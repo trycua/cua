@@ -78,7 +78,7 @@ pub fn fleet_maybe_configured() -> bool {
     let cfg = cua_fleet::FleetConfig::from_env();
     cfg.fleet_token.is_some()
         || (cfg.client_id.is_some() && cfg.client_secret.is_some())
-        || cua_auth::may_have_session()
+        || (cfg.accepts_session() && cua_auth::may_have_session())
 }
 
 /// The Fleet configuration from the environment, falling back to the
@@ -91,6 +91,9 @@ pub async fn fleet_config() -> Result<Option<(cua_fleet::FleetConfig, FleetAuth)
     if let (Some(id), Some(_)) = (&cfg.client_id, &cfg.client_secret) {
         let id = id.clone();
         return Ok(Some((cfg, FleetAuth::ClientCredentials(id))));
+    }
+    if !cfg.accepts_session() {
+        return Ok(None);
     }
     match session_token(&Store::from_env()).await? {
         Some(t) => {
@@ -210,7 +213,7 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
         (Some(u), _) | (None, Some(u)) => format!(" as {u}"),
         _ => String::new(),
     };
-    line(out, format!("Logged in to run.cua.ai{who}."));
+    line(out, format!("Logged in to Cua{who}."));
     Ok(0)
 }
 
@@ -236,10 +239,14 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     let s = session();
     let store = s.store().clone();
     let c = store.load().map_err(auth_err)?;
+    let endpoints = cua_home::env::Endpoints::current();
     if json {
         util::json_line(
             out,
             &serde_json::json!({
+                "env": endpoints.env.name(),
+                "issuer": s.oidc().issuer,
+                "relay": endpoints.relay_url,
                 "logged_in": c.is_some(),
                 "expires_at": c.as_ref().map(|c| c.expires_at.clone()),
                 "identity": c.as_ref().map(|c| c.identity()),
@@ -248,6 +255,18 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
         );
         return Ok(if c.is_some() { 0 } else { 1 });
     }
+    if !endpoints.env.is_prod() {
+        line(
+            out,
+            format!(
+                "Environment: {} (issuer {}, relay {}, home {}).",
+                endpoints.env.name(),
+                s.oidc().issuer,
+                endpoints.relay_url,
+                util::cua_home().display()
+            ),
+        );
+    }
     let Some(c) = c else {
         line(out, "Not logged in. Run 'cua auth login'.");
         return Ok(1);
@@ -255,17 +274,28 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     if c.expires().map_err(auth_err)? <= chrono::Utc::now() {
         line(
             out,
-            "Logged in; access token expired and will refresh on the next run.cua.ai request.",
+            "Logged in; access token expired and will refresh on the next request.",
         );
     } else {
         line(
             out,
-            format!(
-                "Logged in to run.cua.ai. Access token expires {}.",
-                c.expires_at
-            ),
+            format!("Logged in to Cua. Access token expires {}.", c.expires_at),
         );
     }
+    Ok(0)
+}
+
+/// `cua auth keychain [--prompt | --forget]`: one JSON line, the
+/// [`cua_auth::KeychainCheck`] of the store (`--forget`: after removing the
+/// stored session, which reads nothing). Always exit 0 when it ran.
+pub fn keychain(prompt: bool, forget: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+    let store = Store::from_env();
+    let check = if forget {
+        store.forget_keychain().map_err(auth_err)?
+    } else {
+        store.check_keychain(prompt)
+    };
+    line(out, serde_json::to_string(&check).unwrap_or_default());
     Ok(0)
 }
 

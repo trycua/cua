@@ -23,6 +23,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn with_cursor_motion_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
+        properties.extend(cursor_overlay::badge_mode::config_schema_properties());
     }
     schema
 }
@@ -42,19 +43,13 @@ fn def() -> &'static ToolDef {
             cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to \
             ~/.cua-driver/config.json and seed sessions started afterwards. \
             start_session cursor_motion and set_agent_cursor_motion override them; \
-            reduced motion always wins.".into(),
+            reduced motion always wins.\n\nAgent cursor badge: cursor.badges is \
+            minimal (default), verbose or off, saved to ~/.cua-driver/config.json \
+            and applied to every cursor at once."
+            .into(),
         input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",
             "properties": {
-                "key": {
-                    "type": "string",
-                    "description": "Name of a single config field to write ({key, value} shape, \
-                        matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. \
-                        Equivalent to passing the field directly."
-                },
-                "value": {
-                    "description": "New value for `key`. JSON type depends on the key."
-                },
                 "max_image_dimension": {
                     "type": "integer",
                     "description": "Max dimension for screenshot resizing (0 = no limit)."
@@ -87,9 +82,7 @@ impl Tool for SetConfigTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
+        if args.get("capture_scope").is_some() {
             return ToolResult::error(
                 "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
@@ -114,22 +107,12 @@ impl Tool for SetConfigTool {
             Err(message) => return ToolResult::error(message),
         };
 
-        // Accept BOTH the direct field and {key,value} shapes.
-        let kv: Option<(String, Value)> = args
-            .opt_str("key")
-            .and_then(|k| args.get("value").map(|v| (k, v.clone())));
-        let kv_u64 = |name: &str| -> Option<u64> {
-            kv.as_ref()
-                .filter(|(k, _)| k == name)
-                .and_then(|(_, v)| v.as_u64())
+        let badge_key = match cursor_overlay::badge_mode::apply_config_args(&args) {
+            Ok(key) => key,
+            Err(message) => return ToolResult::error(message),
         };
 
-        // Validate max_image_dimension up front so both branches share the
-        // u32 check and we never half-apply.
-        let max_dim: Option<u32> = match args
-            .opt_u64("max_image_dimension")
-            .or_else(|| kv_u64("max_image_dimension"))
-        {
+        let max_dim: Option<u32> = match args.opt_u64("max_image_dimension") {
             Some(dim) => match u32::try_from(dim) {
                 Ok(d) => Some(d),
                 Err(_) => {
@@ -201,6 +184,9 @@ impl Tool for SetConfigTool {
                 " — saved {} (applies to sessions started from now on)",
                 motion_keys.join(", ")
             ));
+        }
+        if let Some(key) = badge_key {
+            pip_note.push_str(&format!(" — saved {key} (applies now)"));
         }
         let scope_note = if session_id.is_some() {
             " (session-scoped; persisted default unchanged)"

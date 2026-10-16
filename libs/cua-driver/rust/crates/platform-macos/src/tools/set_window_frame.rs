@@ -154,9 +154,9 @@ fn is_self_process_target(pid: u32) -> bool {
 fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String> {
     use crate::{
         ax::bindings::{
-            ax_get_window_id, copy_ax_windows, element_screen_rect, is_attribute_settable,
-            kAXErrorSuccess, set_point_attr, set_size_attr, AXUIElementCreateApplication,
-            AXUIElementSetMessagingTimeout,
+            ax_get_window_id, copy_ax_windows_including, element_screen_rect,
+            is_attribute_settable, kAXErrorSuccess, set_point_attr, set_size_attr,
+            AXUIElementCreateApplication, AXUIElementSetMessagingTimeout,
         },
         windows::WindowOwner,
     };
@@ -205,7 +205,7 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
             ));
         }
         AXUIElementSetMessagingTimeout(app, 2.0);
-        let windows = copy_ax_windows(app);
+        let windows = copy_ax_windows_including(app, pid, window_id);
         let target = windows
             .iter()
             .copied()

@@ -137,6 +137,11 @@ pub const ERROR_KINDS: &[&str] = &[
     "fleet",
     "fleet_admission_denied",
     "runtime",
+    // A local create's runtime failure, split by cause (cua_sandbox_created).
+    "runtime_missing",
+    "runtime_not_running",
+    "runtime_permission",
+    "image_pull",
     "env",
     "http",
     "unauthenticated",
@@ -151,6 +156,11 @@ pub const ERROR_KINDS: &[&str] = &[
     "internal",
     "ambiguous_sandbox",
     "insufficient_disk",
+    // A Spaces-app create the app explained from the error's text: macOS
+    // Local Network privacy blocked the new VM; Apple's two macOS VMs
+    // were already running.
+    "local_network",
+    "vm_limit",
     "requires_cua_app",
     "cancelled",
     // An agent run: cua_spaces `Error::Agent`, a run that recorded a
@@ -260,6 +270,20 @@ pub const FEATURES: &[&str] = &[
     // Settings, General: Launch Cua Spaces at login turned on or off.
     "launch_at_login_on",
     "launch_at_login_off",
+    // The in-app Pro and Teams prompts (`cua-spaces-app-core` `upsell`):
+    // a value-moment prompt shown, clicked or dismissed; the always-visible
+    // plan card and account-menu plan only clicked.
+    "upsell_meter_shown",
+    "upsell_meter_click",
+    "upsell_meter_dismiss",
+    "upsell_share_shown",
+    "upsell_share_click",
+    "upsell_share_dismiss",
+    "upsell_machine_shown",
+    "upsell_machine_click",
+    "upsell_machine_dismiss",
+    "upsell_plan_card_click",
+    "upsell_account_menu_click",
 ];
 pub const ONBOARDING_STEPS: &[&str] = &[
     "installer_started",
@@ -276,7 +300,21 @@ pub const ONBOARDING_STEPS: &[&str] = &[
     "first_stream",
     "first_space_ready",
     "first_agent_run",
+    // The Spaces app's getting-started checklist (`cua-spaces-app-core`
+    // `telemetry::checklist`): shown, a step done, every step done,
+    // dismissed, reopened from the menu.
+    "checklist_shown",
+    "checklist_add_machine",
+    "checklist_create_space",
+    "checklist_teleport",
+    "checklist_share",
+    "checklist_run_agent",
+    "checklist_completed",
+    "checklist_dismissed",
+    "checklist_reopened",
 ];
+/// Whether an `app_launched` opens the first run (`unknown` elsewhere).
+pub const ONBOARDING_ELIGIBLE: &[&str] = &["yes", "no", "unknown"];
 /// The Spaces app's first-run pages (`cua-spaces-app-core` `onboarding`).
 pub const ONBOARDING_PAGES: &[&str] = &[
     "welcome",
@@ -370,8 +408,17 @@ pub const KEYVAULT_METHODS: &[&str] = &["os_key_store", "passphrase", "recovery_
 pub const SHARE_ACTIONS: &[&str] = &["share", "unshare", "change_role"];
 /// The role a Space is shared with.
 pub const SHARE_ROLES: &[&str] = &["viewer", "editor", "none"];
-/// Updater steps.
-pub const UPDATE_ACTIONS: &[&str] = &["checked", "found", "not_found", "installed", "failed"];
+/// Updater steps. In the product's words: `found` is update_available,
+/// `downloaded` is update_downloaded (the background download finished),
+/// `installed` is update_installed.
+pub const UPDATE_ACTIONS: &[&str] = &[
+    "checked",
+    "found",
+    "not_found",
+    "downloaded",
+    "installed",
+    "failed",
+];
 /// Update channels (`cua-spaces-app-core` `about::UpdateChannel`).
 pub const UPDATE_CHANNELS: &[&str] = &["stable", "beta"];
 /// Who started an update check.
@@ -811,7 +858,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::ONBOARDING_STEP,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &[
@@ -830,6 +877,16 @@ pub const EVENTS: &[EventSpec] = &[
                 "The funnel step (first_* steps fire once per install).",
             ),
             OUTCOME,
+            p(
+                "onboarding_eligible",
+                Kind::Enum(ONBOARDING_ELIGIBLE),
+                "app_launched only: the app's first run was still to finish at this launch (yes or no); unknown for every other step and product.",
+            ),
+            p(
+                "error_kind",
+                Kind::Enum(ERROR_KINDS),
+                "A failed signed_in: why, as a fixed kind (timeout, cancelled, permission_denied, transport, unauthenticated, other); none otherwise. Never the message.",
+            ),
         ],
         purpose: "Install and onboarding funnel: where people drop off.",
     },
@@ -1030,6 +1087,7 @@ pub const EVENTS: &[EventSpec] = &[
             p("guest_os", Kind::Enum(GUEST_OS), "Guest OS family."),
             p("kind", Kind::Enum(SANDBOX_KINDS), "container or vm."),
             OUTCOME,
+            ERROR_KIND,
             p(
                 "failed_phase",
                 Kind::Enum(CREATE_PHASES),
@@ -1223,7 +1281,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "action",
                 Kind::Enum(UPDATE_ACTIONS),
-                "A check, an update found or not, installed, or failed.",
+                "A check, an update found or not, downloaded in the background, installed, or failed.",
             ),
             p(
                 "channel",

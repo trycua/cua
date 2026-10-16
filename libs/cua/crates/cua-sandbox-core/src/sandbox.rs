@@ -108,6 +108,10 @@ pub enum Probe {
     },
 }
 
+/// How often [`Sandboxes::spawn_stop_watch`] looks for local sandboxes
+/// that stopped on their own.
+pub const STOP_WATCH_EVERY: Duration = Duration::from_secs(15);
+
 /// How long a local resume waits for the probes its create waited for.
 pub const RESUME_READY_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -715,6 +719,9 @@ pub struct SandboxInfo {
     pub runtime_type: String,
     /// Status.
     pub status: Status,
+    /// Why a local sandbox stopped without being asked to (out of memory,
+    /// killed, exited), until it is started again.
+    pub stop_reason: Option<crate::StopReason>,
 }
 
 // One per sandbox handle; size does not matter here.
@@ -2144,10 +2151,17 @@ impl Sandboxes {
                     provider,
                     runtime_type: s.runtime_type().into(),
                     status: status_word(s.status()),
+                    stop_reason: s.stop_reason(),
                 },
             );
         }
         if let Some(rt) = &self.inner.local {
+            // Those that stopped on their own since: recorded with why.
+            for (name, reason) in self.note_unasked_stops().await {
+                if let Some(row) = out.get_mut(&format!("local:{name}")) {
+                    row.stop_reason = Some(reason);
+                }
+            }
             let listed = rt.list().await?;
             // Local state files the backend listing leaves out (a Lume VM,
             // or a VM or container that is gone) get their live status: the
@@ -2180,6 +2194,12 @@ impl Sandboxes {
                     Some(known) if !known.runtime_type.is_empty() => known.runtime_type.clone(),
                     _ => i.backend,
                 };
+                let status: Status = i.status.into();
+                // A reason holds only while it is still stopped.
+                let stop_reason = out
+                    .get(&id)
+                    .and_then(|known| known.stop_reason)
+                    .filter(|_| status == Status::Stopped);
                 out.insert(
                     id.clone(),
                     SandboxInfo {
@@ -2187,7 +2207,8 @@ impl Sandboxes {
                         name: i.name,
                         provider: ProviderKind::Local,
                         runtime_type,
-                        status: i.status.into(),
+                        status,
+                        stop_reason,
                     },
                 );
             }
@@ -2212,13 +2233,20 @@ impl Sandboxes {
                     provider: ProviderKind::Contrib,
                     runtime_type: s.runtime_type().into(),
                     status,
+                    stop_reason: None,
                 })
             }
             Some(SandboxState::Local(l)) if l.runtime_type != "direct" => {
-                let status = match self.local()?.status_on(name, &l.runtime_type).await {
+                let status: Status = match self.local()?.status_on(name, &l.runtime_type).await {
                     Ok(s) => s.into(),
                     Err(crate::RuntimeError::NotFound(_)) => Status::Unknown(MISSING.into()),
                     Err(e) => return Err(e.into()),
+                };
+                let stop_reason = match (&status, l.status.as_str()) {
+                    // Recorded as running but stopped: it stopped on its own.
+                    (Status::Stopped, "running") => self.note_stop(name, &l.runtime_type).await,
+                    (Status::Stopped, _) => state.as_ref().and_then(SandboxState::stop_reason),
+                    _ => None,
                 };
                 Ok(SandboxInfo {
                     id: format!("local:{name}"),
@@ -2226,6 +2254,7 @@ impl Sandboxes {
                     provider: ProviderKind::Local,
                     runtime_type: l.runtime_type.clone(),
                     status,
+                    stop_reason,
                 })
             }
             Some(s) => Ok(SandboxInfo {
@@ -2238,6 +2267,7 @@ impl Sandboxes {
                 },
                 runtime_type: s.runtime_type().into(),
                 status: status_word(s.status()),
+                stop_reason: None,
             }),
             None => {
                 if let Some(rt) = &self.inner.local
@@ -2249,11 +2279,73 @@ impl Sandboxes {
                         provider: ProviderKind::Local,
                         runtime_type: i.backend,
                         status: i.status.into(),
+                        stop_reason: None,
                     });
                 }
                 Err(Error::NotFound(name.into()))
             }
         }
+    }
+
+    /// Why the local sandbox `name` stopped without being asked to, as
+    /// recorded ([`Self::note_unasked_stops`]); `None` once it is started
+    /// again. Reads only the state file.
+    pub fn stop_reason(&self, name: &str) -> Option<crate::StopReason> {
+        self.inner.state.load(name)?.stop_reason()
+    }
+
+    /// Finds the local sandboxes recorded as running whose engine says they
+    /// stopped (out of memory, a crash: nobody asked), records each as
+    /// stopped with why, and logs it once. Returns those it recorded. Never
+    /// boots an engine: one that is down answers nothing.
+    pub async fn note_unasked_stops(&self) -> Vec<(String, crate::StopReason)> {
+        let mut out = Vec::new();
+        if self.inner.local.is_none() {
+            return out;
+        }
+        for s in self.inner.state.list_all() {
+            if provider_of(&s) != ProviderKind::Local
+                || s.status() != "running"
+                || s.runtime_type() == "direct"
+            {
+                continue;
+            }
+            if let Some(reason) = self.note_stop(s.name(), s.runtime_type()).await {
+                out.push((s.name().to_string(), reason));
+            }
+        }
+        out
+    }
+
+    /// [`Self::note_unasked_stops`] for one sandbox.
+    async fn note_stop(&self, name: &str, runtime_type: &str) -> Option<crate::StopReason> {
+        let rt = self.inner.local.as_ref()?;
+        let reason = rt.stop_reason(name, runtime_type).await.ok()??;
+        tracing::warn!(
+            sandbox = %name,
+            exit_code = reason.exit_code,
+            out_of_memory = reason.out_of_memory,
+            "{name} stopped without being asked to: {}",
+            reason.words()
+        );
+        if let Err(e) = self.inner.state.record_stop(name, &reason) {
+            tracing::warn!(sandbox = %name, "recording why it stopped: {e}");
+        }
+        Some(reason)
+    }
+
+    /// Runs [`Self::note_unasked_stops`] every [`STOP_WATCH_EVERY`] until
+    /// every handle is dropped (the daemon starts it once), so a Space that
+    /// stops on its own shows as stopped, and why, without anyone listing.
+    pub fn spawn_stop_watch(&self) -> tokio::task::JoinHandle<()> {
+        let weak = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(STOP_WATCH_EVERY).await;
+                let Some(inner) = weak.upgrade() else { return };
+                Sandboxes { inner }.note_unasked_stops().await;
+            }
+        })
     }
 
     fn kind_of(&self, name: &str) -> Result<(ProviderKind, SandboxState)> {
@@ -3280,11 +3372,22 @@ impl Sandbox {
     /// Waits until every probe passes or `timeout` elapses.
     pub async fn wait_ready(&self, probes: &[Probe], timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
+        let grace = cua_vmm::probe::unreachable_grace();
         for probe in probes {
+            let mut unreachable = cua_vmm::probe::UnreachableWatch::default();
             loop {
-                let ok = self.probe_once(probe).await;
-                if ok {
-                    break;
+                let now = tokio::time::Instant::now();
+                match self.probe_once(probe).await {
+                    ProbeTry::Passed => break,
+                    ProbeTry::NotYet => unreachable.reset(),
+                    // No route the whole grace (on macOS: Local Network
+                    // privacy), or still none at the deadline: say so, as a
+                    // create does, instead of a bare timeout.
+                    ProbeTry::Unreachable { addr, error } => {
+                        if unreachable.observe(now) >= grace || Instant::now() >= deadline {
+                            return Err(unreachable_failure(&addr, &error));
+                        }
+                    }
                 }
                 // A probe can never pass once the instance is gone: fail
                 // fast instead of waiting out the budget.
@@ -3327,7 +3430,7 @@ impl Sandbox {
         }
     }
 
-    async fn probe_once(&self, probe: &Probe) -> bool {
+    async fn probe_once(&self, probe: &Probe) -> ProbeTry {
         let per_try = Duration::from_secs(10);
         if let (Probe::Tcp(guest_port), Target::Local { .. }) = (probe, &self.target) {
             // Ask the runtime first: a host-side connect through a
@@ -3335,15 +3438,15 @@ impl Sandbox {
             // guest listens.
             if let Ok(rt) = self.mgr.local() {
                 match rt.guest_tcp_listening(&self.name, *guest_port).await {
-                    Ok(Some(listening)) => return listening,
+                    Ok(Some(listening)) => return listening.into(),
                     Ok(None) => {}
-                    Err(_) => return false,
+                    Err(_) => return ProbeTry::NotYet,
                 }
             }
         }
         if let Target::Contrib { provider, instance } = &self.target {
             let Ok(ep) = provider.0.endpoint(instance, probe_port(probe)) else {
-                return false;
+                return ProbeTry::NotYet;
             };
             let (path, want) = match probe {
                 Probe::Tcp(_) => ("/", None),
@@ -3355,7 +3458,7 @@ impl Sandbox {
                 .http
                 .request("GET", &ep.url_for(path), &ep.headers, None, per_try)
                 .await;
-            return match (resp, want) {
+            let passed = match (resp, want) {
                 // Through the provider's proxy a TCP probe means the port's
                 // server answers (the proxy's own errors are 5xx).
                 (Ok(r), None) => r.status < 500,
@@ -3363,12 +3466,13 @@ impl Sandbox {
                 (Ok(r), Some(None)) => (200..300).contains(&r.status),
                 (Err(_), _) => false,
             };
+            return passed.into();
         }
-        match (probe, self.port(probe_port(probe))) {
+        let passed = match (probe, self.port(probe_port(probe))) {
             (Probe::Tcp(_), Ok(PortTarget::Addr { host, port })) => {
-                tokio::time::timeout(per_try, tcp_alive(&host, port))
+                return tokio::time::timeout(per_try, tcp_try(&host, port))
                     .await
-                    .unwrap_or(false)
+                    .unwrap_or(ProbeTry::NotYet);
             }
             (Probe::Tcp(_), Ok(PortTarget::Url(url))) => self
                 .http_get(&url, per_try)
@@ -3389,7 +3493,8 @@ impl Sandbox {
                 }
             }
             (_, Err(_)) => false,
-        }
+        };
+        passed.into()
     }
 
     async fn http_get(&self, url: &str, timeout: Duration) -> Result<HttpResponse> {
@@ -3589,19 +3694,58 @@ async fn fleet_services(
         .collect()
 }
 
+/// One readiness probe attempt ([`Sandbox::wait_ready`]).
+#[derive(Debug)]
+enum ProbeTry {
+    Passed,
+    /// Refused, timed out, closed at once, or a bad status.
+    NotYet,
+    /// No route to the guest ([`cua_vmm::probe::is_unreachable`]): on
+    /// macOS, Local Network privacy blocks this process.
+    Unreachable {
+        addr: String,
+        error: std::io::Error,
+    },
+}
+
+impl From<bool> for ProbeTry {
+    fn from(passed: bool) -> Self {
+        if passed { Self::Passed } else { Self::NotYet }
+    }
+}
+
+/// What a connect error says ([`ProbeTry::Unreachable`] or not yet).
+fn connect_failed(addr: String, error: std::io::Error) -> ProbeTry {
+    if cua_vmm::probe::is_unreachable(&error) {
+        ProbeTry::Unreachable { addr, error }
+    } else {
+        ProbeTry::NotYet
+    }
+}
+
+/// The error for a guest still unroutable from this process: the one a
+/// create gives ([`cua_vmm::probe::unreachable_error`]), which names Local
+/// Network access on macOS.
+fn unreachable_failure(addr: &str, error: &std::io::Error) -> Error {
+    Error::Runtime(crate::RuntimeError::Other(
+        cua_vmm::probe::unreachable_error(addr, error).to_string(),
+    ))
+}
+
 /// Connects, then requires the peer to send data or hold the connection
 /// open for 400 ms: a forwarder with nothing behind it accepts and then
 /// closes straight away.
-async fn tcp_alive(host: &str, port: u16) -> bool {
+async fn tcp_try(host: &str, port: u16) -> ProbeTry {
     use tokio::io::AsyncReadExt;
-    let Ok(mut s) = TcpStream::connect((host, port)).await else {
-        return false;
+    let mut s = match TcpStream::connect((host, port)).await {
+        Ok(s) => s,
+        Err(e) => return connect_failed(host_port(host, port), e),
     };
     let mut buf = [0u8; 64];
     match tokio::time::timeout(Duration::from_millis(400), s.read(&mut buf)).await {
-        Err(_) => true,
-        Ok(Ok(n)) => n > 0,
-        Ok(Err(_)) => false,
+        Err(_) => ProbeTry::Passed,
+        Ok(Ok(n)) => (n > 0).into(),
+        Ok(Err(_)) => ProbeTry::NotYet,
     }
 }
 
@@ -4193,6 +4337,57 @@ fn local_env_token(o: &CreateOptions) -> Option<String> {
         .filter(|t| !t.is_empty())
         .cloned();
     given.or_else(|| (!o.os.eq_ignore_ascii_case("windows")).then(mint_env_token))
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    use std::io::{Error as IoError, ErrorKind};
+
+    #[test]
+    fn no_route_to_the_guest_is_unreachable_not_not_yet() {
+        let addr = || "192.168.64.5:3211".to_string();
+        for kind in [ErrorKind::HostUnreachable, ErrorKind::NetworkUnreachable] {
+            assert!(matches!(
+                connect_failed(addr(), IoError::from(kind)),
+                ProbeTry::Unreachable { .. }
+            ));
+        }
+        for kind in [ErrorKind::ConnectionRefused, ErrorKind::TimedOut] {
+            assert!(matches!(
+                connect_failed(addr(), IoError::from(kind)),
+                ProbeTry::NotYet
+            ));
+        }
+    }
+
+    #[test]
+    fn an_unreachable_guest_fails_with_the_create_error() {
+        let error = IoError::from(ErrorKind::HostUnreachable);
+        let text = unreachable_failure("192.168.64.5:3211", &error).to_string();
+        let want = if cfg!(target_os = "macos") {
+            "Local Network access is not available"
+        } else {
+            "a network route to the guest is not available"
+        };
+        assert!(text.starts_with(want), "{text}");
+        assert!(text.contains("192.168.64.5:3211"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_listener_that_holds_the_connection_passes_and_a_closed_port_does_not() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hold = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            drop(s);
+        });
+        assert!(matches!(tcp_try("127.0.0.1", port).await, ProbeTry::Passed));
+        hold.await.unwrap();
+        // Nothing listens there now: refused, which is "not yet".
+        assert!(matches!(tcp_try("127.0.0.1", port).await, ProbeTry::NotYet));
+    }
 }
 
 #[cfg(test)]

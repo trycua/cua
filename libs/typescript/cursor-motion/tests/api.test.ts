@@ -6,7 +6,10 @@ describe('api', () => {
     const req = { from: { x: 80, y: 640 }, to: { x: 900, y: 120 } };
     for (const style of ['signature_arc', 'spring_settle', 'comet_swoop'] as const) {
       const spec = specForStyle(style, { arcSize: 0.4 })!;
-      expect(planSpec(spec, req).samples).toEqual(planMove({ style, arcSize: 0.4 }, req).samples);
+      // A raw spec matches the planned move under native timing; the default (steady) adds a floor.
+      expect(planSpec(spec, req).samples).toEqual(
+        planMove({ style, arcSize: 0.4, timing: 'native' }, req).samples
+      );
     }
     expect(specForStyle('magnetic')).toBeNull();
   });

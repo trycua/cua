@@ -13,7 +13,9 @@
 //! fake binaries only.
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "installer")]
 use std::process::Stdio;
+#[cfg(feature = "installer")]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +23,7 @@ use serde::{Deserialize, Serialize};
 /// Marker line written above a PATH edit (same text as install.sh).
 pub const PATH_MARKER: &str = "# Added by the cua installer";
 
+#[cfg(feature = "installer")]
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// File name of the CLI on this OS.
@@ -130,6 +133,7 @@ pub struct CliInstallRequest {
 
 /// Installs the bundled CLI onto PATH. Paths and environment are injected.
 #[derive(Clone, Debug)]
+#[cfg(feature = "installer")]
 pub struct CliInstaller {
     pub bundled: Option<PathBuf>,
     pub bin_dir: PathBuf,
@@ -141,6 +145,7 @@ pub struct CliInstaller {
     pub prefer_symlink: bool,
 }
 
+#[cfg(feature = "installer")]
 impl CliInstaller {
     /// The real machine: sidecar next to `exe`, `$HOME`, `$PATH`, `$SHELL`.
     pub fn from_env(exe: &Path) -> Self {
@@ -313,7 +318,7 @@ impl CliInstaller {
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "installer"))]
 fn add_to_windows_user_path(dir: &Path) -> Result<(), String> {
     // HKCU\Environment Path through .NET, which also broadcasts the change.
     let script = format!(
@@ -332,14 +337,19 @@ fn add_to_windows_user_path(dir: &Path) -> Result<(), String> {
         .ok_or_else(|| "could not update the user PATH".to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), feature = "installer"))]
 fn add_to_windows_user_path(_dir: &Path) -> Result<(), String> {
     Err("not Windows".into())
 }
 
 /// App locations that survive relaunches (not a mounted dmg or App
-/// Translocation), where a symlink into the bundle stays valid.
+/// Translocation, not an AppImage's mount), where a symlink into the bundle
+/// stays valid: app updates update the CLI too, and removing the app takes
+/// it away, as dragging the Swift app to the Trash does.
 pub fn stable_app_location(cli: &Path) -> bool {
+    if cfg!(target_os = "linux") {
+        return linux_package_location(cli);
+    }
     if !cfg!(target_os = "macos") {
         return false;
     }
@@ -351,6 +361,13 @@ pub fn stable_app_location(cli: &Path) -> bool {
     in_apps && !s.contains("/AppTranslocation/")
 }
 
+/// A Linux package's install tree (the `.deb`'s `/opt/Cua Spaces`, or a
+/// distribution's `/usr`): root-owned and replaced in place by upgrades.
+pub fn linux_package_location(cli: &Path) -> bool {
+    cli.is_absolute() && (cli.starts_with("/opt") || cli.starts_with("/usr"))
+}
+
+#[cfg(feature = "installer")]
 fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(x), Ok(y)) if x == y => true,
@@ -370,6 +387,7 @@ pub fn first_on_path(path_env: &str, name: &str) -> Option<PathBuf> {
 
 /// Whether some *other* PATH entry with a `cua` comes before `bin_dir`
 /// (or `bin_dir` is not on PATH at all).
+#[cfg(feature = "installer")]
 fn on_path_before(path_env: &str, bin_dir: &Path) -> bool {
     for dir in std::env::split_paths(path_env) {
         if dir == bin_dir {
@@ -401,9 +419,11 @@ pub fn is_cua_cli(version_line: &str) -> bool {
 }
 
 /// `ETXTBSY` ("text file busy") on Linux and macOS.
+#[cfg(feature = "installer")]
 const ETXTBSY: i32 = 26;
 
 /// `cua --version`, first line, or `None` if it does not run.
+#[cfg(feature = "installer")]
 pub async fn cli_version(cli: &Path) -> Option<String> {
     // A file just written can be briefly "busy" to exec (ETXTBSY) while a
     // process forked elsewhere still holds its write handle: try again.
@@ -433,9 +453,26 @@ pub async fn cli_version(cli: &Path) -> Option<String> {
         .filter(|l| !l.is_empty())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "installer"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_linux_package_links_its_cli_and_an_appimage_copies_it() {
+        assert!(linux_package_location(Path::new(
+            "/opt/Cua Spaces/resources/native/cua"
+        )));
+        assert!(linux_package_location(Path::new("/usr/lib/cua-spaces/cua")));
+        // An AppImage mounts somewhere new each launch; its CLI is copied.
+        assert!(!linux_package_location(Path::new(
+            "/tmp/.mount_CuaSpaXYZ/resources/native/cua"
+        )));
+        assert!(!linux_package_location(Path::new(
+            "/home/u/.local/share/cua-spaces/daemon/0.7.2-1/cua"
+        )));
+        assert!(!linux_package_location(Path::new("/optional/cua")));
+        assert!(!linux_package_location(Path::new("opt/cua")));
+    }
 
     #[test]
     fn profiles_and_path_lines() {

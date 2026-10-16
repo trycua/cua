@@ -185,3 +185,87 @@ async fn discovered_relay_os_survives_embedded_and_daemon_connections() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relay_id_resolves_before_any_list_including_a_late_join() {
+    for daemon in [false, true] {
+        let relay = FakeRelay::start().await;
+        relay.legacy_enrollment(true);
+        relay.add_account("owner-token", "owner", None);
+        let id = "00112233445566778899aabbccddeeff";
+        let joined = "ffeeddccbbaa99887766554433221100";
+        let register = async |machine: &str, name: &str| {
+            cua_host::RelayClient::new(&relay.url)
+                .unwrap()
+                .register(
+                    "owner-token",
+                    &RegisterRequest {
+                        id: machine.into(),
+                        name: name.into(),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+        };
+        register(id, "Test host").await;
+        let env = fixtures::start_env(None, None).await;
+        relay.tunnel(id, &env.url);
+        relay.set_online(id, true, "0.0.0-mock");
+        let home = tempfile::tempdir().unwrap();
+        let runtime = Runtime::new(RuntimeConfig {
+            state_dir: Some(home.path().join("sandboxes")),
+            spaces_home: Some(home.path().join("cua")),
+            ..Default::default()
+        })
+        .unwrap();
+        runtime.spaces().set_relay(Some(RelayAccount::new(
+            &relay.url,
+            Arc::new(StaticToken("owner-token".into())),
+        )));
+        let (cua, server) = if daemon {
+            let h = server::start(
+                runtime,
+                ServerConfig {
+                    socket_path: Some(home.path().join("cua.sock")),
+                    loopback: Some("127.0.0.1:0".parse().unwrap()),
+                    token: "daemon-token".into(),
+                    discovery_path: Some(home.path().join("daemon.json")),
+                    bridge_ticket_ttl: std::time::Duration::from_secs(30),
+                },
+            )
+            .await
+            .unwrap();
+            (
+                Cua::connect(h.loopback_url.clone(), Some(h.token.clone())).unwrap(),
+                Some(h),
+            )
+        } else {
+            (Cua::from_runtime(runtime), None)
+        };
+        let spaces = cua.spaces();
+        let key = format!("relay:{id}");
+        let resolved = spaces.resolve(key.clone()).await.unwrap();
+        assert_eq!(resolved.name, "Test host", "daemon={daemon}");
+        let connected = spaces.space(key).await.unwrap();
+        assert_eq!(connected.info().name, "Test host");
+        register(joined, "Late host").await;
+        let late = spaces.resolve(format!("relay:{joined}")).await.unwrap();
+        assert_eq!(late.name, "Late host", "daemon={daemon}");
+        let missing = spaces
+            .resolve("direct:127.0.0.1:9".into())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(missing, cua_sdk::CuaError::NotFound(_)),
+            "{missing}"
+        );
+        assert!(!home.path().join("cua/spaces.json").exists());
+        drop(connected);
+        drop(cua);
+        if let Some(server) = server {
+            server.shutdown();
+            server.wait().await;
+        }
+    }
+}

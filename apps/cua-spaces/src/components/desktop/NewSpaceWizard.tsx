@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { core } from "../../core";
 import { NO_EXPERIMENTS, type Experiments } from "../../model/experiments";
@@ -74,6 +74,8 @@ export interface NewSpaceWizardProps {
   onOpenExternal?: (url: string) => void;
   /** Actions applied once when the sheet opens (start views for captures). */
   startActions?: readonly ({ type: string } & Record<string, unknown>)[];
+  /** The empty home's one click: that OS's default Space. */
+  quick?: "linux" | "macos";
   /** The user's connected clouds (the app core's `ConnectedCloud`s); the
    * menu lists them only with the "Your cloud" experiment. */
   clouds?: readonly ConnectedCloud[];
@@ -262,6 +264,7 @@ export function NewSpaceWizard({
   gpus,
   onOpenExternal,
   startActions,
+  quick,
   clouds,
   hosts,
   experiments,
@@ -300,17 +303,16 @@ export function NewSpaceWizard({
     ],
   );
   const [state, setState] = useState<WizardState>(() =>
-    (startActions ?? []).reduce<WizardState>(
+    (quick ? [{ type: "choose-os", os: quick }] : (startActions ?? [])).reduce<WizardState>(
       (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env }),
-      core<WizardState>("wizard.initial", { env }),
+      // The wasm core has no randomness: a seed for the name an unnamed
+      // Space gets (the core shows it and creates the Space with it).
+      core<WizardState>("wizard.initial", { env: { ...env, nameSeed: nameSeed() } }),
     ),
   );
   // The panel opened, was cancelled, or created a Space (the SwiftUI app
   // records the same).
   const telemetry = useMemo(() => telemetryProp ?? telemetryBridge(), [telemetryProp]);
-  useEffect(() => {
-    telemetry.recordSignals([{ type: "space-wizard", action: "opened" }]);
-  }, [telemetry]);
   const cancel = () => {
     telemetry.recordSignals([{ type: "space-wizard", action: "cancelled" }]);
     onCancel();
@@ -323,6 +325,16 @@ export function NewSpaceWizard({
     setState((s) => core<WizardState>("wizard.reduce", { state: s, action: { type: "sync-default", location: defaultLocation }, env }));
   }, [defaultLocation, env]);
   const v = core<WizardView>("wizard.view", { state, env });
+  // Before paint, so a quick create never shows the sheet; once, because StrictMode runs mount effects twice.
+  const started = useRef(false);
+  useLayoutEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    if (quick && v.canContinue) {
+      telemetry.recordSignals([{ type: "space-wizard", action: "submitted" }]);
+      onCreate(v.plan);
+    } else telemetry.recordSignals([{ type: "space-wizard", action: "opened" }]);
+  }, []);
   const step = v.step;
 
   if (v.mode === "address") {
@@ -838,4 +850,10 @@ function AddByAddress({
       </footer>
     </div>
   );
+}
+
+/** 40 random bits for the generated Space name (`wizard::generated_space_name`). */
+function nameSeed(): number {
+  const [high = 0, low = 0] = globalThis.crypto.getRandomValues(new Uint32Array(2));
+  return (high & 0xff) * 2 ** 32 + low;
 }

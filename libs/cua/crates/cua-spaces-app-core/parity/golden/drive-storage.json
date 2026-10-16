@@ -547,7 +547,7 @@
       "section": [
         "= Settings",
         "# Storage (storage)",
-        "- backend choice: Store files on {This computer|*S3-compatible}",
+        "- backend choice: Store files on {This PC|*S3-compatible}",
         "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
         "- s3-bucket field: Bucket = cua-volume",
         "- s3-region field: Region = us-east-1 ~us-east-1",

@@ -214,6 +214,10 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     if unknown.is_empty() {
         return None;
     }
+    // A direct action named by role/name: that targeting lives in run_steps.
+    const NAME_TARGET: &[&str] = &["role", "name", "label", "app", "window", "nth"];
+    let name_targeted = crate::batch_tools::BATCHABLE_TOOLS.contains(&def.name.as_str())
+        && unknown.iter().all(|name| NAME_TARGET.contains(name));
     let accepted: Vec<&str> = properties
         .map(|properties| {
             properties
@@ -228,11 +232,328 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     } else {
         "arguments"
     };
+    let hint = if name_targeted {
+        format!(
+            ". To target by role/name/app/window, send the same arguments as one run_steps \
+             step: run_steps {{\"steps\":[{{\"{}\": {{...}}}}]}}",
+            def.name
+        )
+    } else {
+        String::new()
+    };
     Some(format!(
-        "{noun} {}; accepted: {}",
+        "{noun} {}; accepted: {}{hint}",
         unknown.join(", "),
         accepted.join(", ")
     ))
+}
+
+/// Rewrite argument spellings models guess into the advertised ones, before
+/// the closed schema is checked. Shared by dispatch and `run_steps` step
+/// validation, so a batch step accepts what a direct call accepts. `Err` is a
+/// refusal detail for an alias that cannot be translated.
+pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if cfg!(target_os = "linux") && tool_name == "set_value" {
+        if let Some(value @ Value::Number(_)) = args.get_mut("value") {
+            *value = Value::String(value.to_string());
+        }
+    }
+    normalize_zoom_args(tool_name, args);
+    normalize_key_args(tool_name, args);
+    normalize_menu_args(tool_name, args);
+    normalize_scroll_args(tool_name, args)?;
+    normalize_set_config_args(tool_name, args)
+}
+
+/// `{key, value}` is unadvertised; rewrite it before the closed schema rejects `key`.
+fn normalize_set_config_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    let Some(object) = args.as_object_mut().filter(|_| tool_name == "set_config") else {
+        return Ok(());
+    };
+    match (object.remove("key"), object.remove("value")) {
+        (None, None) => Ok(()),
+        (Some(Value::String(key)), Some(value))
+            if !key.starts_with('_') && !matches!(key.as_str(), "key" | "value" | "session") =>
+        {
+            object.insert(key, value);
+            Ok(())
+        }
+        (Some(Value::String(key)), Some(_)) => Err(format!("key '{key}' is reserved")),
+        (Some(_), _) => Err("key requires an exact value".into()),
+        (None, Some(_)) => Err("value requires an exact key".into()),
+    }
+}
+
+/// `invoke_menu` takes `path` as a list of labels. Models also send
+/// `menu_path`, a JSON-encoded list, or one "File > Save As..." string.
+fn normalize_menu_args(tool_name: &str, args: &mut Value) {
+    if tool_name != "invoke_menu" {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    if !arguments.contains_key("path") {
+        if let Some(alias) = ["menu_path", "menu", "items"]
+            .iter()
+            .find(|alias| arguments.contains_key(**alias))
+        {
+            let value = arguments.remove(*alias).expect("present");
+            arguments.insert("path".to_owned(), value);
+        }
+    }
+    let Some(Value::String(text)) = arguments.get("path") else {
+        return;
+    };
+    let text = text.trim();
+    let labels: Vec<String> = match serde_json::from_str::<Vec<String>>(text) {
+        Ok(labels) => labels,
+        Err(_) => text
+            .split(['>', '→'])
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    };
+    if !labels.is_empty() {
+        arguments.insert(
+            "path".to_owned(),
+            Value::Array(labels.into_iter().map(Value::String).collect()),
+        );
+    }
+}
+
+/// The JSON types a property schema admits, from `type` (a string or a list)
+/// and the `type` of each `anyOf`/`oneOf` branch. Empty when the schema
+/// declares none.
+fn declared_types(schema: &Value) -> Vec<&str> {
+    fn add<'v>(types: &mut Vec<&'v str>, value: Option<&'v Value>) {
+        match value {
+            Some(Value::String(name)) => types.push(name.as_str()),
+            Some(Value::Array(names)) => types.extend(names.iter().filter_map(Value::as_str)),
+            _ => {}
+        }
+    }
+    let mut types = Vec::new();
+    add(&mut types, schema.get("type"));
+    for key in ["anyOf", "oneOf"] {
+        if let Some(branches) = schema.get(key).and_then(Value::as_array) {
+            for branch in branches {
+                add(&mut types, branch.get("type"));
+            }
+        }
+    }
+    types
+}
+
+/// Models sometimes send scalars as strings (`"include_screenshot": "false"`,
+/// `"observe": "true"`, `"pid": "4211"`). A tool reading `as_bool()` would
+/// silently take `"false"` as absent and use the default, which is the
+/// opposite of what was asked. Rewrite a top-level string argument into the
+/// boolean, integer or number its schema declares, but only when the schema
+/// does not also admit a string, so no string-valued field is reinterpreted.
+pub(crate) fn coerce_string_scalars(schema: &Value, args: &mut Value) {
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    for (name, value) in arguments.iter_mut() {
+        let Value::String(text) = value else {
+            continue;
+        };
+        let Some(property) = properties.get(name) else {
+            continue;
+        };
+        let types = declared_types(property);
+        if types.is_empty() || types.contains(&"string") {
+            continue;
+        }
+        let text = text.trim();
+        let coerced = if types.contains(&"boolean") && text.eq_ignore_ascii_case("true") {
+            Some(Value::Bool(true))
+        } else if types.contains(&"boolean") && text.eq_ignore_ascii_case("false") {
+            Some(Value::Bool(false))
+        } else if types.contains(&"integer") {
+            text.parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| text.parse::<u64>().map(Value::from))
+                .ok()
+        } else if types.contains(&"number") {
+            text.parse::<f64>()
+                .ok()
+                .filter(|number| number.is_finite())
+                .and_then(|number| serde_json::Number::from_f64(number).map(Value::Number))
+        } else {
+            None
+        };
+        if let Some(coerced) = coerced {
+            *value = coerced;
+        }
+    }
+}
+
+/// Key spellings models reach for that every platform's key table spells
+/// differently. Only unambiguous renames: `delete` itself means backspace on
+/// macOS and forward delete elsewhere, so it is left alone.
+fn canonical_key_name(key: &str) -> Option<&'static str> {
+    let folded: String = key
+        .chars()
+        .filter(|c| !matches!(c, '_' | '-' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect();
+    Some(match folded.as_str() {
+        "pagedown" | "pgdn" | "pgdown" | "pagedn" => "pagedown",
+        "pageup" | "pgup" => "pageup",
+        "arrowleft" | "leftarrow" => "left",
+        "arrowright" | "rightarrow" => "right",
+        "arrowup" | "uparrow" => "up",
+        "arrowdown" | "downarrow" => "down",
+        "forwarddelete" | "fwddelete" | "deleteforward" => {
+            if cfg!(target_os = "macos") {
+                "forward_delete"
+            } else {
+                "delete"
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// `press_key` takes one key plus `modifiers`, `hotkey` a list of keys.
+/// Rewrite the shapes models send instead: a combination in `key`
+/// ("shift+Right" becomes key "Right" with modifiers ["shift"]), `hotkey`
+/// keys as one "cmd+s" string, and spellings such as "Page_Down".
+fn normalize_key_args(tool_name: &str, args: &mut Value) {
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    match tool_name {
+        "press_key" => {
+            let Some(key) = arguments
+                .get("key")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                return;
+            };
+            let mut key = key.trim().to_owned();
+            if key.chars().count() > 1 && key.contains('+') && !key.ends_with('+') {
+                let parts: Vec<String> =
+                    key.split('+').map(|part| part.trim().to_owned()).collect();
+                if parts.iter().all(|part| !part.is_empty()) {
+                    let (modifiers, last) = parts.split_at(parts.len() - 1);
+                    let existing = arguments
+                        .get("modifiers")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut merged: Vec<Value> = existing;
+                    for modifier in modifiers {
+                        let modifier = Value::String(modifier.to_lowercase());
+                        if !merged.contains(&modifier) {
+                            merged.push(modifier);
+                        }
+                    }
+                    arguments.insert("modifiers".to_owned(), Value::Array(merged));
+                    key = last[0].clone();
+                }
+            }
+            if let Some(canonical) = canonical_key_name(&key) {
+                key = canonical.to_owned();
+            }
+            arguments.insert("key".to_owned(), Value::String(key));
+        }
+        "hotkey" => {
+            if let Some(Value::String(combo)) = arguments.get("keys") {
+                let keys: Vec<Value> = combo
+                    .split('+')
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| Value::String(part.to_owned()))
+                    .collect();
+                arguments.insert("keys".to_owned(), Value::Array(keys));
+            }
+            if let Some(Value::Array(keys)) = arguments.get_mut("keys") {
+                for key in keys.iter_mut() {
+                    if let Some(canonical) = key.as_str().and_then(canonical_key_name) {
+                        *key = Value::String(canonical.to_owned());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A larger `dx`/`dy` magnitude than this many notches is read as pixels.
+const SCROLL_MAX_NOTCHES: f64 = 50.0;
+/// Pixels per wheel notch when `dx`/`dy` is given in pixels (a Chromium
+/// wheel notch scrolls about 100 px).
+const SCROLL_PIXELS_PER_NOTCH: f64 = 100.0;
+
+/// `scroll` takes `direction` plus `amount` (wheel notches) on every platform.
+/// Models reach for signed `dx`/`dy` deltas (sometimes as strings), so
+/// translate them: positive `dy` scrolls down and positive `dx` right, as in
+/// DOM `scrollBy` and wheel `deltaY`. A magnitude up to 50 counts notches; a
+/// larger one is pixels at 100 px per notch, clamped to 50 notches. An
+/// explicit `direction` (and `amount`) wins over `dx`/`dy`.
+fn normalize_scroll_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if tool_name != "scroll" {
+        return Ok(());
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return Ok(());
+    };
+    let read = |value: Option<Value>| -> Result<f64, String> {
+        match value {
+            None | Some(Value::Null) => Ok(0.0),
+            Some(value) => value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+                .filter(|number: &f64| number.is_finite())
+                .ok_or_else(|| format!("dx/dy must be numbers, got {value}")),
+        }
+    };
+    if !arguments.contains_key("dx") && !arguments.contains_key("dy") {
+        return Ok(());
+    }
+    let dx = read(arguments.remove("dx"))?;
+    let dy = read(arguments.remove("dy"))?;
+    if arguments.contains_key("direction") {
+        return Ok(());
+    }
+    let (direction, delta) = match (dx != 0.0, dy != 0.0) {
+        (true, true) => {
+            return Err(format!(
+                "scroll moves along one axis per call, got dx={dx} and dy={dy}. Pass only dx or \
+                 dy (or direction and amount), or use two scroll steps in run_steps."
+            ))
+        }
+        (false, false) => {
+            return Err(
+                "dx and dy are both 0, so there is nothing to scroll. Pass direction \
+                 (up, down, left or right) and amount (wheel notches). To hover without \
+                 scrolling, use move_cursor."
+                    .to_owned(),
+            )
+        }
+        (false, true) => (if dy > 0.0 { "down" } else { "up" }, dy),
+        (true, false) => (if dx > 0.0 { "right" } else { "left" }, dx),
+    };
+    let magnitude = delta.abs();
+    let notches = if magnitude <= SCROLL_MAX_NOTCHES {
+        magnitude
+    } else {
+        magnitude / SCROLL_PIXELS_PER_NOTCH
+    };
+    let notches = notches.round().clamp(1.0, SCROLL_MAX_NOTCHES) as u64;
+    arguments.insert("direction".to_owned(), Value::String(direction.to_owned()));
+    arguments
+        .entry("amount")
+        .or_insert_with(|| serde_json::json!(notches));
+    Ok(())
 }
 
 /// `zoom` takes a region as two corners (`x1,y1`-`x2,y2`). Models reach for
@@ -295,8 +616,6 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
-    // Reuse the portable contract's exact tagged-union schema while retaining
-    // the live runtime's broader legacy `scope=window|desktop` decoder.
     if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
         if let Some(portable_properties) = portable
             .input_schema
@@ -309,6 +628,30 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
         }
     }
     schema
+}
+
+/// Tools renamed before 0.35.0, as (old name, new name). The old name still
+/// dispatches to the new tool, but it is not registered, so tools/list shows
+/// only the new name, and its result ends with a one-line deprecation note.
+/// To be removed in a future release.
+pub const RENAMED_TOOLS: &[(&str, &str)] = &[("run_actions", crate::batch_tools::RUN_STEPS_TOOL)];
+
+/// `~/.cua-driver/config.json` key that turns `run_script` off when `true`.
+pub const DISABLE_CONFIG_KEY: &str = "disable_run_script";
+/// Legacy `~/.cua-driver/config.json` key. `false` turns `run_script` off;
+/// `true` changes nothing.
+pub const LEGACY_CONFIG_KEY: &str = "experimental_script";
+
+/// The current name of a renamed tool, or `None` when `name` is not an old name.
+pub fn renamed_tool(name: &str) -> Option<&'static str> {
+    RENAMED_TOOLS
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| *new)
+}
+
+fn deprecated_name_note(old: &str, new: &str) -> String {
+    format!("Note: `{old}` is deprecated and will be removed in a future release; call `{new}` instead.")
 }
 
 /// Centralised tool name → capability tokens map. Lookup is by name so
@@ -325,6 +668,8 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
 ///   `input.pointer.click.right`, `input.pointer.click.double`,
 ///   `input.pointer.drag`, `input.pointer.scroll`,
 ///   `input.pointer.move`, `input.pointer.button` (raw down/up)
+/// - `input.scroll.coordinates` (the live scroll schema accepts numeric x/y;
+///   does not imply focus-free background delivery)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
 /// - `input.delivery_mode` (the live tool schema accepts the shared
@@ -474,7 +819,8 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "stop_recording" => &["recording.stop"],
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
-        "run_actions" => &["input.batch"],
+        "run_steps" => &["input.batch"],
+        "run_script" => &["input.script"],
         "install_ffmpeg" => &["recording.install_dependency"],
         "install_extension" => &["extension.install"],
 
@@ -513,10 +859,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// Capabilities advertised by a concrete runtime tool definition.
 ///
 /// Most capabilities are stable properties of a tool name and come from the
-/// typed portable contract (or the legacy runtime-only map). Delivery mode is
-/// different: the typed desktop SDK intentionally exposes a narrower,
-/// desktop-only input while the live platform schemas additionally accept
-/// window-targeted `delivery_mode`. Deriving this one token from the concrete
+/// typed portable contract (or the legacy runtime-only map). Delivery mode and
+/// scroll coordinates are derived from the live schema. The typed desktop SDK
+/// exposes a narrower, desktop-only input while the live schemas additionally accept
+/// window-targeted `delivery_mode`. Deriving these tokens from the concrete
 /// schema keeps `tools/list` truthful on every platform and prevents either
 /// overclaiming a tool that cannot accept the field or omitting support from a
 /// richer live schema.
@@ -529,6 +875,16 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
             .any(|capability| capability == "input.delivery_mode")
     {
         capabilities.push("input.delivery_mode".into());
+    }
+    if tool_name == "scroll"
+        && ["x", "y"].iter().all(|field| {
+            matches!(
+                input_schema["properties"][field]["type"].as_str(),
+                Some("number" | "integer")
+            )
+        })
+    {
+        capabilities.push("input.scroll.coordinates".into());
     }
     capabilities
 }
@@ -1007,12 +1363,29 @@ impl ToolRegistry {
         self.register_batch_tools();
     }
 
-    /// Register `run_actions`, which re-enters this registry for every step.
+    /// Register `run_steps`, which re-enters this registry for every step.
     /// Called from [`Self::register_session_tools`] so every platform that
     /// registers sessions gets it; [`Self::init_self_weak`] supplies the
     /// registry handle, as for `replay_trajectory`.
     fn register_batch_tools(&mut self) {
-        self.register(Box::new(crate::batch_tools::RunActionsTool::new(
+        self.register(Box::new(crate::batch_tools::RunStepsTool::new(
+            self.replay_registry.clone(),
+        )));
+        // On by default; the operator can turn it off (see script_tool).
+        #[cfg(feature = "script")]
+        match crate::script_tool::disabled_by() {
+            None => self.register_script_tool(),
+            Some(setting) => tracing::debug!("run_script not offered: turned off by {setting}"),
+        }
+        #[cfg(not(feature = "script"))]
+        tracing::debug!("run_script not offered: built without the `script` engine feature");
+    }
+
+    /// Register the `run_script` tool, which, like
+    /// `run_steps`, re-enters this registry for every driver call.
+    #[cfg(feature = "script")]
+    pub fn register_script_tool(&mut self) {
+        self.register(Box::new(crate::script_tool::RunScriptTool::new(
             self.replay_registry.clone(),
         )));
     }
@@ -1308,6 +1681,7 @@ impl ToolRegistry {
         // fields carry registry-internal attestations and must not be
         // caller-forgeable here.
         crate::tool_args::sanitize_reserved_args(&mut args);
+        let original_name = name;
 
         if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
             return protected_refusal(
@@ -1332,7 +1706,7 @@ impl ToolRegistry {
                 eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                 "type_text"
             }
-            other => other,
+            other => renamed_tool(other).unwrap_or(other),
         };
 
         let Some(tool) = self.tools.get(resolved_name) else {
@@ -1357,8 +1731,17 @@ impl ToolRegistry {
 
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
+        coerce_string_scalars(&tool.def().input_schema, &mut args);
         normalize_delivery_mode_args(tool.def(), &mut args);
-        normalize_zoom_args(resolved_name, &mut args);
+        if let Err(detail) = normalize_argument_aliases(resolved_name, &mut args) {
+            return ToolResult::error(format!("{resolved_name}: {detail}")).with_structured(
+                serde_json::json!({
+                    "code": "invalid_arguments",
+                    "tool": resolved_name,
+                    "detail": detail,
+                }),
+            );
+        }
         let unknown_argument = unknown_argument(tool.def(), &args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
@@ -1521,6 +1904,30 @@ impl ToolRegistry {
                 "os_permission_prompt_requires_trusted_host",
                 "operating-system permission prompts must be initiated by a trusted host outside the agent tool path; call check_permissions with prompt=false to inspect state",
             );
+        }
+
+        if resolved_name == "set_config" && args.get("capture_scope").is_some() {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
+            )
+            .with_structured(serde_json::json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "action.target",
+            }));
+        }
+        if let Some(key) = [DISABLE_CONFIG_KEY, LEGACY_CONFIG_KEY]
+            .into_iter()
+            .find(|key| resolved_name == "set_config" && args.get(key).is_some())
+        {
+            return ToolResult::error(format!(
+                "config key '{key}' is set by whoever runs cua-driver, in \
+                 ~/.cua-driver/config.json or the environment, not through set_config"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "config_key_operator_only",
+                "key": key,
+            }));
         }
 
         if let Some(detail) = unknown_argument {
@@ -1807,7 +2214,8 @@ impl ToolRegistry {
                     | "stop_recording"
                     | "get_recording_state"
                     | "replay_trajectory"
-                    | "run_actions"
+                    | "run_steps"
+                    | "run_script"
                     | "start_session"
                     | "end_session"
             );
@@ -2028,6 +2436,13 @@ impl ToolRegistry {
                     timestamp_ms: now_ms(),
                 });
             }
+        }
+
+        if renamed_tool(original_name).is_some() {
+            result.content.push(Content::text(deprecated_name_note(
+                original_name,
+                resolved_name,
+            )));
         }
 
         result
@@ -2622,20 +3037,6 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), ToolResult> {
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
-            return Err(
-                ToolResult::error(
-                    "config key 'capture_scope' is retired; select a window or desktop target on each action",
-                )
-                .with_structured(serde_json::json!({
-                    "code": "config_key_retired",
-                    "key": "capture_scope",
-                    "replacement": "action.target",
-                })),
-            );
-        }
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
@@ -2662,25 +3063,8 @@ impl ToolRegistry {
         }
 
         let mut exact = serde_json::Map::new();
-        if let Some(key) = args.get("key").and_then(Value::as_str) {
-            if matches!(key, "key" | "value" | "session" | "_session_id")
-                || !properties.contains_key(key)
-            {
-                return Err(protected_scope_refusal(&format!(
-                    "set_config key '{key}' is not present in the concrete tool schema"
-                )));
-            }
-            let value = args
-                .get("value")
-                .ok_or_else(|| protected_scope_refusal("set_config key requires an exact value"))?;
-            exact.insert(key.to_owned(), value.clone());
-        } else if args.get("value").is_some() {
-            return Err(protected_scope_refusal(
-                "set_config value requires an exact key",
-            ));
-        }
         for (key, value) in object {
-            if matches!(key.as_str(), "session" | "key" | "value") || key.starts_with('_') {
+            if key == "session" || key.starts_with('_') {
                 continue;
             }
             exact.insert(key.clone(), value.clone());
@@ -5220,10 +5604,23 @@ resources:
                     "value": true,
                     "session": "config"
                 }),
-                context,
+                context.clone(),
             )
             .await;
         assert_eq!(unknown.is_error, Some(true));
+        for key in ["disable_run_script", "experimental_script"] {
+            for args in [
+                serde_json::json!({"key": key, "value": true}),
+                serde_json::json!({key: true}),
+            ] {
+                let refused = registry
+                    .invoke_with_context("set_config", args.clone(), context.clone())
+                    .await;
+                let structured = refused.structured_content.unwrap();
+                assert_eq!(structured["code"], "config_key_operator_only", "{args}");
+                assert_eq!(structured["key"], key, "{args}");
+            }
+        }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
@@ -6016,6 +6413,7 @@ mod capability_tests {
         "input.pointer.click.double",
         "input.pointer.drag",
         "input.pointer.scroll",
+        "input.scroll.coordinates",
         "input.pointer.move",
         "input.pointer.button",
         // keyboard
@@ -6303,6 +6701,61 @@ mod capability_tests {
     }
 
     #[test]
+    fn to_list_entry_advertises_scroll_coordinates_only_when_accepted() {
+        use serde_json::json;
+
+        for (name, properties, expected) in [
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                true,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
+                true,
+            ),
+            ("scroll", json!({}), false),
+            ("scroll", json!({"x": {"type": "number"}}), false),
+            ("scroll", json!({"y": {"type": "number"}}), false),
+            (
+                "scroll",
+                json!({"x": {"type": "string"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "string"}}),
+                false,
+            ),
+            (
+                "click",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "unknown",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+        ] {
+            let mut def = dummy_def(name);
+            def.input_schema = json!({"type": "object", "properties": properties});
+            let entry = def.to_list_entry();
+            let capabilities = entry["capabilities"].as_array().unwrap();
+            assert_eq!(
+                capabilities
+                    .iter()
+                    .filter(|capability| *capability == "input.scroll.coordinates")
+                    .count(),
+                usize::from(expected),
+                "{name}: {}",
+                def.input_schema
+            );
+        }
+    }
+
+    #[test]
     fn to_list_entry_includes_versioned_risk_metadata() {
         let entry = dummy_def("browser_prepare").to_list_entry();
         assert_eq!(entry["risk"]["class"], "r2");
@@ -6541,8 +6994,133 @@ mod capability_tests {
 
 #[cfg(test)]
 mod argument_shape_tests {
-    use super::{normalize_zoom_args, unknown_argument, ToolDef};
+    use super::{
+        coerce_string_scalars, normalize_argument_aliases, normalize_zoom_args, unknown_argument,
+        ToolDef,
+    };
     use serde_json::json;
+
+    #[test]
+    fn string_scalars_follow_the_declared_type() {
+        // v036: "include_screenshot": "false" was read as absent, so the
+        // screenshot the model declined was sent anyway.
+        let schema = json!({"type": "object", "properties": {
+            "include_screenshot": {"type": "boolean"},
+            "observe": {"type": ["object", "boolean"]},
+            "pid": {"type": "integer"},
+            "x": {"type": "number"},
+            "text": {"type": "string"},
+            "value": {"anyOf": [{"type": "string"}, {"type": "boolean"}]},
+            "since": {"type": ["string", "null"]},
+            "untyped": {}
+        }});
+        let mut args = json!({
+            "include_screenshot": "False", "observe": " true", "pid": "4211", "x": "12.5",
+            "text": "true", "value": "false", "since": "1", "untyped": "true", "extra": "true"
+        });
+        coerce_string_scalars(&schema, &mut args);
+        assert_eq!(
+            args,
+            json!({
+                "include_screenshot": false, "observe": true, "pid": 4211, "x": 12.5,
+                "text": "true", "value": "false", "since": "1", "untyped": "true", "extra": "true"
+            })
+        );
+        // Not a number or boolean: left for the schema check to name.
+        let mut junk = json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"});
+        coerce_string_scalars(&schema, &mut junk);
+        assert_eq!(
+            junk,
+            json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"})
+        );
+    }
+
+    #[test]
+    fn menu_paths_in_the_shapes_models_send() {
+        let menu = |args: serde_json::Value| {
+            let mut args = args;
+            normalize_argument_aliases("invoke_menu", &mut args).unwrap();
+            args
+        };
+        // v036 shapes.
+        assert_eq!(
+            menu(json!({"pid": 1, "menu_path": "[\"Sheet\",\"Navigate\",\"Next Sheet\"]"})),
+            json!({"pid": 1, "path": ["Sheet", "Navigate", "Next Sheet"]})
+        );
+        assert_eq!(
+            menu(json!({"path": "File > Reload"})),
+            json!({"path": ["File", "Reload"]})
+        );
+        assert_eq!(
+            menu(json!({"menu": ["Edit", "Copy"]})),
+            json!({"path": ["Edit", "Copy"]})
+        );
+        // A real path and an explicit path win.
+        assert_eq!(
+            menu(json!({"path": ["File", "Save As..."], "menu_path": "x"})),
+            json!({"path": ["File", "Save As..."], "menu_path": "x"})
+        );
+    }
+
+    #[test]
+    fn a_direct_action_named_by_role_points_to_run_steps() {
+        let click = ToolDef {
+            name: "click".into(),
+            description: String::new(),
+            input_schema: json!({"type": "object", "properties": {"pid": {"type": "integer"}}, "additionalProperties": false}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let detail =
+            unknown_argument(&click, &json!({"pid": 1, "role": "button", "name": "OK"})).unwrap();
+        assert!(detail.contains("one run_steps step"), "{detail}");
+        let other = unknown_argument(&click, &json!({"pid": 1, "bogus": 1})).unwrap();
+        assert!(!other.contains("run_steps"), "{other}");
+    }
+
+    #[test]
+    fn key_combinations_and_spellings_are_normalized() {
+        let press = |args: serde_json::Value| {
+            let mut args = args;
+            normalize_argument_aliases("press_key", &mut args).unwrap();
+            args
+        };
+        assert_eq!(
+            press(json!({"key": "shift+Right"})),
+            json!({"key": "Right", "modifiers": ["shift"]})
+        );
+        assert_eq!(
+            press(json!({"key": "cmd+shift+z", "modifiers": ["shift"]})),
+            json!({"key": "z", "modifiers": ["shift", "cmd"]})
+        );
+        assert_eq!(
+            press(json!({"key": "Page_Down"})),
+            json!({"key": "pagedown"})
+        );
+        assert_eq!(press(json!({"key": "ArrowLeft"})), json!({"key": "left"}));
+        let forward = if cfg!(target_os = "macos") {
+            "forward_delete"
+        } else {
+            "delete"
+        };
+        assert_eq!(
+            press(json!({"key": "forwarddelete"})),
+            json!({"key": forward})
+        );
+        // A bare "+" and plain names stay as sent.
+        assert_eq!(press(json!({"key": "+"})), json!({"key": "+"}));
+        assert_eq!(press(json!({"key": "Return"})), json!({"key": "Return"}));
+        assert_eq!(press(json!({"key": "delete"})), json!({"key": "delete"}));
+
+        let mut hotkey = json!({"keys": ["ctrl", "Page_Down"]});
+        normalize_argument_aliases("hotkey", &mut hotkey).unwrap();
+        assert_eq!(hotkey, json!({"keys": ["ctrl", "pagedown"]}));
+        let mut combo = json!({"keys": "cmd+s"});
+        normalize_argument_aliases("hotkey", &mut combo).unwrap();
+        assert_eq!(combo, json!({"keys": ["cmd", "s"]}));
+    }
 
     fn zoom_def() -> ToolDef {
         ToolDef {
@@ -6592,6 +7170,133 @@ mod argument_shape_tests {
         let mut other_tool = json!({"x": 1, "width": 2});
         normalize_zoom_args("click", &mut other_tool);
         assert_eq!(other_tool, json!({"x": 1, "width": 2}));
+    }
+
+    fn scroll(args: serde_json::Value) -> Result<serde_json::Value, String> {
+        let mut args = args;
+        normalize_argument_aliases("scroll", &mut args).map(|()| args)
+    }
+
+    #[test]
+    fn scroll_translates_signed_deltas_into_direction_and_notches() {
+        // Shapes models sent in the v035 bench and the live check of #4812.
+        let base = json!({"pid": 1, "window_id": 2, "x": 450, "y": 500});
+        let with = |extra: serde_json::Value| {
+            let mut args = base.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        for (delta, direction, amount) in [
+            (json!({"dy": "10"}), "down", 10),
+            (json!({"dy": 20}), "down", 20),
+            (json!({"dy": -3}), "up", 3),
+            (json!({"dy": 500}), "down", 5),
+            (json!({"dy": "1500"}), "down", 15),
+            (json!({"dy": "2000"}), "down", 20),
+            (json!({"dy": 99999}), "down", 50),
+            (json!({"dy": 0.2}), "down", 1),
+            (json!({"dx": 5, "dy": 0}), "right", 5),
+            (json!({"dx": "-120"}), "left", 1),
+        ] {
+            let out = scroll(with(delta.clone())).unwrap();
+            assert_eq!(out["direction"], direction, "{delta}");
+            assert_eq!(out["amount"], amount, "{delta}");
+            assert!(
+                out.get("dx").is_none() && out.get("dy").is_none(),
+                "{delta}"
+            );
+            assert_eq!(out["x"], 450);
+        }
+    }
+
+    #[test]
+    fn scroll_keeps_explicit_direction_and_amount_and_refuses_what_it_cannot_translate() {
+        let out = scroll(json!({"direction": "up", "amount": 2, "dy": 900})).unwrap();
+        assert_eq!(out, json!({"direction": "up", "amount": 2}));
+        let out = scroll(json!({"dy": 400, "amount": 7})).unwrap();
+        assert_eq!(out, json!({"direction": "down", "amount": 7}));
+        let both = scroll(json!({"dx": 3, "dy": 4})).unwrap_err();
+        assert!(both.contains("one axis per call"), "{both}");
+        let zero = scroll(json!({"dx": 0, "dy": "0"})).unwrap_err();
+        assert!(zero.contains("nothing to scroll"), "{zero}");
+        let junk = scroll(json!({"dy": "lots"})).unwrap_err();
+        assert!(junk.contains("must be numbers"), "{junk}");
+        let untouched = json!({"direction": "down", "amount": 3});
+        assert_eq!(scroll(untouched.clone()).unwrap(), untouched);
+        let mut click = json!({"dy": 4});
+        normalize_argument_aliases("click", &mut click).unwrap();
+        assert_eq!(click, json!({"dy": 4}));
+    }
+
+    #[test]
+    fn set_config_key_value_alias_matches_the_direct_field_for_every_key() {
+        for key in [
+            "capture_mode",
+            "max_image_dimension",
+            "experimental_pip",
+            "experimental_pip_geometry",
+            "cursor.motion",
+            "cursor.motion.style",
+            "cursor.motion.timing",
+            "cursor.motion.effects.trail",
+            "cursor.motion.effects.glow",
+            "cursor.motion.effects.magnet",
+            "cursor.motion.effects.ripple",
+            "cursor.motion.effects.squish",
+        ] {
+            let mut aliased = json!({"key": key, "value": "default"});
+            normalize_argument_aliases("set_config", &mut aliased).unwrap();
+            assert_eq!(aliased, json!({key: "default"}), "{key}");
+        }
+        let mut bare_key = json!({"key": "capture_mode"});
+        let error = normalize_argument_aliases("set_config", &mut bare_key).unwrap_err();
+        assert!(error.contains("exact value"), "{error}");
+        let mut bare_value = json!({"value": 1});
+        let error = normalize_argument_aliases("set_config", &mut bare_value).unwrap_err();
+        assert!(error.contains("exact key"), "{error}");
+
+        let mut unknown = json!({"key": "not_a_key", "value": 1});
+        normalize_argument_aliases("set_config", &mut unknown).unwrap();
+        let def = ToolDef {
+            name: "set_config".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"max_image_dimension": {"type": "integer"}},
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        let detail = unknown_argument(&def, &unknown).unwrap();
+        assert!(detail.contains("not_a_key"), "{detail}");
+        let mut retired = json!({"key": "capture_scope", "value": "desktop"});
+        normalize_argument_aliases("set_config", &mut retired).unwrap();
+        assert_eq!(retired, json!({"capture_scope": "desktop"}));
+    }
+
+    #[test]
+    fn set_config_alias_refuses_reserved_keys_before_authorization() {
+        for key in [
+            "_session_id",
+            "_transport_session_id",
+            "_public_session_label",
+            "_other",
+            "key",
+            "value",
+            "session",
+        ] {
+            let mut args = json!({"key": key, "value": "forged", "max_image_dimension": 1});
+            let error = normalize_argument_aliases("set_config", &mut args).unwrap_err();
+            assert_eq!(error, format!("key '{key}' is reserved"));
+            let object = args.as_object().unwrap();
+            assert!(object.keys().all(|name| !name.starts_with('_')), "{args}");
+            assert!(object.get(key).is_none(), "{key} was written: {args}");
+        }
     }
 
     #[test]

@@ -16,6 +16,7 @@ use crate::{
 };
 use clap::{Args, Subcommand};
 use cua_sdk::{Cua, CuaError, SandboxCreateOptions};
+use cua_spaces::registry::Registry;
 use serde::{Deserialize, Serialize};
 use std::{io::Write, path::PathBuf, sync::Arc};
 
@@ -574,7 +575,9 @@ pub async fn run(cua: &Arc<Cua>, args: DoArgs, out: &mut dyn Write) -> Result<i3
                 Err(Exit(code, msg)) => {
                     if !msg.is_empty() {
                         eprintln!("❌ {msg}");
-                        util::line(out, r.state.context());
+                        if r.state.provider.is_some() {
+                            util::line(out, r.state.context());
+                        }
                     }
                     Ok(code)
                 }
@@ -737,10 +740,47 @@ impl Run<'_> {
         Ok(0)
     }
 
-    async fn computer(&self) -> Result<Computer, CuaError> {
-        Ok(Computer::new(
-            crate::sandbox::env_of(self.cua, &self.state.name).await?,
-        ))
+    async fn computer(&mut self) -> Result<Computer, CuaError> {
+        let name = self.state.name.clone();
+        let err = match crate::sandbox::env_of(self.cua, &name).await {
+            Ok(env) => return Ok(Computer::new(env)),
+            Err(e @ CuaError::SpacesdNotAvailable(_))
+                if crate::sandbox::relay_space_id(&name).is_none() =>
+            {
+                e
+            }
+            Err(e) => return Err(e),
+        };
+        let Some(url) = self
+            .cua
+            .sandboxes()
+            .get(name.clone())
+            .await
+            .ok()
+            .filter(|i| i.location == "direct")
+            .and_then(|i| i.endpoints.get("env").cloned())
+        else {
+            return Err(err);
+        };
+        if State::load().name == name {
+            std::fs::remove_file(state_path()).map_err(internal)?;
+            self.state.provider = None;
+        }
+        let next = match Registry::new(util::cua_home())
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .find_map(|s| crate::sandbox::relay_space_id(&s.id))
+        {
+            Some(id) => format!("Registered relay Space: cua do switch {id}"),
+            None => "List Spaces: cua spaces ls".into(),
+        };
+        Err(CuaError::SpacesdNotAvailable(format!(
+            "{name} ({url}) did not answer; it may have moved or gone offline. Unselected it.\n   \
+             Select it again once it is back: cua do switch {name}\n   \
+             Forget it: cua sandbox rm {name}\n   \
+             {next}"
+        )))
     }
 
     async fn zoom_ref(&self, c: &Computer) -> Option<cua_spacesd_client::pb::WindowRef> {

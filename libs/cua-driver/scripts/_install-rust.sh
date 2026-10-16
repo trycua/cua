@@ -189,6 +189,32 @@ TMP_DIR=$(mktemp -d)
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
 
+print_path_hint() {
+    log "WARNING: $BIN_DIR is not on PATH."
+    echo "Add it for your shell with:"
+    local run_prefix=""
+    case "${SHELL:-}" in
+        */fish)
+            printf '  fish_add_path "%s"\n' "$BIN_DIR"
+            ;;
+        */nu|*/nushell)
+            printf '  $env.PATH = ($env.PATH | prepend "%s")\n' "$BIN_DIR"
+            run_prefix="^"
+            ;;
+        *)
+            echo "POSIX-compatible shells:"
+            printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
+            ;;
+    esac
+    echo "Or run the installed binary directly:"
+    printf '  %s"%s" --version\n' "$run_prefix" "$BIN_LINK"
+}
+
+# The integer "version" of a GNOME helper metadata.json, or nothing.
+helper_metadata_version() {
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -n 1 || true
+}
+
 # Return the source form of an app's designated code-signing requirement.
 macos_designated_requirement() {
     codesign -d -r- "$1" 2>/dev/null \
@@ -626,7 +652,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.34.0" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.36.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are
@@ -1423,10 +1449,18 @@ else
 
         INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
         if [[ -d "$INSTALLED_WAYLAND_HELPER" ]]; then
-            cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
-                "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
-                "$INSTALLED_WAYLAND_HELPER/"
-            log "updated installed GNOME helper; reload the GNOME session to activate it"
+            # The helper's API is additive and shared with other apps that
+            # bundle it, so never replace a newer installed helper.
+            BUNDLED_HELPER_VERSION=$(helper_metadata_version "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json")
+            INSTALLED_HELPER_VERSION=$(helper_metadata_version "$INSTALLED_WAYLAND_HELPER/metadata.json")
+            if (( ${INSTALLED_HELPER_VERSION:-0} > ${BUNDLED_HELPER_VERSION:-0} )); then
+                log "kept installed GNOME helper v$INSTALLED_HELPER_VERSION (newer than bundled v${BUNDLED_HELPER_VERSION:-?})"
+            else
+                cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                    "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
+                    "$INSTALLED_WAYLAND_HELPER/"
+                log "updated installed GNOME helper; reload the GNOME session to activate it"
+            fi
         fi
     fi
     log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"
@@ -1530,21 +1564,20 @@ CUA_DRIVER_RELEASE_VERSION="$VERSION" \
 disown 2>/dev/null || true
 
 # Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
-if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     SHELL_RC=""
     case "${SHELL:-}" in
         */zsh)  SHELL_RC="$HOME/.zshrc"  ;;
         */bash) SHELL_RC="$HOME/.bashrc" ;;
     esac
-    if [[ -n "$SHELL_RC" ]]; then
+    if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ -n "$SHELL_RC" ]]; then
         {
             printf '\n# Added by cua-driver-rs installer — see https://github.com/trycua/cua\n'
             printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
         } >> "$SHELL_RC"
         log "appended PATH update to $SHELL_RC — open a new shell or run \`source $SHELL_RC\`"
-    else
-        log "WARNING: $BIN_DIR is not on PATH; add it manually."
     fi
+    print_path_hint
 fi
 
 echo ""

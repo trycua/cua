@@ -36,7 +36,7 @@ export interface MotionParams {
 
 export const DEFAULT_PARAMS: Readonly<MotionParams> = Object.freeze({
   style: 'signature_arc',
-  timing: 'native',
+  timing: 'steady',
   effects: {},
   startHandle: 0.3,
   endHandle: 0.3,

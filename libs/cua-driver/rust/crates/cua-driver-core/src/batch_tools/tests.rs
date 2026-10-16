@@ -29,6 +29,9 @@ impl Tool for Probe {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         self.calls.lock().unwrap().push(args.clone());
+        if let Some(message) = args["fail_message"].as_str() {
+            return ToolResult::error(message.to_owned());
+        }
         if args["fail"] == true {
             ToolResult::error(format!("{} refused: probe asked to fail", self.def.name))
         } else {
@@ -46,11 +49,11 @@ impl Harness {
     fn new() -> Self {
         let mut registry = ToolRegistry::new();
         let mut calls = std::collections::HashMap::new();
-        for name in super::BATCHABLE_TOOLS
-            .iter()
-            .copied()
-            .chain(["get_window_state"])
-        {
+        for name in super::BATCHABLE_TOOLS.iter().copied().chain([
+            "get_window_state",
+            "zoom",
+            "invoke_menu",
+        ]) {
             let log = Arc::new(Mutex::new(Vec::new()));
             calls.insert(name, log.clone());
             registry.register(Box::new(Probe {
@@ -64,14 +67,32 @@ impl Harness {
                             "window_id": {"type": "integer"},
                             "text": {"type": "string"},
                             "fail": {"type": "boolean"},
+                            "fail_message": {"type": "string"},
+                            "element_token": {"type": "string"},
+                            "value": {"type": "string"},
+                            "key": {"type": "string"},
+                            "keys": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+                            "modifiers": {"type": "array", "items": {"type": "string"}},
+                            "count": {"type": "integer", "minimum": 1},
+                            "query": {"type": "string"},
+                            "delivery_mode": {"type": "string"},
+                            "path": {"type": "array", "items": {"type": "string"}},
+                            "x1": {"type": "number"}, "y1": {"type": "number"},
+                            "x2": {"type": "number"}, "y2": {"type": "number"},
                             "include_screenshot": {"type": "boolean"},
                             "since": {"type": "string"},
+                            "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                            "amount": {"type": "integer", "minimum": 1, "maximum": 50},
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "button": {"type": "string", "enum": ["left", "right", "middle"]},
+                            "target": {"type": "object"},
                             "full_output": {"type": "boolean"},
                             "max_elements": {"type": "integer", "minimum": 1}
                         },
                         "additionalProperties": false
                     }),
-                    read_only: name == "get_window_state",
+                    read_only: matches!(name, "get_window_state" | "zoom"),
                     destructive: false,
                     idempotent: false,
                     open_world: false,
@@ -100,7 +121,7 @@ impl Harness {
 
     async fn run(&self, args: Value) -> ToolResult {
         self.registry
-            .invoke_with_context(super::RUN_ACTIONS_TOOL, args, context(None))
+            .invoke_with_context(super::RUN_STEPS_TOOL, args, context(None))
             .await
     }
 }
@@ -202,11 +223,7 @@ async fn validates_every_step_before_running_any() {
     let harness = Harness::new();
     let cases = [
         (
-            json!({"tool": "get_window_state", "args": {}}),
-            "cannot run in a batch",
-        ),
-        (
-            json!({"tool": "run_actions", "args": {}}),
+            json!({"tool": "run_steps", "args": {}}),
             "cannot run in a batch",
         ),
         (
@@ -345,11 +362,11 @@ async fn every_step_runs_in_the_batch_session() {
 #[tokio::test]
 async fn each_step_is_held_to_the_capability_manifest() {
     let harness = Harness::new();
-    let manifest = "version: 2\nmode: bounded\nexpires_after: 1h\nidle_timeout: 30m\nallow:\n  tools: [run_actions, click]\n";
+    let manifest = "version: 2\nmode: bounded\nexpires_after: 1h\nidle_timeout: 30m\nallow:\n  tools: [run_steps, click]\n";
     let result = harness
         .registry
         .invoke_with_context(
-            super::RUN_ACTIONS_TOOL,
+            super::RUN_STEPS_TOOL,
             json!({"steps": [
                 {"tool": "click", "args": {"pid": 42}},
                 {"tool": "set_value", "args": {"pid": 42, "text": "secret"}},
@@ -377,7 +394,7 @@ async fn the_batch_itself_needs_the_manifest_to_allow_it() {
     let result = harness
         .registry
         .invoke_with_context(
-            super::RUN_ACTIONS_TOOL,
+            super::RUN_STEPS_TOOL,
             json!({"steps": [{"tool": "click", "args": {"pid": 42}}]}),
             context(Some(manifest)),
         )
@@ -391,7 +408,7 @@ async fn the_batch_is_advertised_with_its_schema() {
     let harness = Harness::new();
     let def = harness
         .registry
-        .get_def(super::RUN_ACTIONS_TOOL)
+        .get_def(super::RUN_STEPS_TOOL)
         .expect("registered");
     assert_eq!(def.input_schema["required"], json!(["steps"]));
     let listed: Vec<_> = def.input_schema["properties"]["steps"]["items"]["properties"]["tool"]
@@ -402,6 +419,63 @@ async fn the_batch_is_advertised_with_its_schema() {
         .map(|value| value.as_str().unwrap())
         .collect();
     assert_eq!(listed, super::BATCHABLE_TOOLS);
+}
+
+#[tokio::test]
+async fn the_old_name_run_actions_still_runs_but_is_not_listed() {
+    let harness = Harness::new();
+    assert!(harness.registry.get_def("run_actions").is_none());
+    assert!(!harness
+        .registry
+        .tool_names()
+        .any(|name| name == "run_actions"));
+
+    let result = harness
+        .registry
+        .invoke_with_context(
+            "run_actions",
+            json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7}}]}),
+            context(None),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.hits("click"), 1);
+    let crate::protocol::Content::Text { text: note, .. } = result.content.last().unwrap() else {
+        panic!("last content block is not text");
+    };
+    assert!(
+        note.contains("`run_actions` is deprecated") && note.contains("`run_steps`"),
+        "{note}"
+    );
+    assert_eq!(note.lines().count(), 1);
+
+    // The new name carries no note.
+    let current = harness
+        .run(json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7}}]}))
+        .await;
+    assert!(!text(&current).contains("deprecated"), "{}", text(&current));
+}
+
+#[tokio::test]
+async fn a_manifest_that_allows_run_actions_allows_run_steps() {
+    let harness = Harness::new();
+    let manifest = "version: 2\nmode: bounded\nexpires_after: 1h\nidle_timeout: 30m\nallow:\n  tools: [run_actions, click]\n";
+    let result = harness
+        .registry
+        .invoke_with_context(
+            super::RUN_STEPS_TOOL,
+            json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7}}]}),
+            context(Some(manifest)),
+        )
+        .await;
+    // The batch itself is allowed: the refusal comes from its first step,
+    // whose pid the manifest does not declare.
+    let message = text(&result);
+    assert_eq!(
+        result.structured_content.unwrap()["failed_step"],
+        0,
+        "{message}"
+    );
 }
 
 #[tokio::test]
@@ -455,4 +529,206 @@ async fn common_tool_name_slips_map_to_the_batchable_tool() {
         .run(json!({"steps": [{"tool": "get_window_state", "args": {"pid": 1}}]}))
         .await;
     assert_eq!(refused.is_error, Some(true));
+}
+
+#[tokio::test]
+async fn scroll_steps_accept_dx_dy_like_a_direct_call() {
+    let harness = Harness::new();
+    // The live-check shape: {"dy": 500} in a batch step.
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "scroll", "args": {"pid": 1, "window_id": 2, "x": 600, "y": 500, "dy": 500}},
+            {"tool": "scroll", "args": {"pid": 1, "window_id": 2, "x": 600, "y": 500, "dx": "-4"}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let calls = harness.calls["scroll"].lock().unwrap().clone();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        (calls[0]["direction"].clone(), calls[0]["amount"].clone()),
+        (json!("down"), json!(5))
+    );
+    assert_eq!(
+        (calls[1]["direction"].clone(), calls[1]["amount"].clone()),
+        (json!("left"), json!(4))
+    );
+    assert!(calls
+        .iter()
+        .all(|c| c.get("dy").is_none() && c.get("dx").is_none()));
+
+    let refused = harness
+        .run(json!({"steps": [{"tool": "scroll", "args": {"pid": 1, "dx": 1, "dy": 1}}]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(
+        text(&refused).contains("one axis per call"),
+        "{}",
+        text(&refused)
+    );
+    assert_eq!(harness.hits("scroll"), 2, "a refused batch runs nothing");
+}
+
+#[tokio::test]
+async fn a_trailing_read_becomes_the_observation_and_a_middle_one_points_to_observe() {
+    let harness = Harness::new();
+    // The v035 / live-check shape: act, act, then get_window_state as a step.
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3, "text": "x"}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 70}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.unwrap();
+    assert_eq!(structured["total"], 2, "the read is not counted as a step");
+    assert_eq!(structured["observation"]["ok"], true);
+    let observed = harness.last("get_window_state");
+    assert_eq!(observed["max_elements"], 70);
+    assert_eq!(observed["since"], "latest");
+    assert_eq!(harness.hits("click"), 2);
+
+    // v036: a read between actions (act, read, act, read) is skipped with a
+    // note instead of rejecting the whole batch; the last read is `observe`.
+    let skipped = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "query": "AXTextField"}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 90}},
+        ]}))
+        .await;
+    assert_ne!(skipped.is_error, Some(true), "{}", text(&skipped));
+    let message = text(&skipped);
+    assert!(message.contains("2. get_window_state skipped"), "{message}");
+    assert_eq!(harness.hits("click"), 4);
+    assert_eq!(harness.hits("get_window_state"), 2, "only the end read ran");
+    assert_eq!(harness.last("get_window_state")["max_elements"], 90);
+
+    // With no read at the end, the last skipped read is the end read.
+    let looked = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "query": "Wiki"}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+        ]}))
+        .await;
+    assert_ne!(looked.is_error, Some(true), "{}", text(&looked));
+    assert_eq!(harness.hits("get_window_state"), 3);
+    assert_eq!(harness.last("get_window_state")["query"], "Wiki");
+
+    // v036: a trailing read plus an explicit observe merge; observe wins.
+    let both = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 40}},
+        ], "observe": {"include_screenshot": true, "max_elements": 60}}))
+        .await;
+    assert_ne!(both.is_error, Some(true), "{}", text(&both));
+    assert_eq!(harness.hits("get_window_state"), 4);
+    let observed = harness.last("get_window_state");
+    assert_eq!(observed["max_elements"], 60);
+    assert_eq!(observed["include_screenshot"], true);
+
+    // A batch of reads only still points at the direct call.
+    let refused = harness
+        .run(json!({"steps": [{"tool": "get_window_state", "args": {"pid": 7, "window_id": 3}}]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(
+        text(&refused).contains("reads state and a batch only acts"),
+        "{}",
+        text(&refused)
+    );
+}
+
+#[tokio::test]
+async fn click_step_refuses_null_target_and_button_five() {
+    let harness = Harness::new();
+    let target = harness
+        .run(json!({"steps": [{"click": {"x": 1, "y": 2, "target": null}}]}))
+        .await;
+    assert_eq!(target.is_error, Some(true));
+    assert!(text(&target).contains("/target"), "{}", text(&target));
+    let refused = harness
+        .run(json!({"steps": [{"click": {"x": 1, "y": 2, "button": 5}}]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(text(&refused).contains("/button"), "{}", text(&refused));
+}
+
+#[cfg(test)]
+#[path = "reliability_tests.rs"]
+mod reliability_tests;
+
+// The Linux runtime historically accepts JSON numbers for set_value. The
+// provider-facing string schema must not narrow direct or batched calls.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn numeric_set_value_matches_direct_and_batched_string_arguments() {
+    for value in [
+        json!(0),
+        json!(-12),
+        json!(4.5),
+        json!(18446744073709551615u64),
+    ] {
+        let expected = Value::String(value.to_string());
+        let harness = Harness::new();
+        harness
+            .registry
+            .invoke_with_context(
+                "set_value",
+                json!({"pid": 42, "value": value}),
+                context(None),
+            )
+            .await;
+        assert_eq!(harness.last("set_value")["value"], expected);
+        let result = harness
+            .run(json!({"steps": [{
+                "tool": "set_value", "args": {"pid": 42, "value": value}
+            }]}))
+            .await;
+        assert_ne!(result.is_error, Some(true), "{}", text(&result));
+        assert_eq!(harness.hits("set_value"), 2);
+        assert_eq!(harness.last("set_value")["value"], expected);
+    }
+    // A numeric field with the same name on another tool is not rewritten.
+    let unrelated = Harness::new();
+    unrelated
+        .registry
+        .invoke_with_context("type_text", json!({"value": 4.5}), context(None))
+        .await;
+    assert_eq!(unrelated.last("type_text")["value"], json!(4.5));
+    // Text must remain byte-for-byte unchanged, even when it looks numeric.
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [{
+            "tool": "set_value", "args": {"pid": 42, "value": " 004.50 "}
+        }]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.last("set_value")["value"], " 004.50 ");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn non_scalar_set_value_is_rejected_before_any_batch_action() {
+    for value in [Value::Null, json!(true), json!([]), json!({})] {
+        let harness = Harness::new();
+        let result = harness
+            .run(json!({"steps": [
+                {"tool": "set_value", "args": {"pid": 42, "value": "valid"}},
+                {"tool": "set_value", "args": {"pid": 42, "value": value}}
+            ]}))
+            .await;
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["code"], "invalid_batch");
+        assert_eq!(structured["executed"], 0);
+        assert_eq!(structured["failed_step"], 1);
+        assert!(structured["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("set_value: invalid arguments at /value:"));
+        assert_eq!(harness.hits("set_value"), 0);
+    }
 }

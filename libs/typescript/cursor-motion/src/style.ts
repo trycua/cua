@@ -16,9 +16,42 @@ export const MOTION_STYLES: MotionStyle[] = [
   'classic',
 ];
 
-/** `native` (the style's own), `fitts` or `fixed`. */
-export type MotionTiming = 'native' | 'fitts' | 'fixed';
-export const MOTION_TIMINGS: MotionTiming[] = ['native', 'fitts', 'fixed'];
+/**
+ * `native` (the style's own), `fitts` or `fixed`; `relaxed`, `steady` and `calm` keep the
+ * style's timing with a 450, 600 or 750 ms floor and a sine ease; `deliberate` is Fitts with
+ * a 400 ms constant, 450..1300 ms.
+ */
+export type MotionTiming =
+  | 'native'
+  | 'fitts'
+  | 'fixed'
+  | 'relaxed'
+  | 'steady'
+  | 'calm'
+  | 'deliberate';
+export const MOTION_TIMINGS: MotionTiming[] = [
+  'native',
+  'fitts',
+  'fixed',
+  'relaxed',
+  'steady',
+  'calm',
+  'deliberate',
+];
+
+/** Minimum move time of the floor timings, or `null`. */
+export function timingFloorMs(timing: MotionTiming): number | null {
+  switch (timing) {
+    case 'relaxed':
+      return 450;
+    case 'steady':
+      return 600;
+    case 'calm':
+      return 750;
+    default:
+      return null;
+  }
+}
 
 export type EffectName = 'trail' | 'glow' | 'magnet' | 'ripple' | 'squish';
 export const EFFECT_NAMES: EffectName[] = ['trail', 'glow', 'magnet', 'ripple', 'squish'];

@@ -59,10 +59,11 @@ fn clamp_amount(requested: u64) -> usize {
 }
 
 const ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE: &str = "Background scroll is unavailable for \
-     Electron/Chromium windows on macOS: they drop background wheel events and keystrokes, so \
-     nothing was sent. Retry with delivery_mode:\"foreground\" (and the same window_id, \
-     element_token or x,y); the driver briefly fronts that window, scrolls, and restores the \
-     prior frontmost app.";
+     this Electron/Chromium window on macOS: it drops background wheel events and keystrokes, \
+     and background scroll movement could not be established through accessibility. \
+     Retry with delivery_mode:\"foreground\" (and the same window_id, element_token \
+     or x,y); the driver briefly fronts that window, scrolls, and restores the prior frontmost \
+     app.";
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
@@ -71,7 +72,7 @@ fn def() -> &'static ToolDef {
             - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n\
             - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\
             \n\
-            Electron/Chromium windows refuse background delivery; pass `delivery_mode:\"foreground\"`.\n\
+            Electron/Chromium windows drop background wheel events: there a background scroll reveals the content just past the edge of the scroll container under the target through accessibility (about `amount` notches); `delivery_mode:\"foreground\"` is the fallback.\n\
             `amount` is wheel notches (targeted) or key repetitions (keystroke).".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -145,6 +146,11 @@ impl Tool for ScrollTool {
                 ScrollDirection::Left => (0, step),
             };
             let (x, y) = super::desktop_screenshot_point(x, y).await;
+            if let Some(refusal) =
+                super::desktop_pointer_guard::check("scroll", &args, vec![(x, y)]).await
+            {
+                return refusal;
+            }
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
             })
@@ -171,14 +177,10 @@ impl Tool for ScrollTool {
         // background CGEvents). Only the pixel-wheel path honors it; the
         // keystroke path is background-by-design and untouched.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
-        if !delivery_mode.is_foreground() && crate::browser::ElectronJs::is_electron(pid) {
-            return cua_driver_core::delivery::background_unavailable_result(
-                ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE,
-                "background_unavailable",
-                "Electron/Chromium windows drop background wheel events and keystrokes on macOS",
-                serde_json::json!({ "effect": "refused" }),
-            );
-        }
+        // Electron/Chromium drop background wheel events and keystrokes; a
+        // background scroll there goes through accessibility instead (below).
+        let electron_background =
+            !delivery_mode.is_foreground() && crate::browser::ElectronJs::is_electron(pid);
         let direction = match args.require_str("direction") {
             Ok(v) => v,
             Err(e) => return e,
@@ -444,6 +446,21 @@ impl Tool for ScrollTool {
             None
         };
 
+        if electron_background {
+            return electron_reveal_scroll(
+                pid,
+                window_id,
+                wheel_target
+                    .as_ref()
+                    .map(|target| (target.screen_x, target.screen_y)),
+                &direction,
+                (step.unsigned_abs() as usize * amount) as f64,
+                pre_focus_ptr,
+                &mut _mutation_lease,
+            )
+            .await;
+        }
+
         if let Some(target) = wheel_target {
             if !delivery_mode.is_foreground() {
                 if let Some(wid) = target.wid {
@@ -669,6 +686,81 @@ impl Tool for ScrollTool {
             Ok(Err(e)) => ToolResult::error(format!("Scroll failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+/// Background scroll for Electron/Chromium windows, which drop background
+/// wheel events: reveal the content just past the edge of the scroll
+/// container under `point` (the window's center when there is no target)
+/// through accessibility. Refuses as before when no container moves.
+async fn electron_reveal_scroll(
+    pid: i32,
+    window_id: Option<u32>,
+    point: Option<(f64, f64)>,
+    direction: &str,
+    distance: f64,
+    pre_focus_ptr: Option<usize>,
+    lease: &mut Option<super::BackgroundMutationLease>,
+) -> ToolResult {
+    let unavailable = || {
+        cua_driver_core::delivery::background_unavailable_result(
+            ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE,
+            "background_unavailable",
+            "Electron/Chromium windows drop background wheel events and keystrokes on macOS",
+            serde_json::json!({ "effect": "refused" }),
+        )
+    };
+    let window = window_id.and_then(crate::windows::window_bounds_by_id);
+    let Some(point) = point.or_else(|| {
+        window
+            .as_ref()
+            .map(|b| (b.x + b.width / 2.0, b.y + b.height / 2.0))
+    }) else {
+        return unavailable();
+    };
+    if let Some(wid) = window_id {
+        let gate = match lease.as_ref() {
+            Some(lease) => {
+                lease
+                    .gate_again(
+                        wid,
+                        pre_focus_ptr,
+                        cua_driver_core::background_input::BackgroundAction::AxSemantic,
+                    )
+                    .await
+            }
+            None => super::gate_background_window_action(
+                pid,
+                wid,
+                pre_focus_ptr,
+                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+            )
+            .await
+            .map(|granted| *lease = Some(granted)),
+        };
+        if let Err(refusal) = gate {
+            return refusal;
+        }
+    }
+    let window_rect = window.map(|b| [b.x, b.y, b.width, b.height]);
+    let direction_owned = direction.to_owned();
+    let outcome = tokio::task::spawn_blocking(move || unsafe {
+        crate::ax::reveal_scroll::reveal_scroll(pid, point, window_rect, &direction_owned, distance)
+    })
+    .await;
+    match outcome {
+        Ok(Some(outcome)) => ToolResult::text(format!(
+            "✅ Scrolled {direction} about {:.0} pt in the background through accessibility \
+             (revealed the content just past the {}'s edge; this Electron/Chromium window drops \
+             background wheel events).",
+            outcome.moved, outcome.container_role
+        ))
+        .with_structured(serde_json::json!({
+            "path": "ax",
+            "verified": false,
+            "effect": "unverifiable",
+        })),
+        _ => unavailable(),
     }
 }
 

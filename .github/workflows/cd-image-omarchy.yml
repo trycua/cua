@@ -85,6 +85,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -158,7 +161,7 @@ jobs:
           workspaces: libs/cua
       - name: Build the cua CLI
         working-directory: libs/cua
-        run: cargo build --release --locked -p cua-cli
+        run: cargo build --release --locked -p cua-cli --features byoc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-cli-linux-amd64

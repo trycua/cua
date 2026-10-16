@@ -32,7 +32,10 @@ async fn direct_with(h: &Home, url: &str, name: &str, token: &str) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sandbox_lifecycle_exec_and_compat_aliases() {
     let env = fixtures::start_env(Some("t"), None).await;
-    let h = Home::new();
+    let mut h = Home::new();
+    // No local containers: this machine's own Docker Spaces must not show up
+    // in a "local" listing (the test runs next to real Spaces on dev Macs).
+    h.set("DOCKER_HOST", "unix:///nonexistent/cua-test-no-docker.sock");
     direct(&h, &env.url, "dev").await;
 
     // `ls` lists everything with its location (no Fleet credentials here:
@@ -495,6 +498,79 @@ async fn host_target_needs_consent() {
     h.run(&["--embedded", "do", "key", "tab"]).await.ok();
 }
 
+fn closed_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    port
+}
+
+async fn select_closed(h: &Home) -> String {
+    let url = format!("127.0.0.1:{}", closed_port());
+    h.run(&[
+        "--embedded",
+        "do",
+        "switch",
+        "url",
+        &url,
+        "--token",
+        "t",
+        "--as",
+        "gone",
+    ])
+    .await
+    .ok();
+    url
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn do_unselects_a_direct_target_that_stops_answering() {
+    let h = Home::new();
+    let url = select_closed(&h).await;
+    let o = h.run(&["--embedded", "do", "screenshot"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stderr.contains(&format!("gone (http://{url})")), "{o:?}");
+    assert!(o.stderr.contains("cua do switch gone"), "{o:?}");
+    assert!(o.stderr.contains("cua sandbox rm gone"), "{o:?}");
+    assert!(o.stderr.contains("List Spaces: cua spaces ls"), "{o:?}");
+    assert!(!o.stderr.contains("retry in a few seconds"), "{o:?}");
+    assert!(!o.stdout.contains('💻'), "{o:?}");
+    let o = h.run(&["--embedded", "do", "status"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stderr.contains("No target selected"), "{o:?}");
+    let listed = h.run(&["--embedded", "do", "ls", "direct"]).await;
+    listed.ok();
+    assert!(
+        listed.stdout.contains("  gone  [") && listed.stdout.contains("direct"),
+        "{listed:?}"
+    );
+    assert_eq!(
+        read_json(&h.cua_home().join("env-tokens.json"))["gone"],
+        "t"
+    );
+    h.run(&["--embedded", "do", "switch", "gone"]).await.ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn do_names_a_registered_relay_space_without_touching_the_registry() {
+    let h = Home::new();
+    std::fs::create_dir_all(h.cua_home()).unwrap();
+    let spaces = h.cua_home().join("spaces.json");
+    let body = r#"[{"id":"direct:10.9.8.7:3211","name":"other","features":[]},{"id":"relay:a30ad1ef1e4fea09","name":"desk","features":[]}]"#;
+    std::fs::write(&spaces, body).unwrap();
+    select_closed(&h).await;
+    let before = std::fs::read(&spaces).unwrap();
+    let o = h.run(&["--embedded", "do", "screenshot"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(
+        o.stderr.contains("cua do switch relay:a30ad1ef1e4fea09"),
+        "{o:?}"
+    );
+    assert!(!o.stderr.contains("direct:10.9.8.7:3211"), "{o:?}");
+    assert!(!o.stderr.contains("List Spaces:"), "{o:?}");
+    assert_eq!(std::fs::read(&spaces).unwrap(), before);
+}
+
 /// cua-spacesd's `/mcp` requires the Space token: `sb mcp` against a
 /// direct sandbox sends the one registered with `--token` (it used to send
 /// none and got 401).
@@ -525,6 +601,114 @@ async fn sandbox_mcp_sends_the_direct_token() {
         .await;
     assert_ne!(o.code, 0, "{o:?}");
     assert!(o.stderr.contains("401"), "{o:?}");
+}
+
+const SPACE_TOKEN: &str = "registry-only-5073-tok";
+
+async fn spacesd_with_token() -> (cua_spacesd_client::testing::MockServer, String) {
+    use cua_spacesd_client::testing::{MockAuth, MockServer};
+    let server = MockServer::start(MockAuth {
+        token: Some(SPACE_TOKEN.into()),
+        ..Default::default()
+    })
+    .await;
+    let id = format!("direct:{}", server.url().trim_start_matches("http://"));
+    (server, id)
+}
+
+fn add_space(h: &Home, id: &str, credential: cua_spaces::registry::Credential) {
+    let space = cua_proto::daemon::v1::Space {
+        id: id.into(),
+        ..Default::default()
+    };
+    cua_spaces::registry::Registry::new(h.cua_home())
+        .upsert(space, credential)
+        .unwrap();
+}
+
+async fn view(h: &Home, id: &str) -> Out {
+    h.run(&["--embedded", "--json", "sb", "view", id, "--no-open"])
+        .await
+}
+
+fn files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .flat_map(|e| {
+            let p = e.unwrap().path();
+            if p.is_dir() { files(&p) } else { vec![p] }
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sandbox_view_sends_the_spacesd_token_of_a_space_added_by_address() {
+    use cua_spaces::registry::Credential;
+    let (server, id) = spacesd_with_token().await;
+    let mut h = Home::new();
+    add_space(
+        &h,
+        &id,
+        Credential {
+            url: Some(server.url()),
+            token: Some(SPACE_TOKEN.into()),
+            ..Default::default()
+        },
+    );
+    let o = view(&h, &id).await;
+    o.ok();
+    assert!(
+        o.json()["url"]
+            .as_str()
+            .unwrap()
+            .contains("#ticket=mock-viewer"),
+        "{o:?}"
+    );
+    h.set("CUA_ENV_TOKEN", "wrong");
+    view(&h, &id).await.ok();
+
+    let creds = h.cua_home().join("spaces-credentials.json");
+    for f in files(&h.cua_home()) {
+        if f != creds {
+            let body = String::from_utf8_lossy(&std::fs::read(&f).unwrap()).into_owned();
+            assert!(!body.contains(SPACE_TOKEN), "{}", f.display());
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&creds).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    h.env.remove("CUA_ENV_TOKEN");
+
+    let (server, _) = spacesd_with_token().await;
+    let url = server.url().trim_start_matches("http://").to_string();
+    direct_with(&h, &url, "own-token", SPACE_TOKEN).await;
+    add_space(
+        &h,
+        &format!("direct:{url}"),
+        Credential {
+            token: Some("wrong".into()),
+            ..Default::default()
+        },
+    );
+    view(&h, "own-token").await.ok();
+
+    let (mcp_server, mcp_id) = spacesd_with_token().await;
+    add_space(
+        &h,
+        &mcp_id,
+        Credential {
+            token: Some(SPACE_TOKEN.into()),
+            service_urls: [("mcp".into(), format!("{}/mcp", mcp_server.url()))].into(),
+            ..Default::default()
+        },
+    );
+    assert_ne!(view(&h, &mcp_id).await.code, 0);
+
+    let (_unregistered, unregistered_id) = spacesd_with_token().await;
+    assert_ne!(view(&h, &unregistered_id).await.code, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -885,6 +1069,21 @@ async fn do_drives_a_relay_space() {
         .await;
     o.ok();
     assert!(o.stdout.starts_with("✅ relay-ok"), "{o:?}");
+
+    let target = std::fs::read(h.cua_home().join("do_target.json")).unwrap();
+    relay.tunnel(MACHINE, &format!("http://127.0.0.1:{}", closed_port()));
+    let o = h.run(&["--embedded", "do", "screenshot"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(
+        o.stderr.contains("has no cua-spacesd") && o.stderr.contains("502 Bad Gateway"),
+        "{o:?}"
+    );
+    assert!(!o.stderr.contains("Unselected"), "{o:?}");
+    assert!(o.stdout.contains("💻 relay:"), "{o:?}");
+    assert_eq!(
+        std::fs::read(h.cua_home().join("do_target.json")).unwrap(),
+        target
+    );
 
     cua_host::RelayClient::new(&relay.url)
         .unwrap()

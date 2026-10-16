@@ -179,6 +179,9 @@ pub struct SandboxRecord {
     /// The image as resolved and pinned at create time, when known (not
     /// carried over the daemon wire).
     pub image_info: Option<cua_sandbox_core::ImageInfo>,
+    /// Why a local sandbox stopped without being asked to, in plain words
+    /// ("out of memory"); `None` otherwise.
+    pub stop_reason: Option<String>,
 }
 
 /// How long a listing waits for Fleet before it lists without the cloud
@@ -249,6 +252,7 @@ async fn cloud_claims(fleet: &FleetClient) -> Result<Vec<SandboxRecord>> {
                     ("claim".to_string(), name),
                 ]),
                 image_info: None,
+                stop_reason: None,
             });
         }
     }
@@ -346,6 +350,38 @@ struct Handle {
     image: Option<String>,
     labels: BTreeMap<String, String>,
     created_at: Option<SystemTime>,
+    /// Which sandbox this handle (and the env connection made from it) is
+    /// for: [`Runtime::incarnation`] when it was connected. A same-name
+    /// sandbox created again has another one, and the handle is dropped.
+    incarnation: Incarnation,
+}
+
+/// What the persisted state says about the sandbox behind a handle key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Incarnation {
+    /// The state file of this very ref: its creation time and ports, which
+    /// are written once, when the sandbox is created.
+    Is(String),
+    /// No state file (an ephemeral sandbox, an orphan the local runtime
+    /// lists, a direct connection kept in memory).
+    Absent,
+    /// A state file of the same name that describes another ref: a local and
+    /// a cloud sandbox of one name share it. Says nothing about this one.
+    Other,
+}
+
+impl Incarnation {
+    /// Whether a handle made for `self` is for a sandbox that is gone or was
+    /// created again, given what the state says `now`. Only a handle that
+    /// knew its sandbox's state can be judged: anything else is kept, as it
+    /// was before handles carried one.
+    fn replaced_by(&self, now: &Incarnation) -> bool {
+        match (self, now) {
+            (Incarnation::Is(was), Incarnation::Is(is)) => was != is,
+            (Incarnation::Is(_), Incarnation::Absent) => true,
+            _ => false,
+        }
+    }
 }
 
 struct Inner {
@@ -760,7 +796,11 @@ impl Runtime {
         let sandbox = Box::pin(self.inner.sandboxes.create_tracked(o)).await?;
         let key = sandbox.id();
         let image = (!req.image.is_empty()).then_some(req.image);
-        self.insert(key.clone(), sandbox, image, req.labels);
+        let incarnation = self.incarnation(&key);
+        self.insert(key.clone(), sandbox, image, req.labels, incarnation);
+        // A same-name sandbox created again is not the one an earlier
+        // connection was made for.
+        self.inner.envs.lock().await.remove(&key);
         self.record(&key).await
     }
 
@@ -782,7 +822,8 @@ impl Runtime {
             self.inner.sandboxes.remember_direct(n, url)?;
         }
         let key = sandbox.id();
-        self.insert(key.clone(), sandbox, None, labels);
+        let incarnation = self.incarnation(&key);
+        self.insert(key.clone(), sandbox, None, labels, incarnation);
         self.cached_record(&key)
             .ok_or_else(|| Error::Internal("sandbox vanished".into()))
     }
@@ -793,6 +834,7 @@ impl Runtime {
         sandbox: Sandbox,
         image: Option<String>,
         labels: BTreeMap<String, String>,
+        incarnation: Incarnation,
     ) {
         self.inner.handles.lock().unwrap().insert(
             key,
@@ -801,8 +843,71 @@ impl Runtime {
                 image,
                 labels,
                 created_at: Some(SystemTime::now()),
+                incarnation,
             },
         );
+    }
+
+    /// Which sandbox the persisted state of `key` describes ([`Incarnation`]).
+    /// A sandbox deleted and created again under the same name has another
+    /// one (and none in between), whoever deleted it: this runtime, another
+    /// `Spaces`/`Sandboxes` on the same state directory, or another process.
+    fn incarnation(&self, key: &str) -> Incarnation {
+        let Some(state) = self.inner.sandboxes.state().load(&Self::state_name(key)) else {
+            return Incarnation::Absent;
+        };
+        if state.sandbox_ref().to_string() != key {
+            return Incarnation::Other;
+        }
+        Incarnation::Is(match &state {
+            cua_sandbox_core::SandboxState::Local(l) => {
+                format!("{}|{}|{:?}", l.created_at, l.api_port, l.exposed_ports)
+            }
+            cua_sandbox_core::SandboxState::Fleet(f) => format!("{}|{}", f.pool_name, f.created_at),
+        })
+    }
+
+    /// Drops what is cached for `key` (the handle, its env connection, its
+    /// public URLs and signed service URLs) when the sandbox it was made
+    /// for is gone or was created again under the same name; returns
+    /// whether it did. The Spaces runtime deletes a local Space by name in
+    /// the sandbox manager ([`cua_spaces::Spaces::delete`]), which these
+    /// caches never see, so without this check the new sandbox (new port,
+    /// new token) was reached through the old connection until the daemon
+    /// restarted.
+    async fn evict_if_stale(&self, key: &str) -> bool {
+        let held = match self.inner.handles.lock().unwrap().get(key) {
+            Some(h) => h.incarnation.clone(),
+            None => return false,
+        };
+        if !held.replaced_by(&self.incarnation(key)) {
+            return false;
+        }
+        tracing::debug!(
+            sandbox = key,
+            "dropping the cached connection of a sandbox that was deleted or created again"
+        );
+        self.evict(key).await;
+        true
+    }
+
+    /// [`Self::evict_if_stale`] for every held sandbox.
+    async fn evict_stale(&self) {
+        let keys: Vec<String> = self.inner.handles.lock().unwrap().keys().cloned().collect();
+        for key in keys {
+            self.evict_if_stale(&key).await;
+        }
+    }
+
+    /// Drops everything this runtime caches for `key`.
+    async fn evict(&self, key: &str) {
+        self.forget(key).await;
+        self.inner.shares.revoke_sandbox(key);
+        self.inner
+            .service_urls
+            .lock()
+            .unwrap()
+            .retain(|(sb, _), _| sb != key);
     }
 
     /// Resolves any accepted spelling of a sandbox (a qualified ref, a
@@ -814,6 +919,20 @@ impl Runtime {
     pub async fn resolve(&self, input: &str) -> Result<SandboxRef> {
         let wanted = SandboxRef::parse(input)?;
         if let SandboxRef::Bare { name } = &wanted {
+            // A held sandbox that was deleted behind this runtime must not
+            // answer for its name.
+            let named: Vec<String> = self
+                .inner
+                .handles
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, h)| h.sandbox.name() == name)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in named {
+                self.evict_if_stale(&key).await;
+            }
             let held: Vec<(String, SandboxRef)> = {
                 let handles = self.inner.handles.lock().unwrap();
                 handles
@@ -838,11 +957,19 @@ impl Runtime {
     }
 
     /// The handle key (the canonical qualified ref) for `input`.
+    ///
+    /// A held sandbox that was deleted, or deleted and created again under
+    /// the same name, is dropped on the way ([`Self::evict_if_stale`]), so
+    /// no operation goes through a stale handle or env connection.
     async fn key(&self, input: &str) -> Result<String> {
-        if self.inner.handles.lock().unwrap().contains_key(input) {
+        let held = self.inner.handles.lock().unwrap().contains_key(input);
+        if held && !self.evict_if_stale(input).await {
             return Ok(input.to_string());
         }
-        Ok(self.resolve(input).await?.to_string())
+        let key = self.resolve(input).await?.to_string();
+        // Another spelling of a held sandbox (a legacy id).
+        self.evict_if_stale(&key).await;
+        Ok(key)
     }
 
     /// Reattaches to a sandbox by ref or name.
@@ -870,9 +997,13 @@ impl Runtime {
             return Ok(key);
         }
         let r = SandboxRef::parse(&key)?;
+        // Read before connecting: a sandbox created again in between leaves
+        // this handle looking stale (it is dropped and connected again)
+        // rather than current.
+        let incarnation = self.incarnation(&key);
         let r = self.inner.sandboxes.resolve_ref_among(&r, vec![]).await?;
         let sandbox = self.inner.sandboxes.connect_ref(&r).await?;
-        self.insert(key.clone(), sandbox, None, BTreeMap::new());
+        self.insert(key.clone(), sandbox, None, BTreeMap::new(), incarnation);
         Ok(key)
     }
 
@@ -927,6 +1058,7 @@ impl Runtime {
                         expires_at: None,
                         provider_details: BTreeMap::new(),
                         image_info: None,
+                        stop_reason: info.stop_reason.map(|r| r.words()),
                     });
                 }
                 return Err(e);
@@ -942,6 +1074,8 @@ impl Runtime {
 
     /// Every known sandbox: state files, local instances and live handles.
     pub async fn list(&self, provider: Option<ProviderKind>) -> Result<Vec<SandboxRecord>> {
+        // A sandbox deleted behind this runtime is not listed as running.
+        self.evict_stale().await;
         let mut out: BTreeMap<String, SandboxRecord> = BTreeMap::new();
         for info in self.inner.sandboxes.list().await? {
             let (mut kind, mut runtime) = placement_words_of(&info.runtime_type);
@@ -989,6 +1123,7 @@ impl Runtime {
                     expires_at,
                     provider_details,
                     image_info: None,
+                    stop_reason: info.stop_reason.map(|r| r.words()),
                 },
             );
         }
@@ -999,7 +1134,14 @@ impl Runtime {
                     .get(key)
                     .map(|r| r.status.clone())
                     .unwrap_or(Status::Running);
-                out.insert(key.clone(), record_of(key, h, status));
+                let stop_reason = out.get(key).and_then(|r| r.stop_reason.clone());
+                out.insert(
+                    key.clone(),
+                    SandboxRecord {
+                        stop_reason,
+                        ..record_of(key, h, status)
+                    },
+                );
             }
         }
         Ok(out
@@ -1090,14 +1232,7 @@ impl Runtime {
                 return Err(e);
             }
         };
-        self.inner.envs.lock().await.remove(&key);
-        self.inner.handles.lock().unwrap().remove(&key);
-        self.inner.shares.revoke_sandbox(&key);
-        self.inner
-            .service_urls
-            .lock()
-            .unwrap()
-            .retain(|(sb, _), _| sb != &key);
+        self.evict(&key).await;
         let direct = sandbox.provider() == ProviderKind::Direct;
         sandbox.delete().await?;
         if direct {
@@ -1603,6 +1738,7 @@ fn record_of(key: &str, h: &Handle, status: Status) -> SandboxRecord {
         expires_at: sb.expires_at(),
         provider_details: sb.provider_details(),
         image_info: sb.image_info().cloned(),
+        stop_reason: None,
     }
 }
 

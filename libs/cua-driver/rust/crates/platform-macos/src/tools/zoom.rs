@@ -54,6 +54,18 @@ impl Tool for ZoomTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let mut args = args;
+        super::default_window_for_pid(&mut args);
+        if ["x1", "y1", "x2", "y2"]
+            .iter()
+            .all(|key| args.get(*key).is_none())
+        {
+            return ToolResult::error(
+                "zoom needs a region of the window's screenshot: x1,y1 (top-left) and x2,y2 \
+                 (bottom-right) in screenshot pixels, or x,y,width,height. To see the whole \
+                 window, call get_window_state (it returns the screenshot).",
+            );
+        }
         let window_id = match args.require_u32("window_id") {
             Ok(v) => v,
             Err(e) => return e,

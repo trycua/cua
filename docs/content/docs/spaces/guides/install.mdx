@@ -1,0 +1,55 @@
+---
+title: Install
+description: 'Install the Cua Spaces app and the cua CLI on macOS, Windows or Linux.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Cua Spaces 0.9.0 runs on macOS, Windows (preview) and Linux. One command installs the
+`cua` CLI and the app. The [download page](https://cua.ai/download) has
+the app for macOS, Windows (preview) and Linux, and every installer is attached to
+the [GitHub releases](https://github.com/trycua/cua/releases).
+
+<Tabs items={['macOS', 'Windows (preview)', 'Linux']}>
+  <Tab value="macOS">
+    ```bash skip="host-install"
+    curl -fsSL https://cua.ai/install.sh | sh
+    ```
+
+    Or open the universal `.dmg` (or `.pkg`) from the release. macOS 26 or later.
+  </Tab>
+  <Tab value="Windows (preview)">
+    <Callout type="warn">
+      Cua Spaces for Windows is a preview. Expect rough edges and tell us what
+      you hit.
+    </Callout>
+
+    ```powershell skip="host-install"
+    irm https://cua.ai/install.ps1 | iex
+    ```
+
+    Or run `cua-spaces-<version>-windows-x64-setup.exe` (`windows-arm64` on Arm)
+    from the release. Windows may show a SmartScreen prompt the first time:
+    choose **More info**, then **Run anyway**.
+  </Tab>
+  <Tab value="Linux">
+    ```bash skip="host-install"
+    curl -fsSL https://cua.ai/install.sh | sh
+    ```
+
+    The installer picks the supported **.deb** on Ubuntu 24.04 (x64 and arm64).
+    To install it by hand:
+    `sudo apt install ./cua-spaces_<version>_<arch>.deb`. A portable
+    **AppImage** is also released; it is not supported and has no Keyvault. See
+    [Cua Spaces on Linux](/spaces/quickstart#cua-spaces-on-linux).
+  </Tab>
+</Tabs>
+
+At a console the installer shows a checklist first. Add `--cli-only`
+(`-CliOnly` on Windows) to install the CLI alone.
+
+## Next
+
+- [Quickstart](/spaces/quickstart)
+- [Plans](/spaces/guides/plans): what Free, Pro and Teams include.

@@ -81,17 +81,24 @@ pub(crate) fn pointer_reading_background_refusal(
     event_kind: &str,
 ) -> ToolResult {
     let name = toolkit.name();
+    let why = toolkit.why();
     cua_driver_core::delivery::background_unavailable_result(
         format!(
             "Background pixel click is not available for pid {pid}: its {name} toolkit \
-             derives click locations from the hardware pointer, and background delivery \
-             never moves the pointer, so the click would land wherever the pointer \
-             currently is. Retry this action with delivery_mode:\"foreground\"; Cua \
+             {why}. Retry this action with delivery_mode:\"foreground\"; Cua \
              Driver will activate the window, move the pointer to the target, and click."
         ),
         "background_unavailable",
-        "the target toolkit reads the hardware pointer position, which background \
-         PID-routed events cannot move; retry with delivery_mode:\"foreground\".",
+        match toolkit {
+            PointerReadingToolkit::Tk => {
+                "the target toolkit reads the hardware pointer position, which background \
+                 PID-routed events cannot move; retry with delivery_mode:\"foreground\"."
+            }
+            PointerReadingToolkit::Vcl => {
+                "the target toolkit ignores background PID-routed mouse events; retry with \
+                 delivery_mode:\"foreground\"."
+            }
+        },
         serde_json::json!({
             "event_kind": event_kind,
             "reason": "pointer_reading_toolkit",
@@ -194,6 +201,20 @@ mod tests {
         assert_eq!(structured["reason"], "pointer_reading_toolkit");
         assert_eq!(structured["toolkit"], "tk");
         assert_eq!(structured["event_kind"], "mouse_click");
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+    }
+
+    #[test]
+    fn libreoffice_background_clicks_are_refused_with_the_foreground_route() {
+        assert_eq!(
+            pixel_click_route(false, true, Some(PointerReadingToolkit::Vcl)),
+            PixelClickRoute::RefuseBackground(PointerReadingToolkit::Vcl)
+        );
+        let result =
+            pointer_reading_background_refusal(42, PointerReadingToolkit::Vcl, "mouse_click");
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["toolkit"], "libreoffice-vcl");
         assert_eq!(structured["escalation"]["recommended"], "foreground");
     }
 

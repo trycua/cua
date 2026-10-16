@@ -696,8 +696,37 @@ fn modifier_flags(modifiers: &[&str]) -> CGEventFlags {
     flags
 }
 
+/// A multi-character key name as `key_name_to_code` matches it: lower case
+/// with spaces, `_` and `-` dropped, and common spellings folded onto one
+/// name, so "Page_Down", "page-down", "PgDn" and "ArrowLeft" all work. Single
+/// characters ("-", "_" never reaches here as a name) pass through unchanged.
+fn canonical_key_name(key: &str) -> String {
+    let lower = key.trim().to_lowercase();
+    if lower.chars().count() < 2 {
+        return lower;
+    }
+    let compact: String = lower
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '_' | '-'))
+        .collect();
+    match compact.as_str() {
+        "pgdn" | "pgdown" => "pagedown",
+        "pgup" => "pageup",
+        "arrowleft" | "leftarrow" => "left",
+        "arrowright" | "rightarrow" => "right",
+        "arrowup" | "uparrow" => "up",
+        "arrowdown" | "downarrow" => "down",
+        "forwarddelete" | "fwddelete" | "deleteforward" => "forward_delete",
+        "bksp" => "backspace",
+        "escape" => "escape",
+        "kpenter" | "numpadenter" => "enter",
+        _ => return compact,
+    }
+    .to_owned()
+}
+
 pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
-    let code = match key.to_lowercase().as_str() {
+    let code = match canonical_key_name(key).as_str() {
         "return" | "enter" => 36,
         "tab" => 48,
         "space" => 49,
@@ -812,6 +841,30 @@ fn unknown_key_message(key: &str) -> String {
 mod tests {
     use super::*;
     use core_graphics::event::CGEventType;
+
+    #[test]
+    fn common_key_spellings_resolve_to_one_key() {
+        for (spelling, name) in [
+            ("Page_Down", "pagedown"),
+            ("page-down", "pagedown"),
+            ("PgDn", "pagedown"),
+            ("Page Up", "pageup"),
+            ("ArrowLeft", "left"),
+            ("left_arrow", "left"),
+            ("Forward_Delete", "del"),
+            ("ESC", "escape"),
+            ("KP_Enter", "return"),
+        ] {
+            assert_eq!(
+                super::key_name_to_code(spelling).unwrap(),
+                super::key_name_to_code(name).unwrap(),
+                "{spelling}"
+            );
+        }
+        // Single characters are keys in their own right.
+        assert_eq!(super::key_name_to_code("-").unwrap(), 27);
+        assert!(super::key_name_to_code("asterisk").is_err());
+    }
 
     #[test]
     fn unknown_key_errors_say_what_to_send_instead() {

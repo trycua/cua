@@ -1044,6 +1044,10 @@ fn wayland_window_crop(xid: u64) -> anyhow::Result<WaylandWindowCrop> {
             window.visible,
         );
     }
+    // GNOME helpers before API 9 have no per-window capture, so the stage is
+    // cropped to the window's frame. GetRects proves geometry, not occlusion:
+    // a covering window shows in the crop. API 9+ helpers never reach this
+    // (see `screenshot_dispatch_for_pid`).
     if let Some(window) = shell_helper::list_windows(None)
         .and_then(|windows| windows.into_iter().find(|window| window.xid == xid))
     {
@@ -1105,6 +1109,23 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
                 "Hyprland target identity or toplevel export could not be verified",
             )
         });
+    }
+    if is_wayland() {
+        // A GNOME helper with API 9+ snapshots the window's own actor, so a
+        // covering window never shows. It is then the only GNOME route: a
+        // refused capture (minimized window, locked screen) must not fall
+        // back to a stage crop that could show another app.
+        match shell_helper::screenshot_window(xid, pid) {
+            shell_helper::WindowCapture::Png(png) => return Ok(png),
+            shell_helper::WindowCapture::Unavailable => {
+                return Err(surface_identity_unproven(
+                    xid,
+                    "the GNOME helper could not capture this window (minimized, closed, \
+                     or the screen is locked)",
+                ))
+            }
+            shell_helper::WindowCapture::Unsupported => {}
+        }
     }
     screenshot_window_bytes_with_dispatch(
         is_wayland(),
@@ -3489,6 +3510,11 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                     Vec::new()
                 }
             };
+        }
+        // A verified GNOME helper already supplies exact IDs and ownership.
+        // Do not probe unrelated compositor protocols for every preview frame.
+        if let Some(ws) = shell_helper::list_windows(filter_pid) {
+            return listed_windows(ws);
         }
         if let Some(ws) = kwin_helper::list_window_infos() {
             return listed_windows(apply_pid_filter(ws, filter_pid));

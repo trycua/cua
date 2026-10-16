@@ -1,0 +1,42 @@
+---
+title: Install Cua Spaces
+description: 'Install the Cua Spaces app and the cua CLI on macOS, Linux or Windows (preview) with one command.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+One installer sets up the `cua` CLI and the Cua Spaces app on macOS, Linux and
+Windows. The app is installed by default on all three.
+
+## Install
+
+On macOS and Linux:
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/install.sh | sh
+```
+
+On Windows (PowerShell):
+
+```powershell skip="host-install"
+irm https://cua.ai/install.ps1 | iex
+```
+
+At a console the installer shows a checklist first: toggle items by number,
+press Enter to install. To skip it, add `--cli-only` (macOS, Linux) or
+`-CliOnly` (Windows) for the CLI alone, or `--select`/`-Select` to preselect
+extra items such as `cua-driver` or `host`.
+
+## Windows (preview)
+
+<Callout type="warn">
+  Cua Spaces for Windows is a preview. Expect rough edges and tell us what you
+  hit.
+</Callout>
+
+Windows may show a SmartScreen prompt the first time you run the installer or
+the app. Choose **More info**, then **Run anyway**.
+
+## Next
+
+- [Authentication](/cua-cli/guides/authentication): sign in once for the CLI and the app.

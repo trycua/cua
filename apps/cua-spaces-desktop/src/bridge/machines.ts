@@ -7,6 +7,8 @@
 // connected, and the host's state with its relay machine id.
 import type { AppModel } from "../model/app-model";
 import { DevicesUnavailable } from "../model/devices";
+import { words } from "../model/errors";
+import { withTimeout } from "../model/time";
 import { optionalString, string } from "./args";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
@@ -61,6 +63,44 @@ async function relayCall<T>(model: AppModel, call: () => Promise<T>): Promise<T>
   }
 }
 
+/** How long one machine may take to answer its health check. */
+const HEALTH_SECONDS = 35;
+/** Machines asked at once. */
+const HEALTH_AT_ONCE = 3;
+
+/**
+ * `machines.checkHealth`: asks each machine the core's view names a
+ * `healthTarget` for (This Mac through its daemon, another of yours over
+ * the relay or mesh) and keeps the answers for the view. A machine that is
+ * no longer a target (offline, removed) loses its old answer, so no stale
+ * check shows as current.
+ */
+export async function checkMachinesHealth(model: AppModel): Promise<void> {
+  const targets = model.machinesView.machines.filter((m) => m.healthTarget !== undefined && m.healthTarget !== null);
+  const wanted = new Set(targets.map((m) => m.id));
+  for (const id of [...model.machineHealth.keys()]) if (!wanted.has(id)) model.machineHealth.delete(id);
+  const queue = [...targets];
+  const worker = async () => {
+    for (let m = queue.shift(); m; m = queue.shift()) {
+      const target = m.healthTarget ? m.healthTarget : null;
+      const o = await withTimeout(HEALTH_SECONDS, () => model.backend.machineHealth(target));
+      model.machineHealth.set(
+        m.id,
+        o.ok
+          ? {
+              id: m.id,
+              cuaVersion: o.value.cuaVersion,
+              checks: o.value.checks.map((c) => ({ id: c.id, status: c.status, message: c.message, remediation: c.remediation, facts: c.facts })),
+              error: undefined,
+            }
+          : { id: m.id, cuaVersion: "", checks: [], error: words(o.error) },
+      );
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(HEALTH_AT_ONCE, queue.length) }, worker));
+  model.changed("machines");
+}
+
 export function machinesMethods({ model }: BridgeContext): Handlers {
   return {
     "machines.list": async () => {
@@ -90,6 +130,10 @@ export function machinesMethods({ model }: BridgeContext): Handlers {
       if (device) await relayCall(model, () => model.devices.revoke(device));
       else await model.devices.refresh();
       await model.refresh();
+      return null;
+    },
+    "machines.checkHealth": async () => {
+      if (model.servicesIn) await checkMachinesHealth(model);
       return null;
     },
     "host.status": async () => {

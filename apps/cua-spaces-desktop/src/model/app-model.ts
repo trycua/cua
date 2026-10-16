@@ -20,6 +20,7 @@ import type {
   AppMachinesPageInput,
   AppMachinesView,
   AppMachinesViewAbout,
+  AppMachinesViewHealth,
   AppMainChrome,
   AppRosterAction,
   AppRosterState,
@@ -315,6 +316,9 @@ export class AppModel {
    * machine (whose it is, its team, whether it provides Spaces), This
    * machine's host state and this computer.
    */
+  /** What each machine's daemon last said of its health, by row id (`machines.checkHealth`). */
+  readonly machineHealth = new Map<string, AppMachinesViewHealth>();
+
   get machinesView(): AppMachinesView {
     const relay = (this.devices.snapshot?.machines ?? []).map((m) => ({
       id: m.id,
@@ -329,6 +333,7 @@ export class AppModel {
       host: this.host.state ?? undefined,
       about: this.about?.() ?? { computerName: "", appVersion: "", osVersion: "" },
       rows: undefined,
+      health: [...this.machineHealth.values()],
     });
   }
 

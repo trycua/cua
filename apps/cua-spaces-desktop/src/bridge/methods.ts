@@ -43,7 +43,7 @@ export const METHODS = [
   "window.setBackgroundColor", "window.setDragRegions", "window.setDropTargets",
   "startup.get", "startup.act",
   "relay.usage",
-  "machines.rename", "machines.remove",
+  "machines.rename", "machines.remove", "machines.checkHealth",
   "checklist.get", "checklist.send",
 ] as const;
 

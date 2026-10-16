@@ -137,6 +137,7 @@ same list the receiver imports:
 - `firefox`
 - `slack`
 - `discord`
+- `claude-desktop`
 - `unity-hub`
 - `steam`
 - `whatsapp` (macOS)

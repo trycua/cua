@@ -583,6 +583,7 @@ pub(crate) fn trusted_app_for(service: &str) -> Option<&'static str> {
         "discord Safe Storage" => Some("/Applications/Discord.app"),
         "Code Safe Storage" => Some("/Applications/Visual Studio Code.app"),
         "Notion Safe Storage" => Some("/Applications/Notion.app"),
+        "Claude Safe Storage" => Some("/Applications/Claude.app"),
         _ => None,
     }
 }

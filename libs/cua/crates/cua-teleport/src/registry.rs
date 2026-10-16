@@ -86,6 +86,7 @@ impl ExportRegistry {
             ElectronProvider::discord(),
             ElectronProvider::vscode(),
             ElectronProvider::notion(),
+            ElectronProvider::claude_desktop(),
         ] {
             registry.register(Box::new(provider.structured().with_host(host.clone())));
         }

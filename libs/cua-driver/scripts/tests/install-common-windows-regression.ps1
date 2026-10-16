@@ -150,3 +150,68 @@ finally {
         Stop-Process -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+$installScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'install.ps1'
+$tokens = $null
+$parseErrors = $null
+$installAst = [System.Management.Automation.Language.Parser]::ParseFile($installScript, [ref]$tokens, [ref]$parseErrors)
+Assert-True ($parseErrors.Count -eq 0) "install.ps1 parse errors: $($parseErrors -join '; ')"
+$integrityCheck = $installAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Assert-ReleaseZipIntegrity'
+}, $true)
+Assert-True ($null -ne $integrityCheck) 'Assert-ReleaseZipIntegrity not found in install.ps1'
+. ([scriptblock]::Create($integrityCheck.Extent.Text))
+
+$Repo = 'trycua/cua'
+$TagPrefix = 'cua-driver-rs-v'
+$ChecksumsRequiredFrom = [version]'0.31.0'
+$SigstoreRequiredFrom = [version]'0.32.0'
+$CosignOidcIssuer = 'https://token.actions.githubusercontent.com'
+$RequireSignature = $true
+$Script:CuaDriverRsReleaseTag = 'cua-driver-rs-v0.30.0'
+$zipName = 'cua-driver-rs-0.30.0-windows-x86_64.zip'
+$steps = New-Object System.Collections.Generic.List[string]
+
+function Get-BaseVersion([string]$version) { return [version]$version }
+function Get-ReleaseFile([string]$name, [string]$destPath) { return $name.EndsWith('.sigstore.json') }
+function Write-Step($message) { $steps.Add($message) }
+function Write-WarningStep($message) { }
+function Write-ErrorStep($message) { throw $message }
+
+function Invoke-IntegrityCheck {
+    param([string[]]$StandInLines)
+    Set-Content -LiteralPath (Join-Path $cosignRoot 'cosign.cmd') -Value (@('@echo off') + $StandInLines) -Encoding Ascii
+    $steps.Clear()
+    try {
+        Assert-ReleaseZipIntegrity (Join-Path $cosignRoot $zipName) '0.30.0'
+        return $null
+    }
+    catch {
+        return $_.Exception.Message
+    }
+}
+
+$cosignRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cua-driver-cosign-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $cosignRoot | Out-Null
+$savedPath = $env:PATH
+try {
+    $env:PATH = "$cosignRoot;$savedPath"
+
+    $failure = Invoke-IntegrityCheck @('echo Error: none of the expected identities matched 1>&2', 'exit /b 1')
+    Assert-True ("$failure" -like '*did not verify*') "a failed cosign check was not refused: $failure"
+    Assert-True (@($steps | Where-Object { $_ -like '*Sigstore signature*' }).Count -eq 0) `
+        'a failed cosign check logged the Sigstore success step'
+
+    $failure = Invoke-IntegrityCheck @('echo Verified OK 1>&2', 'exit /b 0')
+    Assert-True ($null -eq $failure) "a successful cosign check aborted the install: $failure"
+    Assert-True ($steps -contains "verified the Sigstore signature of $zipName") `
+        'a successful cosign check did not log the Sigstore success step'
+
+    Write-Host 'Windows installer cosign check accepted a verified zip and refused an unverified one.'
+}
+finally {
+    $env:PATH = $savedPath
+    Remove-Item -LiteralPath $cosignRoot -Recurse -Force -ErrorAction SilentlyContinue
+}

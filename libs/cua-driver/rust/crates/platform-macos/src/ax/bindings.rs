@@ -551,6 +551,28 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
     }
 }
 
+/// The CGWindowID of the window that holds `pid`'s focused UI element
+/// (`AXFocusedUIElement` → `AXWindow`). `None` when the app reports no focused
+/// element: a LibreOffice that has never been active names a focused window
+/// but has no focused element, and drops every key posted to it.
+pub fn focused_element_window_id_of_pid(pid: i32) -> Option<u32> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let element = copy_element_attr(app, "AXFocusedUIElement");
+        CFRelease(app as CFTypeRef);
+        let element = element?;
+        let window = copy_element_attr(element, "AXWindow");
+        CFRelease(element as CFTypeRef);
+        let window = window?;
+        let window_id = ax_get_window_id(window);
+        CFRelease(window as CFTypeRef);
+        window_id
+    }
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety

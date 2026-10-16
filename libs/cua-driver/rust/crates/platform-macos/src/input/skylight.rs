@@ -57,45 +57,114 @@ type ManagedDisplayGetCurrentSpaceFn = unsafe extern "C" fn(u32, *const c_void) 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyPrime {
     AlreadyKey,
-    FocusRecord,
+    /// The in-app key-window records ([`post_window_key_records`]).
+    KeyRecords,
     AxFocusedWindow,
+}
+
+/// Where an app's keyboard focus is, as Accessibility reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyFocus {
+    /// The app's `AXFocusedWindow`.
+    pub window: Option<u32>,
+    /// The window holding the app's `AXFocusedUIElement`.
+    pub element_window: Option<u32>,
+}
+
+impl KeyFocus {
+    /// Keys posted to the app go to `target`. The focused window is the
+    /// predictor: in every LibreOffice trial keys went to `AXFocusedWindow`
+    /// (a sibling document or Find & Replace when the switch failed, the
+    /// target when it held). The focused element is not used here: VCL keeps
+    /// reporting a modeless dialog's field as focused after its document
+    /// window has become key and is receiving the keys.
+    fn routes_to(self, target: u32) -> bool {
+        self.window == Some(target)
+    }
+
+    /// `target` is key with nothing left to prime. A focused window without
+    /// any focused element is a LibreOffice that has never been active: it
+    /// drops every key until the window is primed (CUA-1767).
+    fn settled_on(self, target: u32) -> bool {
+        self.routes_to(target) && self.element_window.is_some()
+    }
 }
 
 /// Make `target` the app's key window and PROVE it before any key is posted.
 ///
-/// `focused` re-reads the app's `AXFocusedWindow`; `focus_record` sends the
-/// SkyLight focus record; `ax_focus` writes `AXFocusedWindow` on the app. Each
-/// step is followed by a re-read; keys may only be posted when the re-read
-/// names `target`. Returns `Err` otherwise: refusing is safe, a key that lands
-/// in a sibling window (a Find & Replace field) is not.
+/// `focus` re-reads the app's focus; `key_records` posts the in-app key-window
+/// records and waits for them to settle; `ax_focus` writes `AXFocusedWindow`.
+/// Each step is followed by a re-read, and keys may only be posted when it
+/// shows `target` as the window keys route to. Returns `Err` otherwise:
+/// refusing is safe, a key that lands in a sibling window (a Find & Replace
+/// field, another document) is not.
 pub fn prime_exact_window_key(
     target: u32,
-    mut focused: impl FnMut() -> Option<u32>,
-    mut focus_record: impl FnMut() -> bool,
+    mut focus: impl FnMut() -> KeyFocus,
+    mut key_records: impl FnMut() -> bool,
     mut ax_focus: impl FnMut() -> bool,
 ) -> Result<KeyPrime, String> {
-    if focused() == Some(target) {
+    if focus().settled_on(target) {
         return Ok(KeyPrime::AlreadyKey);
     }
-    if focus_record() && focused() == Some(target) {
-        return Ok(KeyPrime::FocusRecord);
+    // The records go out at most twice: WindowServer delivers them
+    // asynchronously, and the second pass catches an app that was still
+    // handling the first.
+    for _ in 0..2 {
+        if key_records() && focus().routes_to(target) {
+            return Ok(KeyPrime::KeyRecords);
+        }
     }
-    if ax_focus() && focused() == Some(target) {
+    if ax_focus() && focus().routes_to(target) {
         return Ok(KeyPrime::AxFocusedWindow);
     }
+    let now = focus();
     Err(format!(
         "window {target} could not be confirmed as the app's key window (the app's focused \
-         window is {:?}), so no keys were sent: they could have gone to another window of \
-         the same app. Close the other window, or use delivery_mode:\"foreground\"",
-        focused()
+         window is {:?}, its focused element is in window {:?}), so no keys were sent: they \
+         could have gone to another window of the same app. Close the other window, or use \
+         delivery_mode:\"foreground\"",
+        now.window, now.element_window
     ))
 }
 
-/// Holds an exact window as the app's key window; hands key back on drop.
+/// Holds an exact window as the app's key window; hands key back on drop
+/// (with the same in-app records, so the app is never activated or raised).
 pub struct WindowKeyScope {
     pid: pid_t,
+    target: u32,
     previous: Option<u32>,
+    /// The app's on-screen windows before priming, front to back.
+    order_before: Vec<u32>,
     primed: KeyPrime,
+}
+
+/// The window key goes back to. Normally the previous key window. LibreOffice
+/// hides a document's modeless dialog (Find & Replace) while another of its
+/// documents is key, and re-shows it, raising its document, when that
+/// document is key again. When the previous key window was such a dialog it
+/// is gone now, so key goes to the frontmost window that was on screen
+/// before: its document, which brings the dialog and the window order back.
+fn restore_target(
+    target: u32,
+    previous: Option<u32>,
+    order_before: &[u32],
+    on_screen_now: &[u32],
+) -> Option<u32> {
+    let present = |w: &u32| *w != target && on_screen_now.contains(w);
+    previous
+        .filter(present)
+        .or_else(|| order_before.iter().copied().find(present))
+}
+
+/// `pid`'s on-screen layer-0 windows, front to back.
+fn app_window_order(pid: pid_t) -> Vec<u32> {
+    let mut windows: Vec<_> = crate::windows::visible_windows()
+        .into_iter()
+        .filter(|w| w.pid == pid && w.layer == 0 && w.is_on_screen)
+        .collect();
+    windows.sort_by_key(|w| std::cmp::Reverse(w.z_index));
+    windows.into_iter().map(|w| w.window_id).collect()
 }
 
 impl Drop for WindowKeyScope {
@@ -103,14 +172,21 @@ impl Drop for WindowKeyScope {
         if self.primed == KeyPrime::AlreadyKey {
             return;
         }
-        if let Some(previous) = self.previous {
-            match self.primed {
-                KeyPrime::FocusRecord => {
-                    activate_without_raise_with(self.pid, previous, false);
-                }
-                _ => {
-                    set_app_focused_window(self.pid, previous);
-                }
+        let Some(previous) = restore_target(
+            self.target,
+            self.previous,
+            &self.order_before,
+            &app_window_order(self.pid),
+        ) else {
+            return;
+        };
+        match self.primed {
+            KeyPrime::AlreadyKey => {}
+            KeyPrime::KeyRecords => {
+                post_window_key_records(self.pid, Some(self.target), previous);
+            }
+            KeyPrime::AxFocusedWindow => {
+                set_app_focused_window(self.pid, previous);
             }
         }
     }
@@ -147,43 +223,101 @@ fn set_app_focused_window(pid: pid_t, wid: u32) -> bool {
     }
 }
 
-/// Make `target_wid` the app's key window (no activation, no raise, no
-/// pointer), confirmed by re-reading the app's focused window, and return a
-/// guard that hands key back. `Err` when it cannot be confirmed.
-pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeyScope, String> {
-    let previous = crate::ax::bindings::focused_window_id_of_pid(pid);
-    // An app with no focused window has never been active: it has no key
-    // window to hand over, and keys posted to it are dropped silently while
-    // the call still reports success (LibreOffice, CUA-1767). Refuse.
-    if previous.is_none() {
-        return Err(format!(
-            "pid {pid} has no focused window (it has not been active yet), so window \
-             {target_wid} cannot be confirmed as its key window and no keys were sent. \
-             Activate the app once (bring_to_front) or use delivery_mode:\"foreground\""
-        ));
+/// The app's focus as Accessibility reports it.
+fn key_focus_of_pid(pid: pid_t) -> KeyFocus {
+    KeyFocus {
+        window: crate::ax::bindings::focused_window_id_of_pid(pid),
+        element_window: crate::ax::bindings::focused_element_window_id_of_pid(pid),
     }
-    let settle = || std::thread::sleep(std::time::Duration::from_millis(120));
+}
+
+/// Settle time between the key-window records. Without it the app can drop
+/// the focus record while it is still handling the defocus (measured on
+/// LibreOffice 26.8: about half the switches failed without a pause).
+const KEY_RECORD_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// Move key status inside `pid` from `current` to `target` without activating
+/// the app, raising a window or touching the pointer. Every record goes to
+/// `pid` only; the user's front app receives nothing and keeps key focus.
+///
+/// Sequence, measured on LibreOffice (VCL) where each step alone is ignored:
+/// 1. defocus record (0x0d, 0x8a=2) for the app's current key window;
+/// 2. focus record (0x0d, 0x8a=1) for `target`;
+/// 3. the make-key record pair (0x01/0x02) for `target`, as
+///    [`make_exact_window_key`] sends after fronting, here without fronting.
+///
+/// Returns `true` when every record was posted. Whether the app acted on them
+/// is for the caller to confirm.
+pub fn post_window_key_records(pid: pid_t, current: Option<u32>, target: u32) -> bool {
+    crate::window_change_detector::end_tail();
+    let Some(post) = post_event_record_to_fn() else {
+        return false;
+    };
+    let mut psn = [0u8; 8];
+    if !get_process_psn_for_window(target, pid, &mut psn) {
+        return false;
+    }
+    let send =
+        |record: &[u8; 0xF8]| unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) == 0 };
+    let mut ok = true;
+    if let Some(current) = current {
+        let mut defocus = focus_record(current);
+        defocus[0x8A] = 0x02;
+        ok &= send(&defocus);
+        std::thread::sleep(KEY_RECORD_SETTLE);
+    }
+    let mut focus = focus_record(target);
+    focus[0x8A] = 0x01;
+    ok &= send(&focus);
+    std::thread::sleep(KEY_RECORD_SETTLE);
+    for event_kind in [0x01, 0x02] {
+        ok &= send(&make_key_window_record(target, event_kind));
+    }
+    ok
+}
+
+/// Wait until the app's focus has settled on `target`, for at most `budget`.
+/// The make-key records are handled on the app's main thread, so the change
+/// trails the post; a never-active LibreOffice shows it last, when a focused
+/// element appears. The caller re-reads and decides.
+fn await_key_focus(pid: pid_t, target: u32, budget: std::time::Duration) {
+    std::thread::sleep(KEY_RECORD_SETTLE);
+    let deadline = std::time::Instant::now() + budget;
+    while !key_focus_of_pid(pid).settled_on(target) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+}
+
+/// Make `target_wid` the app's key window (no activation, no raise, no
+/// pointer), confirmed by re-reading the app's focus, and return a guard that
+/// hands key back. `Err` when it cannot be confirmed.
+pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeyScope, String> {
+    let before = key_focus_of_pid(pid);
+    let previous = before.window;
+    let order_before = app_window_order(pid);
     let primed = prime_exact_window_key(
         target_wid,
-        || crate::ax::bindings::focused_window_id_of_pid(pid),
+        || key_focus_of_pid(pid),
         || {
-            let ok = activate_without_raise_with(pid, target_wid, false);
+            let ok = post_window_key_records(pid, previous, target_wid);
             if ok {
-                settle();
+                await_key_focus(pid, target_wid, std::time::Duration::from_millis(400));
             }
             ok
         },
         || {
             let ok = set_app_focused_window(pid, target_wid);
             if ok {
-                settle();
+                await_key_focus(pid, target_wid, std::time::Duration::from_millis(200));
             }
             ok
         },
     )?;
     Ok(WindowKeyScope {
         pid,
+        target: target_wid,
         previous,
+        order_before,
         primed,
     })
 }
@@ -1497,50 +1631,138 @@ mod tests {
 
 #[cfg(test)]
 mod key_prime_tests {
-    use super::{prime_exact_window_key, KeyPrime};
+    use super::{prime_exact_window_key, restore_target, KeyFocus, KeyPrime};
     use std::cell::Cell;
 
-    #[test]
-    fn already_key_sends_nothing() {
-        let r = prime_exact_window_key(7, || Some(7), || panic!("record"), || panic!("ax"));
-        assert_eq!(r, Ok(KeyPrime::AlreadyKey));
+    fn at(window: Option<u32>, element_window: Option<u32>) -> KeyFocus {
+        KeyFocus {
+            window,
+            element_window,
+        }
     }
 
     #[test]
-    fn focus_record_is_accepted_only_after_the_reread_names_the_target() {
-        let focus = Cell::new(Some(9));
+    fn already_key_sends_nothing() {
+        let r = prime_exact_window_key(
+            7,
+            || at(Some(7), Some(7)),
+            || panic!("record"),
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::AlreadyKey));
+    }
+
+    /// LibreOffice that was never active: AX names the window but no element
+    /// has focus, and keys are dropped. It must be primed, not trusted.
+    #[test]
+    fn focused_window_without_focused_element_is_primed() {
+        let focus = Cell::new(at(Some(7), None));
+        let records = Cell::new(0);
         let r = prime_exact_window_key(
             7,
             || focus.get(),
             || {
-                focus.set(Some(7));
+                records.set(records.get() + 1);
+                focus.set(at(Some(7), Some(7)));
                 true
             },
             || panic!("ax"),
         );
-        assert_eq!(r, Ok(KeyPrime::FocusRecord));
+        assert_eq!(r, Ok(KeyPrime::KeyRecords));
+        assert_eq!(records.get(), 1);
     }
 
     #[test]
-    fn ignored_focus_record_falls_back_to_ax_then_confirms() {
-        let focus = Cell::new(Some(9));
+    fn key_records_are_accepted_only_after_the_reread_names_the_target() {
+        let focus = Cell::new(at(Some(9), Some(9)));
         let r = prime_exact_window_key(
             7,
             || focus.get(),
-            || true, // record posted but the app ignored it
             || {
-                focus.set(Some(7));
+                focus.set(at(Some(7), Some(7)));
+                true
+            },
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::KeyRecords));
+    }
+
+    /// The records are delivered asynchronously; a second pass is allowed.
+    #[test]
+    fn a_late_switch_is_caught_by_the_second_pass() {
+        let focus = Cell::new(at(Some(9), Some(9)));
+        let passes = Cell::new(0);
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || {
+                passes.set(passes.get() + 1);
+                if passes.get() == 2 {
+                    focus.set(at(Some(7), Some(7)));
+                }
+                true
+            },
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::KeyRecords));
+        assert_eq!(passes.get(), 2);
+    }
+
+    #[test]
+    fn ignored_records_fall_back_to_ax_then_confirm() {
+        let focus = Cell::new(at(Some(9), Some(9)));
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || true, // records posted but the app ignored them
+            || {
+                focus.set(at(Some(7), None));
                 true
             },
         );
         assert_eq!(r, Ok(KeyPrime::AxFocusedWindow));
     }
 
+    /// After the switch VCL can keep naming a Find & Replace field as the
+    /// focused element while the document window is key and gets the keys.
+    #[test]
+    fn a_stale_dialog_element_does_not_block_a_confirmed_switch() {
+        let focus = Cell::new(at(Some(9), Some(9)));
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || {
+                focus.set(at(Some(7), Some(9)));
+                true
+            },
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::KeyRecords));
+    }
+
+    #[test]
+    fn key_goes_back_to_the_previous_window() {
+        assert_eq!(restore_target(7, Some(9), &[9, 7, 5], &[7, 9, 5]), Some(9));
+    }
+
+    /// LibreOffice hid the Find & Replace dialog (9) of document 5 when
+    /// document 7 became key: hand key to 5, which re-shows the dialog.
+    #[test]
+    fn a_hidden_previous_dialog_hands_key_to_the_frontmost_remaining_window() {
+        assert_eq!(restore_target(7, Some(9), &[9, 5, 7], &[7, 5]), Some(5));
+    }
+
+    #[test]
+    fn nothing_to_restore_when_only_the_target_is_left() {
+        assert_eq!(restore_target(7, Some(7), &[7], &[7]), None);
+        assert_eq!(restore_target(7, None, &[], &[7]), None);
+    }
+
     /// The Find & Replace leak: the dialog keeps key, nothing redirects. Must
     /// refuse, never post.
     #[test]
     fn unconfirmed_key_window_refuses_instead_of_leaking() {
-        for focused in [Some(9), None] {
+        for focused in [at(Some(9), Some(9)), at(None, None), at(Some(9), Some(7))] {
             let r = prime_exact_window_key(7, || focused, || true, || true);
             assert!(r.unwrap_err().contains("no keys were sent"));
         }

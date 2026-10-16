@@ -91,7 +91,7 @@ pub enum BackgroundAction {
     /// Process-scoped key/hotkey without an action-specific verifier.
     GenericKey,
     /// Process-scoped keys whose transport first makes the exact target window
-    /// the app's key window (a window focus record: no activation, no raise,
+    /// the app's key window (in-app key-window records: no activation, no raise,
     /// the user's front window keeps key status) and hands key back after. A
     /// second same-pid window is then not a competing destination, because
     /// the keys are routed to the requested window explicitly. Callers use

@@ -1205,13 +1205,44 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
 
 /// The inline line a failed power action shows: "Could not turn it on:
 /// <why>".
+///
+/// The known causes ([`failure_cause`], as for a failed create) read in
+/// plain words: a Local Network block names the app to turn on, instead of
+/// the SDK's raw error (CUA-1807).
 pub fn power_failed_text(on: bool, error: &str) -> String {
     let what = if on { "turn it on" } else { "turn it off" };
     if error.trim().is_empty() {
-        format!("Could not {what}")
-    } else {
-        format!("Could not {what}: {}", crate::errors::plain_error(error))
+        return format!("Could not {what}");
     }
+    let plain = crate::errors::plain_error(error);
+    let why = match failure_cause(error, None, false) {
+        Some(FailureCause::LocalNetwork) => {
+            let app = local_network_app(&plain).unwrap_or("Cua Spaces (or cua-spacesd)");
+            format!(
+                "Cua can't reach the Space's VM because it doesn't have Local Network access on \
+                 the Mac running it. On that Mac, open System Settings > Privacy & Security > \
+                 Local Network, turn on {app}, then try again."
+            )
+        }
+        Some(FailureCause::Disk) => "there isn't enough disk space on the Mac running it. Free \
+             up space there (or run `cua cache prune` in Terminal), then try again."
+            .into(),
+        Some(FailureCause::VmLimit) => "the Mac running it is already running two macOS VMs, \
+             the most Apple's macOS license allows at once. Stop one, then try again."
+            .into(),
+        _ => plain,
+    };
+    format!("Could not {what}: {why}")
+}
+
+/// The app the SDK's Local Network error names ("Local Network access is
+/// not available: <App> (<path>) cannot reach ..."), when it names one.
+fn local_network_app(plain: &str) -> Option<&str> {
+    const LEAD: &str = "Local Network access is not available: ";
+    let rest = &plain[plain.find(LEAD)? + LEAD.len()..];
+    let (name, _) = rest.split_once(" (")?;
+    let name = name.trim();
+    (!name.is_empty() && name != "cua" && !name.contains("cannot reach")).then_some(name)
 }
 
 /// Drops finished creates whose Space the registry now lists, and finished
@@ -1421,6 +1452,41 @@ pub fn compose(registry: &[Space], state: &CreatesState) -> Vec<Space> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CUA-1807: Turn on showed the SDK's raw Local Network error.
+    #[test]
+    fn a_failed_turn_on_says_the_known_cause_in_plain_words() {
+        let raw = "local runtime: Local Network access is not available: Cua Spaces \
+                   (/Applications/Cua Spaces.app) cannot reach the VM at 192.168.64.191:3211 \
+                   (No route to host (os error 65)). macOS blocks Cua Spaces's local network \
+                   connections until they are allowed: ...";
+        let t = power_failed_text(true, raw);
+        assert!(
+            t.starts_with("Could not turn it on: Cua can't reach"),
+            "{t}"
+        );
+        assert!(t.contains("turn on Cua Spaces, then try again"), "{t}");
+        assert!(!t.contains("os error"), "{t}");
+        // An older SDK's bare EHOSTUNREACH to a vmnet address.
+        let t = power_failed_text(
+            true,
+            "connect 192.168.64.5:3211: No route to host (os error 65)",
+        );
+        assert!(t.contains("turn on Cua Spaces (or cua-spacesd)"), "{t}");
+        // A bare binary is not an app to turn on.
+        let t = power_failed_text(
+            true,
+            "Local Network access is not available: cua cannot reach the VM at 192.168.64.5:3211",
+        );
+        assert!(t.contains("turn on Cua Spaces (or cua-spacesd)"), "{t}");
+        // Unknown causes stay as they were.
+        assert_eq!(
+            power_failed_text(false, "Docker is not running"),
+            "Could not turn it off: Docker is not running"
+        );
+        assert_eq!(power_failed_text(true, " "), "Could not turn it on");
+        assert!(power_failed_text(true, "No space left on device").contains("disk space"));
+    }
 
     fn start(id: &str, name: &str, os: SpaceOs) -> CreateAction {
         CreateAction::Start {

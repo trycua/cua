@@ -16,8 +16,6 @@
 //! [`crate::machines_view::MachinesViewInput::health`], and draw the
 //! view's `issues` and `health`.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::host::{HostActionId, HostState};
@@ -42,7 +40,7 @@ pub struct MachinesViewCheck {
     pub remediation: String,
     /// `app`, `settings_url`, `free_gb`, ...
     #[serde(default)]
-    pub facts: BTreeMap<String, String>,
+    pub facts: std::collections::HashMap<String, String>,
 }
 
 /// What the shell got for one machine's health.
@@ -198,6 +196,11 @@ pub fn issues(
                     host_action: None,
                 })
         };
+        // This Mac's page already lists its permissions, each with its
+        // own button (the host panel): not twice.
+        if subject.current && c.id.starts_with("machine.permissions.") {
+            continue;
+        }
         let (text, action) = match c.id.as_str() {
             "machine.local_network" => {
                 let app = Some(fact("app"))
@@ -434,20 +437,23 @@ mod tests {
         );
         let i = issues(&THIS, Some(&h), None);
         let texts: Vec<&str> = i.iter().map(|i| i.text.as_str()).collect();
+        // This Mac's permissions are listed on its page already.
         assert_eq!(
             texts,
             [
                 "Only 21 GB free. A macOS Space needs about 30 GB.",
                 "Running Spaces use 12 of 16 GB of memory, so another may not start.",
-                "Sharing the desktop needs Screen Recording for cua-driver.",
             ]
         );
         assert_eq!(i[0].action.as_ref().unwrap().label, "Free disk space");
         assert!(i[1].action.is_none());
+        // Another Mac's: said there, without a button (its settings are there).
+        let i = issues(&OTHER, Some(&h), None);
         assert_eq!(
-            i[2].action.as_ref().unwrap().label,
-            "Open Screen Recording settings"
+            i[2].text,
+            "Sharing the desktop on that Mac needs Screen Recording for cua-driver."
         );
+        assert!(i[2].action.is_none());
         assert_eq!(health_level(&i), "warn");
     }
 

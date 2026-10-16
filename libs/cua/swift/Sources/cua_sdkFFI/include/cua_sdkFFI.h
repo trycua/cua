@@ -2146,6 +2146,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_list(uint64_t ptr
 uint64_t uniffi_cua_sdk_fn_method_spaces_list_tools_json(uint64_t ptr
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
+uint64_t uniffi_cua_sdk_fn_method_spaces_machine_health(uint64_t ptr, RustBuffer machine
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_REGISTER
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_REGISTER
 uint64_t uniffi_cua_sdk_fn_method_spaces_relay_register(uint64_t ptr, RustBuffer space
@@ -5271,6 +5276,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_list(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_TOOLS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_TOOLS_JSON
 uint16_t uniffi_cua_sdk_checksum_method_spaces_list_tools_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
+uint16_t uniffi_cua_sdk_checksum_method_spaces_machine_health(void
 
 );
 #endif

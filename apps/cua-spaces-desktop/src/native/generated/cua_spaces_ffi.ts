@@ -24666,6 +24666,125 @@ const FfiConverterTypeAppMachinesViewRename = (() => {
     return new FFIConverter();
 })();
 
+export type AppMachinesViewIssueAction = {
+    /**
+     * "Open Local Network settings", "Free disk space", "Restart service".
+     */
+    label: string,
+    /**
+     * A System Settings pane to open (`host.openSettings`).
+     */
+    url?: string,
+    /**
+     * A host action to run (`host.action`).
+     */
+    hostAction?: AppHostActionId
+}
+
+/**
+ * Generated factory for {@link AppMachinesViewIssueAction} record objects.
+ */
+export const AppMachinesViewIssueAction = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMachinesViewIssueAction, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMachinesViewIssueAction>,
+    });
+})();
+
+const FfiConverterTypeAppMachinesViewIssueAction = (() => {
+    type TypeName = AppMachinesViewIssueAction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                label: FfiConverterString.read(from),
+                url: FfiConverterOptionalString.read(from),
+                hostAction: FfiConverterOptionalTypeAppHostActionId.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.label, into);
+            FfiConverterOptionalString.write(value.url, into);
+            FfiConverterOptionalTypeAppHostActionId.write(value.hostAction, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.label) +
+             FfiConverterOptionalString.allocationSize(value.url) +
+             FfiConverterOptionalTypeAppHostActionId.allocationSize(value.hostAction);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppMachinesViewIssue = {
+    /**
+     * The check it comes from (`machine.disk`, `service`, `version`).
+     */
+    id: string,
+    /**
+     * `warn` or `fail`.
+     */
+    level: string,
+    /**
+     * One plain sentence.
+     */
+    text: string,
+    /**
+     * Its fix, when there is one here.
+     */
+    action?: AppMachinesViewIssueAction
+}
+
+/**
+ * Generated factory for {@link AppMachinesViewIssue} record objects.
+ */
+export const AppMachinesViewIssue = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMachinesViewIssue, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMachinesViewIssue>,
+    });
+})();
+
+const FfiConverterTypeAppMachinesViewIssue = (() => {
+    type TypeName = AppMachinesViewIssue;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                level: FfiConverterString.read(from),
+                text: FfiConverterString.read(from),
+                action: FfiConverterOptionalTypeAppMachinesViewIssueAction.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.level, into);
+            FfiConverterString.write(value.text, into);
+            FfiConverterOptionalTypeAppMachinesViewIssueAction.write(value.action, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.level) +
+             FfiConverterString.allocationSize(value.text) +
+             FfiConverterOptionalTypeAppMachinesViewIssueAction.allocationSize(value.action);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppMachinesViewToggle = {
     /**
      * `spaces` or `desktop`.
@@ -24963,6 +25082,16 @@ export type AppMachinesViewMachine = {
      */
     online: boolean,
     /**
+     * The dot's tint for its issues: `warn`, `fail`, or empty.
+     */
+    health: string,
+    /**
+     * What the shell passes to `Spaces.machine_health` to check it: empty
+     * for This Mac, its id for another of your machines; `None` when it
+     * can't be checked from here (offline, not yours).
+     */
+    healthTarget?: string,
+    /**
      * `macos`, `linux`, `windows`, or empty.
      */
     os: string,
@@ -24986,6 +25115,15 @@ export type AppMachinesViewMachine = {
      * Rename, when it can be renamed from here.
      */
     rename?: AppMachinesViewRename,
+    /**
+     * "Issues".
+     */
+    issuesTitle: string,
+    /**
+     * What is wrong, one sentence each with its fix; empty when healthy
+     * (the section is hidden then) or offline.
+     */
+    issues: Array<AppMachinesViewIssue>,
     /**
      * One line over the switches (offline, signed out).
      */
@@ -25058,12 +25196,16 @@ const FfiConverterTypeAppMachinesViewMachine = (() => {
                 badge: FfiConverterOptionalString.read(from),
                 line: FfiConverterString.read(from),
                 online: FfiConverterBool.read(from),
+                health: FfiConverterString.read(from),
+                healthTarget: FfiConverterOptionalString.read(from),
                 os: FfiConverterString.read(from),
                 current: FfiConverterBool.read(from),
                 team: FfiConverterBool.read(from),
                 status: FfiConverterString.read(from),
                 sharedBy: FfiConverterOptionalString.read(from),
                 rename: FfiConverterOptionalTypeAppMachinesViewRename.read(from),
+                issuesTitle: FfiConverterString.read(from),
+                issues: FfiConverterSequenceTypeAppMachinesViewIssue.read(from),
                 notice: FfiConverterOptionalString.read(from),
                 noticeAction: FfiConverterOptionalTypeAppHostAction.read(from),
                 toggles: FfiConverterSequenceTypeAppMachinesViewToggle.read(from),
@@ -25083,12 +25225,16 @@ const FfiConverterTypeAppMachinesViewMachine = (() => {
             FfiConverterOptionalString.write(value.badge, into);
             FfiConverterString.write(value.line, into);
             FfiConverterBool.write(value.online, into);
+            FfiConverterString.write(value.health, into);
+            FfiConverterOptionalString.write(value.healthTarget, into);
             FfiConverterString.write(value.os, into);
             FfiConverterBool.write(value.current, into);
             FfiConverterBool.write(value.team, into);
             FfiConverterString.write(value.status, into);
             FfiConverterOptionalString.write(value.sharedBy, into);
             FfiConverterOptionalTypeAppMachinesViewRename.write(value.rename, into);
+            FfiConverterString.write(value.issuesTitle, into);
+            FfiConverterSequenceTypeAppMachinesViewIssue.write(value.issues, into);
             FfiConverterOptionalString.write(value.notice, into);
             FfiConverterOptionalTypeAppHostAction.write(value.noticeAction, into);
             FfiConverterSequenceTypeAppMachinesViewToggle.write(value.toggles, into);
@@ -25107,12 +25253,16 @@ const FfiConverterTypeAppMachinesViewMachine = (() => {
              FfiConverterOptionalString.allocationSize(value.badge) +
              FfiConverterString.allocationSize(value.line) +
              FfiConverterBool.allocationSize(value.online) +
+             FfiConverterString.allocationSize(value.health) +
+             FfiConverterOptionalString.allocationSize(value.healthTarget) +
              FfiConverterString.allocationSize(value.os) +
              FfiConverterBool.allocationSize(value.current) +
              FfiConverterBool.allocationSize(value.team) +
              FfiConverterString.allocationSize(value.status) +
              FfiConverterOptionalString.allocationSize(value.sharedBy) +
              FfiConverterOptionalTypeAppMachinesViewRename.allocationSize(value.rename) +
+             FfiConverterString.allocationSize(value.issuesTitle) +
+             FfiConverterSequenceTypeAppMachinesViewIssue.allocationSize(value.issues) +
              FfiConverterOptionalString.allocationSize(value.notice) +
              FfiConverterOptionalTypeAppHostAction.allocationSize(value.noticeAction) +
              FfiConverterSequenceTypeAppMachinesViewToggle.allocationSize(value.toggles) +
@@ -25242,6 +25392,139 @@ const FfiConverterTypeAppMachinesViewAbout = (() => {
     return new FFIConverter();
 })();
 
+export type AppMachinesViewCheck = {
+    /**
+     * `machine.local_network`, `machine.disk`, ...
+     */
+    id: string,
+    /**
+     * `pass`, `warn`, `fail`, `skip`.
+     */
+    status: string,
+    /**
+     * What it found.
+     */
+    message: string,
+    /**
+     * What to do.
+     */
+    remediation: string,
+    /**
+     * `app`, `settings_url`, `free_gb`, ...
+     */
+    facts: Map<string, string>
+}
+
+/**
+ * Generated factory for {@link AppMachinesViewCheck} record objects.
+ */
+export const AppMachinesViewCheck = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMachinesViewCheck, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMachinesViewCheck>,
+    });
+})();
+
+const FfiConverterTypeAppMachinesViewCheck = (() => {
+    type TypeName = AppMachinesViewCheck;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                status: FfiConverterString.read(from),
+                message: FfiConverterString.read(from),
+                remediation: FfiConverterString.read(from),
+                facts: FfiConverterMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.status, into);
+            FfiConverterString.write(value.message, into);
+            FfiConverterString.write(value.remediation, into);
+            FfiConverterMapStringString.write(value.facts, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.status) +
+             FfiConverterString.allocationSize(value.message) +
+             FfiConverterString.allocationSize(value.remediation) +
+             FfiConverterMapStringString.allocationSize(value.facts);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppMachinesViewHealth = {
+    /**
+     * The machine's row id (`this-mac`, a relay machine id).
+     */
+    id: string,
+    /**
+     * Its checks.
+     */
+    checks: Array<AppMachinesViewCheck>,
+    /**
+     * The Cua version of the daemon that checked.
+     */
+    cuaVersion: string,
+    /**
+     * Why it could not be checked, when it could not.
+     */
+    error?: string
+}
+
+/**
+ * Generated factory for {@link AppMachinesViewHealth} record objects.
+ */
+export const AppMachinesViewHealth = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMachinesViewHealth, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMachinesViewHealth>,
+    });
+})();
+
+const FfiConverterTypeAppMachinesViewHealth = (() => {
+    type TypeName = AppMachinesViewHealth;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                checks: FfiConverterSequenceTypeAppMachinesViewCheck.read(from),
+                cuaVersion: FfiConverterString.read(from),
+                error: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterSequenceTypeAppMachinesViewCheck.write(value.checks, into);
+            FfiConverterString.write(value.cuaVersion, into);
+            FfiConverterOptionalString.write(value.error, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterSequenceTypeAppMachinesViewCheck.allocationSize(value.checks) +
+             FfiConverterString.allocationSize(value.cuaVersion) +
+             FfiConverterOptionalString.allocationSize(value.error);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppMachinesViewRelay = {
     /**
      * Machine id.
@@ -25333,7 +25616,13 @@ export type AppMachinesViewInput = {
      * The rows when the shell already listed them (an older host's rows,
      * merged by the web UI); `None`: [`machines::page_rows`] of `page`.
      */
-    rows?: Array<AppMachinePageRow>
+    rows?: Array<AppMachinePageRow>,
+    /**
+     * What each machine's daemon reported of its health, by row id, for
+     * the machines whose `health_target` the shell checked
+     * ([`crate::machines_health`]).
+     */
+    health: Array<AppMachinesViewHealth>
 }
 
 /**
@@ -25361,7 +25650,8 @@ const FfiConverterTypeAppMachinesViewInput = (() => {
                 relay: FfiConverterSequenceTypeAppMachinesViewRelay.read(from),
                 host: FfiConverterOptionalTypeAppHostState.read(from),
                 about: FfiConverterTypeAppMachinesViewAbout.read(from),
-                rows: FfiConverterOptionalSequenceTypeAppMachinePageRow.read(from)
+                rows: FfiConverterOptionalSequenceTypeAppMachinePageRow.read(from),
+                health: FfiConverterSequenceTypeAppMachinesViewHealth.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -25370,13 +25660,15 @@ const FfiConverterTypeAppMachinesViewInput = (() => {
             FfiConverterOptionalTypeAppHostState.write(value.host, into);
             FfiConverterTypeAppMachinesViewAbout.write(value.about, into);
             FfiConverterOptionalSequenceTypeAppMachinePageRow.write(value.rows, into);
+            FfiConverterSequenceTypeAppMachinesViewHealth.write(value.health, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppMachinesPageInput.allocationSize(value.page) +
              FfiConverterSequenceTypeAppMachinesViewRelay.allocationSize(value.relay) +
              FfiConverterOptionalTypeAppHostState.allocationSize(value.host) +
              FfiConverterTypeAppMachinesViewAbout.allocationSize(value.about) +
-             FfiConverterOptionalSequenceTypeAppMachinePageRow.allocationSize(value.rows);
+             FfiConverterOptionalSequenceTypeAppMachinePageRow.allocationSize(value.rows) +
+             FfiConverterSequenceTypeAppMachinesViewHealth.allocationSize(value.health);
 
         }
     };
@@ -60870,6 +61162,15 @@ const FfiConverterSequenceTypeAppMachinesViewGroup = new FfiConverterArray(FfiCo
 // FfiConverter for AppMachinesViewRename | undefined
 const FfiConverterOptionalTypeAppMachinesViewRename = new FfiConverterOptional(FfiConverterTypeAppMachinesViewRename);
 
+// FfiConverter for AppHostActionId | undefined
+const FfiConverterOptionalTypeAppHostActionId = new FfiConverterOptional(FfiConverterTypeAppHostActionId);
+
+// FfiConverter for AppMachinesViewIssueAction | undefined
+const FfiConverterOptionalTypeAppMachinesViewIssueAction = new FfiConverterOptional(FfiConverterTypeAppMachinesViewIssueAction);
+
+// FfiConverter for Array<AppMachinesViewIssue>
+const FfiConverterSequenceTypeAppMachinesViewIssue = new FfiConverterArray(FfiConverterTypeAppMachinesViewIssue);
+
 // FfiConverter for Array<AppHostActionId>
 const FfiConverterSequenceTypeAppHostActionId = new FfiConverterArray(FfiConverterTypeAppHostActionId);
 
@@ -60888,6 +61189,9 @@ const FfiConverterOptionalTypeAppMachinesViewRemove = new FfiConverterOptional(F
 // FfiConverter for Array<AppMachinesViewMachine>
 const FfiConverterSequenceTypeAppMachinesViewMachine = new FfiConverterArray(FfiConverterTypeAppMachinesViewMachine);
 
+// FfiConverter for Array<AppMachinesViewCheck>
+const FfiConverterSequenceTypeAppMachinesViewCheck = new FfiConverterArray(FfiConverterTypeAppMachinesViewCheck);
+
 // FfiConverter for Array<AppMachinesViewRelay>
 const FfiConverterSequenceTypeAppMachinesViewRelay = new FfiConverterArray(FfiConverterTypeAppMachinesViewRelay);
 
@@ -60896,6 +61200,9 @@ const FfiConverterOptionalTypeAppHostState = new FfiConverterOptional(FfiConvert
 
 // FfiConverter for Array<AppMachinePageRow> | undefined
 const FfiConverterOptionalSequenceTypeAppMachinePageRow = new FfiConverterOptional(FfiConverterSequenceTypeAppMachinePageRow);
+
+// FfiConverter for Array<AppMachinesViewHealth>
+const FfiConverterSequenceTypeAppMachinesViewHealth = new FfiConverterArray(FfiConverterTypeAppMachinesViewHealth);
 
 // FfiConverter for Array<AppMenuPreviewRow>
 const FfiConverterSequenceTypeAppMenuPreviewRow = new FfiConverterArray(FfiConverterTypeAppMenuPreviewRow);
@@ -62622,9 +62929,13 @@ export default Object.freeze({
     FfiConverterTypeAppMachinesPageInput,
     FfiConverterTypeAppMachinesView,
     FfiConverterTypeAppMachinesViewAbout,
+    FfiConverterTypeAppMachinesViewCheck,
     FfiConverterTypeAppMachinesViewFact,
     FfiConverterTypeAppMachinesViewGroup,
+    FfiConverterTypeAppMachinesViewHealth,
     FfiConverterTypeAppMachinesViewInput,
+    FfiConverterTypeAppMachinesViewIssue,
+    FfiConverterTypeAppMachinesViewIssueAction,
     FfiConverterTypeAppMachinesViewMachine,
     FfiConverterTypeAppMachinesViewNewSpace,
     FfiConverterTypeAppMachinesViewRelay,

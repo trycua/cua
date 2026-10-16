@@ -130,9 +130,11 @@ impl HostSpacesService for FakeDaemon {
             .unwrap_or("")
             .to_string();
         self.callers.lock().unwrap().push(who);
+        // A forwarded call never names another machine to hop to.
+        let hop = !req.into_inner().machine.is_empty();
         Ok(tonic::Response::new(DiagnoseHostResponse {
             report: None,
-            cua_version: "9.9.9".into(),
+            cua_version: if hop { "hop".into() } else { "9.9.9".into() },
             os: "macos".into(),
         }))
     }
@@ -491,7 +493,9 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
     // not it provides Spaces, with the verified caller.
     let health = owner
         .host_spaces()
-        .diagnose_host(DiagnoseHostRequest {})
+        .diagnose_host(DiagnoseHostRequest {
+            machine: "another-machine".into(),
+        })
         .await
         .unwrap()
         .into_inner();

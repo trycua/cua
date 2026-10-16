@@ -9316,7 +9316,7 @@ pub struct AppMachinesViewCheck {
     /// What to do.
     pub remediation: String,
     /// `app`, `settings_url`, `free_gb`, ...
-    pub facts: BTreeMap<String, String>,
+    pub facts: std::collections::HashMap<String, String>,
 }
 
 /// What the shell got for one machine's health.

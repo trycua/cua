@@ -459,6 +459,15 @@ export const PAGES: PageSpec[] = [
     items: ['SpaceCreateOptions', 'SpaceCreateResult', 'SpaceCreateProgress', 'SpaceCreateListener', 'SpaceCancelOutcome', 'GpuSupport', 'GpuOption'],
   },
   {
+    slug: 'spaces/machine-health',
+    title: 'Machine health',
+    description: "A machine's health as its own cua daemon checks it: Local Network access, disk, virtualization, memory and permissions.",
+    intro:
+      '`Spaces.machine_health` asks a machine\'s cua daemon to check it (this machine with `None`, another of yours by id or name over the relay, the mesh or its direct address). The Machines page shows the warnings and failures as the machine\'s issues; `cua doctor --machine` prints them.',
+    members: [{ object: 'Spaces', title: 'Check a machine', methods: ['machine_health'] }],
+    items: ['MachineHealth', 'MachineHealthCheck'],
+  },
+  {
     slug: 'spaces/space',
     title: 'Space',
     description: 'A connected Space: shell, files, tools, windows and the hotspot.',

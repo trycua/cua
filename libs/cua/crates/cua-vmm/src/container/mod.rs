@@ -46,7 +46,7 @@ const LABEL_BACKEND: &str = "cua.vmm.backend";
 const LABEL_SIDECAR_OF: &str = "cua.sandbox.sidecar-of";
 /// Sidecar defaults, the same as a Fleet pod sidecar's (500m / 512Mi).
 const SIDECAR_NANO_CPUS: i64 = 500_000_000;
-const SIDECAR_MEMORY_BYTES: i64 = 512 * 1024 * 1024;
+pub(crate) const SIDECAR_MEMORY_BYTES: i64 = 512 * 1024 * 1024;
 /// Engine repository of `ensure_base` images (pulled images re-tagged).
 pub const BASE_REPO: &str = "cua-vmm/base";
 /// Engine repository of checkpoints and of the intermediate images this
@@ -234,6 +234,43 @@ impl ContainerRuntime {
 
     pub fn docker(&self) -> &Docker {
         &self.docker
+    }
+
+    /// Every container on this engine (sandboxes and their sidecars), its
+    /// status and its memory limit in MiB (a container with no limit counts
+    /// as the default 2 GiB). For sizing the built-in runtime's VM, which
+    /// runs nothing else.
+    pub async fn memory_reservations(&self) -> Result<Vec<(String, Status, u64)>> {
+        let rows = self
+            .docker
+            .list_containers(Some(ListContainersOptions {
+                all: true,
+                ..Default::default()
+            }))
+            .await
+            .map_err(engine_err)?;
+        let mut out = Vec::new();
+        for c in rows {
+            let Some(name) = c
+                .names
+                .as_ref()
+                .and_then(|n| n.first())
+                .map(|n| n.trim_start_matches('/').to_string())
+            else {
+                continue;
+            };
+            let Some(i) = self.inspect(&name).await? else {
+                continue;
+            };
+            let bytes = i
+                .host_config
+                .as_ref()
+                .and_then(|h| h.memory)
+                .filter(|b| *b > 0)
+                .unwrap_or(2048 << 20);
+            out.push((name, Self::status_from(&i), (bytes as u64) >> 20));
+        }
+        Ok(out)
     }
 
     /// NVIDIA GPUs for containers under `runtime` (`container` for runc,

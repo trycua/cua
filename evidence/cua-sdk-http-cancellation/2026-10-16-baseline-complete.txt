@@ -1,0 +1,393 @@
+$ node --test test/spaces-unit.test.mjs test/presence-netcode.test.mjs
+TAP version 13
+# Subtest: conformance: linear_interpolation_below_four_samples
+ok 1 - conformance: linear_interpolation_below_four_samples
+  ---
+  duration_ms: 3.985937
+  type: 'test'
+  ...
+# Subtest: conformance: catmull_rom_with_four_samples
+ok 2 - conformance: catmull_rom_with_four_samples
+  ---
+  duration_ms: 0.96026
+  type: 'test'
+  ...
+# Subtest: conformance: minimum_clock_offset_absorbs_jitter
+ok 3 - conformance: minimum_clock_offset_absorbs_jitter
+  ---
+  duration_ms: 0.48625
+  type: 'test'
+  ...
+# Subtest: conformance: extrapolate_100ms_then_hold
+ok 4 - conformance: extrapolate_100ms_then_hold
+  ---
+  duration_ms: 0.323698
+  type: 'test'
+  ...
+# Subtest: conformance: jump_over_a_quarter_snaps
+ok 5 - conformance: jump_over_a_quarter_snaps
+  ---
+  duration_ms: 0.646927
+  type: 'test'
+  ...
+# Subtest: conformance: target_change_snaps
+ok 6 - conformance: target_change_snaps
+  ---
+  duration_ms: 0.2725
+  type: 'test'
+  ...
+# Subtest: conformance: idle_cursor_fades_then_disappears
+ok 7 - conformance: idle_cursor_fades_then_disappears
+  ---
+  duration_ms: 1.662917
+  type: 'test'
+  ...
+# Subtest: conformance: own_cursor_is_local_with_server_shape
+ok 8 - conformance: own_cursor_is_local_with_server_shape
+  ---
+  duration_ms: 0.331563
+  type: 'test'
+  ...
+# Subtest: conformance: shape_changed_updates_a_remote_cursor
+ok 9 - conformance: shape_changed_updates_a_remote_cursor
+  ---
+  duration_ms: 0.816666
+  type: 'test'
+  ...
+# Subtest: conformance: heartbeat_drops_missing_then_silence_drops_all
+ok 10 - conformance: heartbeat_drops_missing_then_silence_drops_all
+  ---
+  duration_ms: 1.103281
+  type: 'test'
+  ...
+# Subtest: conformance: left_run_ended_removes_the_agent_cursor
+ok 11 - conformance: left_run_ended_removes_the_agent_cursor
+  ---
+  duration_ms: 0.414688
+  type: 'test'
+  ...
+# Subtest: conformance: hidden_cursor_is_not_drawn_and_reshow_snaps
+ok 12 - conformance: hidden_cursor_is_not_drawn_and_reshow_snaps
+  ---
+  duration_ms: 0.272344
+  type: 'test'
+  ...
+# Subtest: the idle fade curve
+ok 13 - the idle fade curve
+  ---
+  duration_ms: 0.233594
+  type: 'test'
+  ...
+# Subtest: every shape has art, unknown names draw the arrow
+ok 14 - every shape has art, unknown names draw the arrow
+  ---
+  duration_ms: 0.705625
+  type: 'test'
+  ...
+# Subtest: the roster follows shapes and drops participants a heartbeat omits
+ok 15 - the roster follows shapes and drops participants a heartbeat omits
+  ---
+  duration_ms: 1.511563
+  type: 'test'
+  ...
+# Subtest: placement cannot be defaulted into
+ok 16 - placement cannot be defaulted into
+  ---
+  duration_ms: 2.398437
+  type: 'test'
+  ...
+# Subtest: shared placement without the acknowledgement is refused with code isolation
+ok 17 - shared placement without the acknowledgement is refused with code isolation
+  ---
+  duration_ms: 0.539531
+  type: 'test'
+  ...
+# Subtest: a falsy-but-present acknowledgement is still refused
+ok 18 - a falsy-but-present acknowledgement is still refused
+  ---
+  duration_ms: 0.288333
+  type: 'test'
+  ...
+# Subtest: an acknowledged shared placement and a dedicated placement both pass
+ok 19 - an acknowledged shared placement and a dedicated placement both pass
+  ---
+  duration_ms: 0.231458
+  type: 'test'
+  ...
+# Subtest: the turn lock serializes turns in call order
+ok 20 - the turn lock serializes turns in call order
+  ---
+  duration_ms: 16.231094
+  type: 'test'
+  ...
+# Subtest: a failed turn does not wedge the Space forever
+ok 21 - a failed turn does not wedge the Space forever
+  ---
+  duration_ms: 0.429844
+  type: 'test'
+  ...
+# Subtest: the adapter emits only what is new between polls
+ok 22 - the adapter emits only what is new between polls
+  ---
+  duration_ms: 1019.362604
+  type: 'test'
+  ...
+# Subtest: every derived event says it is derived
+ok 23 - every derived event says it is derived
+  ---
+  duration_ms: 0.590105
+  type: 'test'
+  ...
+# Subtest: the adapter reports lost output instead of dropping it silently
+ok 24 - the adapter reports lost output instead of dropping it silently
+  ---
+  duration_ms: 0.991562
+  type: 'test'
+  ...
+# Subtest: a scrolled window with overlap emits only the unseen remainder
+ok 25 - a scrolled window with overlap emits only the unseen remainder
+  ---
+  duration_ms: 1.025781
+  type: 'test'
+  ...
+# Subtest: files and images are separated, links are captured, directories are not
+ok 26 - files and images are separated, links are captured, directories are not
+  ---
+  duration_ms: 1.186875
+  type: 'test'
+  ...
+# Subtest: approval detection fires only on a trailing prompt
+ok 27 - approval detection fires only on a trailing prompt
+  ---
+  duration_ms: 0.291823
+  type: 'test'
+  ...
+# Subtest: native CuaError variants map to stable codes
+ok 28 - native CuaError variants map to stable codes
+  ---
+  duration_ms: 0.564531
+  type: 'test'
+  ...
+# Subtest: startThread refuses bad input before any call
+ok 29 - startThread refuses bad input before any call
+  ---
+  duration_ms: 0.767083
+  type: 'test'
+  ...
+# Subtest: a thread's events stop when the run settles, with a state event per change
+ok 30 - a thread's events stop when the run settles, with a state event per change
+  ---
+  duration_ms: 10.120833
+  type: 'test'
+  ...
+# Subtest: events() is bounded even when the run never settles
+ok 31 - events() is bounded even when the run never settles
+  ---
+  duration_ms: 5.864688
+  type: 'test'
+  ...
+# Subtest: send is refused while a turn runs and delivered once idle; stop reports what it witnessed
+ok 32 - send is refused while a turn runs and delivered once idle; stop reports what it witnessed
+  ---
+  duration_ms: 0.909375
+  type: 'test'
+  ...
+# Subtest: send follows the server's published acceptsMessage, not the status word
+ok 33 - send follows the server's published acceptsMessage, not the status word
+  ---
+  duration_ms: 0.464896
+  type: 'test'
+  ...
+# Subtest: closing a dedicated thread deletes the Space it created
+ok 34 - closing a dedicated thread deletes the Space it created
+  ---
+  duration_ms: 0.336875
+  type: 'test'
+  ...
+# Subtest: McpSession handshakes once and turns isError into a ToolError with its kind
+ok 35 - McpSession handshakes once and turns isError into a ToolError with its kind
+  ---
+  duration_ms: 1.302813
+  type: 'test'
+  ...
+# Subtest: McpSession re-initializes once when the server says the session expired
+ok 36 - McpSession re-initializes once when the server says the session expired
+  ---
+  duration_ms: 0.402865
+  type: 'test'
+  ...
+# Subtest: TauriTransport carries messages through invoke and maps a notification to null
+ok 37 - TauriTransport carries messages through invoke and maps a notification to null
+  ---
+  duration_ms: 0.361511
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport sends the bearer, keeps the session id, and ends it on close
+ok 38 - McpHttpTransport sends the bearer, keeps the session id, and ends it on close
+  ---
+  duration_ms: 63.882813
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport reports a refused bearer as a 401 TransportError
+ok 39 - McpHttpTransport reports a refused bearer as a 401 TransportError
+  ---
+  duration_ms: 21.141563
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport rejects a pre-aborted listTools without sending it
+not ok 40 - McpHttpTransport rejects a pre-aborted listTools without sending it
+  ---
+  duration_ms: 26.230417
+  type: 'test'
+  location: '/tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:447:1'
+  failureType: 'testCodeFailure'
+  error: 'Missing expected rejection (abortedFetch).'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  stack: |-
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:453:5
+    async withMcpServer (file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:395:12)
+    async TestContext.<anonymous> (file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:448:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: McpHttpTransport aborts listTools while waiting for response headers
+ok 41 - McpHttpTransport aborts listTools while waiting for response headers
+  ---
+  duration_ms: 21.922968
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport keeps caller abort active through a partial response body
+not ok 42 - McpHttpTransport keeps caller abort active through a partial response body
+  ---
+  duration_ms: 1526.541197
+  type: 'test'
+  location: '/tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:478:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    The "abortedBody" validation function is expected to return "true". Received false
+    
+    Caught error:
+    
+    Error: test watchdog: SDK wait did not settle
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  stack: |-
+    async m.method.tools.name (file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:505:7)
+    async withMcpServer (file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:395:12)
+    async TestContext.<anonymous> (file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:483:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: McpHttpTransport keeps timeout active through a partial response body
+not ok 43 - McpHttpTransport keeps timeout active through a partial response body
+  ---
+  duration_ms: 1528.654583
+  type: 'test'
+  location: '/tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:478:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    The "abortedBody" validation function is expected to return "true". Received false
+    
+    Caught error:
+    
+    Error: test watchdog: SDK wait did not settle
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  stack: |-
+    async m.method.tools.name (file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:505:7)
+    async withMcpServer (file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:395:12)
+    async TestContext.<anonymous> (file:///tmp/cua-http-baseline-20261016/libs/cua/typescript/test/spaces-unit.test.mjs:483:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: McpHttpTransport succeeds with cancellation options and removes the listener
+ok 44 - McpHttpTransport succeeds with cancellation options and removes the listener
+  ---
+  duration_ms: 13.195156
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport reinitializes once after a real HTTP 404
+ok 45 - McpHttpTransport reinitializes once after a real HTTP 404
+  ---
+  duration_ms: 6.609687
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport maps an accepted notification with a body to null
+ok 46 - McpHttpTransport maps an accepted notification with a body to null
+  ---
+  duration_ms: 5.385886
+  type: 'test'
+  ...
+# Subtest: no control file means the app is not running, and that is said plainly
+ok 47 - no control file means the app is not running, and that is said plainly
+  ---
+  duration_ms: 2.395729
+  type: 'test'
+  ...
+# Subtest: a malformed control file is a protocol error, not a silent fallback
+ok 48 - a malformed control file is a protocol error, not a silent fallback
+  ---
+  duration_ms: 2.327292
+  type: 'test'
+  ...
+# Subtest: pin sends the bearer the app wrote and the space id
+ok 49 - pin sends the bearer the app wrote and the space id
+  ---
+  duration_ms: 6.11125
+  type: 'test'
+  ...
+# Subtest: a non-local id is refused here rather than sent for the app to reject with 400
+ok 50 - a non-local id is refused here rather than sent for the app to reject with 400
+  ---
+  duration_ms: 1.863698
+  type: 'test'
+  ...
+# Subtest: streamWindow requires a freshly-read token
+ok 51 - streamWindow requires a freshly-read token
+  ---
+  duration_ms: 1.746719
+  type: 'test'
+  ...
+# Subtest: streamWindow passes the replica flag through
+ok 52 - streamWindow passes the replica flag through
+  ---
+  duration_ms: 7.454688
+  type: 'test'
+  ...
+# Subtest: an HTTP 200 without an acknowledgement is an unproven effect, not a success
+ok 53 - an HTTP 200 without an acknowledgement is an unproven effect, not a success
+  ---
+  duration_ms: 4.958125
+  type: 'test'
+  ...
+# Subtest: a control-server error status surfaces with its status code
+ok 54 - a control-server error status surfaces with its status code
+  ---
+  duration_ms: 4.75849
+  type: 'test'
+  ...
+# Subtest: a control server that has gone away reads as host_unavailable
+ok 55 - a control server that has gone away reads as host_unavailable
+  ---
+  duration_ms: 3.335781
+  type: 'test'
+  ...
+# Subtest: the control file lives under CUA_HOME, like the Rust core
+ok 56 - the control file lives under CUA_HOME, like the Rust core
+  ---
+  duration_ms: 1.627031
+  type: 'test'
+  ...
+1..56
+# tests 56
+# suites 0
+# pass 53
+# fail 3
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4504.443175
+
+exit=1

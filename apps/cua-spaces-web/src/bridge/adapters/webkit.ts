@@ -210,6 +210,7 @@ export function fromHostView(v: MachinesView): MachinesView {
       ...m,
       toggles: m.toggles.map((t) => ({ ...t, actions: t.actions.map(actionId) })),
       noticeAction: m.noticeAction ? { ...m.noticeAction, id: actionId(m.noticeAction.id) } : m.noticeAction,
+      issues: m.issues?.map((i) => (i.action?.hostAction ? { ...i, action: { ...i.action, hostAction: actionId(i.action.hostAction) } } : i)),
     })),
   };
 }
@@ -662,6 +663,10 @@ export function createWebkitAdapter(
     "relay.usage": () => request<RelayUsage | null>("relay.usage"),
     "machines.rename": async ({ id, name }) => {
       await request("machines.rename", { id, name });
+      return null;
+    },
+    "machines.checkHealth": async () => {
+      await request("machines.checkHealth");
       return null;
     },
     "machines.remove": async ({ machine, device }) => {

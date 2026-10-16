@@ -1197,6 +1197,29 @@ pub async fn doctor_report() -> DoctorReport {
     auto::doctor().await
 }
 
+/// `RuntimeService.Doctor`'s answer: the runtime report, plus on macOS
+/// Local Network access as this process has it and which app macOS holds
+/// responsible for it (`local_network`). This process is the one that
+/// talks to the VMs (the daemon, or the SDK embedding it); a CLI's own
+/// connect would test the terminal's grant instead (CUA-1807).
+pub async fn doctor_response() -> cua_proto::daemon::v1::DoctorResponse {
+    let report = doctor_report().await;
+    let mut json = serde_json::to_value(&report).unwrap_or_default();
+    if cfg!(target_os = "macos")
+        && let Some(map) = json.as_object_mut()
+    {
+        let ln = cua_vmm::local_network::report(&cua_vmm::local_network::lume_base()).await;
+        map.insert(
+            "local_network".into(),
+            serde_json::to_value(ln).unwrap_or_default(),
+        );
+    }
+    cua_proto::daemon::v1::DoctorResponse {
+        checks: doctor_checks(&report),
+        report_json: json.to_string(),
+    }
+}
+
 /// The report as `cua.daemon.v1` checks (one per backend).
 pub fn doctor_checks(r: &DoctorReport) -> Vec<cua_proto::daemon::v1::RuntimeCheck> {
     use cua_proto::daemon::v1::{CheckStatus, RuntimeCheck};

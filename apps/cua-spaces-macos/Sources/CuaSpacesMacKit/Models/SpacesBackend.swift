@@ -41,6 +41,11 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// directory (`Spaces.relay_unregister`): Remove from account on the
     /// Machines page. The relay refuses one that is online.
     func relayUnregister(id: String) async throws
+    /// A machine's health as its own cua daemon checks it
+    /// (`Spaces.machine_health`): `nil` for this Mac, else another of your
+    /// machines by id, asked over the relay or mesh. The Machines page
+    /// shows its warnings and failures as the machine's issues.
+    func machineHealth(machine: String?) async throws -> AppMachinesViewHealth
     /// Turns a Space off (`on` false: suspended or stopped, as its provider
     /// can) or back on (`stop_space` / `start_space`).
     func setPower(id: String, on: Bool) async throws
@@ -126,6 +131,9 @@ public extension SpacesBackend {
     func lumeSource() async -> String? { nil }
     func relayUnregister(id: String) async throws {
         throw FixtureError(message: "Machines can't be removed here")
+    }
+    func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
+        throw FixtureError(message: "Machines can't be checked here")
     }
     func runningMacosVms() async -> Int? { nil }
     func setLumeSource(_ value: String) async throws {}
@@ -311,6 +319,17 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func relayUnregister(id: String) async throws {
         _ = try await cua.spaces().relayUnregister(space: id)
+    }
+
+    public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
+        let h = try await cua.spaces().machineHealth(machine: machine)
+        return AppMachinesViewHealth(
+            id: "",
+            checks: h.checks.map {
+                AppMachinesViewCheck(id: $0.id, status: $0.status, message: $0.message,
+                                     remediation: $0.remediation, facts: $0.facts)
+            },
+            cuaVersion: h.cuaVersion, error: nil)
     }
 
     public func remove(id: String, removeOnly: Bool) async throws {
@@ -671,6 +690,20 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
         await MainActor.run {
             unregistered.append(id)
             fixtureRows.removeAll { $0.id == id }
+        }
+    }
+
+    /// What `machineHealth` answers, by machine (`""` for this Mac); a
+    /// machine without an entry has no issues.
+    public var fixtureHealth: [String: AppMachinesViewHealth] = [:]
+    /// The machines `machineHealth` was asked about (`""` for this Mac).
+    public private(set) var healthChecked: [String] = []
+
+    public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
+        let key = machine ?? ""
+        return await MainActor.run {
+            healthChecked.append(key)
+            return fixtureHealth[key] ?? AppMachinesViewHealth(id: "", checks: [], cuaVersion: "", error: nil)
         }
     }
     /// The fixture cloud is connected (`cloud_connect` ran).

@@ -1615,6 +1615,7 @@ dependencies = [
  "cua-spaces-contract",
  "cua-spacesd-client",
  "cua-telemetry",
+ "cua-vmm",
  "futures-util",
  "hex",
  "http",

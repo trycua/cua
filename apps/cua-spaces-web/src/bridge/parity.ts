@@ -297,6 +297,8 @@ export interface ParityHandle extends NewSpaceParityHandle, TeleportParityHandle
   showHostForm(state: HostFormState, identity: string | null): void;
   /** These machine and device rows on the Machines page, at `now` (Unix seconds). */
   showMachines(rows: MachineRow[], now: number): void;
+  /** The Machines page the core draws for this `MachinesViewInput` (its machines' health included). */
+  showMachinesView(input: object): void;
   /** These persistent agents on the Agents page. */
   showAgents(agents: PersistentAgent[], nowMs: number): void;
   /** Sends usage events through the bridge; resolves once sent or dropped. */
@@ -360,6 +362,7 @@ export function installParityHandle(store: BridgeStore): () => void {
     showHost: (state) => store.showHost(state),
     showHostForm: (state, identity) => store.thisMachine.show(state, identity),
     showMachines: (rows, now) => store.showMachines(rows, now),
+    showMachinesView: (input) => store.showMachinesView(input),
     showAgents: (agents, nowMs) => store.showAgents(agents, nowMs),
     track: async (signals) => {
       await store.telemetry.track(signals);

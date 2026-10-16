@@ -97,6 +97,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "relay.usage": {},
   "machines.rename": { id: "m-studio", name: "Studio" },
   "machines.remove": { machine: "m-old", device: "dev_old" },
+  "machines.checkHealth": {},
   "checklist.get": {},
   "checklist.send": { action: { type: "done", step: "teleport" } },
   "presence.join": { spaceId: SPACE },

@@ -2,6 +2,7 @@
   "title": "Spaces",
   "pages": [
     "create",
+    "machine-health",
     "space",
     "volume",
     "volume-sync",

@@ -20,6 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::host::{HostActionId, HostConfirm, HostState};
 use crate::machines::{self, MachinePageRow, MachinesPageInput};
+pub use crate::machines_health::{
+    ISSUES_TITLE, MachinesViewCheck, MachinesViewHealth, MachinesViewIssue, MachinesViewIssueAction,
+};
 use crate::model::{Space, SpaceOs, SpaceProvider, SpaceStatus};
 
 /// A machine offline for this long goes under "Offline for 30+ days".
@@ -81,6 +84,11 @@ pub struct MachinesViewInput {
     /// merged by the web UI); `None`: [`machines::page_rows`] of `page`.
     #[serde(default)]
     pub rows: Option<Vec<MachinePageRow>>,
+    /// What each machine's daemon reported of its health, by row id, for
+    /// the machines whose `health_target` the shell checked
+    /// ([`crate::machines_health`]).
+    #[serde(default)]
+    pub health: Vec<MachinesViewHealth>,
 }
 
 /// One of the two switches on a machine's page.
@@ -203,6 +211,14 @@ pub struct MachinesViewMachine {
     pub line: String,
     /// Usable now (the green dot): online and sharing.
     pub online: bool,
+    /// The dot's tint for its issues: `warn`, `fail`, or empty.
+    #[serde(default)]
+    pub health: String,
+    /// What the shell passes to `Spaces.machine_health` to check it: empty
+    /// for This Mac, its id for another of your machines; `None` when it
+    /// can't be checked from here (offline, not yours).
+    #[serde(default)]
+    pub health_target: Option<String>,
     /// `macos`, `linux`, `windows`, or empty.
     pub os: String,
     /// The machine this app runs on.
@@ -217,6 +233,13 @@ pub struct MachinesViewMachine {
     /// Rename, when it can be renamed from here.
     #[serde(default)]
     pub rename: Option<MachinesViewRename>,
+    /// "Issues".
+    #[serde(default)]
+    pub issues_title: String,
+    /// What is wrong, one sentence each with its fix; empty when healthy
+    /// (the section is hidden then) or offline.
+    #[serde(default)]
+    pub issues: Vec<MachinesViewIssue>,
     /// One line over the switches (offline, signed out).
     #[serde(default)]
     pub notice: Option<String>,
@@ -316,7 +339,7 @@ fn spaces_n(n: usize) -> String {
 }
 
 /// "that Mac", "that PC", "that computer".
-fn that_machine(os: &str) -> &'static str {
+pub(crate) fn that_machine(os: &str) -> &'static str {
     match os {
         "macos" => "that Mac",
         "windows" => "that PC",
@@ -542,6 +565,12 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
     let mut old = vec![];
     let mut team_ids = vec![];
     let mut old_removes = vec![];
+    let local_version = rows
+        .iter()
+        .find(|r| r.current)
+        .and_then(|r| input.health.iter().find(|h| h.id == r.id))
+        .map(|h| h.cua_version.as_str())
+        .filter(|v| !v.is_empty());
     for row in &rows {
         let relay = input.relay.iter().find(|r| r.id == row.id);
         let team = !row.current && relay.is_some_and(|r| !r.role.is_empty() && r.role != "owner");
@@ -840,12 +869,33 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             .current
             .then(|| input.page.host_os.this_machine().to_string())
             .filter(|b| *b != name);
+        let issues = crate::machines_health::issues(
+            &crate::machines_health::Subject {
+                current: row.current,
+                live: row.current || live,
+                os: &row.os,
+                local_version,
+            },
+            input.health.iter().find(|h| h.id == row.id),
+            host.filter(|_| row.current),
+        );
         list.push(MachinesViewMachine {
             id: row.id.clone(),
             name,
             badge,
             line,
             online: live,
+            health: crate::machines_health::health_level(&issues),
+            health_target: crate::machines_health::health_target(
+                row.current,
+                row.online,
+                row.stopped_sharing,
+                row.device_only,
+                relay.is_some_and(|r| r.role == "owner" || r.role.is_empty()),
+                &row.id,
+            ),
+            issues_title: ISSUES_TITLE.into(),
+            issues,
             os: row.os.clone(),
             current: row.current,
             team,
@@ -1014,6 +1064,7 @@ mod tests {
     /// team machine.
     fn mockup() -> MachinesViewInput {
         MachinesViewInput {
+            health: vec![],
             page: MachinesPageInput {
                 spaces: vec![
                     space(
@@ -1075,6 +1126,7 @@ mod tests {
         let input = mockup();
         let rows = machines::page_rows(&input.page);
         let given = view(&MachinesViewInput {
+            health: vec![],
             rows: Some(rows),
             ..input.clone()
         });
@@ -1325,6 +1377,7 @@ mod tests {
     #[test]
     fn a_machine_that_stopped_sharing_reads_not_sharing_no_spaces() {
         let input = MachinesViewInput {
+            health: vec![],
             page: MachinesPageInput {
                 spaces: vec![space(serde_json::json!({
                     "id": "relay:b695", "name": "Adas-MacBook-Pro-2.local", "os": "macos",

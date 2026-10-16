@@ -2339,6 +2339,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_machine_health": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_notifications": {
       args: [FfiType.Handle, FfiType.Int8, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -4574,6 +4579,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_machine_health": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_notifications": {
       args: [],
       ret: FfiType.UInt16,
@@ -5639,6 +5649,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_hosts(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list_tools_json(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_spaces_machine_health(uniffiSelf: bigint, machine: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications(uniffiSelf: bigint, unreadOnly: number, sinceMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications_ack(uniffiSelf: bigint, ids: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notify_user(uniffiSelf: bigint, title: Uint8Array, body: Uint8Array, agent: Uint8Array): bigint;
@@ -6086,6 +6097,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_hosts(): number;
     uniffi_cua_sdk_checksum_method_spaces_list(): number;
     uniffi_cua_sdk_checksum_method_spaces_list_tools_json(): number;
+    uniffi_cua_sdk_checksum_method_spaces_machine_health(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications_ack(): number;
     uniffi_cua_sdk_checksum_method_spaces_notify_user(): number;

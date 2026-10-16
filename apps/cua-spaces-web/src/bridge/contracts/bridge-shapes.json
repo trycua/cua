@@ -1761,6 +1761,66 @@
               "online": {
                 "type": "boolean"
               },
+              "health": {
+                "type": "string"
+              },
+              "healthTarget": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "issuesTitle": {
+                "type": "string"
+              },
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "level": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "hostAction": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "level",
+                    "text"
+                  ]
+                }
+              },
               "os": {
                 "type": "string"
               },
@@ -4909,6 +4969,9 @@
     "loginItem.set": {
       "$ref": "#/$defs/LoginItemReport"
     },
+    "machines.checkHealth": {
+      "type": "null"
+    },
     "machines.list": {
       "type": "array",
       "items": {
@@ -6433,6 +6496,9 @@
     },
     "loginItem.set": {
       "$ref": "#/$defs/LoginItemReport"
+    },
+    "machines.checkHealth": {
+      "type": "null"
     },
     "machines.list": {
       "$ref": "#/$defs/WkMachines"

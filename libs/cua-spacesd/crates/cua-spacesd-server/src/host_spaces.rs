@@ -424,6 +424,21 @@ impl HostSpacesService for HostSpacesImpl {
             .await
     }
 
+    async fn diagnose_host(
+        &self,
+        request: Request<DiagnoseHostRequest>,
+    ) -> Result<Response<DiagnoseHostResponse>, Status> {
+        // Whether or not this machine provides Spaces: its health is the
+        // owner's to see either way (the daemon checks the caller).
+        let (mut client, who) = self.forward(&request, false).await?;
+        // This machine's own health only: never a hop to another machine.
+        let mut message = request.into_inner();
+        message.machine.clear();
+        client
+            .diagnose_host(with_caller(message, &who, Some(Duration::from_secs(30)))?)
+            .await
+    }
+
     async fn delete_host_space(
         &self,
         request: Request<DeleteHostSpaceRequest>,

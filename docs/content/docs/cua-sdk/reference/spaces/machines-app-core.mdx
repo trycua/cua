@@ -82,6 +82,16 @@ Returned by [`app_machines_view`](#app_machines_view).
 | `app_version` / `appVersion` | `String` |  | The app's version ("0.9.1"). |
 | `os_version` / `osVersion` | `String` |  | Its system and version ("macOS 26.5.2"). |
 
+## `AppMachinesViewCheck` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | `machine.local_network`, `machine.disk`, ... |
+| `status` | `String` |  | `pass`, `warn`, `fail`, `skip`. |
+| `message` | `String` |  | What it found. |
+| `remediation` | `String` |  | What to do. |
+| `facts` | `HashMap<String, String>` |  | `app`, `settings_url`, `free_gb`, ... |
+
 ## `AppMachinesViewFact` record
 
 | Field | Type | Default | Description |
@@ -99,6 +109,15 @@ Returned by [`app_machines_view`](#app_machines_view).
 | `ids` | `Vec<String>` |  | Its machines' ids, in order. |
 | `remove_all` / `removeAll` | [`Option<AppMachinesViewRemoveAll>`](#appmachinesviewremoveall-record) |  | Remove old machines. |
 
+## `AppMachinesViewHealth` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | The machine's row id (`this-mac`, a relay machine id). |
+| `checks` | [`Vec<AppMachinesViewCheck>`](#appmachinesviewcheck-record) |  | Its checks. |
+| `cua_version` / `cuaVersion` | `String` |  | The Cua version of the daemon that checked. |
+| `error` | `Option<String>` |  | Why it could not be checked, when it could not. |
+
 ## `AppMachinesViewInput` record
 
 Returned by [`app_machines_view_input_from_json`](#app_machines_view_input_from_json).
@@ -110,6 +129,24 @@ Returned by [`app_machines_view_input_from_json`](#app_machines_view_input_from_
 | `host` | [`Option<AppHostState>`](/cua-sdk/reference/spaces/app-core/this-machine#apphoststate-record) |  | This machine's host state (`None` while it loads). |
 | `about` | [`AppMachinesViewAbout`](#appmachinesviewabout-record) |  | This computer. |
 | `rows` | [`Option<Vec<AppMachinePageRow>>`](#appmachinepagerow-record) |  | The rows when the shell already listed them (an older host's rows, merged by the web UI); `None`: `machines.page_rows` of `page`. |
+| `health` | [`Vec<AppMachinesViewHealth>`](#appmachinesviewhealth-record) |  | What each machine's daemon reported of its health, by row id, for the machines whose `health_target` the shell checked (`crate.machines_health`). |
+
+## `AppMachinesViewIssue` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | The check it comes from (`machine.disk`, `service`, `version`). |
+| `level` | `String` |  | `warn` or `fail`. |
+| `text` | `String` |  | One plain sentence. |
+| `action` | [`Option<AppMachinesViewIssueAction>`](#appmachinesviewissueaction-record) |  | Its fix, when there is one here. |
+
+## `AppMachinesViewIssueAction` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `String` |  | "Open Local Network settings", "Free disk space", "Restart service". |
+| `url` | `Option<String>` |  | A System Settings pane to open (`host.openSettings`). |
+| `host_action` / `hostAction` | [`Option<AppHostActionId>`](/cua-sdk/reference/spaces/app-core/this-machine#apphostactionid-enum) |  | A host action to run (`host.action`). |
 
 ## `AppMachinesViewMachine` record
 
@@ -120,12 +157,16 @@ Returned by [`app_machines_view_input_from_json`](#app_machines_view_input_from_
 | `badge` | `Option<String>` |  | "This Mac" on the machine this app runs on. |
 | `line` | `String` |  | The row's one muted line ("2 Spaces running", "Ready for Spaces", "Offline · last seen 9 days ago"). |
 | `online` | `bool` |  | Usable now (the green dot): online and sharing. |
+| `health` | `String` |  | The dot's tint for its issues: `warn`, `fail`, or empty. |
+| `health_target` / `healthTarget` | `Option<String>` |  | What the shell passes to `Spaces.machine_health` to check it: empty for This Mac, its id for another of your machines; `None` when it can't be checked from here (offline, not yours). |
 | `os` | `String` |  | `macos`, `linux`, `windows`, or empty. |
 | `current` | `bool` |  | The machine this app runs on. |
 | `team` | `bool` |  | Someone shares it with you (a team machine). |
 | `status` | `String` |  | The page's status line ("Online", "Offline · last seen 9 days ago"). |
 | `shared_by` / `sharedBy` | `Option<String>` |  | After the status: who shares it ("Shared by your team"). |
 | `rename` | [`Option<AppMachinesViewRename>`](#appmachinesviewrename-record) |  | Rename, when it can be renamed from here. |
+| `issues_title` / `issuesTitle` | `String` |  | "Issues". |
+| `issues` | [`Vec<AppMachinesViewIssue>`](#appmachinesviewissue-record) |  | What is wrong, one sentence each with its fix; empty when healthy (the section is hidden then) or offline. |
 | `notice` | `Option<String>` |  | One line over the switches (offline, signed out). |
 | `notice_action` / `noticeAction` | [`Option<AppHostAction>`](/cua-sdk/reference/spaces/app-core/this-machine#apphostaction-record) |  | The notice's button (Sign In). |
 | `toggles` | [`Vec<AppMachinesViewToggle>`](#appmachinesviewtoggle-record) |  | Provide Spaces, then Share this desktop. |

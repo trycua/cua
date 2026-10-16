@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ChevronRightIcon, InfoIcon, LockIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, UsersIcon } from "lucide-react";
+import { ChevronRightIcon, CircleAlertIcon, InfoIcon, LockIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -13,6 +13,7 @@ import {
   useThisMachine,
   type Machine,
   type MachinesView,
+  type MachinesViewIssue,
   type MachinesViewMachine,
   type MachinesViewRemove,
   type MachinesViewToggle,
@@ -47,8 +48,19 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * core's `machines_view::view`, as the SwiftUI page draws it. A Space's own
  * actions (open, start, stop, teleport, drop files) stay on the Space.
  */
+/** How often the page asks the machines for their health while it is open. */
+const HEALTH_EVERY_MS = 60_000;
+
 function MachinesPage() {
-  const { data: machines = [], isLoading, error, setupGuide, view } = useMachines();
+  const { data: machines = [], isLoading, error, setupGuide, view, checkHealth } = useMachines();
+  // Each machine's issues come from its own daemon: asked on opening the
+  // page and every minute while it stays open.
+  useEffect(() => {
+    void checkHealth();
+    const timer = setInterval(() => void checkHealth(), HEALTH_EVERY_MS);
+    return () => clearInterval(timer);
+    // Once per visit: the hook's functions are new on every render.
+  }, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const { add } = Route.useSearch();
@@ -229,8 +241,11 @@ function MachineList({
   );
 }
 
-function StatusDot({ online, className }: { online: boolean; className?: string }) {
-  return <span aria-hidden className={cn("size-2 shrink-0 rounded-full", online ? "bg-success" : "bg-muted-foreground/45", className)} />;
+/** Green when usable, grey when not; amber or red when the machine has
+ * issues (`health`). */
+function StatusDot({ online, health, className }: { online: boolean; health?: string; className?: string }) {
+  const tint = health === "fail" ? "bg-destructive" : health === "warn" ? "bg-warning" : online ? "bg-success" : "bg-muted-foreground/45";
+  return <span aria-hidden data-machine-health={health || undefined} className={cn("size-2 shrink-0 rounded-full", tint, className)} />;
 }
 
 function MachineRow({
@@ -270,7 +285,7 @@ function MachineRow({
         selected ? "bg-brand/15" : "hover:bg-accent/60",
       )}
     >
-      <StatusDot online={m.online} />
+      <StatusDot online={m.online} health={m.health} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-medium">{m.name}</span>
@@ -354,6 +369,8 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
           </>
         ) : null}
       </p>
+
+      <MachineIssues machine={m} hidePermissions={Boolean(m.current && row?.panel?.permissionsTitle)} onFail={fail} />
 
       <div className="mt-[22px] overflow-hidden rounded-xl border bg-card" data-machine-toggles>
         {m.notice ? (
@@ -484,6 +501,45 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
 }
 
 /** New Space here: the wizard with this machine chosen. */
+/**
+ * What is wrong with the machine, from its own daemon: one sentence each,
+ * with its fix where there is one here. Nothing at all when it is healthy.
+ * `hidePermissions`: This Mac lists the permissions it needs already.
+ */
+function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: MachinesViewMachine; hidePermissions: boolean; onFail: (what: string) => (e: unknown) => void }) {
+  const { data: session } = useSession();
+  const host = useThisMachine(session?.identity ?? null);
+  const issues = (m.issues ?? []).filter((i) => !(hidePermissions && i.id.startsWith("machine.permissions.")));
+  if (!issues.length) return null;
+  const act = (i: MachinesViewIssue) => {
+    const a = i.action!;
+    const done = a.url ? host.openSettings(a.url) : a.hostAction ? host.run(a.hostAction) : Promise.resolve();
+    void Promise.resolve(done).catch(onFail(`Couldn't ${a.label.charAt(0).toLowerCase()}${a.label.slice(1)}`));
+  };
+  return (
+    <>
+      <h3 className="mt-[22px] mb-2 text-xs font-semibold text-muted-foreground">{m.issuesTitle || "Issues"}</h3>
+      <div className="overflow-hidden rounded-xl border bg-card" data-machine-issues>
+        {issues.map((i, n) => (
+          <div key={i.id} className={cn("flex items-center gap-2.5 px-4 py-2.5", n > 0 && "border-t")} data-machine-issue={i.id} data-level={i.level}>
+            {i.level === "fail" ? (
+              <CircleAlertIcon aria-label="Problem" className="size-3.5 shrink-0 text-destructive" />
+            ) : (
+              <TriangleAlertIcon aria-label="Warning" className="size-3.5 shrink-0 text-warning" />
+            )}
+            <span className="min-w-0 flex-1 text-[13px]">{i.text}</span>
+            {i.action ? (
+              <Button size="sm" variant="outline" className="shrink-0" disabled={host.busy} onClick={() => act(i)} data-machine-issue-action={i.id}>
+                {i.action.label}
+              </Button>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function NewSpaceHere({ machine: m }: { machine: MachinesViewMachine }) {
   const wizard = useNewSpaceWizard();
   const newSpace = useNewSpace();

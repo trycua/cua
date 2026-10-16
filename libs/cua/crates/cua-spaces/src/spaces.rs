@@ -1634,11 +1634,12 @@ impl Spaces {
                 }
             }
         };
+        let mut unavailable: Option<(String, String)> = None;
         let env = match options {
             None => None,
             Some(options) => match SpacesdClient::connect(options.probe_timeout(probe)).await {
                 Ok(env) => Some(env),
-                Err(cua_spacesd_client::Error::SpacesdNotAvailable { reason, .. }) => {
+                Err(cua_spacesd_client::Error::SpacesdNotAvailable { endpoint, reason }) => {
                     let generic_ok = matches!(id, SpaceId::Local { .. } | SpaceId::Cloud { .. })
                         || !services.is_empty();
                     if let SpaceId::Relay { machine_id } = &id
@@ -1666,6 +1667,7 @@ impl Spaces {
                         });
                     }
                     tracing::debug!(space = %id, %reason, "no cua-spacesd; a Space of declared services");
+                    unavailable = Some((endpoint, reason));
                     None
                 }
                 Err(e) => return Err(e.into()),
@@ -1692,6 +1694,9 @@ impl Spaces {
         }
         if let Some((kind, arch)) = platform {
             space.set_platform(kind, arch);
+        }
+        if let Some((endpoint, reason)) = unavailable {
+            space.set_spacesd_unavailable(endpoint, reason);
         }
         Ok(space)
     }

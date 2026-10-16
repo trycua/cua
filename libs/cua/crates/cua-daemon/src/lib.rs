@@ -38,6 +38,8 @@ pub mod fixtures;
 mod host_svc;
 pub mod identity;
 pub mod local;
+#[cfg(feature = "spaces")]
+pub mod machine_doctor;
 pub mod maintenance;
 #[cfg(feature = "server")]
 mod passthrough;

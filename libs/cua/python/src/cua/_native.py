@@ -1175,6 +1175,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications() != 10964:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications_ack() != 64477:
@@ -3835,6 +3837,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications.argtypes = (
     ctypes.c_uint64,
     ctypes.c_int8,
@@ -5414,6 +5421,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_machine_health.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_machine_health.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.restype = ctypes.c_uint16
@@ -15367,6 +15377,137 @@ class _UniffiFfiConverterTypeLocationInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.description, buf)
         _UniffiFfiConverterSequenceString.write(value.kinds, buf)
         _UniffiFfiConverterMapStringSequenceString.write(value.runtimes, buf)
+
+@dataclass
+class MachineHealthCheck:
+    """
+    One check of a machine's health ([`Spaces::machine_health`]).
+"""
+    def __init__(self, *, id:str, status:str, message:str, remediation:str, facts:dict[str, str]):
+        self.id = id
+        self.status = status
+        self.message = message
+        self.remediation = remediation
+        self.facts = facts
+
+
+
+
+    def __str__(self):
+        return "MachineHealthCheck(id={}, status={}, message={}, remediation={}, facts={})".format(self.id, self.status, self.message, self.remediation, self.facts)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.status != other.status:
+            return False
+        if self.message != other.message:
+            return False
+        if self.remediation != other.remediation:
+            return False
+        if self.facts != other.facts:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeMachineHealthCheck(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return MachineHealthCheck(
+            id=_UniffiFfiConverterString.read(buf),
+            status=_UniffiFfiConverterString.read(buf),
+            message=_UniffiFfiConverterString.read(buf),
+            remediation=_UniffiFfiConverterString.read(buf),
+            facts=_UniffiFfiConverterMapStringString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterString.check_lower(value.status)
+        _UniffiFfiConverterString.check_lower(value.message)
+        _UniffiFfiConverterString.check_lower(value.remediation)
+        _UniffiFfiConverterMapStringString.check_lower(value.facts)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterString.write(value.status, buf)
+        _UniffiFfiConverterString.write(value.message, buf)
+        _UniffiFfiConverterString.write(value.remediation, buf)
+        _UniffiFfiConverterMapStringString.write(value.facts, buf)
+
+class _UniffiFfiConverterSequenceTypeMachineHealthCheck(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeMachineHealthCheck.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeMachineHealthCheck.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeMachineHealthCheck.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class MachineHealth:
+    """
+    A machine's health as its own cua daemon checks it.
+"""
+    def __init__(self, *, cua_version:str, os:str, checks:typing.List[MachineHealthCheck], report_json:str):
+        self.cua_version = cua_version
+        self.os = os
+        self.checks = checks
+        self.report_json = report_json
+
+
+
+
+    def __str__(self):
+        return "MachineHealth(cua_version={}, os={}, checks={}, report_json={})".format(self.cua_version, self.os, self.checks, self.report_json)
+    def __eq__(self, other):
+        if self.cua_version != other.cua_version:
+            return False
+        if self.os != other.os:
+            return False
+        if self.checks != other.checks:
+            return False
+        if self.report_json != other.report_json:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeMachineHealth(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return MachineHealth(
+            cua_version=_UniffiFfiConverterString.read(buf),
+            os=_UniffiFfiConverterString.read(buf),
+            checks=_UniffiFfiConverterSequenceTypeMachineHealthCheck.read(buf),
+            report_json=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.cua_version)
+        _UniffiFfiConverterString.check_lower(value.os)
+        _UniffiFfiConverterSequenceTypeMachineHealthCheck.check_lower(value.checks)
+        _UniffiFfiConverterString.check_lower(value.report_json)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.cua_version, buf)
+        _UniffiFfiConverterString.write(value.os, buf)
+        _UniffiFfiConverterSequenceTypeMachineHealthCheck.write(value.checks, buf)
+        _UniffiFfiConverterString.write(value.report_json, buf)
 
 @dataclass
 class McpConfig:
@@ -34023,6 +34164,17 @@ class SpacesProtocol(typing.Protocol):
         The Spaces MCP `tools/list` result as JSON (the contract).
 """
         raise NotImplementedError
+    async def machine_health(self, machine: typing.Optional[str]) -> MachineHealth:
+        """
+        A machine's health as its own cua daemon checks it: Local Network
+        access (and which app macOS holds responsible), free disk,
+        virtualization, memory left by running Spaces, the permissions
+        sharing its desktop needs. `machine`: another of your machines, by
+        id or name (asked over the relay, the mesh or its direct address);
+        `None` for this one. Read-only; fails plainly when that machine is
+        offline, not yours, or runs a Cua that predates the check.
+"""
+        raise NotImplementedError
     async def notifications(self, unread_only: bool,since_ms: typing.Optional[int]) -> typing.List[NotificationInfo]:
         """
         The notifications feed, newest first.
@@ -34802,6 +34954,32 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def machine_health(self, machine: typing.Optional[str]) -> MachineHealth:
+        """
+        A machine's health as its own cua daemon checks it: Local Network
+        access (and which app macOS holds responsible), free disk,
+        virtualization, memory left by running Spaces, the permissions
+        sharing its desktop needs. `machine`: another of your machines, by
+        id or name (asked over the relay, the mesh or its direct address);
+        `None` for this one. Read-only; fails plainly when that machine is
+        offline, not yours, or runs a Cua that predates the check.
+"""
+
+        _UniffiFfiConverterOptionalString.check_lower(machine)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterOptionalString.lower(machine),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeMachineHealth.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -37946,6 +38124,8 @@ __all__ = [
     "StorageVolume",
     "LocalStorage",
     "LocationInfo",
+    "MachineHealthCheck",
+    "MachineHealth",
     "McpConfig",
     "MediaBridge",
     "MediaEvent",

@@ -10579,6 +10579,17 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func listToolsJson() async throws  -> String
 
     /**
+     * A machine's health as its own cua daemon checks it: Local Network
+     * access (and which app macOS holds responsible), free disk,
+     * virtualization, memory left by running Spaces, the permissions
+     * sharing its desktop needs. `machine`: another of your machines, by
+     * id or name (asked over the relay, the mesh or its direct address);
+     * `None` for this one. Read-only; fails plainly when that machine is
+     * offline, not yours, or runs a Cua that predates the check.
+     */
+    func machineHealth(machine: String?) async throws  -> MachineHealth
+
+    /**
      * Publishes `space` on the cua.ai relay as a machine of the signed-in
      * account, the way `cua host setup` publishes this computer: the
      * Space's own driver dials out, so the account's other devices (a
@@ -11528,6 +11539,32 @@ open func listToolsJson()async throws  -> String  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * A machine's health as its own cua daemon checks it: Local Network
+     * access (and which app macOS holds responsible), free disk,
+     * virtualization, memory left by running Spaces, the permissions
+     * sharing its desktop needs. `machine`: another of your machines, by
+     * id or name (asked over the relay, the mesh or its direct address);
+     * `None` for this one. Read-only; fails plainly when that machine is
+     * offline, not yours, or runs a Cua that predates the check.
+     */
+open func machineHealth(machine: String?)async throws  -> MachineHealth  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_machine_health(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionString.lower(machine)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeMachineHealth_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -24019,6 +24056,198 @@ public func FfiConverterTypeLocationInfo_lift(_ buf: RustBuffer) throws -> Locat
 #endif
 public func FfiConverterTypeLocationInfo_lower(_ value: LocationInfo) -> RustBuffer {
     return FfiConverterTypeLocationInfo.lower(value)
+}
+
+
+/**
+ * A machine's health as its own cua daemon checks it.
+ */
+public struct MachineHealth: Equatable, Hashable {
+    /**
+     * The Cua version of the daemon that checked.
+     */
+    public var cuaVersion: String
+    /**
+     * `macos`, `linux`, `windows`.
+     */
+    public var os: String
+    /**
+     * Every check, in order.
+     */
+    public var checks: [MachineHealthCheck]
+    /**
+     * The whole report as JSON (the schema `cua doctor --json` writes).
+     */
+    public var reportJson: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Cua version of the daemon that checked.
+         */cuaVersion: String,
+        /**
+         * `macos`, `linux`, `windows`.
+         */os: String,
+        /**
+         * Every check, in order.
+         */checks: [MachineHealthCheck],
+        /**
+         * The whole report as JSON (the schema `cua doctor --json` writes).
+         */reportJson: String) {
+        self.cuaVersion = cuaVersion
+        self.os = os
+        self.checks = checks
+        self.reportJson = reportJson
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MachineHealth: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMachineHealth: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MachineHealth {
+        return
+            try MachineHealth(
+                cuaVersion: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                checks: FfiConverterSequenceTypeMachineHealthCheck.read(from: &buf),
+                reportJson: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MachineHealth, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.cuaVersion, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterSequenceTypeMachineHealthCheck.write(value.checks, into: &buf)
+        FfiConverterString.write(value.reportJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMachineHealth_lift(_ buf: RustBuffer) throws -> MachineHealth {
+    return try FfiConverterTypeMachineHealth.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMachineHealth_lower(_ value: MachineHealth) -> RustBuffer {
+    return FfiConverterTypeMachineHealth.lower(value)
+}
+
+
+/**
+ * One check of a machine's health ([`Spaces::machine_health`]).
+ */
+public struct MachineHealthCheck: Equatable, Hashable {
+    /**
+     * `machine.local_network`, `machine.disk`, `machine.virtualization`,
+     * `machine.memory`, `machine.permissions.<id>`.
+     */
+    public var id: String
+    /**
+     * `pass`, `warn`, `fail` or `skip`.
+     */
+    public var status: String
+    /**
+     * What it found, in one line.
+     */
+    public var message: String
+    /**
+     * What to do about a warning or failure.
+     */
+    public var remediation: String
+    /**
+     * What a UI needs to word it and offer its fix (`app`, `settings_url`,
+     * `free_gb`, ...).
+     */
+    public var facts: [String: String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `machine.local_network`, `machine.disk`, `machine.virtualization`,
+         * `machine.memory`, `machine.permissions.<id>`.
+         */id: String,
+        /**
+         * `pass`, `warn`, `fail` or `skip`.
+         */status: String,
+        /**
+         * What it found, in one line.
+         */message: String,
+        /**
+         * What to do about a warning or failure.
+         */remediation: String,
+        /**
+         * What a UI needs to word it and offer its fix (`app`, `settings_url`,
+         * `free_gb`, ...).
+         */facts: [String: String]) {
+        self.id = id
+        self.status = status
+        self.message = message
+        self.remediation = remediation
+        self.facts = facts
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MachineHealthCheck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMachineHealthCheck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MachineHealthCheck {
+        return
+            try MachineHealthCheck(
+                id: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                remediation: FfiConverterString.read(from: &buf),
+                facts: FfiConverterDictionaryStringString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MachineHealthCheck, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterString.write(value.remediation, into: &buf)
+        FfiConverterDictionaryStringString.write(value.facts, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMachineHealthCheck_lift(_ buf: RustBuffer) throws -> MachineHealthCheck {
+    return try FfiConverterTypeMachineHealthCheck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMachineHealthCheck_lower(_ value: MachineHealthCheck) -> RustBuffer {
+    return FfiConverterTypeMachineHealthCheck.lower(value)
 }
 
 
@@ -38608,6 +38837,31 @@ fileprivate struct FfiConverterSequenceTypeLocationInfo: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMachineHealthCheck: FfiConverterRustBuffer {
+    typealias SwiftType = [MachineHealthCheck]
+
+    public static func write(_ value: [MachineHealthCheck], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMachineHealthCheck.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MachineHealthCheck] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MachineHealthCheck]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMachineHealthCheck.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeNotificationInfo: FfiConverterRustBuffer {
     typealias SwiftType = [NotificationInfo]
 
@@ -41240,6 +41494,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_relay_register() != 31691) {

@@ -54,6 +54,15 @@ async function mockupView(): Promise<MachinesView> {
   return core.call<MachinesView>("machines.view", { input: fixture.views[0].input });
 }
 
+/** The mockup with each machine's health as its daemon reported it
+ * (`parity/machines.json`, the view "the mockup with issues"). */
+async function issuesView(): Promise<MachinesView> {
+  const fixture = JSON.parse(readFileSync(resolve(process.cwd(), "../../libs/cua/crates/cua-spaces-app-core/parity/machines.json"), "utf8"));
+  const v = (fixture.views as { name: string; input: object }[]).find((x) => x.name.startsWith("the mockup with issues"))!;
+  const core = await testCore();
+  return core.call<MachinesView>("machines.view", { input: v.input });
+}
+
 function hostDrawn(view: MachinesView, calls: [string, unknown][]): TestHost {
   const rows: MachineRow[] = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [] }));
   return {
@@ -61,7 +70,7 @@ function hostDrawn(view: MachinesView, calls: [string, unknown][]): TestHost {
     listsGhost: false,
     answer: (op, out) => (op === "machines.list" ? rows : out),
     intercept: (op, args) => {
-      if (op === "machines.remove" || op === "machines.rename") {
+      if (op === "machines.remove" || op === "machines.rename" || op === "machines.checkHealth" || op === "host.openSettings" || op === "host.action") {
         calls.push([op, args]);
         return null;
       }
@@ -171,12 +180,13 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(dialog.textContent).toContain("Remove “Cua BYOC tests” from your account?");
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(calls).toEqual([]);
+    const changes = () => calls.filter(([op]) => op !== "machines.checkHealth");
+    expect(changes()).toEqual([]);
 
     fireEvent.click(remove);
     dialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
-    await waitFor(() => expect(calls).toEqual([["machines.remove", { machine: "byoc", device: "dev_byoc" }]]));
+    await waitFor(() => expect(changes()).toEqual([["machines.remove", { machine: "byoc", device: "dev_byoc" }]]));
   });
 
   it("a team machine has no Remove and says its owner changes it", async () => {
@@ -190,5 +200,63 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(detail.querySelector("[data-machine-toggles-note]")?.textContent).toBe("Its owner changes this on that Mac.");
     expect(detail.querySelector("[data-machine-remove]")).toBeNull();
     expect(detail.querySelector("[data-machine-rename]")).toBeNull();
+  });
+
+  it("shows a machine's issues with their fixes, tints its dot, and shows nothing for a healthy or offline machine", async () => {
+    const view = await issuesView();
+    const calls: [string, unknown][] = [];
+    const { router } = await mountApp("/machines", hostDrawn(view, calls));
+    await router.load();
+    await screen.findByText(view.summary);
+    // The page asks the machines for their health once it opens.
+    await waitFor(() => expect(calls.some(([op]) => op === "machines.checkHealth")).toBe(true));
+
+    // The dots: red for This Mac, amber for the Mac Studio, none on the rest.
+    const tint = (id: string) => document.querySelector(`[data-machine-id="${id}"] [data-machine-health]`)?.getAttribute("data-machine-health") ?? null;
+    expect([tint("this-mac"), tint("studio"), tint("byoc"), tint("old1")]).toEqual(["fail", "warn", null, null]);
+
+    // This Mac: Local Network (fail) and disk (warn), each with its fix.
+    let detail = await detailOf("Ada's MacBook Pro");
+    const issues = () => [...detail.querySelectorAll<HTMLElement>("[data-machine-issue]")];
+    expect(issues().map((i) => [i.dataset.machineIssue, i.dataset.level])).toEqual([
+      ["machine.local_network", "fail"],
+      ["machine.disk", "warn"],
+    ]);
+    expect(issues()[0]!.textContent).toContain("Local Network access is off for Cua Spaces.");
+    fireEvent.click(within(issues()[0]!).getByRole("button", { name: "Open Local Network settings" }));
+    await waitFor(() =>
+      expect(calls).toContainEqual(["host.openSettings", { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork" }]),
+    );
+    expect(within(issues()[1]!).getByRole("button", { name: "Free disk space" })).toBeTruthy();
+
+    // The Mac Studio: said there, with no buttons (its settings are on it).
+    select("studio");
+    detail = await detailOf("cua's Mac Studio");
+    expect(issues().map((i) => i.textContent)).toEqual([
+      "Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
+      "It runs Cua 0.3.9, older than this Mac’s 0.4.1. Update Cua on it.",
+    ]);
+    expect(detail.querySelector("[data-machine-issue-action]")).toBeNull();
+
+    // Healthy (the team machine) and offline (old checks not shown): no section.
+    for (const [id, name] of [["team", "build-mini-01"], ["byoc", "Cua BYOC tests"]] as const) {
+      select(id);
+      detail = await detailOf(name);
+      expect(detail.querySelector("[data-machine-issues]")).toBeNull();
+      expect(detail.textContent).not.toContain("Issues");
+    }
+  });
+
+  it("a Restart service fix runs the host action", async () => {
+    const view = await issuesView();
+    const mac = view.machines.find((m) => m.current)!;
+    mac.issues = [{ id: "service", level: "fail", text: "The Cua service isn’t running.", action: { label: "Restart service", hostAction: "resume-sharing" } }];
+    mac.health = "fail";
+    const calls: [string, unknown][] = [];
+    const { router } = await mountApp("/machines", hostDrawn(view, calls));
+    await router.load();
+    const detail = await detailOf("Ada's MacBook Pro");
+    fireEvent.click(within(detail).getByRole("button", { name: "Restart service" }));
+    await waitFor(() => expect(calls.some(([op, a]) => op === "host.action" && JSON.stringify(a).includes("resume-sharing"))).toBe(true));
   });
 });

@@ -689,6 +689,21 @@ const MachinesViewShape = ref(
         badge: optNull(str),
         line: str,
         online: bool,
+        // The machine's issues (`machines_health`): a host that predates
+        // them sends none.
+        health: opt(str),
+        healthTarget: optNull(str),
+        issuesTitle: opt(str),
+        issues: opt(
+          list(
+            object({
+              id: str,
+              level: str,
+              text: str,
+              action: optNull(object({ label: str, url: optNull(str), hostAction: optNull(str) })),
+            }),
+          ),
+        ),
         os: str,
         current: bool,
         team: bool,
@@ -874,6 +889,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
 
   "machines.rename": nul,
   "machines.remove": nul,
+  "machines.checkHealth": nul,
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
   "relay.usage": nullable(
     obj<RelayUsage>()({
@@ -1269,6 +1285,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "relay.usage": OP_SHAPES["relay.usage"],
   "machines.rename": nul,
   "machines.remove": nul,
+  "machines.checkHealth": nul,
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
 };

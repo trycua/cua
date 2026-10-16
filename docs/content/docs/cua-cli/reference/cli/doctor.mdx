@@ -39,6 +39,7 @@ cua doctor [OPTIONS] [TARGET]
 | <span id="cua-doctor--expect-manifest"></span>`--expect-manifest` | path |  |  | The image's claims (manifest JSON), for the shim or to override the guest's own. |
 | <span id="cua-doctor--out"></span>`--out` | path |  |  | Also write the JSON report here. |
 | <span id="cua-doctor--junit"></span>`--junit` | path |  |  | Also write JUnit XML here. |
+| <span id="cua-doctor--machine"></span>`--machine` | string |  |  | Check a machine's health instead, as its own cua daemon sees it (the checks the Machines page shows): another of your machines by name or id, over the relay, the mesh or its direct address, or `this`. |
 | <span id="cua-doctor--expect"></span>`--expect` | string |  |  | Fail unless the build running in the guest is the expected one: COMPONENT=WANT with WANT `sha256:<hex>` (the executable), `git:<sha>` or a version (repeatable). Components: cua-spacesd, cua-driver, or an overlay name. `cua sb create --overlay` prints the sha256 to pass. |
 | <span id="cua-doctor--strict"></span>`--strict` | boolean | `false` |  | Fail on warnings and on required checks that were skipped. |
 | <span id="cua-doctor--no-host"></span>`--no-host` | boolean | `false` |  | Skip the host checks. |

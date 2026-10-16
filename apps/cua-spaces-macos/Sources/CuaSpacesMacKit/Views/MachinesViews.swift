@@ -264,7 +264,7 @@ struct MachinePage: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    StatusDot(online: m.online, health: m.health, size: 7)
+                    StatusDot(online: m.online, size: 7)
                     Text(m.status)
                     if let by = m.sharedBy {
                         Text("\u{b7}").foregroundStyle(.tertiary)

@@ -1786,7 +1786,7 @@ mod tests {
     fn recording(
         calls: &std::sync::Mutex<Vec<String>>,
         group: &'static str,
-        sudo_ok: bool,
+        failing: &'static str,
     ) -> impl AsyncFn(&str, &[&str]) -> Result<String> {
         async move |program: &str, args: &[&str]| {
             calls
@@ -1796,8 +1796,10 @@ mod tests {
             match program {
                 "stat" => Ok(format!("{group}\n")),
                 "id" => Ok("alice\n".to_string()),
-                _ if sudo_ok => Ok(String::new()),
-                _ => Err(VmmError::PermissionDenied("a password is required".into())),
+                _ if args.contains(&failing) => {
+                    Err(VmmError::PermissionDenied("a password is required".into()))
+                }
+                _ => Ok(String::new()),
             }
         }
     }
@@ -1806,41 +1808,91 @@ mod tests {
         Err(std::io::ErrorKind::PermissionDenied.into())
     }
 
+    fn denied_until_setfacl(
+        calls: &std::sync::Mutex<Vec<String>>,
+    ) -> impl Fn() -> std::io::Result<()> {
+        move || match calls.lock().unwrap().iter().any(|c| c.contains("setfacl")) {
+            true => Ok(()),
+            false => denied(),
+        }
+    }
+
     #[tokio::test]
-    async fn denied_kvm_adds_the_user_to_the_kvm_group_with_sudo() {
+    async fn denied_kvm_adds_the_user_to_the_kvm_group_then_grants_it_now() {
         let calls = Default::default();
         let note = grant_kvm(
-            denied(),
+            denied_until_setfacl(&calls),
             Some("bob".into()),
             false,
-            recording(&calls, "kvm", true),
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            calls.into_inner().unwrap(),
+            [
+                "stat -c %G /dev/kvm",
+                "sudo -n usermod -aG kvm bob",
+                "sudo -n setfacl -m u:bob:rw /dev/kvm",
+            ]
+        );
+        assert_eq!(note, "added bob to the kvm group and granted /dev/kvm now");
+    }
+
+    #[tokio::test]
+    async fn a_failed_setfacl_still_adds_the_group_with_a_relogin_note() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied_until_setfacl(&calls),
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", "setfacl"),
         )
         .await
         .unwrap()
         .unwrap();
         let calls = calls.into_inner().unwrap();
-        let sudo = calls.last().unwrap();
-        assert!(sudo.starts_with("sudo -n usermod -aG kvm "), "{calls:?}");
-        assert!(note.starts_with("added "), "{note}");
+        assert!(calls.contains(&"sudo -n usermod -aG kvm bob".to_string()));
+        assert!(note.starts_with("added bob to the kvm group; "), "{note}");
         assert!(note.contains("log out and back in"), "{note}");
         assert!(note.contains("newgrp kvm"), "{note}");
+    }
+
+    #[tokio::test]
+    async fn kvm_still_denied_after_setfacl_keeps_the_relogin_note() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied,
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            calls.into_inner().unwrap().last().unwrap(),
+            "sudo -n setfacl -m u:bob:rw /dev/kvm"
+        );
+        assert!(note.contains("log out and back in"), "{note}");
     }
 
     #[tokio::test]
     async fn an_empty_user_falls_back_to_id_un() {
         let calls = Default::default();
         let note = grant_kvm(
-            denied(),
+            denied_until_setfacl(&calls),
             Some(String::new()),
             false,
-            recording(&calls, "kvm", true),
+            recording(&calls, "kvm", ""),
         )
         .await
         .unwrap()
         .unwrap();
         let calls = calls.into_inner().unwrap();
         assert!(calls.contains(&"id -un".to_string()), "{calls:?}");
-        assert_eq!(calls.last().unwrap(), "sudo -n usermod -aG kvm alice");
+        assert!(calls.contains(&"sudo -n usermod -aG kvm alice".to_string()));
         assert!(note.starts_with("added alice "), "{note}");
     }
 
@@ -1848,25 +1900,27 @@ mod tests {
     async fn denied_kvm_without_sudo_is_an_error_naming_the_usermod_fix() {
         let calls = Default::default();
         let err = grant_kvm(
-            denied(),
+            denied,
             Some("bob".into()),
             false,
-            recording(&calls, "kvm", false),
+            recording(&calls, "kvm", "usermod"),
         )
         .await
         .unwrap_err();
         assert_eq!(err.to_string(), host::kvm_hint(&denied().unwrap_err()));
         assert!(err.to_string().contains("sudo usermod -aG kvm"), "{err}");
+        let calls = calls.into_inner().unwrap();
+        assert!(!calls.iter().any(|c| c.contains("setfacl")), "{calls:?}");
     }
 
     #[tokio::test]
     async fn kvm_owned_by_another_group_is_the_hint_without_sudo() {
         let calls = Default::default();
         let err = grant_kvm(
-            denied(),
+            denied,
             Some("bob".into()),
             false,
-            recording(&calls, "root", true),
+            recording(&calls, "root", ""),
         )
         .await
         .unwrap_err();
@@ -1878,12 +1932,12 @@ mod tests {
     #[tokio::test]
     async fn missing_kvm_runs_nothing_and_is_only_a_note() {
         let calls = Default::default();
-        let missing = Err(std::io::ErrorKind::NotFound.into());
+        let missing = || Err(std::io::ErrorKind::NotFound.into());
         let note = grant_kvm(
             missing,
             Some("bob".into()),
             false,
-            recording(&calls, "kvm", true),
+            recording(&calls, "kvm", ""),
         )
         .await
         .unwrap()
@@ -1893,19 +1947,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dry_run_only_says_it_would_add_the_user() {
+    async fn dry_run_only_says_it_would_add_the_user_and_grant_kvm() {
         let calls = Default::default();
         let note = grant_kvm(
-            denied(),
+            denied,
             Some("bob".into()),
             true,
-            recording(&calls, "kvm", true),
+            recording(&calls, "kvm", ""),
         )
         .await
         .unwrap()
         .unwrap();
-        assert!(note.starts_with("would: add "), "{note}");
-        assert!(note.ends_with(" to the kvm group"), "{note}");
+        assert!(
+            note.starts_with("would: add bob to the kvm group"),
+            "{note}"
+        );
+        assert!(note.contains("grant it /dev/kvm now (setfacl)"), "{note}");
         assert!(calls.lock().unwrap().is_empty());
     }
 

@@ -1943,12 +1943,12 @@ mod tests {
         })
     }
 
-    async fn setup_names(
+    async fn setup_steps(
         report: cua_vmm::auto::DoctorReport,
         components: &[&str],
         dry_run: bool,
         installs: bool,
-    ) -> Vec<String> {
+    ) -> Vec<(String, cua_proto::daemon::v1::CheckStatus)> {
         let components: Vec<String> = components.iter().map(|c| c.to_string()).collect();
         let install = async || match installs {
             true => Ok(()),
@@ -1959,42 +1959,51 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .map(|s| s.name)
+            .map(|s| (s.name, s.status.try_into().unwrap()))
             .collect()
+    }
+
+    fn steps(
+        steps: &[(&str, cua_proto::daemon::v1::CheckStatus)],
+    ) -> Vec<(String, cua_proto::daemon::v1::CheckStatus)> {
+        steps.iter().map(|(n, s)| (n.to_string(), *s)).collect()
     }
 
     #[tokio::test]
     async fn the_kvm_step_follows_qemu_once_it_is_present() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
         assert_eq!(
-            setup_names(qemu_report(false), &[], false, true).await,
-            ["qemu", "kvm"]
+            setup_steps(qemu_report(false), &[], false, true).await,
+            steps(&[("qemu", Ok), ("kvm", Ok)])
         );
         assert_eq!(
-            setup_names(qemu_report(true), &["qemu"], false, true).await,
-            ["qemu", "kvm"]
+            setup_steps(qemu_report(true), &["qemu"], false, true).await,
+            steps(&[("qemu", Ok), ("kvm", Ok)])
         );
         assert_eq!(
-            setup_names(qemu_report(false), &["qemu"], true, true).await,
-            ["qemu", "kvm"]
+            setup_steps(qemu_report(false), &["qemu"], true, true).await,
+            steps(&[("qemu", Installable), ("kvm", Ok)])
         );
     }
 
     #[tokio::test]
     async fn a_failed_qemu_install_has_no_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
         assert_eq!(
-            setup_names(qemu_report(false), &["qemu"], false, false).await,
-            ["qemu"]
+            setup_steps(qemu_report(false), &["qemu"], false, false).await,
+            steps(&[("qemu", Error)])
         );
     }
 
     #[tokio::test]
     async fn components_without_qemu_have_no_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
         assert_eq!(
-            setup_names(qemu_report(false), &["lume"], false, false).await,
-            ["lume"]
+            setup_steps(qemu_report(false), &["lume"], false, false).await,
+            steps(&[("lume", Error)])
         );
         assert!(
-            setup_names(qemu_report(true), &[], false, true)
+            setup_steps(qemu_report(true), &[], false, true)
                 .await
                 .is_empty()
         );
@@ -2002,11 +2011,15 @@ mod tests {
 
     #[tokio::test]
     async fn installed_qemu_denied_kvm_still_gets_a_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Ok;
         let mut report = qemu_report(false);
         report.backends[0].provisionable = false;
         report.qemu.qemu_img = Some("/usr/bin/qemu-img".into());
         let system = Some("/usr/bin/qemu-system-x86_64".into());
         report.qemu.binaries.insert("x86_64".into(), system);
-        assert_eq!(setup_names(report, &[], false, true).await, ["kvm"]);
+        assert_eq!(
+            setup_steps(report, &[], false, true).await,
+            steps(&[("kvm", Ok)])
+        );
     }
 }

@@ -362,6 +362,11 @@ public struct OnboardingView: View {
                 ForEach(onboarding.agentSummaries, id: \.line) { s in
                     Text(s.line).lineLimit(1).help(([s.text] + s.failed).joined(separator: "\n"))
                         .foregroundStyle(s.failed.isEmpty ? Color.primary : Color.red)
+                    // Why it failed and how to fix it (cua-driver missing).
+                    ForEach(s.failed, id: \.self) { f in
+                        Text(f).font(.caption).foregroundStyle(Color.red)
+                            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    }
                 }
             } else if onboarding.agentStatuses == nil {
                 Text(copy.agentsLooking).foregroundStyle(.secondary)

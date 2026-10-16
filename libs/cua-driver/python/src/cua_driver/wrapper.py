@@ -46,8 +46,6 @@ def get_binary_path() -> Path:
             f"This package may not have been built correctly for {sys.platform}."
         )
 
-    # Restore a lost executable bit on Unix. Only the owner may chmod, and a
-    # shared install (root-owned venv, read-only image) is already executable.
     if sys.platform != "win32" and not os.access(binary_path, os.X_OK):
         os.chmod(binary_path, 0o755)
 

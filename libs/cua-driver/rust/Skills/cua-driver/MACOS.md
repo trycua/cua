@@ -571,11 +571,22 @@ move is the px form of `type_text`: focus and type in one call.
 ## Navigating native menu bars (AXMenuBar)
 
 Use `invoke_menu({pid, window_id, path:[...]})` when the desired command has a
-known native application-menu path. The tool temporarily activates the exact
-target window because the on-screen macOS menu bar belongs to the frontmost
-application, resolves each immediate child from live AX state, uses only
-`AXPress`/`AXPick`-class actions, and restores the prior application afterward
-on a best-effort basis.
+known native application-menu path. It resolves each immediate child from live
+AX state and uses only `AXPress`/`AXPick`-class actions. Where the target sits
+decides how:
+
+- **App in the background:** the whole path is resolved without opening a menu
+  and the app is never activated (see the AXMenuBar rule above).
+- **Another window of the app the user is in** (the app is frontmost, the
+  target is not its key window): the target is made key for the press through
+  the in-app key-window record, with no raise and no activation, the item is
+  pressed without opening its menu, and key goes back to the user's window. When
+  the target cannot be made key that way, the call is refused with
+  `window_not_key` and nothing is invoked; if the user allows it,
+  `bring_to_front` the window first.
+- **The frontmost app's key window:** the on-screen menu bar is already the
+  target's, so the menu is opened and the item pressed there.
+
 It refuses missing, duplicate, disabled, or non-actionable segments and never
 falls back to pixels.
 When a path fails after the tool already opened a menu, it cancels that menu

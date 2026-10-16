@@ -156,13 +156,7 @@ impl Local {
         let backend = self.backend.clone();
         run(async move {
             let r = match &backend {
-                Backend::Embedded(_) => {
-                    let report = cua_daemon::local::doctor_report().await;
-                    cua_proto::daemon::v1::DoctorResponse {
-                        checks: cua_daemon::local::doctor_checks(&report),
-                        report_json: serde_json::to_string(&report)?,
-                    }
-                }
+                Backend::Embedded(_) => cua_daemon::local::doctor_response().await,
                 Backend::Daemon(d) => d.doctor().await?,
             };
             Ok(DoctorReport {

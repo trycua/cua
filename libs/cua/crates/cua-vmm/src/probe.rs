@@ -158,21 +158,40 @@ pub fn is_unreachable(e: &std::io::Error) -> bool {
 /// The error for a guest this process cannot reach: on macOS, what to allow
 /// in Local Network privacy and for which app (the `.app` bundle this
 /// process runs from, by name and path, since two builds can share a name).
-pub fn unreachable_error(addr: &str, error: &std::io::Error) -> VmmError {
-    unreachable_error_for(addr, error, std::env::current_exe().ok().as_deref())
+///
+/// A bare executable (not in an `.app`) is named by the app macOS holds
+/// responsible for it when that is an app
+/// ([`crate::local_network::ResponsibleApp`]): the daemon a shell app
+/// started reads as that app, not as "cua".
+pub fn unreachable_error(addr: &str, error: &dyn std::fmt::Display) -> VmmError {
+    let exe = std::env::current_exe().ok();
+    let bundle = exe.as_deref().and_then(app_bundle).or_else(|| {
+        crate::local_network::ResponsibleApp::of_this_process()
+            .filter(|a| a.bundle)
+            .map(|a| (a.name, a.path))
+    });
+    unreachable_error_named(addr, error, bundle)
 }
 
+#[cfg(test)]
 fn unreachable_error_for(
     addr: &str,
-    error: &std::io::Error,
+    error: &dyn std::fmt::Display,
     exe: Option<&std::path::Path>,
+) -> VmmError {
+    unreachable_error_named(addr, error, exe.and_then(app_bundle))
+}
+
+fn unreachable_error_named(
+    addr: &str,
+    error: &dyn std::fmt::Display,
+    bundle: Option<(String, std::path::PathBuf)>,
 ) -> VmmError {
     if cfg!(target_os = "macos") {
         // macOS asks once per boot, on this Mac's own screen, the first time
         // the app reaches the local network, and lists the app under Local
         // Network only after it has asked. Someone using this Mac from
         // another device may never see the prompt, so say all three ways.
-        let bundle = exe.and_then(app_bundle);
         let hint = match &bundle {
             Some((name, path)) => format!(
                 "{name} ({}) cannot reach the VM at {addr} ({error}). macOS blocks {name}'s \

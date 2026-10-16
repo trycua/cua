@@ -439,6 +439,8 @@ if script --version 2>/dev/null | grep -q util-linux; then
     check "interactive + --no-onboarding: no login" absent "$home/cua2.log"
 
     # PATH prompt on a terminal: Enter adds it to the profile, n leaves it.
+    # `script` runs its command through $SHELL, so zsh (absent from the CI
+    # containers) is only set inside the command, never as the outer shell.
     if command -v timeout >/dev/null 2>&1; then
         pty_path() { # KEYS PREFIX
             home="$work/home.pty.$RANDOM_SEQ"
@@ -448,9 +450,9 @@ if script --version 2>/dev/null | grep -q util-linux; then
                 sleep 2
                 printf '%b' "$1"
                 sleep 2
-            ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/zsh CUA_HOME="$home/.cua" \
+            ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" \
                 CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
-                timeout 60 script -qec "$sh_bin '$installer' --cli-only --no-onboarding --prefix '$2'" /dev/null >"$work/out" 2>&1
+                timeout 60 script -qec "env SHELL=/bin/zsh $sh_bin '$installer' --cli-only --no-onboarding --prefix '$2'" /dev/null >"$work/out" 2>&1
             status=$?
         }
         pty_path '\r' "$work/pt1"
@@ -474,7 +476,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
         ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh TERM="${tty_term:-xterm}" CUA_HOME="$home/.cua" \
             CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
             CUA_INSTALL_DRIVER_URL="$driver_url" \
-            timeout 60 script -qec "$sh_bin '$installer' --no-onboarding $*" /dev/null >"$work/out" 2>&1
+            timeout 60 script -qec "$sh_bin '$installer' --no-onboarding --no-modify-path $*" /dev/null >"$work/out" 2>&1
         status=$?
     }
     logged() { grep -q -- "$1" "$home/cua.log" 2>/dev/null; }

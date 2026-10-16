@@ -150,12 +150,9 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     Ok(result)
 }
 
-/// Where [`get_window_list`] found the toplevels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowSource {
-    /// The window manager's EWMH client list: every entry is a window it manages.
     ClientList,
-    /// Mapped root children, read when no window manager publishes a client list.
     RootChildren,
 }
 

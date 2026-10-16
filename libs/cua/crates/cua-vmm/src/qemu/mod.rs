@@ -979,8 +979,6 @@ fn missing_tools(
     ))
 }
 
-/// Add this user to the kvm group and grant it `/dev/kvm` now when denied (`sudo -n`);
-/// what was done or would be, or why `/dev/kvm` is not used.
 pub async fn grant_kvm(
     probe: impl Fn() -> std::io::Result<()>,
     user: Option<String>,

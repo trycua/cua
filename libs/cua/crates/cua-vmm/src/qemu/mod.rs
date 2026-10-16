@@ -1786,6 +1786,77 @@ mod tests {
         assert!(matches!(r.load("win"), Err(VmmError::NotFound(_))));
     }
 
+    fn recording(
+        calls: &std::sync::Mutex<Vec<String>>,
+        sudo_ok: bool,
+    ) -> impl AsyncFn(&str, &[&str]) -> Result<String> {
+        async move |program: &str, args: &[&str]| {
+            calls
+                .lock()
+                .unwrap()
+                .push(format!("{program} {}", args.join(" ")));
+            match program {
+                "stat" => Ok("kvm\n".to_string()),
+                "id" => Ok("alice\n".to_string()),
+                _ if sudo_ok => Ok(String::new()),
+                _ => Err(VmmError::PermissionDenied("a password is required".into())),
+            }
+        }
+    }
+
+    fn denied() -> std::io::Result<()> {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    }
+
+    #[tokio::test]
+    async fn denied_kvm_adds_the_user_to_the_kvm_group_with_sudo() {
+        let calls = Default::default();
+        let note = grant_kvm(denied(), false, recording(&calls, true))
+            .await
+            .unwrap()
+            .unwrap();
+        let calls = calls.into_inner().unwrap();
+        let sudo = calls.last().unwrap();
+        assert!(sudo.starts_with("sudo -n usermod -aG kvm "), "{calls:?}");
+        assert!(note.starts_with("added "), "{note}");
+        assert!(note.contains("log out and back in"), "{note}");
+        assert!(note.contains("newgrp kvm"), "{note}");
+    }
+
+    #[tokio::test]
+    async fn denied_kvm_without_sudo_is_an_error_naming_the_usermod_fix() {
+        let calls = Default::default();
+        let err = grant_kvm(denied(), false, recording(&calls, false))
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), host::kvm_hint(&denied().unwrap_err()));
+        assert!(err.to_string().contains("sudo usermod -aG kvm"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn missing_kvm_runs_nothing_and_is_only_a_note() {
+        let calls = Default::default();
+        let missing = Err(std::io::ErrorKind::NotFound.into());
+        let note = grant_kvm(missing, false, recording(&calls, true))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(note.contains("/dev/kvm is missing"), "{note}");
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dry_run_only_says_it_would_add_the_user() {
+        let calls = Default::default();
+        let note = grant_kvm(denied(), true, recording(&calls, true))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(note.starts_with("would: add "), "{note}");
+        assert!(note.ends_with(" to the kvm group"), "{note}");
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn missing_qemu_hints_show_the_install_plan() {
         assert_eq!(

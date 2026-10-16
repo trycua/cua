@@ -31,7 +31,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
 
     /// The traffic lights' width plus a gap, for `--titlebar-left-inset`.
     static let fallbackLeftInset: CGFloat = 78
-    static let titlebarHeight: CGFloat = 38
+    static let titlebarHeight: CGFloat = 48
     /// Where the window's frame is saved (the defaults' `NSWindow Frame <name>`).
     static let frameName = "CuaSpacesWebUI"
     static let devServer = URL(string: "http://localhost:5174/")!
@@ -296,7 +296,23 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         return max(Self.fallbackLeftInset, (right + 20).rounded())
     }
 
+    /// Centres the traffic lights on the page's top bar (`titlebarHeight`):
+    /// a transparent title bar is shorter, so they would sit above the
+    /// search field's centre line. Nothing to do in full screen.
+    func centerTrafficLights() {
+        guard let window, !window.styleMask.contains(.fullScreen),
+              let close = window.standardWindowButton(.closeButton), let bar = close.superview,
+              let host = bar.superview else { return }
+        let height = Self.titlebarHeight
+        bar.frame = NSRect(x: bar.frame.minX, y: host.bounds.height - height, width: bar.frame.width, height: height)
+        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = window.standardWindowButton(kind) else { continue }
+            button.setFrameOrigin(NSPoint(x: button.frame.minX, y: ((height - button.frame.height) / 2).rounded()))
+        }
+    }
+
     func applyInset() {
+        centerTrafficLights()
         let inset = Int(leftInset)
         webView.titlebarLeftInset = CGFloat(inset)
         webView.evaluateJavaScript(
@@ -443,6 +459,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
 
     // MARK: - Window
 
+    public func windowDidResize(_ notification: Notification) { centerTrafficLights() }
     public func windowDidEnterFullScreen(_ notification: Notification) { applyInset() }
     public func windowDidExitFullScreen(_ notification: Notification) { applyInset() }
 

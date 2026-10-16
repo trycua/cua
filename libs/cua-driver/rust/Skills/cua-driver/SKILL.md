@@ -80,15 +80,17 @@ Check the installed version and advertised schema before using unfamiliar parame
 
 ## Failure map
 
-| Symptom                                                   | Next step                                                                             |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Missing binary, mismatched daemon, unknown tool/field     | [Runtime preflight](RUNTIME.md#preflight-and-transport)                               |
-| Stale token or ambiguous window                           | Refresh `list_windows` / `get_window_state`; choose the intended live target          |
-| Large, truncated, or sparse tree; repeated reads          | [Bounded observation and `since` diffs](WORKFLOW.md#observe)                          |
-| `surface_identity_unproven` or screenshot permission wait | [Wayland capture recovery](LINUX.md#capture-recovery)                                 |
-| `background_unavailable`                                  | Verify current state; ask before foreground/desktop control if not already authorized |
-| Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)           |
-| Browser setup, binding, or ref refused                    | [Browser recovery](BROWSER.md#recovery-rules)                                         |
+| Symptom                                                   | Next step                                                                                                                                                           |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Missing binary, mismatched daemon, unknown tool/field     | [Runtime preflight](RUNTIME.md#preflight-and-transport)                                                                                                             |
+| Stale token or ambiguous window                           | Refresh `list_windows` / `get_window_state`; choose the intended live target                                                                                        |
+| Large, truncated, or sparse tree; repeated reads          | [Bounded observation and `since` diffs](WORKFLOW.md#observe)                                                                                                        |
+| `surface_identity_unproven` or screenshot permission wait | [Wayland capture recovery](LINUX.md#capture-recovery)                                                                                                               |
+| `background_unavailable`                                  | Not a stop: that input route is closed, the task is not. Read `get_window_state` and act by element (`element_token`, `invoke_menu`); foreground only if authorized |
+| Web page in a browser                                     | Refs from `get_browser_state` with `browser_click` / `browser_type`; pixel clicks only when no ref exists                                                           |
+| LibreOffice, Preview and other macOS editors              | [macOS recipes](MACOS.md#libreoffice-numbers-and-other-editors-in-the-background)                                                                                   |
+| Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)                                                                                         |
+| Browser setup, binding, or ref refused                    | [Browser recovery](BROWSER.md#recovery-rules)                                                                                                                       |
 
 ## Consult recent Cua activity only for continuation
 

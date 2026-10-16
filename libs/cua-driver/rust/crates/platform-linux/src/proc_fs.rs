@@ -329,7 +329,6 @@ pub(crate) mod tests {
         }
     }
 
-
     fn wait_for_exec(pid: u32) {
         let ours = std::fs::read_link("/proc/self/exe").expect("our image");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

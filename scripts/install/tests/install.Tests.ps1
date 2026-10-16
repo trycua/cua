@@ -219,11 +219,33 @@ Describe 'install.ps1' {
     }
 
     It 'dry run: -Pair installs the CLI and runs host setup with the code, no sign-in or checklist' {
-        $out = Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'https://relay.example.com' }
+        $out = Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'https://relay.example.com' } @{ CUA_INSTALL_REINSTALL = '1' }
         $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
         $out | Should -Match 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com'
         $out | Should -Not -Match 'auth login'
         $out | Should -Not -Match 'Choose what to install'
+    }
+
+    It '-Pair on a computer that already has cua: uses it and downloads nothing' {
+        $dir = Join-Path $env:CUA_TEST_ROOT 'existing-cua'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $sep = [IO.Path]::PathSeparator
+        if ($IsWindows) {
+            Set-Content -LiteralPath (Join-Path $dir 'cua.cmd') -Value "@echo off`r`necho       --pair ^<CODE^>  add this machine with a code"
+        } else {
+            $fake = Join-Path $dir 'cua'
+            Set-Content -LiteralPath $fake -Value "#!/bin/sh`necho '      --pair <CODE>  add this machine with a code'"
+            chmod +x $fake
+        }
+        $vars = @{ PATH = "$dir$sep$env:PATH"; CUA_INSTALL_REINSTALL = $null }
+        $out = Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD' } $vars
+        $out | Should -Match 'already installed at'
+        $out | Should -Match 'host setup --pair K7QM-4XPB-2RHD'
+        $out | Should -Not -Match 'cua-cli-1.2.3'
+        $out | Should -Not -Match 'manifest'
+        # -Version and CUA_INSTALL_REINSTALL install anyway.
+        (Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Version = '1.2.3' } $vars) | Should -Match 'cua-cli-1.2.3'
+        (Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD' } @{ PATH = $vars.PATH; CUA_INSTALL_REINSTALL = '1' }) | Should -Match 'cua-cli-1.2.3'
     }
 
     It '-Pair refuses codes and relays with shell characters' {

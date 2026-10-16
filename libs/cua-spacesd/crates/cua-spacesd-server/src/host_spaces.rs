@@ -45,8 +45,11 @@ pub const CALLER_METADATA: &str = "x-cua-host-caller";
 /// The feature `GetCapabilities` reports while this host provides Spaces.
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
 
-/// How long a forwarded create may run (a macOS VM's first boot).
-const CREATE_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+/// How long a forwarded create may run: a macOS VM's first create
+/// downloads a 20+ GB image before it boots, which on a slow connection
+/// takes well over the 20 min this once was (the daemon's own budgets
+/// bound each phase; this only catches a daemon that lost the call).
+const CREATE_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 /// How long the driver waits for a daemon it started (the daemon socket
 /// is a Unix socket; other systems do not start one).
 #[cfg(unix)]

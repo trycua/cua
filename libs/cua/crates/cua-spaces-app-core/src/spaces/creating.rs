@@ -764,6 +764,9 @@ pub enum FailureCause {
     /// The image download stopped partway: Lume's pull failed or was
     /// cancelled, or Lume stopped. Another try resumes it.
     PullStopped,
+    /// The VM's runtime is not on this machine (QEMU for a Windows or Linux
+    /// VM on a PC without it): trying again does not help.
+    RuntimeMissing,
 }
 
 impl FailureCause {
@@ -779,6 +782,7 @@ impl FailureCause {
             Self::Unauthenticated => "Unauthenticated",
             Self::ServiceTimeout | Self::PullTimeout => "Timeout",
             Self::PullStopped => "ImagePull",
+            Self::RuntimeMissing => "RuntimeMissing",
         }
     }
 }
@@ -826,6 +830,12 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
     }
     if l.contains(PULL_STOPPED) {
         return Some(FailureCause::PullStopped);
+    }
+    // The SDK's `VmmError::Missing` for QEMU: "QEMU (qemu-system-x86_64,
+    // qemu-img) is not available: ...", or older SDKs' "qemu-img is not
+    // available: ..." after the image was pulled.
+    if l.contains("qemu") && (l.contains("is not available") || l.contains("not found on path")) {
+        return Some(FailureCause::RuntimeMissing);
     }
     let timed_out =
         l.contains("timed out") || l.contains("timeout") || l.contains("not ready after");
@@ -943,7 +953,7 @@ pub fn failure_text_on(
         Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
             .into(),
-        None => plain,
+        Some(FailureCause::RuntimeMissing) | None => plain,
     }
 }
 
@@ -2468,6 +2478,24 @@ mod tests {
             failure_variant(stopped, Some("pulling"), false, "Runtime"),
             "ImagePull"
         );
+        // QEMU missing on a Windows PC: 0.9.2's after the pull, and the
+        // refusal before it. Not `other` in telemetry, and the SDK's words.
+        for raw in [
+            "local runtime: [local] qemu-img is not available: install QEMU (macOS: `brew \
+             install qemu`; Debian/Ubuntu: `apt install qemu-utils`)",
+            "local runtime: [local] QEMU (qemu-system-x86_64, qemu-img) is not available: \
+             Windows VMs on a Windows PC need QEMU, which Cua does not install for you.",
+        ] {
+            assert_eq!(
+                failure_cause(raw, Some("pulling"), false),
+                Some(FailureCause::RuntimeMissing),
+                "{raw}"
+            );
+            assert_eq!(
+                failure_variant(raw, Some("pulling"), false, "Other"),
+                "RuntimeMissing"
+            );
+        }
         // Local Network privacy on the Mac that runs the VM.
         let sdk = "Local Network access is not available: cua cannot reach the VM at \
                    192.168.64.45:3211 (No route to host (os error 65)). macOS blocks an app's \

@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.36.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.36.0...cua-driver-rs-v0.36.0) (2026-10-16)
+
+
+### Features
+
+* **cua-driver:** add browser_select for native HTML select ([#5232](https://github.com/trycua/cua/issues/5232)) ([3df424f](https://github.com/trycua/cua/commit/3df424fafcd6823f9efba14df5b36038ddb2dcb5))
+
+
+### Bug Fixes
+
+* **cua-driver:** ask for macOS's direct-capture consent during setup, not over the user's window (CUA-1792) ([#5352](https://github.com/trycua/cua/issues/5352)) ([a75d1c2](https://github.com/trycua/cua/commit/a75d1c2e9ba205b3d41d9094b419bc1412dae35c))
+* **cua-driver:** deliver background drags in Electron windows through the main process (CUA-1207) ([#5351](https://github.com/trycua/cua/issues/5351)) ([24f6fc0](https://github.com/trycua/cua/commit/24f6fc04d892468defc1f6efff1db5df91e1c369))
+* **cua-driver:** derive the macOS desktop point ratio from the display mode instead of a screenshot ([#5340](https://github.com/trycua/cua/issues/5340)) ([ac825f8](https://github.com/trycua/cua/commit/ac825f8b928716c3db690f10ad3d8281e98197bc))
+* **cua-driver:** don't open a background web &lt;select&gt;; steer to set_value (CUA-1795) ([#5353](https://github.com/trycua/cua/issues/5353)) ([add1383](https://github.com/trycua/cua/commit/add1383b0c60f72f4ec000c6283538f27b7ac4b3))
+* **cua-driver:** install Antigravity skills in IDE and CLI directories ([#5226](https://github.com/trycua/cua/issues/5226)) ([3bd8f65](https://github.com/trycua/cua/commit/3bd8f65896d0d876a512ae4ea41ae2607218ef79))
+* **cua-driver:** keep rendered controls visible in semantic_v2 and report not_rendered for background tabs ([#5256](https://github.com/trycua/cua/issues/5256)) ([a212cd0](https://github.com/trycua/cua/commit/a212cd026e260c6e397efd105726e20a2f914144))
+* **cua-driver:** list untitled X11 windows the window manager manages ([#5341](https://github.com/trycua/cua/issues/5341)) ([57a01e6](https://github.com/trycua/cua/commit/57a01e6fb4cbbb256749da5d0bb986569c2240cd))
+* **cua-driver:** verify macOS target focus before dispatching keys ([#5372](https://github.com/trycua/cua/issues/5372)) ([8a66f0d](https://github.com/trycua/cua/commit/8a66f0d8d9553e3f5fdc52e265755aff0f06c5d3))
+
+
+### Performance Improvements
+
+* **cua-driver:** read macOS bundle plists in process ([#5369](https://github.com/trycua/cua/issues/5369)) ([231c953](https://github.com/trycua/cua/commit/231c953c08979b5f46d789a59117510fabfe4eb1))
+
 ## [0.36.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.35.4...cua-driver-rs-v0.36.0) (2026-10-16)
 
 

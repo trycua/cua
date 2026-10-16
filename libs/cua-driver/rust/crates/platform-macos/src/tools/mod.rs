@@ -302,6 +302,35 @@ pub(crate) fn background_refusal_result(
     .with_structured(structured)
 }
 
+/// Hint shown with every `windowserver_connection_invalid` refusal.
+pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `open -n -g -a CuaDriver --args serve`.";
+
+/// Structured refusal for a background action whose no-raise focus step got
+/// `SLPSPostEventRecordTo` status 1002 (invalid connection). Nothing was sent
+/// to the target.
+pub(crate) fn windowserver_connection_refusal(
+    pid: i32,
+    window_id: Option<u32>,
+) -> cua_driver_core::protocol::ToolResult {
+    cua_driver_core::delivery::background_unavailable_result(
+        format!(
+            "Background input is not available for pid {pid}: the WindowServer connection is \
+             invalid (SLPSPostEventRecordTo returned 1002). {WINDOWSERVER_INVALID_HINT}"
+        ),
+        "background_unavailable",
+        "the daemon has no valid WindowServer connection, so no-raise focus cannot work; \
+         run the app-bundle daemon, or retry with delivery_mode:\"foreground\".",
+        serde_json::json!({
+            "reason": "windowserver_connection_invalid",
+            "status": crate::input::skylight::WINDOWSERVER_INVALID_CONNECTION,
+            "effect": "refused",
+            "pid": pid,
+            "window_id": window_id,
+            "hint": WINDOWSERVER_INVALID_HINT,
+        }),
+    )
+}
+
 /// Exclusive per-process ownership of one background mutation. Callers must
 /// keep this value alive through actuator dispatch, focus restoration, and
 /// target-bound verification.
@@ -433,6 +462,9 @@ pub(crate) async fn acquire_key_scope(
     };
     match tokio::task::spawn_blocking(move || key_scope(pid, Some(wid))).await {
         Ok(Ok(scope)) => Ok(scope),
+        Ok(Err(_)) if crate::input::skylight::windowserver_connection_invalid() => {
+            Err(windowserver_connection_refusal(pid, Some(wid)))
+        }
         Ok(Err(reason)) => Err(background_refusal_result(
             pid,
             wid,
@@ -1368,5 +1400,25 @@ mod recording_start_guard_tests {
         assert!(ok.is_ok(), "anonymous start must never be gated");
         assert!(rec.current_state().enabled);
         let _ = rec.stop_owner(None);
+    }
+}
+
+#[cfg(test)]
+mod windowserver_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn refusal_names_the_reason_and_the_app_bundle_daemon() {
+        let result = windowserver_connection_refusal(42, Some(7));
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["reason"], "windowserver_connection_invalid");
+        assert_eq!(structured["status"], 1002);
+        assert_eq!(structured["window_id"], 7);
+        assert!(structured["hint"]
+            .as_str()
+            .unwrap()
+            .contains("open -n -g -a CuaDriver --args serve"));
     }
 }

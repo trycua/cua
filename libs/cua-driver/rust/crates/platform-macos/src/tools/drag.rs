@@ -377,6 +377,9 @@ impl Tool for DragTool {
             .await
             {
                 Ok(activated) => {
+                    if !activated && crate::input::skylight::windowserver_connection_invalid() {
+                        return super::windowserver_connection_refusal(pid, Some(wid));
+                    }
                     crate::cursor::overlay::send_command(
                         cursor_key.clone(),
                         cursor_overlay::OverlayCommand::PinAbove(wid as u64),

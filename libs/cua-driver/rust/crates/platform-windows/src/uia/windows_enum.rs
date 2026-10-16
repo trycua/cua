@@ -62,7 +62,7 @@ const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
 /// Health probes can tolerate the same budget without delaying window listing.
 const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
 
-enum UiaDeadlineError {
+pub(crate) enum UiaDeadlineError {
     Timeout,
     Busy,
     Unavailable,
@@ -122,7 +122,7 @@ where
     match rx.recv_timeout(timeout) {
         Ok(result) => Ok(result),
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            cancelled.store(true, Ordering::Release);
+            cancelled.store(true, Ordering::SeqCst);
             tracing::warn!(
                 target: "uia_windows_enum",
                 "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",
@@ -161,6 +161,19 @@ where
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
     run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
+}
+
+pub(crate) fn run_focused_document_uia<T, F>(f: F) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    run_uia_with_deadline_cancelable(
+        "focused document typing",
+        SUBTREE_OP_TIMEOUT,
+        "the existing input route unless the write started",
+        f,
+    )
 }
 
 struct ComInit {

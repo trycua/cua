@@ -2348,9 +2348,6 @@ fn resolve_launched_windows(
     }
 }
 
-/// The launch's windows among `all`, once its app window is up. A splash does
-/// not count: LibreOffice's `oosplash` launcher draws one, then forks the
-/// `soffice.bin` that owns every document window.
 fn settle_launch(
     all: &[crate::x11::WindowInfo],
     launcher_pid: u32,

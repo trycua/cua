@@ -5,6 +5,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 INSTALLER = Path(__file__).resolve().parents[1] / "_install-rust.sh"
 
@@ -238,3 +240,84 @@ def test_exit_cleanup_leaves_a_committed_install_untouched(tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
     assert (app / "candidate").read_text() == "valid"
     assert not backup.exists()
+
+
+def run_install_dir(system_dir: Path, user_dir: Path) -> subprocess.CompletedProcess[str]:
+    function = extract_shell_function("macos_app_install_dir")
+    return subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            f'set -euo pipefail\n{function}\nmacos_app_install_dir "$1" "$2"',
+            "macos_app_install_dir",
+            str(system_dir),
+            str(user_dir),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_writable_system_applications_keeps_the_admin_layout(tmp_path: Path) -> None:
+    system_dir = tmp_path / "Applications"
+    system_dir.mkdir()
+    user_dir = tmp_path / "home" / "Applications"
+
+    result = run_install_dir(system_dir, user_dir)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(system_dir)
+    assert not user_dir.exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write to a read-only directory")
+def test_read_only_system_applications_falls_back_to_the_user_folder(tmp_path: Path) -> None:
+    system_dir = tmp_path / "Applications"
+    system_dir.mkdir()
+    system_dir.chmod(0o555)
+    user_dir = tmp_path / "home" / "Applications"
+    try:
+        result = run_install_dir(system_dir, user_dir)
+    finally:
+        system_dir.chmod(0o755)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(user_dir)
+    assert user_dir.is_dir()
+
+
+def test_missing_system_applications_falls_back_to_the_user_folder(tmp_path: Path) -> None:
+    user_dir = tmp_path / "home" / "Applications"
+
+    result = run_install_dir(tmp_path / "missing", user_dir)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(user_dir)
+    assert user_dir.is_dir()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write to a read-only directory")
+def test_no_writable_applications_folder_fails(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o555)
+    try:
+        result = run_install_dir(tmp_path / "missing", home / "Applications")
+    finally:
+        home.chmod(0o755)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+
+
+def test_installer_installs_into_the_resolved_folder_and_registers_it() -> None:
+    source = INSTALLER.read_text()
+    resolve = source.index(
+        'APP_INSTALL_DIR="$(macos_app_install_dir "$SYSTEM_APP_DIR" "$USER_APP_DIR")"'
+    )
+    dest = source.index('APP_DEST="$APP_INSTALL_DIR/$APP_NAME"', resolve)
+    copy = source.index('ditto "$SRC_APP" "$APP_DEST"', dest)
+    source.index('"$LSREGISTER" -f "$APP_DEST"', copy)
+
+    assert "/Applications is not writable. Re-run" not in source

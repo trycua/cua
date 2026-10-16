@@ -37,9 +37,13 @@ For multi-call work, prefer a short public label and pass the same label on ever
 
 `start_session` is optional: actions can establish the run. Use it to configure the initial cursor theme or revive a name after `end_session`. The default idle TTL is five minutes; do not assume a long human permission wait preserves handles.
 
+Element tokens and window screenshots belong to the session that read them. Without a label, each one-shot CLI call runs in its own session, so a token from one call is refused as `stale_element_token` in the next. Address elements by `element_token`, not the retired `element_index`.
+
 ```bash
 cua-driver start_session '{"session":"run-1"}'
-# Discover, observe, act, and verify; repeat session:"run-1".
+cua-driver get_window_state '{"session":"run-1","pid":844,"window_id":10725}'
+# Act on a token printed by that read; repeat session:"run-1" on every call.
+cua-driver click '{"session":"run-1","element_token":"s0000002a:11"}'
 cua-driver end_session '{"session":"run-1"}'
 ```
 

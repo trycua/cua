@@ -4,6 +4,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub const LRU_CAP_PER_PID: usize = 8;
 pub const STALE_TOKEN_ERROR: &str =
     "element_token is stale; call get_window_state again to refresh";
+/// Appended to every `stale_element_token` refusal. The most common cause is a
+/// chain of one-shot CLI calls without a shared session: each unnamed call
+/// runs in its own disposable session, whose snapshots end with the call.
+pub const STALE_TOKEN_SESSION_HINT: &str =
+    "Tokens are retired when the session that read them ends. Pass the same `session` \
+     label (for example \"session\":\"run-1\") to the read and to every call that uses \
+     its tokens; each one-shot `cua-driver call` without one runs in its own session";
 
 static SNAPSHOT_COUNTER: AtomicU32 = AtomicU32::new(1);
 
@@ -66,12 +73,13 @@ pub const STALE_TOKEN_WITHOUT_PID: &str =
 /// The refusal for [`STALE_TOKEN_WITHOUT_PID`]: `stale_element_token`, with
 /// the hint that a current token names its own pid.
 pub fn stale_token_without_pid() -> ToolResult {
+    let message = format!("{STALE_TOKEN_WITHOUT_PID}. {STALE_TOKEN_SESSION_HINT}.");
     ToolResult::error(format!(
-        "{STALE_TOKEN_WITHOUT_PID} (a current token names its own pid)."
+        "{STALE_TOKEN_WITHOUT_PID} (a current token names its own pid). {STALE_TOKEN_SESSION_HINT}."
     ))
     .with_structured(serde_json::json!({
         "status": "refused",
-        "refusal": { "code": "stale_element_token", "message": STALE_TOKEN_WITHOUT_PID },
+        "refusal": { "code": "stale_element_token", "message": message },
     }))
 }
 
@@ -123,6 +131,8 @@ mod tests {
         let refused = fill_pid_from_token(&mut stale, |_| None).unwrap_err();
         let structured = refused.structured_content.unwrap();
         assert_eq!(structured["refusal"]["code"], "stale_element_token");
+        let message = structured["refusal"]["message"].as_str().unwrap();
+        assert!(message.contains(STALE_TOKEN_SESSION_HINT), "{message}");
     }
 
     #[test]

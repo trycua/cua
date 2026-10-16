@@ -1,6 +1,6 @@
 use crate::element_token::{
     format_snapshot_id, parse_token, refusal, token_for, ResolvedElement, LRU_CAP_PER_PID,
-    STALE_TOKEN_ERROR,
+    STALE_TOKEN_ERROR, STALE_TOKEN_SESSION_HINT,
 };
 use crate::protocol::ToolResult;
 use std::any::Any;
@@ -145,9 +145,11 @@ fn stale_token_refusal<S>(pid: i32, lane: &[Snapshot<S>]) -> ToolResult {
         .map(|snapshot| (format_snapshot_id(snapshot.id), snapshot.window_id))
         .collect();
     let message = match current.as_slice() {
-        [] => format!("{STALE_TOKEN_ERROR}; pid {pid} has no current snapshot"),
+        [] => format!(
+            "{STALE_TOKEN_ERROR}; pid {pid} has no current snapshot. {STALE_TOKEN_SESSION_HINT}."
+        ),
         current => format!(
-            "{STALE_TOKEN_ERROR}; current snapshots for pid {pid}: {}",
+            "{STALE_TOKEN_ERROR}; current snapshots for pid {pid}: {}. {STALE_TOKEN_SESSION_HINT}.",
             current
                 .iter()
                 .map(|(snapshot_id, window_id)| format!("{snapshot_id} (window {window_id})"))
@@ -918,6 +920,10 @@ mod tests {
             structured["current_snapshots"],
             serde_json::json!([{ "snapshot_id": format_snapshot_id(current), "window_id": 555 }])
         );
+        // The refusal tells a caller chaining one-shot calls how to keep tokens live.
+        let message = structured["refusal"]["message"].as_str().unwrap();
+        assert!(message.contains("\"session\":\"run-1\""), "{message}");
+        assert!(message.contains("`cua-driver call`"), "{message}");
     }
 
     #[test]

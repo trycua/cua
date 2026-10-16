@@ -475,6 +475,33 @@ impl QemuRuntime {
         spec: &StartSpec,
         loadvm: Option<String>,
     ) -> Result<()> {
+        match self.launch_once(st, spec, loadvm.clone(), false).await {
+            Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
+                // A host whose KVM opens but cannot run a vCPU (a broken
+                // nested-virtualization setup oopses in vcpu creation) leaves
+                // QEMU alive with a dead vCPU thread and a QMP monitor that
+                // never answers. Retry once under TCG instead of failing.
+                tracing::warn!(
+                    sandbox = %st.name,
+                    "KVM did not start a vCPU (QEMU stopped answering QMP; see `dmesg` for kvm errors), so retrying under slow TCG emulation"
+                );
+                if let Some(pid) = st.pid.take() {
+                    let _ = host::run("kill", &["-9", &pid.to_string()]).await;
+                    Self::wait_exit(pid, Duration::from_secs(5)).await;
+                }
+                self.launch_once(st, spec, loadvm, true).await
+            }
+            r => r,
+        }
+    }
+
+    async fn launch_once(
+        &self,
+        st: &mut QemuState,
+        spec: &StartSpec,
+        loadvm: Option<String>,
+        force_tcg: bool,
+    ) -> Result<()> {
         let bin = self.binary(st.arch).await?;
         let dir = self.dir(&st.name);
         let mut guest_ports: Vec<u16> = spec.ports.clone();
@@ -490,7 +517,11 @@ impl QemuRuntime {
         } else {
             None
         };
-        st.accel = self.accel_for(st.arch, &host::kvm_usable())?;
+        st.accel = if force_tcg {
+            "tcg".into()
+        } else {
+            self.accel_for(st.arch, &host::kvm_usable())?
+        };
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
         st.restrict_network = spec.restrict_network;
@@ -903,6 +934,12 @@ pub fn usernet_established(table: &str, host_port: u16, guest_port: u16) -> bool
     })
 }
 
+/// Whether a launch failed because QEMU stopped answering its QMP monitor,
+/// which under KVM means the vCPU never started.
+fn kvm_stalled(e: &VmmError) -> bool {
+    matches!(e, VmmError::Qmp(m) if m.contains("timed out"))
+}
+
 fn unique_suffix() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -988,6 +1025,9 @@ pub async fn grant_kvm(
 }
 
 /// Install QEMU through the host package manager (explicit opt-in).
+/// Tries per package-manager step in [`install_qemu`].
+const PACKAGE_ATTEMPTS: u32 = 3;
+
 pub async fn install_qemu() -> Result<()> {
     match host::HostOs::current() {
         host::HostOs::Macos => {
@@ -1007,7 +1047,32 @@ pub async fn install_qemu() -> Result<()> {
             let program = program.display().to_string();
             tracing::info!("installing QEMU with {manager:?} (sudo -n)");
             for args in manager.commands(&program) {
-                host::run("sudo", &args).await?;
+                // A package mirror answering 5xx for a moment should not end a
+                // one-shot install: retry each step, and let a refresh that
+                // keeps failing fall through to the install, which still
+                // works from the package lists the host already has.
+                let refresh = args.last() == Some(&"update");
+                let mut attempt = 1;
+                loop {
+                    match host::run("sudo", &args).await {
+                        Ok(_) => break,
+                        Err(e) if attempt < PACKAGE_ATTEMPTS => {
+                            tracing::warn!(
+                                "`sudo {}` failed (attempt {attempt}), retrying: {e}",
+                                args.join(" ")
+                            );
+                            attempt += 1;
+                            tokio::time::sleep(Duration::from_secs(3 * attempt as u64)).await;
+                        }
+                        Err(e) if refresh => {
+                            tracing::warn!(
+                                "package index refresh failed, installing from the current lists: {e}"
+                            );
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
             }
         }
         host::HostOs::Windows => {
@@ -1557,6 +1622,19 @@ mod tests {
         assert!(err.contains("sudo usermod -aG kvm"), "{err}");
         let missing = Err(std::io::ErrorKind::NotFound.into());
         assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
+    }
+
+    #[test]
+    fn only_a_qmp_timeout_counts_as_a_stalled_kvm_launch() {
+        assert!(kvm_stalled(&VmmError::Qmp(
+            "timed out waiting for QEMU".into()
+        )));
+        assert!(!kvm_stalled(&VmmError::Qmp(
+            "connection closed by QEMU".into()
+        )));
+        assert!(!kvm_stalled(&VmmError::other(
+            "qemu started but VM status is 'paused'"
+        )));
     }
 
     #[test]

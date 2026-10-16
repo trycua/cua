@@ -206,6 +206,27 @@ Describe 'install.ps1' {
         $out | Should -Not -Match 'cua-cli-1.2.3'
     }
 
+    # Clean machine: the manifest lists signatures but neither minisign nor
+    # cosign is installed. The "checked sha256" note reads $script:SigNoted,
+    # which crashed under Set-StrictMode when it was never initialised.
+    It 'installs under StrictMode when the manifest has signatures but no verifier is installed' {
+        $sig = Join-Path $env:CUA_TEST_ROOT 'sig'
+        New-Item -ItemType Directory -Force -Path $sig | Out-Null
+        Copy-Item (Join-Path $env:CUA_TEST_ROOT 'release/*') $sig
+        Get-ChildItem $sig -Filter 'cua-cli-*.zip' | ForEach-Object { Set-Content -LiteralPath "$($_.FullName).minisig" -Value 'sig' }
+        $sigManifest = Join-Path $sig 'release-artifacts.json'
+        & $Python.Source $Tool --component cli --version 1.2.3 --dir $sig --out $sigManifest
+        (Get-Content -Raw $sigManifest) | Should -Match 'minisig'
+        $prefix = Join-Path $env:CUA_TEST_ROOT 'p-sig'
+        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix } @{
+            CUA_INSTALL_MANIFEST_URL = (ConvertTo-FileUrl $sigManifest)
+            PATH = ((Get-Command python3).Source | Split-Path)
+        }
+        $out | Should -Not -Match 'has not been set'
+        $out | Should -Match 'checked sha256'
+        Join-Path $prefix 'bin/cua.exe' | Should -Exist
+    }
+
     It 'aborts on a checksum mismatch' {
         $bad = Join-Path $env:CUA_TEST_ROOT 'bad'
         New-Item -ItemType Directory -Force -Path $bad | Out-Null

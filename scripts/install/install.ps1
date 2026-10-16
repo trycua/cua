@@ -106,6 +106,7 @@ $script:Picked = $false
 # Cua Spaces ships for Windows as the Electron app's NSIS setup.exe
 # (cd-cua-spaces.yml). Set this to $false to skip a selected `spaces` with a note.
 $script:SpacesSupported = $true
+$script:SigNoted = $false
 
 function Get-Sha256Hex([string]$Path) {
     # .NET directly: Get-FileHash is missing when the Utility module is not

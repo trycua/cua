@@ -133,7 +133,19 @@ export {
   useRelayUsageView,
   RELAY_USAGE_FOCUS_MS,
   RELAY_USAGE_POLL_MS,
+  type PlanCard,
+  type PlanLink,
   type RelayAllowanceNotice,
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+export {
+  resetUpsellMemory,
+  useQuiet,
+  useTrackPlanClick,
+  useUpsellGate,
+  useUpsellPrompt,
+  type UpsellGate,
+  type UpsellPrompt,
+  type UpsellSurface,
+} from "./upsell";

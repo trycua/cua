@@ -21,7 +21,7 @@ struct SettingsView: View {
                     Section {
                         ForEach(section.rows, id: \.id) { row($0, in: section.id) }
                         if section.id == "account", let usage = model.devices.relayUsageView {
-                            RelayUsageRow(view: usage)
+                            RelayUsageRow(view: usage) { model.devices.recordUpsell("upsell_plan_card_click") }
                         }
                     } header: {
                         HStack {

@@ -24640,6 +24640,168 @@ public func FfiConverterTypeAppPlacementOption_lower(_ value: AppPlacementOption
 }
 
 
+public struct AppPlanCard: Equatable, Hashable {
+    /**
+     * `free`, `pro` or `teams`.
+     */
+    public var plan: String
+    /**
+     * "Free plan".
+     */
+    public var label: String
+    /**
+     * What the plan includes, in one sentence.
+     */
+    public var detail: String
+    /**
+     * The main button ("Get Pro"); none when there is nothing to buy.
+     */
+    public var primary: AppPlanLink?
+    /**
+     * The other one ("Start a team").
+     */
+    public var secondary: AppPlanLink?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `free`, `pro` or `teams`.
+         */plan: String,
+        /**
+         * "Free plan".
+         */label: String,
+        /**
+         * What the plan includes, in one sentence.
+         */detail: String,
+        /**
+         * The main button ("Get Pro"); none when there is nothing to buy.
+         */primary: AppPlanLink?,
+        /**
+         * The other one ("Start a team").
+         */secondary: AppPlanLink?) {
+        self.plan = plan
+        self.label = label
+        self.detail = detail
+        self.primary = primary
+        self.secondary = secondary
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppPlanCard: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppPlanCard: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppPlanCard {
+        return
+            try AppPlanCard(
+                plan: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                primary: FfiConverterOptionTypeAppPlanLink.read(from: &buf),
+                secondary: FfiConverterOptionTypeAppPlanLink.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppPlanCard, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.plan, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterOptionTypeAppPlanLink.write(value.primary, into: &buf)
+        FfiConverterOptionTypeAppPlanLink.write(value.secondary, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppPlanCard_lift(_ buf: RustBuffer) throws -> AppPlanCard {
+    return try FfiConverterTypeAppPlanCard.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppPlanCard_lower(_ value: AppPlanCard) -> RustBuffer {
+    return FfiConverterTypeAppPlanCard.lower(value)
+}
+
+
+public struct AppPlanLink: Equatable, Hashable {
+    /**
+     * "Get Pro".
+     */
+    public var label: String
+    /**
+     * https, on the account app.
+     */
+    public var url: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Get Pro".
+         */label: String,
+        /**
+         * https, on the account app.
+         */url: String) {
+        self.label = label
+        self.url = url
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppPlanLink: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppPlanLink: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppPlanLink {
+        return
+            try AppPlanLink(
+                label: FfiConverterString.read(from: &buf),
+                url: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppPlanLink, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.url, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppPlanLink_lift(_ buf: RustBuffer) throws -> AppPlanLink {
+    return try FfiConverterTypeAppPlanLink.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppPlanLink_lower(_ value: AppPlanLink) -> RustBuffer {
+    return FfiConverterTypeAppPlanLink.lower(value)
+}
+
+
 public struct AppPlanStepView: Equatable, Hashable {
     /**
      * `install`, `files`, `state`, `launch`.
@@ -25554,6 +25716,13 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
      * or another limit reached, shows the notice again.
      */
     public var dismissKey: String
+    /**
+     * `warn` (80% of the relay hours) or `limit` (the allowance is used).
+     * A `warn` is a prompt: the shells hold it back while a live session
+     * or an agent run is going ([`crate::upsell`]). A `limit` is only the
+     * status, so it always shows.
+     */
+    public var level: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -25573,12 +25742,19 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
         /**
          * What a dismissal remembers: the month and the reasons. A new month,
          * or another limit reached, shows the notice again.
-         */dismissKey: String) {
+         */dismissKey: String,
+        /**
+         * `warn` (80% of the relay hours) or `limit` (the allowance is used).
+         * A `warn` is a prompt: the shells hold it back while a live session
+         * or an agent run is going ([`crate::upsell`]). A `limit` is only the
+         * status, so it always shows.
+         */level: String) {
         self.text = text
         self.upgrade = upgrade
         self.upgradeUrl = upgradeUrl
         self.dismiss = dismiss
         self.dismissKey = dismissKey
+        self.level = level
     }
 
 
@@ -25601,7 +25777,8 @@ public struct FfiConverterTypeAppRelayAllowanceNotice: FfiConverterRustBuffer {
                 upgrade: FfiConverterString.read(from: &buf),
                 upgradeUrl: FfiConverterOptionString.read(from: &buf),
                 dismiss: FfiConverterString.read(from: &buf),
-                dismissKey: FfiConverterString.read(from: &buf)
+                dismissKey: FfiConverterString.read(from: &buf),
+                level: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -25611,6 +25788,7 @@ public struct FfiConverterTypeAppRelayAllowanceNotice: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.upgradeUrl, into: &buf)
         FfiConverterString.write(value.dismiss, into: &buf)
         FfiConverterString.write(value.dismissKey, into: &buf)
+        FfiConverterString.write(value.level, into: &buf)
     }
 }
 
@@ -25877,9 +26055,13 @@ public struct AppRelayUsageView: Equatable, Hashable {
      */
     public var plan: String
     /**
-     * Past the allowance.
+     * At 80% of the relay hours, or past the allowance.
      */
     public var notice: AppRelayAllowanceNotice?
+    /**
+     * Settings' plan card.
+     */
+    public var planCard: AppPlanCard
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -25895,12 +26077,16 @@ public struct AppRelayUsageView: Equatable, Hashable {
          * "Free plan" (empty when the relay names none).
          */plan: String,
         /**
-         * Past the allowance.
-         */notice: AppRelayAllowanceNotice?) {
+         * At 80% of the relay hours, or past the allowance.
+         */notice: AppRelayAllowanceNotice?,
+        /**
+         * Settings' plan card.
+         */planCard: AppPlanCard) {
         self.label = label
         self.line = line
         self.plan = plan
         self.notice = notice
+        self.planCard = planCard
     }
 
 
@@ -25922,7 +26108,8 @@ public struct FfiConverterTypeAppRelayUsageView: FfiConverterRustBuffer {
                 label: FfiConverterString.read(from: &buf),
                 line: FfiConverterString.read(from: &buf),
                 plan: FfiConverterString.read(from: &buf),
-                notice: FfiConverterOptionTypeAppRelayAllowanceNotice.read(from: &buf)
+                notice: FfiConverterOptionTypeAppRelayAllowanceNotice.read(from: &buf),
+                planCard: FfiConverterTypeAppPlanCard.read(from: &buf)
         )
     }
 
@@ -25931,6 +26118,7 @@ public struct FfiConverterTypeAppRelayUsageView: FfiConverterRustBuffer {
         FfiConverterString.write(value.line, into: &buf)
         FfiConverterString.write(value.plan, into: &buf)
         FfiConverterOptionTypeAppRelayAllowanceNotice.write(value.notice, into: &buf)
+        FfiConverterTypeAppPlanCard.write(value.planCard, into: &buf)
     }
 }
 
@@ -58791,6 +58979,30 @@ fileprivate struct FfiConverterOptionTypeAppOpenFileInput: FfiConverterRustBuffe
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppOpenFileInput.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppPlanLink: FfiConverterRustBuffer {
+    typealias SwiftType = AppPlanLink?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppPlanLink.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppPlanLink.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

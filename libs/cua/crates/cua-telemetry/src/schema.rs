@@ -270,6 +270,20 @@ pub const FEATURES: &[&str] = &[
     // Settings, General: Launch Cua Spaces at login turned on or off.
     "launch_at_login_on",
     "launch_at_login_off",
+    // The in-app Pro and Teams prompts (`cua-spaces-app-core` `upsell`):
+    // a value-moment prompt shown, clicked or dismissed; the always-visible
+    // plan card and account-menu plan only clicked.
+    "upsell_meter_shown",
+    "upsell_meter_click",
+    "upsell_meter_dismiss",
+    "upsell_share_shown",
+    "upsell_share_click",
+    "upsell_share_dismiss",
+    "upsell_machine_shown",
+    "upsell_machine_click",
+    "upsell_machine_dismiss",
+    "upsell_plan_card_click",
+    "upsell_account_menu_click",
 ];
 pub const ONBOARDING_STEPS: &[&str] = &[
     "installer_started",

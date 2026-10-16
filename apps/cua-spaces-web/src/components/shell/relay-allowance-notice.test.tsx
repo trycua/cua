@@ -28,10 +28,12 @@ function host(usage: RelayUsage | null, accountUrl?: string) {
   const demo = createDemoAdapter({ latencyMs: 0 });
   demo.state.relayUsage = usage;
   const opened: string[] = [];
+  const tracked: unknown[] = [];
   const adapter: DataAdapter = {
     ...demo,
     call: (op, args) => {
       if (op === "session.openExternal") opened.push((args as { url: string }).url);
+      if (op === "telemetry.track") tracked.push(...(args as { signals: unknown[] }).signals);
       // The host names its account app (the page's core has no environment).
       if (op === "settings.get" && accountUrl) return demo.call(op, args).then((s) => ({ ...(s as object), accountUrl }) as typeof s);
       return demo.call(op, args);
@@ -43,7 +45,7 @@ function host(usage: RelayUsage | null, accountUrl?: string) {
         <RelayAllowanceNotice />
       </BridgeProvider>,
     );
-  return { demo, opened, view };
+  return { demo, opened, tracked, view };
 }
 
 // The words are the app core's: these need the wasm build.
@@ -56,12 +58,14 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
   });
 
   it("past the allowance: says the Spaces keep working, and Upgrade opens the plan's page", async () => {
-    const { view, opened } = host(reached);
+    const { view, opened, tracked } = host(reached);
     view();
     const notice = await screen.findByRole("status");
     expect(notice.textContent).toContain("You've used your free relay allowance for this month. Your Spaces keep working.");
     fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
     await waitFor(() => expect(opened).toEqual(["https://cua.ai/pricing"]));
+    // The click is counted as a fixed-word feature, nothing else.
+    expect(tracked).toEqual([{ type: "feature", feature: "upgrade_open" }]);
   });
 
   it("with no page from the relay, Upgrade opens the host's account app billing page", async () => {

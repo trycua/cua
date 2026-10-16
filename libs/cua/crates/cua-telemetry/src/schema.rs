@@ -267,6 +267,9 @@ pub const FEATURES: &[&str] = &[
     "volume_open_finder",
     "agents_page_open",
     "share_open",
+    // The in-app Upgrade button (relay allowance notice) was clicked: the
+    // app side of the paid funnel (CUA-1683).
+    "upgrade_open",
     // Settings, General: Launch Cua Spaces at login turned on or off.
     "launch_at_login_on",
     "launch_at_login_off",

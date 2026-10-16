@@ -238,6 +238,7 @@ class _Loopback:
         self.body = body
         self.status = status
         self.hits: list[str] = []
+        self.requests: list[dict] = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -246,7 +247,7 @@ class _Loopback:
 
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
-                self.rfile.read(length)
+                outer.requests.append(json.loads(self.rfile.read(length)))
                 outer.hits.append(self.path)
                 if outer.mode == "redirect":
                     host, port = self.server.server_address[:2]
@@ -350,6 +351,108 @@ class LoopbackHttpTest(unittest.TestCase):
             server.close()
         self.assertEqual(caught.exception.code, "response_too_large")
         self.assertEqual(server.hits, ["/v1/systemone"])
+
+class CliLoopbackHttpTest(unittest.TestCase):
+    """Exercise the supported CLI, not an injected adapter transport."""
+
+    def _run(self, server: _Loopback, *, value=None, api_key=""):
+        env = os.environ.copy()
+        for name in (
+            "OPENJEV_BASE_URL",
+            "OPENJEV_API_KEY",
+            "OPENJEV_MODEL",
+            "OPENJEV_TIMEOUT_MS",
+        ):
+            env.pop(name, None)
+        env.update(
+            OPENJEV_BASE_URL=server.base_url,
+            OPENJEV_API_KEY=api_key,
+            OPENJEV_MODEL="cli-loopback",
+            OPENJEV_TIMEOUT_MS="2000",
+        )
+        return subprocess.run(
+            [sys.executable, str(BASE / "python/choose_decision.py"),
+             "--model", "openjev"],
+            input=json.dumps(
+                decision_request_wire(request()) if value is None else value
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+            env=env,
+        )
+
+    def test_v2_cli_forces_openjev_and_preserves_caller_state(self) -> None:
+        server = _Loopback("ok", json.dumps(good_response()).encode())
+        try:
+            process = self._run(server)
+        finally:
+            server.close()
+        self.assertEqual(process.returncode, 0, process.stderr)
+        result = json.loads(process.stdout)
+        self.assertEqual(result["kind"], "selected")
+        self.assertEqual(result["selected_id"], "submit")
+        self.assertEqual(result["capture_id"], request().capture_id)
+        self.assertEqual(result["model"], "openjev-fixture")
+        self.assertEqual(server.hits, ["/v1/systemone"])
+        self.assertEqual(server.requests[0]["model"], "cli-loopback")
+        self.assertEqual(
+            server.requests[0]["state"], decision_request_wire(request())
+        )
+        self.assertEqual(
+            server.requests[0]["questions"]["candidate"]["criteria"],
+            request().criteria,
+        )
+
+    def test_cli_provider_failures_return_error_without_retry(self) -> None:
+        unknown = good_response()
+        unknown["answers"]["candidate"]["choice"] = "not-supplied"
+        for mode, body, status in (
+            ("ok", json.dumps(unknown).encode(), 200),
+            ("error", b"unavailable", 503),
+            ("ok", b"not-json", 200),
+            ("redirect", b"", 302),
+            ("ok", b"x" * (256 * 1024 + 1), 200),
+        ):
+            with self.subTest(mode=mode, status=status, size=len(body)):
+                server = _Loopback(mode, body, status)
+                try:
+                    process = self._run(server)
+                finally:
+                    server.close()
+                self.assertEqual(process.returncode, 0, process.stderr)
+                result = json.loads(process.stdout)
+                self.assertEqual(result["kind"], "error")
+                self.assertEqual(result["reason"], "model_error")
+                self.assertIsNone(result["selected_id"])
+                self.assertEqual(server.hits, ["/v1/systemone"])
+
+    def test_cli_rejects_invalid_request_before_transport(self) -> None:
+        value = decision_request_wire(request())
+        value["schema"] = "unsupported"
+        server = _Loopback("ok", json.dumps(good_response()).encode())
+        try:
+            process = self._run(server, value=value)
+        finally:
+            server.close()
+        self.assertNotEqual(process.returncode, 0)
+        self.assertEqual(process.stdout, "")
+        self.assertIn("invalid request:", process.stderr)
+        self.assertEqual(server.hits, [])
+
+    def test_cli_rejects_http_api_key_before_transport(self) -> None:
+        server = _Loopback("ok", json.dumps(good_response()).encode())
+        try:
+            process = self._run(server, api_key="test-only-not-a-credential")
+        finally:
+            server.close()
+        self.assertNotEqual(process.returncode, 0)
+        self.assertEqual(process.stdout, "")
+        self.assertIn("OpenJev setup failed", process.stderr)
+        self.assertNotIn("test-only-not-a-credential", process.stderr)
+        self.assertEqual(server.hits, [])
+
 
 if __name__ == "__main__":
     unittest.main()

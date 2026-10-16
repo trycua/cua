@@ -91,6 +91,19 @@ and selection checks.
 This backend does not change Driver or the browser/native runners. Runner-side
 provider selection and backend receipt logging are separate integration work.
 
+The focused transport and CLI regression suite is dependency-free:
+
+```bash
+python -m unittest discover -s python/tests -p test_openjev_model.py -v
+```
+
+Its CLI rows launch `choose_decision.py --model openjev` as a real subprocess
+against an owned loopback HTTP responder. They check the received v2 state and
+criteria, valid selection, invalid-choice/HTTP/malformed/redirect/size failures
+without retry, and pre-transport request/credential refusals. These prove the
+decision boundary only: the responder is not an external OpenJev service, and
+no Driver binary, browser action, native effect, or speedup is qualified.
+
 ## Run a bounded request
 
 The deterministic mock requires no model weights or credential:

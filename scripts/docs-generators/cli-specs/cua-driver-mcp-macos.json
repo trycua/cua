@@ -938,7 +938,7 @@
    "read_only": false
   },
   {
-   "description": "Press and release one key. `delivery_mode` as in click/type_text.\n- `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n- `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\nConfirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.",
+   "description": "Press and release one key. `delivery_mode` as in click/type_text.\n- `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n- `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\nAn element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key dispatched.\nConfirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {

@@ -123,11 +123,11 @@ pub struct AboutLink {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AboutUpdates {
-    /// "Automatically check for updates".
+    /// "Check for and download updates automatically".
     pub auto_check_label: String,
     /// Checked.
     pub auto_check: bool,
-    /// "Install updates automatically".
+    /// "Install a downloaded update when Cua Spaces quits".
     pub auto_install_label: String,
     /// Checked.
     pub auto_install: bool,
@@ -218,9 +218,9 @@ pub fn view(input: &AboutInput) -> AboutView {
         url,
     };
     let updates = input.updater.then(|| AboutUpdates {
-        auto_check_label: "Automatically check for updates".into(),
+        auto_check_label: "Check for and download updates automatically".into(),
         auto_check: input.auto_check,
-        auto_install_label: "Install updates automatically".into(),
+        auto_install_label: "Install a downloaded update when Cua Spaces quits".into(),
         auto_install: input.auto_install,
         auto_install_enabled: input.auto_check,
         channel_label: "Update to:".into(),

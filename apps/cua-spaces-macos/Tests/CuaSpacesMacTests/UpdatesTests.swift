@@ -66,6 +66,17 @@ struct UpdatesTests {
         #expect(v.updates?.lastCheck != "Last check: Never")
     }
 
+    /// Updates check and download in the background out of the box, like
+    /// Windows and Linux; only a click on "Restart to update" restarts.
+    @Test func updatesDownloadInTheBackgroundByDefault() throws {
+        let plist = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Support/Info.plist")
+        let info = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: plist), format: nil) as? [String: Any])
+        #expect(info["SUEnableAutomaticChecks"] as? Bool == true)
+        #expect(info["SUAutomaticallyUpdate"] as? Bool == true)
+    }
+
     @Test func noUpdaterNoControls() {
         let model = UpdatesModel(updater: nil, info: Self.info)
         #expect(model.view.updates == nil)

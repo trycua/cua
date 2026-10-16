@@ -51,6 +51,8 @@
 	<string>4ikTEz/qr6f2gooAccIHFi5tuP3uEeQEW0QboJu2f+0=</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
 </dict>

@@ -335,7 +335,8 @@ struct ViewModelTests {
         var panel = h.panel
         #expect(panel.toggles.map(\.on) == [false, true])
         #expect(panel.toggles.map(\.enabled) == [true, true], "both may be off")
-        #expect(panel.limits?.contains("Apple\u{2019}s license allows two per Mac") == true)
+        #expect(panel.limits?.hasSuffix("2 macOS VMs") == true)
+        #expect(panel.limits?.contains("license") == false)
         #expect(panel.providedEmpty == "None yet")
         #expect(panel.permissions.isEmpty, "no desktop, no screen permissions")
         await h.run(panel.toggles[0].action)

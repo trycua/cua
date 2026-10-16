@@ -160,6 +160,10 @@ message Sandbox {
   // The engine that runs it: "gvisor", "runc", "qemu", "lume" or
   // "kubevirt"; empty when not known.
   string runtime = 17;
+  // Why a local sandbox stopped without being asked to, in plain words:
+  // "out of memory", "killed", "exited" or "exited with code N". Empty
+  // otherwise, and once it is started again.
+  string stop_reason = 18;
 }
 
 // A user-declared readiness probe. With no probes a sandbox is ready as soon

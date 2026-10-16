@@ -336,6 +336,19 @@ pub trait LocalRuntime: Send + Sync {
         None
     }
 
+    /// Why the instance `name` (that `runtime_type` runs) stopped, once it
+    /// has: its engine's exit record. `None` while it runs, when the engine
+    /// keeps no such record, or when the engine is not up now (this never
+    /// boots one). Default: none.
+    async fn stop_reason(
+        &self,
+        name: &str,
+        runtime_type: &str,
+    ) -> RuntimeResult<Option<crate::StopReason>> {
+        let _ = (name, runtime_type);
+        Ok(None)
+    }
+
     /// Copy-on-write clone of a stopped instance or checkpoint.
     async fn fork(&self, source: &str, new_name: &str) -> RuntimeResult<()> {
         Err(RuntimeError::Unsupported {

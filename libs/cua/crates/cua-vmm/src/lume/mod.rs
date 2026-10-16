@@ -1284,21 +1284,25 @@ pub fn lume_installed_marker() -> PathBuf {
 /// Logs the Lume installer's LaunchAgent writes (`lume serve` as a daemon).
 pub const LUME_DAEMON_LOGS: [&str; 2] = ["/tmp/lume_daemon.log", "/tmp/lume_daemon.error.log"];
 
+/// The GPU options Lume offers `spec`: GPU acceleration for a macOS guest.
+/// An OCI image is one (Lume pulls and clones macOS bases; a Linux guest
+/// boots from a disk image), even when the caller left `os` at its Linux
+/// default, as the Spaces app's create does (CUA-1778).
+fn gpu_offered(spec: &StartSpec) -> &'static [&'static str] {
+    if spec.os == GuestOs::Macos || matches!(spec.image, ImageSource::Oci { .. }) {
+        &[crate::gpu::PARAVIRTUAL]
+    } else {
+        &[]
+    }
+}
+
 impl LumeRuntime {
     /// Starts `spec`; sets `created` once a new VM exists in Lume (a clone
     /// or a Linux VM shell), so a failure after that deletes it.
     async fn start_vm(&self, spec: &StartSpec, created: &mut bool) -> Result<Instance> {
         validate_name(&spec.name)?;
         crate::types::reject_sidecars(BackendKind::Lume, spec)?;
-        crate::types::reject_gpu(
-            BackendKind::Lume,
-            spec,
-            if spec.os == GuestOs::Macos {
-                &[crate::gpu::PARAVIRTUAL]
-            } else {
-                &[]
-            },
-        )?;
+        crate::types::reject_gpu(BackendKind::Lume, spec, gpu_offered(spec))?;
         // Lume answers, so only the host (Apple silicon) can say no.
         if spec.gpu.is_some()
             && let Err(why) = crate::gpu::lume_support(true).pick(crate::gpu::PARAVIRTUAL)
@@ -2235,6 +2239,31 @@ mod tests {
         .to_string();
         assert!(err.contains("denied for ***"), "{err}");
         assert!(!err.contains("s3cret"));
+    }
+
+    #[test]
+    fn gpu_acceleration_is_offered_for_a_macos_image_whatever_os_says() {
+        let oci = ImageSource::Oci {
+            reference: "ghcr.io/trycua/macos:26".into(),
+        };
+        // The Spaces app's create leaves `os` at its default (Linux).
+        let mut spec = StartSpec::new("gpu-mac", oci.clone());
+        assert_eq!(spec.os, GuestOs::Linux);
+        spec.gpu = Some(crate::gpu::PARAVIRTUAL.into());
+        crate::types::reject_gpu(BackendKind::Lume, &spec, gpu_offered(&spec))
+            .expect("a macOS image on Lume takes GPU acceleration");
+        spec.os = GuestOs::Macos;
+        assert_eq!(gpu_offered(&spec), [crate::gpu::PARAVIRTUAL]);
+        // A Linux disk VM has none, and another GPU kind is still refused.
+        let disk = StartSpec::new(
+            "gpu-linux",
+            ImageSource::Disk {
+                path: "/tmp/linux.qcow2".into(),
+            },
+        );
+        assert!(gpu_offered(&disk).is_empty());
+        spec.gpu = Some(crate::gpu::VIRGL.into());
+        assert!(crate::types::reject_gpu(BackendKind::Lume, &spec, gpu_offered(&spec)).is_err());
     }
 
     #[test]

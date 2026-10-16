@@ -504,6 +504,28 @@ pub fn window_is_modal(xid: u64) -> bool {
         .is_some_and(|atoms| atoms.contains(&modal_atom))
 }
 
+/// `_NET_WM_WINDOW_TYPE` carries `_NET_WM_WINDOW_TYPE_SPLASH`: a startup
+/// screen, often drawn by a launcher process that never owns the app window.
+pub fn window_is_splash(xid: u64) -> bool {
+    let Ok(xid) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    let (Ok(type_atom), Ok(splash_atom)) = (
+        get_atom(&conn, "_NET_WM_WINDOW_TYPE"),
+        get_atom(&conn, "_NET_WM_WINDOW_TYPE_SPLASH"),
+    ) else {
+        return false;
+    };
+    conn.get_property(false, xid, type_atom, AtomEnum::ATOM, 0, 64)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().map(|atoms| atoms.collect::<Vec<_>>()))
+        .is_some_and(|atoms| atoms.contains(&splash_atom))
+}
+
 /// True while `xid` exists on the server and is viewable.
 pub fn window_is_viewable(xid: u64) -> bool {
     window_info(xid).is_some_and(|w| w.is_on_screen)

@@ -1316,7 +1316,7 @@ impl Host {
         }
         status.paused_signed_out = config.paused_signed_out;
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
-            match self.relay_machine(url, id).await {
+            match recall_relay_view(url, id, self.relay_machine(url, id).await) {
                 Ok(m) => {
                     status.online = Some(m.online);
                     // Paused: nobody can reach it, whatever the relay's
@@ -1686,6 +1686,41 @@ impl Host {
             ))),
             None => Ok(()),
         }
+    }
+}
+
+/// How long [`Host::status`] keeps the relay's last answer about this
+/// machine while the relay is briefly unreachable, before it shows the
+/// failure ("Needs attention"). A relay deploy replaces its one pod, and
+/// the proxy in front of it answers 503 for about 20 s meanwhile; the
+/// host service reconnects on its own.
+pub const RELAY_HICCUP_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The relay's last answer about each machine (relay URL, machine id),
+/// and when it came.
+type RelayViews = std::collections::HashMap<(String, String), (std::time::Instant, crate::Machine)>;
+static RELAY_VIEWS: std::sync::Mutex<Option<RelayViews>> = std::sync::Mutex::new(None);
+
+/// `read` (the relay's answer about machine `id`), remembered when it
+/// worked; a transient failure ([`Error::is_transient`]) within
+/// [`RELAY_HICCUP_GRACE`] of the last answer gets that answer instead.
+fn recall_relay_view(url: &str, id: &str, read: Result<crate::Machine>) -> Result<crate::Machine> {
+    let key = (url.to_string(), id.to_string());
+    let mut views = RELAY_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let views = views.get_or_insert_with(Default::default);
+    match read {
+        Ok(m) => {
+            views.insert(key, (std::time::Instant::now(), m.clone()));
+            Ok(m)
+        }
+        Err(e) if e.is_transient() => match views.get(&key) {
+            Some((at, m)) if at.elapsed() < RELAY_HICCUP_GRACE => {
+                tracing::debug!("relay status read failed; showing its last answer: {e}");
+                Ok(m.clone())
+            }
+            _ => Err(e),
+        },
+        Err(e) => Err(e),
     }
 }
 

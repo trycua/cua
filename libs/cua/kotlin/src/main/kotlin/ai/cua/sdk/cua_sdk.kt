@@ -33948,6 +33948,12 @@ data class SandboxInfo (
      * a registry, and the daemon topology.
      */
     var `imageInfo`: ImageInfo? = null
+    ,
+    /**
+     * Why a local sandbox stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+     */
+    var `stopReason`: kotlin.String? = null
 
 ){
 
@@ -33980,6 +33986,7 @@ public object FfiConverterTypeSandboxInfo: FfiConverterRustBuffer<SandboxInfo> {
             FfiConverterOptionalLong.read(buf),
             FfiConverterMapStringString.read(buf),
             FfiConverterOptionalTypeImageInfo.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -33999,7 +34006,8 @@ public object FfiConverterTypeSandboxInfo: FfiConverterRustBuffer<SandboxInfo> {
             FfiConverterString.allocationSize(value.`location`) +
             FfiConverterOptionalLong.allocationSize(value.`expiresAtUnix`) +
             FfiConverterMapStringString.allocationSize(value.`providerDetails`) +
-            FfiConverterOptionalTypeImageInfo.allocationSize(value.`imageInfo`)
+            FfiConverterOptionalTypeImageInfo.allocationSize(value.`imageInfo`) +
+            FfiConverterOptionalString.allocationSize(value.`stopReason`)
     )
 
     override fun write(value: SandboxInfo, buf: ByteBuffer) {
@@ -34019,6 +34027,7 @@ public object FfiConverterTypeSandboxInfo: FfiConverterRustBuffer<SandboxInfo> {
             FfiConverterOptionalLong.write(value.`expiresAtUnix`, buf)
             FfiConverterMapStringString.write(value.`providerDetails`, buf)
             FfiConverterOptionalTypeImageInfo.write(value.`imageInfo`, buf)
+            FfiConverterOptionalString.write(value.`stopReason`, buf)
     }
 }
 
@@ -35703,6 +35712,13 @@ data class SpaceInfo (
      * Empty for other Spaces.
      */
     var `cloudDelete`: kotlin.String
+    ,
+    /**
+     * Why a local Space stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); empty otherwise,
+     * and once it is started again.
+     */
+    var `stopReason`: kotlin.String = ""
 
 ){
 
@@ -35740,6 +35756,7 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
         )
     }
 
@@ -35764,7 +35781,8 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterString.allocationSize(value.`powerState`) +
             FfiConverterString.allocationSize(value.`cloud`) +
             FfiConverterString.allocationSize(value.`cloudPlace`) +
-            FfiConverterString.allocationSize(value.`cloudDelete`)
+            FfiConverterString.allocationSize(value.`cloudDelete`) +
+            FfiConverterString.allocationSize(value.`stopReason`)
     )
 
     override fun write(value: SpaceInfo, buf: ByteBuffer) {
@@ -35789,6 +35807,7 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterString.write(value.`cloud`, buf)
             FfiConverterString.write(value.`cloudPlace`, buf)
             FfiConverterString.write(value.`cloudDelete`, buf)
+            FfiConverterString.write(value.`stopReason`, buf)
     }
 }
 

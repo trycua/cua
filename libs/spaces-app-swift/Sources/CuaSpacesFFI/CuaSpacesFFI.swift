@@ -30789,6 +30789,11 @@ public struct AppSpacePower: Equatable, Hashable {
      * Why the last power action failed, until the next one.
      */
     public var error: String?
+    /**
+     * Why it stopped without being asked to, in plain words ("out of
+     * memory"), while it is off.
+     */
+    public var stopReason: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30806,11 +30811,16 @@ public struct AppSpacePower: Equatable, Hashable {
          */turningOn: Bool?,
         /**
          * Why the last power action failed, until the next one.
-         */error: String?) {
+         */error: String?,
+        /**
+         * Why it stopped without being asked to, in plain words ("out of
+         * memory"), while it is off.
+         */stopReason: String?) {
         self.control = control
         self.off = off
         self.turningOn = turningOn
         self.error = error
+        self.stopReason = stopReason
     }
 
 
@@ -30832,7 +30842,8 @@ public struct FfiConverterTypeAppSpacePower: FfiConverterRustBuffer {
                 control: FfiConverterTypeAppPowerControl.read(from: &buf),
                 off: FfiConverterBool.read(from: &buf),
                 turningOn: FfiConverterOptionBool.read(from: &buf),
-                error: FfiConverterOptionString.read(from: &buf)
+                error: FfiConverterOptionString.read(from: &buf),
+                stopReason: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -30841,6 +30852,7 @@ public struct FfiConverterTypeAppSpacePower: FfiConverterRustBuffer {
         FfiConverterBool.write(value.off, into: &buf)
         FfiConverterOptionBool.write(value.turningOn, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
+        FfiConverterOptionString.write(value.stopReason, into: &buf)
     }
 }
 
@@ -31084,6 +31096,12 @@ public struct AppSpaceRow: Equatable, Hashable {
      * (that machine created it) or `elsewhere` (another device did).
      */
     public var cloudDelete: String?
+    /**
+     * Why a local Space stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"), as the SDK
+     * recorded it; absent otherwise.
+     */
+    public var stopReason: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31158,7 +31176,12 @@ public struct AppSpaceRow: Equatable, Hashable {
         /**
          * Where Delete permanently can delete it: `here`, `host:<machine>`
          * (that machine created it) or `elsewhere` (another device did).
-         */cloudDelete: String?) {
+         */cloudDelete: String?,
+        /**
+         * Why a local Space stopped without being asked to, in plain words
+         * ("out of memory", "killed", "exited with code 1"), as the SDK
+         * recorded it; absent otherwise.
+         */stopReason: String?) {
         self.id = id
         self.name = name
         self.provider = provider
@@ -31181,6 +31204,7 @@ public struct AppSpaceRow: Equatable, Hashable {
         self.cloud = cloud
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
+        self.stopReason = stopReason
     }
 
 
@@ -31220,7 +31244,8 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
                 powerState: FfiConverterOptionString.read(from: &buf),
                 cloud: FfiConverterOptionString.read(from: &buf),
                 cloudPlace: FfiConverterOptionString.read(from: &buf),
-                cloudDelete: FfiConverterOptionString.read(from: &buf)
+                cloudDelete: FfiConverterOptionString.read(from: &buf),
+                stopReason: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -31247,6 +31272,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.cloud, into: &buf)
         FfiConverterOptionString.write(value.cloudPlace, into: &buf)
         FfiConverterOptionString.write(value.cloudDelete, into: &buf)
+        FfiConverterOptionString.write(value.stopReason, into: &buf)
     }
 }
 

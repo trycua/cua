@@ -834,14 +834,17 @@ fn local_engine_detail(image: &SandboxImage, env: &WizardEnv) -> Option<String> 
     })
 }
 
-/// This Mac can run `image` now: a local runtime answers, and (when the
-/// doctor's list is known) one of the image's engines is among them.
+/// This Mac can run `image` now: a local runtime answers, and one of the
+/// image's engines is among the doctor's ready ones. While that list is not
+/// known, every engine counts as ready except QEMU: the app never installs
+/// it (a Windows PC has no way to), and a Windows VM's image is gigabytes
+/// that would download only for the create to fail.
 fn local_ready(image: &SandboxImage, env: &WizardEnv) -> bool {
     env.local_available
-        && env
-            .local_backends
-            .as_ref()
-            .is_none_or(|b| local_runtime_ready(image, b))
+        && match env.local_backends.as_ref() {
+            Some(b) => local_runtime_ready(image, b),
+            None => image.local != Some(LocalEngine::Qemu),
+        }
 }
 
 /// The first machine of yours that can run `image` now (online, not at a
@@ -3612,6 +3615,69 @@ mod tests {
         }
     }
 
+    /// A Windows VM runs on QEMU, which the app never installs: on a PC
+    /// without it (or before the doctor answered) the Windows image is not
+    /// offered here, so nothing downloads gigabytes only to fail.
+    #[test]
+    fn a_windows_vm_needs_qemu_ready_here() {
+        let image = "ghcr.io/trycua/windows:2022";
+        let blocked = |e: &WizardEnv| {
+            let s = reduce(
+                &initial(e),
+                &WizardAction::ChooseImage {
+                    image_ref: image.into(),
+                },
+                e,
+            );
+            let s = reduce(&s, &WizardAction::ChoosePlacement { on: "local".into() }, e);
+            let v = view_on(&s, e, SpaceOs::Windows);
+            assert_eq!(v.image.image_ref, image);
+            (!v.can_continue).then(|| v.placement_error.unwrap_or_default())
+        };
+        let unknown = WizardEnv {
+            local_backends: None,
+            ..env()
+        };
+        assert_eq!(
+            blocked(&unknown).as_deref(),
+            Some("This PC cannot run QEMU Spaces.")
+        );
+        // Docker Desktop is up, QEMU is not: the doctor's reason.
+        let docker_only = WizardEnv {
+            local_backends: Some(vec!["container".into()]),
+            local_details: Some(
+                [(
+                    "qemu".to_string(),
+                    "QEMU not found; missing: qemu-system-x86_64 / qemu-img".to_string(),
+                )]
+                .into(),
+            ),
+            ..env()
+        };
+        assert_eq!(
+            blocked(&docker_only).as_deref(),
+            Some(
+                "This PC cannot run QEMU Spaces: QEMU not found; missing: qemu-system-x86_64 \
+                 / qemu-img."
+            )
+        );
+        // A Linux container is still offered with the same env.
+        let linux = reduce(
+            &initial(&unknown),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/linux:24.04".into(),
+            },
+            &unknown,
+        );
+        assert!(view_on(&linux, &unknown, SpaceOs::Windows).can_continue);
+        // QEMU ready: Windows is offered.
+        let qemu = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..env()
+        };
+        assert_eq!(blocked(&qemu), None);
+    }
+
     /// A container image on a Mac whose container engine is not ready says
     /// why (the runtime doctor's detail), not only that it cannot.
     #[test]
@@ -3870,7 +3936,10 @@ mod tests {
 
     #[test]
     fn a_linux_vm_disk_grows_with_the_slider() {
-        let e = storage_env();
+        let e = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..storage_env()
+        };
         let mut s = on("ghcr.io/trycua/linux:24.04-disk", &e);
         let v = view(&s, &e);
         let p = sizes("ghcr.io/trycua/linux:24.04-disk", "arm64");

@@ -471,6 +471,16 @@ const REGISTER_RETRY_BASE: Duration = Duration::from_secs(1);
 #[cfg(test)]
 const REGISTER_RETRY_BASE: Duration = Duration::from_millis(5);
 
+/// Times a read (a GET, which changes nothing) is tried again when the
+/// relay was not reached or answered 429, 502 or 503, before the caller
+/// sees the failure.
+const READ_RETRIES: u32 = 2;
+/// The first wait before reading again (tripled each time).
+#[cfg(not(test))]
+const READ_RETRY_BASE: Duration = Duration::from_millis(250);
+#[cfg(test)]
+const READ_RETRY_BASE: Duration = Duration::from_millis(5);
+
 /// HTTP client for one relay.
 #[derive(Clone, Debug)]
 pub struct RelayClient {
@@ -556,6 +566,26 @@ impl RelayClient {
         };
         serde_json::from_str(body)
             .map_err(|e| (Error::Relay(format!("bad relay response: {e}")), false))
+    }
+
+    /// `GET path`, tried again (twice, about a second in all) when the
+    /// relay is briefly unreachable or overloaded. A read changes nothing,
+    /// so sending it again is always safe.
+    async fn get<T: serde::de::DeserializeOwned>(&self, path: &str, bearer: &str) -> Result<T> {
+        let mut delay = READ_RETRY_BASE;
+        let mut attempt = 0;
+        loop {
+            match self.send_once(self.http.get(self.url(path)), bearer).await {
+                // Not a timeout: one that hung would hang again.
+                Err((e, true)) if attempt < READ_RETRIES => {
+                    attempt += 1;
+                    tracing::debug!(attempt, path, "relay read failed, retrying: {e}");
+                    tokio::time::sleep(delay).await;
+                    delay *= 3;
+                }
+                r => return r.map_err(|(e, _)| e),
+            }
+        }
     }
 
     /// One call with an optional JSON body (see [`RelayClient::send`]).
@@ -775,19 +805,13 @@ impl RelayClient {
 
     /// Machines the account owns or that are shared with it.
     pub async fn machines(&self, account_token: &str) -> Result<Vec<Machine>> {
-        let list: MachineList = self
-            .send(self.http.get(self.url("/v1/machines")), account_token)
-            .await?;
+        let list: MachineList = self.get("/v1/machines", account_token).await?;
         Ok(list.machines)
     }
 
     /// One machine (`credential` = account token or the machine token).
     pub async fn machine(&self, credential: &str, id: &str) -> Result<Machine> {
-        self.send(
-            self.http.get(self.url(&format!("/v1/machines/{id}"))),
-            credential,
-        )
-        .await
+        self.get(&format!("/v1/machines/{id}"), credential).await
     }
 
     /// Renames / changes the allowlist / toggles sharing (owner).

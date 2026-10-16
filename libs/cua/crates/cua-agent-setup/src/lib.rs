@@ -137,6 +137,19 @@ pub struct HostEnv {
     pub run_agent_clis: bool,
 }
 
+/// Where coding-agent CLIs usually install, searched after `$PATH`.
+fn well_known_bin_dirs(home: &Path) -> Vec<PathBuf> {
+    vec![
+        home.join(".local/bin"),
+        home.join(".claude/local"),
+        home.join(".npm-global/bin"),
+        home.join(".bun/bin"),
+        home.join(".cargo/bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ]
+}
+
 const VARS: &[&str] = &[
     "XDG_CONFIG_HOME",
     "APPDATA",
@@ -166,10 +179,20 @@ impl HostEnv {
             .iter()
             .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
             .collect();
-        let path = std::env::var_os("PATH")
+        let os = Os::current();
+        let mut path: Vec<PathBuf> = std::env::var_os("PATH")
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
-        let os = Os::current();
+        // A GUI app (Cua Spaces from the Dock) runs without the user's
+        // shell PATH, so an agent installed under a user bin dir would look
+        // missing. Search the usual install dirs after the real PATH.
+        if os != Os::Windows {
+            for d in well_known_bin_dirs(&home) {
+                if !path.contains(&d) {
+                    path.push(d);
+                }
+            }
+        }
         // `CUA_AGENT_APP_DIRS` (a path list, empty for none) replaces the
         // app folders, so hermetic runs do not see the host's apps.
         let app_dirs = match std::env::var_os("CUA_AGENT_APP_DIRS") {
@@ -1323,7 +1346,7 @@ fn run_cli(bin: &Path, args: &[String]) -> Result<()> {
 
 #[cfg(test)]
 mod cmd_shim_tests {
-    use super::cmd_shim_target;
+    use super::{HostEnv, Os, cmd_shim_target};
 
     /// What `npm i -g @anthropic-ai/claude-code` writes (cmd-shim).
     const NATIVE_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\"   %*\r\n";
@@ -1339,6 +1362,19 @@ mod cmd_shim_tests {
             std::fs::write(bin.join("claude.exe"), b"MZ").unwrap();
         }
         d
+    }
+
+    #[test]
+    fn the_current_env_also_searches_the_usual_install_dirs() {
+        let env = HostEnv::current();
+        if env.os != Os::Windows {
+            let home = env.home.clone();
+            assert!(env.path.contains(&home.join(".local/bin")));
+            assert!(
+                env.path
+                    .contains(&std::path::PathBuf::from("/opt/homebrew/bin"))
+            );
+        }
     }
 
     #[test]

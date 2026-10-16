@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { useState } from "react";
+
 import { useMachines, useThisMachine, type OnboardingHook, type OnboardingView } from "@/bridge";
+import { JoinWithCodeDialog } from "@/components/join-with-code-dialog";
 import { HostSetupForm } from "@/components/this-machine";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +18,7 @@ type HostSetup = ReturnType<typeof useThisMachine>;
  */
 export function ModeCard({ flow, view, host }: { flow: OnboardingHook; view: OnboardingView; host: HostSetup }) {
   const { data: machines } = useMachines();
+  const [joining, setJoining] = useState(false);
   if (host.formView) {
     const done = (ok: boolean) => {
       if (ok) flow.send({ type: "mode-chosen", mode: "host" });
@@ -59,6 +63,19 @@ export function ModeCard({ flow, view, host }: { flow: OnboardingHook; view: Onb
           </button>
         );
       })}
+      {flow.hostConfigured ? null : (
+        <>
+          <button
+            type="button"
+            onClick={() => setJoining(true)}
+            data-testid="onboarding-join-with-code"
+            className="self-start px-1 pt-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
+          >
+            Have a code from another device? Join with a code
+          </button>
+          <JoinWithCodeDialog open={joining} onOpenChange={setJoining} />
+        </>
+      )}
     </div>
   );
 }

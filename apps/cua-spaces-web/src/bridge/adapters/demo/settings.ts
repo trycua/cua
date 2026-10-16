@@ -11,7 +11,7 @@ import { HostError } from "../../adapter";
 import type { DeviceInput, DevicesInput, PairingCode } from "../../contracts/devices";
 import type { MachineRow } from "../../contracts/host";
 import type { NotificationInput } from "../../contracts/notifications";
-import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, StorageInput } from "../../contracts/settings";
+import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, StorageInput, UpdateState } from "../../contracts/settings";
 import { NO_EXPERIMENTS } from "../../contracts/volume";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./platform";
 import type { NotificationsOperations } from "../../ops/notifications";
@@ -36,6 +36,8 @@ export interface DemoSettingsContext {
   addMachine?: (machine: MachineRow) => void;
   /** This device is not on the relay until Enroll… signs in again. */
   unenrolled?: boolean;
+  /** Where the updater is at start (idle: up to date). */
+  update?: Partial<UpdateState>;
 }
 
 /** How many times "Add a machine" reads the codes before the demo's other
@@ -148,6 +150,16 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     cache: { size_bytes: Math.round(1.2 * GIB), capacity_bytes: 10 * GIB },
   };
 
+  let update: UpdateState = {
+    status: "idle",
+    currentVersion: "0.6.0",
+    version: null,
+    percent: null,
+    notesUrl: null,
+    message: null,
+    ...ctx.update,
+  };
+
   const about = (): AboutInput => ({
     platform: platform.os,
     version: "0.6.0",
@@ -194,6 +206,16 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
         emit({ type: "settings.changed" });
       });
       return about();
+    },
+
+    "update.get": () => ({ ...update }),
+    "update.install": () => {
+      // Nothing downloaded: nothing to install, and the state says so.
+      if (update.status !== "downloaded") return { ...update };
+      // The real host relaunches into the new version.
+      update = { ...update, status: "idle", currentVersion: update.version ?? update.currentVersion, version: null, notesUrl: null };
+      emit({ type: "update.changed" });
+      return { ...update };
     },
 
     "experiments.get": () => ({ ...experiments }),

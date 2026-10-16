@@ -52,7 +52,7 @@ import type {
   WizardEnv,
 } from "./new-space";
 import type { NotificationInput } from "./notifications";
-import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput } from "./settings";
+import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry } from "./share";
 import type { SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
@@ -104,6 +104,7 @@ const SpaceRowShape = ref(
     hostName: opt(str),
     power: opt(str),
     powerState: opt(str),
+    stopReason: opt(str),
     cloud: opt(str),
     cloudPlace: opt(str),
     cloudDelete: opt(str),
@@ -256,6 +257,18 @@ const AboutShape = ref(
     channel: oneOf("stable", "beta"),
     lastCheck: nullable(str),
     checking: bool,
+  }),
+);
+
+const UpdateShape = ref(
+  "UpdateState",
+  obj<UpdateState>()({
+    status: oneOf("idle", "checking", "available", "downloading", "downloaded", "error"),
+    currentVersion: str,
+    version: nullable(str),
+    percent: nullable(num),
+    notesUrl: nullable(str),
+    message: nullable(str),
   }),
 );
 
@@ -842,6 +855,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "about.get": AboutShape,
   "about.set": AboutShape,
   "about.checkNow": AboutShape,
+  "update.get": UpdateShape,
+  "update.install": UpdateShape,
   "experiments.get": ExperimentsShape,
   "experiments.set": ExperimentsShape,
   "loginItem.get": LoginItemShape,
@@ -875,6 +890,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.droppedFiles": strings,
   "spaces.sendFiles": list(obj<SentFileInfo>()({ name: str, dest: str, bytes: num })),
   "host.setUp": HostStatusShape,
+  "host.joinWithCode": HostStatusShape,
   "host.action": HostStatusShape,
   "host.openSettings": nul,
   "startup.get": StartupShape,
@@ -937,7 +953,7 @@ const WkSpaceShape = ref(
     arch: optNull(str),
     host: optNull(str),
     hostName: optNull(str),
-    power: optNull(object({ control: str, off: bool, turningOn: optNull(bool), error: optNull(str) })),
+    power: optNull(object({ control: str, off: bool, turningOn: optNull(bool), error: optNull(str), stopReason: optNull(str) })),
     cloud: optNull(str),
     cloudPlace: optNull(str),
     cloudDelete: optNull(str),
@@ -1103,6 +1119,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "machines.list": WkMachinesShape,
   "host.status": nullable(WkHostShape),
   "host.setUp": nullable(WkHostShape),
+  "host.joinWithCode": nullable(WkHostShape),
   "host.action": nullable(WkHostShape),
   "agents.list": OP_SHAPES["agents.list"],
   "agents.runs": OP_SHAPES["agents.runs"],
@@ -1153,6 +1170,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "about.get": AboutShape,
   "about.set": AboutShape,
   "about.checkNow": AboutShape,
+  "update.get": UpdateShape,
+  "update.install": UpdateShape,
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,

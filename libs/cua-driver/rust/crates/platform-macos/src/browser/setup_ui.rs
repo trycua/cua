@@ -160,9 +160,6 @@ fn omnibox_reads_setup_url(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor
     })
 }
 
-/// The page behind the current tab is only part of the setup proof when the
-/// omnibox already reads the setup URL; otherwise its size (thousands of nodes
-/// on a heavy site) would truncate the walk and refuse before navigating.
 fn initial_setup_tree(
     pid: i32,
     window_id: u32,

@@ -22,6 +22,7 @@
   "identityOverrides": {
     "antoine.bonnet@hcompany.ai": "abonneth",
     "anvit.mail@icloud.com": "AnvitDevadiga",
+    "bitomule@gmail.com": "bitomule",
     "ddupont@mit.edu": "ddupont808",
     "dillon@trycua.com": "ddupont808",
     "egnichtel@crosscode.com": "ngnichtel",
@@ -30,6 +31,7 @@
     "i@jyunko.cn": "HsiangNianian",
     "ifuubhat72@gmail.com": "Iflaqbhat",
     "ilskdw@gmail.com": "CMGS",
+    "irfanwani347@gmail.com": "Irfanwani",
     "jf-mac-mini@jf-mac-mini-4.local": "0xjohnnydev",
     "kevinherron@gmail.com": "kevinherron",
     "klymenko@adobe.com": "pavelklymenko",
@@ -38,9 +40,10 @@
     "marko.civonafets@gmail.com": "civonafets",
     "me@madhavajay.com": "madhavajay",
     "methanoya@like.dance": "methanoya",
+    "ritikag5533@gmail.com": "RitikaxG",
     "robert@trycua.com": "enchanted-koala",
-    "rwendt1337@gmail.com": "r33drichards",
     "rsyuzyov@gmail.com": "rsyuzyov",
+    "rwendt1337@gmail.com": "r33drichards",
     "sarinajin.li@gmail.com": "sarinali",
     "steipete@gmail.com": "steipete",
     "sunflowers0607@outlook.com": "SunflowersLwtech",
@@ -49,6 +52,10 @@
     "zane.chee.2023@scis.smu.edu.sg": "injaneity",
     "zongxin_yang@hms.harvard.edu": "z-x-yang"
   },
-  "internalHandles": ["ddupont808", "enchanted-koala", "f-trycua"],
+  "internalHandles": [
+    "ddupont808",
+    "enchanted-koala",
+    "f-trycua"
+  ],
   "optOutHandles": []
 }

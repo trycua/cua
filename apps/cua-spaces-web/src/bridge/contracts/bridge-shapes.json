@@ -1306,6 +1306,16 @@
             "null"
           ]
         },
+        "fix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeFix"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "hostArch": {
           "type": "string"
         },
@@ -1514,6 +1524,15 @@
             "number",
             "null"
           ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "spaces": {
+          "type": "number"
+        },
+        "spacesLabel": {
+          "type": "string"
         }
       },
       "required": [
@@ -1527,7 +1546,10 @@
         "deviceOnly",
         "spaceId",
         "stoppedSharing",
-        "lastSeen"
+        "lastSeen",
+        "status",
+        "spaces",
+        "spacesLabel"
       ]
     },
     "MachineRow": {
@@ -1629,6 +1651,12 @@
         },
         "merged": {
           "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "spacesLabel": {
+          "type": "string"
         }
       },
       "required": [
@@ -1735,6 +1763,12 @@
         },
         "read": {
           "type": "boolean"
+        },
+        "space": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1942,6 +1976,43 @@
         "visible",
         "appId",
         "targetEpoch"
+      ]
+    },
+    "RuntimeFix": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "install-docker",
+            "start-docker",
+            null
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "busy": {
+          "type": "boolean"
+        },
+        "termsUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "label",
+        "note",
+        "busy",
+        "termsUrl"
       ]
     },
     "SessionSnapshot": {
@@ -2266,6 +2337,12 @@
             "label",
             "registered"
           ]
+        },
+        "accountUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -2400,6 +2477,9 @@
           "type": "string"
         },
         "powerState": {
+          "type": "string"
+        },
+        "stopReason": {
           "type": "string"
         },
         "cloud": {
@@ -2569,6 +2649,56 @@
       "required": [
         "teams",
         "currentTeamId"
+      ]
+    },
+    "UpdateState": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "idle",
+            "checking",
+            "available",
+            "downloading",
+            "downloaded",
+            "error"
+          ]
+        },
+        "currentVersion": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "notesUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "currentVersion",
+        "version",
+        "percent",
+        "notesUrl",
+        "message"
       ]
     },
     "VolumeOverview": {
@@ -2871,6 +3001,12 @@
           "items": {
             "$ref": "#/$defs/GpuChoice"
           }
+        },
+        "nameSeed": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3685,6 +3821,12 @@
             "label",
             "registered"
           ]
+        },
+        "accountUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3838,6 +3980,12 @@
               ]
             },
             "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "stopReason": {
               "type": [
                 "string",
                 "null"
@@ -4374,6 +4522,9 @@
     "host.action": {
       "$ref": "#/$defs/HostStatus"
     },
+    "host.joinWithCode": {
+      "$ref": "#/$defs/HostStatus"
+    },
     "host.openSettings": {
       "type": "null"
     },
@@ -4460,6 +4611,9 @@
       }
     },
     "notifications.markAllRead": {
+      "type": "null"
+    },
+    "notifications.markRead": {
       "type": "null"
     },
     "presence.join": {
@@ -4699,6 +4853,9 @@
       "items": {
         "type": "string"
       }
+    },
+    "spaces.fixRuntime": {
+      "type": "null"
     },
     "spaces.list": {
       "type": "array",
@@ -5176,6 +5333,12 @@
           "supported"
         ]
       }
+    },
+    "update.get": {
+      "$ref": "#/$defs/UpdateState"
+    },
+    "update.install": {
+      "$ref": "#/$defs/UpdateState"
     },
     "volume.approve": {
       "type": "null"
@@ -5871,6 +6034,16 @@
         }
       ]
     },
+    "host.joinWithCode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "host.openSettings": {
       "type": "null"
     },
@@ -5973,6 +6146,9 @@
       }
     },
     "notifications.markAllRead": {
+      "type": "null"
+    },
+    "notifications.markRead": {
       "type": "null"
     },
     "relay.usage": {
@@ -6585,6 +6761,12 @@
           "supported"
         ]
       }
+    },
+    "update.get": {
+      "$ref": "#/$defs/UpdateState"
+    },
+    "update.install": {
+      "$ref": "#/$defs/UpdateState"
     },
     "volume.approve": {
       "type": "null"

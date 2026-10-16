@@ -17637,7 +17637,7 @@ class SandboxInfo:
     """
     A sandbox as listed.
 """
-    def __init__(self, *, name:str, kind:str, runtime:str, runtime_type:str, status:SandboxStatus, status_detail:typing.Optional[str], ephemeral:bool, services:dict[str, int], endpoints:dict[str, str], image:typing.Optional[str], id:str, phase:SandboxPhase, location:str, expires_at_unix:typing.Optional[int], provider_details:dict[str, str], image_info:typing.Optional[ImageInfo] = _DEFAULT):
+    def __init__(self, *, name:str, kind:str, runtime:str, runtime_type:str, status:SandboxStatus, status_detail:typing.Optional[str], ephemeral:bool, services:dict[str, int], endpoints:dict[str, str], image:typing.Optional[str], id:str, phase:SandboxPhase, location:str, expires_at_unix:typing.Optional[int], provider_details:dict[str, str], image_info:typing.Optional[ImageInfo] = _DEFAULT, stop_reason:typing.Optional[str] = _DEFAULT):
         self.name = name
         self.kind = kind
         self.runtime = runtime
@@ -17657,12 +17657,16 @@ class SandboxInfo:
             self.image_info = None
         else:
             self.image_info = image_info
+        if stop_reason is _DEFAULT:
+            self.stop_reason = None
+        else:
+            self.stop_reason = stop_reason
 
 
 
 
     def __str__(self):
-        return "SandboxInfo(name={}, kind={}, runtime={}, runtime_type={}, status={}, status_detail={}, ephemeral={}, services={}, endpoints={}, image={}, id={}, phase={}, location={}, expires_at_unix={}, provider_details={}, image_info={})".format(self.name, self.kind, self.runtime, self.runtime_type, self.status, self.status_detail, self.ephemeral, self.services, self.endpoints, self.image, self.id, self.phase, self.location, self.expires_at_unix, self.provider_details, self.image_info)
+        return "SandboxInfo(name={}, kind={}, runtime={}, runtime_type={}, status={}, status_detail={}, ephemeral={}, services={}, endpoints={}, image={}, id={}, phase={}, location={}, expires_at_unix={}, provider_details={}, image_info={}, stop_reason={})".format(self.name, self.kind, self.runtime, self.runtime_type, self.status, self.status_detail, self.ephemeral, self.services, self.endpoints, self.image, self.id, self.phase, self.location, self.expires_at_unix, self.provider_details, self.image_info, self.stop_reason)
     def __eq__(self, other):
         if self.name != other.name:
             return False
@@ -17696,6 +17700,8 @@ class SandboxInfo:
             return False
         if self.image_info != other.image_info:
             return False
+        if self.stop_reason != other.stop_reason:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSandboxInfo(_UniffiConverterRustBuffer):
@@ -17718,6 +17724,7 @@ class _UniffiFfiConverterTypeSandboxInfo(_UniffiConverterRustBuffer):
             expires_at_unix=_UniffiFfiConverterOptionalInt64.read(buf),
             provider_details=_UniffiFfiConverterMapStringString.read(buf),
             image_info=_UniffiFfiConverterOptionalTypeImageInfo.read(buf),
+            stop_reason=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -17738,6 +17745,7 @@ class _UniffiFfiConverterTypeSandboxInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalInt64.check_lower(value.expires_at_unix)
         _UniffiFfiConverterMapStringString.check_lower(value.provider_details)
         _UniffiFfiConverterOptionalTypeImageInfo.check_lower(value.image_info)
+        _UniffiFfiConverterOptionalString.check_lower(value.stop_reason)
 
     @staticmethod
     def write(value, buf):
@@ -17757,6 +17765,7 @@ class _UniffiFfiConverterTypeSandboxInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalInt64.write(value.expires_at_unix, buf)
         _UniffiFfiConverterMapStringString.write(value.provider_details, buf)
         _UniffiFfiConverterOptionalTypeImageInfo.write(value.image_info, buf)
+        _UniffiFfiConverterOptionalString.write(value.stop_reason, buf)
 
 class _UniffiFfiConverterSequenceTypeSandboxInfo(_UniffiConverterRustBuffer):
     @classmethod
@@ -18917,7 +18926,7 @@ class SpaceInfo:
     """
     A registered Space.
 """
-    def __init__(self, *, id:str, name:str, provider:str, spacesd_version:str, features:typing.List[str], os:str, os_name:str, os_pretty_name:str, image:str, image_digest:str, kind:str, arch:str, services:typing.List[str], added_at:typing.Optional[str], host:str, host_name:str, power:str, power_state:str, cloud:str, cloud_place:str, cloud_delete:str):
+    def __init__(self, *, id:str, name:str, provider:str, spacesd_version:str, features:typing.List[str], os:str, os_name:str, os_pretty_name:str, image:str, image_digest:str, kind:str, arch:str, services:typing.List[str], added_at:typing.Optional[str], host:str, host_name:str, power:str, power_state:str, cloud:str, cloud_place:str, cloud_delete:str, stop_reason:str = ""):
         self.id = id
         self.name = name
         self.provider = provider
@@ -18939,12 +18948,13 @@ class SpaceInfo:
         self.cloud = cloud
         self.cloud_place = cloud_place
         self.cloud_delete = cloud_delete
+        self.stop_reason = stop_reason
 
 
 
 
     def __str__(self):
-        return "SpaceInfo(id={}, name={}, provider={}, spacesd_version={}, features={}, os={}, os_name={}, os_pretty_name={}, image={}, image_digest={}, kind={}, arch={}, services={}, added_at={}, host={}, host_name={}, power={}, power_state={}, cloud={}, cloud_place={}, cloud_delete={})".format(self.id, self.name, self.provider, self.spacesd_version, self.features, self.os, self.os_name, self.os_pretty_name, self.image, self.image_digest, self.kind, self.arch, self.services, self.added_at, self.host, self.host_name, self.power, self.power_state, self.cloud, self.cloud_place, self.cloud_delete)
+        return "SpaceInfo(id={}, name={}, provider={}, spacesd_version={}, features={}, os={}, os_name={}, os_pretty_name={}, image={}, image_digest={}, kind={}, arch={}, services={}, added_at={}, host={}, host_name={}, power={}, power_state={}, cloud={}, cloud_place={}, cloud_delete={}, stop_reason={})".format(self.id, self.name, self.provider, self.spacesd_version, self.features, self.os, self.os_name, self.os_pretty_name, self.image, self.image_digest, self.kind, self.arch, self.services, self.added_at, self.host, self.host_name, self.power, self.power_state, self.cloud, self.cloud_place, self.cloud_delete, self.stop_reason)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -18988,6 +18998,8 @@ class SpaceInfo:
             return False
         if self.cloud_delete != other.cloud_delete:
             return False
+        if self.stop_reason != other.stop_reason:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
@@ -19015,6 +19027,7 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
             cloud=_UniffiFfiConverterString.read(buf),
             cloud_place=_UniffiFfiConverterString.read(buf),
             cloud_delete=_UniffiFfiConverterString.read(buf),
+            stop_reason=_UniffiFfiConverterString.read(buf),
         )
 
     @staticmethod
@@ -19040,6 +19053,7 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.cloud)
         _UniffiFfiConverterString.check_lower(value.cloud_place)
         _UniffiFfiConverterString.check_lower(value.cloud_delete)
+        _UniffiFfiConverterString.check_lower(value.stop_reason)
 
     @staticmethod
     def write(value, buf):
@@ -19064,6 +19078,7 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.cloud, buf)
         _UniffiFfiConverterString.write(value.cloud_place, buf)
         _UniffiFfiConverterString.write(value.cloud_delete, buf)
+        _UniffiFfiConverterString.write(value.stop_reason, buf)
 
 class _UniffiFfiConverterOptionalTypeSpaceInfo(_UniffiConverterRustBuffer):
     @classmethod

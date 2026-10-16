@@ -61,6 +61,7 @@ import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { HostChecklistState } from "../ops/checklist";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
+import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
 import type { SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
@@ -121,6 +122,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     hostName: opt(s.hostName),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
+    stopReason: off ? opt(s.power?.stopReason) : undefined,
     cloud: opt(s.cloud),
     cloudPlace: opt(s.cloudPlace),
     cloudDelete: opt(s.cloudDelete),
@@ -216,6 +218,9 @@ function fromPageRows(spaces: WkSpaces, machines: WkMachines, rows: MachinePageR
       limits: r.stoppedSharing ? withNotSharing([], stoppedSharingLine(r.name)) : [],
       merged: true,
     };
+    // The core's words for the row, the same the SwiftUI list shows.
+    if (r.status) row.status = r.status;
+    if (r.spacesLabel != null) row.spacesLabel = r.spacesLabel;
     const detail = r.current ? machines.thisMachine?.detail : r.deviceOnly ? dev?.detail : own?.detail || dev?.detail;
     if (detail) row.detail = detail;
     if (r.lastSeen != null) row.lastSeen = r.lastSeen;
@@ -289,6 +294,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       keyvaultProtection: protection.length ? protection : null,
     },
     globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
+    accountUrl: s.accountUrl ?? null,
   };
 }
 
@@ -415,6 +421,7 @@ const EVENTS: Record<string, HostEvent[]> = {
   "checklist.changed": [{ type: "checklist.changed" }],
   "keyvault.changed": [{ type: "keyvault.changed" }],
   "settings.changed": [{ type: "settings.changed" }],
+  "update.changed": [{ type: "update.changed" }],
   "session.changed": [{ type: "session.changed" }],
 };
 
@@ -646,6 +653,10 @@ export function createWebkitAdapter(
           "presence.leave": (args: OpArgs<"presence.leave">) => request<null>("presence.leave", { ...args }),
         }
       : unsupportedPresenceOps("webkit")),
+    // Windows' "Install Docker Desktop": a Mac sets up its runtimes itself.
+    ...(electron
+      ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
+      : unsupportedRuntimeFixOps("webkit")),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {

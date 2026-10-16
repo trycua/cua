@@ -13,9 +13,24 @@ describe("Onboarding", () => {
     const onDone = vi.fn();
     render(<Onboarding host={host} onDone={onDone} />);
     expect(screen.getByText("Set up this machine for unattended access")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Access other machines"));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledWith("client", undefined));
     expect(host.calls).toEqual(["onboarding:client"]);
+  });
+
+  it("always shows an enabled Continue with 'Access other machines' selected, and Enter continues", async () => {
+    const host = createFakeHostBridge();
+    const onDone = vi.fn();
+    render(<Onboarding host={host} onDone={onDone} />);
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "Access other machines" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("mode-later")).toHaveTextContent("This machine");
+    // Choosing a card only selects it.
+    fireEvent.click(screen.getByRole("radio", { name: "Set up this machine for unattended access" }));
+    expect(onDone).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: "Access other machines" }));
+    fireEvent.keyDown(document.body, { key: "Enter" });
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith("client", undefined));
   });
 
   it("host path joins the relay by default and completes as host", async () => {
@@ -23,6 +38,7 @@ describe("Onboarding", () => {
     const onDone = vi.fn();
     render(<Onboarding host={host} onDone={onDone} identity="ada@example.com" />);
     fireEvent.click(screen.getByText("Set up this machine for unattended access"));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByText("Joins the Cua relay as ada@example.com. No port forwarding.")).toBeInTheDocument();
     // Direct ip:port is hidden until Advanced is opened.
     expect(screen.queryByText(/Direct connection/)).toBeNull();
@@ -36,6 +52,7 @@ describe("Onboarding", () => {
     const onDone = vi.fn();
     render(<Onboarding host={host} onDone={onDone} />);
     fireEvent.click(screen.getByText("Set up this machine for unattended access"));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     fireEvent.click(screen.getByLabelText(/Direct connection/));
     const listen = screen.getByDisplayValue("0.0.0.0:3211");

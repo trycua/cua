@@ -17,7 +17,10 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::platform::{
+    BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
+    PrepareStrategy,
+};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
@@ -642,7 +645,11 @@ impl BrowserPrepareTool {
                 background_unavailable unless delivery_mode is \"foreground\" (the app that \
                 was in front is brought back afterwards) or the browser window is on another \
                 Space than the user's, where it attaches in the background while the driver \
-                reverts the browser's own brief activations."
+                reverts the browser's own brief activations. A driver-owned isolated launch \
+                result carries an advisory lifecycle object: the browser process ends with the \
+                calling session after idle_expires_in_seconds without session activity, an \
+                isolated_named profile persists after the session and an isolated_new profile \
+                does not, and explicit end, disconnect, revocation or shutdown end it earlier."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -747,11 +754,17 @@ impl Tool for BrowserPrepareTool {
                 Err(error) => error,
             };
         }
+        let profile_mode = profile.as_ref().map(|profile| profile.mode);
+        let transport_session = args.opt_str("_transport_session_id");
+        let owner_transport = transport_session
+            .clone()
+            .filter(|owner| !owner.is_empty())
+            .unwrap_or_else(|| session.clone());
         let request = PrepareRequest {
             pid,
             window_id: args.opt_u64("window_id"),
-            session,
-            transport_session: args.opt_str("_transport_session_id"),
+            session: session.clone(),
+            transport_session,
             strategy,
             profile,
             allow_launch,
@@ -760,7 +773,10 @@ impl Tool for BrowserPrepareTool {
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
                 let prepared = outcome.endpoint.is_some();
-                ToolResult::text(format!(
+                let lifecycle = profile_mode
+                    .filter(|_| outcome.action == PrepareAction::LaunchedIsolatedBrowser)
+                    .and_then(|mode| isolated_session_lifecycle(&session, &owner_transport, mode));
+                let text = format!(
                     "browser_prepare: {} — {}",
                     if prepared {
                         "endpoint available"
@@ -768,8 +784,8 @@ impl Tool for BrowserPrepareTool {
                         "no endpoint"
                     },
                     outcome.message
-                ))
-                .with_structured(json!({
+                );
+                let mut structured = json!({
                     "status": "ok",
                     "prepared": prepared,
                     "action": outcome.action,
@@ -779,7 +795,11 @@ impl Tool for BrowserPrepareTool {
                     "prepared_pid": outcome.prepared_pid,
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
-                }))
+                });
+                if let Some(lifecycle) = lifecycle {
+                    structured["lifecycle"] = lifecycle;
+                }
+                ToolResult::text(text).with_structured(structured)
             }
             Err(refusal) if refusal.code == BrowserRefusalCode::BackgroundUnavailable => {
                 let reason = refusal
@@ -789,7 +809,7 @@ impl Tool for BrowserPrepareTool {
                     .and_then(Value::as_str)
                     .unwrap_or("attaching would bring the browser to the front")
                     .to_owned();
-                crate::delivery::background_unavailable_result(
+                crate::delivery::background_unavailable_result_with_suggestion(
                     format!("browser_prepare refused: {}", refusal.message),
                     refusal.code.as_str(),
                     reason,
@@ -797,11 +817,35 @@ impl Tool for BrowserPrepareTool {
                         "status": "refused",
                         "refusal": refusal,
                     }),
+                    BROWSER_PREPARE_BACKGROUND_SUGGESTION,
                 )
             }
             Err(refusal) => refusal.to_tool_result(),
         }
     }
+}
+
+/// `browser_prepare` is optional: the page's accessibility tree is a working
+/// background route, so the refusal leads with it.
+const BROWSER_PREPARE_BACKGROUND_SUGGESTION: &str = "Not blocked: use get_window_state on this window and act through the accessibility tree (set_value, click by element token). If the first read shows only browser chrome and no AXWebArea, read the window again after a moment. Use delivery_mode:\"foreground\" only if that fails and nobody is using the screen.";
+
+fn isolated_session_lifecycle(
+    session: &str,
+    owner_transport: &str,
+    mode: PrepareProfileMode,
+) -> Option<Value> {
+    let snapshot = crate::session::session_snapshot(
+        session,
+        owner_transport,
+        crate::session::DEFAULT_SESSION_IDLE_TTL,
+    )
+    .filter(|snapshot| !snapshot.ending)?;
+    Some(json!({
+        "owner": "session",
+        "idle_expires_in_seconds": snapshot.idle_ttl.as_secs(),
+        "process_ends_with_session": true,
+        "profile_persists_after_session": mode == PrepareProfileMode::IsolatedNamed,
+    }))
 }
 
 // ── browser_navigate ─────────────────────────────────────────────────────────
@@ -2596,7 +2640,9 @@ impl Tool for BrowserSetInputFilesTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::platform::{BrowserPlatform, PrepareOutcome, PrepareRequest};
+    use crate::browser::platform::{
+        BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest,
+    };
     use crate::browser::types::{
         BrowserClassification, BrowserEngineFamily, BrowserProduct, NativeWindowInfo,
         OwnedEndpoint, ProcessFingerprint,
@@ -2605,7 +2651,31 @@ mod tests {
     /// Minimal adapter: pid 1 is a CDP-capable browser with no endpoint
     /// (setup required); pid 2 is not a browser; pid 3 is Safari-like
     /// (browser, no CDP). Prepare requires consent.
-    struct MockPlatform;
+    #[derive(Default)]
+    struct MockPlatform {
+        devtools: Option<std::net::TcpListener>,
+        launch_delay: std::time::Duration,
+    }
+
+    impl MockPlatform {
+        fn devtools_endpoint(&self, pid: i64) -> Option<OwnedEndpoint> {
+            use crate::browser::types::{
+                EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport,
+            };
+            let port = self.devtools.as_ref()?.local_addr().unwrap().port();
+            Some(OwnedEndpoint {
+                ws_url: format!("ws://127.0.0.1:{port}/devtools/browser/mock"),
+                http_port: Some(port),
+                transport: EndpointTransport::DevToolsActivePort,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+                    owner_pid: pid,
+                    listener_pid: None,
+                    detail: None,
+                },
+            })
+        }
+    }
 
     #[async_trait]
     impl BrowserPlatform for MockPlatform {
@@ -2687,9 +2757,9 @@ mod tests {
 
         async fn discover_owned_endpoint(
             &self,
-            _pid: i64,
+            pid: i64,
         ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-            Ok(None)
+            Ok(self.devtools_endpoint(pid))
         }
 
         async fn process_fingerprint(
@@ -2705,17 +2775,125 @@ mod tests {
 
         async fn prepare_endpoint(
             &self,
-            _request: PrepareRequest,
+            request: PrepareRequest,
         ) -> Result<PrepareOutcome, BrowserRefusal> {
-            Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRequiresSetup,
-                "mock endpoint needs acting setup",
-            ))
+            let pid = request.pid.expect("prepare_endpoint receives a pid");
+            let endpoint = self.devtools_endpoint(pid).ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRequiresSetup,
+                    "mock endpoint needs acting setup",
+                )
+            })?;
+            Ok(PrepareOutcome {
+                action: PrepareAction::AlreadyPrepared,
+                endpoint: Some(endpoint),
+                message: "mock endpoint already exists".into(),
+                prepared_pid: Some(pid),
+                side_effects: Default::default(),
+                attachment: None,
+            })
+        }
+
+        fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+            match self.devtools {
+                Some(_) => Ok("sleep".into()),
+                None => Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "mock has no isolated browser executable",
+                )),
+            }
+        }
+
+        fn spawn_isolated_browser(
+            &self,
+            _command: std::process::Command,
+            profile: &std::path::Path,
+        ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
+        {
+            std::thread::sleep(self.launch_delay);
+            let port = self.devtools.as_ref().unwrap().local_addr().unwrap().port();
+            std::fs::write(
+                profile.join("DevToolsActivePort"),
+                format!("{port}\n/devtools/browser/mock\n"),
+            )
+            .unwrap();
+            let mut stand_in = std::process::Command::new("sleep");
+            stand_in.arg("30");
+            #[cfg(unix)]
+            std::os::unix::process::CommandExt::process_group(&mut stand_in, 0);
+            Ok(Box::new(stand_in.spawn().unwrap()))
         }
     }
 
     fn engine() -> Arc<BrowserEngine> {
-        BrowserEngine::new(Arc::new(MockPlatform))
+        BrowserEngine::new(Arc::new(MockPlatform::default()))
+    }
+
+    fn launching_engine() -> Arc<BrowserEngine> {
+        slow_launching_engine(std::time::Duration::ZERO)
+    }
+
+    fn slow_launching_engine(launch_delay: std::time::Duration) -> Arc<BrowserEngine> {
+        static PROFILE_ROOT: std::sync::Once = std::sync::Once::new();
+        PROFILE_ROOT.call_once(|| {
+            std::env::set_var(
+                "CUA_DRIVER_BROWSER_PROFILE_ROOT",
+                std::env::temp_dir().join("cua-browser-tools-profiles"),
+            )
+        });
+        BrowserEngine::new(Arc::new(MockPlatform {
+            devtools: Some(std::net::TcpListener::bind("127.0.0.1:0").unwrap()),
+            launch_delay,
+        }))
+    }
+
+    fn start_lifecycle_session(idle_ttl: Option<std::time::Duration>) -> (String, String) {
+        use crate::session::{SessionClientKind, SessionTransport};
+        let session = format!("browser-lifecycle-{}", uuid::Uuid::new_v4());
+        let owner = format!("browser-lifecycle-owner-{}", uuid::Uuid::new_v4());
+        match idle_ttl {
+            Some(ttl) => crate::session::activate_session_with_ttl(
+                &session,
+                None,
+                &owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                ttl,
+            ),
+            None => crate::session::activate_session(
+                &session,
+                None,
+                &owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            ),
+        }
+        .unwrap();
+        (session, owner)
+    }
+
+    async fn prepare_isolated(
+        engine: &Arc<BrowserEngine>,
+        session: &str,
+        owner: &str,
+        profile: Value,
+    ) -> Value {
+        let result = BrowserPrepareTool::new(engine.clone())
+            .invoke(json!({
+                "allow_launch": true,
+                "profile": profile,
+                "session": session,
+                "_transport_session_id": owner
+            }))
+            .await;
+        let structured = structured(&result).clone();
+        assert_eq!(
+            structured["action"], "launched_isolated_browser",
+            "{structured}"
+        );
+        structured
     }
 
     fn structured(result: &ToolResult) -> &Value {
@@ -3062,6 +3240,124 @@ mod tests {
             structured(&result)["refusal"]["code"],
             "browser_consent_required"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_new_publishes_the_session_effective_idle_ttl() {
+        let engine = launching_engine();
+        for (idle_ttl, expected) in [
+            (None, crate::session::DEFAULT_SESSION_IDLE_TTL.as_secs()),
+            (Some(std::time::Duration::from_secs(1234)), 1234),
+        ] {
+            let (session, owner) = start_lifecycle_session(idle_ttl);
+            let prepared =
+                prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" }))
+                    .await;
+            assert_eq!(
+                prepared["lifecycle"],
+                json!({
+                    "owner": "session",
+                    "idle_expires_in_seconds": expected,
+                    "process_ends_with_session": true,
+                    "profile_persists_after_session": false
+                })
+            );
+            crate::session::end_session(&session);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preparation_longer_than_the_idle_ttl_still_publishes_the_ttl() {
+        let engine = slow_launching_engine(std::time::Duration::from_millis(2100));
+        let (session, owner) = start_lifecycle_session(Some(std::time::Duration::from_secs(1)));
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert_eq!(prepared["lifecycle"]["idle_expires_in_seconds"], 1);
+        crate::session::end_session(&session);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ending_session_gets_no_lifecycle() {
+        use crate::session::{SessionClientKind, SessionTransport};
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let live =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert_eq!(live["lifecycle"]["owner"], "session", "{live}");
+        let guard = crate::session::begin_session_dispatch(
+            &session,
+            None,
+            &owner,
+            false,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        assert!(crate::session::end_session_for_owner(&session, &owner));
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert!(prepared.get("lifecycle").is_none(), "{prepared}");
+        drop(guard);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_named_profile_persists_after_session() {
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let name = format!("lifecycle-{}", uuid::Uuid::new_v4().simple());
+        let prepared = prepare_isolated(
+            &engine,
+            &session,
+            &owner,
+            json!({ "mode": "isolated_named", "name": name }),
+        )
+        .await;
+        assert_eq!(
+            prepared["lifecycle"]["profile_persists_after_session"],
+            true
+        );
+        assert_eq!(prepared["lifecycle"]["process_ends_with_session"], true);
+        crate::session::end_session(&session);
+        let root = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT").unwrap();
+        std::fs::remove_dir_all(std::path::Path::new(&root).join(name)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn lifecycle_requires_a_driver_launch_owned_by_a_visible_session() {
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let discovered = BrowserPrepareTool::new(engine.clone())
+            .invoke(json!({
+                "pid": 1,
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "session": session,
+                "_transport_session_id": owner
+            }))
+            .await;
+        let discovered = structured(&discovered);
+        assert_eq!(discovered["action"], "already_prepared");
+        assert!(discovered.get("lifecycle").is_none(), "{discovered}");
+
+        let foreign_owner = format!("browser-lifecycle-foreign-{}", uuid::Uuid::new_v4());
+        let foreign = prepare_isolated(
+            &engine,
+            &session,
+            &foreign_owner,
+            json!({ "mode": "isolated_new" }),
+        )
+        .await;
+        assert!(foreign.get("lifecycle").is_none(), "{foreign}");
+
+        let owned =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert_eq!(owned["lifecycle"]["owner"], "session");
+        crate::session::end_session(&session);
     }
 
     #[tokio::test]

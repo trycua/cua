@@ -541,6 +541,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         } else {
             String::new()
         },
+        stop_reason: String::new(),
     }
 }
 
@@ -630,6 +631,16 @@ pub fn sanitize_label(value: &str) -> String {
 
 pub(crate) fn random_suffix() -> String {
     format!("{:010x}", rand::random::<u64>() & 0xff_ffff_ffff)
+}
+
+/// A name in the form [`SpaceCreate::name`] defaults to (`space-` and ten
+/// lowercase hex digits): one the SDK, or an app on its behalf, generated.
+/// A create under such a name cleans up after a failed start, as one with
+/// no name does.
+pub fn is_generated_name(name: &str) -> bool {
+    name.strip_prefix("space-").is_some_and(|hex| {
+        hex.len() == 10 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
 }
 
 pub(crate) struct Inner {
@@ -745,6 +756,7 @@ impl Spaces {
             .map(|r| {
                 let mut info = SpaceInfo::from_record(r)?;
                 (info.power, info.power_state) = self.power_of(&info.id);
+                info.stop_reason = self.stop_reason_of(&info.id);
                 Ok(info)
             })
             .collect::<Result<_>>()?;
@@ -808,7 +820,9 @@ impl Spaces {
 
     /// Refreshes the relay directory when an account is configured, then
     /// lists every Space. A failed refresh is an error, not an empty or
-    /// current directory, except when no account is signed in at all: that
+    /// current directory (a brief relay hiccup lists the last directory
+    /// for a while, see `relay_directory`), except when no account is
+    /// signed in at all: that
     /// is the normal state of many hosts, so this machine's own Spaces are
     /// listed without the account's machines (and any listed before the
     /// sign-out are dropped). [`Self::list`] remains the cached, local read.
@@ -959,6 +973,18 @@ impl Spaces {
         let machines = match read.await {
             Ok(m) => m,
             Err(_) if listed => return Ok(cached),
+            // The relay briefly unreachable (a deploy, a moment with no
+            // backend behind its proxy): the machines it listed a moment
+            // ago stand, each with its own state, instead of failing the
+            // whole Space list. Past the grace the failure shows.
+            Err(Error::Relay(e))
+                if e.is_transient()
+                    && !cached.is_empty()
+                    && read_at.is_some_and(|at| at.elapsed() < cua_host::RELAY_HICCUP_GRACE) =>
+            {
+                tracing::debug!("relay directory read failed; listing its last answer: {e}");
+                return Ok(cached);
+            }
             Err(e) => {
                 return Err(Error::Relay(match e.tag() {
                     "unauthenticated" => cua_host::Error::Unauthenticated(
@@ -1186,6 +1212,7 @@ impl Spaces {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            stop_reason: String::new(),
         }))
     }
 
@@ -2085,7 +2112,13 @@ impl Spaces {
             }
         };
         let create_id = opts.create_id.clone().filter(|c| !c.trim().is_empty());
-        let generated = opts.name.as_deref().is_none_or(|n| n.trim().is_empty());
+        // A name in the SDK's own form counts as generated: an app that
+        // shows the name before creating picks it the same way
+        // ([`is_generated_name`]).
+        let generated = opts
+            .name
+            .as_deref()
+            .is_none_or(|n| n.trim().is_empty() || is_generated_name(n.trim()));
         let named = |opts: &mut SpaceCreate| {
             let name = sanitize_label(
                 &opts
@@ -2882,6 +2915,20 @@ impl Spaces {
         self.sandbox_power(&name)
     }
 
+    /// [`SpaceInfo::stop_reason`] of the Space `id`: why its local sandbox
+    /// stopped without being asked to, in plain words, from its state file
+    /// (empty when it did not, or is not local).
+    pub fn stop_reason_of(&self, id: &str) -> String {
+        let Ok(SpaceId::Local { name }) = SpaceId::parse(id) else {
+            return String::new();
+        };
+        self.inner
+            .sandboxes
+            .stop_reason(&name)
+            .map(|r| r.words())
+            .unwrap_or_default()
+    }
+
     /// [`Self::power_of`] for the sandbox `name` (a local Space's, or the
     /// cloud sandbox behind a `relay:` Space).
     fn sandbox_power(&self, name: &str) -> (String, String) {
@@ -2932,6 +2979,11 @@ impl Spaces {
                 self.drop_connection(&id).await;
                 let state = if on {
                     sandboxes.power_on(name).await?;
+                    // What extensions keep for a connected Space (its Cua
+                    // Volume) ended with the connection above: start it
+                    // again now, not only when something next connects.
+                    #[cfg(feature = "mcp")]
+                    self.notify_connected(&id);
                     cua_sandbox_core::PowerState::Running
                 } else {
                     sandboxes.power_off(name).await?
@@ -3331,6 +3383,22 @@ mod tests {
         assert_eq!(sanitize_label("Client_ID.42"), "client-id-42");
         assert_eq!(sanitize_label("--x--"), "x");
         assert_eq!(sanitize_label(&"a".repeat(80)).len(), 63);
+    }
+
+    #[test]
+    fn generated_names_are_the_sdks_own_form() {
+        let name = format!("space-{}", random_suffix());
+        assert!(is_generated_name(&name), "{name}");
+        assert!(is_generated_name("space-000000002a"));
+        for other in [
+            "space-2a",
+            "space-000000002A",
+            "dev",
+            "space-000000002ag",
+            "my-space-000000002a",
+        ] {
+            assert!(!is_generated_name(other), "{other}");
+        }
     }
 
     #[test]

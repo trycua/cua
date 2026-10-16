@@ -39,7 +39,8 @@ public struct WebUIActions {
 /// Events (native to web): `window.dispatchEvent(new CustomEvent("cua:event",
 /// { detail: { event, payload } }))`, where `event` is `spaces.changed`,
 /// `machines.changed`, `keyvault.changed`, `session.changed`,
-/// `settings.changed` or `agents.changed`; the UI asks again for what it
+/// `settings.changed`, `agents.changed` or `update.changed` (an update
+/// found, downloading, ready or failed); the UI asks again for what it
 /// shows. `spaces.createProgress` carries a create's progress (the page's
 /// pending id), and `spaces.newRequested` (`{on}`) asks the page to open
 /// its New Space wizard (the app's New Space menu items, the notch).
@@ -85,17 +86,17 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
         "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
         "agents.setupDriver",
-        "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
+        "about.get", "about.set", "about.checkNow", "update.get", "update.install", "loginItem.get", "loginItem.set", "loginItem.openSettings",
         "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
-        "notifications.list", "notifications.markAllRead",
+        "notifications.list", "notifications.markAllRead", "notifications.markRead",
         "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
         "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
-        "host.setUp", "host.action", "host.openSettings",
+        "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
         "settings.get", "settings.choose",
         "keyvault.get", "keyvault.lock", "keyvault.unlock",
         "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
@@ -462,6 +463,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "updateChannel": model.updates.updater == nil ? NSNull() : (model.updates.channel == .beta ? "beta" : "stable"),
             // ⌘⇧Space, and whether the system gave it (tried again on each read).
             "globalShortcut": GlobalShortcut.installed?.bridgeValue ?? NSNull(),
+            // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
+            // has no environment, so Upgrade's billing fallback names this one.
+            "accountUrl": appAccountAppUrl(),
         ]
     }
 
@@ -951,6 +955,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let self else { return "" }
             return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view)])
         }
+        followChanges("update.changed") { [model] in Self.signature(model.updates.updateState.json) }
         followChanges("checklist.changed") { [model] in Self.signature(model.checklist.stored) }
         followChanges("agents.changed") { [model] in
             Self.signature([model.persistent.agentsInput["agents"] ?? NSNull(),

@@ -136,6 +136,9 @@ pub struct AppSpacePower {
     pub turning_on: Option<bool>,
     /// Why the last power action failed, until the next one.
     pub error: Option<String>,
+    /// Why it stopped without being asked to, in plain words ("out of
+    /// memory"), while it is off.
+    pub stop_reason: Option<String>,
 }
 
 /// One Space as the shells show it.
@@ -257,6 +260,10 @@ pub struct AppSpaceRow {
     /// Where Delete permanently can delete it: `here`, `host:<machine>`
     /// (that machine created it) or `elsewhere` (another device did).
     pub cloud_delete: Option<String>,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"), as the SDK
+    /// recorded it; absent otherwise.
+    pub stop_reason: Option<String>,
 }
 
 /// Where new Spaces can be created.
@@ -2248,6 +2255,38 @@ pub struct AppReviewToggle {
     pub selected: bool,
 }
 
+/// One saved password of the Keyvault, as a review lists it: its site and
+/// username, never its value.
+pub type AppVaultPassword = core::teleport::review::VaultPassword;
+#[uniffi::remote(Record)]
+pub struct AppVaultPassword {
+    /// The item's id.
+    pub id: String,
+    /// Its site (`github.com`); empty when not known.
+    pub site: String,
+    /// Its username; empty when not known or hidden.
+    pub username: String,
+}
+
+/// One saved password choice in the review: a site of the browser (reading
+/// it now) or one saved password (from the Keyvault). Sites and usernames
+/// only: a password's value is never shown.
+pub type AppReviewPassword = core::teleport::review::ReviewPassword;
+#[uniffi::remote(Record)]
+pub struct AppReviewPassword {
+    /// What picking it toggles: the site (reading the app) or the item id
+    /// (from the Keyvault).
+    pub key: String,
+    /// The site (`github.com`), or "Saved password" when not known.
+    pub site: String,
+    /// The username, when known (a saved item).
+    pub username: String,
+    /// "2 passwords" (a site of the browser); empty for one saved item.
+    pub counts: String,
+    /// Chosen to send.
+    pub selected: bool,
+}
+
 /// The saved Keyvault items of the app being teleported.
 pub type AppVaultSource = core::teleport::review::VaultSource;
 #[uniffi::remote(Record)]
@@ -2262,6 +2301,15 @@ pub struct AppVaultSource {
     pub selected: Vec<String>,
     /// The app's saved passwords (ids), sent only when ticked.
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value), for
+    /// the review to list.
+    pub passwords: Vec<AppVaultPassword>,
+    /// The Keyvault daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status). Without it the review offers
+    /// the passwords as before (those of the chosen sites, or every saved
+    /// one) and lists none to pick: it never shows a choice the daemon
+    /// would not keep.
+    pub password_picks: bool,
 }
 
 /// The review's choices.
@@ -2287,6 +2335,15 @@ pub struct AppReviewChoice {
     /// The saved passwords are ticked to send (off unless the user ticks
     /// them; never remembered).
     pub include_passwords: bool,
+    /// The sites whose saved passwords to send (reading the app).
+    pub password_domains: Vec<String>,
+    /// The saved passwords to send (ids, from the Keyvault).
+    pub password_items: Vec<String>,
+    /// The passwords list's search text.
+    pub password_query: String,
+    /// The password choice was made (the default is picked the first time
+    /// the box is ticked).
+    pub passwords_picked: bool,
 }
 
 /// What teleport can do with an app.
@@ -2528,6 +2585,9 @@ pub struct AppTeleportConsent {
     pub from_vault: Option<Vec<String>>,
     /// Also send the saved passwords (ticked in the review).
     pub include_passwords: bool,
+    /// Reading the app: the sites whose saved passwords to send (the
+    /// review's per-site choice); `None` when no password is sent this way.
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// The "needs the Cua app" prompt for a Keyvault refusal.
@@ -2748,11 +2808,33 @@ pub enum AppPickerEvent {
         selected: Vec<String>,
         /// The app's saved passwords (ids): sent only when ticked.
         password_ids: Vec<String>,
+        /// The same passwords with their site and username (never a
+        /// value), for the review to list.
+        passwords: Vec<AppVaultPassword>,
+        /// The Keyvault daemon enforces a choice of passwords by site
+        /// (`password_domains` in its status); off for an older one.
+        password_picks: bool,
     },
     /// Tick or untick "Also send saved passwords".
     TogglePasswords {
         /// Ticked.
         value: bool,
+    },
+    /// Pick or drop one saved password choice (a site, or a saved item's
+    /// id: [`ReviewPassword::key`]).
+    TogglePassword {
+        /// The choice.
+        key: String,
+    },
+    /// Pick or drop every saved password choice the search shows.
+    SelectShownPasswords {
+        /// Pick (true) or drop.
+        value: bool,
+    },
+    /// The passwords list's search text.
+    PasswordQuery {
+        /// Text.
+        text: String,
     },
     /// The chosen saved items changed.
     VaultSelection {
@@ -2793,7 +2875,11 @@ pub struct AppReviewView {
     pub title: String,
     /// The consent lines.
     pub items: Vec<AppConsentItem>,
-    /// Plan steps.
+    /// What happens, in plan steps, when the review has nothing to choose
+    /// (no files, state, secrets or sites; e.g. "Just the app" for an app
+    /// the Space's image already has), so the review is never blank. Empty
+    /// otherwise: the lines below say what is sent, and a step's counts
+    /// would not follow what is turned off. The installs are in `items`.
     pub steps: Vec<AppPlanStepView>,
     /// The secrets checkbox shows.
     pub needs_acknowledgement: bool,
@@ -2849,6 +2935,14 @@ pub struct AppReviewView {
     pub include_passwords: bool,
     /// "Also send 14 saved passwords".
     pub passwords_label: String,
+    /// Ticked: the saved passwords to pick from (sites with counts when
+    /// reading the app, each saved password's site and username from the
+    /// Keyvault; never a value), filtered by the search.
+    pub passwords: Vec<AppReviewPassword>,
+    /// "2 of 5 sites", "2 of 5 passwords".
+    pub password_summary: String,
+    /// The passwords search text.
+    pub password_query: String,
     /// What the Keychain will do for this source, in a line.
     pub source_note: String,
 }
@@ -3204,6 +3298,10 @@ pub struct AppWizardEnv {
     /// `gpu_support`), when known. A runtime not listed has none: the
     /// Resources step shows no GPU row for it.
     pub gpus: Option<Vec<AppGpuChoice>>,
+    /// Picks the name an unnamed Space gets ([`generated_space_name`]);
+    /// `None`: this process's own randomness. A core without randomness
+    /// (the wasm build) is given one; tests give a fixed one.
+    pub name_seed: Option<u64>,
 }
 
 /// Create or connect by address.
@@ -3230,6 +3328,28 @@ pub struct AppAddressForm {
     pub busy: bool,
     /// The last error, in words.
     pub error: Option<String>,
+}
+
+/// A Resources slider whose value can be typed.
+pub type AppResourceField = core::wizard::ResourceField;
+#[uniffi::remote(Enum)]
+pub enum AppResourceField {
+    /// CPU cores.
+    Cpus,
+    /// Memory, GB.
+    Memory,
+    /// Disk, GB.
+    Disk,
+}
+
+/// A slider's value as typed.
+pub type AppResourceEdit = core::wizard::ResourceEdit;
+#[uniffi::remote(Record)]
+pub struct AppResourceEdit {
+    /// Which slider.
+    pub field: AppResourceField,
+    /// The text as typed.
+    pub text: String,
 }
 
 /// The wizard's state.
@@ -3279,6 +3399,11 @@ pub struct AppWizardState {
     pub gpu: bool,
     /// The address form.
     pub address: AppAddressForm,
+    /// The name the Space gets when Name is left empty
+    /// ([`generated_space_name`], chosen when the wizard opens).
+    pub generated_name: String,
+    /// A slider's value being typed (its number was clicked).
+    pub resource_edit: Option<AppResourceEdit>,
 }
 
 /// An input to the wizard.
@@ -3363,6 +3488,21 @@ pub enum AppWizardAction {
     },
     /// The disk slider's Reset: back to the image's own disk.
     ResetDisk,
+    /// A slider's number clicked: its value can be typed.
+    EditResource {
+        /// Which slider.
+        field: AppResourceField,
+    },
+    /// The typed value's text.
+    SetResourceText {
+        /// Text.
+        text: String,
+    },
+    /// Return (or leaving the field): the typed value is used when it is
+    /// within the slider's limits; otherwise the field stays with why.
+    CommitResource,
+    /// Escape: the slider's value stays.
+    CancelResource,
     /// The GPU checkbox.
     SetGpu {
         /// Checked.
@@ -3657,6 +3797,18 @@ pub struct AppGpuRow {
     pub learn_more_url: Option<String>,
 }
 
+/// A slider's value being typed.
+pub type AppResourceEditView = core::wizard::ResourceEditView;
+#[uniffi::remote(Record)]
+pub struct AppResourceEditView {
+    /// Which slider.
+    pub field: AppResourceField,
+    /// The text as typed.
+    pub text: String,
+    /// Why it cannot be used, in one line (the slider's limits).
+    pub error: Option<String>,
+}
+
 /// The wizard as drawn.
 pub type AppWizardView = core::wizard::WizardView;
 #[uniffi::remote(Record)]
@@ -3748,8 +3900,14 @@ pub struct AppWizardView {
     pub resources_error: Option<String>,
     /// The GPU row (Resources), where the runtime offers a GPU.
     pub gpu: Option<AppGpuRow>,
+    /// A slider's value being typed: the field shows instead of its number
+    /// (its error is also the field's [`WizardField::error`]).
+    pub resource_edit: Option<AppResourceEditView>,
     /// Name as typed.
     pub name: String,
+    /// The name the Space gets: the one typed, else the generated one
+    /// (the Name field's placeholder).
+    pub space_name: String,
     /// The name breaks the DNS-label rule.
     pub name_invalid: bool,
     /// Why, in one line.
@@ -4152,6 +4310,10 @@ pub struct KvStatus {
     pub browse_until_ms: Option<u64>,
     /// "Never ask again" on the unlock prompt is on.
     pub skip_unlock_prompt: Option<bool>,
+    /// What the daemon supports beyond the original protocol
+    /// (`password_domains`: it reads only the saved passwords of the sites
+    /// picked for them); empty from a daemon that predates the list.
+    pub features: Vec<String>,
     /// An earlier preview's vault was found and set aside.
     pub reset_notice: Option<String>,
 }
@@ -4750,6 +4912,12 @@ pub struct KvVaultSource {
     /// The app's saved passwords (ids), never part of `ids`: they are sent
     /// only when ticked in the review.
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value),
+    /// for the review to list and pick from.
+    pub passwords: Vec<AppVaultPassword>,
+    /// The daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status): the review may offer one.
+    pub password_picks: bool,
 }
 
 /// A sidebar category.
@@ -5631,8 +5799,8 @@ pub struct AppOnboardingView {
     /// The presentation page's two cards, side by side.
     pub presentations: Vec<AppPresentationCard>,
     /// Done's example prompts ([`PROMPTS`]), one line each: shown under
-    /// both columns, scrolling slowly, to suggest what to ask a coding
-    /// agent. Not interactive.
+    /// both columns under "Try asking your agent:", to suggest what to ask a
+    /// coding agent. Each copies to the clipboard on click.
     pub prompts: Vec<String>,
     /// The first-run telemetry notice (the Welcome page, so the first run
     /// itself can be measured): nothing is sent before it has been shown
@@ -6103,11 +6271,11 @@ pub struct AppAboutLink {
 pub type AppAboutUpdates = core::about::AboutUpdates;
 #[uniffi::remote(Record)]
 pub struct AppAboutUpdates {
-    /// "Automatically check for updates".
+    /// "Check for and download updates automatically".
     pub auto_check_label: String,
     /// Checked.
     pub auto_check: bool,
-    /// "Install updates automatically".
+    /// "Install a downloaded update when Cua Spaces quits".
     pub auto_install_label: String,
     /// Checked.
     pub auto_install: bool,
@@ -6357,7 +6525,8 @@ pub struct AppExperiments {
     pub cua_volume: bool,
     /// Your own clouds in the New Space wizard.
     pub your_cloud: bool,
-    /// Sharing a Space with other accounts.
+    /// Sharing a Space with other accounts. On unless turned off: a missing
+    /// key reads as on (the plans on cua.ai/pricing list sharing).
     pub sharing: bool,
     /// The New UI (the shared web UI) is the main window: the user's choice
     /// or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
@@ -9129,6 +9298,15 @@ pub struct AppMachinePageRow {
     pub stopped_sharing: bool,
     /// The device's last session (Unix seconds), when it has a device.
     pub last_seen: Option<u64>,
+    /// The row's status word, the same in every UI ([`status_word`]):
+    /// "Online", "Not sharing" or "Offline".
+    pub status: String,
+    /// The Spaces it runs that the Spaces list shows: this machine's local
+    /// Spaces, or the Spaces another machine provides (`host`).
+    pub spaces: u32,
+    /// "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+    /// device of its own, which runs no Spaces.
+    pub spaces_label: String,
 }
 
 /// One step, in the order the checklist lists them
@@ -9391,6 +9569,37 @@ pub struct AppRelayAllowanceNotice {
     /// What a dismissal remembers: the month and the reasons. A new month,
     /// or another limit reached, shows the notice again.
     pub dismiss_key: String,
+    /// `warn` (80% of the relay hours) or `limit` (the allowance is used).
+    /// A `warn` is a prompt: the shells hold it back while a live session
+    /// or an agent run is going ([`crate::upsell`]). A `limit` is only the
+    /// status, so it always shows.
+    pub level: String,
+}
+
+/// A button that opens a page on the account app.
+pub type AppPlanLink = core::relay_usage::PlanLink;
+#[uniffi::remote(Record)]
+pub struct AppPlanLink {
+    /// "Get Pro".
+    pub label: String,
+    /// https, on the account app.
+    pub url: String,
+}
+
+/// The plan as Settings draws it: always there, never a prompt.
+pub type AppPlanCard = core::relay_usage::PlanCard;
+#[uniffi::remote(Record)]
+pub struct AppPlanCard {
+    /// `free`, `pro` or `teams`.
+    pub plan: String,
+    /// "Free plan".
+    pub label: String,
+    /// What the plan includes, in one sentence.
+    pub detail: String,
+    /// The main button ("Get Pro"); none when there is nothing to buy.
+    pub primary: Option<AppPlanLink>,
+    /// The other one ("Start a team").
+    pub secondary: Option<AppPlanLink>,
 }
 
 /// The allowance as drawn.
@@ -9404,6 +9613,8 @@ pub struct AppRelayUsageView {
     pub line: String,
     /// "Free plan" (empty when the relay names none).
     pub plan: String,
-    /// Past the allowance.
+    /// At 80% of the relay hours, or past the allowance.
     pub notice: Option<AppRelayAllowanceNotice>,
+    /// Settings' plan card.
+    pub plan_card: AppPlanCard,
 }

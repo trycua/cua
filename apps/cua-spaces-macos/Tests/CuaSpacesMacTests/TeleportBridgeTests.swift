@@ -55,7 +55,7 @@ struct TeleportBridgeTests {
         ])
         #expect(on == sdkConsent(AppTeleportConsent(
             approved: true, acknowledgeSensitive: true, saveToKeyvault: true, acknowledgeRelayPlaintext: true,
-            cookieDomains: ["github.com"], exclude: ["Default/Bookmarks"], fromVault: ["a", "b"], includePasswords: true)))
+            cookieDomains: ["github.com"], exclude: ["Default/Bookmarks"], fromVault: ["a", "b"], includePasswords: true, passwordDomains: nil)))
         #expect(on.saveToKeyvault)
         let off = WebUIBridge.teleportConsent(["approved": true, "acknowledgeSensitive": true])
         #expect(!off.saveToKeyvault && off.exclude.isEmpty && off.cookieDomains == nil)

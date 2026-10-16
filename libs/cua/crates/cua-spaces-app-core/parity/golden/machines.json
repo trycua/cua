@@ -46,19 +46,19 @@
     {
       "page": "a spare Mac with one Space, a machine that stopped sharing and devices only in the device list",
       "rows": [
-        "This Mac [this-mac] local macos online (this machine) + dev_me desktop this-mac",
-        "studio-2.local [b6953d14ff94b10fcbb38bdd13c47824] relay macos online + dev_s desktop relay:b6953d14ff94b10fcbb38bdd13c47824 (stopped sharing)",
-        "BYOC tests [dev_byoc] relay macos offline (a device)",
-        "Ana's MacBook Pro [dev_l1] relay macos online (a device)",
-        "Ana's MacBook Pro [dev_l2] relay macos offline (a device)"
+        "This Mac [this-mac] local macos online (this machine) + dev_me desktop this-mac \"Online\" \"1 Space\"",
+        "studio-2.local [b6953d14ff94b10fcbb38bdd13c47824] relay macos online + dev_s desktop relay:b6953d14ff94b10fcbb38bdd13c47824 (stopped sharing) \"Not sharing\" \"No Spaces\"",
+        "BYOC tests [dev_byoc] relay macos offline (a device) \"Offline\"",
+        "Ana's MacBook Pro [dev_l1] relay macos online (a device) \"Online\"",
+        "Ana's MacBook Pro [dev_l2] relay macos offline (a device) \"Offline\""
       ]
     },
     {
       "page": "a machine that provides Spaces and one sharing its desktop, signed out",
       "rows": [
-        "This computer [this-mac] local linux online (this machine)",
-        "Spare Mac mini [m-mini] relay macos online desktop relay:m-mini",
-        "Build box [m-box] relay ? online"
+        "This computer [this-mac] local linux online (this machine) \"Online\" \"No Spaces\"",
+        "Spare Mac mini [m-mini] relay macos online desktop relay:m-mini \"Online\" \"No Spaces\"",
+        "Build box [m-box] relay ? online \"Online\" \"2 Spaces\""
       ]
     }
   ]

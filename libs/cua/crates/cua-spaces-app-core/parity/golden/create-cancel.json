@@ -78,12 +78,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Downloading image…",
+              "Status: Downloading macOS (first time only)…",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "pending:1",
-            "previewText": "Downloading image…",
+            "previewText": "Downloading macOS (first time only)…",
             "progress": 160,
             "progressText": "3.9 of 22.3 GB · 81 MB/s · about 4 min"
           }
@@ -96,7 +96,7 @@
           "os-macos Mac [Starting] 160 16%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Starting 160 Downloading image…"
+          "os-macos Mac, macOS, This Mac, Starting 160 Downloading macOS (first time only)…"
         ]
       }
     },
@@ -120,12 +120,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Downloading image…",
+              "Status: Downloading macOS (first time only)…",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "pending:1",
-            "previewText": "Downloading image…",
+            "previewText": "Downloading macOS (first time only)…",
             "progress": 187,
             "progressText": "4.7 of 22.3 GB · 80 MB/s · about 4 min"
           }
@@ -138,7 +138,7 @@
           "os-macos Mac [Starting] 187 18%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Starting 187 Downloading image…"
+          "os-macos Mac, macOS, This Mac, Starting 187 Downloading macOS (first time only)…"
         ]
       }
     },

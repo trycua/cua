@@ -1,7 +1,7 @@
 ---
 name: cua-driver
 description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host, or to continue, resume, or recall recent Cua activity.
-version: 0.35.4 # x-release-please-version
+version: 0.36.0 # x-release-please-version
 metadata:
   openclaw:
     requires:
@@ -58,6 +58,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 | Verify the outcome                        | `verify_state({pid, window_id, expect})` or a fresh snapshot read by the agent                        | [Workflow](WORKFLOW.md)                               |
 | Operate the authorized desktop            | `get_desktop_state` → input with `target:{kind:"desktop",display_id:"primary"}` → `get_desktop_state` | [Workflow](WORKFLOW.md), [Linux](LINUX.md) on Wayland |
 | Drive supported browser page content      | `get_browser_state` → `browser_prepare` from `detail.next_call` if refused → typed browser action      | [Browser](BROWSER.md)                                 |
+| Browser tools refuse in the background   | Not blocked: fill the page through `get_window_state` + `set_value`/click; if the first read shows only browser chrome, read again. BLOCKED only after that fails | [Browser](BROWSER.md) |
 | Record an explicitly requested run        | `start_recording` → actions → `stop_recording`; verify artifacts                                      | [Recording](RECORDING.md)                             |
 | Finish                                    | Stop after proof; `end_session` for this run, not `cua-driver stop` on a shared service               | [Runtime](RUNTIME.md)                                 |
 
@@ -79,15 +80,17 @@ Check the installed version and advertised schema before using unfamiliar parame
 
 ## Failure map
 
-| Symptom                                                   | Next step                                                                             |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Missing binary, mismatched daemon, unknown tool/field     | [Runtime preflight](RUNTIME.md#preflight-and-transport)                               |
-| Stale token or ambiguous window                           | Refresh `list_windows` / `get_window_state`; choose the intended live target          |
-| Large, truncated, or sparse tree; repeated reads          | [Bounded observation and `since` diffs](WORKFLOW.md#observe)                          |
-| `surface_identity_unproven` or screenshot permission wait | [Wayland capture recovery](LINUX.md#capture-recovery)                                 |
-| `background_unavailable`                                  | Verify current state; ask before foreground/desktop control if not already authorized |
-| Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)           |
-| Browser setup, binding, or ref refused                    | [Browser recovery](BROWSER.md#recovery-rules)                                         |
+| Symptom                                                   | Next step                                                                                                                                                           |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Missing binary, mismatched daemon, unknown tool/field     | [Runtime preflight](RUNTIME.md#preflight-and-transport)                                                                                                             |
+| Stale token or ambiguous window                           | Refresh `list_windows` / `get_window_state`; choose the intended live target                                                                                        |
+| Large, truncated, or sparse tree; repeated reads          | [Bounded observation and `since` diffs](WORKFLOW.md#observe)                                                                                                        |
+| `surface_identity_unproven` or screenshot permission wait | [Wayland capture recovery](LINUX.md#capture-recovery)                                                                                                               |
+| `background_unavailable`                                  | Not a stop: that input route is closed, the task is not. Read `get_window_state` and act by element (`element_token`, `invoke_menu`); foreground only if authorized |
+| Web page in a browser                                     | Refs from `get_browser_state` with `browser_click` / `browser_type`; pixel clicks only when no ref exists                                                           |
+| LibreOffice, Preview and other macOS editors              | [macOS recipes](MACOS.md#libreoffice-numbers-and-other-editors-in-the-background)                                                                                   |
+| Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)                                                                                         |
+| Browser setup, binding, or ref refused                    | [Browser recovery](BROWSER.md#recovery-rules)                                                                                                                       |
 
 ## Consult recent Cua activity only for continuation
 

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { UpsellPrompt } from "@/components/upsell-prompt";
 import { cn } from "@/lib/utils";
 
 /**
@@ -116,6 +117,7 @@ export default function ShareSheet() {
               ))
             )}
           </ul>
+          <UpsellPrompt surface="share" active={v.rows.some((r) => !r.who.startsWith("team:"))} className="mt-3" />
           {v.error ? (
             <p className="mt-2 text-[13px] text-destructive" data-share-error>
               {v.error}

@@ -81,13 +81,16 @@ export function experimentsPage(model: AppModel) {
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
- * no updater) and the global shortcut (null: none here). */
+ * no updater), the global shortcut (null: none here) and the account app. */
 export function settingsState(model: AppModel, parts: HostParts) {
   return {
     page: encode(settingsPage(model, parts)),
     experiments: encode(experimentsPage(model)),
     updateChannel: parts.updates.updater === null ? null : parts.updates.channelWord,
     globalShortcut: parts.system?.globalShortcut?.() ?? null,
+    // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
+    // environment, so Upgrade's billing fallback names this one.
+    accountUrl: model.native.appAccountAppUrl(),
   };
 }
 
@@ -171,6 +174,9 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
+        // The switch sits beside the usage note (Welcome, Settings): the
+        // notice was seen.
+        model.telemetry?.acknowledgeNotice();
         model.changed("settings");
         return;
       default:

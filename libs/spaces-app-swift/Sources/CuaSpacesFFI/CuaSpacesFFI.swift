@@ -3164,7 +3164,7 @@ public func FfiConverterTypeAppAboutLink_lower(_ value: AppAboutLink) -> RustBuf
 
 public struct AppAboutUpdates: Equatable, Hashable {
     /**
-     * "Automatically check for updates".
+     * "Check for and download updates automatically".
      */
     public var autoCheckLabel: String
     /**
@@ -3172,7 +3172,7 @@ public struct AppAboutUpdates: Equatable, Hashable {
      */
     public var autoCheck: Bool
     /**
-     * "Install updates automatically".
+     * "Install a downloaded update when Cua Spaces quits".
      */
     public var autoInstallLabel: String
     /**
@@ -3212,13 +3212,13 @@ public struct AppAboutUpdates: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Automatically check for updates".
+         * "Check for and download updates automatically".
          */autoCheckLabel: String,
         /**
          * Checked.
          */autoCheck: Bool,
         /**
-         * "Install updates automatically".
+         * "Install a downloaded update when Cua Spaces quits".
          */autoInstallLabel: String,
         /**
          * Checked.
@@ -13930,7 +13930,8 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var yourCloud: Bool
     /**
-     * Sharing a Space with other accounts.
+     * Sharing a Space with other accounts. On unless turned off: a missing
+     * key reads as on (the plans on cua.ai/pricing list sharing).
      */
     public var sharing: Bool
     /**
@@ -13949,7 +13950,8 @@ public struct AppExperiments: Equatable, Hashable {
          * Your own clouds in the New Space wizard.
          */yourCloud: Bool,
         /**
-         * Sharing a Space with other accounts.
+         * Sharing a Space with other accounts. On unless turned off: a missing
+         * key reads as on (the plans on cua.ai/pricing list sharing).
          */sharing: Bool,
         /**
          * The New UI (the shared web UI) is the main window: the user's choice
@@ -18716,6 +18718,21 @@ public struct AppMachinePageRow: Equatable, Hashable {
      * The device's last session (Unix seconds), when it has a device.
      */
     public var lastSeen: UInt64?
+    /**
+     * The row's status word, the same in every UI ([`status_word`]):
+     * "Online", "Not sharing" or "Offline".
+     */
+    public var status: String
+    /**
+     * The Spaces it runs that the Spaces list shows: this machine's local
+     * Spaces, or the Spaces another machine provides (`host`).
+     */
+    public var spaces: UInt32
+    /**
+     * "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+     * device of its own, which runs no Spaces.
+     */
+    public var spacesLabel: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -18757,7 +18774,19 @@ public struct AppMachinePageRow: Equatable, Hashable {
          */stoppedSharing: Bool,
         /**
          * The device's last session (Unix seconds), when it has a device.
-         */lastSeen: UInt64?) {
+         */lastSeen: UInt64?,
+        /**
+         * The row's status word, the same in every UI ([`status_word`]):
+         * "Online", "Not sharing" or "Offline".
+         */status: String,
+        /**
+         * The Spaces it runs that the Spaces list shows: this machine's local
+         * Spaces, or the Spaces another machine provides (`host`).
+         */spaces: UInt32,
+        /**
+         * "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+         * device of its own, which runs no Spaces.
+         */spacesLabel: String) {
         self.id = id
         self.name = name
         self.online = online
@@ -18769,6 +18798,9 @@ public struct AppMachinePageRow: Equatable, Hashable {
         self.spaceId = spaceId
         self.stoppedSharing = stoppedSharing
         self.lastSeen = lastSeen
+        self.status = status
+        self.spaces = spaces
+        self.spacesLabel = spacesLabel
     }
 
 
@@ -18797,7 +18829,10 @@ public struct FfiConverterTypeAppMachinePageRow: FfiConverterRustBuffer {
                 deviceOnly: FfiConverterBool.read(from: &buf),
                 spaceId: FfiConverterOptionString.read(from: &buf),
                 stoppedSharing: FfiConverterBool.read(from: &buf),
-                lastSeen: FfiConverterOptionUInt64.read(from: &buf)
+                lastSeen: FfiConverterOptionUInt64.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                spaces: FfiConverterUInt32.read(from: &buf),
+                spacesLabel: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -18813,6 +18848,9 @@ public struct FfiConverterTypeAppMachinePageRow: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.spaceId, into: &buf)
         FfiConverterBool.write(value.stoppedSharing, into: &buf)
         FfiConverterOptionUInt64.write(value.lastSeen, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterUInt32.write(value.spaces, into: &buf)
+        FfiConverterString.write(value.spacesLabel, into: &buf)
     }
 }
 
@@ -22586,8 +22624,8 @@ public struct AppOnboardingView: Equatable, Hashable {
     public var presentations: [AppPresentationCard]
     /**
      * Done's example prompts ([`PROMPTS`]), one line each: shown under
-     * both columns, scrolling slowly, to suggest what to ask a coding
-     * agent. Not interactive.
+     * both columns under "Try asking your agent:", to suggest what to ask a
+     * coding agent. Each copies to the clipboard on click.
      */
     public var prompts: [String]
     /**
@@ -22660,8 +22698,8 @@ public struct AppOnboardingView: Equatable, Hashable {
          */presentations: [AppPresentationCard],
         /**
          * Done's example prompts ([`PROMPTS`]), one line each: shown under
-         * both columns, scrolling slowly, to suggest what to ask a coding
-         * agent. Not interactive.
+         * both columns under "Try asking your agent:", to suggest what to ask a
+         * coding agent. Each copies to the clipboard on click.
          */prompts: [String],
         /**
          * The first-run telemetry notice (the Welcome page, so the first run
@@ -24602,6 +24640,168 @@ public func FfiConverterTypeAppPlacementOption_lower(_ value: AppPlacementOption
 }
 
 
+public struct AppPlanCard: Equatable, Hashable {
+    /**
+     * `free`, `pro` or `teams`.
+     */
+    public var plan: String
+    /**
+     * "Free plan".
+     */
+    public var label: String
+    /**
+     * What the plan includes, in one sentence.
+     */
+    public var detail: String
+    /**
+     * The main button ("Get Pro"); none when there is nothing to buy.
+     */
+    public var primary: AppPlanLink?
+    /**
+     * The other one ("Start a team").
+     */
+    public var secondary: AppPlanLink?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `free`, `pro` or `teams`.
+         */plan: String,
+        /**
+         * "Free plan".
+         */label: String,
+        /**
+         * What the plan includes, in one sentence.
+         */detail: String,
+        /**
+         * The main button ("Get Pro"); none when there is nothing to buy.
+         */primary: AppPlanLink?,
+        /**
+         * The other one ("Start a team").
+         */secondary: AppPlanLink?) {
+        self.plan = plan
+        self.label = label
+        self.detail = detail
+        self.primary = primary
+        self.secondary = secondary
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppPlanCard: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppPlanCard: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppPlanCard {
+        return
+            try AppPlanCard(
+                plan: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                primary: FfiConverterOptionTypeAppPlanLink.read(from: &buf),
+                secondary: FfiConverterOptionTypeAppPlanLink.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppPlanCard, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.plan, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterOptionTypeAppPlanLink.write(value.primary, into: &buf)
+        FfiConverterOptionTypeAppPlanLink.write(value.secondary, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppPlanCard_lift(_ buf: RustBuffer) throws -> AppPlanCard {
+    return try FfiConverterTypeAppPlanCard.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppPlanCard_lower(_ value: AppPlanCard) -> RustBuffer {
+    return FfiConverterTypeAppPlanCard.lower(value)
+}
+
+
+public struct AppPlanLink: Equatable, Hashable {
+    /**
+     * "Get Pro".
+     */
+    public var label: String
+    /**
+     * https, on the account app.
+     */
+    public var url: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Get Pro".
+         */label: String,
+        /**
+         * https, on the account app.
+         */url: String) {
+        self.label = label
+        self.url = url
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppPlanLink: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppPlanLink: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppPlanLink {
+        return
+            try AppPlanLink(
+                label: FfiConverterString.read(from: &buf),
+                url: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppPlanLink, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.url, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppPlanLink_lift(_ buf: RustBuffer) throws -> AppPlanLink {
+    return try FfiConverterTypeAppPlanLink.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppPlanLink_lower(_ value: AppPlanLink) -> RustBuffer {
+    return FfiConverterTypeAppPlanLink.lower(value)
+}
+
+
 public struct AppPlanStepView: Equatable, Hashable {
     /**
      * `install`, `files`, `state`, `launch`.
@@ -25516,6 +25716,13 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
      * or another limit reached, shows the notice again.
      */
     public var dismissKey: String
+    /**
+     * `warn` (80% of the relay hours) or `limit` (the allowance is used).
+     * A `warn` is a prompt: the shells hold it back while a live session
+     * or an agent run is going ([`crate::upsell`]). A `limit` is only the
+     * status, so it always shows.
+     */
+    public var level: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -25535,12 +25742,19 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
         /**
          * What a dismissal remembers: the month and the reasons. A new month,
          * or another limit reached, shows the notice again.
-         */dismissKey: String) {
+         */dismissKey: String,
+        /**
+         * `warn` (80% of the relay hours) or `limit` (the allowance is used).
+         * A `warn` is a prompt: the shells hold it back while a live session
+         * or an agent run is going ([`crate::upsell`]). A `limit` is only the
+         * status, so it always shows.
+         */level: String) {
         self.text = text
         self.upgrade = upgrade
         self.upgradeUrl = upgradeUrl
         self.dismiss = dismiss
         self.dismissKey = dismissKey
+        self.level = level
     }
 
 
@@ -25563,7 +25777,8 @@ public struct FfiConverterTypeAppRelayAllowanceNotice: FfiConverterRustBuffer {
                 upgrade: FfiConverterString.read(from: &buf),
                 upgradeUrl: FfiConverterOptionString.read(from: &buf),
                 dismiss: FfiConverterString.read(from: &buf),
-                dismissKey: FfiConverterString.read(from: &buf)
+                dismissKey: FfiConverterString.read(from: &buf),
+                level: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -25573,6 +25788,7 @@ public struct FfiConverterTypeAppRelayAllowanceNotice: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.upgradeUrl, into: &buf)
         FfiConverterString.write(value.dismiss, into: &buf)
         FfiConverterString.write(value.dismissKey, into: &buf)
+        FfiConverterString.write(value.level, into: &buf)
     }
 }
 
@@ -25839,9 +26055,13 @@ public struct AppRelayUsageView: Equatable, Hashable {
      */
     public var plan: String
     /**
-     * Past the allowance.
+     * At 80% of the relay hours, or past the allowance.
      */
     public var notice: AppRelayAllowanceNotice?
+    /**
+     * Settings' plan card.
+     */
+    public var planCard: AppPlanCard
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -25857,12 +26077,16 @@ public struct AppRelayUsageView: Equatable, Hashable {
          * "Free plan" (empty when the relay names none).
          */plan: String,
         /**
-         * Past the allowance.
-         */notice: AppRelayAllowanceNotice?) {
+         * At 80% of the relay hours, or past the allowance.
+         */notice: AppRelayAllowanceNotice?,
+        /**
+         * Settings' plan card.
+         */planCard: AppPlanCard) {
         self.label = label
         self.line = line
         self.plan = plan
         self.notice = notice
+        self.planCard = planCard
     }
 
 
@@ -25884,7 +26108,8 @@ public struct FfiConverterTypeAppRelayUsageView: FfiConverterRustBuffer {
                 label: FfiConverterString.read(from: &buf),
                 line: FfiConverterString.read(from: &buf),
                 plan: FfiConverterString.read(from: &buf),
-                notice: FfiConverterOptionTypeAppRelayAllowanceNotice.read(from: &buf)
+                notice: FfiConverterOptionTypeAppRelayAllowanceNotice.read(from: &buf),
+                planCard: FfiConverterTypeAppPlanCard.read(from: &buf)
         )
     }
 
@@ -25893,6 +26118,7 @@ public struct FfiConverterTypeAppRelayUsageView: FfiConverterRustBuffer {
         FfiConverterString.write(value.line, into: &buf)
         FfiConverterString.write(value.plan, into: &buf)
         FfiConverterOptionTypeAppRelayAllowanceNotice.write(value.notice, into: &buf)
+        FfiConverterTypeAppPlanCard.write(value.planCard, into: &buf)
     }
 }
 
@@ -26192,6 +26418,148 @@ public func FfiConverterTypeAppRemoteWindowGroup_lower(_ value: AppRemoteWindowG
 }
 
 
+public struct AppResourceEdit: Equatable, Hashable {
+    /**
+     * Which slider.
+     */
+    public var field: AppResourceField
+    /**
+     * The text as typed.
+     */
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Which slider.
+         */field: AppResourceField,
+        /**
+         * The text as typed.
+         */text: String) {
+        self.field = field
+        self.text = text
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppResourceEdit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppResourceEdit: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppResourceEdit {
+        return
+            try AppResourceEdit(
+                field: FfiConverterTypeAppResourceField.read(from: &buf),
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppResourceEdit, into buf: inout [UInt8]) {
+        FfiConverterTypeAppResourceField.write(value.field, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceEdit_lift(_ buf: RustBuffer) throws -> AppResourceEdit {
+    return try FfiConverterTypeAppResourceEdit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceEdit_lower(_ value: AppResourceEdit) -> RustBuffer {
+    return FfiConverterTypeAppResourceEdit.lower(value)
+}
+
+
+public struct AppResourceEditView: Equatable, Hashable {
+    /**
+     * Which slider.
+     */
+    public var field: AppResourceField
+    /**
+     * The text as typed.
+     */
+    public var text: String
+    /**
+     * Why it cannot be used, in one line (the slider's limits).
+     */
+    public var error: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Which slider.
+         */field: AppResourceField,
+        /**
+         * The text as typed.
+         */text: String,
+        /**
+         * Why it cannot be used, in one line (the slider's limits).
+         */error: String?) {
+        self.field = field
+        self.text = text
+        self.error = error
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppResourceEditView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppResourceEditView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppResourceEditView {
+        return
+            try AppResourceEditView(
+                field: FfiConverterTypeAppResourceField.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                error: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppResourceEditView, into buf: inout [UInt8]) {
+        FfiConverterTypeAppResourceField.write(value.field, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceEditView_lift(_ buf: RustBuffer) throws -> AppResourceEditView {
+    return try FfiConverterTypeAppResourceEditView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceEditView_lower(_ value: AppResourceEditView) -> RustBuffer {
+    return FfiConverterTypeAppResourceEditView.lower(value)
+}
+
+
 public struct AppReviewChoice: Equatable, Hashable {
     /**
      * Where to send from.
@@ -26228,6 +26596,23 @@ public struct AppReviewChoice: Equatable, Hashable {
      * them; never remembered).
      */
     public var includePasswords: Bool
+    /**
+     * The sites whose saved passwords to send (reading the app).
+     */
+    public var passwordDomains: [String]
+    /**
+     * The saved passwords to send (ids, from the Keyvault).
+     */
+    public var passwordItems: [String]
+    /**
+     * The passwords list's search text.
+     */
+    public var passwordQuery: String
+    /**
+     * The password choice was made (the default is picked the first time
+     * the box is ticked).
+     */
+    public var passwordsPicked: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -26258,7 +26643,20 @@ public struct AppReviewChoice: Equatable, Hashable {
         /**
          * The saved passwords are ticked to send (off unless the user ticks
          * them; never remembered).
-         */includePasswords: Bool) {
+         */includePasswords: Bool,
+        /**
+         * The sites whose saved passwords to send (reading the app).
+         */passwordDomains: [String],
+        /**
+         * The saved passwords to send (ids, from the Keyvault).
+         */passwordItems: [String],
+        /**
+         * The passwords list's search text.
+         */passwordQuery: String,
+        /**
+         * The password choice was made (the default is picked the first time
+         * the box is ticked).
+         */passwordsPicked: Bool) {
         self.source = source
         self.domains = domains
         self.selectedDomains = selectedDomains
@@ -26267,6 +26665,10 @@ public struct AppReviewChoice: Equatable, Hashable {
         self.vault = vault
         self.loaded = loaded
         self.includePasswords = includePasswords
+        self.passwordDomains = passwordDomains
+        self.passwordItems = passwordItems
+        self.passwordQuery = passwordQuery
+        self.passwordsPicked = passwordsPicked
     }
 
 
@@ -26292,7 +26694,11 @@ public struct FfiConverterTypeAppReviewChoice: FfiConverterRustBuffer {
                 excluded: FfiConverterSequenceString.read(from: &buf),
                 vault: FfiConverterTypeAppVaultSource.read(from: &buf),
                 loaded: FfiConverterBool.read(from: &buf),
-                includePasswords: FfiConverterBool.read(from: &buf)
+                includePasswords: FfiConverterBool.read(from: &buf),
+                passwordDomains: FfiConverterSequenceString.read(from: &buf),
+                passwordItems: FfiConverterSequenceString.read(from: &buf),
+                passwordQuery: FfiConverterString.read(from: &buf),
+                passwordsPicked: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -26305,6 +26711,10 @@ public struct FfiConverterTypeAppReviewChoice: FfiConverterRustBuffer {
         FfiConverterTypeAppVaultSource.write(value.vault, into: &buf)
         FfiConverterBool.write(value.loaded, into: &buf)
         FfiConverterBool.write(value.includePasswords, into: &buf)
+        FfiConverterSequenceString.write(value.passwordDomains, into: &buf)
+        FfiConverterSequenceString.write(value.passwordItems, into: &buf)
+        FfiConverterString.write(value.passwordQuery, into: &buf)
+        FfiConverterBool.write(value.passwordsPicked, into: &buf)
     }
 }
 
@@ -26462,6 +26872,104 @@ public func FfiConverterTypeAppReviewDomain_lower(_ value: AppReviewDomain) -> R
 }
 
 
+public struct AppReviewPassword: Equatable, Hashable {
+    /**
+     * What picking it toggles: the site (reading the app) or the item id
+     * (from the Keyvault).
+     */
+    public var key: String
+    /**
+     * The site (`github.com`), or "Saved password" when not known.
+     */
+    public var site: String
+    /**
+     * The username, when known (a saved item).
+     */
+    public var username: String
+    /**
+     * "2 passwords" (a site of the browser); empty for one saved item.
+     */
+    public var counts: String
+    /**
+     * Chosen to send.
+     */
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What picking it toggles: the site (reading the app) or the item id
+         * (from the Keyvault).
+         */key: String,
+        /**
+         * The site (`github.com`), or "Saved password" when not known.
+         */site: String,
+        /**
+         * The username, when known (a saved item).
+         */username: String,
+        /**
+         * "2 passwords" (a site of the browser); empty for one saved item.
+         */counts: String,
+        /**
+         * Chosen to send.
+         */selected: Bool) {
+        self.key = key
+        self.site = site
+        self.username = username
+        self.counts = counts
+        self.selected = selected
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppReviewPassword: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppReviewPassword: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppReviewPassword {
+        return
+            try AppReviewPassword(
+                key: FfiConverterString.read(from: &buf),
+                site: FfiConverterString.read(from: &buf),
+                username: FfiConverterString.read(from: &buf),
+                counts: FfiConverterString.read(from: &buf),
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppReviewPassword, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.site, into: &buf)
+        FfiConverterString.write(value.username, into: &buf)
+        FfiConverterString.write(value.counts, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppReviewPassword_lift(_ buf: RustBuffer) throws -> AppReviewPassword {
+    return try FfiConverterTypeAppReviewPassword.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppReviewPassword_lower(_ value: AppReviewPassword) -> RustBuffer {
+    return FfiConverterTypeAppReviewPassword.lower(value)
+}
+
+
 public struct AppReviewToggle: Equatable, Hashable {
     /**
      * The consent item's key.
@@ -26578,7 +27086,11 @@ public struct AppReviewView: Equatable, Hashable {
      */
     public var items: [AppConsentItem]
     /**
-     * Plan steps.
+     * What happens, in plan steps, when the review has nothing to choose
+     * (no files, state, secrets or sites; e.g. "Just the app" for an app
+     * the Space's image already has), so the review is never blank. Empty
+     * otherwise: the lines below say what is sent, and a step's counts
+     * would not follow what is turned off. The installs are in `items`.
      */
     public var steps: [AppPlanStepView]
     /**
@@ -26684,6 +27196,20 @@ public struct AppReviewView: Equatable, Hashable {
      */
     public var passwordsLabel: String
     /**
+     * Ticked: the saved passwords to pick from (sites with counts when
+     * reading the app, each saved password's site and username from the
+     * Keyvault; never a value), filtered by the search.
+     */
+    public var passwords: [AppReviewPassword]
+    /**
+     * "2 of 5 sites", "2 of 5 passwords".
+     */
+    public var passwordSummary: String
+    /**
+     * The passwords search text.
+     */
+    public var passwordQuery: String
+    /**
      * What the Keychain will do for this source, in a line.
      */
     public var sourceNote: String
@@ -26698,7 +27224,11 @@ public struct AppReviewView: Equatable, Hashable {
          * The consent lines.
          */items: [AppConsentItem],
         /**
-         * Plan steps.
+         * What happens, in plan steps, when the review has nothing to choose
+         * (no files, state, secrets or sites; e.g. "Just the app" for an app
+         * the Space's image already has), so the review is never blank. Empty
+         * otherwise: the lines below say what is sent, and a step's counts
+         * would not follow what is turned off. The installs are in `items`.
          */steps: [AppPlanStepView],
         /**
          * The secrets checkbox shows.
@@ -26779,6 +27309,17 @@ public struct AppReviewView: Equatable, Hashable {
          * "Also send 14 saved passwords".
          */passwordsLabel: String,
         /**
+         * Ticked: the saved passwords to pick from (sites with counts when
+         * reading the app, each saved password's site and username from the
+         * Keyvault; never a value), filtered by the search.
+         */passwords: [AppReviewPassword],
+        /**
+         * "2 of 5 sites", "2 of 5 passwords".
+         */passwordSummary: String,
+        /**
+         * The passwords search text.
+         */passwordQuery: String,
+        /**
          * What the Keychain will do for this source, in a line.
          */sourceNote: String) {
         self.title = title
@@ -26808,6 +27349,9 @@ public struct AppReviewView: Equatable, Hashable {
         self.offersPasswords = offersPasswords
         self.includePasswords = includePasswords
         self.passwordsLabel = passwordsLabel
+        self.passwords = passwords
+        self.passwordSummary = passwordSummary
+        self.passwordQuery = passwordQuery
         self.sourceNote = sourceNote
     }
 
@@ -26854,6 +27398,9 @@ public struct FfiConverterTypeAppReviewView: FfiConverterRustBuffer {
                 offersPasswords: FfiConverterBool.read(from: &buf),
                 includePasswords: FfiConverterBool.read(from: &buf),
                 passwordsLabel: FfiConverterString.read(from: &buf),
+                passwords: FfiConverterSequenceTypeAppReviewPassword.read(from: &buf),
+                passwordSummary: FfiConverterString.read(from: &buf),
+                passwordQuery: FfiConverterString.read(from: &buf),
                 sourceNote: FfiConverterString.read(from: &buf)
         )
     }
@@ -26886,6 +27433,9 @@ public struct FfiConverterTypeAppReviewView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.offersPasswords, into: &buf)
         FfiConverterBool.write(value.includePasswords, into: &buf)
         FfiConverterString.write(value.passwordsLabel, into: &buf)
+        FfiConverterSequenceTypeAppReviewPassword.write(value.passwords, into: &buf)
+        FfiConverterString.write(value.passwordSummary, into: &buf)
+        FfiConverterString.write(value.passwordQuery, into: &buf)
         FfiConverterString.write(value.sourceNote, into: &buf)
     }
 }
@@ -30427,6 +30977,11 @@ public struct AppSpacePower: Equatable, Hashable {
      * Why the last power action failed, until the next one.
      */
     public var error: String?
+    /**
+     * Why it stopped without being asked to, in plain words ("out of
+     * memory"), while it is off.
+     */
+    public var stopReason: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30444,11 +30999,16 @@ public struct AppSpacePower: Equatable, Hashable {
          */turningOn: Bool?,
         /**
          * Why the last power action failed, until the next one.
-         */error: String?) {
+         */error: String?,
+        /**
+         * Why it stopped without being asked to, in plain words ("out of
+         * memory"), while it is off.
+         */stopReason: String?) {
         self.control = control
         self.off = off
         self.turningOn = turningOn
         self.error = error
+        self.stopReason = stopReason
     }
 
 
@@ -30470,7 +31030,8 @@ public struct FfiConverterTypeAppSpacePower: FfiConverterRustBuffer {
                 control: FfiConverterTypeAppPowerControl.read(from: &buf),
                 off: FfiConverterBool.read(from: &buf),
                 turningOn: FfiConverterOptionBool.read(from: &buf),
-                error: FfiConverterOptionString.read(from: &buf)
+                error: FfiConverterOptionString.read(from: &buf),
+                stopReason: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -30479,6 +31040,7 @@ public struct FfiConverterTypeAppSpacePower: FfiConverterRustBuffer {
         FfiConverterBool.write(value.off, into: &buf)
         FfiConverterOptionBool.write(value.turningOn, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
+        FfiConverterOptionString.write(value.stopReason, into: &buf)
     }
 }
 
@@ -30722,6 +31284,12 @@ public struct AppSpaceRow: Equatable, Hashable {
      * (that machine created it) or `elsewhere` (another device did).
      */
     public var cloudDelete: String?
+    /**
+     * Why a local Space stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"), as the SDK
+     * recorded it; absent otherwise.
+     */
+    public var stopReason: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30796,7 +31364,12 @@ public struct AppSpaceRow: Equatable, Hashable {
         /**
          * Where Delete permanently can delete it: `here`, `host:<machine>`
          * (that machine created it) or `elsewhere` (another device did).
-         */cloudDelete: String?) {
+         */cloudDelete: String?,
+        /**
+         * Why a local Space stopped without being asked to, in plain words
+         * ("out of memory", "killed", "exited with code 1"), as the SDK
+         * recorded it; absent otherwise.
+         */stopReason: String?) {
         self.id = id
         self.name = name
         self.provider = provider
@@ -30819,6 +31392,7 @@ public struct AppSpaceRow: Equatable, Hashable {
         self.cloud = cloud
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
+        self.stopReason = stopReason
     }
 
 
@@ -30858,7 +31432,8 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
                 powerState: FfiConverterOptionString.read(from: &buf),
                 cloud: FfiConverterOptionString.read(from: &buf),
                 cloudPlace: FfiConverterOptionString.read(from: &buf),
-                cloudDelete: FfiConverterOptionString.read(from: &buf)
+                cloudDelete: FfiConverterOptionString.read(from: &buf),
+                stopReason: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -30885,6 +31460,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.cloud, into: &buf)
         FfiConverterOptionString.write(value.cloudPlace, into: &buf)
         FfiConverterOptionString.write(value.cloudDelete, into: &buf)
+        FfiConverterOptionString.write(value.stopReason, into: &buf)
     }
 }
 
@@ -32660,6 +33236,11 @@ public struct AppTeleportConsent: Equatable, Hashable {
      * Also send the saved passwords (ticked in the review).
      */
     public var includePasswords: Bool
+    /**
+     * Reading the app: the sites whose saved passwords to send (the
+     * review's per-site choice); `None` when no password is sent this way.
+     */
+    public var passwordDomains: [String]?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -32688,7 +33269,11 @@ public struct AppTeleportConsent: Equatable, Hashable {
          */fromVault: [String]?,
         /**
          * Also send the saved passwords (ticked in the review).
-         */includePasswords: Bool) {
+         */includePasswords: Bool,
+        /**
+         * Reading the app: the sites whose saved passwords to send (the
+         * review's per-site choice); `None` when no password is sent this way.
+         */passwordDomains: [String]?) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
@@ -32697,6 +33282,7 @@ public struct AppTeleportConsent: Equatable, Hashable {
         self.exclude = exclude
         self.fromVault = fromVault
         self.includePasswords = includePasswords
+        self.passwordDomains = passwordDomains
     }
 
 
@@ -32722,7 +33308,8 @@ public struct FfiConverterTypeAppTeleportConsent: FfiConverterRustBuffer {
                 cookieDomains: FfiConverterOptionSequenceString.read(from: &buf),
                 exclude: FfiConverterSequenceString.read(from: &buf),
                 fromVault: FfiConverterOptionSequenceString.read(from: &buf),
-                includePasswords: FfiConverterBool.read(from: &buf)
+                includePasswords: FfiConverterBool.read(from: &buf),
+                passwordDomains: FfiConverterOptionSequenceString.read(from: &buf)
         )
     }
 
@@ -32735,6 +33322,7 @@ public struct FfiConverterTypeAppTeleportConsent: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.exclude, into: &buf)
         FfiConverterOptionSequenceString.write(value.fromVault, into: &buf)
         FfiConverterBool.write(value.includePasswords, into: &buf)
+        FfiConverterOptionSequenceString.write(value.passwordDomains, into: &buf)
     }
 }
 
@@ -33766,6 +34354,82 @@ public func FfiConverterTypeAppUsageToggle_lower(_ value: AppUsageToggle) -> Rus
 }
 
 
+public struct AppVaultPassword: Equatable, Hashable {
+    /**
+     * The item's id.
+     */
+    public var id: String
+    /**
+     * Its site (`github.com`); empty when not known.
+     */
+    public var site: String
+    /**
+     * Its username; empty when not known or hidden.
+     */
+    public var username: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The item's id.
+         */id: String,
+        /**
+         * Its site (`github.com`); empty when not known.
+         */site: String,
+        /**
+         * Its username; empty when not known or hidden.
+         */username: String) {
+        self.id = id
+        self.site = site
+        self.username = username
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppVaultPassword: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppVaultPassword: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppVaultPassword {
+        return
+            try AppVaultPassword(
+                id: FfiConverterString.read(from: &buf),
+                site: FfiConverterString.read(from: &buf),
+                username: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppVaultPassword, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.site, into: &buf)
+        FfiConverterString.write(value.username, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppVaultPassword_lift(_ buf: RustBuffer) throws -> AppVaultPassword {
+    return try FfiConverterTypeAppVaultPassword.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppVaultPassword_lower(_ value: AppVaultPassword) -> RustBuffer {
+    return FfiConverterTypeAppVaultPassword.lower(value)
+}
+
+
 public struct AppVaultSource: Equatable, Hashable {
     /**
      * The app has saved items that can be sent (passwords never are).
@@ -33787,6 +34451,19 @@ public struct AppVaultSource: Equatable, Hashable {
      * The app's saved passwords (ids), sent only when ticked.
      */
     public var passwordIds: [String]
+    /**
+     * The same passwords with their site and username (never a value), for
+     * the review to list.
+     */
+    public var passwords: [AppVaultPassword]
+    /**
+     * The Keyvault daemon enforces a choice of passwords by site
+     * (`password_domains` in its status). Without it the review offers
+     * the passwords as before (those of the chosen sites, or every saved
+     * one) and lists none to pick: it never shows a choice the daemon
+     * would not keep.
+     */
+    public var passwordPicks: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -33805,12 +34482,25 @@ public struct AppVaultSource: Equatable, Hashable {
          */selected: [String],
         /**
          * The app's saved passwords (ids), sent only when ticked.
-         */passwordIds: [String]) {
+         */passwordIds: [String],
+        /**
+         * The same passwords with their site and username (never a value), for
+         * the review to list.
+         */passwords: [AppVaultPassword],
+        /**
+         * The Keyvault daemon enforces a choice of passwords by site
+         * (`password_domains` in its status). Without it the review offers
+         * the passwords as before (those of the chosen sites, or every saved
+         * one) and lists none to pick: it never shows a choice the daemon
+         * would not keep.
+         */passwordPicks: Bool) {
         self.available = available
         self.items = items
         self.saved = saved
         self.selected = selected
         self.passwordIds = passwordIds
+        self.passwords = passwords
+        self.passwordPicks = passwordPicks
     }
 
 
@@ -33833,7 +34523,9 @@ public struct FfiConverterTypeAppVaultSource: FfiConverterRustBuffer {
                 items: FfiConverterUInt32.read(from: &buf),
                 saved: FfiConverterString.read(from: &buf),
                 selected: FfiConverterSequenceString.read(from: &buf),
-                passwordIds: FfiConverterSequenceString.read(from: &buf)
+                passwordIds: FfiConverterSequenceString.read(from: &buf),
+                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from: &buf),
+                passwordPicks: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -33843,6 +34535,8 @@ public struct FfiConverterTypeAppVaultSource: FfiConverterRustBuffer {
         FfiConverterString.write(value.saved, into: &buf)
         FfiConverterSequenceString.write(value.selected, into: &buf)
         FfiConverterSequenceString.write(value.passwordIds, into: &buf)
+        FfiConverterSequenceTypeAppVaultPassword.write(value.passwords, into: &buf)
+        FfiConverterBool.write(value.passwordPicks, into: &buf)
     }
 }
 
@@ -33935,6 +34629,12 @@ public struct AppWizardEnv: Equatable, Hashable {
      * Resources step shows no GPU row for it.
      */
     public var gpus: [AppGpuChoice]?
+    /**
+     * Picks the name an unnamed Space gets ([`generated_space_name`]);
+     * `None`: this process's own randomness. A core without randomness
+     * (the wasm build) is given one; tests give a fixed one.
+     */
+    public var nameSeed: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -33994,7 +34694,12 @@ public struct AppWizardEnv: Equatable, Hashable {
          * The GPU option of each runtime that has one (the SDK's
          * `gpu_support`), when known. A runtime not listed has none: the
          * Resources step shows no GPU row for it.
-         */gpus: [AppGpuChoice]?) {
+         */gpus: [AppGpuChoice]?,
+        /**
+         * Picks the name an unnamed Space gets ([`generated_space_name`]);
+         * `None`: this process's own randomness. A core without randomness
+         * (the wasm build) is given one; tests give a fixed one.
+         */nameSeed: UInt64?) {
         self.defaultLocation = defaultLocation
         self.cloudAvailable = cloudAvailable
         self.localAvailable = localAvailable
@@ -34011,6 +34716,7 @@ public struct AppWizardEnv: Equatable, Hashable {
         self.hosts = hosts
         self.experiments = experiments
         self.gpus = gpus
+        self.nameSeed = nameSeed
     }
 
 
@@ -34044,7 +34750,8 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
                 clouds: FfiConverterSequenceTypeAppConnectedCloud.read(from: &buf),
                 hosts: FfiConverterSequenceTypeAppSpaceHost.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
-                gpus: FfiConverterOptionSequenceTypeAppGpuChoice.read(from: &buf)
+                gpus: FfiConverterOptionSequenceTypeAppGpuChoice.read(from: &buf),
+                nameSeed: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
@@ -34065,6 +34772,7 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppSpaceHost.write(value.hosts, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterOptionSequenceTypeAppGpuChoice.write(value.gpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.nameSeed, into: &buf)
     }
 }
 
@@ -34440,6 +35148,15 @@ public struct AppWizardState: Equatable, Hashable {
      * The address form.
      */
     public var address: AppAddressForm
+    /**
+     * The name the Space gets when Name is left empty
+     * ([`generated_space_name`], chosen when the wizard opens).
+     */
+    public var generatedName: String
+    /**
+     * A slider's value being typed (its number was clicked).
+     */
+    public var resourceEdit: AppResourceEdit?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -34506,7 +35223,14 @@ public struct AppWizardState: Equatable, Hashable {
          */gpu: Bool,
         /**
          * The address form.
-         */address: AppAddressForm) {
+         */address: AppAddressForm,
+        /**
+         * The name the Space gets when Name is left empty
+         * ([`generated_space_name`], chosen when the wizard opens).
+         */generatedName: String,
+        /**
+         * A slider's value being typed (its number was clicked).
+         */resourceEdit: AppResourceEdit?) {
         self.mode = mode
         self.step = step
         self.placement = placement
@@ -34527,6 +35251,8 @@ public struct AppWizardState: Equatable, Hashable {
         self.host = host
         self.gpu = gpu
         self.address = address
+        self.generatedName = generatedName
+        self.resourceEdit = resourceEdit
     }
 
 
@@ -34564,7 +35290,9 @@ public struct FfiConverterTypeAppWizardState: FfiConverterRustBuffer {
                 cloud: FfiConverterOptionString.read(from: &buf),
                 host: FfiConverterOptionString.read(from: &buf),
                 gpu: FfiConverterBool.read(from: &buf),
-                address: FfiConverterTypeAppAddressForm.read(from: &buf)
+                address: FfiConverterTypeAppAddressForm.read(from: &buf),
+                generatedName: FfiConverterString.read(from: &buf),
+                resourceEdit: FfiConverterOptionTypeAppResourceEdit.read(from: &buf)
         )
     }
 
@@ -34589,6 +35317,8 @@ public struct FfiConverterTypeAppWizardState: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.host, into: &buf)
         FfiConverterBool.write(value.gpu, into: &buf)
         FfiConverterTypeAppAddressForm.write(value.address, into: &buf)
+        FfiConverterString.write(value.generatedName, into: &buf)
+        FfiConverterOptionTypeAppResourceEdit.write(value.resourceEdit, into: &buf)
     }
 }
 
@@ -34775,9 +35505,19 @@ public struct AppWizardView: Equatable, Hashable {
      */
     public var gpu: AppGpuRow?
     /**
+     * A slider's value being typed: the field shows instead of its number
+     * (its error is also the field's [`WizardField::error`]).
+     */
+    public var resourceEdit: AppResourceEditView?
+    /**
      * Name as typed.
      */
     public var name: String
+    /**
+     * The name the Space gets: the one typed, else the generated one
+     * (the Name field's placeholder).
+     */
+    public var spaceName: String
     /**
      * The name breaks the DNS-label rule.
      */
@@ -34957,8 +35697,16 @@ public struct AppWizardView: Equatable, Hashable {
          * The GPU row (Resources), where the runtime offers a GPU.
          */gpu: AppGpuRow?,
         /**
+         * A slider's value being typed: the field shows instead of its number
+         * (its error is also the field's [`WizardField::error`]).
+         */resourceEdit: AppResourceEditView?,
+        /**
          * Name as typed.
          */name: String,
+        /**
+         * The name the Space gets: the one typed, else the generated one
+         * (the Name field's placeholder).
+         */spaceName: String,
         /**
          * The name breaks the DNS-label rule.
          */nameInvalid: Bool,
@@ -35034,7 +35782,9 @@ public struct AppWizardView: Equatable, Hashable {
         self.resourceFacts = resourceFacts
         self.resourcesError = resourcesError
         self.gpu = gpu
+        self.resourceEdit = resourceEdit
         self.name = name
+        self.spaceName = spaceName
         self.nameInvalid = nameInvalid
         self.nameError = nameError
         self.openWhenReady = openWhenReady
@@ -35104,7 +35854,9 @@ public struct FfiConverterTypeAppWizardView: FfiConverterRustBuffer {
                 resourceFacts: FfiConverterSequenceTypeAppWizardFact.read(from: &buf),
                 resourcesError: FfiConverterOptionString.read(from: &buf),
                 gpu: FfiConverterOptionTypeAppGpuRow.read(from: &buf),
+                resourceEdit: FfiConverterOptionTypeAppResourceEditView.read(from: &buf),
                 name: FfiConverterString.read(from: &buf),
+                spaceName: FfiConverterString.read(from: &buf),
                 nameInvalid: FfiConverterBool.read(from: &buf),
                 nameError: FfiConverterOptionString.read(from: &buf),
                 openWhenReady: FfiConverterBool.read(from: &buf),
@@ -35160,7 +35912,9 @@ public struct FfiConverterTypeAppWizardView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppWizardFact.write(value.resourceFacts, into: &buf)
         FfiConverterOptionString.write(value.resourcesError, into: &buf)
         FfiConverterOptionTypeAppGpuRow.write(value.gpu, into: &buf)
+        FfiConverterOptionTypeAppResourceEditView.write(value.resourceEdit, into: &buf)
         FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.spaceName, into: &buf)
         FfiConverterBool.write(value.nameInvalid, into: &buf)
         FfiConverterOptionString.write(value.nameError, into: &buf)
         FfiConverterBool.write(value.openWhenReady, into: &buf)
@@ -39051,6 +39805,12 @@ public struct KvStatus: Equatable, Hashable {
      */
     public var skipUnlockPrompt: Bool?
     /**
+     * What the daemon supports beyond the original protocol
+     * (`password_domains`: it reads only the saved passwords of the sites
+     * picked for them); empty from a daemon that predates the list.
+     */
+    public var features: [String]
+    /**
      * An earlier preview's vault was found and set aside.
      */
     public var resetNotice: String?
@@ -39108,6 +39868,11 @@ public struct KvStatus: Equatable, Hashable {
          * "Never ask again" on the unlock prompt is on.
          */skipUnlockPrompt: Bool?,
         /**
+         * What the daemon supports beyond the original protocol
+         * (`password_domains`: it reads only the saved passwords of the sites
+         * picked for them); empty from a daemon that predates the list.
+         */features: [String],
+        /**
          * An earlier preview's vault was found and set aside.
          */resetNotice: String?) {
         self.version = version
@@ -39125,6 +39890,7 @@ public struct KvStatus: Equatable, Hashable {
         self.unlockProtectors = unlockProtectors
         self.browseUntilMs = browseUntilMs
         self.skipUnlockPrompt = skipUnlockPrompt
+        self.features = features
         self.resetNotice = resetNotice
     }
 
@@ -39159,6 +39925,7 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
                 unlockProtectors: FfiConverterSequenceString.read(from: &buf),
                 browseUntilMs: FfiConverterOptionUInt64.read(from: &buf),
                 skipUnlockPrompt: FfiConverterOptionBool.read(from: &buf),
+                features: FfiConverterSequenceString.read(from: &buf),
                 resetNotice: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -39179,6 +39946,7 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.unlockProtectors, into: &buf)
         FfiConverterOptionUInt64.write(value.browseUntilMs, into: &buf)
         FfiConverterOptionBool.write(value.skipUnlockPrompt, into: &buf)
+        FfiConverterSequenceString.write(value.features, into: &buf)
         FfiConverterOptionString.write(value.resetNotice, into: &buf)
     }
 }
@@ -40073,6 +40841,16 @@ public struct KvVaultSource: Equatable, Hashable {
      * only when ticked in the review.
      */
     public var passwordIds: [String]
+    /**
+     * The same passwords with their site and username (never a value),
+     * for the review to list and pick from.
+     */
+    public var passwords: [AppVaultPassword]
+    /**
+     * The daemon enforces a choice of passwords by site
+     * (`password_domains` in its status): the review may offer one.
+     */
+    public var passwordPicks: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -40089,11 +40867,21 @@ public struct KvVaultSource: Equatable, Hashable {
         /**
          * The app's saved passwords (ids), never part of `ids`: they are sent
          * only when ticked in the review.
-         */passwordIds: [String]) {
+         */passwordIds: [String],
+        /**
+         * The same passwords with their site and username (never a value),
+         * for the review to list and pick from.
+         */passwords: [AppVaultPassword],
+        /**
+         * The daemon enforces a choice of passwords by site
+         * (`password_domains` in its status): the review may offer one.
+         */passwordPicks: Bool) {
         self.count = count
         self.newestMs = newestMs
         self.ids = ids
         self.passwordIds = passwordIds
+        self.passwords = passwords
+        self.passwordPicks = passwordPicks
     }
 
 
@@ -40115,7 +40903,9 @@ public struct FfiConverterTypeKvVaultSource: FfiConverterRustBuffer {
                 count: FfiConverterUInt32.read(from: &buf),
                 newestMs: FfiConverterInt64.read(from: &buf),
                 ids: FfiConverterSequenceString.read(from: &buf),
-                passwordIds: FfiConverterSequenceString.read(from: &buf)
+                passwordIds: FfiConverterSequenceString.read(from: &buf),
+                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from: &buf),
+                passwordPicks: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -40124,6 +40914,8 @@ public struct FfiConverterTypeKvVaultSource: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.newestMs, into: &buf)
         FfiConverterSequenceString.write(value.ids, into: &buf)
         FfiConverterSequenceString.write(value.passwordIds, into: &buf)
+        FfiConverterSequenceTypeAppVaultPassword.write(value.passwords, into: &buf)
+        FfiConverterBool.write(value.passwordPicks, into: &buf)
     }
 }
 
@@ -41060,6 +41852,11 @@ public struct TeleportConsent: Equatable, Hashable {
      * Also send the saved passwords: only when ticked in the review.
      */
     public var includePasswords: Bool
+    /**
+     * The sites whose saved passwords to send (the review's own
+     * choice; `None`: those of `cookie_domains`).
+     */
+    public var passwordDomains: [String]?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -41090,7 +41887,11 @@ public struct TeleportConsent: Equatable, Hashable {
          */fromVault: [String]? = nil,
         /**
          * Also send the saved passwords: only when ticked in the review.
-         */includePasswords: Bool = false) {
+         */includePasswords: Bool = false,
+        /**
+         * The sites whose saved passwords to send (the review's own
+         * choice; `None`: those of `cookie_domains`).
+         */passwordDomains: [String]? = nil) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
@@ -41099,6 +41900,7 @@ public struct TeleportConsent: Equatable, Hashable {
         self.exclude = exclude
         self.fromVault = fromVault
         self.includePasswords = includePasswords
+        self.passwordDomains = passwordDomains
     }
 
 
@@ -41124,7 +41926,8 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
                 cookieDomains: FfiConverterOptionSequenceString.read(from: &buf),
                 exclude: FfiConverterSequenceString.read(from: &buf),
                 fromVault: FfiConverterOptionSequenceString.read(from: &buf),
-                includePasswords: FfiConverterBool.read(from: &buf)
+                includePasswords: FfiConverterBool.read(from: &buf),
+                passwordDomains: FfiConverterOptionSequenceString.read(from: &buf)
         )
     }
 
@@ -41137,6 +41940,7 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.exclude, into: &buf)
         FfiConverterOptionSequenceString.write(value.fromVault, into: &buf)
         FfiConverterBool.write(value.includePasswords, into: &buf)
+        FfiConverterOptionSequenceString.write(value.passwordDomains, into: &buf)
     }
 }
 
@@ -48843,7 +49647,15 @@ public enum AppPickerEvent: Equatable, Hashable {
          */selected: [String],
         /**
          * The app's saved passwords (ids): sent only when ticked.
-         */passwordIds: [String]
+         */passwordIds: [String],
+        /**
+         * The same passwords with their site and username (never a
+         * value), for the review to list.
+         */passwords: [AppVaultPassword],
+        /**
+         * The Keyvault daemon enforces a choice of passwords by site
+         * (`password_domains` in its status); off for an older one.
+         */passwordPicks: Bool
     )
     /**
      * Tick or untick "Also send saved passwords".
@@ -48852,6 +49664,31 @@ public enum AppPickerEvent: Equatable, Hashable {
         /**
          * Ticked.
          */value: Bool
+    )
+    /**
+     * Pick or drop one saved password choice (a site, or a saved item's
+     * id: [`ReviewPassword::key`]).
+     */
+    case togglePassword(
+        /**
+         * The choice.
+         */key: String
+    )
+    /**
+     * Pick or drop every saved password choice the search shows.
+     */
+    case selectShownPasswords(
+        /**
+         * Pick (true) or drop.
+         */value: Bool
+    )
+    /**
+     * The passwords list's search text.
+     */
+    case passwordQuery(
+        /**
+         * Text.
+         */text: String
     )
     /**
      * The chosen saved items changed.
@@ -48970,24 +49807,33 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
         case 22: return .sendFrom(source: try FfiConverterTypeAppSendSource.read(from: &buf)
         )
 
-        case 23: return .vaultItems(count: try FfiConverterUInt32.read(from: &buf), newestMs: try FfiConverterInt64.read(from: &buf), nowMs: try FfiConverterInt64.read(from: &buf), selected: try FfiConverterSequenceString.read(from: &buf), passwordIds: try FfiConverterSequenceString.read(from: &buf)
+        case 23: return .vaultItems(count: try FfiConverterUInt32.read(from: &buf), newestMs: try FfiConverterInt64.read(from: &buf), nowMs: try FfiConverterInt64.read(from: &buf), selected: try FfiConverterSequenceString.read(from: &buf), passwordIds: try FfiConverterSequenceString.read(from: &buf), passwords: try FfiConverterSequenceTypeAppVaultPassword.read(from: &buf), passwordPicks: try FfiConverterBool.read(from: &buf)
         )
 
         case 24: return .togglePasswords(value: try FfiConverterBool.read(from: &buf)
         )
 
-        case 25: return .vaultSelection(selected: try FfiConverterSequenceString.read(from: &buf)
+        case 25: return .togglePassword(key: try FfiConverterString.read(from: &buf)
         )
 
-        case 26: return .confirm
-
-        case 27: return .progress(event: try FfiConverterTypeAppTeleportRunEvent.read(from: &buf)
+        case 26: return .selectShownPasswords(value: try FfiConverterBool.read(from: &buf)
         )
 
-        case 28: return .finished(report: try FfiConverterTypeAppTeleportRunReport.read(from: &buf)
+        case 27: return .passwordQuery(text: try FfiConverterString.read(from: &buf)
         )
 
-        case 29: return .back
+        case 28: return .vaultSelection(selected: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 29: return .confirm
+
+        case 30: return .progress(event: try FfiConverterTypeAppTeleportRunEvent.read(from: &buf)
+        )
+
+        case 31: return .finished(report: try FfiConverterTypeAppTeleportRunReport.read(from: &buf)
+        )
+
+        case 32: return .back
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -49110,13 +49956,15 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
             FfiConverterTypeAppSendSource.write(source, into: &buf)
 
 
-        case let .vaultItems(count,newestMs,nowMs,selected,passwordIds):
+        case let .vaultItems(count,newestMs,nowMs,selected,passwordIds,passwords,passwordPicks):
             writeInt(&buf, Int32(23))
             FfiConverterUInt32.write(count, into: &buf)
             FfiConverterInt64.write(newestMs, into: &buf)
             FfiConverterInt64.write(nowMs, into: &buf)
             FfiConverterSequenceString.write(selected, into: &buf)
             FfiConverterSequenceString.write(passwordIds, into: &buf)
+            FfiConverterSequenceTypeAppVaultPassword.write(passwords, into: &buf)
+            FfiConverterBool.write(passwordPicks, into: &buf)
 
 
         case let .togglePasswords(value):
@@ -49124,27 +49972,42 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
             FfiConverterBool.write(value, into: &buf)
 
 
-        case let .vaultSelection(selected):
+        case let .togglePassword(key):
             writeInt(&buf, Int32(25))
+            FfiConverterString.write(key, into: &buf)
+
+
+        case let .selectShownPasswords(value):
+            writeInt(&buf, Int32(26))
+            FfiConverterBool.write(value, into: &buf)
+
+
+        case let .passwordQuery(text):
+            writeInt(&buf, Int32(27))
+            FfiConverterString.write(text, into: &buf)
+
+
+        case let .vaultSelection(selected):
+            writeInt(&buf, Int32(28))
             FfiConverterSequenceString.write(selected, into: &buf)
 
 
         case .confirm:
-            writeInt(&buf, Int32(26))
+            writeInt(&buf, Int32(29))
 
 
         case let .progress(event):
-            writeInt(&buf, Int32(27))
+            writeInt(&buf, Int32(30))
             FfiConverterTypeAppTeleportRunEvent.write(event, into: &buf)
 
 
         case let .finished(report):
-            writeInt(&buf, Int32(28))
+            writeInt(&buf, Int32(31))
             FfiConverterTypeAppTeleportRunReport.write(report, into: &buf)
 
 
         case .back:
-            writeInt(&buf, Int32(29))
+            writeInt(&buf, Int32(32))
 
         }
     }
@@ -49914,6 +50777,89 @@ public func FfiConverterTypeAppPowerControl_lift(_ buf: RustBuffer) throws -> Ap
 #endif
 public func FfiConverterTypeAppPowerControl_lower(_ value: AppPowerControl) -> RustBuffer {
     return FfiConverterTypeAppPowerControl.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppResourceField: Equatable, Hashable {
+
+    /**
+     * CPU cores.
+     */
+    case cpus
+    /**
+     * Memory, GB.
+     */
+    case memory
+    /**
+     * Disk, GB.
+     */
+    case disk
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppResourceField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppResourceField: FfiConverterRustBuffer {
+    typealias SwiftType = AppResourceField
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppResourceField {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .cpus
+
+        case 2: return .memory
+
+        case 3: return .disk
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppResourceField, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .cpus:
+            writeInt(&buf, Int32(1))
+
+
+        case .memory:
+            writeInt(&buf, Int32(2))
+
+
+        case .disk:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceField_lift(_ buf: RustBuffer) throws -> AppResourceField {
+    return try FfiConverterTypeAppResourceField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppResourceField_lower(_ value: AppResourceField) -> RustBuffer {
+    return FfiConverterTypeAppResourceField.lower(value)
 }
 
 
@@ -53835,6 +54781,31 @@ public enum AppWizardAction: Equatable, Hashable {
      */
     case resetDisk
     /**
+     * A slider's number clicked: its value can be typed.
+     */
+    case editResource(
+        /**
+         * Which slider.
+         */field: AppResourceField
+    )
+    /**
+     * The typed value's text.
+     */
+    case setResourceText(
+        /**
+         * Text.
+         */text: String
+    )
+    /**
+     * Return (or leaving the field): the typed value is used when it is
+     * within the slider's limits; otherwise the field stays with why.
+     */
+    case commitResource
+    /**
+     * Escape: the slider's value stays.
+     */
+    case cancelResource
+    /**
      * The GPU checkbox.
      */
     case setGpu(
@@ -53981,35 +54952,45 @@ public struct FfiConverterTypeAppWizardAction: FfiConverterRustBuffer {
 
         case 18: return .resetDisk
 
-        case 19: return .setGpu(on: try FfiConverterBool.read(from: &buf)
+        case 19: return .editResource(field: try FfiConverterTypeAppResourceField.read(from: &buf)
         )
 
-        case 20: return .setName(name: try FfiConverterString.read(from: &buf)
+        case 20: return .setResourceText(text: try FfiConverterString.read(from: &buf)
         )
 
-        case 21: return .setOpenWhenReady(on: try FfiConverterBool.read(from: &buf)
+        case 21: return .commitResource
+
+        case 22: return .cancelResource
+
+        case 23: return .setGpu(on: try FfiConverterBool.read(from: &buf)
         )
 
-        case 22: return .next
-
-        case 23: return .back
-
-        case 24: return .showAddress
-
-        case 25: return .hideAddress
-
-        case 26: return .setAddress(url: try FfiConverterString.read(from: &buf)
+        case 24: return .setName(name: try FfiConverterString.read(from: &buf)
         )
 
-        case 27: return .setToken(token: try FfiConverterString.read(from: &buf)
+        case 25: return .setOpenWhenReady(on: try FfiConverterBool.read(from: &buf)
         )
 
-        case 28: return .setAddressName(name: try FfiConverterString.read(from: &buf)
+        case 26: return .next
+
+        case 27: return .back
+
+        case 28: return .showAddress
+
+        case 29: return .hideAddress
+
+        case 30: return .setAddress(url: try FfiConverterString.read(from: &buf)
         )
 
-        case 29: return .submitAddress
+        case 31: return .setToken(token: try FfiConverterString.read(from: &buf)
+        )
 
-        case 30: return .addressFailed(error: try FfiConverterString.read(from: &buf)
+        case 32: return .setAddressName(name: try FfiConverterString.read(from: &buf)
+        )
+
+        case 33: return .submitAddress
+
+        case 34: return .addressFailed(error: try FfiConverterString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -54105,58 +55086,76 @@ public struct FfiConverterTypeAppWizardAction: FfiConverterRustBuffer {
             writeInt(&buf, Int32(18))
 
 
-        case let .setGpu(on):
+        case let .editResource(field):
             writeInt(&buf, Int32(19))
+            FfiConverterTypeAppResourceField.write(field, into: &buf)
+
+
+        case let .setResourceText(text):
+            writeInt(&buf, Int32(20))
+            FfiConverterString.write(text, into: &buf)
+
+
+        case .commitResource:
+            writeInt(&buf, Int32(21))
+
+
+        case .cancelResource:
+            writeInt(&buf, Int32(22))
+
+
+        case let .setGpu(on):
+            writeInt(&buf, Int32(23))
             FfiConverterBool.write(on, into: &buf)
 
 
         case let .setName(name):
-            writeInt(&buf, Int32(20))
+            writeInt(&buf, Int32(24))
             FfiConverterString.write(name, into: &buf)
 
 
         case let .setOpenWhenReady(on):
-            writeInt(&buf, Int32(21))
+            writeInt(&buf, Int32(25))
             FfiConverterBool.write(on, into: &buf)
 
 
         case .next:
-            writeInt(&buf, Int32(22))
+            writeInt(&buf, Int32(26))
 
 
         case .back:
-            writeInt(&buf, Int32(23))
+            writeInt(&buf, Int32(27))
 
 
         case .showAddress:
-            writeInt(&buf, Int32(24))
+            writeInt(&buf, Int32(28))
 
 
         case .hideAddress:
-            writeInt(&buf, Int32(25))
+            writeInt(&buf, Int32(29))
 
 
         case let .setAddress(url):
-            writeInt(&buf, Int32(26))
+            writeInt(&buf, Int32(30))
             FfiConverterString.write(url, into: &buf)
 
 
         case let .setToken(token):
-            writeInt(&buf, Int32(27))
+            writeInt(&buf, Int32(31))
             FfiConverterString.write(token, into: &buf)
 
 
         case let .setAddressName(name):
-            writeInt(&buf, Int32(28))
+            writeInt(&buf, Int32(32))
             FfiConverterString.write(name, into: &buf)
 
 
         case .submitAddress:
-            writeInt(&buf, Int32(29))
+            writeInt(&buf, Int32(33))
 
 
         case let .addressFailed(error):
-            writeInt(&buf, Int32(30))
+            writeInt(&buf, Int32(34))
             FfiConverterString.write(error, into: &buf)
 
         }
@@ -58014,6 +59013,30 @@ fileprivate struct FfiConverterOptionTypeAppOpenFileInput: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppPlanLink: FfiConverterRustBuffer {
+    typealias SwiftType = AppPlanLink?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppPlanLink.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppPlanLink.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppPowerButton: FfiConverterRustBuffer {
     typealias SwiftType = AppPowerButton?
 
@@ -58150,6 +59173,54 @@ fileprivate struct FfiConverterOptionTypeAppRelayUsageView: FfiConverterRustBuff
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppRelayUsageView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppResourceEdit: FfiConverterRustBuffer {
+    typealias SwiftType = AppResourceEdit?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppResourceEdit.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppResourceEdit.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppResourceEditView: FfiConverterRustBuffer {
+    typealias SwiftType = AppResourceEditView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppResourceEditView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppResourceEditView.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -61631,6 +62702,31 @@ fileprivate struct FfiConverterSequenceTypeAppReviewDomain: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppReviewPassword: FfiConverterRustBuffer {
+    typealias SwiftType = [AppReviewPassword]
+
+    public static func write(_ value: [AppReviewPassword], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppReviewPassword.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppReviewPassword] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppReviewPassword]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppReviewPassword.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppReviewToggle: FfiConverterRustBuffer {
     typealias SwiftType = [AppReviewToggle]
 
@@ -62373,6 +63469,31 @@ fileprivate struct FfiConverterSequenceTypeAppUnconfirmedMachine: FfiConverterRu
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppUnconfirmedMachine.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppVaultPassword: FfiConverterRustBuffer {
+    typealias SwiftType = [AppVaultPassword]
+
+    public static func write(_ value: [AppVaultPassword], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppVaultPassword.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppVaultPassword] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppVaultPassword]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppVaultPassword.read(from: &buf))
         }
         return seq
     }
@@ -65019,6 +66140,16 @@ public func appPickerConsent(state: AppPickerState) -> AppTeleportConsent  {
 })
 }
 /**
+ * A teleport picker event from JSON (fixtures, parity).
+ */
+public func appPickerEventFromJson(json: String)throws  -> AppPickerEvent  {
+    return try  FfiConverterTypeAppPickerEvent_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_spaces_ffi_fn_func_app_picker_event_from_json(
+        FfiConverterString.lower(json),$0
+    )
+})
+}
+/**
  * The picker grid's primary button for a tab ("Continue", "Teleport to
  * <Space>", "Stream to This Mac"), live with a choosable tile selected.
  */
@@ -67114,6 +68245,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_picker_consent() != 47226) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_picker_event_from_json() != 64995) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_primary() != 24894) {

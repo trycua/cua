@@ -67,6 +67,8 @@ export const WEBKIT_PAGE_OPS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
@@ -85,6 +87,7 @@ export const WEBKIT_PAGE_OPS = [
   "storage.run",
   "notifications.list",
   "notifications.markAllRead",
+  "notifications.markRead",
   "telemetry.track",
   "spaces.usage",
   "spaces.windows",
@@ -94,6 +97,7 @@ export const WEBKIT_PAGE_OPS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
 ] as const satisfies readonly OpName[];
@@ -240,13 +244,21 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "about.get": call("about.get"),
     "about.set": call("about.set"),
     "about.checkNow": call("about.checkNow"),
+    "update.get": call("update.get"),
+    "update.install": call("update.install"),
     "loginItem.get": call("loginItem.get"),
     "loginItem.set": call("loginItem.set"),
     "loginItem.openSettings": none("loginItem.openSettings"),
     "devices.get": call("devices.get"),
     "devices.enroll": call("devices.enroll"),
     "devices.checkEnrolled": async () => Boolean(await request("devices.checkEnrolled")),
-    "devices.approve": none("devices.approve"),
+    // The host asks for Touch ID or the login password first: no timeout,
+    // or a slow answer reads as "the app did not answer" while the prompt
+    // is still up, and the relay's own answer is lost.
+    "devices.approve": async (args) => {
+      await request("devices.approve", { ...args }, null);
+      return null;
+    },
     "devices.rename": none("devices.rename"),
     "devices.revoke": none("devices.revoke"),
     "devices.confirmMachine": none("devices.confirmMachine"),
@@ -258,6 +270,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "storage.run": call("storage.run"),
     "notifications.list": list("notifications.list"),
     "notifications.markAllRead": none("notifications.markAllRead"),
+    "notifications.markRead": none("notifications.markRead"),
 
     // Only known signals of fixed words leave the page; the host drops
     // them all while usage data is off.
@@ -275,6 +288,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "spaces.sendFiles": list("spaces.sendFiles"),
 
     "host.setUp": host("host.setUp"),
+    "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),
     "host.action": host("host.action"),
     "host.openSettings": async ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");

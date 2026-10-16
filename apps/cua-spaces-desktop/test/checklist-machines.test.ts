@@ -80,8 +80,13 @@ describe.skipIf(!built)("the checklist and the Machines rows on the app core", (
     expect(rows[0]).toMatchObject({ id: "this-mac", current: true, device: "dev_mac" });
     expect(rows.filter((r) => r.deviceOnly).map((r) => r.name)).toEqual(["Work laptop"]);
     // The page gets the same rows.
-    const answer = (await call("machines.list")) as { rows: { id: string }[] };
+    const answer = (await call("machines.list")) as { rows: { id: string; status: string; spacesLabel: string }[] };
     expect(answer.rows.map((r) => r.id)).toEqual(rows.map((r) => r.id));
+    // With the core's status word and Spaces count (CUA-1617), as the
+    // SwiftUI list shows them.
+    expect(answer.rows.map((r) => [r.status, r.spacesLabel])).toEqual(rows.map((r) => [r.status, r.spacesLabel]));
+    expect(rows[0]!.status).toBe("Online");
+    expect(rows.find((r) => r.deviceOnly)!.spacesLabel).toBe("");
   });
 
   it("ticks steps off from what the app shows, and the page changes the same copy", async () => {

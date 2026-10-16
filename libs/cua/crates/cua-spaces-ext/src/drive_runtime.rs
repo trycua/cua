@@ -258,6 +258,23 @@ impl SpacesDrive for Spaces {
         }
         let s = self.space(&id).await?;
         let Some(backend) = s.volume_backend() else {
+            let answered_before = self
+                .registry()
+                .get(&id)
+                .ok()
+                .flatten()
+                .is_some_and(|r| !r.spacesd_version.is_empty());
+            if not_up_yet(s.has_spacesd(), answered_before) {
+                // Connected while its cua-spacesd was still starting (a
+                // fresh or restarted container): the connection has no
+                // capabilities, not a guest without the volume. Connect
+                // afresh next time, and fail so the supervisor retries.
+                let _ = self.forget_connection(&id).await;
+                let why = "its cua-spacesd is not answering yet (the Space is still starting); \
+                           Cua Volume mounts once it does";
+                ext.runtime.note_unavailable(&id, Some(why.into()));
+                return Err(Error::extension("precondition_failed", why));
+            }
             let why = s
                 .feature(VOLUME_FEATURE)
                 .map(|f| f.limitation.clone())
@@ -447,6 +464,14 @@ pub(crate) fn spawn_attach(spaces: &Spaces, id: &str) {
     }
 }
 
+/// Whether a Space without the volume feature on this connection is only
+/// still starting: no cua-spacesd answered when it connected, though one did
+/// before. A guest whose cua-spacesd answers without the feature predates
+/// the volume; one that never ran cua-spacesd has nothing to mount.
+fn not_up_yet(has_spacesd: bool, answered_before: bool) -> bool {
+    !has_spacesd && answered_before
+}
+
 /// Mounts the Space's volume and keeps it mounted: when the guest daemon
 /// restarts (an update, a crash, a reboot) its mount and its half of the
 /// socket are gone, so the volume is mounted again, with a backoff while the
@@ -541,4 +566,19 @@ async fn remount(spaces: &Spaces, key: &str) -> Result<Option<VolumeInfo>> {
         tracing::info!(space = %key, "Cua Volume mounted again");
     }
     Ok(info)
+}
+
+#[cfg(test)]
+mod not_up_yet_tests {
+    use super::not_up_yet;
+
+    #[test]
+    fn a_daemon_that_answered_before_is_still_starting() {
+        assert!(not_up_yet(false, true));
+        // It answered on this connection: the feature list is real.
+        assert!(!not_up_yet(true, true));
+        assert!(!not_up_yet(true, false));
+        // An image that never ran cua-spacesd.
+        assert!(!not_up_yet(false, false));
+    }
 }

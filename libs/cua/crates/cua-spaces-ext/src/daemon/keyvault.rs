@@ -618,7 +618,13 @@ impl Backend for DaemonBackend {
             // source's key here, never written to disk; the receiver
             // re-encrypts them under its own.
             if spec.passwords && spec.confirm_passwords {
-                let sites: Vec<String> = spec.domains.clone().unwrap_or_default();
+                // The review's choice of passwords, else those of the
+                // chosen sites.
+                let sites: Vec<String> = spec
+                    .password_domains
+                    .clone()
+                    .or_else(|| spec.domains.clone())
+                    .unwrap_or_default();
                 for l in self.site_logins_for(&spec.app, spec.profile.clone(), &sites)? {
                     keep(&mut out, &display, &scope, record::password_record(&l)?);
                 }
@@ -988,6 +994,32 @@ pub async fn serve_socket(broker: Arc<Broker>, path: std::path::PathBuf) {
                     tries += 1;
                     tracing::debug!(error = %e, "keyvault: socket busy, retrying");
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                // Still held after 10 s: by a daemon this one replaced that
+                // never exited (it outlived an app update, #4950). This
+                // daemon is the one its cua home runs, so that one is ended.
+                Err(e) if tries == 40 => {
+                    tries += 1;
+                    let p = path.clone();
+                    let ended = tokio::task::spawn_blocking(move || {
+                        cua_daemon::socket_listener_pid(&p).filter(|&pid| {
+                            pid != std::process::id()
+                                && cua_daemon::terminate_daemon(
+                                    pid,
+                                    std::time::Duration::from_secs(3),
+                                )
+                        })
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    match ended {
+                        Some(pid) => tracing::warn!(
+                            pid,
+                            "keyvault: ended an old cua daemon that still held the socket"
+                        ),
+                        None => tracing::debug!(error = %e, "keyvault: socket busy"),
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, path = %path.display(), "keyvault: socket not served");

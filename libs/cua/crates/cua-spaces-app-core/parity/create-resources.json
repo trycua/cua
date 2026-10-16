@@ -1,12 +1,13 @@
 {
   "name": "create-resources",
-  "about": "The Resources step: kind, architecture (emulated off this Mac's platform), the disk (a slider where the guest grows it) with the download and the room left where it is written, a Space that does not fit blocking Continue, the cloud tile refusing a pick while it is coming soon (its lines, sliders and price are unit-tested), the local sliders (local is free), and a grown macOS disk in the plan.",
+  "about": "The Resources step: kind, architecture (emulated off this Mac's platform), the disk (a slider where the guest grows it) with the download and the room left where it is written, a Space that does not fit blocking Continue, the cloud tile refusing a pick while it is coming soon (its lines, sliders and price are unit-tested), the local sliders (local is free), and a grown macOS disk in the plan, and a value typed into a slider's number (used within the slider's limits, refused with the slider's words outside them).",
   "env": {
     "defaultLocation": "local",
     "cloudAvailable": true,
     "localAvailable": true,
     "localReason": null,
-    "localBackends": null,
+    "localBackends": ["docker", "lume", "qemu"],
+    "nameSeed": 42,
     "maxCpus": 8,
     "hostArch": "arm64",
     "storage": {
@@ -67,6 +68,53 @@
     {
       "type": "set-disk",
       "diskGb": 2
+    },
+    {
+      "type": "edit-resource",
+      "field": "disk"
+    },
+    {
+      "type": "set-resource-text",
+      "text": "9999"
+    },
+    {
+      "type": "commit-resource"
+    },
+    {
+      "type": "set-resource-text",
+      "text": "80 GB"
+    },
+    {
+      "type": "commit-resource"
+    },
+    {
+      "type": "edit-resource",
+      "field": "cpus"
+    },
+    {
+      "type": "set-resource-text",
+      "text": "99"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "cancel-resource"
+    },
+    {
+      "type": "edit-resource",
+      "field": "memory"
+    },
+    {
+      "type": "set-resource-text",
+      "text": "six"
+    },
+    {
+      "type": "set-resource-text",
+      "text": "6"
+    },
+    {
+      "type": "commit-resource"
     },
     {
       "type": "back"

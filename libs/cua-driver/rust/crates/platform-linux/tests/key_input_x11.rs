@@ -11,6 +11,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 /// Connects to the test display while one connection stays open for the
 /// whole test binary. An X server started without `-noreset` (plain
@@ -466,5 +467,444 @@ fn xtest_text_gives_each_missing_character_its_own_keycode() -> Result<()> {
     );
     assert_ne!(presses[0], presses[1], "{presses:?}");
     assert_eq!(presses[0], presses[2], "{presses:?}");
+    Ok(())
+}
+
+fn ping_window(conn: &RustConnection, screen: usize) -> Result<(Window, Atom, Atom)> {
+    let root = conn.setup().roots[screen].root;
+    let window = focused_input_window(conn, screen)?;
+    let atom = |name: &str| -> Result<Atom> {
+        Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
+    };
+    let (protocols, ping, active) = (
+        atom("WM_PROTOCOLS")?,
+        atom("_NET_WM_PING")?,
+        atom("_NET_ACTIVE_WINDOW")?,
+    );
+    conn.change_property32(
+        PropMode::REPLACE,
+        window,
+        protocols,
+        AtomEnum::ATOM,
+        &[ping],
+    )?;
+    conn.change_property32(PropMode::REPLACE, root, active, AtomEnum::WINDOW, &[window])?;
+    conn.get_input_focus()?.reply()?;
+    Ok((root, protocols, ping))
+}
+
+fn clear_active_window(conn: &RustConnection, root: Window) -> Result<()> {
+    let active = conn
+        .intern_atom(false, b"_NET_ACTIVE_WINDOW")?
+        .reply()?
+        .atom;
+    conn.delete_property(root, active)?;
+    conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+fn pong(conn: &RustConnection, root: Window, protocols: Atom, data: [u32; 5]) -> Result<()> {
+    let event = ClientMessageEvent::new(32, root, protocols, data);
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+        event,
+    )?;
+    conn.flush()?;
+    Ok(())
+}
+
+fn keysyms_of(conn: &RustConnection, keycode: u8) -> Result<Vec<u32>> {
+    Ok(conn.get_keyboard_mapping(keycode, 1)?.reply()?.keysyms)
+}
+
+struct Typed {
+    result: Result<()>,
+    pings: Vec<[u32; 5]>,
+    presses: Vec<u8>,
+    elapsed: Duration,
+}
+
+fn type_with_pings(
+    conn: &RustConnection,
+    text: &'static str,
+    protocols: Atom,
+    ping: Atom,
+    mut on_press: impl FnMut(u8) -> Result<()>,
+    mut on_ping: impl FnMut([u32; 5], &[u8]) -> Result<()>,
+) -> Result<Typed> {
+    let start = Instant::now();
+    let typing = std::thread::spawn(move || send_type_text_xtest(text));
+    let deadline = start + Duration::from_secs(5);
+    let (mut pings, mut presses) = (Vec::new(), Vec::new());
+    while !typing.is_finished() && Instant::now() < deadline {
+        match conn.poll_for_event()? {
+            Some(Event::KeyPress(event)) => {
+                presses.push(event.detail);
+                on_press(event.detail)?;
+            }
+            Some(Event::ClientMessage(event))
+                if event.type_ == protocols && event.data.as_data32()[0] == ping =>
+            {
+                let data = event.data.as_data32();
+                pings.push(data);
+                on_ping(data, &presses)?;
+            }
+            Some(Event::Error(error)) => bail!("X11 observer error: {error:?}"),
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    let result = typing.join().expect("typing thread panicked");
+    let elapsed = start.elapsed();
+    conn.get_input_focus()?.reply()?;
+    while let Some(event) = conn.poll_for_event()? {
+        if let Event::KeyPress(event) = event {
+            presses.push(event.detail);
+        }
+    }
+    Ok(Typed {
+        result,
+        pings,
+        presses,
+        elapsed,
+    })
+}
+
+const NI: u32 = 0x0100_4f60;
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_restores_a_borrowed_keycode_only_after_the_client_answers_a_ping() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, presses| {
+            std::thread::sleep(Duration::from_millis(200));
+            if let Some(&keycode) = presses.last() {
+                assert!(
+                    keysyms_of(&conn, keycode)?.contains(&NI),
+                    "keycode {keycode} restored before the pong"
+                );
+            }
+            pong(&conn, root, protocols, data)
+        },
+    )?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
+    assert_eq!(
+        typed.pings.len(),
+        2,
+        "a ping after the binding and one before the restore"
+    );
+    assert_ne!(typed.pings[0][1], 0);
+    assert_ne!(typed.pings[0][1], typed.pings[1][1], "pings share a serial");
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_ignores_a_late_reply_to_an_earlier_ping() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    let mut earlier: Option<[u32; 5]> = None;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, presses| {
+            let Some(stale) = earlier else {
+                earlier = Some(data);
+                return pong(&conn, root, protocols, data);
+            };
+            pong(&conn, root, protocols, stale)?;
+            std::thread::sleep(Duration::from_millis(200));
+            let keycode = *presses
+                .last()
+                .expect("the key arrives before the last ping");
+            assert!(
+                keysyms_of(&conn, keycode)?.contains(&NI),
+                "keycode {keycode} restored on the reply to an earlier ping"
+            );
+            pong(&conn, root, protocols, data)
+        },
+    )?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    assert_eq!(typed.pings.len(), 2);
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_restores_the_keycode_of_a_client_that_never_answers() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |_, _| Ok(()),
+    )?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
+    assert_eq!(spare_keycodes(&conn)?, before);
+    assert_eq!(
+        typed.pings.len(),
+        1,
+        "a client that missed a ping is pinged again"
+    );
+    assert!(
+        typed.elapsed < Duration::from_millis(2500),
+        "typing took {:?}",
+        typed.elapsed
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_rebinds_a_spare_keycode_only_after_the_client_confirms() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let spare = spare_keycodes(&conn)?;
+    let (&free, others) = spare
+        .split_last()
+        .expect("the test display has no spare keycode");
+    let per = conn
+        .get_keyboard_mapping(free, 1)?
+        .reply()?
+        .keysyms_per_keycode;
+    let bind = |keysym: u32| -> Result<()> {
+        for &keycode in others {
+            conn.change_keyboard_mapping(1, keycode, per, &vec![keysym; usize::from(per)])?;
+        }
+        conn.get_input_focus()?.reply()?;
+        Ok(())
+    };
+    bind(0x7e1)?;
+    let silent = type_with_pings(
+        &conn,
+        "\u{4f60}\u{597d}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |_, _| Ok(()),
+    )?;
+    let after_silent = spare_keycodes(&conn)?;
+    let answered = type_with_pings(
+        &conn,
+        "\u{4f60}\u{597d}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, _| pong(&conn, root, protocols, data),
+    )?;
+    bind(0)?;
+    clear_active_window(&conn, root)?;
+
+    let error = silent
+        .result
+        .expect_err("rebound a keycode the client had not confirmed");
+    assert!(
+        error.to_string().starts_with("typed 1 of 2 characters"),
+        "{error:#}"
+    );
+    assert_eq!(silent.presses, vec![free]);
+    assert_eq!(after_silent, vec![free]);
+    answered.result?;
+    assert_eq!(answered.presses, vec![free, free]);
+    assert_eq!(spare_keycodes(&conn)?, spare);
+    Ok(())
+}
+
+fn take_ping(conn: &RustConnection, window: Window, protocols: Atom, ping: Atom) -> Result<()> {
+    conn.change_property32(
+        PropMode::REPLACE,
+        window,
+        protocols,
+        AtomEnum::ATOM,
+        &[ping],
+    )?;
+    conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_syncs_with_the_window_that_got_the_keys_after_a_focus_change() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let first = conn.get_input_focus()?.reply()?.focus;
+    let second = input_window(&conn, root, 0, 120)?;
+    take_ping(&conn, second, protocols, ping)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}\u{597d}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, _| {
+            if data[2] == first {
+                conn.set_input_focus(InputFocus::PARENT, second, x11rb::CURRENT_TIME)?;
+                conn.get_input_focus()?.reply()?;
+            }
+            pong(&conn, root, protocols, data)
+        },
+    )?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    let pinged: Vec<Window> = typed.pings.iter().map(|data| data[2]).collect();
+    assert_eq!(
+        pinged,
+        [first, second, second],
+        "a ping per binding to the focused window, then the restore waits for the window that got the keys"
+    );
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_pings_the_ancestor_of_a_focused_child_window() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let parent = conn.get_input_focus()?.reply()?.focus;
+    let child = input_window(&conn, parent, 10, 10)?;
+    conn.set_input_focus(InputFocus::PARENT, child, x11rb::CURRENT_TIME)?;
+    assert_eq!(conn.get_input_focus()?.reply()?.focus, child);
+    clear_active_window(&conn, root)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, _| pong(&conn, root, protocols, data),
+    )?;
+    typed.result?;
+    assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
+    assert!(!typed.pings.is_empty());
+    assert!(
+        typed.pings.iter().all(|data| data[2] == parent),
+        "{:?}",
+        typed.pings
+    );
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_syncs_with_the_window_that_got_the_keys_when_focus_moves_after_them() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let first = conn.get_input_focus()?.reply()?.focus;
+    let second = input_window(&conn, root, 0, 120)?;
+    take_ping(&conn, second, protocols, ping)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}aaaaaaaaaa",
+        protocols,
+        ping,
+        |_| {
+            conn.set_input_focus(InputFocus::PARENT, second, x11rb::CURRENT_TIME)?;
+            conn.flush()?;
+            Ok(())
+        },
+        |data, _| pong(&conn, root, protocols, data),
+    )?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    let pinged: Vec<Window> = typed.pings.iter().map(|data| data[2]).collect();
+    assert_eq!(pinged, [first, first]);
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+struct DisplayWithoutXtest {
+    server: std::process::Child,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl DisplayWithoutXtest {
+    fn start() -> Result<(Self, RustConnection, usize)> {
+        let mut server = std::process::Command::new("Xvfb")
+            .args(["-displayfd", "1", "-extension", "XTEST", "-nolisten", "tcp"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()?;
+        let mut number = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(server.stdout.take().expect("piped stdout")),
+            &mut number,
+        )?;
+        let display = format!(":{}", number.trim());
+        let previous = std::env::var_os("DISPLAY");
+        std::env::set_var("DISPLAY", &display);
+        let (conn, screen) = x11rb::connect(Some(&display))?;
+        Ok((Self { server, previous }, conn, screen))
+    }
+}
+
+impl Drop for DisplayWithoutXtest {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(display) => std::env::set_var("DISPLAY", display),
+            None => std::env::remove_var("DISPLAY"),
+        }
+        let _ = self.server.kill();
+        let _ = self.server.wait();
+    }
+}
+
+#[test]
+#[ignore = "requires Xvfb"]
+fn xtest_text_syncs_before_restoring_when_sending_a_key_fails() -> Result<()> {
+    let (_display, conn, screen) = DisplayWithoutXtest::start()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, _| {
+            std::thread::sleep(Duration::from_millis(200));
+            assert_ne!(
+                spare_keycodes(&conn)?,
+                before,
+                "keycode restored before the pong"
+            );
+            pong(&conn, root, protocols, data)
+        },
+    )?;
+    assert!(typed.result.is_err(), "typing without XTEST succeeded");
+    assert!(typed.presses.is_empty(), "{:?}", typed.presses);
+    assert_eq!(
+        typed.pings.len(),
+        2,
+        "a ping after the binding and one before the restore"
+    );
+    assert_eq!(spare_keycodes(&conn)?, before);
     Ok(())
 }

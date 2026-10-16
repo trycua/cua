@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Machine } from "@/bridge";
-import { connectionLabel, machineOs, machinesSummary, machineSubtitle, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount } from "./machines";
+import { connectionLabel, machineOs, machinesSummary, machineSubtitle, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount, spacesLabel } from "./machines";
 
 const NOW = Date.parse("2026-10-03T12:00:00Z");
 
@@ -47,18 +47,27 @@ describe("machines", () => {
     expect(presenceLabel(machine({ online: false, lastSeen: (NOW - 2 * 86_400_000) / 1000 }), NOW)).toBe("Offline, last seen 2 days ago");
   });
 
-  it("says a machine its owner stopped sharing is not reachable", () => {
+  it("says a machine its owner stopped sharing is not sharing", () => {
     const stopped = machine({ notSharing: "Studio stopped sharing" });
-    // As the SwiftUI detail says it: the core's word, not "online".
-    expect(presenceLabel(stopped, NOW)).toBe("Not reachable");
-    expect(presenceWord(stopped)).toBe("Not reachable");
-    expect(presenceLabel(stopped, NOW, "Unreachable here")).toBe("Unreachable here");
+    // The core's word (`machines::NOT_SHARING`), as the SwiftUI list says it.
+    expect(presenceLabel(stopped, NOW)).toBe("Not sharing");
+    expect(presenceWord(stopped)).toBe("Not sharing");
     expect(reachable(stopped)).toBe(false);
     expect(reachable(machine({}))).toBe(true);
     expect(presenceWord(machine({}))).toBe("Online");
     // Offline wins: it says nothing about sharing then.
     expect(presenceWord(machine({ online: false, notSharing: "x" }))).toBe("Offline");
     expect(presenceLabel(machine({ online: false, notSharing: "x" }), NOW)).toBe("Offline");
+  });
+
+  it("shows the core's status word and Spaces count when the host has them", () => {
+    // CUA-1617: never a Space's "Suspended" or "Not reachable".
+    const row = machine({ notSharing: "x", status: "Not sharing", spacesLabel: "No Spaces" });
+    expect(presenceWord(row)).toBe("Not sharing");
+    expect(presenceLabel(row, NOW)).toBe("Not sharing");
+    expect(spacesLabel(row, 4)).toBe("No Spaces");
+    expect(spacesLabel(machine({ device: true, spacesLabel: "" }), 0)).toBe("");
+    expect(spacesLabel(machine({}), 1)).toBe("1 Space");
   });
 
   it("counts Spaces and keeps a valid selection", () => {

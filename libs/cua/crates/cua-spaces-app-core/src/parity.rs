@@ -207,6 +207,11 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/checklist.json"),
         include_str!("../parity/golden/checklist.json"),
     ),
+    (
+        "create-stages",
+        include_str!("../parity/create-stages.json"),
+        include_str!("../parity/golden/create-stages.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -329,7 +334,7 @@ pub mod frame {
                 },
             })
         };
-        json!({
+        let mut out = json!({
             "step": view["step"],
             "canContinue": view["canContinue"],
             "primaryLabel": view["primaryLabel"],
@@ -375,7 +380,21 @@ pub mod frame {
             "fields": view["fields"].as_array().map(|a| a.iter().map(field).collect::<Vec<_>>()).unwrap_or_default(),
             "imageField": image_field,
             "address": address,
-        })
+        });
+        // A slider's value being typed: `cpus: 9 !Choose 1 to 8 cores.`
+        // (only while one is).
+        if let Some(e) = view["resourceEdit"].as_object() {
+            out["resourceEdit"] = Value::String(format!(
+                "{}: {}{}",
+                e["field"].as_str().unwrap_or(""),
+                e["text"].as_str().unwrap_or(""),
+                e["error"]
+                    .as_str()
+                    .map(|m| format!(" !{m}"))
+                    .unwrap_or_default()
+            ));
+        }
+        out
     }
 
     fn str_of(v: &Value) -> &str {
@@ -1181,7 +1200,7 @@ pub mod frame {
         sensitive: &Value,
         plan_sensitive: &Value,
     ) -> Value {
-        json!({
+        let mut out = json!({
             "step": state["step"],
             "selectedId": state["selectedId"],
             "entry": state["entry"]["id"],
@@ -1208,7 +1227,20 @@ pub mod frame {
                 o["group"].as_str().unwrap_or(""), o["label"].as_str().unwrap_or(""),
                 o["detail"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "planSensitive": plan_sensitive,
-        })
+        });
+        // Saved passwords, while the review offers them: the box's label
+        // and, ticked, `site user (counts) [x]` per choice.
+        if review["offersPasswords"] == true {
+            out["passwords"] = json!({
+                "label": review["passwordsLabel"],
+                "on": review["includePasswords"],
+                "summary": review["passwordSummary"],
+                "rows": review["passwords"].as_array().map(|a| a.iter().map(|p| Value::String(format!("{} {} ({}) [{}]",
+                    p["site"].as_str().unwrap_or(""), p["username"].as_str().unwrap_or(""),
+                    p["counts"].as_str().unwrap_or(""), if p["selected"] == true { "x" } else { " " }))).collect::<Vec<_>>()).unwrap_or_default(),
+            });
+        }
+        out
     }
 
     /// After each notch event.
@@ -1884,7 +1916,9 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "main-window" => run_main_window(&flow, h),
         "notch" => run_notch(&flow, h),
         "notch-drag-trigger" => run_notch_drag_trigger(&flow, h),
-        "provisioning" | "create-progress" | "create-cancel" => run_provisioning(&flow, h),
+        "provisioning" | "create-progress" | "create-cancel" | "create-stages" => {
+            run_provisioning(&flow, h)
+        }
         "stream-section" => run_stream_section(&flow, h),
         "space-facts" => run_space_facts(&flow, h),
         "picker-grid" => run_picker_grid(&flow, h),
@@ -2965,7 +2999,8 @@ fn run_machines(f: &Value, h: &dyn Host) -> Result<Value, String> {
 
 /// The Machines page's rows (`machines.pageRows`), one line each: name,
 /// id, how it is reached, its system, online, the device in it or a
-/// device of its own, its desktop's Space, and whether it stopped sharing.
+/// device of its own, its desktop's Space, whether it stopped sharing, and
+/// the status word and Spaces count every UI shows.
 fn page_lines(rows: &Value) -> Vec<String> {
     rows.as_array()
         .into_iter()
@@ -3000,6 +3035,11 @@ fn page_lines(rows: &Value) -> Vec<String> {
             }
             if r["stoppedSharing"].as_bool() == Some(true) {
                 line.push_str(" (stopped sharing)");
+            }
+            // The words every UI shows: its status and its Spaces.
+            line.push_str(&format!(" \"{}\"", str_of(&r["status"])));
+            if !str_of(&r["spacesLabel"]).is_empty() {
+                line.push_str(&format!(" \"{}\"", str_of(&r["spacesLabel"])));
             }
             line
         })

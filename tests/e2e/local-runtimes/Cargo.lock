@@ -786,6 +786,7 @@ dependencies = [
  "http-body-util",
  "humantime",
  "hyper-util",
+ "libc",
  "pbjson-types",
  "prost",
  "prost-types",
@@ -887,6 +888,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

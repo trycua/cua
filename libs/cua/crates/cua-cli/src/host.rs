@@ -546,6 +546,7 @@ fn space_json(s: &cua_sdk::SpaceInfo) -> serde_json::Value {
         "host_name": s.host_name,
         "power": s.power,
         "power_state": s.power_state,
+        "stop_reason": s.stop_reason,
     })
 }
 
@@ -785,13 +786,21 @@ pub async fn run_spaces_sdk(
             // What each create is doing, on one updating line of the
             // terminal (never in --json output).
             let show = !json && std::io::stderr().is_terminal() && count == 1;
+            let steps = Arc::new(crate::util::StepLines::new(
+                crate::util::CreateWords::for_image(
+                    image.as_deref().unwrap_or_default(),
+                    kind.as_deref().unwrap_or_default(),
+                    true,
+                ),
+            ));
             let creates = names.into_iter().enumerate().map(|(i, n)| {
                 let options = one(i as u32 + 1, n);
                 let spaces = spaces.clone();
+                let steps = steps.clone();
                 async move {
                     if show {
                         Box::pin(
-                            spaces.create_with_progress(options, Arc::new(ProgressLine::default())),
+                            spaces.create_with_progress(options, Arc::new(StepListener(steps))),
                         )
                         .await
                     } else {
@@ -824,7 +833,7 @@ pub async fn run_spaces_sdk(
             };
             crate::util::exit_on_ctrl_c();
             if show {
-                eprint!("\r\x1b[2K");
+                steps.finish();
             }
             let mut failed = 0;
             let mut rows = Vec::new();
@@ -1931,6 +1940,10 @@ fn grouped_lines(list: &[cua_spaces::SpaceInfo]) -> Vec<String> {
         // A Space turned off says so (`cua spaces start` turns it on), as
         // does a machine the relay cannot reach now (offline, not sharing).
         match (s.power_state.as_str(), s.status.as_str()) {
+            // One that stopped on its own says why ("stopped: out of memory").
+            ("stopped", _) if !s.stop_reason.is_empty() => {
+                format!("{} (stopped: {})", line.trim_end(), s.stop_reason)
+            }
             ("suspended" | "stopped", _) => format!("{} ({})", line.trim_end(), s.power_state),
             (_, status) if !status.is_empty() => format!("{} ({status})", line.trim_end()),
             _ => line,
@@ -2120,46 +2133,27 @@ pub async fn run_spaces(
     Ok(0)
 }
 
-/// Prints a create's progress on one updating line of stderr:
-/// "Downloading image 4.2 of 22.1 GB · 85 MB/s · about 4 min".
-#[derive(Default)]
-struct ProgressLine {
-    last: std::sync::Mutex<String>,
-}
+/// Passes a Space create's progress to the terminal's step lines.
+struct StepListener(Arc<crate::util::StepLines>);
 
-impl cua_sdk::SpaceCreateListener for ProgressLine {
+impl cua_sdk::SpaceCreateListener for StepListener {
     fn on_progress(&self, p: cua_sdk::SpaceCreateProgress) {
-        let words = match p.phase.as_str() {
-            "preparing" => "Preparing",
-            "pulling" => "Downloading image",
-            "creating" => "Creating",
-            "booting" => "Booting",
-            "waiting_for_services" => "Starting services",
-            "connecting" => "Connecting",
-            _ => return,
+        use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+        let Some(phase) = Phase::parse(&p.phase) else {
+            return;
         };
-        let detail = match (p.bytes_done, p.bytes_total) {
-            (Some(done), total) => cua_sandbox_core::progress::Transfer {
-                done,
-                total: total.unwrap_or(0),
-                per_second: p.bytes_per_second,
-            }
-            .describe(),
-            _ => p
-                .fraction
-                .map(|f| format!("{:.0}%", f * 100.0))
-                .unwrap_or_default(),
-        };
-        let text = if p.space.is_empty() {
-            format!("{words} {detail}")
-        } else {
-            format!("{}: {words} {detail}", p.space)
-        };
-        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
-        if *last != text {
-            eprint!("\r\x1b[2K{}", text.trim_end());
-            *last = text;
+        let mut out = Progress::phase(phase).detail(p.detail);
+        if let Some(f) = p.fraction {
+            out = out.fraction(f);
         }
+        if let Some(done) = p.bytes_done {
+            out = out.bytes(Transfer {
+                done,
+                total: p.bytes_total.unwrap_or(0),
+                per_second: p.bytes_per_second,
+            });
+        }
+        self.0.show(&out);
     }
 }
 
@@ -2297,6 +2291,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            stop_reason: String::new(),
         };
         let mut list = vec![
             space("local:box", ""),
@@ -2354,6 +2349,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            stop_reason: String::new(),
         };
         let lines = grouped_lines(&[
             space("relay:space-1", "mini1234"),
@@ -2422,6 +2418,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            stop_reason: String::new(),
         };
         let lines = grouped_lines(std::slice::from_ref(&s));
         let cols: Vec<&str> = lines[0].split_whitespace().collect();
@@ -2429,6 +2426,23 @@ mod tests {
             cols,
             ["local:e2e-1005-cli", "e2e-1005-cli", "local", "0.5.3"]
         );
+        // Stopped on its own: the line says why, and so does --json.
+        s.power = "stop".into();
+        s.power_state = "stopped".into();
+        s.stop_reason = "out of memory".into();
+        let lines = grouped_lines(std::slice::from_ref(&s));
+        assert!(
+            lines[0].ends_with("(stopped: out of memory)"),
+            "{}",
+            lines[0]
+        );
+        assert_eq!(
+            ls_json(std::slice::from_ref(&s))[0]["stop_reason"],
+            "out of memory"
+        );
+        s.stop_reason = String::new();
+        let lines = grouped_lines(std::slice::from_ref(&s));
+        assert!(lines[0].ends_with("(stopped)"), "{}", lines[0]);
         let json = ls_json(std::slice::from_ref(&s));
         assert_eq!(json[0]["id"], "local:e2e-1005-cli");
         assert_eq!(json[0]["name"], "327b8dc70418");

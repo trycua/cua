@@ -276,7 +276,7 @@ jobs:
           set -euo pipefail
           TITLE="Cua Driver release gate failing on main (nightly)"
           mkdir -p lane-evidence
-          failed=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | "- `\(.key)`: \(.value.result)"' <<< "$LANES")
+          failed=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select(.key != "macos-pr" or .value.result != "skipped") | "- `\(.key)`: \(.value.result)"' <<< "$LANES")
           flaky=$(scripts/ci/summarize-flaky-cases.sh lane-evidence)
           existing=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:title" --json number,title \
             --jq "[.[]|select(.title==\"$TITLE\")][0].number // empty")

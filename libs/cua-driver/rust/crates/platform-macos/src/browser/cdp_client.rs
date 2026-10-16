@@ -150,6 +150,11 @@ impl CdpSessionCache {
         Ok(arc)
     }
 
+    /// Whether a connection for `port` is already open (and so approved).
+    pub async fn has_session(&self, port: u16) -> bool {
+        self.sessions.lock().await.contains_key(&port)
+    }
+
     async fn evict(&self, port: u16) {
         self.sessions.lock().await.remove(&port);
     }

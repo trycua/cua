@@ -24,6 +24,8 @@ pub mod browser;
 #[cfg(target_os = "macos")]
 pub mod capture;
 #[cfg(target_os = "macos")]
+pub mod capture_consent;
+#[cfg(target_os = "macos")]
 pub mod cursor;
 #[cfg(target_os = "macos")]
 pub mod document_edit;

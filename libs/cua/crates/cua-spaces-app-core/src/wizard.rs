@@ -834,14 +834,17 @@ fn local_engine_detail(image: &SandboxImage, env: &WizardEnv) -> Option<String> 
     })
 }
 
-/// This Mac can run `image` now: a local runtime answers, and (when the
-/// doctor's list is known) one of the image's engines is among them.
+/// This Mac can run `image` now: a local runtime answers, and one of the
+/// image's engines is among the doctor's ready ones. While that list is not
+/// known, every engine counts as ready except QEMU: the app never installs
+/// it (a Windows PC has no way to), and a Windows VM's image is gigabytes
+/// that would download only for the create to fail.
 fn local_ready(image: &SandboxImage, env: &WizardEnv) -> bool {
     env.local_available
-        && env
-            .local_backends
-            .as_ref()
-            .is_none_or(|b| local_runtime_ready(image, b))
+        && match env.local_backends.as_ref() {
+            Some(b) => local_runtime_ready(image, b),
+            None => image.local != Some(LocalEngine::Qemu),
+        }
 }
 
 /// The first machine of yours that can run `image` now (online, not at a
@@ -1145,6 +1148,11 @@ pub struct WizardEnv {
     /// Resources step shows no GPU row for it.
     #[serde(default)]
     pub gpus: Option<Vec<GpuChoice>>,
+    /// Picks the name an unnamed Space gets ([`generated_space_name`]);
+    /// `None`: this process's own randomness. A core without randomness
+    /// (the wasm build) is given one; tests give a fixed one.
+    #[serde(default)]
+    pub name_seed: Option<u64>,
 }
 
 /// A runtime's GPU option, as the wizard offers it.
@@ -1299,6 +1307,59 @@ pub struct WizardState {
     pub gpu: bool,
     /// The address form.
     pub address: AddressForm,
+    /// The name the Space gets when Name is left empty
+    /// ([`generated_space_name`], chosen when the wizard opens).
+    #[serde(default)]
+    pub generated_name: String,
+    /// A slider's value being typed (its number was clicked).
+    #[serde(default)]
+    pub resource_edit: Option<ResourceEdit>,
+}
+
+/// A Resources slider whose value can be typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResourceField {
+    /// CPU cores.
+    Cpus,
+    /// Memory, GB.
+    Memory,
+    /// Disk, GB.
+    Disk,
+}
+
+impl ResourceField {
+    /// The field id ([`WizardField::id`]).
+    pub fn id(self) -> &'static str {
+        match self {
+            ResourceField::Cpus => "cpus",
+            ResourceField::Memory => "memory",
+            ResourceField::Disk => "disk",
+        }
+    }
+}
+
+/// A slider's value as typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceEdit {
+    /// Which slider.
+    pub field: ResourceField,
+    /// The text as typed.
+    pub text: String,
+}
+
+/// The name an unnamed Space gets: `space-` and ten hex digits, the form
+/// the SDK gives one it names itself (`cua_spaces::Spaces::create`). The
+/// wizard picks it when it opens, shows it, and creates the Space with it.
+pub fn generated_space_name(seed: Option<u64>) -> String {
+    let n = seed.unwrap_or_else(|| {
+        use std::hash::{BuildHasher, Hasher};
+        std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+    });
+    format!("space-{:010x}", n & 0xff_ffff_ffff)
 }
 
 /// An input to the wizard.
@@ -1386,6 +1447,21 @@ pub enum WizardAction {
     },
     /// The disk slider's Reset: back to the image's own disk.
     ResetDisk,
+    /// A slider's number clicked: its value can be typed.
+    EditResource {
+        /// Which slider.
+        field: ResourceField,
+    },
+    /// The typed value's text.
+    SetResourceText {
+        /// Text.
+        text: String,
+    },
+    /// Return (or leaving the field): the typed value is used when it is
+    /// within the slider's limits; otherwise the field stays with why.
+    CommitResource,
+    /// Escape: the slider's value stays.
+    CancelResource,
     /// The GPU checkbox.
     SetGpu {
         /// Checked.
@@ -1475,6 +1551,8 @@ pub fn initial(env: &WizardEnv) -> WizardState {
         host: None,
         gpu: false,
         address: AddressForm::default(),
+        generated_name: generated_space_name(env.name_seed),
+        resource_edit: None,
     };
     follow_to_host(&mut state, env);
     state
@@ -1718,15 +1796,36 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
             }
         }
         WizardAction::ResetDisk => s.disk_gb = None,
+        WizardAction::EditResource { field } => {
+            if let Some((value, _, _)) = resource_now(&s, env, *field) {
+                s.resource_edit = Some(ResourceEdit {
+                    field: *field,
+                    text: value.to_string(),
+                });
+            }
+        }
+        WizardAction::SetResourceText { text } => {
+            if let Some(e) = s.resource_edit.as_mut() {
+                e.text = text.clone();
+            }
+        }
+        WizardAction::CommitResource => commit_resource(&mut s, env),
+        WizardAction::CancelResource => s.resource_edit = None,
         WizardAction::SetGpu { on } => s.gpu = *on,
         WizardAction::SetName { name } => s.name = name.clone(),
         WizardAction::SetOpenWhenReady { on } => s.open_when_ready = *on,
         WizardAction::Next => {
+            // A typed value is used first (one that breaks the limits
+            // keeps the step, with why).
+            commit_resource(&mut s, env);
             if s.step < 3 && view(&s, env).can_continue {
                 s.step += 1;
             }
         }
-        WizardAction::Back => s.step = s.step.saturating_sub(1),
+        WizardAction::Back => {
+            s.resource_edit = None;
+            s.step = s.step.saturating_sub(1);
+        }
         WizardAction::ShowAddress => s.mode = WizardMode::Address,
         WizardAction::HideAddress => s.mode = WizardMode::Create,
         WizardAction::SetAddress { url } => s.address.url = url.clone(),
@@ -1744,6 +1843,83 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
         }
     }
     s
+}
+
+/// A slider's value and limits now: `(value, min, max)`; `None` when it
+/// does not show.
+fn resource_now(s: &WizardState, env: &WizardEnv, field: ResourceField) -> Option<(u32, u32, u32)> {
+    let eff = effective(s, env);
+    let ((c0, c1), (m0, m1)) = size_ranges(eff.placement, env);
+    let (cpus, memory_gb) = effective_size(&eff, env);
+    match field {
+        ResourceField::Cpus => Some((cpus, c0, c1)),
+        ResourceField::Memory => Some((memory_gb, m0, m1)),
+        ResourceField::Disk => {
+            if eff.placement != Location::Local {
+                return None;
+            }
+            let (min, max) = disk_bounds(&image_of(&eff), env)?;
+            Some((eff.disk_gb.unwrap_or(min).clamp(min, max), min, max))
+        }
+    }
+}
+
+/// The typed text as a number: digits, with an optional unit
+/// (`8`, `8 GB`, `4 cores`).
+fn typed_number(text: &str) -> Option<u32> {
+    let t = text.trim().to_ascii_lowercase();
+    let digits = ["cores", "core", "gb", "g"]
+        .iter()
+        .find_map(|u| t.strip_suffix(u))
+        .unwrap_or(&t)
+        .trim();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// The typed value, or why it cannot be used: the slider's own limits
+/// (its min and max, the disk the image needs and the room on the volume).
+fn typed_value(s: &WizardState, env: &WizardEnv, edit: &ResourceEdit) -> Result<u32, String> {
+    let Some((_, min, max)) = resource_now(s, env, edit.field) else {
+        return Err(String::new());
+    };
+    let n = typed_number(&edit.text).ok_or_else(|| "Enter a whole number.".to_string())?;
+    if (min..=max).contains(&n) {
+        return Ok(n);
+    }
+    Err(match edit.field {
+        ResourceField::Cpus => format!("Choose {min} to {max} cores."),
+        ResourceField::Memory => format!("Choose {min} to {max} GB."),
+        ResourceField::Disk if n < min => {
+            format!("A VM disk cannot shrink below the image's {min} GB.")
+        }
+        ResourceField::Disk => match volume_of(&image_of(&effective(s, env)), env) {
+            Some(v) if max < MAX_DISK_GB => format!("{} has room for up to {max} GB.", v.name),
+            _ => format!("Choose {min} to {max} GB."),
+        },
+    })
+}
+
+/// Uses the typed value when it is within the limits (and closes the
+/// field); leaves the field open otherwise.
+fn commit_resource(s: &mut WizardState, env: &WizardEnv) {
+    let Some(edit) = s.resource_edit.clone() else {
+        return;
+    };
+    if resource_now(s, env, edit.field).is_none() {
+        s.resource_edit = None;
+        return;
+    }
+    if let Ok(n) = typed_value(s, env, &edit) {
+        match edit.field {
+            ResourceField::Cpus => s.cpus = n,
+            ResourceField::Memory => s.memory_gb = n,
+            ResourceField::Disk => s.disk_gb = Some(n),
+        }
+        s.resource_edit = None;
+    }
 }
 
 /// How far along a step is.
@@ -2065,6 +2241,19 @@ pub struct WizardLabels {
     pub advanced: String,
 }
 
+/// A slider's value being typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceEditView {
+    /// Which slider.
+    pub field: ResourceField,
+    /// The text as typed.
+    pub text: String,
+    /// Why it cannot be used, in one line (the slider's limits).
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 /// The wizard as drawn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2159,8 +2348,16 @@ pub struct WizardView {
     /// The GPU row (Resources), where the runtime offers a GPU.
     #[serde(default)]
     pub gpu: Option<GpuRow>,
+    /// A slider's value being typed: the field shows instead of its number
+    /// (its error is also the field's [`WizardField::error`]).
+    #[serde(default)]
+    pub resource_edit: Option<ResourceEditView>,
     /// Name as typed.
     pub name: String,
+    /// The name the Space gets: the one typed, else the generated one
+    /// (the Name field's placeholder).
+    #[serde(default)]
+    pub space_name: String,
     /// The name breaks the DNS-label rule.
     pub name_invalid: bool,
     /// Why, in one line.
@@ -2250,7 +2447,15 @@ fn fields(
     placement_error: Option<String>,
     name_error: Option<String>,
     disk_editable: bool,
+    resource_edit: Option<&ResourceEditView>,
 ) -> Vec<WizardField> {
+    // A typed value's error is its field's.
+    let typed = |id: &str| WizardField {
+        error: resource_edit
+            .filter(|e| e.field.id() == id)
+            .and_then(|e| e.error.clone()),
+        ..field(id, "")
+    };
     let yours = state.placement == Location::Yours;
     match (state.mode, state.step) {
         (WizardMode::Address, _) => vec![
@@ -2299,15 +2504,32 @@ fn fields(
         // The cloud picks the machine: no sliders, its facts only.
         (WizardMode::Create, 1) if yours => vec![],
         (WizardMode::Create, 1) => {
-            let mut f = vec![field("cpus", "CPU cores"), field("memory", "Memory")];
+            let mut f = vec![
+                WizardField {
+                    label: "CPU cores".into(),
+                    ..typed("cpus")
+                },
+                WizardField {
+                    label: "Memory".into(),
+                    ..typed("memory")
+                },
+            ];
             if disk_editable {
-                f.push(field("disk", "Disk"));
+                f.push(WizardField {
+                    label: "Disk".into(),
+                    ..typed("disk")
+                });
             }
             f
         }
         (WizardMode::Create, 2) => vec![
             WizardField {
-                placeholder: Some("Optional".into()),
+                // The name it gets when left empty.
+                placeholder: Some(if state.generated_name.is_empty() {
+                    "Optional".into()
+                } else {
+                    state.generated_name.clone()
+                }),
                 error: name_error,
                 ..field("name", "Name")
             },
@@ -2751,13 +2973,24 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     };
     let name = state.name.trim().to_string();
     let name_invalid = !name.is_empty() && !valid_space_name(&name);
+    // Left empty, the Space gets the name generated when the wizard opened.
+    let space_name = if name.is_empty() {
+        state.generated_name.clone()
+    } else {
+        name.clone()
+    };
+    let resource_edit = state.resource_edit.as_ref().map(|e| ResourceEditView {
+        field: e.field,
+        text: e.text.clone(),
+        error: typed_value(state, env, e).err().filter(|m| !m.is_empty()),
+    });
     let custom = custom_ref(state).is_some();
     let image_error = validate_image_ref(&state.image_text);
     let disk = disk_view(state, &image, env, os);
     let can_continue = image.os != SpaceOs::Unknown
         && match state.step {
             0 => placeable && placement_ready && image_error.is_none(),
-            1 => disk.error.is_none(),
+            1 => disk.error.is_none() && resource_edit.as_ref().is_none_or(|e| e.error.is_none()),
             2 => !name_invalid,
             _ => true,
         };
@@ -3004,10 +3237,10 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     }
     summary.push(Fact {
         label: "Name".into(),
-        value: if name.is_empty() {
+        value: if space_name.is_empty() {
             "Chosen automatically".into()
         } else {
-            name.clone()
+            space_name.clone()
         },
         copy: None,
         help: None,
@@ -3031,7 +3264,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         host: host.map(|h| h.id.clone()),
         image: image.clone(),
         runtime,
-        name: (!name.is_empty()).then(|| name.clone()),
+        name: (!space_name.is_empty()).then(|| space_name.clone()),
         // In your cloud the machine type sets the size.
         cpus: (!yours).then_some(cpus),
         memory_mb: (!yours).then_some(memory_gb * 1024),
@@ -3128,7 +3361,9 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         resources_error: disk.error.clone(),
         gpu,
+        resource_edit: resource_edit.clone(),
         name: state.name.clone(),
+        space_name: space_name.clone(),
         name_invalid,
         name_error: name_error.clone(),
         open_when_ready: state.open_when_ready,
@@ -3170,6 +3405,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             placement_error_for_fields,
             name_error,
             disk.bounds.is_some(),
+            resource_edit.as_ref(),
         ),
         labels: WizardLabels {
             cancel: "Cancel".into(),
@@ -3212,6 +3448,7 @@ mod tests {
             hosts: vec![],
             experiments: crate::experiments::Experiments::default(),
             gpus: None,
+            name_seed: Some(0x2a),
         }
     }
 
@@ -3376,6 +3613,69 @@ mod tests {
             }),
             ..env()
         }
+    }
+
+    /// A Windows VM runs on QEMU, which the app never installs: on a PC
+    /// without it (or before the doctor answered) the Windows image is not
+    /// offered here, so nothing downloads gigabytes only to fail.
+    #[test]
+    fn a_windows_vm_needs_qemu_ready_here() {
+        let image = "ghcr.io/trycua/windows:2022";
+        let blocked = |e: &WizardEnv| {
+            let s = reduce(
+                &initial(e),
+                &WizardAction::ChooseImage {
+                    image_ref: image.into(),
+                },
+                e,
+            );
+            let s = reduce(&s, &WizardAction::ChoosePlacement { on: "local".into() }, e);
+            let v = view_on(&s, e, SpaceOs::Windows);
+            assert_eq!(v.image.image_ref, image);
+            (!v.can_continue).then(|| v.placement_error.unwrap_or_default())
+        };
+        let unknown = WizardEnv {
+            local_backends: None,
+            ..env()
+        };
+        assert_eq!(
+            blocked(&unknown).as_deref(),
+            Some("This PC cannot run QEMU Spaces.")
+        );
+        // Docker Desktop is up, QEMU is not: the doctor's reason.
+        let docker_only = WizardEnv {
+            local_backends: Some(vec!["container".into()]),
+            local_details: Some(
+                [(
+                    "qemu".to_string(),
+                    "QEMU not found; missing: qemu-system-x86_64 / qemu-img".to_string(),
+                )]
+                .into(),
+            ),
+            ..env()
+        };
+        assert_eq!(
+            blocked(&docker_only).as_deref(),
+            Some(
+                "This PC cannot run QEMU Spaces: QEMU not found; missing: qemu-system-x86_64 \
+                 / qemu-img."
+            )
+        );
+        // A Linux container is still offered with the same env.
+        let linux = reduce(
+            &initial(&unknown),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/linux:24.04".into(),
+            },
+            &unknown,
+        );
+        assert!(view_on(&linux, &unknown, SpaceOs::Windows).can_continue);
+        // QEMU ready: Windows is offered.
+        let qemu = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..env()
+        };
+        assert_eq!(blocked(&qemu), None);
     }
 
     /// A container image on a Mac whose container engine is not ready says
@@ -3636,7 +3936,10 @@ mod tests {
 
     #[test]
     fn a_linux_vm_disk_grows_with_the_slider() {
-        let e = storage_env();
+        let e = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..storage_env()
+        };
         let mut s = on("ghcr.io/trycua/linux:24.04-disk", &e);
         let v = view(&s, &e);
         let p = sizes("ghcr.io/trycua/linux:24.04-disk", "arm64");
@@ -5038,5 +5341,221 @@ mod tests {
                 name: Some("lab".into())
             })
         );
+    }
+
+    /// Clicking a slider's number lets its value be typed: a value within
+    /// the slider's limits is used; one outside keeps the field open with
+    /// why, and Continue waits for it.
+    #[test]
+    fn a_resource_value_can_be_typed_within_the_sliders_limits() {
+        let e = env();
+        let s = reduce(&initial(&e), &WizardAction::Next, &e);
+        assert_eq!(s.step, 1);
+        let edit = |s: &WizardState, field, text: &str| {
+            let s = reduce(s, &WizardAction::EditResource { field }, &e);
+            reduce(&s, &WizardAction::SetResourceText { text: text.into() }, &e)
+        };
+        let field_error = |v: &WizardView, id: &str| {
+            v.fields
+                .iter()
+                .find(|f| f.id == id)
+                .and_then(|f| f.error.clone())
+        };
+        // Clicking shows the value as it is.
+        let open = reduce(
+            &s,
+            &WizardAction::EditResource {
+                field: ResourceField::Cpus,
+            },
+            &e,
+        );
+        assert_eq!(
+            view(&open, &e).resource_edit.map(|r| r.text),
+            Some(view(&s, &e).cpus.to_string())
+        );
+        // Within the limits (a unit is fine): used, and the field closes.
+        let typed = reduce(
+            &edit(&s, ResourceField::Cpus, " 6 cores"),
+            &WizardAction::CommitResource,
+            &e,
+        );
+        let v = view(&typed, &e);
+        assert_eq!((v.cpus, v.cpus_text.as_str()), (6, "6 cores"));
+        assert!(v.resource_edit.is_none());
+        let typed = reduce(
+            &edit(&s, ResourceField::Memory, "12 GB"),
+            &WizardAction::CommitResource,
+            &e,
+        );
+        assert_eq!(view(&typed, &e).memory_text, "12 GB");
+        // Outside: the slider's limits, said on the field; nothing changes
+        // and Continue waits.
+        let (lo, hi) = MEMORY_GB_RANGE;
+        for (field, text, why) in [
+            (ResourceField::Cpus, "9", "Choose 1 to 8 cores.".to_string()),
+            (ResourceField::Cpus, "0", "Choose 1 to 8 cores.".to_string()),
+            (
+                ResourceField::Memory,
+                "64",
+                format!("Choose {lo} to {hi} GB."),
+            ),
+            (
+                ResourceField::Memory,
+                "lots",
+                "Enter a whole number.".to_string(),
+            ),
+            (
+                ResourceField::Memory,
+                "",
+                "Enter a whole number.".to_string(),
+            ),
+        ] {
+            let bad = reduce(&edit(&s, field, text), &WizardAction::CommitResource, &e);
+            let v = view(&bad, &e);
+            assert_eq!(
+                v.resource_edit.as_ref().and_then(|r| r.error.as_deref()),
+                Some(why.as_str()),
+                "{text}"
+            );
+            assert_eq!(field_error(&v, field.id()), Some(why.clone()));
+            assert!(!v.can_continue, "{text}");
+            assert_eq!(
+                (v.cpus, v.memory_gb),
+                (view(&s, &e).cpus, view(&s, &e).memory_gb)
+            );
+            assert_eq!(reduce(&bad, &WizardAction::Next, &e).step, 1, "{text}");
+            // Escape keeps the slider's value and clears the error.
+            let v = view(&reduce(&bad, &WizardAction::CancelResource, &e), &e);
+            assert!(
+                v.resource_edit.is_none()
+                    && v.can_continue
+                    && field_error(&v, field.id()).is_none()
+            );
+        }
+        // Continue uses a valid typed value.
+        let next = reduce(&edit(&s, ResourceField::Cpus, "3"), &WizardAction::Next, &e);
+        assert_eq!(
+            (next.step, next.cpus, next.resource_edit.clone()),
+            (2, 3, None)
+        );
+    }
+
+    /// The disk takes a typed size between the image's and the room on its
+    /// volume, with the slider's words when it is outside.
+    #[test]
+    fn a_typed_disk_size_keeps_the_images_disk_and_the_volumes_room() {
+        let e = WizardEnv {
+            storage: Some(LocalStorage {
+                reserve_bytes: 5 * GIB,
+                lume: Some(vol(212, "Macintosh HD")),
+                qemu: Some(StorageVolume {
+                    total_bytes: 300 * GIB,
+                    ..vol(212, "Macintosh HD")
+                }),
+                container: Some(vol(40, "Colima")),
+                pulled: vec![],
+                linux_runtime_download_bytes: 0,
+            }),
+            ..storage_env()
+        };
+        let s = on("ghcr.io/trycua/linux:24.04-disk", &e);
+        let min = view(&s, &e).min_disk_gb;
+        assert_eq!(view(&s, &e).max_disk_gb, 300);
+        let typed = |text: &str| {
+            let t = reduce(
+                &s,
+                &WizardAction::EditResource {
+                    field: ResourceField::Disk,
+                },
+                &e,
+            );
+            let t = reduce(&t, &WizardAction::SetResourceText { text: text.into() }, &e);
+            reduce(&t, &WizardAction::CommitResource, &e)
+        };
+        let v = view(&typed("120"), &e);
+        assert_eq!((v.disk_gb, v.plan.disk_gb), (120, Some(120)));
+        let small = view(&typed(&(min - 1).to_string()), &e);
+        assert_eq!(
+            small.resource_edit.and_then(|r| r.error),
+            Some(format!(
+                "A VM disk cannot shrink below the image's {min} GB."
+            ))
+        );
+        let big = view(&typed("301"), &e);
+        assert_eq!(
+            big.resource_edit.and_then(|r| r.error).as_deref(),
+            Some("Macintosh HD has room for up to 300 GB.")
+        );
+        // A container has no disk slider: nothing to type.
+        let c = on("ghcr.io/trycua/linux:24.04", &e);
+        let c = reduce(
+            &c,
+            &WizardAction::EditResource {
+                field: ResourceField::Disk,
+            },
+            &e,
+        );
+        assert!(c.resource_edit.is_none());
+    }
+
+    /// Left empty, the Space gets the name generated when the wizard
+    /// opened: the Name field's placeholder, the Summary and the create all
+    /// say it. A typed name wins.
+    #[test]
+    fn an_unnamed_space_shows_and_gets_its_generated_name() {
+        let e = env();
+        let s = initial(&e);
+        assert_eq!(s.generated_name, "space-000000002a");
+        assert_eq!(generated_space_name(Some(u64::MAX)), "space-ffffffffff");
+        let other = generated_space_name(None);
+        assert!(other.starts_with("space-") && other.len() == 16 && valid_space_name(&other));
+        let mut s = s;
+        for _ in 0..2 {
+            s = reduce(&s, &WizardAction::Next, &e);
+        }
+        let v = view(&s, &e);
+        let placeholder = v
+            .fields
+            .iter()
+            .find(|f| f.id == "name")
+            .and_then(|f| f.placeholder.clone());
+        assert_eq!(placeholder.as_deref(), Some("space-000000002a"));
+        assert_eq!(v.space_name, "space-000000002a");
+        let name_row = |v: &WizardView| {
+            v.summary
+                .iter()
+                .find(|f| f.label == "Name")
+                .map(|f| f.value.clone())
+        };
+        assert_eq!(name_row(&v).as_deref(), Some("space-000000002a"));
+        assert_eq!(
+            create_args(&v.plan).name.as_deref(),
+            Some("space-000000002a")
+        );
+        assert_eq!(
+            creating_text(&v.plan),
+            "Creating space-000000002a. It appears in the list when it is ready."
+        );
+        let named = view(
+            &reduce(
+                &s,
+                &WizardAction::SetName {
+                    name: " dev ".into(),
+                },
+                &e,
+            ),
+            &e,
+        );
+        assert_eq!(name_row(&named).as_deref(), Some("dev"));
+        assert_eq!(named.plan.name.as_deref(), Some("dev"));
+        // An older state without one keeps the old words and lets the SDK
+        // name it.
+        let old = WizardState {
+            generated_name: String::new(),
+            ..s
+        };
+        let v = view(&old, &e);
+        assert_eq!(name_row(&v).as_deref(), Some("Chosen automatically"));
+        assert_eq!(v.plan.name, None);
     }
 }

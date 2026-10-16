@@ -109,6 +109,7 @@ describe("tauri adapter", () => {
         spaceId: "s",
         agents: null,
         signals: [],
+        ids: ["n1"],
         // storage.run takes a StorageRequest; host.setUp the host form's request.
         request: op === "host.setUp" ? { mode: "relay" } : { kind: "clear-cache" },
         action: "stop-sharing",
@@ -313,6 +314,20 @@ describe("electron adapter", () => {
   it("rejects a reply without an envelope", async () => {
     const { win } = electronHost(() => [1, 2]);
     await expect(createElectronAdapter(win).call("spaces.list", {})).rejects.toMatchObject({ code: "protocol" });
+  });
+
+  it("reads update.get and update.install from the host, and turns update.changed into the page's event", async () => {
+    const state = { status: "downloaded", currentVersion: "0.9.2", version: "0.9.3", percent: 100, notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3", message: null };
+    const asked: string[] = [];
+    const { win, subs } = electronHost(bridged((method) => (asked.push(method), { ok: true, result: state })));
+    const a = createElectronAdapter(win);
+    expect(await a.call("update.get", {})).toEqual(state);
+    expect(await a.call("update.install", {})).toEqual(state);
+    expect(asked).toEqual(["update.get", "update.install"]);
+    const got: HostEvent[] = [];
+    a.subscribe((e) => got.push(e));
+    subs.get(ELECTRON_EVENT_CHANNEL)?.({ event: "update.changed" });
+    expect(got).toEqual([{ type: "update.changed" }]);
   });
 
   it("delivers the host's cua:event pushes", () => {
@@ -789,6 +804,27 @@ describe("webkit adapter", () => {
       await vi.advanceTimersByTimeAsync(120_000);
       answer(ok(report));
       expect(await settled).toEqual({ ok: true, r: report });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits for a device approval while the host asks for Touch ID or the password", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer!: (a: Answer) => void;
+      const { win } = webkitHost((req) => (req.method === "devices.approve" ? new Promise<Answer>((r) => (answer = r)) : ok(null)));
+      const call = createWebkitAdapter(win, { timeoutMs: 1_000 }).call("devices.approve", { code: "K7QX-M2RP", deviceId: null });
+      const settled = call.then(
+        (r) => ({ ok: true as const, r }),
+        (e: unknown) => ({ ok: false as const, e }),
+      );
+      // A person typing the login password: longer than the call timeout.
+      await vi.advanceTimersByTimeAsync(60_000);
+      answer({ ok: false, error: { code: "not_found", message: "no device is waiting with the code K7QX-M2RP" } });
+      const r = await settled;
+      expect(r.ok).toBe(false);
+      expect((r as { e: HostError }).e.message).toBe("no device is waiting with the code K7QX-M2RP");
     } finally {
       vi.useRealTimers();
     }

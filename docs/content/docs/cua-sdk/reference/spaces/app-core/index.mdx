@@ -43,6 +43,75 @@ pub fn cua_spaces_register()
 </Tab>
 </Tabs>
 
+## `AppPlanCard` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `plan` | `String` |  | `free`, `pro` or `teams`. |
+| `label` | `String` |  | "Free plan". |
+| `detail` | `String` |  | What the plan includes, in one sentence. |
+| `primary` | [`Option<AppPlanLink>`](#appplanlink-record) |  | The main button ("Get Pro"); none when there is nothing to buy. |
+| `secondary` | [`Option<AppPlanLink>`](#appplanlink-record) |  | The other one ("Start a team"). |
+
+## `AppPlanLink` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `String` |  | "Get Pro". |
+| `url` | `String` |  | https, on the account app. |
+
+## `AppResourceEdit` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `field` | [`AppResourceField`](#appresourcefield-enum) |  | Which slider. |
+| `text` | `String` |  | The text as typed. |
+
+## `AppResourceEditView` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `field` | [`AppResourceField`](#appresourcefield-enum) |  | Which slider. |
+| `text` | `String` |  | The text as typed. |
+| `error` | `Option<String>` |  | Why it cannot be used, in one line (the slider's limits). |
+
+## `AppVaultPassword` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | The item's id. |
+| `site` | `String` |  | Its site (`github.com`); empty when not known. |
+| `username` | `String` |  | Its username; empty when not known or hidden. |
+
+## `AppResourceField` enum
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+.cpus
+.memory
+.disk
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+AppResourceField::Cpus
+AppResourceField::Memory
+AppResourceField::Disk
+```
+
+</Tab>
+</Tabs>
+
+| Variant | Description |
+| --- | --- |
+| `Cpus` | CPU cores. |
+| `Memory` | Memory, GB. |
+| `Disk` | Disk, GB. |
+
 ## `app_account_app_url`
 
 The account app for this environment (`CUA_ACCOUNT_APP_URL`, else
@@ -71,11 +140,11 @@ pub fn app_account_app_url() -> String
 
 ## All items
 
-620 items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.
+628 items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.
 
 **[About, updates and launch](/cua-sdk/reference/spaces/app-core/about)**: `app_about_after_launch`, `app_about_allowed_channels`, `app_about_input_from_json`, `app_about_refresh_notice`, `app_about_restart_daemon`, `app_about_view`, `app_daemon_check_from_json`, `app_launch_input_from_json`, `app_refresh_report_from_json`, `AppAboutInput`, `AppAboutLink`, `AppAboutLinkId`, `AppAboutUpdates`, `AppAboutView`, `AppCliInstaller`, `AppCliInstallPlan`, `AppCliInstallRequest`, `AppDaemonCheck`, `AppInstallMethod`, `AppLaunchInput`, `AppLaunchPlan`, `AppRefreshReport`, `AppUpdateChannel`
 
-**Spaces app core**: [`app_account_app_url`](#app_account_app_url), [`cua_spaces_register`](#cua_spaces_register)
+**Spaces app core**: [`app_account_app_url`](#app_account_app_url), [`AppPlanCard`](#appplancard-record), [`AppPlanLink`](#appplanlink-record), [`AppResourceEdit`](#appresourceedit-record), [`AppResourceEditView`](#appresourceeditview-record), [`AppResourceField`](#appresourcefield-enum), [`AppVaultPassword`](#appvaultpassword-record), [`cua_spaces_register`](#cua_spaces_register)
 
 **[Settings, Agents](/cua-sdk/reference/spaces/app-core/agent-keys)**: `app_agent_key_form`, `app_agent_key_form_input_from_json`, `app_agent_key_name_problem`, `app_agent_key_remove_confirm`, `app_agent_keys_input_from_json`, `app_agent_keys_view`, `app_agent_settings_rows`, `app_agent_setup_outcome`, `app_agent_setup_outcomes_from_json`, `app_agent_setup_status`, `app_agent_setup_statuses_from_json`, `app_agent_setup_summary`, `AppAgentKeyConfirm`, `AppAgentKeyFormInput`, `AppAgentKeyFormView`, `AppAgentKeyInput`, `AppAgentKeyRow`, `AppAgentKeysInput`, `AppAgentKeysView`, `AppAgentSettingsRow`, `AppAgentSetupOutcomeInput`, `AppAgentSetupStatus`, `AppAgentSetupSummary`
 
@@ -83,7 +152,7 @@ pub fn app_account_app_url() -> String
 
 **[Devices](/cua-sdk/reference/spaces/app-core/devices)**: `app_approve_open`, `app_approve_reduce`, `app_approve_sheet_action_from_json`, `app_approve_view`, `app_confirm_presence`, `app_devices_clean_name`, `app_devices_input`, `app_devices_input_from_json`, `app_devices_view`, `app_enroll_action_from_json`, `app_enroll_initial`, `app_enroll_reduce`, `app_enroll_state_from_json`, `app_enroll_view`, `app_machine_access_notice`, `AppActivityRow`, `AppApprovalPrompt`, `AppApproveRequest`, `AppApproveSheetAction`, `AppApproveSheetState`, `AppApproveSheetView`, `AppAuditInput`, `AppBannerTone`, `AppDeviceAction`, `AppDeviceBanner`, `AppDeviceConfirm`, `AppDeviceInput`, `AppDeviceRow`, `AppDevicesInput`, `AppDevicesLabels`, `AppDevicesView`, `AppEnrollAction`, `AppEnrollmentKind`, `AppEnrollMethod`, `AppEnrollOption`, `AppEnrollPhase`, `AppEnrollState`, `AppEnrollView`, `AppMachineAccessNotice`, `AppMachineInput`, `AppThisDevice`, `AppUnconfirmedMachine`
 
-**[Teleport picker](/cua-sdk/reference/spaces/app-core/teleport)**: `app_catalog_entries_from_json`, `app_catalog_entry`, `app_picker_can_plan`, `app_picker_consent`, `app_picker_initial`, `app_picker_plan_sensitive`, `app_picker_primary`, `app_picker_progress`, `app_picker_reduce`, `app_picker_review`, `app_picker_sections`, `app_picker_sensitive_options`, `app_picker_status`, `AppCatalogEntry`, `AppEntrySection`, `AppPickerAction`, `AppPickerEvent`, `AppPickerPrimary`, `AppPickerState`, `AppPickerStep`, `AppPickerTab`
+**[Teleport picker](/cua-sdk/reference/spaces/app-core/teleport)**: `app_catalog_entries_from_json`, `app_catalog_entry`, `app_picker_can_plan`, `app_picker_consent`, `app_picker_event_from_json`, `app_picker_initial`, `app_picker_plan_sensitive`, `app_picker_primary`, `app_picker_progress`, `app_picker_reduce`, `app_picker_review`, `app_picker_sections`, `app_picker_sensitive_options`, `app_picker_status`, `AppCatalogEntry`, `AppEntrySection`, `AppPickerAction`, `AppPickerEvent`, `AppPickerPrimary`, `AppPickerState`, `AppPickerStep`, `AppPickerTab`
 
 **[Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window)**: `app_chrome_input_from_json`, `app_delete_failed_text`, `app_display_name`, `app_display_path`, `app_drop_sending_text`, `app_drop_sent_text`, `app_format_bytes`, `app_login_item_launch_plan`, `app_main_chrome`, `app_menu`, `app_menu_bar`, `app_menu_bar_with_keyvault`, `app_menu_input_from_json`, `app_openable_count`, `app_sent_file`, `app_sent_files_from_json`, `app_settings_input_from_json`, `app_settings_page`, `app_space_detail_copy`, `AppChromeInput`, `AppDeleteConfirm`, `AppDetailAction`, `AppDetailActionId`, `AppDetailCopy`, `AppFact`, `AppFactCopy`, `AppLoginItemInput`, `AppLoginItemPlan`, `AppLoginItemStatus`, `AppMainChrome`, `AppMenuInput`, `AppMenuItem`, `AppMenuItemId`, `AppSentFileInfo`, `AppSettingsInput`, `AppSettingsOption`, `AppSettingsPage`, `AppSettingsRow`, `AppSettingsRowKind`, `AppSettingsSection`, `AppSignInPhase`, `AppTelemetryInput`
 
@@ -107,7 +176,7 @@ pub fn app_account_app_url() -> String
 
 **[Teleport picker grid](/cua-sdk/reference/spaces/app-core/teleport-grid)**: `app_picker_app_grid`, `app_picker_grid_primary`, `app_picker_grid_step`, `app_picker_grid_tabs`, `app_picker_remote_grid`, `app_picker_window_grid`, `AppPickerGrid`, `AppPickerGridPrimary`, `AppPickerGridTab`, `AppPickerGridTabItem`, `AppPickerTile`, `AppPickerTileIcon`, `AppPickerTileSection`, `AppPickerTileThumbnail`
 
-**[Teleport review](/cua-sdk/reference/spaces/app-core/teleport-review)**: `app_review_remember`, `app_review_remember_key`, `app_review_remembered`, `AppConsentItem`, `AppConsentKind`, `AppInstallCuaPrompt`, `AppPlanStepView`, `AppRememberedChoice`, `AppReviewChoice`, `AppReviewDomain`, `AppReviewToggle`, `AppReviewView`, `AppSendSource`, `AppVaultSource`
+**[Teleport review](/cua-sdk/reference/spaces/app-core/teleport-review)**: `app_review_remember`, `app_review_remember_key`, `app_review_remembered`, `AppConsentItem`, `AppConsentKind`, `AppInstallCuaPrompt`, `AppPlanStepView`, `AppRememberedChoice`, `AppReviewChoice`, `AppReviewDomain`, `AppReviewPassword`, `AppReviewToggle`, `AppReviewView`, `AppSendSource`, `AppVaultSource`
 
 **[Keyvault](/cua-sdk/reference/spaces/app-core/keyvault)**: `app_sensitive_group_sdk`, `AppSensitiveGroup`, `AppSensitiveOption`, `KeyvaultClient`, `KeyvaultOverview`, `kv_credential_form`, `kv_duration`, `kv_labels`, `kv_overview_from_json`, `kv_passphrase_check`, `kv_prune_dismissed`, `kv_recovery_key_text`, `kv_sharing_label`, `kv_signed_in_spaces`, `kv_space_access_key`, `kv_visible_sharing_label`, `KvAccessRequest`, `KvAuditEntry`, `KvCaller`, `KvCommand`, `KvCredentialForm`, `KvDelivery`, `KvDomainCount`, `KvFavicon`, `KvFormMode`, `KvGrant`, `KvInventory`, `KvItem`, `KvItemPolicy`, `KvLabels`, `KvMethod`, `KvOutcome`, `KvPassphraseCheck`, `KvPending`, `KvRule`, `KvRuleCaller`, `KvSelector`, `KvSigning`, `KvStatus`, `KvStrength`, `KvVerification`
 

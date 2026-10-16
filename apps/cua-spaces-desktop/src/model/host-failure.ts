@@ -90,7 +90,10 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
     case "service":
       return [
         "Couldn’t start the Cua host service",
-        `${system} didn’t start the service your other devices connect to. Try again; ` + `if it keeps failing, restart ${here}.`,
+        `${system} didn’t start the service your other devices connect to. Try again; ` +
+          (platform === "win32"
+            ? "if it keeps failing, open Cua Spaces as administrator (right-click it, Run as administrator) and set up access once more."
+            : `if it keeps failing, restart ${here}.`),
       ];
     case "other":
       return [`Couldn’t set up ${here} for access`, "Something went wrong. Try again, or open Details to see what happened."];

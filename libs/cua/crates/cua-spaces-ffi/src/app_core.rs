@@ -1069,6 +1069,12 @@ pub fn app_wizard_action_from_json(json: String) -> Result<AppWizardAction> {
     from_json("wizard action", &json)
 }
 
+/// A teleport picker event from JSON (fixtures, parity).
+#[uniffi::export]
+pub fn app_picker_event_from_json(json: String) -> Result<AppPickerEvent> {
+    from_json("picker event", &json)
+}
+
 /// One of your machines that provides Spaces (the SDK's `Spaces.hosts()`)
 /// as the wizard reads it.
 #[uniffi::export]
@@ -2252,10 +2258,11 @@ pub fn app_agent_setup_summary(
 /// The SDK's agent detection as the app core reads it.
 #[uniffi::export]
 pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
+    let installed = agent_really_installed(&info);
     AppAgentSetupStatus {
         id: info.id,
         name: info.name,
-        installed: info.installed,
+        installed,
         skills_dir: info.skills_dir,
         mcp_config: info.mcp_config,
         cua_configured: info.cua_configured,
@@ -2263,6 +2270,18 @@ pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
         skills_outdated: info.skills_outdated,
         error: info.error,
     }
+}
+
+/// Whether first-run onboarding should treat the agent as installed: its
+/// program (`bin:`) or app bundle (`app:`) was found. A leftover or
+/// cua-created config folder alone (`path:`) is not enough: the AI agents
+/// step ticks and sets up only agents the user actually has (CUA-1771).
+fn agent_really_installed(info: &cua_sdk::AgentInfo) -> bool {
+    info.installed
+        && info
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("bin:") || e.starts_with("app:"))
 }
 
 /// The SDK's setup outcome as the app core reads it.
@@ -2919,7 +2938,7 @@ mod relay_usage_tests {
         let notice = app_relay_usage_view(u).unwrap().notice.unwrap();
         assert_eq!(
             notice.upgrade_url.as_deref(),
-            Some("https://cua.ai/pricing")
+            Some("https://app.cua.ai/buy/pro?from=app_meter")
         );
         assert_eq!(notice.dismiss_key, "2026-10:hours");
 
@@ -2928,5 +2947,48 @@ mod relay_usage_tests {
             ..raw
         });
         assert_eq!(plain.upgrade_url, None);
+    }
+}
+
+#[cfg(test)]
+mod agent_detection_tests {
+    use super::*;
+
+    fn info(id: &str, installed: bool, evidence: &[&str]) -> cua_sdk::AgentInfo {
+        cua_sdk::AgentInfo {
+            id: id.into(),
+            name: id.into(),
+            installed,
+            evidence: evidence.iter().map(|e| e.to_string()).collect(),
+            skills_dir: None,
+            mcp_config: None,
+            mcp_format: None,
+            cua_configured: false,
+            cua_managed: false,
+            cua_driver_configured: false,
+            skills_installed: vec![],
+            skills_outdated: vec![],
+            error: None,
+            unverified: None,
+        }
+    }
+
+    /// Onboarding only ticks agents whose program or app is on the machine;
+    /// a leftover config folder is not an install (CUA-1771).
+    #[test]
+    fn onboarding_counts_a_program_or_an_app_not_a_config_folder() {
+        let s = |i| app_agent_setup_status(i).installed;
+        assert!(s(info(
+            "claude-code",
+            true,
+            &["bin:/usr/local/bin/claude", "path:/h/.claude"]
+        )));
+        assert!(s(info(
+            "vscode",
+            true,
+            &["app:/Applications/Visual Studio Code.app"]
+        )));
+        assert!(!s(info("copilot-cli", true, &["path:/h/.copilot"])));
+        assert!(!s(info("gemini-cli", false, &[])));
     }
 }

@@ -112,7 +112,7 @@ pub struct PairingCode {
     pub id: String,
     /// `XXXX-XXXX-XXXX`: only when just made.
     pub code: Option<String>,
-    /// `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+    /// `https://cua.ai/add/<code>` (the link and the QR code): only
     /// when just made.
     pub url: Option<String>,
     /// `curl … | sh -s -- --pair <code>` (macOS, Linux): only when just made.

@@ -562,6 +562,9 @@ mod tests {
             space_id: None,
             stopped_sharing: false,
             last_seen: None,
+            status: "Online".into(),
+            spaces: 0,
+            spaces_label: "No Spaces".into(),
         }
     }
 

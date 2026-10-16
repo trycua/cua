@@ -216,6 +216,7 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
     v.push(events::share("share", s, Outcome::Ok).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());
+    v.push(events::app_update("downloaded", s, s).unwrap());
     v.push(events::device_enroll("rekey", Outcome::Ok).unwrap());
     v.push(events::experiment("experiment_off", "your_cloud").unwrap());
     v

@@ -17,7 +17,7 @@ use crate::{
     CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, drive_mount_preview,
     drive_page, drive_settings, driver_preview, experiments, host, login_item, machines, notch,
     notifications, onboarding, onboarding_preview, palette, paths, persistent, presence,
-    relay_usage, settings, share, telemetry, window, wizard,
+    relay_usage, settings, share, telemetry, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -286,6 +286,9 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "upsell.prompt",
+    "upsell.allows",
+    "telemetry.upsell",
 ];
 
 struct Args(Value);
@@ -465,7 +468,34 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
         )),
-        "relayUsage.view" => out(relay_usage::view(&a.get("usage")?)),
+        // The page's core has no environment: the host names its account app
+        // (`settings.get`'s `accountUrl`), the Upgrade fallback's billing page.
+        "relayUsage.view" => {
+            let usage = a.get("usage")?;
+            out(match a.get::<Option<String>>("accountApp")? {
+                Some(app) if app.starts_with("https://") => relay_usage::view_for(&usage, &app),
+                _ => relay_usage::view(&usage),
+            })
+        }
+        // The Pro and Teams prompts: the rules and words are `upsell`'s.
+        "upsell.prompt" => {
+            let usage = a.get("usage")?;
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::prompt(
+                &a.get::<String>("surface")?,
+                &usage,
+                &app,
+                &a.get("state")?,
+            ))
+        }
+        "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "telemetry.upsell" => out(telemetry::upsell(
+            &a.get::<String>("surface")?,
+            &a.get::<String>("action")?,
+        )),
         "wizard.pickerImages" => out(wizard::picker_images()),
         "wizard.pickerGroups" => out(wizard::picker_groups()),
         "wizard.findImage" => out(wizard::find_image(&a.get::<String>("ref")?)),
@@ -1089,6 +1119,48 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn upsell_prompts_follow_the_rules_through_dispatch() {
+        let usage =
+            json!({"metered": true, "plan": "free", "liveSessionsLimit": 2, "hoursLimit": 20.0});
+        let state = |quiet: bool| json!({"nowMs": 1_000_000_000_000u64, "quiet": quiet});
+        let p = call_value(
+            "upsell.prompt",
+            json!({"surface": "share", "usage": usage, "accountApp": "https://app.cua.ai", "state": state(false)}),
+        )
+        .unwrap();
+        assert_eq!(
+            p["cta"]["url"],
+            "https://app.cua.ai/buy/teams?from=app_share"
+        );
+        let quiet = call_value(
+            "upsell.prompt",
+            json!({"surface": "share", "usage": usage, "state": state(true)}),
+        )
+        .unwrap();
+        assert!(quiet.is_null());
+        assert_eq!(
+            call_value("upsell.allows", json!({"state": state(true)})).unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "meter", "action": "shown"})
+            )
+            .unwrap(),
+            json!([{"type": "feature", "feature": "upsell_meter_shown"}])
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "plan_card", "action": "shown"})
+            )
+            .unwrap(),
+            json!([])
+        );
+    }
+
+    #[test]
     fn dispatch_covers_every_method() {
         for m in METHODS {
             let r = call_value(m, Value::Object(Default::default()));
@@ -1103,6 +1175,37 @@ mod tests {
             call("nope.nope", "{}"),
             Err(CoreError::Invalid(e)) if e.starts_with("unknown method")
         ));
+    }
+
+    /// The page's core has no environment: Upgrade's checkout is on the
+    /// account app the host names, else production's; only https is taken.
+    #[test]
+    fn relay_upgrade_opens_the_hosts_account_app() {
+        let usage = json!({
+            "metered": true, "plan": "free", "hoursUsed": 20.2, "hoursLimit": 20.0,
+            "softLimitReached": true, "reasons": ["hours"], "upgradeUrl": null,
+        });
+        let upgrade = |args: Value| {
+            call_value("relayUsage.view", args).unwrap()["notice"]["upgradeUrl"].clone()
+        };
+        assert_eq!(
+            upgrade(json!({"usage": usage, "accountApp": "https://app.staging.cua.ai"})),
+            json!("https://app.staging.cua.ai/buy/pro?from=app_meter")
+        );
+        assert_eq!(
+            upgrade(json!({"usage": usage, "accountApp": "javascript:alert(1)"})),
+            json!(format!(
+                "{}/buy/pro?from=app_meter",
+                cua_home::env::account_app_url()
+            ))
+        );
+        assert_eq!(
+            upgrade(json!({"usage": usage})),
+            json!(format!(
+                "{}/buy/pro?from=app_meter",
+                cua_home::env::account_app_url()
+            ))
+        );
     }
 
     /// The web asks the core whether a machine shares its desktop before it

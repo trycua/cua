@@ -77,6 +77,7 @@ Returned by [`app_power_button`](#app_power_button).
 | `off` | `bool` |  | It is off: suspended or stopped as the SDK recorded it, or not answering with no recorded state (a Space one of your machines provides). |
 | `turning_on` / `turningOn` | `Option<bool>` |  | Being turned on (`true`) or off (`false`) now. |
 | `error` | `Option<String>` |  | Why the last power action failed, until the next one. |
+| `stop_reason` / `stopReason` | `Option<String>` |  | Why it stopped without being asked to, in plain words ("out of memory"), while it is off. |
 
 ## `AppPowerControl` enum
 

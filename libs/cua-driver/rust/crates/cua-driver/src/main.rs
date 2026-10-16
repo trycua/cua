@@ -595,6 +595,7 @@ fn main() {
                 std::process::exit(64);
             }
             responsibility::reexec_disclaimed_if_needed();
+            responsibility::warn_if_unbundled();
             if let Err(error) = history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
                 history_runtime::preview_admitted_preference(),
@@ -780,9 +781,9 @@ fn main() {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             serve::run_revoke_cmd(&sp, session.as_deref(), all);
         }
-        cli::Command::Status { socket } => {
+        cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             serve::run_status_cmd(&sp, &pid_path);
         }
         cli::Command::Sessions { json, socket } => {
@@ -1015,6 +1016,7 @@ fn main() -> anyhow::Result<()> {
                 &grants,
             )?;
             responsibility::reexec_disclaimed_if_needed();
+            responsibility::warn_if_unbundled();
             history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
                 history_runtime::preview_admitted_preference(),
@@ -1078,9 +1080,9 @@ fn main() -> anyhow::Result<()> {
             serve::run_revoke_cmd(&sp, session.as_deref(), all);
             Ok(())
         }
-        cli::Command::Status { socket } => {
+        cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             serve::run_status_cmd(&sp, &pid_path);
             Ok(())
         }

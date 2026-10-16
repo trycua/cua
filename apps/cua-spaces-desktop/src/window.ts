@@ -13,7 +13,7 @@ import { KEYBOARD_CHANNEL, applyKeyboard } from "./keyboard";
 import { BACKGROUND, resolvedTheme } from "./theme";
 import { showWhenReady } from "./show-when-ready";
 
-const TITLEBAR_HEIGHT = 40;
+const TITLEBAR_HEIGHT = 48;
 // Room for the macOS traffic lights at x=16 plus a gap.
 const MAC_TITLEBAR_LEFT_INSET = 78;
 const DEFAULT_SIZE = { width: 1280, height: 820 };
@@ -27,7 +27,7 @@ function titleBarOptions(): Pick<
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      // Vertically centred on the 40px top bar (button radius ~6px).
+      // Vertically centred on the 48px top bar (button radius ~6px).
       trafficLightPosition: { x: 16, y: TITLEBAR_HEIGHT / 2 - 6 },
     };
   }

@@ -504,7 +504,6 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
         }
         (Mode, OnboardingAction::ModeChosen { mode }) => {
             n.mode = Some(*mode);
-            n.launch_at_login = *mode == OnboardingMode::Host;
             n.step = Done;
         }
         (_, OnboardingAction::DriveChecked { os, status }) => {
@@ -688,8 +687,8 @@ pub struct OnboardingView {
     /// The presentation page's two cards, side by side.
     pub presentations: Vec<PresentationCard>,
     /// Done's example prompts ([`PROMPTS`]), one line each: shown under
-    /// both columns, scrolling slowly, to suggest what to ask a coding
-    /// agent. Not interactive.
+    /// both columns under "Try asking your agent:", to suggest what to ask a
+    /// coding agent. Each copies to the clipboard on click.
     pub prompts: Vec<String>,
     /// The first-run telemetry notice (the Welcome page, so the first run
     /// itself can be measured): nothing is sent before it has been shown
@@ -953,30 +952,16 @@ pub struct PresentationCard {
     pub selected: bool,
 }
 
-/// Done's example prompts, in order. Each is something a coding agent
-/// with the cua MCP server and skills (set up on the AI agents page), the
-/// cua SDK and the Cua docs does today:
-///
-/// - QA on three OSes: `create_space` (the `windows`, `macos` and `linux`
-///   images), `upload`, `space_bash`, `open_space_viewer`;
-/// - an agent app on the SDK: `Space.agent_start` / `sandbox.agents()`
-///   (docs: Run a coding agent in a sandbox);
-/// - open an app and PiP it: `create_space`, `send_file`, `space_bash`,
-///   `show_space_pip`;
-/// - stream a window into an app: the SDK's `stream_space_window` and
-///   `stream_endpoint` (docs: Stream a desktop);
-/// - teleport a browser: `teleport_manifest`, `teleport_app`, then
+/// Done's example prompts: what to ask a coding agent once it has the cua
+/// skills and MCP server. Each works with the shipped tools:
+/// - a Linux test run: `create_space`, `upload`, `space_bash`;
+/// - finish a web task in a Space's browser: `teleport_browser_session`, then
 ///   `call_tool` on the Space's cua-driver;
-/// - a Cua Bench taskset: the Cua Bench quickstart and Write a task docs;
-/// - a Linux test run: `create_space`, `upload`, `space_bash`.
-pub const PROMPTS: [&str; 7] = [
-    "qa my app on windows, macos and linux",
-    "use the cua sdk to build an agent app that runs codex in a space",
-    "open my app in a space and pip it",
-    "use the cua sdk to stream a space's window into my app",
-    "teleport my browser into a space and finish the checkout test",
-    "use the cua docs to set up a cua bench taskset",
-    "spin up a linux space and run the test suite there",
+/// - sharing: `share_space` (role viewer).
+pub const PROMPTS: [&str; 3] = [
+    "Open a Linux Space and run my test suite in it",
+    "Use my Space's browser to finish the checkout test and show me",
+    "Share this Space with a teammate as a viewer",
 ];
 
 /// The presentation cards for a choice (notch first, the default).
@@ -1743,10 +1728,12 @@ mod tests {
         let done = view(&s);
         assert_eq!(done.prompts, PROMPTS, "Done shows the example prompts");
         assert!(
-            done.prompts
-                .iter()
-                .all(|p| !p.contains('\n') && p.chars().count() <= 72 && p.to_lowercase() == *p),
-            "short lowercase lines"
+            done.prompts.len() == 3
+                && done
+                    .prompts
+                    .iter()
+                    .all(|p| !p.contains('\n') && p.chars().count() <= 72),
+            "short single lines"
         );
         s.step = OnboardingStep::Mode;
         assert!(view(&s).prompts.is_empty(), "only on Done");
@@ -1780,7 +1767,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_at_login_defaults_to_the_chosen_mode() {
+    fn launch_at_login_is_ticked_whatever_mode_is_chosen() {
         for installer_mode in [
             None,
             Some(OnboardingMode::Client),
@@ -1798,7 +1785,9 @@ mod tests {
                     s = reduce(&s, &action);
                 }
                 assert_eq!(s.step, OnboardingStep::Done);
-                let expected = mode == OnboardingMode::Host;
+                // Ticked for both modes: an unattended host needs it, and a
+                // client keeps its Spaces and agents after a restart.
+                let expected = true;
                 assert_eq!(s.launch_at_login, expected);
                 let checkbox = view(&s).launch_at_login.unwrap();
                 assert_eq!(checkbox.checked, expected);
@@ -1810,7 +1799,8 @@ mod tests {
                 assert_eq!(view(&s).launch_at_login.unwrap().checked, !expected);
                 s = reduce(&s, &OnboardingAction::Back);
                 s = reduce(&s, &OnboardingAction::ModeChosen { mode });
-                assert_eq!(s.launch_at_login, expected);
+                // Choosing the mode again keeps the user's untick.
+                assert_eq!(s.launch_at_login, !expected);
             }
         }
     }

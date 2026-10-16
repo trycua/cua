@@ -7,6 +7,7 @@ syntax = "proto3";
 
 package cua.daemon.v1;
 
+import "cua/daemon/v1/spaces.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -20,6 +21,12 @@ service SandboxService {
   // Creates a sandbox where `location` says (local by default), or
   // connects to an existing machine (`direct:<addr>`).
   rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+  // `CreateSandbox`, streaming what the create is doing: progress events
+  // (pulling the image with its bytes, creating, booting, waiting for the
+  // probes) in order, then exactly one `result`. A failed create ends the
+  // stream with its status. Closing the stream cancels the create, as for
+  // a `CreateSandbox` whose caller goes away.
+  rpc CreateSandboxStream(CreateSandboxStreamRequest) returns (stream CreateSandboxStreamResponse);
   // Cancels a `CreateSandbox` of a named sandbox still running: the work
   // in flight stops (an image download, a boot, a claim) and what the
   // create made is deleted; a sandbox of that name that existed before is
@@ -153,6 +160,10 @@ message Sandbox {
   // The engine that runs it: "gvisor", "runc", "qemu", "lume" or
   // "kubevirt"; empty when not known.
   string runtime = 17;
+  // Why a local sandbox stopped without being asked to, in plain words:
+  // "out of memory", "killed", "exited" or "exited with code N". Empty
+  // otherwise, and once it is started again.
+  string stop_reason = 18;
 }
 
 // A user-declared readiness probe. With no probes a sandbox is ready as soon
@@ -368,6 +379,23 @@ message CreateSandboxRequest {
 message CreateSandboxResponse {
   // The sandbox.
   Sandbox sandbox = 1;
+}
+
+// Request for `SandboxService.CreateSandboxStream`.
+message CreateSandboxStreamRequest {
+  // The create, as for `CreateSandbox`.
+  CreateSandboxRequest create = 1;
+}
+
+// One message of `SandboxService.CreateSandboxStream`.
+message CreateSandboxStreamResponse {
+  // Progress, or the result.
+  oneof event {
+    // What the create is doing now (`space` is empty).
+    CreateSpaceProgress progress = 1;
+    // The created sandbox (the last message).
+    CreateSandboxResponse result = 2;
+  }
 }
 
 // Request for `SandboxService.GetSandbox`.

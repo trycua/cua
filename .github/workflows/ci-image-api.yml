@@ -2,6 +2,7 @@ name: "CI: Image API"
 
 on:
   push:
+    branches: [main]
     paths:
       - "clusters/base/cua-images/**"
       - "libs/python/cua-sandbox/cua_sandbox/image.py"

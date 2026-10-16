@@ -914,12 +914,13 @@ mod tests {
         let _serial = lock(&TAIL_TEST_LOCK);
         end_tail();
         lock(&LATE).take();
-        let opened_at = Instant::now() + REPORT_WINDOW + Duration::from_millis(60);
+        let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_opened = opened.clone();
         let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
         let first = snap.detect_bounded_with(
             observation_bounds_from(Some("2000"), Some("10")),
             move || {
-                if Instant::now() >= opened_at {
+                if observed_opened.load(Ordering::SeqCst) {
                     (
                         vec![win(1, 7, "App", "Main"), win(2, 7, "App", "Save")],
                         Some(7),
@@ -930,6 +931,7 @@ mod tests {
             },
         );
         assert!(!first.needs_restore());
+        opened.store(true, Ordering::SeqCst);
         let wait_until = Instant::now() + Duration::from_secs(2);
         while lock(&LATE).is_none() && Instant::now() < wait_until {
             std::thread::sleep(Duration::from_millis(10));

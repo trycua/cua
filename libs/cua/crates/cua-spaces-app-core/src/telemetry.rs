@@ -202,6 +202,24 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
     vec![feature(name)]
 }
 
+/// The in-app Pro and Teams prompts, as `cua_spaces_feature_used`
+/// `upsell_<surface>_<action>`: `meter`, `share` and `machine` are shown,
+/// clicked or dismissed; the always-visible `plan_card` (Settings) and
+/// `account_menu` (the plan under the account name) are only clicked.
+/// Anything else: nothing.
+pub fn upsell(surface: &str, action: &str) -> Vec<TelemetrySignal> {
+    let ok = match surface {
+        "meter" | "share" | "machine" => matches!(action, "shown" | "click" | "dismiss"),
+        "plan_card" | "account_menu" => action == "click",
+        _ => false,
+    };
+    if ok {
+        vec![feature(&format!("upsell_{surface}_{action}"))]
+    } else {
+        vec![]
+    }
+}
+
 // ---- Getting started -----------------------------------------------------------
 
 /// The getting-started checklist's steps, in the order it lists them.
@@ -1415,11 +1433,11 @@ mod tests {
     #[test]
     fn an_experiment_toggle_is_one_event_and_the_set_that_is_on() {
         use crate::experiments::Experiments;
-        let off = Experiments::default();
-        let on = Experiments {
-            sharing: true,
+        let off = Experiments {
+            sharing: false,
             ..Default::default()
         };
+        let on = Experiments::default();
         let signals = experiments_changed(&off, &on);
         assert_eq!(
             signals,
@@ -1494,12 +1512,16 @@ mod tests {
             .foreground()
             .build();
         t.acknowledge_notice();
+        let off = Experiments {
+            sharing: false,
+            ..Default::default()
+        };
         let on = Experiments {
             cua_volume: true,
             sharing: true,
             ..Default::default()
         };
-        let signals = experiments_changed(&Experiments::default(), &on);
+        let signals = experiments_changed(&off, &on);
         assert_eq!(
             record(&t, &signals),
             2,

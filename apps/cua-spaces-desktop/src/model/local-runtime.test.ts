@@ -25,4 +25,8 @@ describe("noLocalRuntimeReason", () => {
   it("tells Windows users to start a stopped Docker Desktop", () => {
     expect(noLocalRuntimeReason("win32", "container engine at npipe://x is not running")).toMatch(/isn't running/);
   });
+
+  it("names the group command when Docker is there but the account may not use it (CUA-1763)", () => {
+    expect(noLocalRuntimeReason("linux", "permission denied on unix:///var/run/docker.sock: add yourself")).toContain("usermod -aG docker");
+  });
 });

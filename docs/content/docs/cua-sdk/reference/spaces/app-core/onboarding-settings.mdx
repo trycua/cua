@@ -246,7 +246,7 @@ Returned by [`app_onboarding_view`](#app_onboarding_view).
 | `summary` | [`Vec<AppFact>`](/cua-sdk/reference/spaces/app-core/window#appfact-record) |  | Done's facts. |
 | `choices` | [`Vec<AppModeChoice>`](#appmodechoice-record) |  | This machine's two answers (the installer's preselection first highlighted), on its page. |
 | `presentations` | [`Vec<AppPresentationCard>`](#apppresentationcard-record) |  | The presentation page's two cards, side by side. |
-| `prompts` | `Vec<String>` |  | Done's example prompts (`PROMPTS`), one line each: shown under both columns, scrolling slowly, to suggest what to ask a coding agent. Not interactive. |
+| `prompts` | `Vec<String>` |  | Done's example prompts (`PROMPTS`), one line each: shown under both columns under "Try asking your agent:", to suggest what to ask a coding agent. Each copies to the clipboard on click. |
 | `notice` | `Option<String>` |  | The first-run telemetry notice (the Welcome page, so the first run itself can be measured): nothing is sent before it has been shown once. |
 | `notice_link_label` / `noticeLinkLabel` | `Option<String>` |  | Its link: label. |
 | `notice_link_url` / `noticeLinkUrl` | `Option<String>` |  | Its link: URL. |

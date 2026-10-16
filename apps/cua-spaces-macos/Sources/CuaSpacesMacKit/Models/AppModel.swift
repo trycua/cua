@@ -197,7 +197,7 @@ public final class AppModel {
             localAvailable: true, localReason: nil, localBackends: nil, localDetails: nil,
             maxCpus: UInt32(max(2, min(16, ProcessInfo.processInfo.activeProcessorCount))),
             hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
-            experiments: settings.experiments, gpus: nil))
+            experiments: settings.experiments, gpus: nil, nameSeed: nil))
         self.notch = NotchModel()
         // The notch tiles and the preview cover read one thumbnail store,
         // filled from the SDK's shared cache.
@@ -231,7 +231,7 @@ public final class AppModel {
         onboarding.onLaunchAtLogin = { [weak self] on in self?.setLaunchAtLogin(on) }
         // Settings, Experiments decide the first run's pages (Cua Volume).
         onboarding.currentExperiments = { [weak self] in
-            self?.settings.experiments ?? AppExperiments(cuaVolume: false, yourCloud: false, sharing: false, webUi: false)
+            self?.settings.experiments ?? AppExperiments(cuaVolume: false, yourCloud: false, sharing: true, webUi: false)
         }
         // Which experiments are on: the day's `cua_app_active` carries them.
         telemetry?.record(appTelemetryExperimentsOn(experiments: settings.experiments))
@@ -876,7 +876,7 @@ public final class AppModel {
             hostArch: Self.hostArch, lumeSource: lumeSource, linuxSource: linuxSource,
             storage: storage.map(Self.wizardStorage),
             cloudPricing: available ? pricing : nil, clouds: [], hosts: [],
-            experiments: settings.experiments, gpus: gpus))
+            experiments: settings.experiments, gpus: gpus, nameSeed: nil))
     }
 
     /// The New Space panel's Cancel.

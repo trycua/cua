@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { useBridge, useExperiments, useMachines, useSpaces, type Machine, type Space, type SpaceDetailView } from "@/bridge";
 import { spaceDetail } from "@/bridge/space-detail";
+import { UpsellPrompt } from "@/components/upsell-prompt";
 import { AddMachineDialog } from "@/components/add-machine-dialog";
 import { JoinWithCodeDialog } from "@/components/join-with-code-dialog";
 import { ThisMachine } from "@/components/this-machine";
@@ -125,6 +126,7 @@ function MachinesPage() {
                 Only this machine so far. Add another to run Spaces on it from here.
               </p>
             ) : null}
+            <UpsellPrompt surface="machine" active={machines.length >= 2 && machines.some((m) => m.via === "relay")} className="mt-3" />
           </div>
           {selected ? (
             <MachineDetail

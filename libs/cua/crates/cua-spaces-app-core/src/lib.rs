@@ -89,6 +89,7 @@ pub mod spaces;
 pub mod teams;
 pub mod telemetry;
 pub mod teleport;
+pub mod upsell;
 mod util;
 pub mod window;
 pub mod wizard;

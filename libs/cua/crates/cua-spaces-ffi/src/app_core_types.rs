@@ -9569,6 +9569,37 @@ pub struct AppRelayAllowanceNotice {
     /// What a dismissal remembers: the month and the reasons. A new month,
     /// or another limit reached, shows the notice again.
     pub dismiss_key: String,
+    /// `warn` (80% of the relay hours) or `limit` (the allowance is used).
+    /// A `warn` is a prompt: the shells hold it back while a live session
+    /// or an agent run is going ([`crate::upsell`]). A `limit` is only the
+    /// status, so it always shows.
+    pub level: String,
+}
+
+/// A button that opens a page on the account app.
+pub type AppPlanLink = core::relay_usage::PlanLink;
+#[uniffi::remote(Record)]
+pub struct AppPlanLink {
+    /// "Get Pro".
+    pub label: String,
+    /// https, on the account app.
+    pub url: String,
+}
+
+/// The plan as Settings draws it: always there, never a prompt.
+pub type AppPlanCard = core::relay_usage::PlanCard;
+#[uniffi::remote(Record)]
+pub struct AppPlanCard {
+    /// `free`, `pro` or `teams`.
+    pub plan: String,
+    /// "Free plan".
+    pub label: String,
+    /// What the plan includes, in one sentence.
+    pub detail: String,
+    /// The main button ("Get Pro"); none when there is nothing to buy.
+    pub primary: Option<AppPlanLink>,
+    /// The other one ("Start a team").
+    pub secondary: Option<AppPlanLink>,
 }
 
 /// The allowance as drawn.
@@ -9582,6 +9613,8 @@ pub struct AppRelayUsageView {
     pub line: String,
     /// "Free plan" (empty when the relay names none).
     pub plan: String,
-    /// Past the allowance.
+    /// At 80% of the relay hours, or past the allowance.
     pub notice: Option<AppRelayAllowanceNotice>,
+    /// Settings' plan card.
+    pub plan_card: AppPlanCard,
 }

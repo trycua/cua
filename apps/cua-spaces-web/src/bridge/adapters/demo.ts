@@ -50,7 +50,7 @@ import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./dem
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
-import { demoRelayUsageHandlers, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
+import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
 
@@ -74,6 +74,9 @@ export interface DemoOptions {
   macHost?: boolean;
   /** This device is not enrolled on the relay yet (the enroll bar above every page). */
   unenrolled?: boolean;
+  /** The relay allowance: `idle` (free, no live session, so prompts can show),
+   * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
+  usage?: "idle" | "warn" | "limit" | "pro" | "teams";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
    * Electron shell passes its own system and architecture). */
   platform?: DemoPlatform;
@@ -99,6 +102,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keychain: flags.has("keychain"),
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
+    usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
       : flags.has("update-downloading")
@@ -148,7 +152,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     onboarding: { completed: options.onboarded !== false, mode: options.onboarded === false ? null : "client" },
     creates: new Map(),
     agents: demoPersistentAgents(now()),
-    runs: demoRunRecords(now()),
+    // A named allowance is for showing the prompts, which wait for no agent run.
+    runs: options.usage ? [] : demoRunRecords(now()),
     agentSetup: demoAgentSetup(),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
@@ -156,6 +161,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
+    ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
     ...demoSpaceDetailState(),
     ...demoHostSetupState(now(), options.onboarded === false),
     ...demoStartupState(Boolean(options.keychain)),

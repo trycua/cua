@@ -2938,7 +2938,7 @@ mod relay_usage_tests {
         let notice = app_relay_usage_view(u).unwrap().notice.unwrap();
         assert_eq!(
             notice.upgrade_url.as_deref(),
-            Some("https://cua.ai/pricing")
+            Some("https://app.cua.ai/buy/pro?from=app_meter")
         );
         assert_eq!(notice.dismiss_key, "2026-10:hours");
 

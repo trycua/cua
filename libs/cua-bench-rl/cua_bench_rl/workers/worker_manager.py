@@ -16,13 +16,14 @@ Example:
 """
 
 import asyncio
+import contextlib
 import os
 import socket
 import subprocess
 import sys
 import threading
 from dataclasses import dataclass
-from typing import IO, List, Optional
+from typing import List, Optional
 
 import aiohttp
 
@@ -53,10 +54,11 @@ def _find_free_ports(n: int) -> List[int]:
     return ports
 
 
-def _forward_output(worker_id: str, stream: IO[str]) -> None:
-    with stream:
+def _forward_output(worker_id: str, output: socket.socket) -> None:
+    with output.makefile("r", errors="replace") as stream:
         for line in stream:
-            sys.stderr.write(f"[{worker_id}] {line}")
+            with contextlib.suppress(Exception):
+                sys.stderr.write(f"[{worker_id}] {line}")
 
 
 @dataclass
@@ -68,6 +70,7 @@ class WorkerHandle:
         port: Port the worker is listening on
         process: Subprocess running the worker
         api_url: Full URL for API requests
+        output: Our end of the socket carrying the worker's stdout and stderr
         output_reader: Thread forwarding the worker's stdout and stderr to ours
     """
 
@@ -75,6 +78,7 @@ class WorkerHandle:
     port: int
     process: subprocess.Popen
     api_url: str
+    output: Optional[socket.socket] = None
     output_reader: Optional[threading.Thread] = None
 
     async def health_check(self, timeout: float = 5.0) -> bool:
@@ -112,8 +116,13 @@ class WorkerHandle:
                     self.process.wait(timeout=5)
             except Exception:
                 pass
-        if self.output_reader:
+        if self.output_reader and self.output_reader.is_alive():
             self.output_reader.join(timeout=5)
+            if self.output_reader.is_alive():
+                self.output.shutdown(socket.SHUT_RDWR)
+                self.output_reader.join(timeout=5)
+        if self.output:
+            self.output.close()
 
     @property
     def is_running(self) -> bool:
@@ -172,36 +181,36 @@ async def create_workers(
             str(port),
         ]
 
+        output, worker_output = socket.socketpair()
         try:
             process = subprocess.Popen(
                 cmd,
                 env=env,
-                stdout=subprocess.PIPE,
+                stdout=worker_output,
                 stderr=subprocess.STDOUT,
-                text=True,
-                errors="replace",
                 start_new_session=True,  # Detach from parent
             )
+            worker_output.close()
+            api_url = f"http://127.0.0.1:{port}"
+            handle = WorkerHandle(
+                worker_id=worker_id,
+                port=port,
+                process=process,
+                api_url=api_url,
+                output=output,
+            )
+            handles.append(handle)
+            handle.output_reader = threading.Thread(
+                target=_forward_output, args=(worker_id, output), daemon=True
+            )
+            handle.output_reader.start()
         except Exception as e:
+            output.close()
+            worker_output.close()
             # Clean up already started workers
             for handle in handles:
                 handle.stop()
             raise RuntimeError(f"Failed to start worker {worker_id}: {e}")
-
-        output_reader = threading.Thread(
-            target=_forward_output, args=(worker_id, process.stdout), daemon=True
-        )
-        output_reader.start()
-
-        api_url = f"http://127.0.0.1:{port}"
-        handle = WorkerHandle(
-            worker_id=worker_id,
-            port=port,
-            process=process,
-            api_url=api_url,
-            output_reader=output_reader,
-        )
-        handles.append(handle)
 
     # Wait for all workers to become healthy
     async def wait_for_health(handle: WorkerHandle) -> bool:

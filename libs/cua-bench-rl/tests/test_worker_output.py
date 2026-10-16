@@ -6,6 +6,9 @@ access-log lines) is full. This starts one real worker and sends well past that.
 """
 
 import asyncio
+import os
+import signal
+import sys
 
 import aiohttp
 import pytest
@@ -47,3 +50,38 @@ async def test_worker_output_reaches_parent_until_stopped(capfd):
         line.startswith("[w0] ") and '"GET /health HTTP/1.1" 200' in line
         for line in err.splitlines()
     )
+
+
+class StderrFailingFirstWrite:
+    def __init__(self):
+        self.lines = []
+
+    def write(self, line):
+        self.lines.append(line)
+        if len(self.lines) == 1:
+            raise OSError("stderr unavailable")
+
+
+async def test_worker_keeps_draining_when_forwarding_fails(monkeypatch):
+    stderr = StderrFailingFirstWrite()
+    monkeypatch.setattr(sys, "stderr", stderr)
+    await test_worker_keeps_answering_past_pipe_buffer()
+    assert len(stderr.lines) > N_REQUESTS
+
+
+async def test_reader_stops_when_grandchild_holds_output_open(monkeypatch, tmp_path, capfd):
+    grandchild_pid = tmp_path / "grandchild.pid"
+    launcher = tmp_path / "python"
+    launcher.write_text(
+        f'#!/bin/sh\nsleep 60 &\necho $! > {grandchild_pid}\nexec {sys.executable} "$@"\n'
+    )
+    launcher.chmod(0o755)
+    monkeypatch.setattr(sys, "executable", str(launcher))
+    workers = await create_workers(n_workers=1, allowed_ips=["127.0.0.1"], host="127.0.0.1")
+    monkeypatch.undo()
+    try:
+        await cleanup_workers(workers)
+        assert not workers[0].output_reader.is_alive()
+        assert "[w0] INFO:     Uvicorn running on" in capfd.readouterr().err
+    finally:
+        os.kill(int(grandchild_pid.read_text()), signal.SIGKILL)

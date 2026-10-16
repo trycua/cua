@@ -99,4 +99,37 @@ impl HostSpacesService for HostSvc {
             .map(tonic::Response::new)
             .map_err(|e| to_status(&e))
     }
+
+    async fn diagnose_host(
+        &self,
+        req: tonic::Request<pb::DiagnoseHostRequest>,
+    ) -> Result<tonic::Response<pb::DiagnoseHostResponse>, tonic::Status> {
+        // The owner's own diagnostics: paths, app names, free space.
+        let who = caller(&req)?;
+        if !who.is_owner() {
+            return Err(tonic::Status::permission_denied(
+                "only this machine's owner can check its health",
+            ));
+        }
+        let machine = req.into_inner().machine;
+        if machine.trim().is_empty() {
+            return Ok(tonic::Response::new(
+                crate::machine_doctor::response().await,
+            ));
+        }
+        // Another machine: asked from this one (the app or `cua doctor
+        // --machine`), never on behalf of a relayed caller.
+        if who.account != "local" {
+            return Err(tonic::Status::permission_denied(
+                "a machine's health is checked on that machine",
+            ));
+        }
+        self.0
+            .runtime
+            .spaces()
+            .machine_health(&machine)
+            .await
+            .map(tonic::Response::new)
+            .map_err(|e| to_status(&e))
+    }
 }

@@ -9302,6 +9302,63 @@ pub struct AppMachinePageRow {
     pub spaces_label: String,
 }
 
+/// One check as the machine's daemon reported it (the SDK's
+/// `MachineHealthCheck`).
+pub type AppMachinesViewCheck = core::machines_health::MachinesViewCheck;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewCheck {
+    /// `machine.local_network`, `machine.disk`, ...
+    pub id: String,
+    /// `pass`, `warn`, `fail`, `skip`.
+    pub status: String,
+    /// What it found.
+    pub message: String,
+    /// What to do.
+    pub remediation: String,
+    /// `app`, `settings_url`, `free_gb`, ...
+    pub facts: BTreeMap<String, String>,
+}
+
+/// What the shell got for one machine's health.
+pub type AppMachinesViewHealth = core::machines_health::MachinesViewHealth;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewHealth {
+    /// The machine's row id (`this-mac`, a relay machine id).
+    pub id: String,
+    /// Its checks.
+    pub checks: Vec<AppMachinesViewCheck>,
+    /// The Cua version of the daemon that checked.
+    pub cua_version: String,
+    /// Why it could not be checked, when it could not.
+    pub error: Option<String>,
+}
+
+/// What fixes an issue.
+pub type AppMachinesViewIssueAction = core::machines_health::MachinesViewIssueAction;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewIssueAction {
+    /// "Open Local Network settings", "Free disk space", "Restart service".
+    pub label: String,
+    /// A System Settings pane to open (`host.openSettings`).
+    pub url: Option<String>,
+    /// A host action to run (`host.action`).
+    pub host_action: Option<AppHostActionId>,
+}
+
+/// One issue on a machine's page.
+pub type AppMachinesViewIssue = core::machines_health::MachinesViewIssue;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewIssue {
+    /// The check it comes from (`machine.disk`, `service`, `version`).
+    pub id: String,
+    /// `warn` or `fail`.
+    pub level: String,
+    /// One plain sentence.
+    pub text: String,
+    /// Its fix, when there is one here.
+    pub action: Option<AppMachinesViewIssueAction>,
+}
+
 /// What the relay says of one of the account's machines (the SDK's
 /// `RelayMachine`, the fields the page reads).
 pub type AppMachinesViewRelay = core::machines_view::MachinesViewRelay;
@@ -9346,6 +9403,10 @@ pub struct AppMachinesViewInput {
     /// The rows when the shell already listed them (an older host's rows,
     /// merged by the web UI); `None`: [`machines::page_rows`] of `page`.
     pub rows: Option<Vec<AppMachinePageRow>>,
+    /// What each machine's daemon reported of its health, by row id, for
+    /// the machines whose `health_target` the shell checked
+    /// ([`crate::machines_health`]).
+    pub health: Vec<AppMachinesViewHealth>,
 }
 
 /// One of the two switches on a machine's page.
@@ -9461,6 +9522,12 @@ pub struct AppMachinesViewMachine {
     pub line: String,
     /// Usable now (the green dot): online and sharing.
     pub online: bool,
+    /// The dot's tint for its issues: `warn`, `fail`, or empty.
+    pub health: String,
+    /// What the shell passes to `Spaces.machine_health` to check it: empty
+    /// for This Mac, its id for another of your machines; `None` when it
+    /// can't be checked from here (offline, not yours).
+    pub health_target: Option<String>,
     /// `macos`, `linux`, `windows`, or empty.
     pub os: String,
     /// The machine this app runs on.
@@ -9473,6 +9540,11 @@ pub struct AppMachinesViewMachine {
     pub shared_by: Option<String>,
     /// Rename, when it can be renamed from here.
     pub rename: Option<AppMachinesViewRename>,
+    /// "Issues".
+    pub issues_title: String,
+    /// What is wrong, one sentence each with its fix; empty when healthy
+    /// (the section is hidden then) or offline.
+    pub issues: Vec<AppMachinesViewIssue>,
     /// One line over the switches (offline, signed out).
     pub notice: Option<String>,
     /// The notice's button (Sign In).

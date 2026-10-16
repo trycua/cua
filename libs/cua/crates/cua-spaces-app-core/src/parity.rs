@@ -3027,8 +3027,14 @@ fn view_frame(name: &Value, v: &Value) -> Value {
                         .as_str()
                         .map(|b| format!(" [{b}]"))
                         .unwrap_or_default();
+                    // The dot's tint for the machine's issues.
+                    let health = m["health"]
+                        .as_str()
+                        .filter(|h| !h.is_empty())
+                        .map(|h| format!(" [{h}]"))
+                        .unwrap_or_default();
                     format!(
-                        "{dot} {}{badge} \u{2014} {}",
+                        "{dot} {}{badge} \u{2014} {}{health}",
                         str_of(&m["name"]),
                         str_of(&m["line"])
                     )
@@ -3056,6 +3062,18 @@ fn view_frame(name: &Value, v: &Value) -> Value {
                 head.push_str(&format!(" (rename: {})", str_of(&r["target"])));
             }
             lines.push(head);
+            for i in m["issues"].as_array().into_iter().flatten() {
+                let action = i["action"]["label"]
+                    .as_str()
+                    .map(|l| format!(" [{l}]"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "{} {}: {}{action}",
+                    str_of(&m["issuesTitle"]).to_lowercase(),
+                    str_of(&i["level"]),
+                    str_of(&i["text"])
+                ));
+            }
             if let Some(n) = m["notice"].as_str() {
                 let action = m["noticeAction"]["label"]
                     .as_str()

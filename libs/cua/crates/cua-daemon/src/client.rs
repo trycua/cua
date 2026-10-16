@@ -239,6 +239,21 @@ impl DaemonClient {
             .into_inner())
     }
 
+    /// `HostSpacesService.DiagnoseHost`: this machine's health as its
+    /// daemon checks it, or with `machine` set, another of the owner's
+    /// machines' (asked over the relay by this daemon).
+    pub async fn diagnose_host(
+        &self,
+        machine: String,
+    ) -> Result<cua_proto::env::v1::DiagnoseHostResponse> {
+        use cua_proto::env::v1::host_spaces_service_client::HostSpacesServiceClient;
+        Ok(HostSpacesServiceClient::new(self.channel.clone())
+            .diagnose_host(cua_proto::env::v1::DiagnoseHostRequest { machine })
+            .await
+            .map_err(Self::map)?
+            .into_inner())
+    }
+
     /// `Doctor`.
     pub async fn doctor(&self) -> Result<pb::DoctorResponse> {
         Ok(self

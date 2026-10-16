@@ -117,6 +117,13 @@ message HostSpace {
   // response of a direct Space (the caller stores it like any direct
   // Space's token). Empty otherwise.
   string direct_token = 11;
+  // What the Space is doing now, as this host sees it: "running",
+  // "suspended", "stopped", "starting" (being created or booting) or
+  // "failed" (`state_reason` says why). Empty from a host that predates it.
+  string state = 12;
+  // Why it is "failed" (its runtime's words, or "its sandbox is gone").
+  // Empty otherwise.
+  string state_reason = 13;
 }
 
 // One line of the host's Spaces audit log.

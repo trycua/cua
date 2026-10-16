@@ -17,8 +17,8 @@ pub mod sidebar;
 pub mod stream;
 
 use crate::model::{
-    PowerControl, Space, SpaceOs, SpacePower, SpaceProvider, SpaceRow, SpaceSdkRef, SpaceStatus,
-    ThumbnailScene, normalize_arch,
+    PowerControl, Space, SpaceOs, SpacePower, SpaceProgress, SpaceProvider, SpaceRow, SpaceSdkRef,
+    SpaceStatus, ThumbnailScene, normalize_arch,
 };
 use crate::util::{collate, parse_rfc3339_ms};
 use serde::{Deserialize, Serialize};
@@ -137,6 +137,15 @@ fn provider_label(p: SpaceProvider) -> &'static str {
 }
 
 fn detail_for(row: &SpaceRow, status: SpaceStatus) -> String {
+    if status == SpaceStatus::Suspended && row.power_state.as_deref() == Some(REMOTE_FAILED) {
+        return failed_text(row);
+    }
+    if status == SpaceStatus::Provisioning {
+        return match row.host_name.as_deref().or(row.host.as_deref()) {
+            Some(host) if !host.is_empty() => format!("Starting on {host}\u{2026}"),
+            _ => "Starting\u{2026}".into(),
+        };
+    }
     if status == SpaceStatus::Suspended {
         // Turned off on purpose: said so, not "Unreachable".
         if let Some(control) = row.power.as_deref().and_then(PowerControl::parse)
@@ -205,6 +214,10 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
     );
     let status = if row.reachable && !(power.is_some() && recorded_off) {
         SpaceStatus::Running
+    } else if row.power_state.as_deref() == Some(REMOTE_STARTING) {
+        // Being created, booting or joining the relay on the machine that
+        // runs it (as that machine says): Starting, not Stopped.
+        SpaceStatus::Provisioning
     } else {
         SpaceStatus::Suspended
     };
@@ -249,7 +262,25 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
             error: row.error.clone(),
         }),
         os_name: os_name.or_else(|| distro.as_ref().map(|d| d.name.clone())),
-        progress: None,
+        progress: (status == SpaceStatus::Provisioning).then(|| SpaceProgress {
+            phase: "booting".into(),
+            permille: 0,
+            // The step it is on there, when the machine says.
+            label: row
+                .error
+                .as_deref()
+                .map(str::trim)
+                .filter(|e| !e.is_empty())
+                .map_or_else(
+                    || "Starting\u{2026}".into(),
+                    |step| format!("{step}\u{2026}"),
+                ),
+            error: None,
+            credit_url: None,
+            transfer: None,
+            cancellable: false,
+            cancelling: false,
+        }),
         os_pretty_name: os_pretty_name.or_else(|| distro.map(|d| d.name)),
         kind: row
             .kind
@@ -277,13 +308,37 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
 fn power_of_row(row: &SpaceRow) -> Option<SpacePower> {
     let control = row.power.as_deref().and_then(PowerControl::parse)?;
     let state = row.power_state.as_deref().filter(|s| !s.trim().is_empty());
+    let failed = state == Some(REMOTE_FAILED);
     Some(SpacePower {
         control,
+        // A Space that failed on its machine is off: Start boots it again.
         off: matches!(state, Some("suspended") | Some("stopped"))
+            || failed
             || (state.is_none() && !row.reachable),
         turning_on: None,
-        error: None,
+        error: failed.then(|| failed_text(row)),
     })
+}
+
+/// `power_state` of a Space on another of your machines that the machine
+/// says is being created, booting or joining the relay.
+pub const REMOTE_STARTING: &str = "starting";
+
+/// `power_state` of a Space on another of your machines that the machine
+/// says failed (the row's `error` says why).
+pub const REMOTE_FAILED: &str = "failed";
+
+/// "Failed · <why>" for a Space its machine says failed.
+fn failed_text(row: &SpaceRow) -> String {
+    match row
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+    {
+        Some(why) => format!("Failed \u{b7} {why}"),
+        None => "Failed".into(),
+    }
 }
 
 /// What an off Space is called: "Stopped", however it turned off, so the
@@ -691,5 +746,85 @@ mod tests {
         let idle = this_machine_space(None, 0, SpaceOs::Macos);
         assert!(is_machine_desktop(&idle));
         assert_eq!(openable_count(&[idle]), 0);
+    }
+
+    /// A Space on another of your machines reads what that machine says it
+    /// is doing (CUA-1637, CUA-1638): Starting while it is created or boots
+    /// there (not "Stopped"), Failed with why (and Start offered), and,
+    /// with its machine offline, why it cannot be reached.
+    #[test]
+    fn a_space_on_another_machine_reads_its_machines_state() {
+        let remote = |state: Option<&str>, error: Option<&str>| {
+            row_to_space(
+                &SpaceRow {
+                    id: "relay:space-0000000000000001".into(),
+                    name: "dev-linux".into(),
+                    provider: "relay".into(),
+                    reachable: false,
+                    error: error.map(Into::into),
+                    host: Some("mini-0001".into()),
+                    host_name: Some("Mac mini".into()),
+                    power: Some("stop".into()),
+                    power_state: state.map(Into::into),
+                    ..row()
+                },
+                0,
+            )
+        };
+        let starting = remote(Some(REMOTE_STARTING), None);
+        assert_eq!(starting.status, SpaceStatus::Provisioning);
+        assert_eq!(starting.detail, "Starting on Mac mini\u{2026}");
+        let p = starting.progress.as_ref().unwrap();
+        assert!(p.error.is_none() && !p.cancellable, "{p:?}");
+        assert!(!starting.power.as_ref().unwrap().off);
+        assert_eq!(p.label, "Starting\u{2026}");
+        // The step the machine says it is on.
+        let step = remote(Some(REMOTE_STARTING), Some("Downloading the image, 41%"));
+        assert_eq!(
+            step.progress.unwrap().label,
+            "Downloading the image, 41%\u{2026}"
+        );
+        assert_eq!(step.detail, "Starting on Mac mini\u{2026}");
+
+        let failed = remote(Some(REMOTE_FAILED), Some("its sandbox is gone"));
+        assert_eq!(failed.status, SpaceStatus::Suspended);
+        assert_eq!(failed.detail, "Failed \u{b7} its sandbox is gone");
+        let power = failed.power.as_ref().unwrap();
+        assert!(power.off, "Start is offered");
+        assert_eq!(
+            power.error.as_deref(),
+            Some("Failed \u{b7} its sandbox is gone")
+        );
+        assert!(failed.progress.is_none(), "not a failed create");
+
+        let stopped = remote(Some("stopped"), None);
+        assert_eq!(
+            (stopped.status, stopped.detail.as_str()),
+            (SpaceStatus::Suspended, "Stopped")
+        );
+
+        let running = row_to_space(
+            &SpaceRow {
+                reachable: true,
+                power_state: Some("running".into()),
+                ..SpaceRow {
+                    id: "relay:space-0000000000000001".into(),
+                    provider: "relay".into(),
+                    host: Some("mini-0001".into()),
+                    host_name: Some("Mac mini".into()),
+                    power: Some("stop".into()),
+                    ..row()
+                }
+            },
+            0,
+        );
+        assert_eq!(running.status, SpaceStatus::Running);
+        assert_eq!(running.detail, "On Mac mini");
+
+        let unknown = remote(None, Some("Mac mini is offline"));
+        assert_eq!(unknown.status, SpaceStatus::Suspended);
+        assert_eq!(unknown.detail, "Unreachable \u{b7} Mac mini is offline");
+        // Each is a Space, and counts as one.
+        assert_eq!(openable_count(&[starting, failed, unknown]), 3);
     }
 }

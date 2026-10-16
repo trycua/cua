@@ -215,8 +215,10 @@ pub struct SpaceInfo {
     #[serde(default)]
     pub power: String,
     /// `running`, `suspended` or `stopped` as cua last recorded it; empty
-    /// when unknown (a Space one of your machines provides answers while it
-    /// runs).
+    /// when unknown. A Space one of your other machines provides says what
+    /// that machine reports: `running`, `starting` (being created, booting,
+    /// or joining the relay), `suspended`, `stopped`, or `failed`
+    /// (`state_reason` says why).
     #[serde(default)]
     pub power_state: String,
     /// A Space in your own cloud: the provider (`aws`, `gcp`, `modal`);
@@ -232,6 +234,11 @@ pub struct SpaceInfo {
     /// Empty for other Spaces.
     #[serde(default)]
     pub cloud_delete: String,
+    /// For a Space on another of your machines: why it is in its state,
+    /// for people (why it `failed`, or that its machine is offline). Empty
+    /// otherwise.
+    #[serde(default)]
+    pub state_reason: String,
 }
 
 impl From<dpb::Space> for SpaceInfo {
@@ -265,6 +272,7 @@ impl From<dpb::Space> for SpaceInfo {
             cloud: s.cloud,
             cloud_place: s.cloud_place,
             cloud_delete: s.cloud_delete,
+            state_reason: s.state_reason,
         }
     }
 }
@@ -293,6 +301,7 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
             cloud: s.cloud,
             cloud_place: s.cloud_place,
             cloud_delete: s.cloud_delete,
+            state_reason: s.state_reason,
         }
     }
 }

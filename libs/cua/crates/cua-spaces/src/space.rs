@@ -549,8 +549,10 @@ pub struct SpaceInfo {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub power: String,
     /// `running`, `suspended` or `stopped` as cua last recorded it; empty
-    /// when unknown (a Space one of your machines provides is reachable
-    /// while it runs).
+    /// when unknown. A Space one of your other machines provides says what
+    /// that machine reports: `running`, `starting` (being created, booting,
+    /// or joining the relay), `suspended`, `stopped`, or `failed`
+    /// ([`SpaceInfo::state_reason`] says why).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub power_state: String,
     /// A Space in your own cloud: the provider (`aws`, `gcp`, `modal`);
@@ -571,6 +573,11 @@ pub struct SpaceInfo {
     /// sharing it). Empty when reachable, and for other Spaces.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub status: String,
+    /// For a Space on another of your machines: why it is in its state,
+    /// for people: why it `failed` ([`SpaceInfo::power_state`]), or that its
+    /// machine is offline. Empty otherwise.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub state_reason: String,
 }
 
 impl SpaceInfo {
@@ -604,6 +611,7 @@ impl SpaceInfo {
             cloud_place: record.cloud_place.clone(),
             cloud_delete: record.cloud_delete.clone(),
             status: String::new(),
+            state_reason: record.state_reason.clone(),
         })
     }
 }

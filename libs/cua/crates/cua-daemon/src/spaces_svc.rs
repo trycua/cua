@@ -62,6 +62,7 @@ mod imp {
             cloud: info.cloud.clone(),
             cloud_place: info.cloud_place.clone(),
             cloud_delete: info.cloud_delete.clone(),
+            state_reason: info.state_reason.clone(),
         }
     }
 

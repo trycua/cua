@@ -186,14 +186,18 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         image: info.image.isEmpty ? nil : info.image,
                         imageDigest: info.imageDigest.isEmpty ? nil : info.imageDigest,
                         kind: AppSpaceKind(word: info.kind), arch: info.arch.isEmpty ? nil : info.arch,
-                        reachable: false, error: nil, host: info.host.isEmpty ? nil : info.host, hostName: info.hostName.isEmpty ? nil : info.hostName,
+                        // A Space on another of your machines: why it is in
+                        // its state (it failed, its machine is offline).
+                        reachable: false, error: info.stateReason.isEmpty ? nil : info.stateReason,
+                        host: info.host.isEmpty ? nil : info.host, hostName: info.hostName.isEmpty ? nil : info.hostName,
                         power: info.power.isEmpty ? nil : info.power,
                         powerState: info.powerState.isEmpty ? nil : info.powerState,
                         cloud: info.cloud.isEmpty ? nil : info.cloud,
                         cloudPlace: info.cloudPlace.isEmpty ? nil : info.cloudPlace,
                         cloudDelete: info.cloudDelete.isEmpty ? nil : info.cloudDelete)
-                    // Turned off on purpose: no probe (it would only time out).
-                    if ["suspended", "stopped"].contains(info.powerState) {
+                    // Turned off on purpose, or (on another of your machines)
+                    // starting or failed there: no probe (it would only time out).
+                    if ["suspended", "stopped", "starting", "failed"].contains(info.powerState) {
                         return (index, row)
                     }
                     // Bounded connect: an unreachable Space must not stall the list.

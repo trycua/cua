@@ -1401,7 +1401,14 @@ fn is_hosts_record_of(listed: &Space, p: &PendingCreate) -> bool {
     // Its name; an unnamed create is named by the machine, so any record
     // there that is not up yet is the one.
     let unnamed = p.name == pending_name("", p.os);
-    listed.name == p.name || (unnamed && listed.status == SpaceStatus::Suspended)
+    // (Not up yet: not answering, or what the machine says while it
+    // creates it, Starting.)
+    listed.name == p.name
+        || (unnamed
+            && matches!(
+                listed.status,
+                SpaceStatus::Suspended | SpaceStatus::Provisioning
+            ))
 }
 
 /// The registry's Spaces plus a row per pending create (finished creates

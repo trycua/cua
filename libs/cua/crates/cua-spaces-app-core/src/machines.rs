@@ -16,11 +16,26 @@
 //!    name (devices are named after their hostname);
 //! 4. the same name;
 //! 5. the device's name is a hostname whose first label is the machine's
-//!    first word (`gamma-4.example.com` and `gamma-4 Mac Studio`).
+//!    first word (`gamma-4.example.com` and `gamma-4 Mac Studio`);
+//! 6. the same computer name however it is spelled ([`computer_key`]: a
+//!    hostname and the computer name it comes from).
 //!
-//! Steps 3 to 5 merge only a pair that matches nobody else, on either
+//! Steps 3 to 6 merge only a pair that matches nobody else, on either
 //! side, and whose systems agree: two Macs that share a name stay two
-//! rows. The merged row keeps the machine's id (what `on="host:<id>"`
+//! rows.
+//!
+//! Each reinstall, sign-in or host setup can leave the same computer behind
+//! under another identity (an old device key, an old relay machine named
+//! after its hostname). [`merge`] then folds a stale row into the one live
+//! row of the same computer: a row is stale when it is not this machine,
+//! not online, and (a device of its own) not seen for
+//! [`DEVICE_STALE_SECS`]; it is the same computer when one of its names
+//! and one of the live row's names are the same computer name
+//! ([`computer_key`]: "Dillon's MacBook Pro (2)" and its hostname
+//! "Dillons-MacBook-Pro-2.local" are one) and their systems agree. A stale
+//! device of its own with no live row folds into the one machine of that
+//! name. A row is labelled with the computer's name: a machine named after
+//! its hostname takes its device's name. The merged row keeps the machine's id (what `on="host:<id>"`
 //! takes) and its name, and is online when the app reached it or the
 //! relay sees it connected. A device that matches no machine is listed on
 //! its own, marked `device_only`: it is not a host, so New Space's "Run
@@ -42,6 +57,10 @@ use crate::model::{Space, SpaceOs, SpaceProvider, SpaceStatus};
 
 /// A device whose last session is this recent counts as online.
 pub const DEVICE_ONLINE_SECS: u64 = 15 * 60;
+
+/// A device of its own with no session this recent is a stale identity of
+/// its computer ([`merge`] folds it into that computer's live row).
+pub const DEVICE_STALE_SECS: u64 = 24 * 3600;
 
 /// A machine a shell found.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +160,28 @@ fn host_label(name: &str) -> Option<String> {
     }
     let first = k.split('.').next()?;
     (!first.is_empty()).then(|| first.to_string())
+}
+
+/// A computer's name as its computer name and its hostname both spell it:
+/// lowercase letters and digits only, without a `.local` / `.localdomain`
+/// suffix ("Dillon's MacBook Pro (2)" and "Dillons-MacBook-Pro-2.local"
+/// are both `dillonsmacbookpro2`). `None` when too short to tell computers
+/// apart ("Mac").
+fn computer_key(name: &str) -> Option<String> {
+    let k = key(name);
+    let k = k
+        .strip_suffix(".localdomain")
+        .or_else(|| k.strip_suffix(".local"))
+        .unwrap_or(&k);
+    let out: String = k.chars().filter(|c| c.is_alphanumeric()).collect();
+    (out.chars().count() >= 5).then_some(out)
+}
+
+/// A name that is a hostname, not a computer name a person chose
+/// ("Mac.localdomain", "Dillons-MacBook-Pro-2.local").
+fn is_hostname(name: &str) -> bool {
+    let n = name.trim();
+    !n.is_empty() && !n.contains(char::is_whitespace) && (n.contains('.') || n.contains('-'))
 }
 
 /// The first word of a display name ("gamma-4" of "gamma-4 Mac Studio").
@@ -246,6 +287,15 @@ pub fn merge(input: &MachinesInput) -> Vec<MachineOut> {
         })
     });
 
+    // 6. The same computer name, however it is spelled (a hostname and the
+    // computer name it comes from).
+    pair_unique(input, &mut machine_of, &mut taken, |m, d| {
+        computer_key(&d.name).is_some_and(|k| {
+            computer_key(&m.name).as_deref() == Some(k.as_str())
+                || m.hostname.as_deref().and_then(computer_key).as_deref() == Some(k.as_str())
+        })
+    });
+
     let mut out: Vec<MachineOut> = input
         .machines
         .iter()
@@ -271,10 +321,12 @@ pub fn merge(input: &MachinesInput) -> Vec<MachineOut> {
             }
         })
         .collect();
+    let mut device_rows: Vec<usize> = vec![];
     for (d, of) in input.devices.iter().zip(&machine_of) {
         if of.is_some() || d.current || d.state == "revoked" {
             continue;
         }
+        device_rows.push(input.devices.iter().position(|x| x.id == d.id).unwrap_or(0));
         out.push(MachineOut {
             id: d.id.clone(),
             name: if d.name.trim().is_empty() {
@@ -290,7 +342,138 @@ pub fn merge(input: &MachinesInput) -> Vec<MachineOut> {
             current: false,
         });
     }
-    out
+    fold_stale(input, &machine_of, &device_rows, out)
+}
+
+/// What [`fold_stale`] knows of one row.
+struct RowFacts {
+    /// Its names as computer names ([`computer_key`]).
+    keys: Vec<String>,
+    /// `macos`, `linux`, `windows`, or empty.
+    os: String,
+    /// This machine, or online.
+    live: bool,
+    /// Not live, and (a device of its own) not seen for
+    /// [`DEVICE_STALE_SECS`].
+    stale: bool,
+}
+
+/// Folds each stale row into the one live row of the same computer (or a
+/// stale device of its own into the one machine of that name), and names a
+/// machine named after its hostname by its device's computer name. See the
+/// module docs.
+fn fold_stale(
+    input: &MachinesInput,
+    machine_of: &[Option<usize>],
+    device_rows: &[usize],
+    mut out: Vec<MachineOut>,
+) -> Vec<MachineOut> {
+    let n_machines = input.machines.len();
+    let device_of = |row: usize| -> Option<&DeviceIn> {
+        if row < n_machines {
+            machine_of
+                .iter()
+                .position(|m| *m == Some(row))
+                .map(|d| &input.devices[d])
+                .or_else(|| {
+                    input.machines[row]
+                        .current
+                        .then(|| input.devices.iter().find(|d| d.current))
+                        .flatten()
+                })
+        } else {
+            device_rows
+                .get(row - n_machines)
+                .map(|&d| &input.devices[d])
+        }
+    };
+    let facts: Vec<RowFacts> = out
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let device = device_of(i);
+            let mut names: Vec<&str> = vec![];
+            if i < n_machines {
+                let m = &input.machines[i];
+                // This machine's own row is named for its system ("This
+                // Mac"), not for the computer.
+                if !m.current {
+                    names.push(&m.name);
+                }
+                if let Some(h) = m.hostname.as_deref() {
+                    names.push(h);
+                }
+            }
+            if let Some(d) = device {
+                names.push(&d.name);
+            }
+            let mut keys: Vec<String> = names.into_iter().filter_map(computer_key).collect();
+            keys.sort();
+            keys.dedup();
+            let os = if i < n_machines && !input.machines[i].os.is_empty() {
+                input.machines[i].os.to_lowercase()
+            } else {
+                device.map(|d| platform_os(&d.platform)).unwrap_or_default()
+            };
+            let live = r.current || r.online;
+            let seen_lately = r.device_only
+                && device
+                    .and_then(|d| d.last_seen)
+                    .is_some_and(|s| input.now.saturating_sub(s) < DEVICE_STALE_SECS);
+            RowFacts {
+                keys,
+                os,
+                live,
+                stale: !live && !seen_lately,
+            }
+        })
+        .collect();
+    let same = |a: &RowFacts, b: &RowFacts| {
+        (a.os.is_empty() || b.os.is_empty() || a.os == b.os)
+            && a.keys.iter().any(|k| b.keys.contains(k))
+    };
+    let mut folded = vec![false; out.len()];
+    for i in 0..out.len() {
+        if !facts[i].stale || facts[i].keys.is_empty() {
+            continue;
+        }
+        let live: Vec<usize> = (0..out.len())
+            .filter(|&j| j != i && !folded[j] && facts[j].live && same(&facts[i], &facts[j]))
+            .collect();
+        let into = match live[..] {
+            [j] => Some(j),
+            [] if out[i].device_only => {
+                let machines: Vec<usize> = (0..out.len())
+                    .filter(|&j| {
+                        j != i && !folded[j] && !out[j].device_only && same(&facts[i], &facts[j])
+                    })
+                    .collect();
+                match machines[..] {
+                    [j] => Some(j),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if into.is_some() {
+            folded[i] = true;
+        }
+    }
+    // A machine named after its hostname takes its device's computer name.
+    for (i, r) in out.iter_mut().enumerate() {
+        if r.device_only || r.current || !is_hostname(&r.name) {
+            continue;
+        }
+        if let Some(d) = device_of(i).filter(|d| !d.name.trim().is_empty() && !is_hostname(&d.name))
+        {
+            r.name = d.name.clone();
+        }
+    }
+    out.into_iter()
+        .zip(folded)
+        .filter(|(_, f)| !f)
+        .map(|(r, _)| r)
+        .collect()
 }
 
 /// The machines New Space can create on (`on="host:<id>"`): every row but
@@ -786,6 +969,99 @@ mod tests {
         assert!(rows[2].online && !rows[3].online);
         assert!(rows[2].device_only && rows[3].device_only);
         assert_eq!(run_on_ids(&rows), ["m1"]);
+    }
+
+    /// Each computer once, under its computer name, however many
+    /// identities reinstalls, sign-ins and host setups left behind: this
+    /// laptop as "This Mac", an old relay machine named after its hostname
+    /// and an old device key; the spare Mac as a relay machine named after
+    /// its hostname and its app's device.
+    #[test]
+    fn stale_identities_of_a_computer_fold_into_its_live_row() {
+        let day = 24 * 3600;
+        let mut laptop = device("dev_f0ec", "Dillon\u{2019}s MacBook Pro (2)");
+        laptop.current = true;
+        let mut old_key = device("dev_bb82", "Dillon\u{2019}s MacBook Pro (2)");
+        old_key.last_seen = Some(NOW - 13 * day);
+        let mut old_host_device = device("dev_24ec", "Dillons-MacBook-Pro-2.local");
+        old_host_device.last_seen = Some(NOW - 11 * day);
+        let mut old_host = relay("b6953d14", "Dillons-MacBook-Pro-2.local", false);
+        old_host.os = String::new();
+        let mut spare = relay("9e9d969d", "Mac.localdomain", true);
+        spare.hostname = Some("Mac.localdomain".into());
+        let mut spare_app = device("dev_4b53", "cua\u{2019}s Mac Studio");
+        spare_app.last_seen = Some(NOW - 60);
+        let mut spare_old = device("dev_cdc6", "cua\u{2019}s Mac Studio");
+        spare_old.last_seen = Some(NOW - 5 * day);
+        let rows = merge(&input(
+            vec![this_mac(), spare.clone(), old_host],
+            vec![
+                laptop,
+                old_key,
+                old_host_device,
+                spare_app.clone(),
+                spare_old,
+            ],
+        ));
+        // "Mac.localdomain" and its app's device do not share a name: until
+        // the spare Mac names its relay machine for its computer name
+        // (`HostSpacesServer::label_own_machine`), they are two rows.
+        assert_eq!(
+            names(&rows),
+            ["This Mac", "Mac.localdomain", "cua\u{2019}s Mac Studio"]
+        );
+        // Once it does: one row, under its computer name.
+        spare.name = "cua\u{2019}s Mac Studio".into();
+        let rows = merge(&input(vec![this_mac(), spare], vec![spare_app]));
+        assert_eq!(names(&rows), ["This Mac", "cua\u{2019}s Mac Studio"]);
+        assert_eq!(rows[1].device.as_deref(), Some("dev_4b53"));
+    }
+
+    #[test]
+    fn a_machine_named_after_its_hostname_takes_its_computer_name() {
+        let mut m = relay("m1", "studio.local", true);
+        m.hostname = Some("studio.local".into());
+        let rows = merge(&input(
+            vec![m],
+            vec![device("dev_s", "Ada\u{2019}s Mac Studio")],
+        ));
+        // Paired by nothing (the names differ): two rows, as before.
+        assert_eq!(rows.len(), 2);
+        let mut m = relay("m1", "Ada-s-Mac-Studio.local", true);
+        m.hostname = Some("Ada-s-Mac-Studio.local".into());
+        let rows = merge(&input(
+            vec![m],
+            vec![device("dev_s", "Ada\u{2019}s Mac Studio")],
+        ));
+        assert_eq!(names(&rows), ["Ada\u{2019}s Mac Studio"]);
+    }
+
+    #[test]
+    fn identities_seen_lately_or_ambiguous_are_not_folded() {
+        // Two Macs with one name, both in use today: two rows.
+        let mut a = device("dev_a", "Studio Mac");
+        a.last_seen = Some(NOW - 600);
+        let mut b = device("dev_b", "Studio Mac");
+        b.last_seen = Some(NOW - 7200);
+        let rows = merge(&input(vec![this_mac()], vec![a, b]));
+        assert_eq!(rows.len(), 3);
+        // A stale one with two live rows of its name: which is unknown.
+        let mut old = device("dev_o", "Studio Mac");
+        old.last_seen = Some(NOW - 30 * 24 * 3600);
+        let rows = merge(&input(
+            vec![
+                relay("m1", "Studio Mac", true),
+                relay("m2", "Studio Mac", true),
+            ],
+            vec![old],
+        ));
+        assert_eq!(rows.len(), 3);
+        // A different system is a different computer.
+        let mut old = device("dev_o", "Studio Mac");
+        old.platform = "windows".into();
+        old.last_seen = Some(NOW - 30 * 24 * 3600);
+        let rows = merge(&input(vec![relay("m1", "Studio Mac", true)], vec![old]));
+        assert_eq!(rows.len(), 2);
     }
 
     fn space(v: serde_json::Value) -> Space {

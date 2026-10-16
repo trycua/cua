@@ -143,7 +143,10 @@ message Space {
   // when it cannot. Filled in when listed, not stored.
   string power = 16;
   // "running", "suspended" or "stopped" as cua last recorded it; empty when
-  // unknown. Filled in when listed, not stored.
+  // unknown. A Space one of your other machines provides says what that
+  // machine reports: "running", "starting" (being created, booting, or
+  // joining the relay), "suspended", "stopped" or "failed" (`state_reason`
+  // says why). Filled in when listed, not stored.
   string power_state = 17;
   // A Space in the owner's own cloud: the provider ("aws", "gcp",
   // "modal"); empty otherwise.
@@ -155,6 +158,10 @@ message Space {
   // created it, through the relay) or "elsewhere" (only from the device
   // that created it). Empty for other Spaces.
   string cloud_delete = 20;
+  // For a Space on another of your machines: why it is in its state, for
+  // people (why it "failed", or that its machine is offline). Empty
+  // otherwise. Filled in when listed, not stored.
+  string state_reason = 21;
 }
 
 // Request for `SpaceService.AddSpace`.

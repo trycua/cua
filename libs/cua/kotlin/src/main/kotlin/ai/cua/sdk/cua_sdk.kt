@@ -35680,8 +35680,10 @@ data class SpaceInfo (
     ,
     /**
      * `running`, `suspended` or `stopped` as cua last recorded it; empty
-     * when unknown (a Space one of your machines provides answers while it
-     * runs).
+     * when unknown. A Space one of your other machines provides says what
+     * that machine reports: `running`, `starting` (being created, booting,
+     * or joining the relay), `suspended`, `stopped`, or `failed`
+     * (`state_reason` says why).
      */
     var `powerState`: kotlin.String
     ,
@@ -35703,6 +35705,13 @@ data class SpaceInfo (
      * Empty for other Spaces.
      */
     var `cloudDelete`: kotlin.String
+    ,
+    /**
+     * For a Space on another of your machines: why it is in its state,
+     * for people (why it `failed`, or that its machine is offline). Empty
+     * otherwise.
+     */
+    var `stateReason`: kotlin.String
 
 ){
 
@@ -35740,6 +35749,7 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
         )
     }
 
@@ -35764,7 +35774,8 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterString.allocationSize(value.`powerState`) +
             FfiConverterString.allocationSize(value.`cloud`) +
             FfiConverterString.allocationSize(value.`cloudPlace`) +
-            FfiConverterString.allocationSize(value.`cloudDelete`)
+            FfiConverterString.allocationSize(value.`cloudDelete`) +
+            FfiConverterString.allocationSize(value.`stateReason`)
     )
 
     override fun write(value: SpaceInfo, buf: ByteBuffer) {
@@ -35789,6 +35800,7 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterString.write(value.`cloud`, buf)
             FfiConverterString.write(value.`cloudPlace`, buf)
             FfiConverterString.write(value.`cloudDelete`, buf)
+            FfiConverterString.write(value.`stateReason`, buf)
     }
 }
 

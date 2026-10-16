@@ -518,6 +518,8 @@ impl HostSpacesServer {
   fn new(spaces: Spaces) -> Arc<Self>;
   async fn restore_direct_forwards(&self);
   async fn get(&self, caller: &HostCaller) -> Result<GetHostSpacesResponse>;
+  async fn label_own_machine(&self) -> Result<Option<String>>;
+  async fn publish_own(&self) -> Result<Vec<String>>;
   async fn create(&self, caller: &HostCaller, req: CreateHostSpaceRequest) -> Result<HostSpace>;
   async fn cancel(&self, caller: &HostCaller, space: &str) -> Result<String>;
   async fn delete_cloud(&self, caller: &HostCaller, space: &str) -> Result<String>;
@@ -1604,6 +1606,7 @@ pub struct SpaceInfo {
   pub cloud_place: String,
   pub cloud_delete: String,
   pub status: String,
+  pub state_reason: String,
 }
 ```
 
@@ -2189,6 +2192,12 @@ pub fn frame_message(text: &str, title: &str, others: &[String]) -> String
 // mod host_spaces
 /// The relay URL a Space on this host ...
 pub fn guest_relay_url(relay_url: &str, kind: &str) -> String
+/// Whether `p` is one of the host ...
+pub fn is_published(p: &ProvidedSpace, host_id: &str) -> bool
+/// The relay machine this host publishes ...
+pub fn published_machine(host_id: &str, local_space: &str) -> String
+/// What a sandbox's status says the Space ...
+pub fn space_state(status: &Status) -> (&'static str, String)
 /// A `tonic::Status` carrying a ...
 pub fn to_status(e: &Error) -> Status
 
@@ -2345,6 +2354,8 @@ pub const MIN_BOTS: usize = 2;
 pub const CALLER_METADATA: &str = "x-cua-host-caller";
 /// The spacesd feature a host reports ...
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
+/// Who `HostSpacesServer::publish_own` ...
+pub const PUBLISHED_BY: &str = "this machine";
 /// `HostLimit::resource` of a host the ...
 pub const STOPPED_SHARING: &str = "sharing";
 

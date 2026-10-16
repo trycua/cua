@@ -58,6 +58,13 @@ impl HostSpacesService for FakeDaemon {
         self.callers.lock().unwrap().push(who);
         Ok(tonic::Response::new(GetHostSpacesResponse {
             name: "Mac mini (spare)".into(),
+            spaces: vec![HostSpace {
+                relay_machine: "space-0000000000000001".into(),
+                local_space: "local:dev-macos".into(),
+                state: "failed".into(),
+                state_reason: "its sandbox is gone".into(),
+                ..Default::default()
+            }],
             ..Default::default()
         }))
     }
@@ -318,6 +325,14 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
         .unwrap()
         .into_inner();
     assert_eq!(got.name, "Mac mini (spare)");
+    // What each Space is doing reaches the caller as the daemon said it.
+    assert_eq!(
+        (
+            got.spaces[0].state.as_str(),
+            got.spaces[0].state_reason.as_str()
+        ),
+        ("failed", "its sandbox is gone")
+    );
     let who: serde_json::Value = serde_json::from_str(&daemon.callers.lock().unwrap()[0]).unwrap();
     assert_eq!(who["account"], "ada");
     assert_eq!(who["role"], "owner");
@@ -544,6 +559,14 @@ async fn a_direct_host_serves_host_spaces_to_its_token_holder() {
         .unwrap()
         .into_inner();
     assert_eq!(got.name, "Mac mini (spare)");
+    // What each Space is doing reaches the caller as the daemon said it.
+    assert_eq!(
+        (
+            got.spaces[0].state.as_str(),
+            got.spaces[0].state_reason.as_str()
+        ),
+        ("failed", "its sandbox is gone")
+    );
     let who: serde_json::Value =
         serde_json::from_str(daemon.callers.lock().unwrap().last().unwrap()).unwrap();
     assert_eq!(

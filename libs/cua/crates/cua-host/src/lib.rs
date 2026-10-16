@@ -78,6 +78,12 @@ pub fn device_name() -> String {
     host::friendly_name()
 }
 
+/// This machine's host name as the system reports it (`Mac.localdomain`):
+/// what relay machines set up by older versions were named.
+pub fn system_hostname() -> String {
+    host::hostname()
+}
+
 /// The relay this machine talks to: `flag` (e.g. `--relay`), else
 /// `CUA_RELAY_URL`, else the relay this machine is set up with
 /// (`<home>/host/config.json`), else the default relay. The CLI and the

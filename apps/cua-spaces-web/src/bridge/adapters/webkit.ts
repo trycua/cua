@@ -100,7 +100,24 @@ export function spaceToRow(s: WkSpace): SpaceRow {
   const running = s.status === "local";
   const here = running || s.id === "this-mac";
   const off = s.power ? s.power.off : s.status === "suspended";
-  const powerState = s.power ? (off ? (s.power.control === "stop" ? "stopped" : "suspended") : "running") : off ? "suspended" : undefined;
+  // What the machine running a Space elsewhere says (the core's
+  // `REMOTE_STARTING` / `REMOTE_FAILED`): starting there, or failed there.
+  const remote = s.id.startsWith("relay:") && s.host;
+  const starting = remote && s.status === "provisioning";
+  const failed = remote && off && Boolean(s.power?.error) && s.detail.startsWith("Failed");
+  const powerState = starting
+    ? "starting"
+    : failed
+      ? "failed"
+      : s.power
+        ? off
+          ? s.power.control === "stop"
+            ? "stopped"
+            : "suspended"
+          : "running"
+        : off
+          ? "suspended"
+          : undefined;
   const added = s.startedAt ?? s.lastUsedAt;
   return {
     id: s.id,

@@ -20,8 +20,9 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import IO, List, Optional
 
 import aiohttp
 
@@ -52,6 +53,12 @@ def _find_free_ports(n: int) -> List[int]:
     return ports
 
 
+def _forward_output(worker_id: str, stream: IO[str]) -> None:
+    with stream:
+        for line in stream:
+            sys.stderr.write(f"[{worker_id}] {line}")
+
+
 @dataclass
 class WorkerHandle:
     """Handle for a running worker server.
@@ -61,12 +68,14 @@ class WorkerHandle:
         port: Port the worker is listening on
         process: Subprocess running the worker
         api_url: Full URL for API requests
+        output_reader: Thread forwarding the worker's stdout and stderr to ours
     """
 
     worker_id: str
     port: int
     process: subprocess.Popen
     api_url: str
+    output_reader: Optional[threading.Thread] = None
 
     async def health_check(self, timeout: float = 5.0) -> bool:
         """Check if the worker is healthy.
@@ -103,6 +112,8 @@ class WorkerHandle:
                     self.process.wait(timeout=5)
             except Exception:
                 pass
+        if self.output_reader:
+            self.output_reader.join(timeout=5)
 
     @property
     def is_running(self) -> bool:
@@ -162,14 +173,13 @@ async def create_workers(
         ]
 
         try:
-            # Nothing reads the worker's output, so never give it a pipe: uvicorn logs a
-            # line per request and blocks once a pipe buffer fills. Drop the access log
-            # (stdout) and let startup messages and errors (stderr) reach ours.
             process = subprocess.Popen(
                 cmd,
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                errors="replace",
                 start_new_session=True,  # Detach from parent
             )
         except Exception as e:
@@ -178,12 +188,18 @@ async def create_workers(
                 handle.stop()
             raise RuntimeError(f"Failed to start worker {worker_id}: {e}")
 
+        output_reader = threading.Thread(
+            target=_forward_output, args=(worker_id, process.stdout), daemon=True
+        )
+        output_reader.start()
+
         api_url = f"http://127.0.0.1:{port}"
         handle = WorkerHandle(
             worker_id=worker_id,
             port=port,
             process=process,
             api_url=api_url,
+            output_reader=output_reader,
         )
         handles.append(handle)
 

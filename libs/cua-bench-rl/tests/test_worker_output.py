@@ -29,3 +29,21 @@ async def test_worker_keeps_answering_past_pipe_buffer():
                     pytest.fail(f"worker stopped answering after {i} requests")
     finally:
         await cleanup_workers(workers)
+
+
+async def test_worker_output_reaches_parent_until_stopped(capfd):
+    workers = await create_workers(n_workers=1, allowed_ips=["127.0.0.1"], host="127.0.0.1")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{workers[0].api_url}/health") as response:
+                assert response.status == 200
+    finally:
+        await cleanup_workers(workers)
+
+    assert not workers[0].output_reader.is_alive()
+    err = capfd.readouterr().err
+    assert "[w0] INFO:     Uvicorn running on" in err
+    assert any(
+        line.startswith("[w0] ") and '"GET /health HTTP/1.1" 200' in line
+        for line in err.splitlines()
+    )

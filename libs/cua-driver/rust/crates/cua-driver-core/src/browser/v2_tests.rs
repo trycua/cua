@@ -2707,6 +2707,22 @@ async fn protected_browser_scope_reproves_live_origin_and_omits_sensitive_url_te
 }
 
 #[tokio::test]
+async fn a_stale_binding_keeps_its_refusal_code_through_scope_attestation() {
+    let f = fixture().await;
+    let args = json!({
+        "target_id": "bt-gone",
+        "tab_id": "tab-gone",
+        "session": SESSION,
+    });
+
+    let error = browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, Some("browser_binding_stale"));
+    assert!(error.message.contains("bt-gone"));
+}
+
+#[tokio::test]
 async fn click_routes_oopif_refs_through_the_contained_child_session() {
     let f = fixture().await;
     let (target, tab) = bind(&f).await;

@@ -13856,7 +13856,7 @@ impl Tool for KillAppTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, cua_driver_core::tool::ProtectedResourceScopeError> {
         if adapter_id != "process_control" {
             return Ok(None);
         }
@@ -13884,7 +13884,7 @@ impl Tool for KillAppTool {
             {
                 Ok(Some(scope)) => scope["fingerprint"].clone(),
                 Ok(None) => Value::Null,
-                Err(message) => return kill_app_stale_process_refusal(message),
+                Err(error) => return kill_app_stale_process_refusal(error.message),
             };
             if current != *expected {
                 return kill_app_stale_process_refusal(

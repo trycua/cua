@@ -499,10 +499,8 @@ Calc cells do: `set_value` returns success at the AX level and the cell
 keeps its old content. `set_value` re-reads the value, and when it has
 not moved it fails with `code:"write_not_applied"` and
 `effect:"not_applied"`, so a `run_script` stops there. LibreOffice also
-drops background pointer input, so its cells cannot be edited in the
-background at all: the edit needs the window in front (`bring_to_front`,
-then `type_text`), only if the user allows it. Otherwise stop and report
-the step as blocked.
+ignores background pointer input, so address it with `window_id` and type
+instead (see "LibreOffice, Numbers and other editors in the background").
 
 ### Known text-input limits (Catalyst + Electron)
 
@@ -659,4 +657,8 @@ above (`invoke_menu` with a path such as `["Go", "Downloads"]`).
 
 ### LibreOffice, Numbers and other editors in the background
 
-With `window_id`, `type_text`, `press_key` and `hotkey` post keys to that exact window: the driver makes it the app's key window through in-app key-window records (no raise, no activation, real pointer untouched), confirms that the app's focused window and focused element are in that window, posts, and hands key back. This also covers another window or dialog of the app holding focus, and a LibreOffice that was never activated. When the switch cannot be confirmed the call is refused with `window_not_key` and no key is sent. A second window of the same app (Find & Replace, another document) is no longer `same_pid_keyboard_ambiguity`. A command key whose menu route is refused (item disabled while the app is in the background) falls through to key events in that window. Recipe: Name Box navigation (`type_text` `A1\n`), type with `\n` and `\t`, then read the cell back.
+With `window_id`, `type_text`, `press_key` and `hotkey` post keys to that exact window: the driver makes it the app's key window through in-app key-window records (no raise, no activation, real pointer untouched), confirms that the app's focused window and focused element are in that window, posts, and hands key back. This also covers another window or dialog of the app holding focus, and a LibreOffice that was never activated. When the switch cannot be confirmed the call is refused with `window_not_key` and no key is sent. A second window of the same app (Find & Replace, another document) is no longer `same_pid_keyboard_ambiguity`. A command key whose menu route is refused (item disabled while the app is in the background) falls through to key events in that window. Recipe: pass `window_id` on every call; go to the cell with Name Box navigation (`type_text` `A1\n`), type with `\n` and `\t`, read the cell back; run commands (Paste Special, Format, Save) with `invoke_menu({pid, window_id, path})` rather than clicking the menu bar. A `background_unavailable` refusal here means use `get_window_state` and act by element, not stop.
+
+### Preview: export before resizing
+
+Duplicate is disabled in a background Preview, so work on an export: File > Export (`invoke_menu`) to the destination, then resize or edit the exported copy. Do not resize the original first.

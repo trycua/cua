@@ -1085,6 +1085,7 @@ Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`
 | `cloud` | `String` |  | A Space in your own cloud: the provider (`aws`, `gcp`, `modal`); empty otherwise. |
 | `cloud_place` / `cloudPlace` | `String` |  | Where it runs ("AWS · us-west-2"). |
 | `cloud_delete` / `cloudDelete` | `String` |  | How `delete` would delete it permanently from here: `here` (this device created it), `host:<machine>` (the device that created it, through the relay) or `elsewhere` (only there; `remove` keeps it). Empty for other Spaces. |
+| `stop_reason` / `stopReason` | `String` | `""` | Why a local Space stopped without being asked to, in plain words ("out of memory", "killed", "exited with code 1"); empty otherwise, and once it is started again. |
 
 ## `SpacePowerReport` record
 

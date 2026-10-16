@@ -282,6 +282,9 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     // (the Spaces apps' notch and previews, SDK scripts); idle otherwise.
     #[cfg(feature = "spaces")]
     let _thumbnails = runtime.spaces().spawn_thumbnail_refresh();
+    // A local Space that stops on its own (out of memory, a crash) is
+    // recorded as stopped, and why, for every client.
+    let _stop_watch = runtime.sandboxes().spawn_stop_watch();
     let own = std::env::current_exe()
         .ok()
         .and_then(|e| crate::identity::of(&e));

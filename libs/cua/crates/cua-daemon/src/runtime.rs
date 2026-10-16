@@ -179,6 +179,9 @@ pub struct SandboxRecord {
     /// The image as resolved and pinned at create time, when known (not
     /// carried over the daemon wire).
     pub image_info: Option<cua_sandbox_core::ImageInfo>,
+    /// Why a local sandbox stopped without being asked to, in plain words
+    /// ("out of memory"); `None` otherwise.
+    pub stop_reason: Option<String>,
 }
 
 /// How long a listing waits for Fleet before it lists without the cloud
@@ -249,6 +252,7 @@ async fn cloud_claims(fleet: &FleetClient) -> Result<Vec<SandboxRecord>> {
                     ("claim".to_string(), name),
                 ]),
                 image_info: None,
+                stop_reason: None,
             });
         }
     }
@@ -1054,6 +1058,7 @@ impl Runtime {
                         expires_at: None,
                         provider_details: BTreeMap::new(),
                         image_info: None,
+                        stop_reason: info.stop_reason.map(|r| r.words()),
                     });
                 }
                 return Err(e);
@@ -1118,6 +1123,7 @@ impl Runtime {
                     expires_at,
                     provider_details,
                     image_info: None,
+                    stop_reason: info.stop_reason.map(|r| r.words()),
                 },
             );
         }
@@ -1128,7 +1134,14 @@ impl Runtime {
                     .get(key)
                     .map(|r| r.status.clone())
                     .unwrap_or(Status::Running);
-                out.insert(key.clone(), record_of(key, h, status));
+                let stop_reason = out.get(key).and_then(|r| r.stop_reason.clone());
+                out.insert(
+                    key.clone(),
+                    SandboxRecord {
+                        stop_reason,
+                        ..record_of(key, h, status)
+                    },
+                );
             }
         }
         Ok(out
@@ -1725,6 +1738,7 @@ fn record_of(key: &str, h: &Handle, status: Status) -> SandboxRecord {
         expires_at: sb.expires_at(),
         provider_details: sb.provider_details(),
         image_info: sb.image_info().cloned(),
+        stop_reason: None,
     }
 }
 

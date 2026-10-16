@@ -62,6 +62,7 @@ mod imp {
             cloud: info.cloud.clone(),
             cloud_place: info.cloud_place.clone(),
             cloud_delete: info.cloud_delete.clone(),
+            stop_reason: info.stop_reason.clone(),
         }
     }
 
@@ -198,6 +199,7 @@ mod imp {
             let mut spaces = self.spaces().registry().list().map_err(|e| st(e.into()))?;
             for s in &mut spaces {
                 (s.power, s.power_state) = self.spaces().power_of(&s.id);
+                s.stop_reason = self.spaces().stop_reason_of(&s.id);
             }
             // Plus the signed-in account's relay machines (refreshed).
             for info in self.spaces().list_all().await.map_err(|e| st(e.into()))? {

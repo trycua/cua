@@ -12899,7 +12899,12 @@ export type SandboxInfo = {
      * `None` for direct connections, named pools, images not resolved from
      * a registry, and the daemon topology.
      */
-    imageInfo?: ImageInfo
+    imageInfo?: ImageInfo,
+    /**
+     * Why a local sandbox stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+     */
+    stopReason?: string
 }
 
 /**
@@ -12907,7 +12912,8 @@ export type SandboxInfo = {
  */
 export const SandboxInfo = (() => {
     const defaults = () => ({
-        imageInfo: undefined
+        imageInfo: undefined,
+        stopReason: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<SandboxInfo, ReturnType<typeof defaults>>(defaults);
@@ -12939,7 +12945,8 @@ const FfiConverterTypeSandboxInfo = (() => {
                 location: FfiConverterString.read(from),
                 expiresAtUnix: FfiConverterOptionalInt64.read(from),
                 providerDetails: FfiConverterMapStringString.read(from),
-                imageInfo: FfiConverterOptionalTypeImageInfo.read(from)
+                imageInfo: FfiConverterOptionalTypeImageInfo.read(from),
+                stopReason: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -12959,6 +12966,7 @@ const FfiConverterTypeSandboxInfo = (() => {
             FfiConverterOptionalInt64.write(value.expiresAtUnix, into);
             FfiConverterMapStringString.write(value.providerDetails, into);
             FfiConverterOptionalTypeImageInfo.write(value.imageInfo, into);
+            FfiConverterOptionalString.write(value.stopReason, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.name) +
@@ -12976,7 +12984,8 @@ const FfiConverterTypeSandboxInfo = (() => {
              FfiConverterString.allocationSize(value.location) +
              FfiConverterOptionalInt64.allocationSize(value.expiresAtUnix) +
              FfiConverterMapStringString.allocationSize(value.providerDetails) +
-             FfiConverterOptionalTypeImageInfo.allocationSize(value.imageInfo);
+             FfiConverterOptionalTypeImageInfo.allocationSize(value.imageInfo) +
+             FfiConverterOptionalString.allocationSize(value.stopReason);
 
         }
     };
@@ -14368,7 +14377,13 @@ export type SpaceInfo = {
      * through the relay) or `elsewhere` (only there; `remove` keeps it).
      * Empty for other Spaces.
      */
-    cloudDelete: string
+    cloudDelete: string,
+    /**
+     * Why a local Space stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); empty otherwise,
+     * and once it is started again.
+     */
+    stopReason: string
 }
 
 /**
@@ -14376,6 +14391,7 @@ export type SpaceInfo = {
  */
 export const SpaceInfo = (() => {
     const defaults = () => ({
+        stopReason: ""
     });
     const create = (() => {
         return uniffiCreateRecord<SpaceInfo, ReturnType<typeof defaults>>(defaults);
@@ -14412,7 +14428,8 @@ const FfiConverterTypeSpaceInfo = (() => {
                 powerState: FfiConverterString.read(from),
                 cloud: FfiConverterString.read(from),
                 cloudPlace: FfiConverterString.read(from),
-                cloudDelete: FfiConverterString.read(from)
+                cloudDelete: FfiConverterString.read(from),
+                stopReason: FfiConverterString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14437,6 +14454,7 @@ const FfiConverterTypeSpaceInfo = (() => {
             FfiConverterString.write(value.cloud, into);
             FfiConverterString.write(value.cloudPlace, into);
             FfiConverterString.write(value.cloudDelete, into);
+            FfiConverterString.write(value.stopReason, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -14459,7 +14477,8 @@ const FfiConverterTypeSpaceInfo = (() => {
              FfiConverterString.allocationSize(value.powerState) +
              FfiConverterString.allocationSize(value.cloud) +
              FfiConverterString.allocationSize(value.cloudPlace) +
-             FfiConverterString.allocationSize(value.cloudDelete);
+             FfiConverterString.allocationSize(value.cloudDelete) +
+             FfiConverterString.allocationSize(value.stopReason);
 
         }
     };

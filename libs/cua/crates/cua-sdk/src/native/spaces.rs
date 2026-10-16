@@ -232,6 +232,12 @@ pub struct SpaceInfo {
     /// Empty for other Spaces.
     #[serde(default)]
     pub cloud_delete: String,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); empty otherwise,
+    /// and once it is started again.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub stop_reason: String,
 }
 
 impl From<dpb::Space> for SpaceInfo {
@@ -265,6 +271,7 @@ impl From<dpb::Space> for SpaceInfo {
             cloud: s.cloud,
             cloud_place: s.cloud_place,
             cloud_delete: s.cloud_delete,
+            stop_reason: s.stop_reason,
         }
     }
 }
@@ -293,6 +300,7 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
             cloud: s.cloud,
             cloud_place: s.cloud_place,
             cloud_delete: s.cloud_delete,
+            stop_reason: s.stop_reason,
         }
     }
 }

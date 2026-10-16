@@ -122,7 +122,7 @@ where
     match rx.recv_timeout(timeout) {
         Ok(result) => Ok(result),
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            cancelled.store(true, Ordering::Release);
+            cancelled.store(true, Ordering::SeqCst);
             tracing::warn!(
                 target: "uia_windows_enum",
                 "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",
@@ -164,8 +164,8 @@ where
 }
 
 /// Run a focused-document input probe through the same bounded UIA worker as
-/// window enumeration and hit testing. A timeout is reported to the caller as
-/// an unknown effect; the caller must not fall through to another input path.
+/// window enumeration and hit testing. The caller decides whether a timeout
+/// may fall through to another input path.
 pub(crate) fn run_focused_document_uia<T, F>(f: F) -> Result<T, UiaDeadlineError>
 where
     T: Send + 'static,
@@ -174,7 +174,7 @@ where
     run_uia_with_deadline_cancelable(
         "focused document typing",
         SUBTREE_OP_TIMEOUT,
-        "an unknown-effect result without another input attempt",
+        "the existing input route unless the write started",
         f,
     )
 }

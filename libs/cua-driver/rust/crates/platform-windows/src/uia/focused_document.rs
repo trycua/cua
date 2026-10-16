@@ -6,6 +6,7 @@
 //! failures are unverifiable and must not be retried through another route.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
@@ -28,8 +29,8 @@ pub(crate) enum FocusedDocumentTypeOutcome {
 }
 
 /// Try the focused Document route on the bounded, single-flight UIA worker.
-/// A busy worker may still be finishing a timed-out input attempt, so it is
-/// unknown too. Only a completed pre-write probe preserves the prior route.
+/// A busy worker, or a failed worker before the write stage, preserves the
+/// existing input route. Once the write stage is reached, failures are unknown.
 pub(crate) fn try_type_focused_document_append(
     target_hwnd: u64,
     expected_pid: Option<u32>,
@@ -40,11 +41,19 @@ pub(crate) fn try_type_focused_document_append(
     }
 
     let text = text.to_owned();
+    let write_started = Arc::new(AtomicBool::new(false));
+    let worker_write_started = write_started.clone();
     match run_focused_document_uia(move |cancelled| {
-        try_type_focused_document_append_unbounded(target_hwnd, expected_pid, &text, &cancelled)
+        try_type_focused_document_append_unbounded(
+            target_hwnd,
+            expected_pid,
+            &text,
+            &cancelled,
+            &worker_write_started,
+        )
     }) {
         Ok(outcome) => outcome,
-        Err(error) => focused_document_worker_error(error),
+        Err(error) => focused_document_worker_error(error, write_started.load(Ordering::SeqCst)),
     }
 }
 
@@ -53,6 +62,7 @@ fn try_type_focused_document_append_unbounded(
     expected_pid: Option<u32>,
     text: &str,
     cancelled: &AtomicBool,
+    write_started: &AtomicBool,
 ) -> FocusedDocumentTypeOutcome {
     use windows::core::BSTR;
     use windows::Win32::System::Com::{
@@ -182,8 +192,9 @@ fn try_type_focused_document_append_unbounded(
             }
         }
         // If the UIA deadline fired during pre-write checks, do not start a
-        // write after the caller has already returned an unknown result.
-        if cancelled.load(Ordering::Acquire) {
+        // write after the caller has already stopped waiting for a result.
+        write_started.store(true, Ordering::SeqCst);
+        if cancelled.load(Ordering::SeqCst) {
             return not_applicable("cancelled_before_write");
         }
 
@@ -395,18 +406,16 @@ fn focused_document_appended_value(current_value: &str, input: &str) -> String {
     value
 }
 
-fn focused_document_worker_error(error: UiaDeadlineError) -> FocusedDocumentTypeOutcome {
-    match error {
-        UiaDeadlineError::Busy => FocusedDocumentTypeOutcome::Unknown(
-            "focused UIA worker is busy; an earlier write may still be in flight",
-        ),
-        UiaDeadlineError::Timeout => {
-            FocusedDocumentTypeOutcome::Unknown("focused UIA call timed out")
-        }
-        UiaDeadlineError::Unavailable => {
-            FocusedDocumentTypeOutcome::Unknown("focused UIA worker ended without a result")
-        }
-    }
+pub(crate) fn focused_document_worker_error(
+    error: UiaDeadlineError,
+    write_started: bool,
+) -> FocusedDocumentTypeOutcome {
+    let stage = match error {
+        UiaDeadlineError::Busy => return FocusedDocumentTypeOutcome::NotApplicable,
+        UiaDeadlineError::Timeout => "focused UIA call timed out",
+        UiaDeadlineError::Unavailable => "focused UIA worker ended without a result",
+    };
+    classify_focused_document_write(write_started, Err(stage))
 }
 
 #[cfg(test)]
@@ -461,17 +470,19 @@ mod tests {
     }
 
     #[test]
-    fn busy_timed_out_or_lost_workers_never_enable_a_second_input_route() {
+    fn timed_out_or_lost_workers_enable_a_second_input_route_only_before_write() {
+        for error in [UiaDeadlineError::Timeout, UiaDeadlineError::Unavailable] {
+            assert_eq!(
+                focused_document_worker_error(error, false),
+                FocusedDocumentTypeOutcome::NotApplicable
+            );
+        }
         assert!(matches!(
-            focused_document_worker_error(UiaDeadlineError::Busy),
+            focused_document_worker_error(UiaDeadlineError::Timeout, true),
             FocusedDocumentTypeOutcome::Unknown(_)
         ));
         assert!(matches!(
-            focused_document_worker_error(UiaDeadlineError::Timeout),
-            FocusedDocumentTypeOutcome::Unknown(_)
-        ));
-        assert!(matches!(
-            focused_document_worker_error(UiaDeadlineError::Unavailable),
+            focused_document_worker_error(UiaDeadlineError::Unavailable, true),
             FocusedDocumentTypeOutcome::Unknown(_)
         ));
     }

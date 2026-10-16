@@ -5216,7 +5216,8 @@ fn focused_document_tool_result(
 #[cfg(test)]
 mod focused_document_result_tests {
     use super::focused_document_tool_result;
-    use crate::uia::focused_document::FocusedDocumentTypeOutcome;
+    use crate::uia::focused_document::{focused_document_worker_error, FocusedDocumentTypeOutcome};
+    use crate::uia::windows_enum::UiaDeadlineError;
     use cua_driver_contract::{ActionEffect, ActionRoute};
     use cua_driver_core::action_record::{ActionExecutionRecord, ActionTransport};
     use cua_driver_core::protocol::ToolResult;
@@ -5258,6 +5259,13 @@ mod focused_document_result_tests {
         let unknown = normalize(unknown);
         assert_eq!(unknown.route, ActionRoute::Accessibility);
         assert_eq!(unknown.effect, ActionEffect::Unverifiable);
+    }
+
+    #[test]
+    fn busy_before_probe_falls_back() {
+        let busy = focused_document_worker_error(UiaDeadlineError::Busy, false);
+        assert_eq!(busy, FocusedDocumentTypeOutcome::NotApplicable);
+        assert!(focused_document_tool_result(busy, 12).is_none());
     }
 }
 

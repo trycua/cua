@@ -106,7 +106,10 @@ unnamed calls and cleaned up when the connection closes, on `end_session`, or
 after five idle minutes. After idle expiry, the next unnamed call starts a new
 implicit session, and element tokens and snapshots from the ended one stay
 invalid, so observe again before acting. An ended named session refuses calls
-with `session_ended` until `start_session` restarts it. Pass a `session` label on each call for a readable
+with `session_ended` until `start_session` restarts it. Once the connection
+that held a label closes, another connection's next call starts a fresh session
+under that label, unless the label was ended with `end_session`; then any
+connection may restart it with `start_session`. Pass a `session` label on each call for a readable
 name and a cursor badge; the label is not a credential. One-shot
 `cua-driver call` commands each get a disposable session. All sessions still
 share one screen, keyboard, and focus, and native input is admitted one action

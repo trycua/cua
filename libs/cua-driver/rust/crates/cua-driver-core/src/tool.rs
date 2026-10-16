@@ -1795,9 +1795,11 @@ impl ToolRegistry {
                 .get("_transport_session_id")
                 .and_then(Value::as_str)
                 .unwrap_or(session);
-            // An unnamed session reclaimed by the idle sweep is recreated at
-            // lifecycle admission below; every other ended episode refuses
-            // with the recovery that actually applies to its identity.
+            // An unnamed session reclaimed by the idle sweep, or a label its
+            // closed owner transport released without `end_session`, is
+            // recreated at lifecycle admission below; every other ended
+            // episode refuses with the recovery that actually applies to its
+            // identity.
             if !matches!(resolved_name, "start_session" | "end_session")
                 && crate::session::is_session_ended(session)
                 && !crate::session::recreates_on_next_call(session, owner)

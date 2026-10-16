@@ -1347,10 +1347,15 @@ async fn setup_with(
             },
         });
     }
-    if steps
-        .iter()
-        .any(|s| s.name == "qemu" && s.status != CheckStatus::Error as i32)
-    {
+    let qemu_installed = report.qemu.qemu_img.is_some()
+        && (report.qemu.binaries)
+            .get(report.host.arch.qemu())
+            .is_some_and(Option::is_some);
+    let qemu_present = match steps.iter().find(|s| s.name == "qemu") {
+        Some(s) => s.status != CheckStatus::Error as i32,
+        None => components.is_empty() && qemu_installed,
+    };
+    if qemu_present {
         steps.extend(kvm(dry_run).await);
     }
     Ok(steps)

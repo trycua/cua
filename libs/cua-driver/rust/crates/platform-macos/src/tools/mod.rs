@@ -655,12 +655,9 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-/// Convert native pixels from `get_desktop_state` into the logical point space
-/// used by CoreGraphics input APIs. The ratio is the main display mode's pixel
-/// width over its point width: the width of a native display capture over the
-/// logical screen width, without taking a capture to learn it.
+/// Convert native pixels from `get_desktop_state` into logical points.
 pub fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
-    let ratio = get_screen_size::main_display_pixel_ratio();
+    let ratio = get_screen_size::main_screen_size().map_or(1.0, |(_, _, s)| s);
     (x / ratio, y / ratio)
 }
 

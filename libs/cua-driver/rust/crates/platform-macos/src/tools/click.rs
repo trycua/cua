@@ -360,11 +360,6 @@ impl Tool for ClickTool {
             // x,y arrive in desktop-SCREENSHOT space (what the agent reads off the
             // PNG) and must be divided by the screenshot↔logical ratio, or a
             // center-pixel pick warps to the corner (off by the backing scale).
-            //
-            // The ratio is the current display mode's pixel width over its point
-            // width (`desktop_screenshot_point`), the same figure a native capture
-            // measures and `get_desktop_state` reports. CGDisplayPixelsWide is not
-            // usable for this: it returns the point width on scaled Retina modes.
             let (sx, sy) = if let Some(ref capture_id) = capture_id {
                 match self
                     .state

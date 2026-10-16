@@ -108,6 +108,8 @@ struct LoginItemTests {
                                        .driveContinue, .modeChosen(mode: .client)] {
             b.onboarding.send(a)
         }
+        #expect(b.onboarding.view.launchAtLogin?.checked == true)
+        b.onboarding.send(.launchAtLoginToggled(on: false))
         #expect(b.onboarding.view.launchAtLogin?.checked == false)
         b.onboarding.finish()
         #expect(unticked.calls == ["unregister"])

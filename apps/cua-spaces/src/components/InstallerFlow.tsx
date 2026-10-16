@@ -435,7 +435,7 @@ export function InstallerFlow({
         <Page
           title={view.title}
           lede={view.lede}
-          below={view.prompts.length > 0 ? <PromptTicker prompts={view.prompts} /> : undefined}
+          below={view.prompts.length > 0 ? <PromptList prompts={view.prompts} /> : undefined}
           primary={
             <button
               type="button"
@@ -503,28 +503,41 @@ export function InstallerFlow({
 }
 
 /**
- * Done's example prompts (the core's), one quoted line each, scrolling up
- * slowly and continuously to suggest what to ask a coding agent. Not
- * interactive: CSS pauses it under the pointer, and with reduced motion it
- * is a static list of the first rows (the duplicate that makes the loop
- * seamless is hidden).
+ * Done's example prompts (the core's): a few static lines to ask a coding
+ * agent now that it has the cua skills and MCP server. Each copies to the
+ * clipboard on click and says "Copied".
  */
-function PromptTicker({ prompts }: { prompts: string[] }) {
-  const row = (text: string) => `\u201C${text}\u201D`;
+function PromptList({ prompts }: { prompts: string[] }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const copy = (text: string) => {
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(text);
+        window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => setCopied(null), 1500);
+      },
+      (error: unknown) => console.warn("[Cua Spaces] copy failed", error),
+    );
+  };
   return (
-    <div className="ob-ticker" role="list" aria-label="Example prompts">
-      <div className="ob-ticker-track" style={{ animationDuration: `${prompts.length * 4}s` }}>
+    <div className="ob-prompts">
+      <p className="ob-prompts-label" id="ob-prompts-label">
+        Try asking your agent:
+      </p>
+      <ul className="ob-prompts-list" aria-labelledby="ob-prompts-label">
         {prompts.map((p) => (
-          <div key={p} className="ob-ticker-row" role="listitem">
-            {row(p)}
-          </div>
+          <li key={p}>
+            <button type="button" className="ob-prompt" data-owns-enter onClick={() => copy(p)}>
+              <span>{`\u201C${p}\u201D`}</span>
+              <span className="ob-prompt-copied" aria-live="polite">
+                {copied === p ? "Copied" : ""}
+              </span>
+            </button>
+          </li>
         ))}
-        {prompts.map((p) => (
-          <div key={`again-${p}`} className="ob-ticker-row ob-ticker-again" aria-hidden="true">
-            {row(p)}
-          </div>
-        ))}
-      </div>
+      </ul>
     </div>
   );
 }

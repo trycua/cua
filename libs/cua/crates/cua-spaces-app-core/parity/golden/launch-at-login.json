@@ -9,20 +9,16 @@
         "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
         "drive": null,
         "driveStorage": null,
-        "launchAtLogin": "[ ] Launch at login ~Keeps your Spaces and agents available after a restart.",
+        "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
         "lede": "Cua Spaces is in your menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
         "primary": "Start using Cua Spaces",
         "prompts": [
-          "qa my app on windows, macos and linux",
-          "use the cua sdk to build an agent app that runs codex in a space",
-          "open my app in a space and pip it",
-          "use the cua sdk to stream a space's window into my app",
-          "teleport my browser into a space and finish the checkout test",
-          "use the cua docs to set up a cua bench taskset",
-          "spin up a linux space and run the test suite there"
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
         ],
         "showMark": false,
         "step": "done",
@@ -36,7 +32,7 @@
         "title": "You're all set",
         "usage": null
       },
-      "launchAtLogin": false,
+      "launchAtLogin": true,
       "onboarding": "mode-chosen"
     },
     {
@@ -54,13 +50,9 @@
         "presentations": [],
         "primary": "Start using Cua Spaces",
         "prompts": [
-          "qa my app on windows, macos and linux",
-          "use the cua sdk to build an agent app that runs codex in a space",
-          "open my app in a space and pip it",
-          "use the cua sdk to stream a space's window into my app",
-          "teleport my browser into a space and finish the checkout test",
-          "use the cua docs to set up a cua bench taskset",
-          "spin up a linux space and run the test suite there"
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
         ],
         "showMark": false,
         "step": "done",
@@ -92,13 +84,9 @@
         "presentations": [],
         "primary": "Start using Cua Spaces",
         "prompts": [
-          "qa my app on windows, macos and linux",
-          "use the cua sdk to build an agent app that runs codex in a space",
-          "open my app in a space and pip it",
-          "use the cua sdk to stream a space's window into my app",
-          "teleport my browser into a space and finish the checkout test",
-          "use the cua docs to set up a cua bench taskset",
-          "spin up a linux space and run the test suite there"
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
         ],
         "showMark": false,
         "step": "done",
@@ -130,13 +118,9 @@
         "presentations": [],
         "primary": "Start using Cua Spaces",
         "prompts": [
-          "qa my app on windows, macos and linux",
-          "use the cua sdk to build an agent app that runs codex in a space",
-          "open my app in a space and pip it",
-          "use the cua sdk to stream a space's window into my app",
-          "teleport my browser into a space and finish the checkout test",
-          "use the cua docs to set up a cua bench taskset",
-          "spin up a linux space and run the test suite there"
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
         ],
         "showMark": false,
         "step": "done",
@@ -168,13 +152,9 @@
         "presentations": [],
         "primary": "Start using Cua Spaces",
         "prompts": [
-          "qa my app on windows, macos and linux",
-          "use the cua sdk to build an agent app that runs codex in a space",
-          "open my app in a space and pip it",
-          "use the cua sdk to stream a space's window into my app",
-          "teleport my browser into a space and finish the checkout test",
-          "use the cua docs to set up a cua bench taskset",
-          "spin up a linux space and run the test suite there"
+          "Open a Linux Space and run my test suite in it",
+          "Use my Space's browser to finish the checkout test and show me",
+          "Share this Space with a teammate as a viewer"
         ],
         "showMark": false,
         "step": "done",

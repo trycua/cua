@@ -855,20 +855,16 @@ fn fs_last_used(path: &std::path::Path) -> Option<String> {
     cua_driver_core::timestamp::unix_secs_to_rfc3339(duration.as_secs() as i64)
 }
 
-/// Decode XML or binary bundle metadata without launching a process per key.
 fn read_bundle_plist(path: &std::path::Path) -> Option<CFDictionary> {
     let bytes = std::fs::read(path).ok()?;
     let (plist, _) =
         create_with_data(CFData::from_buffer(&bytes), kCFPropertyListImmutable).ok()?;
-    // The Create API transfers ownership; the checked downcast rejects a
-    // valid plist whose root is not a dictionary.
     unsafe { CFType::wrap_under_create_rule(plist) }.downcast_into::<CFDictionary>()
 }
 
 fn plist_value(plist: &CFDictionary, key: &str) -> Option<CFType> {
     let key = CFString::new(key);
     let value = plist.find(key.as_concrete_TypeRef() as *const c_void)?;
-    // Retain the borrowed value before the dictionary can be dropped.
     Some(unsafe { CFType::wrap_under_get_rule(*value) })
 }
 
@@ -889,7 +885,6 @@ fn plist_flag(plist: &CFDictionary, key: &str) -> bool {
         return unsafe { CFNumberIsFloatType(value.as_concrete_TypeRef()) == 0 }
             && value.to_i64() == Some(1);
     }
-    // Agent flags also occur as "1"/"0" and "true"/"false" strings.
     value.downcast::<CFString>().is_some_and(|value| {
         let raw = value.to_string();
         let raw = raw.trim();

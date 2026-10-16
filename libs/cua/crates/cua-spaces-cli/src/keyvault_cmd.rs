@@ -405,6 +405,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                 paths: None,
                 domains: None,
                 passwords: false,
+                password_domains: None,
             };
             let r = c.import(spec).await.map_err(kv_error)?;
             if json {

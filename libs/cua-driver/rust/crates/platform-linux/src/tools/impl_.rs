@@ -2326,31 +2326,10 @@ fn resolve_launched_windows(
     let started = std::time::Instant::now();
     loop {
         let all = crate::wayland::list_windows_dispatch(None);
-        let own: Vec<_> = all
-            .iter()
-            .filter(|w| w.pid == Some(launcher_pid))
-            .cloned()
-            .collect();
-        if !own.is_empty() {
-            return LaunchedWindows {
-                pid: Some(launcher_pid),
-                windows: own,
-                handed_off: false,
-            };
-        }
-        let fresh: Vec<_> = all
-            .iter()
-            .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
-            .filter(|w| window_matches_launch(w, query))
-            .cloned()
-            .collect();
-        if let Some(pid) = fresh.first().and_then(|w| w.pid) {
-            let windows = fresh.into_iter().filter(|w| w.pid == Some(pid)).collect();
-            return LaunchedWindows {
-                pid: Some(pid),
-                windows,
-                handed_off: true,
-            };
+        if let Some(launched) = settle_launch(&all, launcher_pid, query, before, |w| {
+            crate::x11::window_is_splash(w.xid)
+        }) {
+            return launched;
         }
         let launcher_exited = process_exited(launcher_pid);
         let budget = if launcher_exited {
@@ -2367,6 +2346,39 @@ fn resolve_launched_windows(
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+fn settle_launch(
+    all: &[crate::x11::WindowInfo],
+    launcher_pid: u32,
+    query: &str,
+    before: &std::collections::HashSet<u64>,
+    is_splash: impl Fn(&crate::x11::WindowInfo) -> bool,
+) -> Option<LaunchedWindows> {
+    let own: Vec<_> = all
+        .iter()
+        .filter(|w| w.pid == Some(launcher_pid) && !is_splash(w))
+        .cloned()
+        .collect();
+    if !own.is_empty() {
+        return Some(LaunchedWindows {
+            pid: Some(launcher_pid),
+            windows: own,
+            handed_off: false,
+        });
+    }
+    let fresh: Vec<_> = all
+        .iter()
+        .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
+        .filter(|w| window_matches_launch(w, query) && !is_splash(w))
+        .cloned()
+        .collect();
+    let pid = fresh.first()?.pid?;
+    Some(LaunchedWindows {
+        pid: Some(pid),
+        windows: fresh.into_iter().filter(|w| w.pid == Some(pid)).collect(),
+        handed_off: true,
+    })
 }
 
 #[cfg(test)]
@@ -3129,15 +3141,25 @@ fn with_uinput_hint(mut refusal: ToolResult) -> ToolResult {
 /// Honest refusal for a background keyboard action that has no focus-free
 /// actuator. Carries the uinput hint whenever the MPX route is missing only
 /// because `/dev/uinput` is not writable (the fixable case).
-fn background_keyboard_refusal() -> ToolResult {
-    let refusal = crate::input::delivery::background_unavailable_error(
+fn background_keyboard_refusal(atspi_ok: bool) -> ToolResult {
+    let mut refusal = crate::input::delivery::background_unavailable_error(
         crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
     );
+    let bus = crate::health_report::START_ATSPI_BUS_HINT;
+    let hint = format!("AT-SPI is unavailable. {bus} Or use delivery_mode \"foreground\".");
+    refusal
+        .content
+        .extend((!atspi_ok).then(|| cua_driver_core::protocol::Content::text(hint)));
     if !crate::wayland::is_wayland() && !crate::input::uinput_accessible() {
         with_uinput_hint(refusal)
     } else {
         refusal
     }
+}
+
+fn atspi_up() -> bool {
+    let probe = std::thread::spawn(crate::health_report::probe_a11y_bus);
+    crate::wayland::is_wayland() || probe.join().unwrap_or(false)
 }
 
 fn unavailable_gtk_keyboard_background(
@@ -3148,7 +3170,7 @@ fn unavailable_gtk_keyboard_background(
         && is_gtk_process(pid)
         && !crate::wayland::is_inject_mode()
         && !crate::input::real_keyboard_input_available())
-    .then(background_keyboard_refusal)
+    .then(|| background_keyboard_refusal(atspi_up()))
 }
 
 /// Outcome of one background/foreground keyboard delivery on X11, funnelled
@@ -4812,6 +4834,46 @@ fn isolated_background_routes_do_not_reprobe_availability_before_primary_fallbac
         );
         let native = invoke.split_once("if isolated_background {").unwrap().1;
         assert!(native.contains("return match dispatch.await"), "{start}");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn background_keyboard_refusal_names_missing_atspi_bus() {
+    let plain = crate::input::delivery::background_unavailable_error(
+        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+    );
+    let text = |refusal: &ToolResult| -> String {
+        refusal
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                cua_driver_core::protocol::Content::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    };
+    let (missing, reachable) = (
+        background_keyboard_refusal(false),
+        background_keyboard_refusal(true),
+    );
+    for needle in [
+        "AT-SPI is unavailable",
+        "at-spi-bus-launcher",
+        "delivery_mode \"foreground\"",
+    ] {
+        assert!(
+            text(&missing).contains(needle),
+            "{needle} missing from {}",
+            text(&missing)
+        );
+    }
+    assert!(!text(&reachable).contains("AT-SPI is unavailable"));
+    for refusal in [missing, reachable] {
+        let structured = refusal.structured_content.unwrap();
+        let expected = plain.structured_content.as_ref().unwrap();
+        assert_eq!(structured["code"], expected["code"]);
+        assert_eq!(structured["escalation"], expected["escalation"]);
     }
 }
 
@@ -7921,7 +7983,7 @@ impl Tool for TypeTextTool {
             })
             .await;
             return match result {
-                Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(),
+                Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(atspi_up()),
                 Ok(Ok((_, Some(report)))) => type_text_mpx_result(text_len, report),
                 Ok(Ok((path, None))) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (terminal emulator: pty/XTest key events)."
@@ -8051,7 +8113,7 @@ impl Tool for TypeTextTool {
                     ))
                     .with_structured(type_text_structured("key_events", text_len, false)),
                     Ok(Ok(Some(KeyRoute::Mpx(report)))) => type_text_mpx_result(text_len, report),
-                    Ok(Ok(_)) => background_keyboard_refusal(),
+                    Ok(Ok(_)) => background_keyboard_refusal(atspi_up()),
                     Ok(Err(e)) => input_error_result(e),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -8191,7 +8253,7 @@ impl Tool for TypeTextTool {
                 text_len,
                 &format!("via X11, delivery_mode={mode_label}"),
             ),
-            Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(),
+            Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(atspi_up()),
             Ok(Ok((_, Some(report)))) => type_text_mpx_result(text_len, report),
             Ok(Ok((path, None))) => ToolResult::text(format!(
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
@@ -8241,8 +8303,13 @@ fn type_text_mpx_result(
         structured[key] = value.clone();
     }
     structured["delivery_mode"] = json!("background");
+    let outcome = if report.skipped_characters.is_empty() {
+        format!("Typed {text_len} character(s)")
+    } else {
+        "Partial typing result".to_owned()
+    };
     let mut text = format!(
-        "Typed {text_len} character(s) as real key events {} (delivery_mode=background); \
+        "{outcome} as real key events {} (delivery_mode=background); \
          not verified — confirm with a screenshot.",
         report.route_phrase()
     );
@@ -8261,7 +8328,36 @@ fn type_text_mpx_result(
         );
     }
     text.push_str(&report.delivery_notes());
-    ToolResult::text(text).with_structured(structured)
+    let result = if report.skipped_characters.is_empty() {
+        ToolResult::text(text)
+    } else {
+        ToolResult::error(text)
+    };
+    result.with_structured(structured)
+}
+
+#[cfg(test)]
+#[test]
+fn mpx_type_text_with_skipped_characters_is_an_error() {
+    let report = |skipped_characters: Vec<char>| crate::input::KeyboardDeliveryReport {
+        virtual_focus_held: true,
+        core_focus_unchanged: true,
+        delivery_confirmed: true,
+        key_events: 2,
+        skipped_characters,
+        focus_guard: None,
+        released_stuck: Vec::new(),
+        path: crate::input::MPX_UINPUT_PATH,
+        grab_popup: None,
+    };
+    assert_eq!(type_text_mpx_result(2, report(Vec::new())).is_error, None);
+    let skipped = type_text_mpx_result(2, report(vec!['約']));
+    assert_eq!(skipped.is_error, Some(true));
+    assert!(!format!("{:?}", skipped.content).contains("Typed 2 character(s)"));
+    assert_eq!(
+        skipped.structured_content.unwrap()["skipped_characters"],
+        "約"
+    );
 }
 
 // ── press_key ─────────────────────────────────────────────────────────────────
@@ -9172,9 +9268,9 @@ impl Tool for SetValueTool {
             name: "set_value".into(),
             description: "Set value of an AT-SPI element via SetValue action.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","value"],"properties":{
+                "type":"object","required":["value"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
-                    "pid":{"type":"integer","description":"Target process ID."},
+                    "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                     "window_id":{"type":"integer","description":"Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "value":{"type":"string","description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
@@ -10186,10 +10282,10 @@ impl Tool for DoubleClickTool {
                 (target_occluded), one covered by this app's own dialog is retargeted to it \
                 (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_token). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it)."},
                 "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
                 "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
@@ -10472,10 +10568,10 @@ impl Tool for RightClickTool {
                 title}`): call get_window_state(pid, window_id=<that id>) to index its menu items \
                 and click them by element_token. Provide either (window_id + x/y) or (pid + element_token). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it)."},
                 "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
                 "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
@@ -13173,7 +13269,7 @@ impl Tool for CheckPermissionsTool {
         PERMS_DEF.get_or_init(|| ToolDef {
             name: "check_permissions".into(),
             description: "Check required permissions for cua-driver-rs on Linux.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{"prompt":{"type":"boolean","description":"Ignored: Linux has no permission prompts."}},"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -13234,6 +13330,16 @@ impl Tool for CheckPermissionsTool {
     }
 }
 
+#[cfg(test)]
+#[tokio::test]
+async fn check_permissions_accepts_the_status_prompt_argument() {
+    let result = build_registry_with_provider(false, None)
+        .invoke("check_permissions", json!({ "prompt": false }))
+        .await;
+    let wire = serde_json::to_value(&result).unwrap();
+    assert!(wire["structuredContent"].get("x11").is_some(), "{wire}");
+}
+
 // ── get_config ────────────────────────────────────────────────────────────────
 
 pub struct GetConfigTool {
@@ -13263,7 +13369,10 @@ impl Tool for GetConfigTool {
             "platform": "linux",
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
-            "cursor": { "motion": cursor_overlay::motion_defaults::read_saved().config_json() },
+            "cursor": {
+                "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
+                "badges": cursor_overlay::badge_mode::read_saved().as_str(),
+            },
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry
         }))
@@ -13275,6 +13384,7 @@ impl Tool for GetConfigTool {
 fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
+        properties.extend(cursor_overlay::badge_mode::config_schema_properties());
     }
     schema
 }
@@ -13297,7 +13407,9 @@ impl Tool for SetConfigTool {
                 Linux ships only the trait stub today — see issue #1729).\n\n\
                 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` \
                 (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. \
-                `cursor.motion: \"default\"` clears every saved cursor motion default.".into(),
+                `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n\
+                `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge \
+                for every cursor at once.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
@@ -13323,11 +13435,16 @@ impl Tool for SetConfigTool {
             Ok(keys) => keys,
             Err(message) => return ToolResult::error(message),
         };
+        let badge_key = match cursor_overlay::badge_mode::apply_config_args(&args) {
+            Ok(key) => key,
+            Err(message) => return ToolResult::error(message),
+        };
         let mut cfg = self.state.config.write().unwrap();
         let mut parts: Vec<String> = motion_keys
             .iter()
             .map(|key| format!("{key} (applies to sessions started from now on)"))
             .collect();
+        parts.extend(badge_key.map(|key| format!("{key} (applies now)")));
         if let Some(mode) = args.opt_str("capture_mode") {
             if let Err(e) =
                 pip_preview::write_config_key("capture_mode", Value::String(mode.clone()))

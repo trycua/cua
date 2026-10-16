@@ -148,20 +148,21 @@ export interface BridgeEvent {
 }
 
 export class BridgeEvents {
-  private readonly listeners = new Set<(e: BridgeEvent) => void>();
+  private readonly listeners = new Set<(e: BridgeEvent, to?: unknown) => void>();
 
-  emit(event: string, payload?: unknown): void {
+  /** `to`: only that window gets it (a presence session's events); none: every window. */
+  emit(event: string, payload?: unknown, to?: unknown): void {
     const e: BridgeEvent = payload === undefined ? { event } : { event, payload };
     for (const l of [...this.listeners]) {
       try {
-        l(e);
+        l(e, to);
       } catch (error) {
         console.error("[cua-spaces] bridge event listener failed", error);
       }
     }
   }
 
-  subscribe(listener: (e: BridgeEvent) => void): () => void {
+  subscribe(listener: (e: BridgeEvent, to?: unknown) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }

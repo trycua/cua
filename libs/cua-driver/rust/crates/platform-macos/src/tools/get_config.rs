@@ -84,6 +84,7 @@ impl Tool for GetConfigTool {
             },
             "cursor": {
                 "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
+                "badges": cursor_overlay::badge_mode::read_saved().as_str(),
             },
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry,

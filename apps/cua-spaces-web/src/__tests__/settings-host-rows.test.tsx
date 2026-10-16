@@ -72,7 +72,7 @@ describe.skipIf(!wasmBuilt)("the host's own settings (real routes, wasm core)", 
     expect(within(row("linux-runtime")!).getByText("Linux")).toBeTruthy();
     expect(within(row("auto-connect")!).getByText("Connect to the desktop automatically")).toBeTruthy();
     expect(within(row("keyvault-auto-wipe")!).getByText("Wipe access from Spaces automatically")).toBeTruthy();
-    // Only the auto-wipe rows of the Keyvault section.
+    // A host that doesn't report the site icons setting gets no switch for it.
     expect(row("keyvault-site-icons")).toBeNull();
 
     fireEvent.click(within(macos).getByText("Built-in"));

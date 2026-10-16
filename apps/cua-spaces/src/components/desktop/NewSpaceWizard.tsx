@@ -305,7 +305,9 @@ export function NewSpaceWizard({
   const [state, setState] = useState<WizardState>(() =>
     (quick ? [{ type: "choose-os", os: quick }] : (startActions ?? [])).reduce<WizardState>(
       (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env }),
-      core<WizardState>("wizard.initial", { env }),
+      // The wasm core has no randomness: a seed for the name an unnamed
+      // Space gets (the core shows it and creates the Space with it).
+      core<WizardState>("wizard.initial", { env: { ...env, nameSeed: nameSeed() } }),
     ),
   );
   // The panel opened, was cancelled, or created a Space (the SwiftUI app
@@ -848,4 +850,10 @@ function AddByAddress({
       </footer>
     </div>
   );
+}
+
+/** 40 random bits for the generated Space name (`wizard::generated_space_name`). */
+function nameSeed(): number {
+  const [high = 0, low = 0] = globalThis.crypto.getRandomValues(new Uint32Array(2));
+  return (high & 0xff) * 2 ** 32 + low;
 }

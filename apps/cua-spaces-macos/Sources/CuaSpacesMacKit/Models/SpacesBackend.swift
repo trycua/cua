@@ -65,8 +65,8 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// macOS VMs running on this Mac now (Lume's, Spaces or not: Apple's
     /// license counts every one), when Lume says.
     func runningMacosVms() async -> Int?
-    /// This account's Cua Cloud rates (`Fleet.usagePricing()`), when known:
-    /// the New Space estimate. `nil` shows none.
+    /// This account's Cua Cloud rates, when known: the New Space estimate.
+    /// `nil` shows none (the live backend has no source for them).
     func cloudPricing() async -> AppCloudPricing?
     /// The SDK's teleport handle and the Space handle, for "Teleport an app".
     func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)?
@@ -77,6 +77,9 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// The Space's coding-agent runs as rows (the app core's mapping of the
     /// SDK's run records, attention first).
     func agentRuns(id: String) async throws -> [AppSpaceAgentRun]
+    /// One run's events after `cursor`, as the `agent_events` JSON
+    /// (`events`, `cursor`, `caught_up`, `status`, `phase`).
+    func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String
     /// The Space's latest thumbnail from the SDK's shared cache (the cua
     /// daemon's): no older than `maxAgeMs` (nil: any age), captured fresh
     /// when the cache is older; `nil` when there is none and the Space
@@ -113,6 +116,9 @@ public extension SpacesBackend {
     func shares(id: String) async throws -> [AppShareEntryInput] { [] }
     func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] { [] }
     func unshare(id: String, who: String) async throws -> [AppShareEntryInput] { [] }
+    func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        throw FixtureError(message: "This Space's runs can't be read here")
+    }
     func lumeSource() async -> String? { nil }
     func runningMacosVms() async -> Int? { nil }
     func setLumeSource(_ value: String) async throws {}
@@ -185,7 +191,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         powerState: info.powerState.isEmpty ? nil : info.powerState,
                         cloud: info.cloud.isEmpty ? nil : info.cloud,
                         cloudPlace: info.cloudPlace.isEmpty ? nil : info.cloudPlace,
-                        cloudDelete: info.cloudDelete.isEmpty ? nil : info.cloudDelete)
+                        cloudDelete: info.cloudDelete.isEmpty ? nil : info.cloudDelete,
+                        stopReason: info.stopReason.isEmpty ? nil : info.stopReason)
                     // Turned off on purpose: no probe (it would only time out).
                     if ["suspended", "stopped"].contains(info.powerState) {
                         return (index, row)
@@ -395,13 +402,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         }.count
     }
 
-    public func cloudPricing() async -> AppCloudPricing? {
-        guard await cloudAvailable(), let fleet = try? cua.fleet(),
-              case .success(let got) = await withTimeout(seconds: Self.probeSeconds, { try await fleet.usagePricing() }),
-              let p = got
-        else { return nil }
-        return AppCloudPricing(vcpuHourUsd: p.vcpuHourUsd, memoryGibHourUsd: p.memoryGibHourUsd)
-    }
+    /// No estimate: the rates came from the retired Fleets API
+    /// (`Fleet.usagePricing()` on run.cua.ai), and the app does not offer
+    /// new cloud Spaces. New Space never waits on it.
+    public func cloudPricing() async -> AppCloudPricing? { nil }
 
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
         (cua.teleport(), try await cua.spaces().space(space: id))
@@ -435,6 +439,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     public func agentRuns(id: String) async throws -> [AppSpaceAgentRun] {
         let runs = try await cua.spaces().space(space: id).agentList()
         return appAgentRows(runsJson: runs.map(\.json))
+    }
+
+    public func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        try await cua.spaces().space(space: id).agentEvents(runId: runId, cursor: cursor, max: nil)
     }
 
     public func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? {
@@ -662,17 +670,17 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                     image: "ghcr.io/trycua/linux:24.04",
                     imageDigest: "sha256:4f1c2a9d8e7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
                     kind: .container, arch: "arm64", reachable: true, error: nil, host: nil, hostName: nil,
-                    power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil),
+                    power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil),
         AppSpaceRow(id: "cloud:builder", name: "builder", provider: "cloud", spacesdVersion: "0.4.0",
                     features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z",
                     os: .linux, osName: "Arch Linux", osPrettyName: nil, image: nil, imageDigest: nil,
                     kind: nil, arch: nil, reachable: false, error: "timed out", host: nil, hostName: nil,
-                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil),
+                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil),
         AppSpaceRow(id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct",
                     spacesdVersion: "0.4.0", features: [], addedAt: nil, os: .windows,
                     osName: "Windows", osPrettyName: "Windows Server 2022 Datacenter 10.0.20348",
                     image: nil, imageDigest: nil, kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil),
+                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil),
     ]
 
     public func rows() async throws -> [AppSpaceRow] { await MainActor.run { fixtureRows } }
@@ -726,7 +734,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                                            addedAt: nil, os: .linux, osName: nil, osPrettyName: nil,
                                            image: args.image, imageDigest: nil, kind: args.kind, arch: nil,
                                            reachable: true, error: nil, host: nil, hostName: nil,
-                                           power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil))
+                                           power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil))
             return id
         }
     }
@@ -887,6 +895,13 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
         let (error, runs) = await MainActor.run { (agentRunsError, fixtureRuns[id] ?? []) }
         if let error { throw error }
         return appAgentRows(runsJson: runs)
+    }
+    /// `agent_events` pages, per run id: the whole run, caught up.
+    public var fixtureEvents: [String: String] = [:]
+    public func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        let page = await MainActor.run { fixtureEvents[runId] }
+        guard let page else { throw FixtureError(message: "no run \(runId) in \(id)") }
+        return page
     }
     public private(set) var sent: [String] = []
     public func sendFiles(id: String, paths: [String]) async throws -> [AppSentFileInfo] {

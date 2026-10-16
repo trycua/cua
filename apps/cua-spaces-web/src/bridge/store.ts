@@ -13,6 +13,7 @@ import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
+import { passedSteps } from "./onboarding";
 import type { MachineRow, OnboardingMode, SettingsPage, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
@@ -88,10 +89,6 @@ export interface SessionData extends SessionSnapshot {
 }
 
 
-/** The core's telemetry names of the pages a web host passes through
- * (`NATIVE_ONLY_STEPS`): never on screen here, so never reported. */
-const UNSEEN_PAGES = new Set(["presentation"]);
-
 /** What a persistent agent is doing: paused, a turn running, or waiting. */
 export type AgentState = "running" | "paused" | "idle";
 
@@ -120,6 +117,8 @@ export interface AgentSummary {
   /** The run the detail opens: its current run, else its latest in its Space. */
   run: RunRef | null;
   lastError: string | null;
+  /** The host's record, as the core's Agents page reads it (the detail's Memory, Routines and Access). */
+  record: PersistentAgent;
 }
 
 export interface AgentRunSummary extends SpaceAgentRun {
@@ -306,9 +305,10 @@ export class BridgeStore {
 
   /** The events a first-run step means, from the state before it. */
   trackOnboarding(before: OnboardingFlowState, action: OnboardingAction): void {
-    // The pages the web passes through unseen (Menu bar) are not reported.
+    // The pages this host passes through unseen (Menu bar off a Mac) are not reported.
+    const unseen: readonly string[] = passedSteps();
     const seen = telemetryOnboarding(this.core, before, action).filter(
-      (s) => s.type !== "onboarding-page" || !UNSEEN_PAGES.has(s.page),
+      (s) => s.type !== "onboarding-page" || !unseen.includes(s.page),
     );
     void this.telemetry.track(seen);
   }
@@ -568,7 +568,7 @@ export class BridgeStore {
       this.createRequests.delete(pendingId);
       await this.refresh("spaces");
       const space = (this.resources.spaces.data as Space[] | undefined)?.find((s) => s.id === row.id) ?? rowsToSpaces(this.core, [row], this.now())[0]!;
-      this.extras.record({ kind: "message", title: `${space.name} is ready` });
+      this.extras.record({ kind: "message", title: `${space.name} is ready`, space: space.id });
       return space;
     } catch (e) {
       const message = toError(e).message;
@@ -818,7 +818,16 @@ export class BridgeStore {
    * and the page) only after `session.signIn` answered: take them in, so
    * the page shows them. */
   private followHostSignIn(waiting: HostSignIn | null | undefined): void {
-    if (!waiting || (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting")) return;
+    if (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting") return;
+    // A native host signed in, whichever attempt (a retry's, or one before
+    // it) finished: the wait is over.
+    const snap = this.sessionSnap;
+    if (snap && snap.hostSignIn !== undefined && snap.fleet.authMode === "user" && snap.fleet.identity) {
+      this.stopSignInTimer();
+      this.signInPhase = { kind: "idle" };
+      return;
+    }
+    if (!waiting) return;
     if (waiting.url) this.signInUrl = waiting.url;
     if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode) return;
     this.signInPhase = { kind: "waiting", userCode: waiting.userCode };
@@ -1025,6 +1034,7 @@ export class BridgeStore {
           lastActivityMs: Math.max(a.savedMs, current?.status === "running" ? now : 0),
           run: latest ? { spaceId: latest.spaceId, runId: latest.runId } : null,
           lastError: a.lastError ?? null,
+          record: a,
         },
       ];
     });

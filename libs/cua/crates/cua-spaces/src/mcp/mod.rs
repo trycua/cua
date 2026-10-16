@@ -167,7 +167,12 @@ pub struct McpServer {
     /// keeps the tool fail-closed (it returns a consent requirement and
     /// delivers nothing).
     broker: Option<Arc<dyn crate::teleport_broker::SessionBroker>>,
+    /// Called with `initialize`'s `clientInfo` (`Null` when absent).
+    on_initialize: Option<ClientInfoHook>,
 }
+
+/// See [`McpServer::with_client_info_hook`].
+pub type ClientInfoHook = Arc<dyn Fn(&Value) + Send + Sync>;
 
 impl std::fmt::Debug for McpServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -189,6 +194,7 @@ impl McpServer {
             name: SERVER_NAME,
             instructions: INSTRUCTIONS,
             broker: None,
+            on_initialize: None,
         }
     }
 
@@ -201,6 +207,7 @@ impl McpServer {
             name: SERVER_NAME,
             instructions: INSTRUCTIONS,
             broker: None,
+            on_initialize: None,
         }
     }
 
@@ -213,6 +220,14 @@ impl McpServer {
         broker: Arc<dyn crate::teleport_broker::SessionBroker>,
     ) -> Self {
         self.broker = Some(broker);
+        self
+    }
+
+    /// Runs `hook` with the client's `clientInfo` (`name`, `title`,
+    /// `version`) when it initializes, so the host can act as that agent
+    /// (for example label its cursor "Claude Code").
+    pub fn with_client_info_hook(mut self, hook: ClientInfoHook) -> Self {
+        self.on_initialize = Some(hook);
         self
     }
 
@@ -352,6 +367,9 @@ impl McpServer {
                 } else {
                     SUPPORTED_PROTOCOL_VERSIONS[0]
                 };
+                if let Some(hook) = &self.on_initialize {
+                    hook(params.get("clientInfo").unwrap_or(&Value::Null));
+                }
                 json!({
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},

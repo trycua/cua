@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { describe, expect, it, vi } from "vitest";
-import { NotchModel, settingsURL, type NotchActions, type NotchTeleport, type WindowDragEvent } from "../src/notch/model";
+import { NotchModel, settingsURL, type NotchActions, type NotchTeleport, type WindowDragEvent, type WindowTargets } from "../src/notch/model";
 import type { ScreenFacts, StateMessage } from "../src/notch/protocol";
 import { fakeCore, manualClock, MOTION, type FakeSpace } from "./fakeNotchCore";
 
@@ -36,7 +36,14 @@ function actions(): NotchActions & { calls: unknown[][] } {
   };
 }
 
-function setup(opts: { teleport?: NotchTeleport; thumbnail?: (id: string) => Promise<Uint8Array | null> } = {}) {
+function setup(
+  opts: {
+    teleport?: NotchTeleport;
+    thumbnail?: (id: string) => Promise<Uint8Array | null>;
+    windowTargets?: WindowTargets;
+    windowUnder?: (x: number, y: number, below: number | undefined) => Promise<number | null>;
+  } = {},
+) {
   const fake = fakeCore();
   const clock = manualClock();
   const states: StateMessage[] = [];
@@ -45,9 +52,9 @@ function setup(opts: { teleport?: NotchTeleport; thumbnail?: (id: string) => Pro
   const opened: string[] = [];
   const acts = actions();
   const model = new NotchModel(
-    { core: fake.core, actions: acts, teleport: opts.teleport, thumbnail: opts.thumbnail },
+    { core: fake.core, actions: acts, teleport: opts.teleport, thumbnail: opts.thumbnail, windowTargets: opts.windowTargets },
     { state: (s) => states.push(s), thumbnail: (id, i) => thumbnails.push([id, i]), ghost: (g) => ghosts.push(g) },
-    { clock, openURL: (u) => opened.push(u), log: () => {} },
+    { clock, openURL: (u) => opened.push(u), log: () => {}, windowUnder: opts.windowUnder },
   );
   model.setSpaces(SPACES);
   const last = () => states[states.length - 1]!;
@@ -327,6 +334,102 @@ describe("notch window drags", () => {
     teleport.listener!.onEvent({ phase: "end", x: 500, y: 40 });
     expect(acts.calls).toEqual([["teleport", "local:aurora", app]]);
     expect(ghosts.at(-1)).toBeNull();
+  });
+
+  describe("onto the app's own Space tiles", () => {
+    // The main window (number 900) shows the tile "local:aurora" at 100..300 x 100..250.
+    const MAIN = 900;
+    function targets() {
+      const highlights: (string | null)[] = [];
+      const t: WindowTargets & { highlights: (string | null)[] } = {
+        highlights,
+        at: (x, y) => (x >= 100 && x < 300 && y >= 100 && y < 250 ? { spaceId: "local:aurora", window: MAIN } : null),
+        highlight: (id) => void highlights.push(id),
+      };
+      return t;
+    }
+    async function started(o: { kind?: number; under?: (x: number, y: number, below: number | undefined) => number | null } = {}) {
+      const teleport = fakeTeleport({ permitted: true });
+      const windowTargets = targets();
+      const asked: [number, number, number | undefined][] = [];
+      const under = o.under ?? (() => MAIN);
+      const s = setup({
+        teleport,
+        windowTargets,
+        windowUnder: async (x, y, below) => (asked.push([x, y, below]), under(x, y, below)),
+      });
+      s.model.screens(SCREEN, SCREEN);
+      s.model.recheckPermission();
+      await vi.waitFor(() => expect(teleport.listener).toBeDefined());
+      // The trigger: a move (or what `kind` says), never near the notch.
+      s.fake.script(() => ({ phase: 1, kind: o.kind ?? 1, overlay: [] }));
+      return { ...s, listener: teleport.listener!, windowTargets, asked };
+    }
+    const app = { name: "Notes", id: "com.apple.Notes" };
+    const frame = { x: 400, y: 300, width: 800, height: 600 };
+
+    it("highlights the tile under a moved window and commits a release there to its Teleport review", async () => {
+      const { listener, windowTargets, asked, acts, fake } = await started();
+      listener.onEvent({ phase: "start", x: 700, y: 500, window: { windowId: 7, appName: "Notes" }, app, startFrame: frame, frame });
+      expect(windowTargets.highlights).toEqual([]);
+      listener.onEvent({ phase: "move", x: 150, y: 120 });
+      // Covered or not: asked about the window under the dragged one (its number from the start; moves don't carry it).
+      await vi.waitFor(() => expect(windowTargets.highlights).toEqual(["local:aurora"]));
+      expect(asked.at(-1)).toEqual([150, 120, 7]);
+      listener.onEvent({ phase: "move", x: 600, y: 120 });
+      expect(windowTargets.highlights).toEqual(["local:aurora", null]);
+      listener.onEvent({ phase: "move", x: 160, y: 130 });
+      await vi.waitFor(() => expect(windowTargets.highlights.at(-1)).toBe("local:aurora"));
+      listener.onEvent({ phase: "end", x: 160, y: 130, window: { windowId: 7, appName: "Notes" } });
+      expect(windowTargets.highlights.at(-1)).toBeNull();
+      await vi.waitFor(() => expect(acts.calls).toEqual([["teleport", "local:aurora", app]]));
+      // The notch's own drag ends without a drop.
+      expect(fake.events.at(-1)).toEqual({ tag: "Drag", inner: { event: { tag: "Cancel" } } });
+    });
+
+    it("never targets a tile another window covers there", async () => {
+      const { listener, windowTargets, acts } = await started({ under: () => 1234 });
+      listener.onEvent({ phase: "start", x: 700, y: 500, window: { windowId: 7, appName: "Notes" }, app, startFrame: frame, frame });
+      listener.onEvent({ phase: "move", x: 150, y: 120 });
+      listener.onEvent({ phase: "end", x: 150, y: 120, window: { windowId: 7, appName: "Notes" } });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(windowTargets.highlights.filter(Boolean)).toEqual([]);
+      expect(acts.calls).toEqual([]);
+    });
+
+    it("never targets a tile for a resize", async () => {
+      const { listener, windowTargets, asked, acts } = await started({ kind: 2 });
+      listener.onEvent({ phase: "start", x: 150, y: 120, window: { windowId: 7, appName: "Notes" }, app, startFrame: frame, frame });
+      listener.onEvent({ phase: "move", x: 150, y: 120 });
+      listener.onEvent({ phase: "end", x: 150, y: 120, window: { windowId: 7, appName: "Notes" } });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(asked).toEqual([]);
+      expect(windowTargets.highlights.filter(Boolean)).toEqual([]);
+      expect(acts.calls).toEqual([]);
+    });
+
+    it("drops a late answer once the cursor moved on, and the highlight when the notch hides", async () => {
+      let release: (n: number) => void = () => {};
+      const teleport = fakeTeleport({ permitted: true });
+      const windowTargets = targets();
+      const s = setup({ teleport, windowTargets, windowUnder: () => new Promise((r) => (release = r)) });
+      s.model.recheckPermission();
+      await vi.waitFor(() => expect(teleport.listener).toBeDefined());
+      s.fake.script(() => ({ phase: 1, kind: 1, overlay: [] }));
+      const l = teleport.listener!;
+      l.onEvent({ phase: "start", x: 700, y: 500, window: { windowId: 7, appName: "Notes" }, app, startFrame: frame, frame });
+      l.onEvent({ phase: "move", x: 150, y: 120 });
+      const late = release;
+      l.onEvent({ phase: "move", x: 600, y: 120 });
+      late(MAIN);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(windowTargets.highlights.filter(Boolean)).toEqual([]);
+      l.onEvent({ phase: "move", x: 150, y: 120 });
+      release(MAIN);
+      await vi.waitFor(() => expect(windowTargets.highlights.at(-1)).toBe("local:aurora"));
+      s.model.setShown(false);
+      expect(windowTargets.highlights.at(-1)).toBeNull();
+    });
   });
 
   it("drops window drags while hidden", async () => {

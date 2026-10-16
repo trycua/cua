@@ -111,7 +111,7 @@ def test_spaces_releases_macos_only_for_now() -> None:
     assert "startsWith(github.ref, 'refs/tags/cua-spaces-v')" in gate
     # latest.json (the Tauri feed) only when Linux/Windows artifacts exist.
     sign = step("cd-cua-spaces.yml", "installer-manifest", "Sign, checksum and build release-artifacts.json")["run"]
-    assert 'compgen -G "assets/cua-spaces-$VERSION-linux-*"' in sign
+    assert 'if [ "$TAURI" = success ]; then' in sign
     assert "updater_feed.py" in sign
     assert "cosign sign-blob" in sign and "checksums.txt" in sign
     feeds = step("cd-cua-spaces.yml", "installer-manifest", "Update the rolling feeds")["run"]
@@ -131,13 +131,20 @@ def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
     plan = step("cd-cua-spaces.yml", "electron-plan", "Plan")["run"]
     assert 'beta=false; [[ "$VERSION" == *-* ]] && beta=true' in plan
     assert '[ "$DRY_RUN" != true ]' in plan and "refs/tags/cua-spaces-v*" in plan
-    for name in ("electron-native", "electron-mac", "electron-windows", "electron-linux"):
-        assert jobs[name]["if"] == "needs.electron-plan.outputs.build == 'true'", name
-    assert jobs["electron-publish"]["if"] == "needs.electron-plan.outputs.publish == 'true'"
+    assert jobs["electron-mac"]["if"] == "needs.electron-plan.outputs.build == 'true'"
+    # Windows and Linux build for every release tag, stable included.
+    for name in ("electron-native", "electron-windows", "electron-linux"):
+        assert jobs[name]["if"] == "needs.electron-plan.outputs.desktop == 'true'", name
+    publish_gate = jobs["electron-publish"]["if"]
+    assert "needs.electron-plan.outputs.publish == 'true'" in publish_gate
+    assert "needs.electron-windows.result == 'success' && needs.electron-linux.result == 'success'" in publish_gate
     # Each build runs the native and notch interfaces before electron-builder.
     mac = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-mac"))
     assert "pnpm native -- --target aarch64-apple-darwin" in mac
-    assert "pnpm native -- --target x86_64-apple-darwin" in mac
+    # The x86_64 native build runs in the electron-native-mac matrix job.
+    native = workflow("cd-cua-spaces.yml")["jobs"]["electron-native-mac"]["strategy"]["matrix"]["include"]
+    assert {"label": "darwin-x64", "target": "x86_64-apple-darwin"} in native
+    assert jobs["electron-mac"]["needs"].count("electron-native-mac") == 1
     assert "pnpm notch" in mac
     assert mac.index("pnpm notch") < mac.index("pnpm dist:mac")
     # Signed with the Developer ID identity of a keychain the job imports
@@ -148,14 +155,15 @@ def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
     assert mac.index("security import") < mac.index("pnpm dist:mac") < mac.index("security delete-keychain")
     # The disk images are signed, notarized and stapled after electron-builder,
     # their feed entries made again, and then checked like the SwiftUI app's.
-    assert mac.index("pnpm dist:mac") < mac.index("scripts/notarize.sh") < mac.index("xcrun stapler staple")
-    assert mac.index("xcrun stapler staple") < mac.index("refresh-update-info.mjs") < mac.index('spctl -a -vv -t install "$dmg"')
+    assert mac.index("pnpm dist:mac") < mac.index("/notarize.sh") < mac.index("xcrun stapler staple")
+    assert mac.index("xcrun stapler staple") < mac.index("refresh-update-info.mjs") < mac.index("spctl -a -vv -t install")
     assert "com.trycua.spaces.macos" in mac
-    windows = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-windows"))
-    assert "pnpm native -- --target x86_64-pc-windows-msvc" in windows
+    windows = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-windows-pkg"))
+    targets = {m["target"] for m in jobs["electron-native"]["strategy"]["matrix"]["include"]}
+    assert {"x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"} <= targets
     assert 'AZURE_SIGNING_ENDPOINT="$ENDPOINT"' in windows
-    assert jobs["electron-windows"]["environment"] == "cua-driver-release-signing"
-    for name in ("electron-mac", "electron-windows"):
+    assert jobs["electron-windows-pkg"]["environment"] == "cua-driver-release-signing"
+    for name in ("electron-mac", "electron-windows-pkg"):
         sign = step("cd-cua-spaces.yml", name, "Signing configuration")["run"]
         assert 'elif [ "$REQUIRE_SIGNING" = true ]; then' in sign, name
     # The release waits for the Electron installers; the feed goes up after it is published.

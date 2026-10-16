@@ -3,11 +3,12 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { LaptopIcon, PlusIcon, ServerIcon, Trash2Icon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useBridge, useExperiments, useMachines, useSpaces, type Machine, type Space, type SpaceDetailView } from "@/bridge";
 import { spaceDetail } from "@/bridge/space-detail";
 import { AddMachineDialog } from "@/components/add-machine-dialog";
+import { JoinWithCodeDialog } from "@/components/join-with-code-dialog";
 import { ThisMachine } from "@/components/this-machine";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
@@ -15,11 +16,21 @@ import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
-import { connectionLabel, machineOs, machinesSummary, machineSubtitle, osName, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount } from "@/lib/machines";
+import { connectionLabel, machineOs, machinesSummary, machineSubtitle, osName, presenceLabel, presenceWord, reachable, selectedMachine, spacesLabel } from "@/lib/machines";
 import { osLabel, realSpaces, spaceState } from "@/lib/spaces";
 import { cn, relativeTime } from "@/lib/utils";
 
-export const Route = createFileRoute("/machines/")({ component: MachinesPage });
+export const Route = createFileRoute("/machines/")({
+  component: MachinesPage,
+  // `?add=1` opens "Add a machine" (the getting-started checklist links here).
+  // `?join=<code>` opens "Join with a code" with the code filled in (a `cua://add/<code>` link
+  // opened on this computer); `relay` names a relay other than the production one.
+  validateSearch: (s: Record<string, unknown>): { add?: true; join?: string; relay?: string } => ({
+    ...(s.add === 1 || s.add === "1" || s.add === true ? { add: true as const } : {}),
+    ...(typeof s.join === "string" && s.join ? { join: s.join.slice(0, 200) } : {}),
+    ...(typeof s.relay === "string" && s.relay ? { relay: s.relay.slice(0, 300) } : {}),
+  }),
+});
 
 function MachinesPage() {
   const { data: machines = [], isLoading, error, setupGuide } = useMachines();
@@ -28,21 +39,34 @@ function MachinesPage() {
   const exp = useExperiments();
   const experiments = exp.unsupported ? undefined : (exp.data?.experiments ?? {});
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  const { add, join, relay } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const [adding, setAddingState] = useState(add === true);
+  const setAdding = (open: boolean) => {
+    setAddingState(open);
+    if (!open && add) void navigate({ search: {}, replace: true });
+  };
+  useEffect(() => {
+    if (add) setAddingState(true);
+  }, [add]);
+  const [joining, setJoiningState] = useState(join !== undefined);
+  const setJoining = (open: boolean) => {
+    setJoiningState(open);
+    if (!open && join) void navigate({ search: {}, replace: true });
+  };
+  useEffect(() => {
+    if (join) setJoiningState(true);
+  }, [join]);
   const selected = selectedMachine(machines, selectedId);
   // Reachable from here: a machine whose owner stopped sharing it is not.
   const online = machines.filter(reachable).length;
   // Another machine's own Space (`relay:<id>`), drawn by the core as the
-  // SwiftUI detail draws it: its word when it can't be reached, and Remove.
+  // SwiftUI detail draws it: its Remove action.
   const access = machines.find((m) => m.current)?.accessNotice ?? null;
   const detailOf = (m: Machine): { space: Space; detail: SpaceDetailView } | null => {
     if (m.current) return null;
     const space = spaces.find((s) => s.id === `relay:${m.id}`);
     return space ? { space, detail: spaceDetail(core, space, null, null, experiments, access) } : null;
-  };
-  const reachWord = (m: Machine) => {
-    const d = detailOf(m)?.detail;
-    return d && !d.canStream && !d.desktopNote ? d.previewText : null;
   };
 
   return (
@@ -53,9 +77,14 @@ function MachinesPage() {
           isLoading ? "Loading machines…" : machines.length ? machinesSummary(machines.length, online) : "Computers that can run your Spaces."
         }
         actions={
-          <Button variant="outline" onClick={() => setAdding(true)}>
-            <PlusIcon /> Add a machine
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => setJoining(true)} data-join-with-code-open>
+              Join with a code
+            </Button>
+            <Button variant="outline" onClick={() => setAdding(true)}>
+              <PlusIcon /> Add a machine
+            </Button>
+          </div>
         }
       />
       {error ? (
@@ -84,7 +113,6 @@ function MachinesPage() {
                 <li key={m.id}>
                   <MachineRow
                     machine={m}
-                    reach={reachWord(m)}
                     spaces={realSpaces(spaces).filter((s) => m.spaceIds.includes(s.id)).length}
                     selected={m.id === selected?.id}
                     onSelect={() => setSelectedId(m.id)}
@@ -102,7 +130,6 @@ function MachinesPage() {
             <MachineDetail
               key={selected.id}
               machine={selected}
-              reach={reachWord(selected)}
               own={detailOf(selected)}
               spaces={realSpaces(spaces).filter((s) => selected.spaceIds.includes(s.id))}
               onRemoved={() => setSelectedId(null)}
@@ -111,6 +138,7 @@ function MachinesPage() {
         </div>
       )}
       <AddMachineDialog open={adding} onOpenChange={setAdding} guide={setupGuide} />
+      <JoinWithCodeDialog open={joining} onOpenChange={setJoining} initialCode={join ?? ""} initialRelay={relay ?? null} />
     </Page>
   );
 }
@@ -129,7 +157,8 @@ function PresenceDot({ online, notSharing }: { online: boolean; notSharing?: boo
   return <span className={cn("size-1.5 shrink-0 rounded-full", tone)} aria-hidden />;
 }
 
-function MachineRow({ machine: m, reach, spaces, selected, onSelect }: { machine: Machine; reach: string | null; spaces: number; selected: boolean; onSelect: () => void }) {
+function MachineRow({ machine: m, spaces, selected, onSelect }: { machine: Machine; spaces: number; selected: boolean; onSelect: () => void }) {
+  const count = spacesLabel(m, spaces);
   return (
     <button
       type="button"
@@ -156,9 +185,9 @@ function MachineRow({ machine: m, reach, spaces, selected, onSelect }: { machine
       <div className="flex shrink-0 flex-col items-end gap-1">
         <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <PresenceDot online={m.online} notSharing={Boolean(m.notSharing)} />
-          {presenceWord(m, reach)}
+          {presenceWord(m)}
         </span>
-        <span className="text-xs text-muted-foreground tabular-nums">{spaceCount(spaces)}</span>
+        {count ? <span className="text-xs text-muted-foreground tabular-nums">{count}</span> : null}
       </div>
     </button>
   );
@@ -166,13 +195,11 @@ function MachineRow({ machine: m, reach, spaces, selected, onSelect }: { machine
 
 function MachineDetail({
   machine: m,
-  reach,
   own,
   spaces,
   onRemoved,
 }: {
   machine: Machine;
-  reach: string | null;
   own: { space: Space; detail: SpaceDetailView } | null;
   spaces: Space[];
   onRemoved: () => void;
@@ -201,7 +228,7 @@ function MachineDetail({
           <h2 className="truncate text-[15px] font-semibold">{m.name}</h2>
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <PresenceDot online={m.online} notSharing={Boolean(m.notSharing)} />
-            {presenceLabel(m, now, reach)}
+            {presenceLabel(m, now)}
           </p>
         </div>
         {remove ? (

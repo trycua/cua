@@ -26,9 +26,11 @@ impl AccessTokenProvider for SessionTokens {
 
 /// A Fleet client on the stored session when `config` carries no
 /// credentials of its own and a session exists; `None` otherwise (the
-/// Fleet provider then stays unconfigured, as before).
+/// Fleet provider then stays unconfigured, as before), and `None` when
+/// the session belongs to another `CUA_ENV` than this Fleet
+/// ([`FleetConfig::accepts_session`]).
 pub fn session_fleet_client(config: &FleetConfig) -> Option<FleetClient> {
-    if config.has_auth() {
+    if config.has_auth() || !config.accepts_session() {
         return None;
     }
     let session = cua_auth::Session::from_env();

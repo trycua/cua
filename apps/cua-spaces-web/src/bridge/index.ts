@@ -29,6 +29,7 @@ export {
   type SpacesHook,
 } from "./hooks";
 
+export { useAgentDetail, type AgentDetailHook } from "./agent-detail";
 export type { BridgeMode, DataAdapter } from "./adapter";
 export { HostError, UnsupportedOperationError, isNativeHost, isUnsupported } from "./adapter";
 export { createAdapter, createDemoAdapter, createElectronAdapter, createTauriAdapter, createWebkitAdapter } from "./adapters";
@@ -70,6 +71,7 @@ export {
   type AppearanceTheme,
   type HostEvent,
   type HostOperations,
+  type GlobalShortcut,
   type HostSettings,
   type OpName,
   type SettingKey,
@@ -90,12 +92,23 @@ export type * from "./contracts/settings";
 export type * from "./contracts/devices";
 export type * from "./contracts/notifications";
 export * from "./settings-hooks";
-export { NATIVE_ONLY_STEPS, signInCodeText, type SavedOnboarding } from "./onboarding";
-export { useConnectCloud, useFirstSpaceOffers, useNewSpaceRequests, useNewSpaceWizard, type ConnectCloudHook, type FirstSpaceHook, type NewSpaceWizardHook } from "./new-space-hooks";
+export { hasNotch, passedSteps, signInCodeText, type SavedOnboarding } from "./onboarding";
+export {
+  useConnectCloud,
+  useFirstSpaceOffers,
+  useNewSpaceRequests,
+  useNewSpaceWizard,
+  useRuntimeFix,
+  type ConnectCloudHook,
+  type FirstSpaceHook,
+  type NewSpaceWizardHook,
+  type RuntimeFixHook,
+} from "./new-space-hooks";
 export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstSpaceOffer } from "./new-space";
 export type * from "./contracts/volume";
 export * from "./volume";
 export { ThumbnailStore, THUMBNAIL_CAP, THUMBNAIL_REFRESH_MS, thumbnailStore, useSpaceThumbnail } from "./thumbnails";
+export { useWindowDropTarget } from "./window-drop";
 export { useSpaceFiles, parseDropped, dropSendingText, dropSentText, sendFiles, splitDrop, type DropStatus, type SpaceFilesHook } from "./space-files";
 export { agentRunLines, useDesktopCover, useSpaceDetail, type AgentRunLine, type DetailFor, type DetailReadings, type PipOutcome, type SpaceDetailHook } from "./space-detail";
 export type * from "./ops/space-detail";
@@ -103,4 +116,26 @@ export { useThisMachine, type HostFailure, type HostFormView as HostSetupFormVie
 export type { HostFormAction, HostSetupRequest } from "./ops/host-setup";
 export type { TelemetrySignal } from "./ops/telemetry";
 export { useStartup, type StartupHook } from "./startup";
+export { defaultTeam, eligibleTeams, teamName, useTeamChoices, type TeamChoices } from "./teams";
+export { joinFailureText, useJoinWithCode, type JoinHook, type JoinPhase } from "./join";
+export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pairing-code";
+export { expiresInText, FINISHING_SETUP, PAIRING_POLL_MS, pairingUnsupported, usePairingCode, type PairingHook, type PairingPhase } from "./pairing";
 export { READY_STARTUP, type StartupAction, type StartupPhase, type StartupState } from "./ops/startup";
+export {
+  CHECKLIST_STEPS,
+  useChecklist,
+  type ChecklistHook,
+  type ChecklistRow,
+  type ChecklistState,
+  type ChecklistStep,
+  type ChecklistView,
+} from "./checklist";
+export {
+  useRelayUsage,
+  useRelayUsageView,
+  RELAY_USAGE_FOCUS_MS,
+  RELAY_USAGE_POLL_MS,
+  type RelayAllowanceNotice,
+  type RelayUsage,
+  type RelayUsageView,
+} from "./relay-usage";

@@ -63,9 +63,9 @@ integrity-level harness can exercise it.
 
 | Harness | Proven contracts | Refusals and gaps |
 | --- | --- | --- |
-| AppKit | AX tree/capture; AX background left click, set value, and type text; PX background left/right/double click; PX foreground right/double click and slider drag; AX foreground/background scroll; desktop PX foreground left click | PX background slider drag returns exact `background_unavailable`. Native press key, hotkey, AX-addressed right/double click, and broader control combinations remain unproven. |
+| AppKit | AX tree/capture; AX background left click, set value, and type text; PX background left/right/double click and slider drag; PX foreground right/double click and slider drag; AX foreground/background scroll; desktop PX foreground left click | A background drag that starts an AppKit drag-and-drop session (table reordering) returns `background_unavailable` with `reason: drag_and_drop_session`. Native press key, hotkey, AX-addressed right/double click, and broader control combinations remain unproven. |
 | SwiftUI | AX tree/capture; AX background left click and set value; foreground popover-trigger activation | The fixture proves `popover_open=true`, but the transient panel remains absent from targeted AX enumeration. Other native pointer and keyboard combinations remain unproven. |
-| WKWebView | Full 40-cell shared-web catalog through the dedicated repo-local native host | PX background drag returns exact `background_unavailable`; the other 39 shared cells deliver. Native host-specific controls are outside this fixture. |
+| WKWebView | Full 40-cell shared-web catalog through the dedicated repo-local native host | PX background drag is delivered to the window without moving the pointer (CUA-1207); not yet re-run on this host. The other 39 shared cells deliver. Native host-specific controls are outside this fixture. |
 
 ## Native Linux
 

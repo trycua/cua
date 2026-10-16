@@ -321,55 +321,8 @@ impl DaemonClient {
     }
 
     /// `CreateSandbox`.
-    // The deprecated fields still go out for daemons that predate
-    // `location` / `kind` / `runtime`.
-    #[allow(deprecated)]
     pub async fn create(&self, r: CreateRequest) -> Result<SandboxRecord> {
-        let req = pb::CreateSandboxRequest {
-            location: r.location.clone().unwrap_or_default(),
-            kind: r.kind.clone().unwrap_or_default(),
-            runtime: r.runtime.clone().unwrap_or_default(),
-            name: r.name.unwrap_or_default(),
-            provider: r
-                .provider
-                .map(|p| provider_to_pb(p) as i32)
-                .unwrap_or_default(),
-            image: r.image,
-            pool: r.pool.unwrap_or_default(),
-            url: r.url.unwrap_or_default(),
-            token: r.token.unwrap_or_default(),
-            labels: r.labels.into_iter().collect(),
-            os: r.os.unwrap_or_default(),
-            cpus: r.cpus.unwrap_or_default(),
-            memory_mb: r.memory_mb.unwrap_or_default(),
-            ports: r.ports.iter().map(|p| *p as u32).collect(),
-            services: r.services.into_iter().map(|(k, v)| (k, v as u32)).collect(),
-            wait_for: r.wait_for.iter().map(probe_to_pb).collect(),
-            ready_timeout: r.ready_timeout.map(dur),
-            env: r.env.into_iter().collect(),
-            command: r.command.unwrap_or_default(),
-            fleet_runtime: r.fleet_runtime.unwrap_or_default(),
-            fleet_replicas: r.fleet_replicas.unwrap_or_default(),
-            fleet_ttl_seconds: r.fleet_ttl_seconds.unwrap_or_default(),
-            fleet_warm: r.fleet_warm,
-            fleet_max_pool_size: r.fleet_max_pool_size.unwrap_or_default(),
-            fleet_apply: r.fleet_apply,
-            sidecars: r
-                .sidecars
-                .iter()
-                .map(crate::convert::sidecar_to_pb)
-                .collect(),
-            registry_secret: r
-                .registry_credentials
-                .as_ref()
-                .map(crate::convert::registry_secret_to_pb),
-            build: r.build.as_ref().map(crate::convert::build_to_pb),
-            container_runtime: r.container_runtime.clone().unwrap_or_default(),
-            network: r.network.clone().unwrap_or_default(),
-            owner_pid: r.owner_pid.unwrap_or_default(),
-            keep_on_failure: r.keep_on_failure,
-            gpu: r.gpu.clone().unwrap_or_default(),
-        };
+        let req = create_pb(r);
         Self::sandbox_of(
             self.sandboxes()
                 .create_sandbox(req)
@@ -380,6 +333,127 @@ impl DaemonClient {
         )
     }
 
+    /// `CreateSandboxStream`: [`DaemonClient::create`], passing what the
+    /// create does (the image download with its bytes, the boot, the
+    /// probes) to `progress` as it happens. A daemon that predates the
+    /// stream gets a plain `CreateSandbox`, and `progress` hears nothing.
+    pub async fn create_reporting(
+        &self,
+        r: CreateRequest,
+        progress: cua_sandbox_core::progress::Sink,
+    ) -> Result<SandboxRecord> {
+        use pb::create_sandbox_stream_response::Event;
+        let req = create_pb(r);
+        let mut stream = match self
+            .sandboxes()
+            .create_sandbox_stream(pb::CreateSandboxStreamRequest {
+                create: Some(req.clone()),
+            })
+            .await
+        {
+            Ok(s) => s.into_inner(),
+            Err(e) if e.code() == tonic::Code::Unimplemented => {
+                return Self::sandbox_of(
+                    self.sandboxes()
+                        .create_sandbox(req)
+                        .await
+                        .map_err(Self::map)?
+                        .into_inner()
+                        .sandbox,
+                );
+            }
+            Err(e) => return Err(Self::map(e)),
+        };
+        while let Some(msg) = stream.message().await.map_err(Self::map)? {
+            match msg.event {
+                Some(Event::Progress(p)) => {
+                    if let Some(p) = progress_from_pb(&p) {
+                        progress(&p);
+                    }
+                }
+                Some(Event::Result(r)) => return Self::sandbox_of(r.sandbox),
+                None => {}
+            }
+        }
+        Err(Error::Internal(
+            "the daemon ended the create stream without a result".into(),
+        ))
+    }
+}
+
+/// A streamed progress report, back as the runtime's (`None`: a phase this
+/// build does not know).
+pub fn progress_from_pb(
+    p: &pb::CreateSpaceProgress,
+) -> Option<cua_sandbox_core::progress::Progress> {
+    use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+    let mut out = Progress::phase(Phase::parse(&p.phase)?).detail(p.detail.clone());
+    if let Some(f) = p.fraction {
+        out = out.fraction(f);
+    }
+    if let Some(done) = p.bytes_done {
+        out = out.bytes(Transfer {
+            done,
+            total: p.bytes_total.unwrap_or(0),
+            per_second: p.bytes_per_second,
+        });
+    }
+    out.target = p.space.clone();
+    Some(out)
+}
+
+/// A create as its `CreateSandboxRequest`. The deprecated fields still go
+/// out for daemons that predate `location` / `kind` / `runtime`.
+#[allow(deprecated)]
+fn create_pb(r: CreateRequest) -> pb::CreateSandboxRequest {
+    pb::CreateSandboxRequest {
+        location: r.location.clone().unwrap_or_default(),
+        kind: r.kind.clone().unwrap_or_default(),
+        runtime: r.runtime.clone().unwrap_or_default(),
+        name: r.name.unwrap_or_default(),
+        provider: r
+            .provider
+            .map(|p| provider_to_pb(p) as i32)
+            .unwrap_or_default(),
+        image: r.image,
+        pool: r.pool.unwrap_or_default(),
+        url: r.url.unwrap_or_default(),
+        token: r.token.unwrap_or_default(),
+        labels: r.labels.into_iter().collect(),
+        os: r.os.unwrap_or_default(),
+        cpus: r.cpus.unwrap_or_default(),
+        memory_mb: r.memory_mb.unwrap_or_default(),
+        ports: r.ports.iter().map(|p| *p as u32).collect(),
+        services: r.services.into_iter().map(|(k, v)| (k, v as u32)).collect(),
+        wait_for: r.wait_for.iter().map(probe_to_pb).collect(),
+        ready_timeout: r.ready_timeout.map(dur),
+        env: r.env.into_iter().collect(),
+        command: r.command.unwrap_or_default(),
+        fleet_runtime: r.fleet_runtime.unwrap_or_default(),
+        fleet_replicas: r.fleet_replicas.unwrap_or_default(),
+        fleet_ttl_seconds: r.fleet_ttl_seconds.unwrap_or_default(),
+        fleet_warm: r.fleet_warm,
+        fleet_max_pool_size: r.fleet_max_pool_size.unwrap_or_default(),
+        fleet_apply: r.fleet_apply,
+        sidecars: r
+            .sidecars
+            .iter()
+            .map(crate::convert::sidecar_to_pb)
+            .collect(),
+        registry_secret: r
+            .registry_credentials
+            .as_ref()
+            .map(crate::convert::registry_secret_to_pb),
+        build: r.build.as_ref().map(crate::convert::build_to_pb),
+        container_runtime: r.container_runtime.clone().unwrap_or_default(),
+        network: r.network.clone().unwrap_or_default(),
+        owner_pid: r.owner_pid.unwrap_or_default(),
+        keep_on_failure: r.keep_on_failure,
+        gpu: r.gpu.clone().unwrap_or_default(),
+    }
+}
+
+impl DaemonClient {
     /// `ConnectSandbox`.
     pub async fn connect(&self, name: &str) -> Result<SandboxRecord> {
         Self::sandbox_of(

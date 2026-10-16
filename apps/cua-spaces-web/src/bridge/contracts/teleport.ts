@@ -95,6 +95,9 @@ export interface TeleportConsent {
   exclude?: string[];
   fromVault?: string[] | null;
   includePasswords?: boolean;
+  /** Reading the app: the sites whose saved passwords to send (the review's
+   * own choice of passwords). */
+  passwordDomains?: string[] | null;
 }
 
 export type PickerStep = "loading" | "pick" | "options" | "planning" | "consent" | "running" | "done" | "error";
@@ -167,8 +170,11 @@ export type PickerEvent =
   | { type: "domain-query"; text: string }
   | { type: "toggle-item"; key: string }
   | { type: "toggle-passwords"; value: boolean }
+  | { type: "toggle-password"; key: string }
+  | { type: "select-shown-passwords"; value: boolean }
+  | { type: "password-query"; text: string }
   | { type: "send-from"; source: "live" | "vault" }
-  | { type: "vault-items"; count: number; newestMs: number; nowMs: number; selected: string[]; passwordIds: string[] }
+  | { type: "vault-items"; count: number; newestMs: number; nowMs: number; selected: string[]; passwordIds: string[]; passwords?: VaultPassword[]; passwordPicks?: boolean }
   | { type: "vault-selection"; selected: string[] }
   | { type: "confirm" }
   | { type: "progress"; event: RunEvent }
@@ -200,6 +206,25 @@ export interface ReviewDomain {
   selectable: boolean;
   unavailable: number;
   unavailableNote: string;
+}
+
+/** One saved password of the Keyvault (`review::VaultPassword`): its site and
+ * username, never its value. */
+export interface VaultPassword {
+  id: string;
+  site: string;
+  username: string;
+}
+
+/** One saved password choice of the review (`review::ReviewPassword`): a site
+ * of the browser (reading it now) or one saved password (from the Keyvault).
+ * Sites and usernames only, never a value. */
+export interface ReviewPassword {
+  key: string;
+  site: string;
+  username: string;
+  counts: string;
+  selected: boolean;
 }
 
 /** A consent line the user can turn off (`review::ReviewToggle`). */
@@ -240,6 +265,11 @@ export interface ReviewView {
   offersPasswords: boolean;
   includePasswords: boolean;
   passwordsLabel: string;
+  /** Ticked: the saved passwords to pick from, filtered by the search. */
+  passwords?: ReviewPassword[];
+  /** "2 of 5 sites", "2 of 5 passwords". */
+  passwordSummary?: string;
+  passwordQuery?: string;
   sourceNote: string;
 }
 

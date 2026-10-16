@@ -618,6 +618,106 @@ fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
 
 #[test]
 #[ignore]
+fn harness_appkit_middle_click_px_background_reaches_exact_window() {
+    let case = native_background_case(
+        "appkit",
+        "middle_click",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-middle-click")
+            .expect("start macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().expect("create middle-click journal directory");
+        let journal = directory.path().join("pointer.jsonl");
+        std::fs::write(&journal, "").expect("initialize native pointer journal");
+        let harness = Harness::launch_with_oracles(None, Some(&journal));
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("find middle-click receiver window");
+        let read_events = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&journal)
+                .expect("read native pointer journal")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("parse native pointer event"))
+                .collect()
+        };
+        let initial = read_events();
+        assert_eq!(initial.len(), 1, "receiver must be idle: {initial:?}");
+        assert_eq!(initial[0]["kind"], "ready");
+        assert_eq!(initial[0]["window_id"].as_u64(), Some(wid));
+        let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        assert!(
+            !snapshot.is_error(),
+            "capture receiver: {}",
+            snapshot.text()
+        );
+        let width = snapshot.structured()["screenshot_width"]
+            .as_f64()
+            .expect("screenshot width");
+        let height = snapshot.structured()["screenshot_height"]
+            .as_f64()
+            .expect("screenshot height");
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: harness.pid,
+                native_id: wid,
+            },
+            |driver| {
+                let response = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": harness.pid, "window_id": wid,
+                        "x": width / 2.0, "y": height / 2.0,
+                        "button": "middle", "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    !response.is_error(),
+                    "middle-click request: {}",
+                    response.text()
+                );
+                assert_eq!(response.action_delivery_mode(), Some("background"));
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let events = read_events();
+                    if events.iter().any(|event| event["kind"] == "middle_up") {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "middle-click did not arrive: {events:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                std::thread::sleep(Duration::from_millis(750));
+                let events = read_events();
+                let received = &events[1..];
+                assert_eq!(
+                    received.len(),
+                    2,
+                    "one request must deliver one native middle down/up pair: {received:?}"
+                );
+                assert_eq!(received[0]["kind"], "middle_down");
+                assert_eq!(received[1]["kind"], "middle_up");
+                let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
+                let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
+                for event in received {
+                    assert_eq!(event["window_id"].as_u64(), Some(wid));
+                    assert!((event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0);
+                    assert!((event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0);
+                }
+            },
+        )
+        .expect("middle-click must preserve background desktop state");
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_appkit_smoke() {
     run_case(
         native_readonly_case(
@@ -934,7 +1034,9 @@ fn harness_appkit_invoke_menu_live_path() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")),
+                    .is_some_and(
+                        |message| message.contains("path segment 2 \"Missing\" was not found")
+                    ),
                 "{}",
                 refused.raw
             );
@@ -946,6 +1048,40 @@ fn harness_appkit_invoke_menu_live_path() {
             // and key-window status. The target menu item validates against
             // both, so an AXFocused-only implementation cannot pass this cell.
             let _distractor = Harness::launch();
+
+            // invoke_menu does not activate a background app (#4955): with
+            // the distractor in front, the item stays disabled and the call
+            // refuses without touching the fixture.
+            let background = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Left"]
+                }),
+            );
+            assert!(
+                background.is_error(),
+                "a disabled background menu item was invoked: {}",
+                background.raw
+            );
+            assert_eq!(
+                background.structured()["refusal"]["code"],
+                "background_unavailable",
+                "{}",
+                background.raw
+            );
+            assert!(snapshot_elements(driver, pid, wid)
+                .tree_text()
+                .contains("menu_action=none"));
+
+            // The foreground route the refusal names: bring the exact window
+            // to front, then invoke the menu.
+            let raised = driver.call(
+                "bring_to_front",
+                serde_json::json!({"pid": pid, "window_id": wid}),
+            );
+            assert!(!raised.is_error(), "bring_to_front failed: {}", raised.raw);
 
             let invoked = driver.call(
                 "invoke_menu",
@@ -1031,7 +1167,8 @@ fn harness_appkit_invoke_menu_failed_path_leaves_no_menu_open() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")
+                    .is_some_and(|message| message
+                        .contains("path segment 2 \"Missing\" was not found")
                         && message.contains("No menu window this call opened is still on screen")),
                 "{}",
                 refused.raw
@@ -2036,12 +2173,14 @@ fn harness_appkit_slider_drag_px_background() {
         "slider_drag",
         Targeting::Px,
         DriverRoute::MacosCgEventPid,
-    )
-    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    );
     run_case(case, |pid, wid, driver| {
         let pre = snapshot_elements(driver, pid, wid);
         assert!(pre.tree_text().contains("slider_value=0"));
         let (x, y, width, height) = element_pixel_frame(&pre, "sld-value");
+        // The background oracles fail the case if the drag moves the user's
+        // pointer, raises or activates the fixture, or takes key focus from
+        // the foreground sentinel.
         let (response, mut passed) = run_with_background_oracles(
             driver,
             TargetWindow {
@@ -2067,30 +2206,26 @@ fn harness_appkit_slider_drag_px_background() {
         )
         .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
         assert!(
-            response.is_error(),
-            "AppKit background drag unexpectedly reported delivery: {}",
+            !response.is_error(),
+            "AppKit background drag failed: {}",
             response.text()
         );
-        assert_eq!(
-            response.structured()["code"].as_str(),
-            Some("background_unavailable"),
-            "AppKit background drag returned the wrong refusal: {}",
-            response.text()
-        );
-        std::thread::sleep(Duration::from_millis(200));
         assert!(
-            snapshot_elements(driver, pid, wid)
+            response
+                .text()
+                .contains("background: routed to the window's pid"),
+            "AppKit background drag was not routed to the window's pid: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            !snapshot_elements(driver, pid, wid)
                 .tree_text()
                 .contains("slider_value=0"),
-            "refused AppKit background drag changed the slider"
+            "AppKit background drag did not move the slider"
         );
         passed.push(OracleKind::FixtureState);
-        Observation::refused(
-            RefusalCode::BackgroundUnavailable,
-            passed,
-            response.text(),
-            Evidence::default(),
-        )
+        Observation::delivered_with_fixture_state(passed)
     });
 }
 

@@ -3,7 +3,7 @@
 
 // The bridge on Electron's IPC: the preload's one request channel
 // (`ELECTRON_BRIDGE_CHANNEL`) into the method table, and its events out to
-// every window on `ELECTRON_EVENT_CHANNEL`. Only the app's own pages, in
+// every window (or the one window an event is for) on `ELECTRON_EVENT_CHANNEL`. Only the app's own pages, in
 // their main frame, may call in (the SwiftUI host's origin check).
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { ELECTRON_BRIDGE_CHANNEL, ELECTRON_EVENT_CHANNEL, PRELOAD_INIT_CHANNEL, type PreloadInit } from "../channels";
@@ -41,9 +41,9 @@ export function installBridgeIpc({ registry, events, platform, videoStats }: Bri
     return registry.dispatch(request, { window: BrowserWindow.fromWebContents(event.sender) });
   });
 
-  events?.subscribe((e: BridgeEvent) => {
+  events?.subscribe((e: BridgeEvent, to?: unknown) => {
     for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send(ELECTRON_EVENT_CHANNEL, e);
+      if (!win.isDestroyed() && (to === undefined || to === win)) win.webContents.send(ELECTRON_EVENT_CHANNEL, e);
     }
   });
 }

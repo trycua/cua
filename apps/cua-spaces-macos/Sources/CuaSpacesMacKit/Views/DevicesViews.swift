@@ -396,3 +396,55 @@ struct DevicesBanner: View {
         }
     }
 }
+
+/// The relay allowance for the month is used up: one line above the main
+/// window with Upgrade, until dismissed. Nothing stops at the limit, so it
+/// only says so. The words are the core's (`appRelayUsageView`).
+struct RelayAllowanceBanner: View {
+    @Bindable var devices: DevicesModel
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if let notice = devices.relayNotice {
+            HStack(spacing: 8) {
+                Text(notice.text).lineLimit(2).foregroundStyle(.secondary).help(notice.text)
+                Spacer(minLength: 8)
+                if let url = notice.upgradeUrl.flatMap(URL.init(string:)) {
+                    Button(notice.upgrade) { openURL(url) }
+                        .controlSize(.small)
+                        .accessibilityIdentifier("relay-upgrade")
+                }
+                Button {
+                    devices.dismissRelayNotice()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .accessibilityLabel(notice.dismiss)
+                .accessibilityIdentifier("relay-dismiss")
+            }
+            .font(.callout)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.bar)
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityIdentifier("relay-allowance")
+        }
+    }
+}
+
+/// Settings → Account: the relay allowance this month, where it applies.
+struct RelayUsageRow: View {
+    let view: AppRelayUsageView
+
+    var body: some View {
+        LabeledContent {
+            Text(view.plan).foregroundStyle(.secondary)
+        } label: {
+            Text(view.label)
+            Text(view.line)
+        }
+        .accessibilityIdentifier("settings-relay-usage")
+    }
+}

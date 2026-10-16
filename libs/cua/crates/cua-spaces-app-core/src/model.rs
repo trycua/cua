@@ -320,6 +320,10 @@ pub struct SpacePower {
     /// Why the last power action failed, until the next one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Why it stopped without being asked to, in plain words ("out of
+    /// memory"), while it is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
 }
 
 /// How far a Space being created has come.
@@ -422,6 +426,11 @@ pub struct SpaceRow {
     /// (that machine created it) or `elsewhere` (another device did).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud_delete: Option<String>,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"), as the SDK
+    /// recorded it; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
 }
 
 /// `arm64` or `amd64` for any spelling of a CPU architecture (`aarch64`,

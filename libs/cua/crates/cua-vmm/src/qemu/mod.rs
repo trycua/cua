@@ -53,6 +53,10 @@ pub struct QemuConfig {
     pub vnc: bool,
     /// Override the accelerator (`hvf`/`kvm`/`whpx`/`tcg`); auto when `None`.
     pub accel: Option<String>,
+    /// Refuse a new instance before its image is pulled when
+    /// `qemu-system-<arch>` or `qemu-img` is missing (a VM image can be
+    /// gigabytes, and neither tool is optional).
+    pub preflight_tools: bool,
 }
 
 impl Default for QemuConfig {
@@ -64,6 +68,7 @@ impl Default for QemuConfig {
             graceful_stop: Duration::from_secs(30),
             vnc: true,
             accel: None,
+            preflight_tools: true,
         }
     }
 }
@@ -279,6 +284,19 @@ impl QemuRuntime {
         ))
     }
 
+    /// `qemu-system-<arch>` and `qemu-img` are on this host (installed
+    /// first when allowed), checked before a new instance pulls anything.
+    async fn ensure_tools(&self, arch: Arch) -> Result<()> {
+        let os = host::HostOs::current();
+        if missing_tools(arch, os, host::which).is_none() {
+            return Ok(());
+        }
+        if self.cfg.allow_install {
+            install_qemu().await?;
+        }
+        missing_tools(arch, os, host::which).map_or(Ok(()), Err)
+    }
+
     fn accel_for(&self, arch: Arch, kvm: &std::io::Result<()>) -> Result<String> {
         if let Some(accel) = &self.cfg.accel {
             return Ok(accel.clone());
@@ -382,7 +400,7 @@ impl QemuRuntime {
     ) -> Result<QemuState> {
         crate::disk::ensure_space(
             &self.cfg.root,
-            crate::disk::VM_CREATE_ESTIMATE,
+            backing.map_or(crate::disk::VM_CREATE_ESTIMATE, |_| crate::disk::GIB),
             &format!("create VM {name}"),
         )?;
         let dir = self.dir(name);
@@ -580,7 +598,9 @@ impl QemuRuntime {
             }
             match QmpClient::connect(&format!("127.0.0.1:{qmp_port}")).await {
                 Ok(q) => break q,
-                Err(e) if tokio::time::Instant::now() >= deadline => return Err(e),
+                Err(e) if tokio::time::Instant::now() >= deadline && host::pid_alive(pid) => {
+                    return Err(e);
+                }
                 Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
             }
         };
@@ -891,6 +911,40 @@ fn unique_suffix() -> String {
     format!("{nanos:x}")
 }
 
+/// How QEMU gets onto a Windows host: cua does not install it there.
+pub const WINDOWS_QEMU_HINT: &str = "Windows VMs on a Windows PC need QEMU, which Cua does not \
+     install for you. Install QEMU for Windows from https://qemu.weilnetz.de/ and add it to PATH, \
+     or create a Linux Space instead";
+
+/// What a QEMU VM needs that `which` does not find on an `os` host, as the
+/// error a create returns before pulling its image; `None` when both
+/// `qemu-system-<arch>` and `qemu-img` are there.
+fn missing_tools(
+    arch: Arch,
+    os: host::HostOs,
+    which: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<VmmError> {
+    let system = format!("qemu-system-{}", arch.qemu());
+    let missing: Vec<&str> = [system.as_str(), "qemu-img"]
+        .into_iter()
+        .filter(|t| which(t).is_none())
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    let hint = match os {
+        host::HostOs::Windows => WINDOWS_QEMU_HINT.to_string(),
+        _ => format!(
+            "install QEMU (macOS: `brew install qemu`; {})",
+            QemuPackageManager::linux_hint()
+        ),
+    };
+    Some(VmmError::missing(
+        format!("QEMU ({})", missing.join(", ")),
+        hint,
+    ))
+}
+
 /// Install QEMU through the host package manager (explicit opt-in).
 pub async fn install_qemu() -> Result<()> {
     match host::HostOs::current() {
@@ -915,10 +969,7 @@ pub async fn install_qemu() -> Result<()> {
             }
         }
         host::HostOs::Windows => {
-            return Err(VmmError::missing(
-                "QEMU",
-                "download QEMU for Windows from https://qemu.weilnetz.de/ and put it on PATH",
-            ));
+            return Err(VmmError::missing("QEMU", WINDOWS_QEMU_HINT));
         }
     }
     Ok(())
@@ -1019,6 +1070,14 @@ impl Runtime for QemuRuntime {
                     st
                 }
                 Err(VmmError::NotFound(_)) => {
+                    crate::disk::ensure_space(
+                        &self.cfg.root,
+                        crate::disk::GIB,
+                        &format!("create VM {}", spec.name),
+                    )?;
+                    if self.cfg.preflight_tools {
+                        self.ensure_tools(spec.effective_arch()).await?;
+                    }
                     let (backing, iso) = match &spec.image {
                         ImageSource::Existing => return Err(VmmError::NotFound(spec.name.clone())),
                         ImageSource::Disk { path }
@@ -1499,6 +1558,7 @@ mod tests {
         let r = QemuRuntime::new(QemuConfig {
             root: tmp.path().to_path_buf(),
             resolver: Some(seen.clone()),
+            preflight_tools: false,
             ..Default::default()
         });
         let mut spec = StartSpec::new("p1", ImageSource::oci("ghcr.io/me/private:1"));
@@ -1565,6 +1625,127 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    struct LowUnder(PathBuf, u64);
+
+    impl crate::disk::SpaceProbe for LowUnder {
+        fn space(&self, path: &Path) -> std::io::Result<crate::disk::Space> {
+            let available = if path.starts_with(&self.0) {
+                self.1
+            } else {
+                500 * crate::disk::GIB
+            };
+            Ok(crate::disk::Space {
+                available,
+                total: 500 * crate::disk::GIB,
+            })
+        }
+    }
+
+    struct CountingResolver(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl DiskResolver for CountingResolver {
+        async fn resolve(&self, _: &str, _: Arch) -> Result<PathBuf> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(VmmError::invalid("stop here"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_full_disk_fails_before_the_pull_and_overlays_need_less_than_blank_disks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let resolver = Arc::new(CountingResolver(Default::default()));
+        let r = QemuRuntime::new(QemuConfig {
+            root: tmp.path().to_path_buf(),
+            resolver: Some(resolver.clone()),
+            preflight_tools: false,
+            ..Default::default()
+        });
+        let min_free = crate::disk::CacheConfig::load().min_free;
+        let set_available = |bytes| {
+            crate::disk::set_probe(Some(Arc::new(LowUnder(tmp.path().to_path_buf(), bytes))))
+        };
+
+        set_available(min_free + crate::disk::GIB / 2);
+        let err = r
+            .start(&StartSpec::new("full", ImageSource::oci("ghcr.io/x/y:1")))
+            .await
+            .unwrap_err();
+        let pulls = resolver.0.load(std::sync::atomic::Ordering::SeqCst);
+
+        set_available(min_free + 2 * crate::disk::GIB);
+        let backing = tmp.path().join("base.qcow2");
+        std::fs::write(&backing, b"not really a disk").unwrap();
+        let spec = StartSpec::new("o1", ImageSource::disk(&backing));
+        let overlay = r
+            .create_instance("o1", Some(&backing), None, &spec, None)
+            .await
+            .err();
+        let blank = r.create_instance("b1", None, None, &spec, None).await.err();
+        crate::disk::set_probe(None);
+
+        assert!(matches!(err, VmmError::InsufficientDisk(_)), "{err}");
+        assert_eq!(pulls, 0, "nothing is pulled when the overlay cannot fit");
+        assert!(
+            !matches!(overlay, Some(VmmError::InsufficientDisk(_))),
+            "{overlay:?}"
+        );
+        assert!(
+            matches!(blank, Some(VmmError::InsufficientDisk(_))),
+            "{blank:?}"
+        );
+    }
+
+    #[test]
+    fn missing_qemu_tools_name_what_is_missing_with_a_host_hint() {
+        use host::HostOs;
+        let none = |_: &str| None;
+        let all = |t: &str| Some(PathBuf::from(t));
+        assert!(missing_tools(Arch::X86_64, HostOs::Windows, all).is_none());
+        // A Windows PC: nothing cua can install; says how, and the way out.
+        let err = missing_tools(Arch::X86_64, HostOs::Windows, none).unwrap();
+        assert!(matches!(err, VmmError::Missing { .. }), "{err}");
+        assert_eq!(
+            err.to_string(),
+            format!("QEMU (qemu-system-x86_64, qemu-img) is not available: {WINDOWS_QEMU_HINT}")
+        );
+        assert!(err.to_string().contains("create a Linux Space"));
+        // Only qemu-img missing (a bare qemu-system on PATH).
+        let no_img = |t: &str| (t != "qemu-img").then(|| PathBuf::from(t));
+        let err = missing_tools(Arch::X86_64, HostOs::Linux, no_img).unwrap();
+        assert!(
+            err.to_string()
+                .starts_with("QEMU (qemu-img) is not available: install QEMU")
+        );
+        assert!(err.to_string().contains("brew install qemu"));
+    }
+
+    #[tokio::test]
+    async fn a_new_vm_without_qemu_fails_before_its_image_is_pulled() {
+        let os = host::HostOs::current();
+        if missing_tools(Arch::host(), os, host::which).is_none() {
+            eprintln!("QEMU is installed here; the refusal is covered by missing_tools");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let resolver = Arc::new(CountingResolver(Default::default()));
+        let r = QemuRuntime::new(QemuConfig {
+            root: tmp.path().to_path_buf(),
+            resolver: Some(resolver.clone()),
+            ..Default::default()
+        });
+        let mut spec = StartSpec::new("win", ImageSource::oci("ghcr.io/trycua/windows:2022"));
+        spec.os = GuestOs::Windows;
+        let err = r.start(&spec).await.unwrap_err();
+        assert!(matches!(err, VmmError::Missing { .. }), "{err}");
+        assert_eq!(
+            resolver.0.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "nothing is pulled"
+        );
+        assert!(matches!(r.load("win"), Err(VmmError::NotFound(_))));
     }
 
     #[test]

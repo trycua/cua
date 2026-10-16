@@ -86,6 +86,9 @@ pub struct SetupOptions {
     /// Tailscale and private LAN addresses, and allow a public listen
     /// address (see [`crate::direct`]). Default off.
     pub allow_any_address: bool,
+    /// Install the driver before registering (a single-use pairing code is
+    /// then spent only once the download worked). Default off.
+    pub download_first: bool,
 }
 
 impl SetupOptions {
@@ -102,6 +105,7 @@ impl SetupOptions {
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            download_first: false,
         }
     }
 
@@ -124,6 +128,7 @@ impl SetupOptions {
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            download_first: false,
         }
     }
 }
@@ -287,6 +292,20 @@ pub struct HostConfig {
     /// [`Host::resume_signed_in`] can bring it back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub paused_signed_out: bool,
+    /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
+    /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
+    /// service. Unset, the service follows its own default (off unless the
+    /// Cua Spaces app's channel turns it on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+}
+
+/// `CUA_MESH` where setup runs, when set.
+fn mesh_env() -> Option<String> {
+    std::env::var("CUA_MESH")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
 }
 
 /// A macOS privacy pane the user must grant the driver in.
@@ -898,10 +917,14 @@ impl Host {
                 "--no-mcp".into(),
             ]);
         }
+        let mut env = vec![("CUA_ENV_LOG".into(), "info".into())];
+        if let Some(mesh) = &config.mesh {
+            env.push(("CUA_MESH".into(), mesh.clone()));
+        }
         ServiceSpec {
             program: config.driver_bin.clone(),
             args,
-            env: vec![("CUA_ENV_LOG".into(), "info".into())],
+            env,
             log_path: p.log(),
             working_dir: user_home(&self.home),
         }
@@ -983,8 +1006,13 @@ impl Host {
             sharing: true,
             share_desktop: opts.share_desktop,
             provide_spaces: opts.provide_spaces,
+            mesh: mesh_env(),
             ..Default::default()
         };
+        if opts.download_first {
+            *stage = SetupStage::Download;
+            install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
+        }
         match &opts.mode {
             HostMode::Relay { url } => {
                 let relay = RelayClient::new(url)?;
@@ -1057,16 +1085,10 @@ impl Host {
                 write_json(&self.paths.policy(), &policy)?;
             }
         }
-        *stage = SetupStage::Download;
-        let source = driver::locate(opts.driver_bin.as_deref())?;
-        match &source {
-            DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
-            DriverSource::Release { version, url, .. } => {
-                tracing::info!(%version, %url, "downloading cua-spacesd")
-            }
-            DriverSource::Local(_) => {}
+        if !opts.download_first {
+            *stage = SetupStage::Download;
+            install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
         }
-        driver::install_to(&source, &config.driver_bin).await?;
         *stage = SetupStage::Service;
         write_json(&self.paths.config(), &config)?;
         let manager = self.manager(runner);
@@ -1294,7 +1316,7 @@ impl Host {
         }
         status.paused_signed_out = config.paused_signed_out;
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
-            match self.relay_machine(url, id).await {
+            match recall_relay_view(url, id, self.relay_machine(url, id).await) {
                 Ok(m) => {
                     status.online = Some(m.online);
                     // Paused: nobody can reach it, whatever the relay's
@@ -1592,12 +1614,30 @@ impl Host {
     /// and deletes `<home>/host`. The machine id is kept so a later setup
     /// reuses it.
     pub async fn remove(&self) -> Result<()> {
+        self.remove_inner(false).await
+    }
+
+    /// [`Self::remove`] for an uninstall of the app: the Spaces this machine
+    /// provides do not stop it. Their relay machines (each Space joined the
+    /// relay as its own) are unregistered too, so nothing stays reachable
+    /// through the relay; the Spaces themselves are left as they are for
+    /// the caller to turn off ([`Self::provided_spaces`]).
+    pub async fn remove_for_uninstall(&self) -> Result<()> {
+        self.remove_inner(true).await
+    }
+
+    /// The Spaces this host provides to the owner's other devices.
+    pub fn provided_spaces(&self) -> Result<Vec<crate::provided::ProvidedSpace>> {
+        crate::provided::load_provided(&self.paths.dir)
+    }
+
+    async fn remove_inner(&self, uninstalling: bool) -> Result<()> {
         let Some(config) = self.config()? else {
             return Ok(());
         };
         // Spaces it provides would keep running with nobody to delete them.
         let provided = crate::provided::load_provided(&self.paths.dir)?;
-        if !provided.is_empty() {
+        if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
                 "this machine still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
                 provided.len(),
@@ -1611,17 +1651,32 @@ impl Host {
             )));
         }
         let mut relay_error = None;
+        let mut note = |e: Error| match e {
+            // Already gone: nothing to tell the relay.
+            Error::NotFound(_) => {}
+            // A refused machine token leaves the entry listed under My
+            // machines; report it (after the local cleanup) rather than
+            // pretending the unregister worked.
+            e => relay_error = Some(e),
+        };
+        if uninstalling {
+            for space in &provided {
+                if space.machine_token.is_empty() || space.relay_url.is_empty() {
+                    continue;
+                }
+                if let Err(e) = RelayClient::new(&space.relay_url)?
+                    .delete(&space.machine_token, &space.relay_machine)
+                    .await
+                {
+                    note(e);
+                }
+            }
+        }
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
             && let Ok(token) = read_secret(&self.paths.machine_token())
+            && let Err(e) = RelayClient::new(url)?.delete(&token, id).await
         {
-            match RelayClient::new(url)?.delete(&token, id).await {
-                // Already gone: nothing to tell the relay.
-                Ok(()) | Err(Error::NotFound(_)) => {}
-                // A refused machine token leaves the entry listed under My
-                // machines; report it (after the local cleanup) rather than
-                // pretending the unregister worked.
-                Err(e) => relay_error = Some(e),
-            }
+            note(e);
         }
         self.manager_for_config(&config).uninstall()?;
         std::fs::remove_dir_all(&self.paths.dir)?;
@@ -1631,6 +1686,41 @@ impl Host {
             ))),
             None => Ok(()),
         }
+    }
+}
+
+/// How long [`Host::status`] keeps the relay's last answer about this
+/// machine while the relay is briefly unreachable, before it shows the
+/// failure ("Needs attention"). A relay deploy replaces its one pod, and
+/// the proxy in front of it answers 503 for about 20 s meanwhile; the
+/// host service reconnects on its own.
+pub const RELAY_HICCUP_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The relay's last answer about each machine (relay URL, machine id),
+/// and when it came.
+type RelayViews = std::collections::HashMap<(String, String), (std::time::Instant, crate::Machine)>;
+static RELAY_VIEWS: std::sync::Mutex<Option<RelayViews>> = std::sync::Mutex::new(None);
+
+/// `read` (the relay's answer about machine `id`), remembered when it
+/// worked; a transient failure ([`Error::is_transient`]) within
+/// [`RELAY_HICCUP_GRACE`] of the last answer gets that answer instead.
+fn recall_relay_view(url: &str, id: &str, read: Result<crate::Machine>) -> Result<crate::Machine> {
+    let key = (url.to_string(), id.to_string());
+    let mut views = RELAY_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let views = views.get_or_insert_with(Default::default);
+    match read {
+        Ok(m) => {
+            views.insert(key, (std::time::Instant::now(), m.clone()));
+            Ok(m)
+        }
+        Err(e) if e.is_transient() => match views.get(&key) {
+            Some((at, m)) if at.elapsed() < RELAY_HICCUP_GRACE => {
+                tracing::debug!("relay status read failed; showing its last answer: {e}");
+                Ok(m.clone())
+            }
+            _ => Err(e),
+        },
+        Err(e) => Err(e),
     }
 }
 
@@ -1646,6 +1736,19 @@ pub fn owned_by(policy: &HostPolicy, account: &str) -> bool {
             .owner_email
             .as_deref()
             .is_some_and(|e| e.eq_ignore_ascii_case(account))
+}
+
+/// Locates (or downloads) cua-spacesd and installs it at `dest`.
+async fn install_driver(explicit: Option<&Path>, dest: &Path) -> Result<()> {
+    let source = driver::locate(explicit)?;
+    match &source {
+        DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
+        DriverSource::Release { version, url, .. } => {
+            tracing::info!(%version, %url, "downloading cua-spacesd")
+        }
+        DriverSource::Local(_) => {}
+    }
+    driver::install_to(&source, dest).await
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_experiments_choose` applies a switch. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.
+`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_settings_choose_experiment` applies a switch and saves the New UI choice ("Use classic UI"). `app_settings_resolve_new_ui` applies the New UI default for the update channel and version. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.
 
 ## `app_experiments_from_json`
 
@@ -75,6 +75,95 @@ pub fn app_settings_with_storage(page: AppSettingsPage, storage: AppSettingsSect
 | `experiments` | [`AppExperiments`](#appexperiments-record) | required |
 
 **Returns** [`AppSettingsPage`](/cua-sdk/reference/spaces/app-core/window#appsettingspage-record)
+
+## `app_settings_resolve_new_ui`
+
+The settings with the New UI as a launch of `version` shows it: the
+user's choice, else the default for the update channel and version
+(again after the channel changes).
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appSettingsResolveNewUi(settings: AppSettings, version: String) -> AppSettings
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `settings` | [`AppSettings`](/cua-sdk/reference/spaces/app-core/onboarding-settings#appsettings-record) | required |
+| `version` | `String` | required |
+
+**Returns** [`AppSettings`](/cua-sdk/reference/spaces/app-core/onboarding-settings#appsettings-record)
+
+## `app_settings_first_launch_channel`
+
+The update channel of an install's first launch, from the file's
+`channel`: Beta for a prerelease, else unchanged.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appSettingsFirstLaunchChannel(channel: AppUpdateChannel, version: String) -> AppUpdateChannel
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_settings_first_launch_channel(channel: AppUpdateChannel, version: String) -> AppUpdateChannel
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `channel` | [`AppUpdateChannel`](/cua-sdk/reference/spaces/app-core/about#appupdatechannel-enum) | required |
+| `version` | `String` | required |
+
+**Returns** [`AppUpdateChannel`](/cua-sdk/reference/spaces/app-core/about#appupdatechannel-enum)
+
+## `app_settings_choose_experiment`
+
+The settings after a Settings, Experiments row's choice (the switches,
+and the New UI's "Use classic UI" saved as the user's choice).
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appSettingsChooseExperiment(settings: AppSettings, row: String, option: String) -> AppSettings
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_settings_choose_experiment(settings: AppSettings, row: String, option: String) -> AppSettings
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `settings` | [`AppSettings`](/cua-sdk/reference/spaces/app-core/onboarding-settings#appsettings-record) | required |
+| `row` | `String` | required |
+| `option` | `String` | required |
+
+**Returns** [`AppSettings`](/cua-sdk/reference/spaces/app-core/onboarding-settings#appsettings-record)
 
 ## `app_telemetry_experiments_changed`
 
@@ -140,8 +229,8 @@ Returned by [`app_experiments_choose`](#app_experiments_choose), [`app_experimen
 | --- | --- | --- | --- |
 | `cua_volume` / `cuaVolume` | `bool` |  | Cua Volume in the first run and Settings, Storage. |
 | `your_cloud` / `yourCloud` | `bool` |  | Your own clouds in the New Space wizard. |
-| `sharing` | `bool` |  | Sharing a Space with other accounts. |
-| `web_ui` / `webUi` | `bool` |  | The shared web UI, previewed in its own window. |
+| `sharing` | `bool` |  | Sharing a Space with other accounts. On unless turned off: a missing key reads as on (the plans on cua.ai/pricing list sharing). |
+| `web_ui` / `webUi` | `bool` |  | The New UI (the shared web UI) is the main window: the user's choice or, without one, `new_ui_default` (`crate.settings.resolve_new_ui`). |
 
 ## `app_experiments_choose`
 

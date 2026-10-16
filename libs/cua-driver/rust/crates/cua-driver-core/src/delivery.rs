@@ -65,12 +65,32 @@ pub fn background_unavailable_result(
     escalation_reason: impl Into<String>,
     fields: Value,
 ) -> ToolResult {
+    background_unavailable_result_with_suggestion(
+        message,
+        code,
+        escalation_reason,
+        fields,
+        FOREGROUND_RETRY_SUGGESTION,
+    )
+}
+
+/// Like [`background_unavailable_result`], but `suggestion` replaces the
+/// foreground retry text. Use it when a working background route exists, so the
+/// refusal leads the caller to that route instead of implying the task is
+/// blocked. The foreground `escalation` is still included.
+pub fn background_unavailable_result_with_suggestion(
+    message: impl Into<String>,
+    code: &str,
+    escalation_reason: impl Into<String>,
+    fields: Value,
+    suggestion: &str,
+) -> ToolResult {
     let mut structured = match fields {
         Value::Object(fields) => fields,
         _ => serde_json::Map::new(),
     };
     structured.insert("code".to_owned(), json!(code));
-    structured.insert("suggestion".to_owned(), json!(FOREGROUND_RETRY_SUGGESTION));
+    structured.insert("suggestion".to_owned(), json!(suggestion));
     structured.insert(
         "escalation".to_owned(),
         json!({
@@ -117,6 +137,21 @@ mod tests {
             assert_eq!(mode, expected, "{args}");
             assert_eq!(mode.is_foreground(), expected == DeliveryMode::Foreground);
         }
+    }
+
+    #[test]
+    fn a_custom_suggestion_replaces_only_the_foreground_retry_text() {
+        let result = background_unavailable_result_with_suggestion(
+            "refused",
+            "background_unavailable",
+            "why",
+            json!({}),
+            "use get_window_state",
+        );
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["suggestion"], "use get_window_state");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
     }
 
     #[test]

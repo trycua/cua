@@ -91,6 +91,14 @@ describe("the consent", () => {
     expect(off.fromVault).toBeUndefined();
   });
 
+  it("carries the sites picked for saved passwords apart from the cookie sites", () => {
+    const c = teleportConsent({ approved: true, acknowledgeSensitive: true, includePasswords: true, cookieDomains: ["github.com"], passwordDomains: ["bank.example", "github.com"] });
+    expect(c.cookieDomains).toEqual(["github.com"]);
+    expect(c.passwordDomains).toEqual(["bank.example", "github.com"]);
+    expect(c.includePasswords).toBe(true);
+    expect(teleportConsent({ approved: true, passwordDomains: ["a", 2] }).passwordDomains).toBeUndefined();
+  });
+
   it("takes only true as yes, and only lists of strings as lists", () => {
     const c = teleportConsent({ approved: "yes", saveToKeyvault: 1, cookieDomains: ["a", 2], exclude: "x", fromVault: null });
     expect(c).toEqual({ approved: false, acknowledgeSensitive: false, saveToKeyvault: false, acknowledgeRelayPlaintext: false, cookieDomains: undefined, exclude: [], fromVault: undefined, includePasswords: false });

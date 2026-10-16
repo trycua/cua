@@ -888,6 +888,7 @@ Returned by [`Sandbox.info`](#sandbox), [`Sandbox.refresh`](/cua-sdk/reference/s
 | `expires_at_unix` / `expiresAtUnix` | `Option<i64>` |  | When it expires unless kept alive (unix seconds), when known. |
 | `provider_details` / `providerDetails` | `HashMap<String, String>` |  | Provider internals (cloud: `pool`, `namespace`, `claim`; local: `backend`, `container_id`). Not part of the portable API. |
 | `image_info` / `imageInfo` | [`Option<ImageInfo>`](/cua-sdk/reference/image#imageinfo-record) | `None` | The image as resolved and pinned at create time (digest, variant). `None` for direct connections, named pools, images not resolved from a registry, and the daemon topology. |
+| `stop_reason` / `stopReason` | `Option<String>` | `None` | Why a local sandbox stopped without being asked to, in plain words ("out of memory", "killed", "exited with code 1"); `None` otherwise. |
 
 ## `SandboxListing` record
 

@@ -1,9 +1,12 @@
 {
   "title": "Guides",
   "pages": [
+    "install",
+    "plans",
     "add-a-space",
     "unattended-access",
     "share-a-space",
+    "teams",
     "stream-a-desktop",
     "send-files",
     "teleport-an-app",
@@ -12,6 +15,7 @@
     "keyvault",
     "site-login",
     "relay-security",
+    "mesh",
     "cua-volume",
     "use-from-an-agent",
     "updates"

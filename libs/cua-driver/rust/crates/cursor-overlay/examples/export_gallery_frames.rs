@@ -128,6 +128,9 @@ fn export_state(output: &Path, state: GalleryState) {
             ..CursorConfig::default()
         };
         let mut core = RenderStateCore::new(config);
+        // The gallery documents every badge combination, which only the
+        // verbose badge shows.
+        core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         core.motion.idle_hide_ms = 0.0;
         core.pos = (
             f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),

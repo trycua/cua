@@ -164,6 +164,30 @@ impl Default for Keepalive {
     }
 }
 
+static PROCESS_PRINCIPAL: std::sync::RwLock<Option<HeaderValue>> = std::sync::RwLock::new(None);
+
+/// Sets the principal every client in this process sends when its own
+/// [`crate::ConnectOptions::principal`] is unset. An agent host (`cua mcp`)
+/// sets an agent principal once it knows the agent's name, so the Spaces it
+/// acts in draw a labelled agent cursor. Read on each request: clients made
+/// before the call pick it up. `None` clears it.
+pub fn set_process_principal(principal: Option<Principal>) {
+    let value = principal.and_then(|p| {
+        HeaderValue::from_str(
+            &base64::engine::general_purpose::STANDARD_NO_PAD.encode(p.encode_to_vec()),
+        )
+        .ok()
+    });
+    *PROCESS_PRINCIPAL.write().unwrap_or_else(|e| e.into_inner()) = value;
+}
+
+fn process_principal() -> Option<HeaderValue> {
+    PROCESS_PRINCIPAL
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// Everything needed to build a channel.
 #[derive(Clone)]
 pub(crate) struct ChannelConfig {
@@ -173,6 +197,7 @@ pub(crate) struct ChannelConfig {
     pub gateway: Option<GatewayAuth>,
     pub connect_timeout: Duration,
     pub keepalive: Keepalive,
+    pub headers: Vec<(String, String)>,
 }
 
 /// Decides the transport order for `pref` and `endpoint`.
@@ -405,6 +430,7 @@ pub(crate) struct HeaderInjector {
     principal: Option<HeaderValue>,
     gateway: Option<GatewayAuth>,
     claim: Option<HeaderValue>,
+    extra: Vec<(http::header::HeaderName, HeaderValue)>,
 }
 
 impl HeaderInjector {
@@ -441,12 +467,25 @@ impl HeaderInjector {
             .map(HeaderValue::from_str)
             .transpose()
             .map_err(|_| Error::InvalidEndpoint("claim".into()))?;
+        let extra = cfg
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                let name = http::header::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| Error::InvalidEndpoint(format!("header name {name:?}")))?;
+                let mut value = HeaderValue::from_str(value)
+                    .map_err(|_| Error::InvalidEndpoint("header value".into()))?;
+                value.set_sensitive(true);
+                Ok((name, value))
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             authorization,
             env_token_header,
             principal,
             gateway: cfg.gateway.clone(),
             claim,
+            extra,
         })
     }
 
@@ -472,8 +511,11 @@ impl HeaderInjector {
         } else if let Some(auth) = &self.authorization {
             headers.insert(AUTHORIZATION, auth.clone());
         }
-        if let Some(p) = &self.principal {
-            headers.insert(metadata::PRINCIPAL_BIN, p.clone());
+        if let Some(p) = self.principal.clone().or_else(process_principal) {
+            headers.insert(metadata::PRINCIPAL_BIN, p);
+        }
+        for (name, value) in &self.extra {
+            headers.insert(name.clone(), value.clone());
         }
         Ok(())
     }
@@ -569,6 +611,7 @@ mod extra_header_tests {
             }),
             connect_timeout: Duration::from_secs(1),
             keepalive: Keepalive::default(),
+            headers: Vec::new(),
         }
     }
 
@@ -587,5 +630,44 @@ mod extra_header_tests {
         let mut req = Request::new(());
         plain.apply(&mut req).await.unwrap();
         assert!(!req.headers().contains_key("x-cua-device-session"));
+    }
+
+    /// The process principal fills in for clients without their own, is
+    /// read per request, and never overrides an explicit one.
+    #[tokio::test]
+    async fn process_principal_is_the_fallback() {
+        let decode = |req: &Request<()>| {
+            let raw = req.headers().get(metadata::PRINCIPAL_BIN)?.to_str().ok()?;
+            let bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(raw)
+                .ok()?;
+            Principal::decode(&bytes[..]).ok()
+        };
+        let agent = Principal {
+            id: "agent:claude-code".into(),
+            display_name: "Claude Code".into(),
+            kind: cua_proto::env::v1::PrincipalKind::Agent as i32,
+            ..Principal::default()
+        };
+        let plain = HeaderInjector::new(&config(Arc::new(StaticBearer("a".into())))).unwrap();
+        let mut explicit_cfg = config(Arc::new(StaticBearer("a".into())));
+        explicit_cfg.principal = Some(Principal {
+            id: "ada".into(),
+            ..Principal::default()
+        });
+        let explicit = HeaderInjector::new(&explicit_cfg).unwrap();
+
+        set_process_principal(Some(agent.clone()));
+        let mut req = Request::new(());
+        plain.apply(&mut req).await.unwrap();
+        assert_eq!(decode(&req), Some(agent));
+        let mut req = Request::new(());
+        explicit.apply(&mut req).await.unwrap();
+        assert_eq!(decode(&req).unwrap().id, "ada");
+
+        set_process_principal(None);
+        let mut req = Request::new(());
+        plain.apply(&mut req).await.unwrap();
+        assert!(decode(&req).is_none());
     }
 }

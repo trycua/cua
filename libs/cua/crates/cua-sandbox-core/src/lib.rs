@@ -23,6 +23,9 @@ pub mod mcp;
 pub mod placement;
 /// Clean-up a dropped (cancelled) create hands off ([`cleanup::settle`]).
 pub use cua_vmm::cleanup;
+/// Why a local create failed, as a bounded telemetry word
+/// ([`cua_vmm::error::failure_kind`]).
+pub use cua_vmm::error::failure_kind as runtime_failure_kind;
 /// GPU options per runtime ([`gpu::GpuSupport`]).
 pub use cua_vmm::gpu;
 /// Create progress: what a create is doing (pulling, booting, waiting for
@@ -61,7 +64,7 @@ pub use fleet_local::{
 pub use http::{HttpResponse, RequestBody, ServiceEndpoint, StreamingResponse};
 pub use mcp::{McpClient, McpConfig};
 pub use pool_image::pool_image_info;
-pub use power::{PowerControl, PowerState};
+pub use power::{PowerControl, PowerState, StopReason};
 pub use provider::{
     CLOUD_LOCATIONS, CONTRIB_LOCATIONS, ImageMode, PortExposure, Provider, ProviderCapabilities,
     ProviderCreate, ProviderImage, ProviderInstance, RunKind, is_cloud_location,

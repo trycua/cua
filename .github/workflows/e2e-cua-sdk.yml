@@ -46,6 +46,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -74,10 +77,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:
@@ -155,10 +155,7 @@ jobs:
       # push of this file a startup failure); set it for the later steps here.
       - run: echo "CUA_E2E_PLAYWRIGHT_DIR=$RUNNER_TEMP/pw" >>"$GITHUB_ENV"
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:

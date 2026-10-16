@@ -22624,8 +22624,8 @@ public struct AppOnboardingView: Equatable, Hashable {
     public var presentations: [AppPresentationCard]
     /**
      * Done's example prompts ([`PROMPTS`]), one line each: shown under
-     * both columns, scrolling slowly, to suggest what to ask a coding
-     * agent. Not interactive.
+     * both columns under "Try asking your agent:", to suggest what to ask a
+     * coding agent. Each copies to the clipboard on click.
      */
     public var prompts: [String]
     /**
@@ -22698,8 +22698,8 @@ public struct AppOnboardingView: Equatable, Hashable {
          */presentations: [AppPresentationCard],
         /**
          * Done's example prompts ([`PROMPTS`]), one line each: shown under
-         * both columns, scrolling slowly, to suggest what to ask a coding
-         * agent. Not interactive.
+         * both columns under "Try asking your agent:", to suggest what to ask a
+         * coding agent. Each copies to the clipboard on click.
          */prompts: [String],
         /**
          * The first-run telemetry notice (the Welcome page, so the first run

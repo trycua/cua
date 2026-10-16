@@ -303,14 +303,25 @@ describe.skipIf(!wasmBuilt)("Done's Launch at login", () => {
   it('shows where the host applies it (Electron), and finishes with the choice', async () => {
     const { probe, calls } = mount(await testCore(), 'electron');
     await toDone(probe);
-    expect(probe.flow.launchAtLogin).toMatchObject({ checked: false });
+    expect(probe.flow.launchAtLogin).toMatchObject({ checked: true });
     expect(probe.flow.launchAtLogin?.label).toBeTruthy();
     await act(async () => {
       await probe.flow.finish();
     });
     expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toEqual([
-      ['session.completeOnboarding', { mode: 'client', launchAtLogin: false }],
+      ['session.completeOnboarding', { mode: 'client', launchAtLogin: true }],
     ]);
+  });
+
+  it('registers the login item only on Start, not while the box is merely ticked', async () => {
+    const { probe, calls } = mount(await testCore(), 'electron');
+    await toDone(probe);
+    expect(probe.flow.launchAtLogin).toMatchObject({ checked: true });
+    expect(calls.filter(([op]) => op === 'session.completeOnboarding' || String(op).startsWith('loginItem.'))).toEqual([]);
+    await act(async () => {
+      await probe.flow.finish();
+    });
+    expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toHaveLength(1);
   });
 
   it('is not offered where the host does not apply it', async () => {

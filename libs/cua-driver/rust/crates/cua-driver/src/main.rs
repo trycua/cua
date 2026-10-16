@@ -595,6 +595,7 @@ fn main() {
                 std::process::exit(64);
             }
             responsibility::reexec_disclaimed_if_needed();
+            responsibility::warn_if_unbundled();
             if let Err(error) = history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
                 history_runtime::preview_admitted_preference(),
@@ -1015,6 +1016,7 @@ fn main() -> anyhow::Result<()> {
                 &grants,
             )?;
             responsibility::reexec_disclaimed_if_needed();
+            responsibility::warn_if_unbundled();
             history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
                 history_runtime::preview_admitted_preference(),

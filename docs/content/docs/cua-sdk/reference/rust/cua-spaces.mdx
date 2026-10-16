@@ -1604,6 +1604,7 @@ pub struct SpaceInfo {
   pub cloud_place: String,
   pub cloud_delete: String,
   pub status: String,
+  pub stop_reason: String,
 }
 ```
 
@@ -1672,6 +1673,7 @@ impl Spaces {
   async fn refresh_thumbnails(&self) -> usize;
   fn spawn_thumbnail_refresh(&self) -> JoinHandle<()>;
   fn power_of(&self, id: &str) -> (String, String);
+  fn stop_reason_of(&self, id: &str) -> String;
   async fn stop(&self, space: &str) -> Result<SpacePower>;
   async fn start(&self, space: &str) -> Result<SpacePower>;
   fn download_dir(&self) -> &Path;

@@ -546,6 +546,7 @@ fn space_json(s: &cua_sdk::SpaceInfo) -> serde_json::Value {
         "host_name": s.host_name,
         "power": s.power,
         "power_state": s.power_state,
+        "stop_reason": s.stop_reason,
     })
 }
 
@@ -1939,6 +1940,10 @@ fn grouped_lines(list: &[cua_spaces::SpaceInfo]) -> Vec<String> {
         // A Space turned off says so (`cua spaces start` turns it on), as
         // does a machine the relay cannot reach now (offline, not sharing).
         match (s.power_state.as_str(), s.status.as_str()) {
+            // One that stopped on its own says why ("stopped: out of memory").
+            ("stopped", _) if !s.stop_reason.is_empty() => {
+                format!("{} (stopped: {})", line.trim_end(), s.stop_reason)
+            }
             ("suspended" | "stopped", _) => format!("{} ({})", line.trim_end(), s.power_state),
             (_, status) if !status.is_empty() => format!("{} ({status})", line.trim_end()),
             _ => line,
@@ -2286,6 +2291,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            stop_reason: String::new(),
         };
         let mut list = vec![
             space("local:box", ""),
@@ -2343,6 +2349,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            stop_reason: String::new(),
         };
         let lines = grouped_lines(&[
             space("relay:space-1", "mini1234"),
@@ -2411,6 +2418,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            stop_reason: String::new(),
         };
         let lines = grouped_lines(std::slice::from_ref(&s));
         let cols: Vec<&str> = lines[0].split_whitespace().collect();
@@ -2418,6 +2426,23 @@ mod tests {
             cols,
             ["local:e2e-1005-cli", "e2e-1005-cli", "local", "0.5.3"]
         );
+        // Stopped on its own: the line says why, and so does --json.
+        s.power = "stop".into();
+        s.power_state = "stopped".into();
+        s.stop_reason = "out of memory".into();
+        let lines = grouped_lines(std::slice::from_ref(&s));
+        assert!(
+            lines[0].ends_with("(stopped: out of memory)"),
+            "{}",
+            lines[0]
+        );
+        assert_eq!(
+            ls_json(std::slice::from_ref(&s))[0]["stop_reason"],
+            "out of memory"
+        );
+        s.stop_reason = String::new();
+        let lines = grouped_lines(std::slice::from_ref(&s));
+        assert!(lines[0].ends_with("(stopped)"), "{}", lines[0]);
         let json = ls_json(std::slice::from_ref(&s));
         assert_eq!(json[0]["id"], "local:e2e-1005-cli");
         assert_eq!(json[0]["name"], "327b8dc70418");

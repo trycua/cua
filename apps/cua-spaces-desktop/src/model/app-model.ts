@@ -52,7 +52,7 @@ import type { RuntimeFix, RuntimeFixAction, WindowsRuntime, WindowsRuntimeAdvice
 import { TimeoutError, sleep, withTimeout } from "./time";
 
 /** What changed, for the page's events. */
-export type ModelChange = "spaces" | "session" | "settings" | "machines" | "agents" | "keyvault" | "checklist";
+export type ModelChange = "spaces" | "session" | "settings" | "machines" | "agents" | "keyvault" | "checklist" | "update";
 
 export interface AppModelDeps {
   native: Native;

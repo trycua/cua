@@ -38,7 +38,9 @@ Preselect the app's first-run choice: host or client (implies spaces).
 .PARAMETER Pair
 Add this machine to your account with a one-time code from the Cua Spaces app
 (Add a machine): installs the CLI and runs `cua host setup --pair <code>`, with
-no sign-in and no checklist.
+no sign-in and no checklist. A computer that already has a cua with
+`host setup --pair` uses it instead of downloading again; -Prefix, -Version or
+CUA_INSTALL_REINSTALL=1 install anyway.
 .PARAMETER Relay
 Relay for -Pair (default https://relay.cua.ai).
 .PARAMETER Version
@@ -104,6 +106,7 @@ $script:Picked = $false
 # Cua Spaces ships for Windows as the Electron app's NSIS setup.exe
 # (cd-cua-spaces.yml). Set this to $false to skip a selected `spaces` with a note.
 $script:SpacesSupported = $true
+$script:SigNoted = $false
 
 function Get-Sha256Hex([string]$Path) {
     # .NET directly: Get-FileHash is missing when the Utility module is not
@@ -498,6 +501,23 @@ function Invoke-HostSetup([string]$Cua) {
     if ($LASTEXITCODE -ne 0) { Write-Warning "host setup did not finish; run 'cua host setup' after 'cua auth login'" }
 }
 
+# -Pair on a computer that already has Cua: the `cua` that is there (it must
+# know `host setup --pair`), or $null. -Prefix, -Version and
+# CUA_INSTALL_REINSTALL=1 install anyway.
+function Find-ExistingCua {
+    if (-not $Pair -or $Prefix -or $Version -or $env:CUA_INSTALL_REINSTALL -eq '1') { return $null }
+    $candidates = @()
+    $onPath = Get-Command cua -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($onPath) { $candidates += $onPath.Source }
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\cua\bin\cua.exe') }
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path -LiteralPath $candidate)) { continue }
+        $help = (& $candidate host setup --help 2>&1 | Out-String)
+        if ($help -match '--pair') { return $candidate }
+    }
+    return $null
+}
+
 function Invoke-CuaInstall {
     # Function scope: `irm | iex` runs in the caller's session, so keep these local.
     Set-StrictMode -Version 3
@@ -516,13 +536,23 @@ function Invoke-CuaInstall {
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("cua-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     try {
-        $manifestUrl = Get-ManifestUrl
-        $manifestFile = Join-Path $tmp 'release-artifacts.json'
-        Get-Remote $manifestUrl $manifestFile
-        $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
-        if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
-        Write-Info "platform $platform, manifest $manifestUrl"
         $cua = $null
+        $existing = Find-ExistingCua
+        if ($existing) {
+            Write-Info "cua is already installed at $existing; using it (CUA_INSTALL_REINSTALL=1 installs it again)"
+            $sel.cli = $false
+            $cua = $existing
+        }
+        $manifestUrl = $null
+        # Nothing to download (-Pair on a computer that has Cua): no manifest to read.
+        if ($sel.cli -or $sel.spaces -or $sel['cua-driver']) {
+            $manifestUrl = Get-ManifestUrl
+            $manifestFile = Join-Path $tmp 'release-artifacts.json'
+            Get-Remote $manifestUrl $manifestFile
+            $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
+            if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
+            Write-Info "platform $platform, manifest $manifestUrl"
+        }
         if ($sel.cli) { $cua = Install-Cli $manifest $manifestUrl $platform $tmp }
         if ($sel.spaces) {
             if ($Mode) {

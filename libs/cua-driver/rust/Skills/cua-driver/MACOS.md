@@ -122,7 +122,7 @@ is safe even for apps that normally foreground on media-load
 | Move or resize one exact window       | `set_window_frame({pid, window_id, x, y, width, height})`                              | `osascript` position/size writes or title-bar dragging      |
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Loop, branch or retry over app actions | `run_script({script})` (sandboxed JavaScript over the `cua` API, one call); `run_steps` for a fixed list | an AppleScript or shell loop around `osascript` or `cua-driver` calls |
-| Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y, delivery_mode:"foreground"})` (pixel-only and foreground-only: macOS AX has no semantic drag, and there is no background drag) | `cliclick dd:`, `osascript drag`                            |
+| Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y})` in the background (pixel-only: macOS AX has no semantic drag). Verify with a screenshot; `delivery_mode:"foreground"` only if nothing changed. A bound browser tab: `browser_pointer` `action:"drag"` | `cliclick dd:`, `osascript drag`, refusing a drag-only step as "needs the window in front" |
 | Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). A web page in Chrome, Edge or Brave: `browser_pointer` hover after `get_browser_state`. If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop", delivery_mode:"foreground"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover; a desktop `move_cursor` over a background browser page |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
@@ -383,12 +383,31 @@ surface that only accepts events while frontmost (the canvas/viewport/game
 case below). Unmodified `element_token` (AX) actions remain background-capable
 and hold the no-foreground contract without the flag.
 
-`drag` is the exception: macOS has no background drag. A window-scoped
-`drag` needs `delivery_mode:"foreground"` and `window_id`; without them it
-refuses with `background_unavailable` and sends nothing. The foreground drag
-fronts the exact window, moves the physical pointer along the path, and then
-restores the prior frontmost app. Use it only when a drag is the task, and
-expect the hardware pointer to move.
+`drag` runs in the background too. A window-scoped `drag` (`pid` and
+`window_id`) makes the window key without raising it, posts the press, the
+interpolated drags and the release to that window's process, and hands focus
+back to the user's window. The real pointer does not move. It reaches
+controls that follow the drag events: native sliders and canvases, and
+pointer-event sliders, canvases and boards on web pages in Chrome. The
+result is not driver-verified: check the outcome with a screenshot or the
+tree. Only if nothing changed, retry with `delivery_mode:"foreground"`,
+which fronts the window, moves the physical pointer along the path, and
+restores the prior frontmost app.
+
+A native `<input type="range">` in Chrome does not follow a background drag
+(pointer-event widgets do). Use `set_value` on its slider element, or
+`browser_pointer` `action:"drag"` on a bound tab, which sends the drag
+through CDP `Input.dispatchMouseEvent` with the button held.
+
+A drag that starts a macOS drag-and-drop session (reordering a list by drag
+and drop, moving a file, HTML5 `draggable` content) cannot drop in the
+background: macOS tracks those sessions with the real pointer. The driver
+sees the session start, releases at once, and returns
+`background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
+non-drag route first (Move Up/Down, a menu or context-menu command, a
+shortcut, cut and paste), then foreground if the user allows it. Toolkits that read the hardware pointer (Tk) or drop routed
+mouse events (LibreOffice) refuse the background drag with
+`background_unavailable` before anything is sent.
 
 A foreground window-scoped **pixel** `click`, `double_click`, or
 `right_click` (`x`/`y` with `window_id`) is delivered like a desktop-scope click, not through the per-pid path: Cua Driver
@@ -480,10 +499,8 @@ Calc cells do: `set_value` returns success at the AX level and the cell
 keeps its old content. `set_value` re-reads the value, and when it has
 not moved it fails with `code:"write_not_applied"` and
 `effect:"not_applied"`, so a `run_script` stops there. LibreOffice also
-drops background pointer input, so its cells cannot be edited in the
-background at all: the edit needs the window in front (`bring_to_front`,
-then `type_text`), only if the user allows it. Otherwise stop and report
-the step as blocked.
+ignores background pointer input, so address it with `window_id` and type
+instead (see "LibreOffice, Numbers and other editors in the background").
 
 ### Known text-input limits (Catalyst + Electron)
 
@@ -640,4 +657,8 @@ above (`invoke_menu` with a path such as `["Go", "Downloads"]`).
 
 ### LibreOffice, Numbers and other editors in the background
 
-With `window_id`, `type_text`, `press_key` and `hotkey` post keys to that exact window: the driver makes it the app's key window through a focus record (no raise, no activation, real pointer untouched), posts, and hands key back. A second window of the same app (Find & Replace, another document) is no longer `same_pid_keyboard_ambiguity`. A command key whose menu route is refused (item disabled while the app is in the background) falls through to key events in that window. Recipe: Name Box navigation (`type_text` `A1\n`), type with `\n` and `\t`, then read the cell back.
+With `window_id`, `type_text`, `press_key` and `hotkey` post keys to that exact window: the driver makes it the app's key window through in-app key-window records (no raise, no activation, real pointer untouched), confirms that the app's focused window and focused element are in that window, posts, and hands key back. This also covers another window or dialog of the app holding focus, and a LibreOffice that was never activated. When the switch cannot be confirmed the call is refused with `window_not_key` and no key is sent. A second window of the same app (Find & Replace, another document) is no longer `same_pid_keyboard_ambiguity`. A command key whose menu route is refused (item disabled while the app is in the background) falls through to key events in that window. Recipe: pass `window_id` on every call; go to the cell with Name Box navigation (`type_text` `A1\n`), type with `\n` and `\t`, read the cell back; run commands (Paste Special, Format, Save) with `invoke_menu({pid, window_id, path})` rather than clicking the menu bar. A `background_unavailable` refusal here means use `get_window_state` and act by element, not stop.
+
+### Preview: export before resizing
+
+Duplicate is disabled in a background Preview, so work on an export: File > Export (`invoke_menu`) to the destination, then resize or edit the exported copy. Do not resize the original first.

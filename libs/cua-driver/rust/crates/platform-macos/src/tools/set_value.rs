@@ -222,7 +222,13 @@ impl Tool for SetValueTool {
             "set_value.AXValue",
             || async move {
                 tokio::task::spawn_blocking(move || {
-                    set_value_blocking(element_guard.as_ptr(), element_index, pid, &value)
+                    set_value_blocking(
+                        element_guard.as_ptr(),
+                        element_index,
+                        pid,
+                        window_id,
+                        &value,
+                    )
                 })
                 .await
             },
@@ -468,6 +474,7 @@ fn set_value_blocking(
     element_ptr: usize,
     element_index: usize,
     pid: i32,
+    window_id: u32,
     value: &str,
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
@@ -477,14 +484,20 @@ fn set_value_blocking(
     if role == "AXPopUpButton" {
         let element_title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
         // Menu-item selection, not an AXValue write — no read-back to report.
-        select_popup_option(element, element_index, pid, value, &element_title).map(|detail| {
-            SetValueOutcome {
-                detail,
-                verified: None,
-                changed: None,
-                not_applied: false,
-                document_edited: None,
-            }
+        select_popup_option(
+            element,
+            element_index,
+            pid,
+            window_id,
+            value,
+            &element_title,
+        )
+        .map(|detail| SetValueOutcome {
+            detail,
+            verified: None,
+            changed: None,
+            not_applied: false,
+            document_edited: None,
         })
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
@@ -852,13 +865,103 @@ fn dismiss_popup_menu(popup: AXUIElementRef, pid: i32) {
     }
 }
 
+/// Whether a popup belongs to a Chromium renderer (Chrome-family browsers and
+/// Electron apps), whose `<select>` menu is a native popup.
+fn is_chromium_popup_owner(pid: i32) -> bool {
+    let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
+    super::type_text::is_chromium_identity(&bundle_id)
+        || crate::browser::electron_js::ElectronJs::is_electron(pid)
+}
+
+/// How long the page may take to apply a type-ahead selection.
+const TYPEAHEAD_SETTLE: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// Select a background Chromium `<select>` without opening its menu.
+///
+/// Chromium shows a `<select>` menu as a native popup. Opening it orders the
+/// whole browser window above the user's window, and the window stays there
+/// after the menu closes; re-activating the user's app does not reorder it
+/// (Bench v2: WF-02 to WF-08, IR-05, IR-06, MA-02, CDB-G04). A focused closed
+/// `<select>` takes the page's own type-ahead instead: typing an option's
+/// label selects it and fires `input` and `change`, and the menu never opens.
+///
+/// Returns `None` when this route does not apply or did not land on `value`;
+/// the caller then falls back to opening the menu.
+fn select_chromium_popup_by_typeahead(
+    popup: AXUIElementRef,
+    element_index: usize,
+    pid: i32,
+    window_id: u32,
+    value: &str,
+    element_title: &str,
+) -> Option<String> {
+    let wanted = value.trim();
+    if wanted.is_empty()
+        || crate::apps::frontmost_pid() == Some(pid)
+        || popup_menu_is_open(popup)
+        || !is_chromium_popup_owner(pid)
+    {
+        return None;
+    }
+    let selected = || unsafe { copy_string_attr(popup, "AXValue") }.unwrap_or_default();
+    let matches = |current: &str| current.trim().to_lowercase() == wanted.to_lowercase();
+    if matches(&selected()) {
+        return Some(format!(
+            "✅ '{wanted}' is already selected in AXPopUpButton [{element_index}] \
+             \"{element_title}\"; nothing was changed."
+        ));
+    }
+    // Focus moves inside the page only: no activation, no window order change.
+    unsafe { crate::ax::bindings::set_bool_attr_true(popup, "AXFocused") };
+    std::thread::sleep(POPUP_POLL_INTERVAL);
+    if unsafe { copy_bool_attr(popup, "AXFocused") } != Some(true) {
+        return None;
+    }
+    // Keys go to the window's focused element, so the window must be the
+    // app's key window (in-app records only; the app is not activated).
+    let _scope = super::key_scope(pid, Some(window_id)).ok()?;
+    crate::input::keyboard::type_text(pid, wanted).ok()?;
+    let deadline = std::time::Instant::now() + TYPEAHEAD_SETTLE;
+    loop {
+        let current = selected();
+        if matches(&current) {
+            return Some(format!(
+                "✅ Selected '{current}' in AXPopUpButton [{element_index}] \
+                 \"{element_title}\" by typing its label into the focused control \
+                 (the menu was not opened, so the window order did not change)."
+            ));
+        }
+        if std::time::Instant::now() >= deadline {
+            tracing::debug!(
+                pid,
+                wanted,
+                current,
+                "type-ahead did not select the option; opening the menu"
+            );
+            return None;
+        }
+        std::thread::sleep(POPUP_POLL_INTERVAL);
+    }
+}
+
 fn select_popup_option(
     element: AXUIElementRef,
     element_index: usize,
     pid: i32,
+    window_id: u32,
     value: &str,
     element_title: &str,
 ) -> anyhow::Result<String> {
+    if let Some(detail) = select_chromium_popup_by_typeahead(
+        element,
+        element_index,
+        pid,
+        window_id,
+        value,
+        element_title,
+    ) {
+        return Ok(detail);
+    }
     let mut options = popup_options(element);
     let mut opened_menu = false;
     let mut press_thread = None;

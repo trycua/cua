@@ -121,6 +121,8 @@ export interface Space {
   cloud?: string;
   cloudPlace?: string;
   cloudDelete?: string;
+  /** Why a local Space stopped without being asked to ("out of memory"). */
+  stopReason?: string;
 }
 
 /** A Space's power (the app core's `model::SpacePower`). */
@@ -133,6 +135,8 @@ export interface SpacePower {
   turningOn?: boolean | null;
   /** Why the last power action failed, until the next one. */
   error?: string | null;
+  /** Why it stopped without being asked to ("out of memory"), while it is off. */
+  stopReason?: string | null;
 }
 
 /** How far a Space being created has come. */

@@ -99,7 +99,7 @@ RUN install -d -m 0755 /etc/apt/keyrings
 
 # Chromium from the xtradeb/apps PPA (open-source build, BSD-3-Clause; not
 # Google-branded Chrome): only the chromium packages may come from it, at
-# exactly CHROMIUM_VERSION, and the key must have the pinned fingerprint.
+# the pinned major (CHROMIUM_MAJOR), and the key must have the pinned fingerprint.
 # The key is vendored (common/apt-keys/xtradeb-apps.asc), not fetched from
 # keyserver.ubuntu.com, so a keyserver outage cannot break the build.
 # cua-driver's browser_prepare launches /usr/lib/chromium/chromium (a
@@ -107,11 +107,15 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # managed policy turns off first-run noise, sign-in and password saving, and
 # the "unsupported command-line flag" bar: the image picks the sandbox flags
 # per runtime (common/desktop/browser-sandbox.sh), not the user.
-# Per-arch pins: the PPA keeps only its newest build per arch, and the
-# arches do not always move together. CHROMIUM_VERSION, when set, wins.
+# The PPA keeps only its newest build per arch and prunes the rest, so an
+# exact build pin (155.0.8059.39-1xtradeb1.2404.1) breaks the build as soon as
+# the PPA moves on (it did, repeatedly). Pin the major instead: apt picks the
+# newest CHROMIUM_MAJOR.* build the PPA has for that arch, and the arches need
+# not move together. The resolved version is recorded in
+# /etc/cua-image/chromium-version. Bump the major
+# deliberately. CHROMIUM_VERSION, when set, wins (an exact build, for a repro).
 ARG CHROMIUM_VERSION=
-ARG CHROMIUM_VERSION_AMD64=155.0.8059.39-1xtradeb1.2404.1
-ARG CHROMIUM_VERSION_ARM64=155.0.8059.39-1xtradeb1.2404.1
+ARG CHROMIUM_MAJOR=155
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
     gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \
@@ -120,8 +124,7 @@ RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtrade
       >/etc/apt/sources.list.d/xtradeb-apps.list \
  && printf 'Package: *\nPin: origin ppa.launchpadcontent.net\nPin-Priority: -1\n\nPackage: chromium chromium-common chromium-sandbox\nPin: origin ppa.launchpadcontent.net\nPin-Priority: 1001\n' \
       >/etc/apt/preferences.d/xtradeb-chromium \
- && case "$TARGETARCH" in amd64) pin="$CHROMIUM_VERSION_AMD64" ;; arm64) pin="$CHROMIUM_VERSION_ARM64" ;; *) pin="" ;; esac \
- && pin="${CHROMIUM_VERSION:-$pin}" && test -n "$pin" \
+ && pin="${CHROMIUM_VERSION:-${CHROMIUM_MAJOR}.*}" && test -n "$pin" \
  && apt-get update \
  && for attempt in 1 2 3; do apt-get install -y --no-install-recommends \
       "chromium=${pin}" "chromium-common=${pin}" && break; \

@@ -46,7 +46,7 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_keyvault_action` | `action` (`setup`, `unlock`, `lock`, `import`, `site_login`), `method` (`os_key_store` (Touch ID on a Mac), `passphrase`, `recovery_key`, `none`), `outcome` | Keyvault adoption and how it is unlocked. Nothing about what is stored. |
 | `cua_share` | `action` (`share`, `unshare`, `change_role`), `role` (`viewer`, `editor`, `none`), `outcome` | Sharing, and how often it is view-only. Never who. |
 | `cua_presence_session` | `outcome`, `participants` (bucketed), `duration_bucket` | Multiplayer sessions, their size and length. |
-| `cua_app_update` | `action` (`checked`, `found`, `not_found`, `installed`, `failed`), `channel` (`stable` or `beta`), `trigger` (`user` or `background`) | Whether people update. |
+| `cua_app_update` | `action` (`checked`, `found`, `not_found`, `downloaded`, `installed`, `failed`), `channel` (`stable` or `beta`), `trigger` (`user` or `background`) | Whether people update. |
 | `cua_device_enroll` | `method` (`sign_in`, `approval`, `rekey`), `outcome` | How devices join your account's relay. |
 | `cua_experiment` | `action` (`experiment_on` or `experiment_off`), `experiment` (`cua_volume`, `your_cloud`, `sharing`) | Which experiments people try, and turn off again. |
 

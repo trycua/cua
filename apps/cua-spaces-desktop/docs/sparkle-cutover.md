@@ -82,15 +82,16 @@ Those are the rehearsal below.
    Linux, and on macOS only after the cutover") asserts the old value; it
    changes in the same commit, or electron-mac's tests fail before the
    build.
-3. Migrated users update on their own (`src/update-prefs.ts`, done). Until
-   the user chooses in Settings → About, automatic checks are on when
-   `swiftMigration.found` is true and `sparkleAutomaticChecks !== false`
-   (the Swift app's Info.plist turns Sparkle's checks on, so the key is only
-   saved when the user changed it), and automatic installs follow
-   `sparkleAutomaticDownloads`. A channel carried over from the Swift app
-   that isn't served to the Electron app on macOS (Stable, before
-   `STABLE_FEED`) falls back to the build's channel. Everyone else stays
-   opt-in.
+3. Migrated users update on their own (`src/update-prefs.ts`, done).
+   Automatic checks are on for everyone, migrated or not, unless the user
+   turned them off in Settings → About or had turned them off in the Swift
+   app (`swiftMigration.found` with `sparkleAutomaticChecks === false`; the
+   Swift app's Info.plist turns Sparkle's checks on, so the key is only saved
+   when the user changed it). Found updates download in the background and
+   show the in-app "Restart to update" indicator; nothing restarts without a
+   click. A channel carried over from the Swift app that isn't served to the
+   Electron app on macOS (Stable, before `STABLE_FEED`) falls back to the
+   build's channel.
 4. electron-builder sets `generateUpdatesFilesForAllChannels: true` from the
    cutover on. Stable releases then also write `beta*.yml`, so betas move
    on to the stable release.

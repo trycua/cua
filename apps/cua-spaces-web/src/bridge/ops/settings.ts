@@ -23,6 +23,7 @@ import type {
   StorageInput,
   StorageRequest,
   UpdateChannelId,
+  UpdateState,
 } from "../contracts/settings";
 
 type Empty = Record<string, never>;
@@ -34,6 +35,13 @@ export interface SettingsOperations {
   "about.set": { args: { autoCheck?: boolean; autoInstall?: boolean; channel?: UpdateChannelId }; result: AboutInput };
   /** Check Now. */
   "about.checkNow": { args: Empty; result: AboutInput };
+
+  /** The in-app update indicator: where the host's updater is. */
+  "update.get": { args: Empty; result: UpdateState };
+  /** "Restart to update": installs the downloaded update and relaunches.
+   * Only a click calls it; the host never restarts on its own. With nothing
+   * downloaded it changes nothing and answers the state. */
+  "update.install": { args: Empty; result: UpdateState };
 
   /** Settings, Experiments: the switches as stored. */
   "experiments.get": { args: Empty; result: Experiments };
@@ -81,6 +89,8 @@ export const SETTINGS_OPERATIONS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "experiments.get",
   "experiments.set",
   "loginItem.get",
@@ -156,6 +166,8 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
     "about.get": about,
     "about.set": () => Promise.reject(new UnsupportedOperationError("tauri", "about.set")),
     "about.checkNow": () => Promise.reject(new UnsupportedOperationError("tauri", "about.checkNow")),
+    "update.get": () => Promise.reject(new UnsupportedOperationError("tauri", "update.get")),
+    "update.install": () => Promise.reject(new UnsupportedOperationError("tauri", "update.install")),
 
     // The Tauri app keeps the switches in its UI storage, as its own Settings does.
     "experiments.get": async () => readExperiments(),
@@ -232,13 +244,15 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
 }
 
 /** The Tauri updater has one feed and no controls. */
-export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow"] as const satisfies readonly SettingsOpName[];
+export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow", "update.get", "update.install"] as const satisfies readonly SettingsOpName[];
 
 /** The Tauri commands each operation calls (`coverage.ts`). */
 export const SETTINGS_TAURI_COMMANDS = {
   "about.get": ["plugin:app|version", "get_environment"],
   "about.set": [],
   "about.checkNow": [],
+  "update.get": [],
+  "update.install": [],
   "experiments.get": [],
   "experiments.set": ["ui_storage_set"],
   "loginItem.get": ["login_item_status", "host_status", "agents_tool"],

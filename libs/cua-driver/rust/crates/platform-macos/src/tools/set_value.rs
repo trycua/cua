@@ -873,6 +873,56 @@ fn is_chromium_popup_owner(pid: i32) -> bool {
         || crate::browser::electron_js::ElectronJs::is_electron(pid)
 }
 
+/// Whether pressing `element` would open a Chromium or Electron `<select>`
+/// menu: an `AXPopUpButton` inside web content of a Chromium renderer. The
+/// browser's own toolbar popups have no web-area ancestor and do not match.
+pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElementRef) -> bool {
+    unsafe { copy_string_attr(element, "AXRole") }.as_deref() == Some("AXPopUpButton")
+        && is_chromium_popup_owner(pid)
+        && super::type_text::target_in_web_area(
+            pid,
+            Some((element as usize, None)),
+            Some(window_id),
+        )
+}
+
+/// Refusal for a background press that would open a Chromium `<select>` menu
+/// (CUA-1795). Opening it orders the browser window above the user's window
+/// for at least a frame, which undoing afterwards cannot hide; `set_value`
+/// selects through the page's type-ahead and never opens the menu.
+pub(super) fn chromium_select_open_refusal(
+    pid: i32,
+    window_id: u32,
+    element_index: Option<usize>,
+    element: AXUIElementRef,
+) -> cua_driver_core::protocol::ToolResult {
+    let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+    let current = unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default();
+    let target = match element_index {
+        Some(index) => format!("[{index}] AXPopUpButton \"{title}\""),
+        None => format!("the AXPopUpButton \"{title}\" at that point"),
+    };
+    cua_driver_core::protocol::ToolResult::error(format!(
+        "Not opened: {target} is a web dropdown (<select>). In the background, opening its \
+         menu brings the browser window above the user's window, so nothing was sent. Its \
+         current value is \"{current}\". Choose an option in one call with \
+         set_value(element_token, \"<option text>\"): it types the option's text into the \
+         closed control and the menu never opens. Open the menu with \
+         delivery_mode:\"foreground\" only if the user agreed to the browser coming forward."
+    ))
+    .with_structured(serde_json::json!({
+        "code": "select_menu_would_raise_window",
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "current_value": current,
+        "escalation": {
+            "recommended": "set_value",
+            "reason": "a background <select> is chosen with set_value; opening its menu would raise the browser window",
+        },
+    }))
+}
+
 /// How long the page may take to apply a type-ahead selection.
 const TYPEAHEAD_SETTLE: std::time::Duration = std::time::Duration::from_millis(800);
 

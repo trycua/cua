@@ -445,10 +445,7 @@ async fn machine_run(
     json: bool,
     out: &mut dyn std::io::Write,
 ) -> Result<i32, CuaError> {
-    let target = match machine.trim() {
-        "" | "this" | "local" => None,
-        m => Some(m.to_string()),
-    };
+    let target = (!target_is_this(machine)).then(|| machine.trim().to_string());
     let started = Instant::now();
     let health = cua.spaces().machine_health(target).await?;
     let mut report = Report::from_json(&health.report_json)
@@ -460,7 +457,17 @@ async fn machine_run(
     report.finalize(args.strict, started.elapsed());
     let format = if json { Format::Json } else { args.format };
     let text = match format {
-        Format::Human => report.to_human(),
+        // The report's own first line is about an image; a machine has none.
+        Format::Human => {
+            let human = report.to_human();
+            let body = human.split_once('\n').map_or("", |(_, rest)| rest);
+            let who = if target_is_this(machine) {
+                "this machine"
+            } else {
+                machine
+            };
+            format!("{who} ({}, Cua {})\n{body}", health.os, health.cua_version)
+        }
         Format::Json => report.to_json() + "\n",
         Format::Junit => report.to_junit(),
     };
@@ -470,6 +477,11 @@ async fn machine_run(
     }
     let _ = out.write_all(text.as_bytes());
     Ok(report.exit_code())
+}
+
+/// `--machine this` (or `local`, or empty): this machine.
+fn target_is_this(machine: &str) -> bool {
+    matches!(machine.trim(), "" | "this" | "local")
 }
 
 /// `pass` / `fail`.

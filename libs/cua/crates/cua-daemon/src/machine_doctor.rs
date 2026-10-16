@@ -66,8 +66,14 @@ fn gb(bytes: u64) -> f64 {
     bytes as f64 / GIB
 }
 
+/// A failure stays a failure (a check of severity `info` would report it
+/// as a warning): this machine can't do what the check is about.
 fn info(mut c: Check) -> Check {
-    c.severity = Severity::Info;
+    c.severity = if c.status == Status::Fail {
+        Severity::Required
+    } else {
+        Severity::Info
+    };
     c
 }
 
@@ -425,6 +431,14 @@ mod tests {
         });
         let cs = checks(&f);
         let c = by_id(&cs, "machine.local_network");
+        assert_eq!(c.status, Status::Fail);
+        // Still a failure once the report is finalized.
+        let mut report = Report {
+            checks: cs.clone(),
+            ..Report::default()
+        };
+        report.finalize(false, Duration::ZERO);
+        let c = by_id(&report.checks, "machine.local_network");
         assert_eq!(c.status, Status::Fail);
         assert!(c.message.contains("off for Cua Spaces"), "{}", c.message);
         assert_eq!(c.facts["app"], "Cua Spaces");

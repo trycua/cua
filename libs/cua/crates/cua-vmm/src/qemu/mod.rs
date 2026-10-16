@@ -945,6 +945,44 @@ fn missing_tools(
     ))
 }
 
+/// Add this user to the kvm group when `/dev/kvm` is denied (`sudo -n`);
+/// what was done or would be, or why `/dev/kvm` is not used.
+pub async fn grant_kvm(
+    kvm: std::io::Result<()>,
+    dry_run: bool,
+    run: impl AsyncFn(&str, &[&str]) -> Result<String>,
+) -> Result<Option<String>> {
+    let e = match kvm {
+        Ok(()) => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => e,
+        Err(e) => return Ok(Some(host::kvm_hint(&e))),
+    };
+    let user = std::env::var("USER").ok();
+    if dry_run {
+        let user = user.as_deref().unwrap_or("$USER");
+        return Ok(Some(format!("would: add {user} to the kvm group")));
+    }
+    let denied = || VmmError::PermissionDenied(host::kvm_hint(&e));
+    if run("stat", &["-c", "%G", "/dev/kvm"])
+        .await
+        .map_err(|_| denied())?
+        .trim()
+        != "kvm"
+    {
+        return Err(denied());
+    }
+    let user = match user {
+        Some(user) => user,
+        None => run("id", &["-un"]).await?.trim().to_string(),
+    };
+    run("sudo", &["-n", "usermod", "-aG", "kvm", &user])
+        .await
+        .map_err(|_| denied())?;
+    Ok(Some(format!(
+        "added {user} to the kvm group; log out and back in (or run `newgrp kvm`)"
+    )))
+}
+
 /// Install QEMU through the host package manager (explicit opt-in).
 pub async fn install_qemu() -> Result<()> {
     match host::HostOs::current() {

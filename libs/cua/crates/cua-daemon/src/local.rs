@@ -1278,6 +1278,8 @@ pub async fn setup(
     } else {
         components.to_vec()
     };
+    let grant_kvm = cua_vmm::host::HostOs::current() == cua_vmm::host::HostOs::Linux
+        && (components.is_empty() || wanted.iter().any(|c| c == "qemu"));
     let mut steps = Vec::new();
     for c in wanted {
         let kind = match c.as_str() {
@@ -1330,6 +1332,23 @@ pub async fn setup(
                 detail: e.to_string(),
             },
         });
+    }
+    if grant_kvm {
+        let kvm = cua_vmm::host::kvm_usable();
+        let denied = kvm
+            .as_ref()
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+        let run = async |program: &str, args: &[&str]| cua_vmm::host::run(program, args).await;
+        let (status, detail) = match cua_vmm::qemu::grant_kvm(kvm, dry_run, run).await {
+            Ok(detail) if dry_run && denied => (CheckStatus::Installable, detail),
+            Ok(detail) => (CheckStatus::Ok, detail),
+            Err(e) => (CheckStatus::Error, Some(e.to_string())),
+        };
+        steps.extend(detail.map(|detail| SetupStep {
+            name: "kvm".into(),
+            status: status as i32,
+            detail,
+        }));
     }
     Ok(steps)
 }

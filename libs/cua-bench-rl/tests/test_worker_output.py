@@ -54,19 +54,24 @@ async def test_worker_output_reaches_parent_until_stopped(capfd):
 
 class StderrFailingFirstWrite:
     def __init__(self):
+        self.failed = False
         self.lines = []
 
     def write(self, line):
-        self.lines.append(line)
-        if len(self.lines) == 1:
+        if not self.failed:
+            self.failed = True
             raise OSError("stderr unavailable")
+        self.lines.append(line)
 
 
 async def test_worker_keeps_draining_when_forwarding_fails(monkeypatch):
     stderr = StderrFailingFirstWrite()
     monkeypatch.setattr(sys, "stderr", stderr)
     await test_worker_keeps_answering_past_pipe_buffer()
-    assert len(stderr.lines) > N_REQUESTS
+    assert stderr.failed
+    assert any(line.startswith("[w0] INFO:     Uvicorn running on") for line in stderr.lines)
+    health_lines = [line for line in stderr.lines if '"GET /health HTTP/1.1" 200' in line]
+    assert len(health_lines) >= N_REQUESTS
 
 
 async def test_reader_stops_when_grandchild_holds_output_open(monkeypatch, tmp_path, capfd):

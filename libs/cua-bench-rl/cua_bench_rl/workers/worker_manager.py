@@ -181,8 +181,9 @@ async def create_workers(
             str(port),
         ]
 
-        output, worker_output = socket.socketpair()
+        output = worker_output = None
         try:
+            output, worker_output = socket.socketpair()
             process = subprocess.Popen(
                 cmd,
                 env=env,
@@ -205,8 +206,9 @@ async def create_workers(
             )
             handle.output_reader.start()
         except Exception as e:
-            output.close()
-            worker_output.close()
+            for end in (output, worker_output):
+                if end:
+                    end.close()
             # Clean up already started workers
             for handle in handles:
                 handle.stop()

@@ -144,6 +144,10 @@ export interface MachinesHook extends Resource<Machine[]> {
   rename(id: string, name: string): Promise<void>;
   /** Removes a machine from the account (`machines.remove`). */
   remove(machine: string | null, device: string | null): Promise<void>;
+  /** Asks the machines for their health (`machines.checkHealth`); their
+   * issues show in the next view. Never throws: a check that fails shows
+   * on that machine. */
+  checkHealth(): Promise<void>;
   /** How another machine is set up for access, in the core's words (the
    * "Add a machine" explainer). Setup itself runs on that machine. */
   setupGuide: HostSetupGuide;
@@ -161,6 +165,9 @@ export function useMachines(): MachinesHook {
     view: ctx.store?.machinesView ?? null,
     rename: (id, name) => run((s) => s.renameMachine(id, name)),
     remove: (machine, device) => run((s) => s.removeMachine(machine, device)),
+    checkHealth: async () => {
+      await ctx.store?.checkMachinesHealth().catch(() => undefined);
+    },
   };
 }
 

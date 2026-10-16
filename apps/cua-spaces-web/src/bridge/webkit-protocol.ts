@@ -151,6 +151,7 @@ export const WEBKIT_METHODS = [
   "relay.usage",
   "machines.rename",
   "machines.remove",
+  "machines.checkHealth",
   "checklist.get",
   "checklist.send",
 ] as const;

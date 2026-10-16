@@ -314,6 +314,9 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       emit({ type: "machines.changed" });
       return null;
     },
+    // The demo machines are drawn by the core from their rows, with no
+    // daemon to ask: nothing to check.
+    "machines.checkHealth": () => null,
     "machines.remove": async ({ machine, device }) => {
       await wait(step / 2);
       state.removed = [...state.removed, ...[machine, device].filter((x): x is string => Boolean(x))];

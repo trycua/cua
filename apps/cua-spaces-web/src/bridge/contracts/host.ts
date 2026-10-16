@@ -250,6 +250,27 @@ export interface MachinesViewRemove {
   confirm: HostConfirm;
 }
 
+/** What fixes an issue (`machines_health::MachinesViewIssueAction`). */
+export interface MachinesViewIssueAction {
+  /** "Open Local Network settings", "Free disk space", "Restart service". */
+  label: string;
+  /** A System Settings pane to open (`host.openSettings`). */
+  url?: string | null;
+  /** A host action to run (`host.action`). */
+  hostAction?: HostActionId | null;
+}
+
+/** One issue on a machine's page (`machines_health::MachinesViewIssue`). */
+export interface MachinesViewIssue {
+  /** The check it comes from (`machine.disk`, `service`, `version`). */
+  id: string;
+  /** `warn` or `fail`. */
+  level: string;
+  /** One plain sentence. */
+  text: string;
+  action?: MachinesViewIssueAction | null;
+}
+
 /** One machine's row and page (`machines_view::MachinesViewMachine`). */
 export interface MachinesViewMachine {
   id: string;
@@ -259,6 +280,14 @@ export interface MachinesViewMachine {
   line: string;
   /** Usable now (the green dot). */
   online: boolean;
+  /** The dot's tint for its issues: `warn`, `fail`, or empty. */
+  health?: string;
+  /** What the host passes to `Spaces.machine_health` (empty: This Mac); null when it can't be checked from here. */
+  healthTarget?: string | null;
+  /** "Issues". */
+  issuesTitle?: string;
+  /** What is wrong, one sentence each; empty when healthy or offline. */
+  issues?: MachinesViewIssue[];
   os: string;
   current: boolean;
   team: boolean;

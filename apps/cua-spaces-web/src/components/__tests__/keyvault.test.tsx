@@ -121,6 +121,24 @@ function Badge({ spaceIds }: { spaceIds: string[] }) {
   );
 }
 
+describe.skipIf(!wasmBuilt)("Keyvault page: the on/off switch", () => {
+  it("turns the Keyvault off and on from the header, with the core's banner and help", async () => {
+    const adapter = demo();
+    await mount(adapter);
+    const sw = () => document.querySelector<HTMLElement>("[data-keyvault-switch]");
+    await waitFor(() => expect(sw()?.dataset.keyvaultSwitch).toBe("on"));
+    expect(sw()!.getAttribute("aria-label")).toBe("Keyvault");
+    expect(sw()!.getAttribute("title")).toBeTruthy();
+    expect(document.querySelector("[data-vault-disabled]")).toBeNull();
+    fireEvent.click(sw()!);
+    await waitFor(() => expect(sw()?.dataset.keyvaultSwitch).toBe("off"));
+    expect(document.querySelector("[data-vault-disabled]")).not.toBeNull();
+    fireEvent.click(sw()!);
+    await waitFor(() => expect(sw()?.dataset.keyvaultSwitch).toBe("on"));
+    expect(document.querySelector("[data-vault-disabled]")).toBeNull();
+  });
+});
+
 describe.skipIf(!wasmBuilt)("Spaces with live Keyvault access", () => {
   it("marks the Space holding a live copy, with its Access row, and no other", async () => {
     const adapter = demo();

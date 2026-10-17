@@ -10,6 +10,7 @@ import { EmptyState, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Segmented } from "@/components/ui/segmented";
+import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
 import { hostOs, keyvaultUnlockWay } from "@/lib/host-labels";
 
@@ -42,7 +43,7 @@ interface DeleteAsk {
  */
 export function KeyvaultPage({ initialView = "all", focus = null }: { initialView?: KvCategory; focus?: string | null }) {
   const kv = useKeyvault();
-  const { data, unlock, unlockItems, lockItems, deleteItems, setUp, approve, deny, runCommand, dismissAccess, showItems, vaultAction, pane } = kv;
+  const { data, unlock, unlockItems, lockItems, deleteItems, setUp, setDisabled, approve, deny, runCommand, dismissAccess, showItems, vaultAction, pane } = kv;
   const { core, mode } = useBridge();
   const views = data?.views ?? null;
   // No vault yet: the core's page offers setup; without it, the overview says so.
@@ -113,10 +114,26 @@ export function KeyvaultPage({ initialView = "all", focus = null }: { initialVie
           title="Keyvault"
           description="Saved logins your agents can use. Each use asks you first unless you allow it."
           actions={
-            locked ? (
-              <Button variant="outline" onClick={unlockVault}>
-                <LockIcon /> Unlock
-              </Button>
+            locked || views?.page.killSwitchVisible ? (
+              <>
+                {locked ? (
+                  <Button variant="outline" onClick={unlockVault}>
+                    <LockIcon /> Unlock
+                  </Button>
+                ) : null}
+                {/* The global switch, as the SwiftUI sidebar header has it: off stops every
+                    teleport, import and approval; turning it back on asks the host (Touch ID). */}
+                {views?.page.killSwitchVisible ? (
+                  <Switch
+                    data-keyvault-switch={views.page.disabled ? "off" : "on"}
+                    checked={!views.page.disabled}
+                    disabled={!views.page.killSwitchEnabled || busy}
+                    aria-label="Keyvault"
+                    title={views.page.killSwitchHelp}
+                    onCheckedChange={(on) => act(on ? "Couldn't turn on Keyvault" : "Couldn't turn off Keyvault", setDisabled(!on))}
+                  />
+                ) : null}
+              </>
             ) : null
           }
         />

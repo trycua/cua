@@ -24,6 +24,9 @@ on:
       - "libs/cua/**"
       - ".github/workflows/ci-cua-spaces.yml"
   workflow_dispatch:
+  # Every bundle, nightly: libs/cua-only PRs build the Linux bundle alone.
+  schedule:
+    - cron: "47 6 * * *"
 
 permissions:
   contents: read
@@ -71,22 +74,50 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
+  # The Tauri app is not shipped (cd-cua-spaces.yml has it disabled). A PR
+  # that touches only libs/cua builds the Linux bundle (its Rust command
+  # layer tests and the cua sidecar); the macOS and Windows bundles (~90-105
+  # min each) run when the app or this workflow changes, with the ci:full
+  # label, nightly and on dispatch.
+  scope:
+    name: bundle scope
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: .
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+    steps:
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+        run: |
+          set -euo pipefail
+          linux='{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}'
+          macos='{"name":"macos-dmg","os":"macos-26","bundles":"app,dmg"}'
+          windows='{"name":"windows-nsis-msi","os":"windows-latest","bundles":"nsis,msi"}'
+          all=true
+          if [ "$EVENT" = pull_request ] && [ "$FULL" != true ]; then
+            files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+            if ! grep -qE '^(apps/cua-spaces/|\.github/workflows/ci-cua-spaces\.yml$)' <<<"$files"; then
+              all=false
+            fi
+          fi
+          if [ "$all" = true ]; then
+            echo "matrix={\"include\":[$macos,$windows,$linux]}" >>"$GITHUB_OUTPUT"
+          else
+            echo "matrix={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
+          fi
+
   bundle:
     name: bundle (${{ matrix.name }})
-    needs: frontend
+    needs: [frontend, scope]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: macos-dmg
-            os: macos-26
-            bundles: app,dmg
-          - name: windows-nsis-msi
-            os: windows-latest
-            bundles: nsis,msi
-          - name: linux-deb-appimage
-            os: ubuntu-22.04
-            bundles: deb,appimage
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     # A cold Windows bundle takes about 1 h 45 min (the sidecar release build
     # alone is ~50 min). Fail a real hang instead of holding a runner for the

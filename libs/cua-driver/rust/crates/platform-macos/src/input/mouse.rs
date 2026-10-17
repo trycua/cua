@@ -372,8 +372,9 @@ extern "C" {
 
 /// Like `click_at_xy` but also targets a specific window. Foreground delivery
 /// uses the supplied window-local point with one public pid post. Background
-/// delivery keeps the translated screen point through the SkyLight route, with
-/// a public fallback only when the private symbol is unavailable.
+/// delivery routes through SkyLight using the screen point; when the private
+/// symbol is unavailable it falls back to a public pid post that stamps the
+/// window-local point (the point public `CGEventSetWindowLocation` requires).
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
@@ -546,7 +547,10 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f40 = target pid   (Chromium synthetic-event filter)
 ///  - f51 / f91 / f92 = CGWindowID (window routing)
 ///  - f58 = constant click-group ID across all events (gesture coalescing)
-///  - `CGEventSetWindowLocation` per-event (screen point for both routes)
+///  - `CGEventSetWindowLocation` per-event: SkyLight stamps the screen point,
+///    the public PID route stamps the window-local point. Public
+///    `CGEventSetWindowLocation` REQUIRES a window-local point — a screen
+///    point there hit-tests outside the target window and the click drops.
 ///
 /// Uses the SkyLight route required by Chromium-compatible targets, with the
 /// public API only as a fallback when the private symbol is unavailable.
@@ -578,14 +582,14 @@ fn chromium_click_route_plan(
     count: usize,
 ) -> Vec<ChromiumClickRouteStep> {
     let screen_target = (screen_x, screen_y);
-    let _ = (win_local_x, win_local_y);
+    let window_local_target = (win_local_x, win_local_y);
     let off_screen = (-1.0, -1.0);
     let mut steps = vec![
         ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Move,
             event_location: screen_target,
             skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            public_window_location: window_local_target,
             click_state: 0,
             phase: 2,
             button_number: 0,
@@ -623,7 +627,7 @@ fn chromium_click_route_plan(
             kind: ChromiumClickEventKind::Down,
             event_location: screen_target,
             skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            public_window_location: window_local_target,
             click_state,
             phase: 3,
             button_number: 0,
@@ -634,7 +638,7 @@ fn chromium_click_route_plan(
             kind: ChromiumClickEventKind::Up,
             event_location: screen_target,
             skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            public_window_location: window_local_target,
             click_state,
             phase: 3,
             button_number: 0,
@@ -647,9 +651,10 @@ fn chromium_click_route_plan(
 
 /// Post the route plan for the Chromium-compatible background left-click
 /// recipe. `CGEvent::new_mouse_event` starts with the screen-space location.
-/// `CGEventSetWindowLocation` uses the screen point for both SkyLight and the
-/// public PID fallback. macOS interprets the stamped location in screen space
-/// even when the public route is used for a background process.
+/// `CGEventSetWindowLocation` gets the screen point on the SkyLight route and
+/// the window-local point on the public PID fallback. The public setter
+/// REQUIRES the window-local point: a screen point there hit-tests outside the
+/// target window and the click drops.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
     pid: i32,
@@ -666,6 +671,9 @@ pub fn click_at_xy_chromium(
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let route_plan = chromium_click_route_plan(screen_x, screen_y, win_local_x, win_local_y, count);
+    // The transport is fixed for the whole gesture, so resolve it once and let
+    // the stamp pick the window-location point that route requires.
+    let route = post_route(MousePostMode::SkyLightPreferred, skylight_available());
     let flags = parse_modifier_flags(modifiers);
     let window_id = wid as i64;
 
@@ -694,20 +702,20 @@ pub fn click_at_xy_chromium(
             set(92, window_id); // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent
         }
         set(58, click_group_id); // click-group ID (gesture coalescing)
-        crate::input::skylight::set_window_location(
-            ptr,
-            step.skylight_window_location.0,
-            step.skylight_window_location.1,
-        );
+
+        // Public `CGEventSetWindowLocation` REQUIRES the window-local point:
+        // a screen point there hit-tests outside the target window and the
+        // click drops. SkyLight keeps its screen point (unmeasured).
+        let window_location = match route {
+            PostRoute::SkyLight | PostRoute::SkyLightAndPublic => step.skylight_window_location,
+            PostRoute::PublicPid | PostRoute::Hid => step.public_window_location,
+        };
+        crate::input::skylight::set_window_location(ptr, window_location.0, window_location.1);
         set_explicit_flags(event, flags);
     };
 
     let post = |event: &CGEvent, _step: &ChromiumClickRouteStep| {
-        dispatch_mouse_event(
-            post_route(MousePostMode::SkyLightPreferred, skylight_available()),
-            pid,
-            event,
-        );
+        dispatch_mouse_event(route, pid, event);
     };
 
     for step in route_plan {
@@ -2050,7 +2058,7 @@ mod tests {
                     kind: ChromiumClickEventKind::Move,
                     event_location: (564.0, 504.0),
                     skylight_window_location: (564.0, 504.0),
-                    public_window_location: (564.0, 504.0),
+                    public_window_location: capture_local,
                     click_state: 0,
                     phase: 2,
                     button_number: 0,
@@ -2083,7 +2091,7 @@ mod tests {
                     kind: ChromiumClickEventKind::Down,
                     event_location: (564.0, 504.0),
                     skylight_window_location: (564.0, 504.0),
-                    public_window_location: (564.0, 504.0),
+                    public_window_location: capture_local,
                     click_state: 1,
                     phase: 3,
                     button_number: 0,
@@ -2094,7 +2102,7 @@ mod tests {
                     kind: ChromiumClickEventKind::Up,
                     event_location: (564.0, 504.0),
                     skylight_window_location: (564.0, 504.0),
-                    public_window_location: (564.0, 504.0),
+                    public_window_location: capture_local,
                     click_state: 1,
                     phase: 3,
                     button_number: 0,
@@ -2118,7 +2126,7 @@ mod tests {
             .expect("target mouse-down step");
         assert_eq!(delivered.event_location, (564.0, 504.0));
         assert_eq!(delivered.skylight_window_location, (564.0, 504.0));
-        assert_eq!(delivered.public_window_location, (564.0, 504.0));
+        assert_eq!(delivered.public_window_location, capture_local);
         let skylight_journal_point = (
             delivered.skylight_window_location.0 + screen_to_canvas.0,
             delivered.skylight_window_location.1 + screen_to_canvas.1,
@@ -2126,6 +2134,44 @@ mod tests {
         assert_eq!(skylight_journal_point, capture_local);
         assert!((292.0..=496.0).contains(&skylight_journal_point.0));
         assert!((132.0..=310.0).contains(&skylight_journal_point.1));
+    }
+
+    #[test]
+    fn public_route_stamps_window_local_point_from_win_local_inputs() {
+        // Background delivery on the public PID route requires the window-local
+        // point stamped via CGEventSetWindowLocation: a screen point there
+        // hit-tests outside the target window and the click drops. So the plan
+        // must carry the window-local inputs on the public stamp, and the
+        // win_local inputs must not be discarded.
+        let screen = (564.0_f64, 504.0_f64);
+        let local = (394.0_f64, 310.0_f64);
+        let plan = chromium_click_route_plan(screen.0, screen.1, local.0, local.1, 1);
+
+        let routed: Vec<_> = plan
+            .iter()
+            .filter(|step| step.kind == ChromiumClickEventKind::Move || step.phase == 3)
+            .collect();
+        assert_eq!(
+            routed.len(),
+            3,
+            "move + target down/up carry the public stamp"
+        );
+        for step in routed {
+            assert_eq!(step.public_window_location, local);
+            assert_eq!(step.skylight_window_location, screen);
+        }
+
+        // The win_local inputs are consumed: a different local point moves the
+        // public stamp while the screen stamp stays put.
+        let shifted_local = (local.0 + 1.0, local.1 + 1.0);
+        let moved =
+            chromium_click_route_plan(screen.0, screen.1, shifted_local.0, shifted_local.1, 1);
+        let target_down = moved
+            .iter()
+            .find(|step| step.kind == ChromiumClickEventKind::Down && step.phase == 3)
+            .expect("target mouse-down step");
+        assert_eq!(target_down.public_window_location, shifted_local);
+        assert_eq!(target_down.skylight_window_location, screen);
     }
 
     #[test]

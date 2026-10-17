@@ -1146,6 +1146,9 @@ fn build_element_entry(
     if let Some(selected) = n.selected {
         entry["selected"] = json!(selected);
     }
+    if let Some(is_password) = n.is_password {
+        entry["is_password"] = json!(is_password);
+    }
     if !n.actions.is_empty() {
         entry["actions"] = json!(n.actions);
     }
@@ -1189,7 +1192,9 @@ impl Tool for GetWindowStateTool {
                 `snapshot_id` is printed in the response header and returned in structuredContent. \
                 Pass `tree_format:\"elements\"` for the structured `elements` array instead \
                 (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), \
-                or `\"both\"` for both (about twice the size).\n\n\
+                or `\"both\"` for both (about twice the size). Text-entry elements carry \
+                `is_password` (`true` for a password field), and the Markdown row marks a \
+                password field with `password`.\n\n\
                 Size: a read is bounded by default (`max_elements` 250). When the walk stops at \
                 that budget the response says `Tree truncated at max_elements=…` and `truncated: \
                 true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. \

@@ -1,9 +1,9 @@
 name: Fleet Mirror Guard
 
-# libs/fleet/ is a read-only mirror of a private canonical repository.
-# Changes merged directly to it on main are overwritten by the next mirror
-# sync, so this required check blocks any PR that touches those paths and
-# points the author at the import flow instead.
+# Fleet mirror paths, `libs/fleet/` and `libs/typescript/fleet/`, are read-only
+# mirrors of private canonical repositories. Changes merged directly to either
+# path on main are overwritten by the next mirror sync, so this required check
+# blocks any PR that touches them and points the author at the import flow.
 #
 # This job must NOT use an `on.pull_request.paths` filter: a required check
 # that never reports would block every PR. It always runs and passes when no
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Block direct changes to mirrored paths
+      - name: Block direct changes to Fleet mirror paths (libs/fleet/ and libs/typescript/fleet/)
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -34,26 +34,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Renames out of libs/fleet report the old path only in
+          # Renames out of Fleet mirror paths report the old path only in
           # previous_filename, so collect both sides of every change.
           touched=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
             --paginate \
             --jq '.[] | [.filename, .previous_filename // empty] | .[]' \
-            | { grep '^libs/fleet/' || true; } | sort -u)
+            | { grep -E '^(libs/fleet|libs/typescript/fleet)/' || true; } | sort -u)
 
           if [[ -z "${touched}" ]]; then
-            echo "No mirrored paths touched." >> "${GITHUB_STEP_SUMMARY}"
+            echo "No Fleet mirror paths touched: libs/fleet/ or libs/typescript/fleet/." >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
 
           body=$(cat <<'MSG'
           <!-- fleet-mirror-guard -->
-          ## :no_entry: `libs/fleet` is a mirror — direct merges here lose work
+          ## :no_entry: Fleet mirror paths (`libs/fleet/` and `libs/typescript/fleet/`) are read-only — direct merges lose work
 
-          This PR changes files under `libs/fleet/`, which is synced from a
-          private canonical repository. Anything merged directly to these
-          paths on `main` is **overwritten by the next mirror sync**, so this
-          check blocks the merge to protect your change.
+          This PR changes files under the Fleet mirror paths: `libs/fleet/` or
+          `libs/typescript/fleet/`. These paths are synced from private
+          canonical repositories. Anything merged directly to either path on
+          `main` is **overwritten by the next mirror sync**, so this check
+          blocks the merge to protect your change.
 
           **To land these changes:**
           1. Ask a maintainer to apply the `copybara-import` label to this PR.
@@ -70,7 +71,7 @@ jobs:
           {
             echo "${body}"
             echo ""
-            echo "Mirrored paths touched:"
+            echo "Fleet mirror paths touched: libs/fleet/ or libs/typescript/fleet/"
             echo '```'
             echo "${touched}"
             echo '```'
@@ -89,5 +90,5 @@ jobs:
               -f body="${body}" > /dev/null || echo "Could not post guard comment (fork PR token is read-only)."
           fi
 
-          echo "::error::This PR touches libs/fleet/, a read-only mirror. Direct merges are overwritten by the mirror sync. Ask a maintainer for the 'copybara-import' label to import the change upstream, then close this PR once the mirror lands it on main. See the check summary for details."
+          echo "::error::This PR touches Fleet mirror paths (libs/fleet/ or libs/typescript/fleet/), which are read-only mirrors. Direct merges are overwritten by the mirror sync. Ask a maintainer for the 'copybara-import' label to import the change upstream, then close this PR once the mirror lands it on main. See the check summary for details."
           exit 1

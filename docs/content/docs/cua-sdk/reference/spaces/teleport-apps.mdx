@@ -298,7 +298,7 @@ A window-drag event (global top-left display points).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `phase` | `String` |  | `start`, `move` or `end`. |
+| `phase` | `String` |  | `start`, `move`, `end`, or `stopped` (the monitor died: start a new one). |
 | `x` | `f64` |  |  |
 | `y` | `f64` |  |  |
 | `window` | [`Option<TeleportWindow>`](#teleportwindow-record) |  | The dragged window (`start`, `end`). |

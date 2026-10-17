@@ -43114,7 +43114,7 @@ public func FfiConverterTypeTeleportWindow_lower(_ value: TeleportWindow) -> Rus
  */
 public struct TeleportWindowDragEvent: Equatable, Hashable {
     /**
-     * `start`, `move` or `end`.
+     * `start`, `move`, `end`, or `stopped` (the monitor died: start a new one).
      */
     public var phase: String
     public var x: Double
@@ -43142,7 +43142,7 @@ public struct TeleportWindowDragEvent: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `start`, `move` or `end`.
+         * `start`, `move`, `end`, or `stopped` (the monitor died: start a new one).
          */phase: String, x: Double, y: Double,
         /**
          * The dragged window (`start`, `end`).

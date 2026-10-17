@@ -5,12 +5,15 @@
 //!
 //! The gesture is detected from global mouse events plus the window list:
 //!
-//! 1. mouse down: remember the frontmost normal window under the cursor and
-//!    where its frame sat;
-//! 2. mouse dragged: once that window's frame origin has shifted by more
-//!    than [`MOVE_THRESHOLD`] points it is a window gesture (a text
-//!    selection or in-app drag never moves a window), so emit `start`, then
-//!    `move` for every later event;
+//! 1. mouse down: remember the normal windows under the cursor (front to
+//!    back, at most [`MAX_CANDIDATES`]) and where their frames sat;
+//! 2. mouse dragged: once one of those windows' frame origin has shifted by
+//!    more than [`MOVE_THRESHOLD`] points (the frontmost first) it is a
+//!    window gesture (a text selection or in-app drag never moves a window),
+//!    so emit `start`, then `move` for every later event. Not only the
+//!    frontmost: an invisible window another process leaves over the
+//!    cursor (one that lets clicks through) never moves, and would hide
+//!    every drag;
 //! 3. mouse up: `end`.
 //!
 //! A resize from the left or top edge (or a corner) shifts the origin too,
@@ -45,6 +48,8 @@ pub const MOVE_THRESHOLD: f64 = 8.0;
 pub const FRAME_SAMPLE_EVERY: u32 = 6;
 /// Default preview width (pixels).
 pub const THUMBNAIL_WIDTH: usize = 320;
+/// How many windows under the cursor a mouse down remembers.
+pub const MAX_CANDIDATES: usize = 4;
 /// Windows smaller than this (points) are helpers, not user windows.
 pub const MIN_WINDOW_SIDE: f64 = 80.0;
 
@@ -122,19 +127,31 @@ pub fn user_windows(
         .collect()
 }
 
-/// The frontmost normal window containing the point (not `exclude_pid`'s).
+/// The normal, not fully transparent windows containing the point (not
+/// `exclude_pid`'s), front to back.
+pub fn windows_at(
+    windows: &[WindowInfo],
+    x: f64,
+    y: f64,
+    exclude_pid: i64,
+) -> impl Iterator<Item = &WindowInfo> {
+    windows.iter().filter(move |w| {
+        w.pid != exclude_pid
+            && w.layer == 0
+            && !w.owner.is_empty()
+            && w.alpha > 0.01
+            && w.bounds.is_some_and(|b| b.contains(x, y))
+    })
+}
+
+/// The frontmost of [`windows_at`].
 pub fn frontmost_at(
     windows: &[WindowInfo],
     x: f64,
     y: f64,
     exclude_pid: i64,
 ) -> Option<&WindowInfo> {
-    windows.iter().find(|w| {
-        w.pid != exclude_pid
-            && w.layer == 0
-            && !w.owner.is_empty()
-            && w.bounds.is_some_and(|b| b.contains(x, y))
-    })
+    windows_at(windows, x, y, exclude_pid).next()
 }
 
 /// Whether a frame moved past `threshold` (Chebyshev distance).
@@ -175,6 +192,9 @@ pub enum DragPhase {
     Move,
     /// Released.
     End,
+    /// The monitor stopped on its own (its event tap died): no more events
+    /// come from it, so start a new one.
+    Stopped,
 }
 
 /// The window being dragged.
@@ -209,10 +229,123 @@ pub struct WindowDragEvent {
     pub frame: Option<Rect>,
 }
 
+impl WindowDragEvent {
+    /// The monitor's last event when it stopped on its own.
+    pub fn stopped() -> Self {
+        Self {
+            phase: DragPhase::Stopped,
+            x: 0.0,
+            y: 0.0,
+            window: None,
+            start_frame: None,
+            frame: None,
+        }
+    }
+}
+
+/// Drops the `move`s a later `move` in the same batch supersedes (a slow
+/// listener catching up gets the latest cursor, not every step), keeping
+/// every other phase and every `move` that samples the frame.
+pub fn coalesce_moves(batch: Vec<WindowDragEvent>) -> Vec<WindowDragEvent> {
+    let mut out: Vec<WindowDragEvent> = Vec::with_capacity(batch.len());
+    for e in batch {
+        if e.phase == DragPhase::Move
+            && let Some(last) = out.last()
+            && last.phase == DragPhase::Move
+            && last.frame.is_none()
+        {
+            out.pop();
+        }
+        out.push(e);
+    }
+    out
+}
+
+/// Hands the monitor's events to `on_event` on its own thread, so a slow
+/// listener (the Electron app's runs on its busy JS thread and blocks the
+/// caller until it returns) never holds up the event tap: macOS disables a
+/// tap whose callback is slow. Returns once `rx` closes.
+pub fn deliver(rx: std::sync::mpsc::Receiver<WindowDragEvent>, on_event: impl Fn(WindowDragEvent)) {
+    while let Ok(first) = rx.recv() {
+        let mut batch = vec![first];
+        batch.extend(rx.try_iter());
+        for e in coalesce_moves(batch) {
+            on_event(e);
+        }
+    }
+}
+
+/// What to do when the system disables the event tap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TapDisabled {
+    /// Turn it back on.
+    Reenable,
+    /// It keeps being turned off: end the monitor (it reports `stopped`,
+    /// and the app starts a new one).
+    GiveUp,
+}
+
+/// Counts the tap's disables: re-enabled each time, unless it is turned
+/// off more than [`TapHealth::MAX_DISABLES`] times within
+/// [`TapHealth::WINDOW`].
+#[derive(Debug, Default)]
+pub struct TapHealth {
+    recent: std::collections::VecDeque<std::time::Instant>,
+}
+
+impl TapHealth {
+    pub const MAX_DISABLES: usize = 10;
+    pub const WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
+    /// The tap was disabled at `now`.
+    pub fn disabled(&mut self, now: std::time::Instant) -> TapDisabled {
+        while self
+            .recent
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > Self::WINDOW)
+        {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(now);
+        if self.recent.len() > Self::MAX_DISABLES {
+            TapDisabled::GiveUp
+        } else {
+            TapDisabled::Reenable
+        }
+    }
+}
+
+/// Whether a monitor is still running, and whether it ended on its own.
+#[derive(Debug, Default)]
+pub struct MonitorLife {
+    stopping: std::sync::atomic::AtomicBool,
+    ended: std::sync::atomic::AtomicBool,
+}
+
+impl MonitorLife {
+    /// Running: its event tap is still up.
+    pub fn is_running(&self) -> bool {
+        !self.ended.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The owner asked it to stop.
+    pub fn request_stop(&self) {
+        self.stopping
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Its event tap ended. Returns whether that was on its own (not
+    /// asked), which the listener is told (`stopped`).
+    pub fn ended(&self) -> bool {
+        self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+        !self.stopping.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// The windows under the cursor at mouse down, with their frames then.
 #[derive(Default)]
 struct Pending {
-    window: Option<WindowInfo>,
-    frame: Option<Rect>,
+    candidates: Vec<(WindowInfo, Rect)>,
 }
 
 /// The detection state machine (see the module docs).
@@ -256,6 +389,24 @@ impl<S: WindowSource> WindowDragTracker<S> {
         self.started.is_some()
     }
 
+    /// The windows the last mouse down could drag (diagnostics).
+    pub fn candidates(&self) -> String {
+        if self.pending.candidates.is_empty() {
+            return "none".into();
+        }
+        self.pending
+            .candidates
+            .iter()
+            .map(|(w, f)| {
+                format!(
+                    "{} {:?} (pid {}, alpha {:.2}) at ({:.0}, {:.0}) {:.0}x{:.0}",
+                    w.window_id, w.owner, w.pid, w.alpha, f.x, f.y, f.width, f.height
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
     /// Feeds one mouse event; returns what to emit.
     pub fn handle(&mut self, event: MouseEvent, x: f64, y: f64) -> Option<WindowDragEvent> {
         match event {
@@ -264,10 +415,10 @@ impl<S: WindowSource> WindowDragTracker<S> {
                 self.started = None;
                 self.moves = 0;
                 let windows = self.source.windows();
-                if let Some(w) = frontmost_at(&windows, x, y, self.exclude_pid) {
-                    self.pending.frame = w.bounds;
-                    self.pending.window = Some(w.clone());
-                }
+                self.pending.candidates = windows_at(&windows, x, y, self.exclude_pid)
+                    .filter_map(|w| Some((w.clone(), w.bounds?)))
+                    .take(MAX_CANDIDATES)
+                    .collect();
                 None
             }
             MouseEvent::Dragged => {
@@ -288,11 +439,19 @@ impl<S: WindowSource> WindowDragTracker<S> {
                         frame,
                     });
                 }
-                let (w, start) = (self.pending.window.as_ref()?, self.pending.frame?);
-                let current = self.frame_of(w.window_id)?;
-                if !moved((start.x, start.y), (current.x, current.y), self.threshold) {
+                if self.pending.candidates.is_empty() {
                     return None;
                 }
+                let windows = self.source.windows();
+                let (w, start, current) =
+                    self.pending.candidates.iter().find_map(|(w, start)| {
+                        let current = windows
+                            .iter()
+                            .find(|c| c.window_id == w.window_id)?
+                            .bounds?;
+                        moved((start.x, start.y), (current.x, current.y), self.threshold)
+                            .then_some((w, *start, current))
+                    })?;
                 let dragged = DraggedWindow {
                     window_id: w.window_id,
                     pid: w.pid,
@@ -514,7 +673,8 @@ pub struct WindowDragMonitor {
 }
 
 impl WindowDragMonitor {
-    /// Starts watching; `on_event` runs on the monitor thread. Fails with
+    /// Starts watching; `on_event` runs on the monitor's delivery thread
+    /// (never the event tap's, so a slow listener cannot stall it). Fails with
     /// `PermissionDenied` without the Accessibility permission (macOS) and
     /// `Unsupported` elsewhere.
     pub fn start(on_event: Box<dyn Fn(WindowDragEvent) + Send + 'static>) -> Result<Self, UxError> {
@@ -543,6 +703,20 @@ impl WindowDragMonitor {
     pub fn stop(&self) {
         #[cfg(target_os = "macos")]
         self.inner.stop();
+    }
+
+    /// Whether it still watches. `false` once stopped or once its event tap
+    /// died on its own (the listener then gets a `stopped` event): start a
+    /// new monitor.
+    pub fn is_running(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.inner.is_running()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
     }
 }
 
@@ -673,6 +847,43 @@ mod tests {
     }
 
     #[test]
+    fn a_window_under_an_invisible_overlay_still_drags() {
+        // Another process's window over the cursor that never moves (it
+        // lets clicks through): the window under it moves, and drags.
+        let overlay = win(9, "Overlay", "", 0.0, 0.0);
+        let mut clear = win(8, "Clear", "", 0.0, 0.0);
+        clear.alpha = 0.0;
+        let list = |x| {
+            vec![
+                clear.clone(),
+                overlay.clone(),
+                win(1, "Blender", "b", x, 0.0),
+            ]
+        };
+        assert_eq!(
+            frontmost_at(&list(0.0), 5.0, 5.0, 0).unwrap().owner,
+            "Overlay"
+        );
+        let mut t = WindowDragTracker::new(list(0.0), 0);
+        t.handle(MouseEvent::Down, 5.0, 5.0);
+        assert!(t.candidates().contains("Blender"));
+        assert!(!t.candidates().contains("Clear"));
+        *t.source_mut() = list(40.0);
+        let s = t.handle(MouseEvent::Dragged, 45.0, 5.0).unwrap();
+        assert_eq!(s.phase, DragPhase::Start);
+        assert_eq!(s.window.unwrap().app_name, "Blender");
+        // The next drag works the same.
+        assert_eq!(
+            t.handle(MouseEvent::Up, 45.0, 5.0).unwrap().phase,
+            DragPhase::End
+        );
+        t.handle(MouseEvent::Down, 45.0, 5.0);
+        *t.source_mut() = list(80.0);
+        let s = t.handle(MouseEvent::Dragged, 85.0, 5.0).unwrap();
+        assert_eq!(s.phase, DragPhase::Start);
+    }
+
+    #[test]
     fn user_windows_drop_helpers_offscreen_hidden_and_duplicates() {
         let display = Rect {
             x: 0.0,
@@ -733,6 +944,109 @@ mod tests {
         assert!(encode_png(&[0; 3], 1, 1).is_none());
         assert_eq!(base64(b"hi"), "aGk=");
         assert_eq!(base64(b"abc"), "YWJj");
+    }
+
+    fn ev(phase: DragPhase, x: f64, frame: bool) -> WindowDragEvent {
+        WindowDragEvent {
+            phase,
+            x,
+            y: 0.0,
+            window: None,
+            start_frame: None,
+            frame: frame.then_some(Rect::default()),
+        }
+    }
+
+    #[test]
+    fn a_disabled_tap_is_re_enabled_until_it_keeps_dying() {
+        let mut h = TapHealth::default();
+        let t0 = std::time::Instant::now();
+        for i in 0..TapHealth::MAX_DISABLES {
+            assert_eq!(
+                h.disabled(t0 + std::time::Duration::from_millis(i as u64)),
+                TapDisabled::Reenable
+            );
+        }
+        assert_eq!(
+            h.disabled(t0 + std::time::Duration::from_millis(50)),
+            TapDisabled::GiveUp
+        );
+        // Spread out, disables are always re-enabled.
+        let mut h = TapHealth::default();
+        for i in 0..(TapHealth::MAX_DISABLES as u64 * 3) {
+            assert_eq!(
+                h.disabled(t0 + TapHealth::WINDOW * (i as u32 + 1)),
+                TapDisabled::Reenable
+            );
+        }
+    }
+
+    #[test]
+    fn a_monitor_that_dies_on_its_own_reports_it_and_a_stopped_one_does_not() {
+        let life = MonitorLife::default();
+        assert!(life.is_running());
+        assert!(life.ended(), "an unasked end is reported");
+        assert!(!life.is_running(), "a dead monitor is not running");
+        let life = MonitorLife::default();
+        life.request_stop();
+        assert!(!life.ended(), "an asked-for stop is not reported");
+        assert!(!life.is_running());
+    }
+
+    #[test]
+    fn delivery_coalesces_a_backlog_and_passes_the_stop_on() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for e in [
+            ev(DragPhase::Start, 0.0, true),
+            ev(DragPhase::Move, 1.0, false),
+            ev(DragPhase::Move, 2.0, true),
+            ev(DragPhase::Move, 3.0, false),
+            ev(DragPhase::Move, 4.0, false),
+            ev(DragPhase::End, 5.0, true),
+            WindowDragEvent::stopped(),
+        ] {
+            tx.send(e).unwrap();
+        }
+        drop(tx);
+        let got = std::sync::Mutex::new(vec![]);
+        deliver(rx, |e| got.lock().unwrap().push((e.phase, e.x)));
+        assert_eq!(
+            got.into_inner().unwrap(),
+            vec![
+                (DragPhase::Start, 0.0),
+                // The frame sample is kept; the step a later move replaces is not.
+                (DragPhase::Move, 2.0),
+                (DragPhase::Move, 4.0),
+                (DragPhase::End, 5.0),
+                (DragPhase::Stopped, 0.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_slow_listener_never_blocks_the_sender() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || {
+            let seen = std::sync::Mutex::new(0usize);
+            deliver(rx, |_| {
+                // The first event blocks until the sender is done.
+                let mut n = seen.lock().unwrap();
+                if *n == 0 {
+                    gate.recv().unwrap();
+                }
+                *n += 1;
+            });
+            seen.into_inner().unwrap()
+        });
+        let started = std::time::Instant::now();
+        for i in 0..1000 {
+            tx.send(ev(DragPhase::End, i as f64, false)).unwrap();
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        release.send(()).unwrap();
+        drop(tx);
+        assert_eq!(worker.join().unwrap(), 1000);
     }
 
     #[test]

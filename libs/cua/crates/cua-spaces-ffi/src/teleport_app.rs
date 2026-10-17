@@ -258,7 +258,7 @@ pub struct TeleportWindow {
 /// A window-drag event (global top-left display points).
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct TeleportWindowDragEvent {
-    /// `start`, `move` or `end`.
+    /// `start`, `move`, `end`, or `stopped` (the monitor died: start a new one).
     pub phase: String,
     pub x: f64,
     pub y: f64,
@@ -497,6 +497,7 @@ pub(crate) fn window_event(
             ux::window::DragPhase::Start => "start",
             ux::window::DragPhase::Move => "move",
             ux::window::DragPhase::End => "end",
+            ux::window::DragPhase::Stopped => "stopped",
         }
         .into(),
         x: e.x,

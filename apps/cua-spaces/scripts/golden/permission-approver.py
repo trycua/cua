@@ -60,9 +60,13 @@ Accessibility (measured on the golden image).
 WHAT IT CANNOT DO
 =================
 SecurityAgent dialogs ("<App> wants to use the 'login' keychain", the
-authorization panels). SecurityAgent runs in its own secure session: its
-windows are not in any AX tree this can reach and macOS ignores input to it.
-Those are eliminated at the source instead: the golden build re-keys the login
+authorization panels). This script's driver route cannot: cua-driver
+refuses SecurityAgent's windows (its AXWindow does not report the
+CGWindowID list_windows shows, so the tree comes back empty). They are NOT
+unreachable, though: reading SecurityAgent's AX tree directly works and
+AXValue / AXPress answer them (measured on macOS 26 in a Space VM). That is
+`cua-spacesd prompts` and the daemon's prompt watcher (cua-spacesd-prompts),
+which know the guest password. Beyond that they are eliminated at the source: the golden build re-keys the login
 keychain to the account password (sanitize-golden.sh), so no unanswerable
 keychain panel is raised in the first place. They are deliberately NOT attempted
 here — but they ARE detected and logged

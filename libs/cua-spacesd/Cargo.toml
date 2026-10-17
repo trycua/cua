@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/cua-spacesd-teleport",
+    "crates/cua-spacesd-prompts",
     "crates/cua-spacesd-desktop",
     "crates/cua-spacesd",
     "crates/cua-spacesd-doctor",

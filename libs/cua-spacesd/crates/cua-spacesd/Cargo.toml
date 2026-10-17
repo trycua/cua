@@ -21,6 +21,7 @@ cua-spacesd-session = { path = "../cua-spacesd-session" }
 cua-media-transport = { path = "../../../cua/crates/cua-media-transport" }
 cua-spacesd-server = { path = "../cua-spacesd-server" }
 cua-spacesd-doctor = { path = "../cua-spacesd-doctor" }
+cua-spacesd-prompts = { path = "../cua-spacesd-prompts" }
 cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
 cua-media-codec = { path = "../../../cua/crates/cua-media-codec", default-features = false }
 cua-proto = { path = "../../../cua/crates/cua-proto" }

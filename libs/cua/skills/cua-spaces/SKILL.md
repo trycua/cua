@@ -32,6 +32,24 @@ created when the task ends.
 | `send_file` | Drop a host file into the Space's Downloads (sha256 verified). |
 | `list_tools` / `call_tool` | Reach MCP services running inside the Space. |
 
+### Stuck behind a macOS password dialog
+
+On a macOS Space, a "wants to use the 'login' keychain" or "wants to access
+key 'Chrome Safe Storage'" dialog can block an app until someone answers it.
+If one is up, answer it on demand with `space_bash` (it types the guest
+password the image provisioned, so it only works while the keychain still
+takes that password):
+
+```
+"/Applications/Cua Spacesd.app/Contents/MacOS/cua-spacesd" prompts unblock --wait 10
+```
+
+It prints a JSON report of what was on screen and what it pressed (`prompts
+scan` only lists). An image can also run it automatically with
+`CUA_SPACESD_PROMPT_WATCHER=1`. Admin "wants to make changes" panels are answered only with
+`--class authorization`. A dialog it reports as `rejected` or
+`keychain_broken` needs the user: do not retry it in a loop.
+
 ## Show it to the user
 
 | Tool | Use |

@@ -1608,6 +1608,10 @@ if (-not $skipDownload) {
             } else {
                 Copy-Item -LiteralPath $themeStage -Destination (Join-Path $versionedDir $ThemeBinaryName) -Force
             }
+            $launcherStage = Join-Path $stageDir 'cua-driver-autostart.exe'
+            if (Test-Path -LiteralPath $launcherStage) {
+                Copy-Item -LiteralPath $launcherStage -Destination (Join-Path $versionedDir 'cua-driver-autostart.exe') -Force
+            }
             Write-Step "installed $versionedDir\$BinaryName (version $version, target $target)"
             # Optional sibling: the reserved uiAccess worker
             # (cua-driver-uia.exe). It started shipping with

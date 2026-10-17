@@ -155,6 +155,27 @@ pub fn status() -> Result<Status> {
     platform::status()
 }
 
+/// Start the daemon detached and wait until it is listening. The Windows
+/// autostart task runs this through the windowless launcher. Managed restart
+/// stays off: it would kick this same task again.
+#[cfg(target_os = "windows")]
+pub fn launch() -> Result<()> {
+    let socket = crate::serve::default_socket_path();
+    if crate::serve::is_daemon_listening(&socket) {
+        return Ok(());
+    }
+    let history = crate::history_runtime::preview_admitted_preference();
+    let state = Default::default();
+    Ok(crate::cli::launch_daemon_with_state_and_wait(
+        &socket, 30, &state, history, false,
+    )?)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn launch() -> Result<()> {
+    Err(anyhow!("autostart launch is only used on Windows"))
+}
+
 /// Run the autostart entry immediately without waiting for a fresh logon.
 /// Errors if the entry isn't registered.
 pub fn kick() -> Result<()> {
@@ -277,14 +298,11 @@ mod platform {
     /// install.ps1 surfaces any divergence; the moment install.ps1 changes
     /// shape, this script needs the same edit.
     ///
-    /// **Hidden-console launch (issue #1645):** the task action wraps
-    /// `cua-driver.exe serve` in `powershell -WindowStyle Hidden` +
-    /// `Start-Process -WindowStyle Hidden`. Without this, Task Scheduler
-    /// allocates a new CUI console window (because `cua-driver.exe` is a
-    /// console-subsystem binary) that stays visible on the user's desktop
-    /// for the lifetime of the daemon. The PowerShell wrapper exits
-    /// immediately after spawning the child, leaving only `cua-driver.exe`
-    /// in the process tree.
+    /// **Hidden-console launch (issues #1645, #3983):** the task action runs
+    /// the GUI-subsystem `cua-driver-autostart.exe` next to the driver, which
+    /// runs `cua-driver.exe autostart launch` with `CREATE_NO_WINDOW`. Console
+    /// launchers such as `powershell.exe` flash a window at logon before they
+    /// can hide it.
     ///
     /// **RunLevel = Highest** (since 2026-05-21): the daemon is registered to
     /// run at the user's elevated/admin token rather than the filtered
@@ -308,7 +326,7 @@ mod platform {
     /// $domain selector below picks USERDOMAIN when it's a real
     /// (non-WORKGROUP, non-COMPUTERNAME) domain and falls back to
     /// COMPUTERNAME otherwise, covering both shapes.
-    const REGISTER_PS: &str = r#"
+    pub(super) const REGISTER_PS: &str = r#"
 $ErrorActionPreference = 'Stop'
 if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -ne $env:COMPUTERNAME) {
     $domain = $env:USERDOMAIN
@@ -316,17 +334,11 @@ if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -n
     $domain = $env:COMPUTERNAME
 }
 $user = "$domain\$env:USERNAME"
-# Use a hidden PowerShell wrapper as the task action so Windows never
-# allocates a visible console window when the daemon is launched at
-# logon. cua-driver.exe is a CUI (console-subsystem) binary: without
-# this wrapper, Task Scheduler allocates a new console and the window
-# stays on the user's desktop for the lifetime of the daemon (issue #1645).
-# Start-Process -WindowStyle Hidden spawns the child fully detached;
-# the powershell.exe wrapper exits immediately after, leaving only the
-# cua-driver.exe daemon in the process tree.
+$launcher = Join-Path (Split-Path -Parent $env:CUA_DRIVER_AS_EXE) 'cua-driver-autostart.exe'
+if (-not (Test-Path -LiteralPath $launcher)) { throw "missing $launcher; reinstall cua-driver" }
 $action = New-ScheduledTaskAction `
-    -Execute 'powershell.exe' `
-    -Argument "-NoProfile -WindowStyle Hidden -NonInteractive -Command `"Start-Process -FilePath '$env:CUA_DRIVER_AS_EXE' -ArgumentList 'serve' -WindowStyle Hidden -WorkingDirectory '$env:USERPROFILE'`"" `
+    -Execute $launcher `
+    -Argument "`"$env:CUA_DRIVER_AS_EXE`" autostart launch" `
     -WorkingDirectory $env:USERPROFILE
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
@@ -636,6 +648,7 @@ pub fn run_autostart_cmd(subcommand: &str) {
                 std::process::exit(1);
             }
         },
+        "launch" => (launch(), "Cua Driver daemon is listening.".to_owned()),
         "kick" => (
             kick(),
             format!(
@@ -645,7 +658,7 @@ pub fn run_autostart_cmd(subcommand: &str) {
         ),
         other => {
             eprintln!("Unknown autostart subcommand: {other:?}");
-            eprintln!("Usage: cua-driver autostart {{enable|disable|status|kick}}");
+            eprintln!("Usage: cua-driver autostart {{enable|disable|status|kick|launch}}");
             std::process::exit(64);
         }
     };
@@ -664,6 +677,15 @@ pub fn run_autostart_cmd(subcommand: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn autostart_action_uses_windowless_launcher() {
+        let ps = platform::REGISTER_PS;
+        assert!(ps.contains("'cua-driver-autostart.exe'"));
+        assert!(ps.contains(r#"-Argument "`"$env:CUA_DRIVER_AS_EXE`" autostart launch""#));
+        assert!(!ps.contains("powershell.exe") && !ps.contains("conhost"));
+    }
 
     #[test]
     fn windows_task_path_strips_short_extended_drive_prefix() {

@@ -444,6 +444,7 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "disable" => "disable",
             "status" => "status",
             "kick" => "kick",
+            "launch" => "launch",
             _ => "other",
         },
         Some("skills") => match subcommand.unwrap_or("status") {
@@ -1532,7 +1533,7 @@ pub fn launch_daemon_and_wait(
 }
 
 #[cfg(not(target_os = "macos"))]
-fn launch_daemon_with_state_and_wait(
+pub(crate) fn launch_daemon_with_state_and_wait(
     socket_path: &str,
     timeout_secs: u64,
     state: &crate::history_runtime::DaemonLaunchState,

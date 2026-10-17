@@ -1948,7 +1948,12 @@ fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) 
                     alias: t.org.alias,
                     name: t.org.name,
                     role: t.org.role,
-                    plan: t.org.plan,
+                    // STOPGAP (CUA-1710): the generated record has no field for
+                    // the end date yet, so it rides on the plan as `teams@<RFC 3339>`.
+                    plan: match t.org.plan_ends_at.as_deref().filter(|e| !e.is_empty()) {
+                        Some(ends) => format!("{}@{ends}", t.org.plan),
+                        None => t.org.plan,
+                    },
                     seats: t.org.seats,
                     members: t
                         .members

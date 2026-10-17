@@ -19,7 +19,8 @@
     replaces the Swift driver, not parallels it.
 
     Exists so the Rust port can use the same TCC-attribution trick as
-    the Swift cua-driver: `open -n -g -a CuaDriver --args serve`
+    the Swift cua-driver: launch `open -n -g -a CuaDriver` with the
+    daemon's `serve` argument forwarded to the application. This
     relaunches into a process attributed to `com.trycua.driver` (a
     stable bundle identifier TCC keys grants against), instead of
     inheriting the calling shell/IDE-terminal's TCC responsibility.

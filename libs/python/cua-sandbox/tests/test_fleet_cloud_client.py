@@ -1,5 +1,6 @@
 import logging
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from cua_sandbox.transport.fleet_cloud import (
@@ -145,6 +146,49 @@ async def test_wait_service_ready_sets_a_native_request_timeout():
 
     _, _, _, request = calls[0]
     assert request.timeout_secs == 30
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403])
+async def test_readiness_rejects_auth_failure_without_retrying(status):
+    client = _FleetClient.__new__(_FleetClient)
+    client.service_request = AsyncMock(
+        return_value=HttpResponse(status=status, headers=[], body=b"private-response-body")
+    )
+
+    with pytest.raises(PermissionError, match=f"HTTP {status}") as caught:
+        await client.wait_service_ready("sandbox", "server")
+    client.service_request.assert_awaited_once()
+    assert "private-response-body" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 204, 404])
+async def test_readiness_preserves_reachable_service_compatibility(status):
+    client = _FleetClient.__new__(_FleetClient)
+    client.service_request = AsyncMock(
+        return_value=HttpResponse(status=status, headers=[], body=b"")
+    )
+    await client.wait_service_ready("sandbox", "server")
+    client.service_request.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_readiness_still_retries_unready_service(monkeypatch):
+    from cua_sandbox.transport import fleet_cloud
+
+    client = _FleetClient.__new__(_FleetClient)
+    client.service_request = AsyncMock(
+        side_effect=[
+            HttpResponse(status=503, headers=[], body=b""),
+            HttpResponse(status=200, headers=[], body=b""),
+        ]
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(fleet_cloud.asyncio, "sleep", sleep)
+    await client.wait_service_ready("sandbox", "server")
+    assert client.service_request.await_count == 2
+    sleep.assert_awaited_once_with(2)
 
 
 @pytest.mark.asyncio

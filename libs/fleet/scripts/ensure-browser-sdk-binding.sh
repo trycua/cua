@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cyclops_root="$repo_root/cyclops-cs"
+cyclops_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 binding_dir="$cyclops_root/sdk-bindings/ts-uniffi-browser"
 stamp_dir="$cyclops_root/target/browser-sdk"
 stamp_file="$stamp_dir/input.sha256"

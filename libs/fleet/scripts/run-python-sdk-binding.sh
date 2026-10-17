@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-bindings="$repo_root/cyclops-cs/sdk-bindings/python"
-library="$("$repo_root"/cyclops-cs/scripts/build-sdk-bindings-native.sh)"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$workspace_dir/.." && pwd)"
+bindings="$workspace_dir/sdk-bindings/python"
+library="$("$workspace_dir"/scripts/build-sdk-bindings-native.sh)"
 runtime="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-python-sdk.XXXXXX")"
 trap 'rm -rf "$runtime"' EXIT
 cp -R "$bindings/fleet_sdk" "$runtime/fleet_sdk"

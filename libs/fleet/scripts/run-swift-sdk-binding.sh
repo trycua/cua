@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-swift_dir="$repo_root/cyclops-cs/sdk-bindings/swift"
-library="$("$repo_root"/cyclops-cs/scripts/build-sdk-bindings-native.sh)"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$workspace_dir/.." && pwd)"
+swift_dir="$workspace_dir/sdk-bindings/swift"
+library="$("$workspace_dir"/scripts/build-sdk-bindings-native.sh)"
 library_dir="$(dirname "$library")"
 output="$(mktemp "${TMPDIR:-/tmp}/cyclops-swift-sdk.XXXXXX")"
 trap 'rm -f "$output"' EXIT

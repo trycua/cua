@@ -28,8 +28,7 @@ if [ "$actual_go_generator_version" != "$required_go_generator_version" ]; then
   exit 1
 fi
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cyclops_root="$repo_root/cyclops-cs"
+cyclops_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 normalizer="$cyclops_root/scripts/normalize-compat-sdk-bindings.py"
 temporary="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-compat-bindings.XXXXXX")"
 trap 'rm -rf "$temporary"' EXIT

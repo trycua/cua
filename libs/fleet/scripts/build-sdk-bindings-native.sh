@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace="$repo_root/cyclops-cs"
+workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 target_dir="${CYCLOPS_SDK_NATIVE_TARGET_DIR:-$workspace/target/sdk-bindings-native}"
 
 cargo build --locked --manifest-path "$workspace/Cargo.toml" --package cyclops-sdk --target-dir "$target_dir" >&2

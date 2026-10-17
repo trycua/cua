@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-binding_dir="$repo_root/cyclops-cs/sdk-bindings/ts-uniffi-browser"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+binding_dir="$workspace_dir/sdk-bindings/ts-uniffi-browser"
 
 for command in cargo rustup npm; do
   if ! command -v "$command" >/dev/null 2>&1; then

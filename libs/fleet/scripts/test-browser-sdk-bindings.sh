@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-binding_file="$repo_root/cyclops-cs/sdk-bindings/ts-uniffi-browser/ts/fleet_sdk.ts"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+binding_file="$workspace_dir/sdk-bindings/ts-uniffi-browser/ts/fleet_sdk.ts"
 
 for symbol in AccessTokenProvider connectWithAccessTokenProvider connectWithAccessToken connectBrowserWithAccessToken creationTimestamp listNamespaces listUserApiKeys createUserApiKey deleteUserApiKey; do
   if ! grep -Fq "$symbol" "$binding_file"; then

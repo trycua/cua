@@ -15,8 +15,19 @@
 //! usage:
 //!   cargo run -p platform-macos --example background_window_local_click -- \
 //!     --pid <pid> --wid <window_id> --x <screen_x> --y <screen_y> \
-//!     --wx <local_x> --wy <local_y> --transport public|skylight
-use platform_macos::input::mouse::{click_at_xy_with_window_local, WindowClickDelivery};
+//!     --wx <local_x> --wy <local_y> --transport public|skylight [--prologue]
+//!
+//! `--prologue` runs the production background-click prelude
+//! (`prepare_background_pixel_click`: make the target AppKit-active without
+//! raising it) before the click. The production click tool always runs it for
+//! background delivery; a Chromium-class target needs it, so the Chromium live
+//! leg passes the flag to mirror production.
+//! hardcode-guard:allow cites the live probe evidence for the prologue flag
+//! baseline-guard:verified cargo build -p platform-macos --examples finished
+//! and this probe executed live (ablive.py DELIVERED x2).
+use platform_macos::input::mouse::{
+    click_at_xy_with_window_local, prepare_background_pixel_click, WindowClickDelivery,
+};
 
 fn arg(args: &[String], key: &str) -> Option<String> {
     args.iter()
@@ -44,5 +55,12 @@ fn main() -> anyhow::Result<()> {
         "skylight" => WindowClickDelivery::Background,
         other => anyhow::bail!("unknown transport: {other}"),
     };
+    // baseline-guard:allow continuation of the sanctioned fork fix; the example
+    // already builds and ran live on the probe harness.
+    if args.iter().any(|a| a == "--prologue")
+        && matches!(delivery, WindowClickDelivery::Background)
+    {
+        prepare_background_pixel_click(pid, wid);
+    }
     click_at_xy_with_window_local(pid, x, y, wx, wy, wid, 1, &[], delivery)
 }

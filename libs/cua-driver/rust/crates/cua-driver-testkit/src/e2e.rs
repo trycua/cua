@@ -1319,6 +1319,7 @@ pub fn validate_catalog_with_evidence(
                         &root.join(relative_dir),
                         cell_id,
                         case_requires_action_turn(&result.case),
+                        result.observed_behavior,
                         &mut errors,
                     );
                 }
@@ -1406,6 +1407,7 @@ fn validate_turn_evidence(
     recording_dir: &Path,
     cell_id: &str,
     require_turn: bool,
+    observed_behavior: ObservedBehavior,
     errors: &mut Vec<String>,
 ) {
     let trajectory = recording_dir.join("trajectory.json");
@@ -1469,12 +1471,18 @@ fn validate_turn_evidence(
         return;
     }
 
+    let turn_observation = (turns.len() == 1).then_some(observed_behavior);
     for turn in turns {
-        validate_one_turn(&turn, cell_id, errors);
+        validate_one_turn(&turn, cell_id, turn_observation, errors);
     }
 }
 
-fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
+fn validate_one_turn(
+    turn: &Path,
+    cell_id: &str,
+    observed_behavior: Option<ObservedBehavior>,
+    errors: &mut Vec<String>,
+) {
     let turn_name = turn
         .file_name()
         .and_then(|name| name.to_str())
@@ -1489,6 +1497,10 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             None
         }
     };
+    if let Some(action) = action.as_ref() {
+        validate_action_truthfulness(action, observed_behavior, cell_id, turn_name, errors);
+    }
+
     let manifest_path = turn.join("evidence.json");
     let manifest = match read_json_value(&manifest_path) {
         Ok(manifest) if manifest["schema"] == "cua-turn-evidence/v1" => Some(manifest),
@@ -1700,6 +1712,66 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
     }
 }
 
+fn validate_action_truthfulness(
+    action: &Value,
+    observed_behavior: Option<ObservedBehavior>,
+    cell_id: &str,
+    turn_name: &str,
+    errors: &mut Vec<String>,
+) {
+    let Some(truth) = action.get("action_truth") else {
+        return;
+    };
+    let Some(effect) = truth.get("effect").and_then(Value::as_str) else {
+        errors.push(format!(
+            "action truth has no effect for {cell_id}/{turn_name}"
+        ));
+        return;
+    };
+    if !matches!(
+        effect,
+        "confirmed" | "partial" | "unverifiable" | "suspected_noop" | "refused"
+    ) {
+        errors.push(format!(
+            "action truth has unknown effect '{effect}' for {cell_id}/{turn_name}"
+        ));
+        return;
+    }
+
+    if effect == "confirmed"
+        && !truth
+            .get("evidence")
+            .and_then(Value::as_array)
+            .is_some_and(|evidence| !evidence.is_empty())
+    {
+        errors.push(format!(
+            "confirmed action truth has no evidence for {cell_id}/{turn_name}"
+        ));
+    }
+
+    let contradiction = match observed_behavior {
+        Some(ObservedBehavior::Delivered) if matches!(effect, "refused" | "suspected_noop") => {
+            Some(format!(
+                "independent oracle observed delivery but action truth claimed {effect}"
+            ))
+        }
+        Some(ObservedBehavior::Refused) if effect != "refused" => Some(format!(
+            "independent oracle observed refusal but action truth claimed {effect}"
+        )),
+        Some(ObservedBehavior::NoEffect) if matches!(effect, "confirmed" | "partial") => {
+            Some(format!(
+                "independent oracle observed no effect but action truth claimed {effect}"
+            ))
+        }
+        _ => None,
+    };
+    if let Some(contradiction) = contradiction {
+        errors.push(format!(
+            "action-truth contradiction for {cell_id}/{turn_name}: {contradiction}"
+        ));
+    }
+}
+
 // A tool may scroll an element into view after the original before image.
 // Its actual input point must be grounded in the supplemental pre-input frame.
 fn validate_click_source(
@@ -1907,6 +1979,158 @@ mod tests {
                 "attempts": [], "fallbacks": [], "escalation": null
             }
         })
+    }
+
+    fn action_with_truth(effect: &str, evidence: serde_json::Value) -> Value {
+        serde_json::json!({
+            "tool": "click",
+            "result_error": false,
+            "arguments": {"pid": 1, "window_id": 2},
+            "action_truth": {
+                "effect": effect,
+                "transport": "windows_uia_invoke",
+                "route": "accessibility",
+                "requested_delivery": "background",
+                "actual_delivery": "background",
+                "delivered_count": 1,
+                "attempts": [],
+                "fallbacks": [],
+                "evidence": evidence,
+                "escalation": null
+            }
+        })
+    }
+
+    fn truthfulness_errors(action: &Value, observed: ObservedBehavior) -> Vec<String> {
+        let mut errors = Vec::new();
+        validate_action_truthfulness(
+            action,
+            Some(observed),
+            "cell",
+            "turn-00001",
+            &mut errors,
+        );
+        errors
+    }
+
+    #[test]
+    fn action_truthfulness_allows_conservative_unverifiable_delivery() {
+        let action = action_with_truth("unverifiable", serde_json::json!([]));
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_accepts_confirmed_delivery_with_evidence() {
+        let action = action_with_truth(
+            "confirmed",
+            serde_json::json!([{"kind":"value_readback","detail":"fixture changed"}]),
+        );
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_confirmed_without_evidence() {
+        let action = action_with_truth("confirmed", serde_json::json!([]));
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors.iter().any(|error| error.contains("confirmed action truth has no evidence")));
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_claims_stronger_than_no_effect_oracle() {
+        for effect in ["confirmed", "partial"] {
+            let action = action_with_truth(
+                effect,
+                serde_json::json!([{"kind":"value_readback","detail":"claimed"}]),
+            );
+            let errors = truthfulness_errors(&action, ObservedBehavior::NoEffect);
+            assert!(
+                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+
+        for effect in ["unverifiable", "suspected_noop", "refused"] {
+            let action = action_with_truth(effect, serde_json::json!([]));
+            assert!(
+                truthfulness_errors(&action, ObservedBehavior::NoEffect).is_empty(),
+                "{effect}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_refusal_mismatch() {
+        let refused = action_with_truth("refused", serde_json::json!([]));
+        assert!(truthfulness_errors(&refused, ObservedBehavior::Refused).is_empty());
+
+        for effect in ["confirmed", "partial", "unverifiable", "suspected_noop"] {
+            let evidence = if effect == "confirmed" {
+                serde_json::json!([{"kind":"value_readback","detail":"claimed"}])
+            } else {
+                serde_json::json!([])
+            };
+            let action = action_with_truth(effect, evidence);
+            let errors = truthfulness_errors(&action, ObservedBehavior::Refused);
+            assert!(
+                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_delivered_but_refused_or_noop_claim() {
+        for effect in ["refused", "suspected_noop"] {
+            let action = action_with_truth(effect, serde_json::json!([]));
+            let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+            assert!(
+                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_is_backward_compatible_without_internal_truth() {
+        let action = serde_json::json!({"tool":"click","result_error":false,"arguments":{}});
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_still_checks_internal_claim_without_case_oracle_binding() {
+        let confirmed = action_with_truth("confirmed", serde_json::json!([]));
+        let mut errors = Vec::new();
+        validate_action_truthfulness(
+            &confirmed,
+            None,
+            "cell",
+            "turn-setup",
+            &mut errors,
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("confirmed action truth has no evidence"))
+        );
+
+        let refused = action_with_truth("refused", serde_json::json!([]));
+        let mut errors = Vec::new();
+        validate_action_truthfulness(&refused, None, "cell", "turn-setup", &mut errors);
+        assert!(
+            errors.is_empty(),
+            "multi-turn recordings must not guess which turn owns the case-level oracle: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_unknown_or_missing_effect() {
+        let mut action = action_with_truth("future-effect", serde_json::json!([]));
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors.iter().any(|error| error.contains("unknown effect")));
+
+        action["action_truth"].as_object_mut().unwrap().remove("effect");
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors.iter().any(|error| error.contains("has no effect")));
     }
 
     #[test]
@@ -2224,6 +2448,38 @@ mod tests {
                 "semantic actions still need before/after evidence"
             );
         }
+    }
+
+    #[test]
+    fn catalog_validator_binds_action_truth_to_independent_observation() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        let action_path = turn.join("action.json");
+        let mut action: Value =
+            serde_json::from_slice(&std::fs::read(&action_path).unwrap()).unwrap();
+
+        action["action_truth"] = serde_json::json!({
+            "effect": "unverifiable",
+            "evidence": []
+        });
+        std::fs::write(&action_path, action.to_string()).unwrap();
+        validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            Some(root.path()),
+            true,
+        )
+        .expect("conservative unverifiable claim must remain compatible with delivered oracle");
+
+        action["action_truth"]["effect"] = serde_json::json!("refused");
+        std::fs::write(&action_path, action.to_string()).unwrap();
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("driver refusal claim must contradict delivered external oracle");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("action-truth contradiction")),
+            "{errors:?}"
+        );
     }
 
     #[test]

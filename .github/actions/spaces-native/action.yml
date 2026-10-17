@@ -2,7 +2,8 @@ name: "Cua Spaces native layer"
 description: >-
   Build the Cua Spaces Electron native layer (`pnpm native -- --target T` in
   apps/cua-spaces-desktop) for one target into apps/cua-spaces-desktop/native/<label>,
-  or restore it from the Actions cache. The cache key is the git tree hash of
+  restore it from the Actions cache, or reuse the artifact an earlier run of
+  the same commit uploaded. The cache key is the git tree hash of
   everything the build reads (libs/cua, the cua-spacesd pin, the build script),
   the target, the toolchain and the repository, so any run of a commit with
   the same inputs (a test or dry-run build, then the release) reuses the
@@ -56,19 +57,96 @@ runs:
         HIT: ${{ steps.cache.outputs.cache-hit || 'false' }}
         LABEL: ${{ inputs.label }}
       run: echo "native ${LABEL} cache hit = ${HIT}"
-    - if: steps.cache.outputs.cache-hit != 'true'
+    # The repository's Actions cache sits over its 10 GB cap, so a compiled
+    # slice saved on one run is evicted long before the release run of the
+    # same commit restores it (#5224). Artifacts live outside the cache: a
+    # run of this commit that already uploaded `electron-native-<label>` (the
+    # names cd-cua-spaces.yml's upload-artifact steps use) hands the layer
+    # down instead of rebuilding it. Lookups failing or findings missing fall
+    # through to the normal build.
+    # The provenance check: pin the artifact id, its sha256 digest and the
+    # run that produced it, then verify the digest before extracting. An
+    # artifact without a digest, or a byte that fails verification, leaves
+    # ok=false and falls back to building.
+    - name: Find a prior run's artifacts
+      id: prior
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        LABEL: ${{ inputs.label }}
+        EXTRA_PATHS: ${{ inputs.extra-paths }}
+      run: |
+        set -euo pipefail
+        # Emit one "<artifact-id>\t<digest>\t<run-id>\t<dest>" spec per needed
+        # artifact. The extra cache paths ship as their own artifact
+        # (darwin-arm64's `electron-native-darwin-arm64-lib`), named after the
+        # same label and extracted into the directory holding them.
+        emit() {
+          line="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$1&per_page=20" \
+            --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == "'"$GITHUB_SHA"'" and .workflow_run.id != ('"$GITHUB_RUN_ID"' | tonumber) and .digest != null)] | sort_by(.created_at) | last | if . == null then empty else "\(.id)\t\(.digest)\t\(.workflow_run.id)" end' \
+            || true)"
+          [ -n "$line" ] && printf '%s\t%s\n' "$line" "$2"
+        }
+        specs="$(emit "electron-native-$LABEL" "apps/cua-spaces-desktop/native/$LABEL")"
+        if [ -n "${EXTRA_PATHS// /}" ]; then
+          for p in $EXTRA_PATHS; do lib_dir="$(dirname "$p")"; break; done
+          specs="$specs"$'\n'"$(emit "electron-native-$LABEL-lib" "$lib_dir")"
+        fi
+        specs="$(echo "$specs" | grep '\S' || true)"
+        { echo "specs<<EOF"; echo "$specs"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+        echo "$specs" | while IFS=$'\t' read -r aid dig rid dest; do
+          [ -n "$aid" ] && echo "pinned artifact $aid ($dig) from run $rid -> $dest"
+        done
+    - name: Restore the prior run's artifacts
+      id: restored-check
+      if: steps.prior.outputs.specs != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SPECS: ${{ steps.prior.outputs.specs }}
+        LABEL: ${{ inputs.label }}
+        EXTRA_PATHS: ${{ inputs.extra-paths }}
+      run: |
+        ok=true
+        while IFS=$'\t' read -r aid digest rid dest; do
+          [ -n "${aid:-}" ] || continue
+          zip="$RUNNER_TEMP/cua-prior-$aid.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$aid/zip" > "$zip" || { ok=false; continue; }
+          if [ "$(shasum -a 256 "$zip" | cut -d' ' -f1)" != "${digest#sha256:}" ]; then
+            echo "::error::sha256 mismatch on pinned artifact $aid (run $rid)"
+            ok=false
+            continue
+          fi
+          dest="$GITHUB_WORKSPACE/$dest"
+          mkdir -p "$dest"
+          case "$RUNNER_OS" in
+            Windows) powershell -NoProfile -Command "Expand-Archive -LiteralPath '$zip' -DestinationPath '$dest' -Force" || ok=false ;;
+            *) unzip -oq "$zip" -d "$dest" || ok=false ;;
+          esac
+        done <<< "$SPECS"
+        dir="$GITHUB_WORKSPACE/apps/cua-spaces-desktop/native/$LABEL"
+        test -n "$(find "$dir" -mindepth 1 -print -quit 2>/dev/null)" || ok=false
+        for p in $EXTRA_PATHS; do [ -e "$GITHUB_WORKSPACE/$p" ] || ok=false; done
+        if [ "$ok" = false ]; then
+          rm -rf "$dir"
+          for p in $EXTRA_PATHS; do rm -f "$GITHUB_WORKSPACE/$p"; done
+        fi
+        echo "prior-run artifact restore: ok=$ok"
+        echo "ok=$ok" >> "$GITHUB_OUTPUT"
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       uses: dtolnay/rust-toolchain@1.97.1
       with:
         targets: ${{ inputs.target }}
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       name: Install protoc
       uses: ./.github/actions/setup-protoc
-    - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true' && runner.os == 'Linux'
       name: Install Linux build dependencies
       shell: bash
       run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev
     # Dependencies and build products of a cold build (a source change).
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
       with:
         workspaces: libs/cua -> target
@@ -78,17 +156,17 @@ runs:
         # within the hour. Only the default branch saves it.
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       with:
         package_json_file: apps/cua-spaces-desktop/package.json
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       uses: actions/setup-node@v4
       with:
         node-version: 22
     # The library, its N-API runtime and the bundled cua; Windows links the
     # C runtime statically (build-native.mjs), so no VC++ redistributable.
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       name: Build the native layer
       shell: bash
       working-directory: apps/cua-spaces-desktop

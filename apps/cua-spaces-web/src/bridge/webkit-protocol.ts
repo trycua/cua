@@ -30,6 +30,8 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
+import type { MachinePageRow } from "./contracts/host";
+import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
@@ -64,6 +66,7 @@ export const WEBKIT_METHODS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
   ...KEYVAULT_MANAGE_WEBKIT_METHODS,
@@ -100,6 +103,8 @@ export const WEBKIT_METHODS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
@@ -110,10 +115,15 @@ export const WEBKIT_METHODS = [
   "devices.rename",
   "devices.revoke",
   "devices.confirmMachine",
+  "devices.createPairingCode",
+  "devices.pairingCodes",
+  "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
   "notifications.list",
   "notifications.markAllRead",
+  "notifications.markRead",
   "telemetry.track",
   "spaces.usage",
   "spaces.windows",
@@ -123,6 +133,7 @@ export const WEBKIT_METHODS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   "settings.get",
@@ -137,8 +148,12 @@ export const WEBKIT_METHODS = [
   "keyvault.revokeGrant",
   "window.setBackgroundColor",
   "window.setDragRegions",
+  "window.setDropTargets",
   "startup.get",
   "startup.act",
+  "relay.usage",
+  "checklist.get",
+  "checklist.send",
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -147,9 +162,9 @@ export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
  * page (WebCodecs), so the page asks it for a media ticket
  * (`ops/stream.ts`), and its first run is this page's (`onboarding.get`,
  * `onboarding.complete`); the Mac app draws video and its first run
- * natively. It also reads the account's relay allowance
- * (`relay.usage`, `ops/relay-usage.ts`). */
-export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "relay.usage"] as const;
+ * natively. It also joins presence for the video the page draws
+ * (`presence.*`, `ops/presence.ts`). */
+export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 /** `onboarding.get` and `onboarding.complete`'s answer: whether the first run finished, and as what. */
 export interface WkOnboarding {
@@ -161,6 +176,8 @@ export type HostMethod = WebkitMethod | (typeof ELECTRON_HOST_METHODS)[number];
 
 /** The app menu's Settings command (⌘,) while the SwiftUI app's New UI window is in front: go to Settings. */
 export const WEBKIT_OPEN_SETTINGS_EVENT = "settings.openRequested";
+/** The SwiftUI app's notch and menu bar item while New UI is on: go to `payload.path` (`/spaces/<id>`, `/settings`, ...). */
+export const WEBKIT_OPEN_ROUTE_EVENT = "route.openRequested";
 /** The app menu's Help > Getting Started: show the getting-started checklist again. */
 export const WEBKIT_OPEN_CHECKLIST_EVENT = "checklist.openRequested";
 
@@ -170,6 +187,7 @@ export const WEBKIT_EVENTS = [
   "keyvault.changed",
   "session.changed",
   "settings.changed",
+  "update.changed",
   "agents.changed",
   "teleport.progress",
   "startup.changed",
@@ -218,7 +236,7 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
-  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null } | null;
+  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;
   cloudDelete?: string | null;
@@ -264,6 +282,9 @@ export interface WkMachines {
   /** Signed in, but this Mac cannot open the account's machines (never
    * enrolled, waiting, expired, revoked): `DevicesModel.accessNotice`. */
   accessNotice?: MachineAccessNotice | null;
+  /** The page's rows as the core lists them (`machines::page_rows`, what
+   * the SwiftUI Machines page shows); absent from an older host. */
+  rows?: MachinePageRow[] | null;
 }
 
 /** `session.get`, `session.signIn`, `session.signOut`. */
@@ -283,6 +304,8 @@ export interface WkSettingsRow {
   label: string;
   enabled: boolean;
   help?: string | null;
+  /** A text row's value (the Keyvault's protection facts). */
+  value?: string | null;
   options: { id: string; label: string; active: boolean }[];
 }
 
@@ -292,6 +315,10 @@ export interface WkSettings {
   /** `AppSettings.updateChannel` (`stable` or `beta`); null while the build
    * has no updater. Set with `settings.choose {row: "update-channel"}`. */
   updateChannel?: string | null;
+  /** The global shortcut the host registered; absent or null: none. */
+  globalShortcut?: { label: string; registered: boolean } | null;
+  /** The host's account app (`app_account_app_url`); absent or null: none named. */
+  accountUrl?: string | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */

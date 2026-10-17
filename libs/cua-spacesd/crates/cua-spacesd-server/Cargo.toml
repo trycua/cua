@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+# The machine's node on the WireGuard®-based mesh (mesh_host).
+cua-mesh = { path = "../../../cua/crates/cua-mesh" }
 cua-proto = { path = "../../../cua/crates/cua-proto" }
 # Sealed delivery to a pinned machine key (S1): this guest's own keypair
 # and the replay guard for unsealing.
@@ -45,6 +47,8 @@ notify = "8"
 percent-encoding = "2"
 prost.workspace = true
 rand.workspace = true
+# mesh_host: is the relay coordinating a mesh (`/v1/info`)?
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde.workspace = true
 # `join` account mode: relay assertion verification (relay_account).
 cua-relay = { path = "../cua-relay" }

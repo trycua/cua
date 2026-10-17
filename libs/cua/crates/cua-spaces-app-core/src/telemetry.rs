@@ -202,6 +202,24 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
     vec![feature(name)]
 }
 
+/// The in-app Pro and Teams prompts, as `cua_spaces_feature_used`
+/// `upsell_<surface>_<action>`: `meter`, `share` and `machine` are shown,
+/// clicked or dismissed; the always-visible `plan_card` (Settings) and
+/// `account_menu` (the plan under the account name) are only clicked.
+/// Anything else: nothing.
+pub fn upsell(surface: &str, action: &str) -> Vec<TelemetrySignal> {
+    let ok = match surface {
+        "meter" | "share" | "machine" => matches!(action, "shown" | "click" | "dismiss"),
+        "plan_card" | "account_menu" => action == "click",
+        _ => false,
+    };
+    if ok {
+        vec![feature(&format!("upsell_{surface}_{action}"))]
+    } else {
+        vec![]
+    }
+}
+
 // ---- Getting started -----------------------------------------------------------
 
 /// The getting-started checklist's steps, in the order it lists them.
@@ -234,6 +252,7 @@ pub fn checklist(event: &str) -> Vec<TelemetrySignal> {
 pub fn page_name(s: OnboardingStep) -> &'static str {
     match s {
         OnboardingStep::Welcome => "welcome",
+        OnboardingStep::Cli => "command_line",
         OnboardingStep::Signin => "signin",
         OnboardingStep::Agents => "agents",
         OnboardingStep::Presentation => "presentation",
@@ -325,6 +344,10 @@ pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
 fn leave(s: &OnboardingState, a: &OnboardingAction) -> (&'static str, &'static str) {
     match s.step {
         OnboardingStep::Welcome | OnboardingStep::Done => ("completed", "none"),
+        OnboardingStep::Cli => match a {
+            OnboardingAction::CliPlanned { .. } => ("completed", "installed"),
+            _ => ("skipped", "not_installed"),
+        },
         OnboardingStep::Signin => {
             if s.identity.as_deref().is_some_and(|i| !i.is_empty()) {
                 ("completed", "signed_in")
@@ -1099,6 +1122,51 @@ mod tests {
     }
 
     #[test]
+    fn installing_the_command_and_skipping_it_are_told_apart() {
+        let planned = reduce(
+            &initial(None, None),
+            &OnboardingAction::CliPlanned {
+                plan: crate::installer::CliInstallPlan {
+                    source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                    target: "/Users/alice/.local/bin/cua".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        let s = reduce(&planned, &OnboardingAction::Start);
+        assert_eq!(
+            pages(&onboarding(&planned, &OnboardingAction::Start))[1..],
+            ["welcome completed none", "command_line shown none"]
+        );
+        let installing = reduce(&s, &OnboardingAction::CliDone { install: true });
+        assert!(onboarding(&s, &OnboardingAction::CliDone { install: true }).is_empty());
+        let installed = OnboardingAction::CliPlanned {
+            plan: crate::installer::CliInstallPlan {
+                source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                target: "/Users/alice/.local/bin/cua".into(),
+                up_to_date: true,
+                ..Default::default()
+            },
+        };
+        let done = onboarding(&installing, &installed);
+        assert_eq!(
+            pages(&done),
+            ["command_line completed installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&done).unwrap().contains("alice"));
+        let failed = OnboardingAction::CliInstallFailed {
+            error: "/Users/alice/.zshrc: Permission denied".into(),
+        };
+        assert!(onboarding(&installing, &failed).is_empty());
+        let skip = onboarding(&s, &OnboardingAction::CliDone { install: false });
+        assert_eq!(
+            pages(&skip),
+            ["command_line skipped not_installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&skip).unwrap().contains("alice"));
+    }
+
+    #[test]
     fn no_signal_carries_caller_text() {
         let s = reduce(&initial(None, None), &OnboardingAction::Start);
         let s = reduce(
@@ -1365,11 +1433,11 @@ mod tests {
     #[test]
     fn an_experiment_toggle_is_one_event_and_the_set_that_is_on() {
         use crate::experiments::Experiments;
-        let off = Experiments::default();
-        let on = Experiments {
-            sharing: true,
+        let off = Experiments {
+            sharing: false,
             ..Default::default()
         };
+        let on = Experiments::default();
         let signals = experiments_changed(&off, &on);
         assert_eq!(
             signals,
@@ -1444,12 +1512,16 @@ mod tests {
             .foreground()
             .build();
         t.acknowledge_notice();
+        let off = Experiments {
+            sharing: false,
+            ..Default::default()
+        };
         let on = Experiments {
             cua_volume: true,
             sharing: true,
             ..Default::default()
         };
-        let signals = experiments_changed(&Experiments::default(), &on);
+        let signals = experiments_changed(&off, &on);
         assert_eq!(
             record(&t, &signals),
             2,

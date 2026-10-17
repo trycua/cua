@@ -40,6 +40,7 @@
 //! its fallback and reports that it could not exclude the overlay.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use objc2::rc::autoreleasepool;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::process::Command;
@@ -418,7 +419,7 @@ where
     std::thread::Builder::new()
         .name("cua-sck-window-capture".into())
         .spawn(move || {
-            let result = work();
+            let result = autoreleasepool(|_| work());
             drop(permit);
             let _ = sender.send(result);
         })
@@ -748,6 +749,7 @@ fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<Vec<u8>> {
 /// Tries ScreenCaptureKit first; falls back to the `screencapture` CLI on
 /// native error or empty output.
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
+    refuse_without_direct_capture_consent()?;
     let off_space = crate::windows::window_on_current_space_by_id(window_id) == Some(false);
     capture_window_with_space_route(
         window_id,
@@ -886,6 +888,7 @@ pub fn screenshot_window(window_id: u32) -> anyhow::Result<(String, u32, u32)> {
 /// Capture the full main display.
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
+    refuse_without_direct_capture_consent()?;
     let capture = SecureCapturePath::new("display.png")?;
     let tmp_path = capture.file.to_string_lossy().into_owned();
 
@@ -965,6 +968,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
     cursor_overlay::capture_exclusion::AgentOverlayCapture,
 )> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
+    refuse_without_direct_capture_consent()?;
     capture_excluding_overlays(&OverlayExcluder, |overlay| {
         let Some(&overlay_window_id) = overlay else {
             return Ok((screenshot_display_bytes()?, ResidualCheck::Clean));
@@ -1048,6 +1052,42 @@ fn screenshot_main_display_sck_excluding(excluded_window_id: u32) -> anyhow::Res
     let image = SCScreenshotManager::capture_image(&filter, &config)
         .map_err(|e| anyhow::anyhow!("SCScreenshotManager::capture_image failed: {e}"))?;
     cgimage_to_png(&image, "main display")
+}
+
+/// Skip an implicit capture that would make macOS show its one-time
+/// direct-capture consent over the user's window (CUA-1792).
+fn refuse_without_direct_capture_consent() -> anyhow::Result<()> {
+    match crate::capture_consent::capture_blocked_reason() {
+        Some(reason) => Err(anyhow::anyhow!(reason)),
+        None => Ok(()),
+    }
+}
+
+/// Take one tiny frame of the main display through ScreenCaptureKit.
+///
+/// Listing shareable content does not make macOS ask for its direct-capture
+/// consent; the first real capture does. The explicit grant flow calls this so
+/// the consent appears there, while the user expects system prompts, and not
+/// later over their window. Returns whether the frame came back.
+pub fn capture_probe_frame() -> bool {
+    use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
+    use screencapturekit::screenshot_manager::SCScreenshotManager;
+
+    let Ok(content) = SCShareableContent::get() else {
+        return false;
+    };
+    let Some(display) = content.displays().into_iter().next() else {
+        return false;
+    };
+    let filter = SCContentFilter::create()
+        .with_display(&display)
+        .with_excluding_windows(&[])
+        .build();
+    let config = SCStreamConfiguration::new()
+        .with_width(16)
+        .with_height(16)
+        .with_shows_cursor(false);
+    SCScreenshotManager::capture_image(&filter, &config).is_ok()
 }
 
 /// Capture the main display and return (base64-encoded PNG, width, height).
@@ -1468,6 +1508,23 @@ mod tests {
             GATE.try_acquire().is_some(),
             "gate reopens only when the worker-owned permit drops"
         );
+    }
+
+    #[test]
+    fn pooled_native_worker_returns_work_result_and_error() {
+        static GATE: NativeCaptureGate = NativeCaptureGate::new();
+
+        let ok = run_native_capture_worker(&GATE, Duration::from_secs(5), || Ok(7u8));
+        assert_eq!(ok.expect("work result flows through the pooled worker"), 7);
+
+        let err: anyhow::Result<u8> =
+            run_native_capture_worker(&GATE, Duration::from_secs(5), || {
+                Err(anyhow::anyhow!("boom"))
+            });
+        assert!(err
+            .expect_err("work error flows through")
+            .to_string()
+            .contains("boom"));
     }
 
     #[test]

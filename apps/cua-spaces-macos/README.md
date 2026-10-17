@@ -15,6 +15,7 @@ render and do platform glue.
 | Devices | Settings → Devices: this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too; Approve asks for Touch ID or the login password), and a banner in the main window when this Mac needs enrolling |
 | Menu bar | The Cua mark (template); status line, Open, New Space, Settings, Quit |
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
+| Join with a code | `host.joinWithCode` runs the bundled `cua host setup --pair <code>` (3 minute limit); `cua://add/<CODE>` opens Machines at `?join=<CODE>` and the page asks before joining |
 | Notch panel | The "N Spaces" tab, Space tiles with live thumbnails, and the Teleport prompt; hover opens it after 300 ms, a dragged window or file drops on a tile. Window drags need Accessibility; the panel says so with an Open Settings button |
 
 Keyboard in the live desktop (main window and floating viewer): once you
@@ -58,9 +59,9 @@ UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then
 `xcodebuild test -scheme CuaSpacesMacUITests`.
 
 Environment (debug builds only; release builds ignore every `CUA_SPACES_*` hook):
-`CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`);
+`CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`; a relay allowance `CUA_SPACES_RELAY_USAGE` sets: `reached`, `team`, `none`, default the free plan within it);
 `CUA_SPACES_START_VIEW` opens `new-space`, `keyvault`, `approval`, `settings-devices`, `settings-about`, `device-approval` (with `CUA_SPACES_APPROVE_CODE`), `device-enroll`, `device-enroll-code`,
-`onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images) or a notch state (`notch-open`, which springs
+`onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images), `run-timeline` (an agent run's conversation from the Space's Agents section; fixtures give `local:aurora` two runs) or a notch state (`notch-open`, which springs
 open 1.5 s after launch, `notch-hover`, `notch-permission`,
 `notch-drag-target`, `notch-drop`); `CUA_SPACES_SELECT`
 selects a Space; `CUA_SPACES_CREATE=<image>[,<name>]` creates one on this
@@ -73,14 +74,28 @@ run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Supp
 `CuaSpacesMac --check-launch-only` loads the app's libraries, prints its version and exits
 (`scripts/check-launch.sh`; release builds too).
 
-## New UI (preview)
+## New UI
 
-Settings, Experiments, "New UI (preview)" (`web_ui`, off by default) adds
-File, "Open New UI (preview)" (⇧⌘U) and a "New UI" toolbar button. They open
-`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`): a `WKWebView`
-with the shared React UI (`apps/cua-spaces-web`) in a window without a title
-bar. The notch, the menu bar extra, Touch ID, the updater and video stay
+The New UI (the `web_ui` experiment) makes
+`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`) the main window: a
+`WKWebView` with the shared React UI (`apps/cua-spaces-web`) in a window
+without a title bar. Turning it on puts that window where the native one was
+(same frame) and closes the native one; turning it off does the reverse
+(`MainWindowSwitch`). While it is on, everything that opens the main window
+opens it instead, at the matching page (`MainUIRouter`): the Dock icon, the
+menu bar item, the notch, File, New Space (⌘N), the View menu, Help, Getting
+Started and the app's notifications; the native window, opened any other way
+(the Window menu), gives way to it. The notch, the menu bar extra, Touch ID, the updater and video stay
 native; a Space's desktop opens in its native window.
+
+It is on by default on the Beta update channel (the setting Sparkle uses)
+from the 0.8.1 betas, and on every channel from 0.8.1 (0.8.0 shipped without it)
+(`experiments::new_ui_default`). Settings, Experiments, "Use classic UI"
+(`experiment:classic_ui`) is the way back; it saves the user's choice
+(`AppSettings.new_ui`), which later launches keep. Only a choice is saved:
+an older build's saved `webUi: false` was its default, so it reads as no
+choice, and a saved `true` is kept (`settings::load`). A beta's first launch
+starts on the Beta channel (`settings::first_launch_channel`).
 
 - Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,
   or `CUA_WEBUI_DIST`) to `Contents/Resources/WebUI`, served at
@@ -103,7 +118,7 @@ with `{id, ok: true, result}` or `{id, ok: false, error: {code, message}}`
 `native_only`, `forbidden`, `unsupported`, `failed`). `app.info` lists the
 methods. Native events arrive as `cua:event` window events (`spaces.changed`,
 `machines.changed`, `keyvault.changed`, `session.changed`, `settings.changed`,
-`agents.changed`, `spaces.createProgress`, `spaces.newRequested`,
+`agents.changed`, `update.changed`, `spaces.createProgress`, `spaces.newRequested`,
 `settings.openRequested`). Results are the
 core's records as the SwiftUI views get them (camelCase fields; enums as the
 case name, or `{type, ...}` with a payload). `keyvault.get` also carries the
@@ -252,8 +267,8 @@ so the sign-in is never lost.
 ## Which app is primary
 
 Both ship from the same core, so neither owns behaviour. Recommendation:
-make this SwiftUI app the default macOS distribution and keep the Tauri app
-for Windows and Linux.
+make this SwiftUI app the default macOS distribution and keep the Electron
+app for Windows and Linux.
 
 - The Mac surfaces that matter most are native here: the notch panel, the
   menu bar extra, sheets, Liquid Glass, Passwords-style lists and system
@@ -264,7 +279,8 @@ for Windows and Linux.
 - The cost is a second UI to keep up; the core and the parity flows keep that
   to rendering.
 
-This app is the macOS release; the Tauri app ships for Windows and Linux.
+This app is the macOS release; the Electron app (`apps/cua-spaces-desktop`)
+ships for Windows and Linux.
 
 ## Release
 
@@ -294,7 +310,12 @@ commits under this directory.
 scripts/build-release.sh --version 0.2.0 --out /tmp/spaces-release   # ad hoc signed, universal
 scripts/package-dmg.sh --app "/tmp/spaces-release/Cua Spaces.app" --out /tmp/cua-spaces.dmg
 scripts/verify-release.sh cua-spaces-0.2.0-darwin-universal.dmg      # a downloaded release
+scripts/verify-release.sh --dir assets --version 0.8.0-beta.6 \
+  --expect swift,electron,windows,appcast,feed                      # every asset of a release
 ```
+
+CD (`cd-cua-spaces.yml`, job `verify-release`) runs `verify-release.sh` on the
+signed and notarized build before anything is published.
 
 The disk image window is the spaces.cua.ai hero with the blue Cua Spaces key
 missing. The app, whose icon is that key, sits on the left. The Applications
@@ -320,7 +341,26 @@ component released last, so a `/releases/latest/download/` URL would not
 always be the Spaces feed; a fixed tag always is. The app is outside the App
 Sandbox, so it needs no `SUEnableInstallerLauncherService`.
 `SUVerifyUpdateBeforeExtraction` checks the signature before anything is
-unpacked.
+unpacked (Sparkle does this whatever the user driver).
+
+Sparkle shows no window of its own. `SparkleUpdater` runs an `SPUUpdater`
+with a custom user driver (`UpdateUserDriver`, over the plain-value
+`UpdateFlow` state machine in `UpdateDriver.swift`). It checks at launch and
+periodically (`SUEnableAutomaticChecks` and `SUAutomaticallyUpdate` are on, so
+updates check and download in the background out of the box, as on Windows
+and Linux; an explicit off is kept). An
+update found by a scheduled check downloads and extracts at once; Sparkle's
+ready-to-install reply is then held, and nothing restarts the app until the
+page calls `update.install` ("Restart to update"). With "check for and
+download updates automatically" on (the default), Sparkle's silent path reaches the same state through
+`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`. The page
+reads the state with `update.get` (`{status, currentVersion, version,
+percent, notesUrl, message}`; status is `idle`, `checking`, `available`,
+`downloading`, `downloaded` or `error`) and refetches on the `update.changed`
+event. Check Now (Settings, About) is quiet too: nothing found ends silently,
+and only an error from a check the user started shows a small "Update Error!"
+alert; background errors are logged. Usage telemetry records `found`,
+`not_found`, `downloaded`, `installed` and `failed`.
 
 Channels: an `X.Y.Z-suffix` release is a `beta` item, which only apps set to
 "Update to: Beta" (`AppSettings.updateChannel`) are offered.

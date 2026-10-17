@@ -648,7 +648,7 @@
       "type": "boolean"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -668,9 +668,7 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "double_click",
@@ -721,7 +719,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -741,9 +739,7 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "right_click",
@@ -1502,7 +1498,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -1519,7 +1515,6 @@
      }
     },
     "required": [
-     "pid",
      "value"
     ],
     "type": "object"
@@ -1943,7 +1938,7 @@
       "type": "number"
      },
      "glide_duration_ms": {
-      "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+      "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` or the default `steady` timing also fixes the duration.\nClamped to 0..5000.",
       "type": "number"
      },
      "idle_hide_ms": {
@@ -1975,11 +1970,15 @@
       "type": "string"
      },
      "timing": {
-      "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+      "description": "`steady` (default) keeps the style's timing but makes every move take at least 600 ms,\nwith a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.\n`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses\nglide_duration_ms (1430 ms when 0).",
       "enum": [
        "native",
        "fitts",
-       "fixed"
+       "fixed",
+       "relaxed",
+       "steady",
+       "calm",
+       "deliberate"
       ],
       "type": "string"
      },
@@ -2060,6 +2059,10 @@
    "input_schema": {
     "additionalProperties": false,
     "properties": {
+     "prompt": {
+      "description": "Ignored: Linux has no permission prompts.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -2071,7 +2074,7 @@
    "read_only": true
   },
   {
-   "description": "Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.\n\nInput — all optional:\n  {\n    \"include\": [\"<check_name>\", ...],   // run only these\n    \"skip\":    [\"<check_name>\", ...]    // skip these\n  }\nIf both are given, `include` wins.\n\nCanonical check names:\n  macOS  : binary_version, platform_supported, session_active,\n           bundle_identity, tcc_accessibility, tcc_screen_recording,\n           ax_capability, screen_capture_capability\n  Windows: binary_version, platform_supported, session_active,\n           ax_capability (via UIA), screen_capture_capability (via DXGI)\n  Linux  : binary_version, platform_supported, session_active,\n           ax_capability (via AT-SPI), screen_capture_capability (via X11)\n\nOutput — stable contract, schema_version=\"1\":\n  {\n    \"schema_version\": \"1\",\n    \"platform\": \"darwin\" | \"win32\" | \"linux\",\n    \"driver_version\": \"<semver>\",\n    \"overall\": \"ok\" | \"degraded\" | \"failed\",\n    \"checks\": [\n      {\n        \"name\": \"<one of the canonical names above>\",\n        \"status\": \"pass\" | \"fail\" | \"skip\",\n        \"message\": \"<one-line summary, always present>\",\n        \"hint\": \"<remediation step, present when status=fail>\",\n        \"data\": { /* check-specific structured fields */ }\n      },\n      ...\n    ]\n  }\n\n`overall` rules:\n  - `ok`       — every non-skipped check passes\n  - `degraded` — at least one non-core check fails (binary is still usable)\n  - `failed`   — any core check fails (binary_version, platform_supported, session_active)\n\nStability: schema_version=\"1\" is the contract. Future breaking changes will be `\"2\"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names.",
+   "description": "Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.\n\nInput — all optional:\n  {\n    \"include\": [\"<check_name>\", ...],   // run only these\n    \"skip\":    [\"<check_name>\", ...]    // skip these\n  }\nIf both are given, `include` wins.\n\nCanonical check names:\n  macOS  : binary_version, platform_supported, session_active,\n           bundle_identity, tcc_accessibility, tcc_screen_recording,\n           ax_capability, screen_capture_capability, windowserver_connection\n  Windows: binary_version, platform_supported, session_active,\n           ax_capability (via UIA), screen_capture_capability (via DXGI)\n  Linux  : binary_version, platform_supported, session_active,\n           ax_capability (via AT-SPI), screen_capture_capability (via X11)\n\nOutput — stable contract, schema_version=\"1\":\n  {\n    \"schema_version\": \"1\",\n    \"platform\": \"darwin\" | \"win32\" | \"linux\",\n    \"driver_version\": \"<semver>\",\n    \"overall\": \"ok\" | \"degraded\" | \"failed\",\n    \"checks\": [\n      {\n        \"name\": \"<one of the canonical names above>\",\n        \"status\": \"pass\" | \"fail\" | \"skip\",\n        \"message\": \"<one-line summary, always present>\",\n        \"hint\": \"<remediation step, present when status=fail>\",\n        \"data\": { /* check-specific structured fields */ }\n      },\n      ...\n    ]\n  }\n\n`overall` rules:\n  - `ok`       — every non-skipped check passes\n  - `degraded` — at least one non-core check fails (binary is still usable)\n  - `failed`   — any core check fails (binary_version, platform_supported, session_active)\n\nStability: schema_version=\"1\" is the contract. Future breaking changes will be `\"2\"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2119,7 +2122,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\nThe experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today — see issue #1729).\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.",
+   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\nThe experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today — see issue #1729).\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2130,6 +2133,16 @@
       "enum": [
        "ax",
        "vision"
+      ],
+      "type": "string"
+     },
+     "cursor.badges": {
+      "description": "Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor.",
+      "enum": [
+       "minimal",
+       "verbose",
+       "off",
+       "default"
       ],
       "type": "string"
      },
@@ -2198,11 +2211,15 @@
       "type": "string"
      },
      "cursor.motion.timing": {
-      "description": "Saved default cursor move timing for new sessions.",
+      "description": "Saved default cursor move timing for new sessions. Built-in default: steady (a 600 ms floor on every move).",
       "enum": [
        "native",
        "fitts",
-       "fixed"
+       "fixed",
+       "relaxed",
+       "steady",
+       "calm",
+       "deliberate"
       ],
       "type": "string"
      },
@@ -2376,7 +2393,7 @@
    "read_only": false
   },
   {
-   "description": "Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.",
+   "description": "Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup: a browser that is not attached yet refuses with browser_consent_required or browser_requires_setup, and detail.next_call names the browser_prepare call that attaches it. Use this route for any web page in Chrome, Edge or Brave; desktop pointer tools move the user's pointer.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2434,7 +2451,7 @@
    "read_only": true
   },
   {
-   "description": "Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front for every new connection), existing-profile attachment refuses with background_unavailable unless delivery_mode is \"foreground\"; the app that was in front is then brought back afterwards.",
+   "description": "Attach the browser tools to a browser. For a page in the user's running Chrome, Edge or Brave, call it once with pid, window_id, session and strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with browser_consent_required or browser_requires_setup; then call get_browser_state again and act with browser_click, browser_type or browser_pointer. It attaches, or refuses with nothing changed and says why. Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front whenever the driver opens a new browser connection; sessions for the same browser share one approved connection, kept for up to 30 minutes idle and 8 hours in total, so later sessions do not prompt again), existing-profile attachment refuses with background_unavailable unless delivery_mode is \"foreground\" (the app that was in front is brought back afterwards) or the browser window is on another Space than the user's, where it attaches in the background while the driver reverts the browser's own brief activations. A driver-owned isolated launch result carries an advisory lifecycle object: the browser process ends with the calling session after idle_expires_in_seconds without session activity, an isolated_named profile persists after the session and an isolated_new profile does not, and explicit end, disconnect, revocation or shutdown end it earlier.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -2446,7 +2463,7 @@
      },
      "delivery_mode": {
       "default": "background",
-      "description": "Existing-profile attachment only. background (default) refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards.",
+      "description": "Existing-profile attachment only. background (default) attaches in the background when the browser window is on another Space than the user's, and otherwise refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards.",
       "enum": [
        "background",
        "foreground"
@@ -2484,7 +2501,7 @@
      },
      "strategy": {
       "additionalProperties": false,
-      "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
+      "description": "Attach to an already-running browser instead of launching one. Pass an object, {\"kind\":\"existing_profile\"}, not a string. kind=existing_profile attaches to the user's running profile at pid/window_id under the runtime's profile authorization.",
       "properties": {
        "kind": {
         "enum": [
@@ -2544,7 +2561,7 @@
    "read_only": false
   },
   {
-   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
+   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (including Linux Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic pointer and mouse down/up/click sequence at the element's center, ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2650,6 +2667,48 @@
     "type": "object"
    },
    "name": "browser_type",
+   "read_only": false
+  },
+  {
+   "description": "Select one option of a native HTML <select> ref on an exactly-bound tab without opening its popup. Pass exactly one of label or value; exactly one option must equal it. Refuses non-native, multiple-selection, and disabled selects, disabled options, and zero or ambiguous matches before changing anything. A change dispatches bubbling input and change events; they are synthetic, so verify the page accepted the selection. Selecting the option that is already selected dispatches no events.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "label": {
+      "description": "Exact visible label of the option to select.",
+      "type": "string"
+     },
+     "ref": {
+      "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "value": {
+      "description": "Exact value attribute of the option to select.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "ref"
+    ],
+    "type": "object"
+   },
+   "name": "browser_select",
    "read_only": false
   },
   {
@@ -3104,7 +3163,7 @@
         "type": "number"
        },
        "glide_duration_ms": {
-        "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+        "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` or the default `steady` timing also fixes the duration.\nClamped to 0..5000.",
         "type": "number"
        },
        "idle_hide_ms": {
@@ -3132,11 +3191,15 @@
         "type": "string"
        },
        "timing": {
-        "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+        "description": "`steady` (default) keeps the style's timing but makes every move take at least 600 ms,\nwith a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.\n`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses\nglide_duration_ms (1430 ms when 0).",
         "enum": [
          "native",
          "fitts",
-         "fixed"
+         "fixed",
+         "relaxed",
+         "steady",
+         "calm",
+         "deliberate"
         ],
         "type": "string"
        },

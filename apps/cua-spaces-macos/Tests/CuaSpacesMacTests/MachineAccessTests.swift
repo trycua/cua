@@ -24,7 +24,7 @@ enum MachinesFixture {
                     osPrettyName: os == .macos ? "macOS 26.0" : "Ubuntu 24.04.3 LTS",
                     image: nil, imageDigest: nil, kind: nil, arch: "arm64", reachable: reachable,
                     error: error, host: host, hostName: hostName, power: power, powerState: powerState,
-                    cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
     }
 
     /// This Mac's relay machine id (its host setup).

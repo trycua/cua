@@ -7,7 +7,8 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { helperPath, notchSupported, startNotch, type NotchActions } from "../src/notch";
+import { helperPath, notchSupported, startNotch, type NotchActions, type WindowDragEvent, type WindowTargets } from "../src/notch";
+import { followDragReadiness, notchTeleport } from "../src/notch-feed";
 import { fakeCore, manualClock, MOTION } from "./fakeNotchCore";
 
 const require = createRequire(import.meta.url);
@@ -69,7 +70,7 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function setup(trace?: (line: string) => void) {
+function setup(trace?: (line: string) => void, drags?: { windowTargets: WindowTargets; onListener(l: { onEvent(e: WindowDragEvent): void }): void }) {
   const fake = fakeCore();
   const clock = manualClock();
   const children: FakeChild[] = [];
@@ -96,11 +97,12 @@ function setup(trace?: (line: string) => void) {
       thumbnail: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
       teleport: {
         windowDragSupported: () => true,
-        windowDragPermitted: () => false,
+        windowDragPermitted: () => !!drags,
         requestWindowDragPermission: () => (requested.push(1), true),
-        startWindowDrag: () => ({ stop() {} }),
+        startWindowDrag: (l) => (drags?.onListener(l), { stop() {} }),
         captureWindowThumbnail: () => null,
       },
+      windowTargets: drags?.windowTargets,
     },
     {
       path: "/helper",
@@ -108,6 +110,7 @@ function setup(trace?: (line: string) => void) {
       clock,
       openURL: (u) => opened.push(u),
       log: () => {},
+      windowUnderTimeoutMs: 50,
       process: {
         spawn: () => {
           const c = new FakeChild();
@@ -225,5 +228,189 @@ describe("the notch end to end (fake helper)", () => {
     c.emit("exit", 0, null);
     clock.advance(120_000);
     expect(children).toHaveLength(1);
+  });
+});
+
+describe("window drags onto the app's own Space tiles (fake helper)", () => {
+  it("asks the helper which window is under the dragged one, and highlights the tile only when it is the app's", async () => {
+    const highlights: (string | null)[] = [];
+    let listener: { onEvent(e: WindowDragEvent): void } | undefined;
+    const windowTargets: WindowTargets = {
+      at: (x) => (x < 300 ? { spaceId: "local:aurora", window: 900 } : null),
+      highlight: (id) => void highlights.push(id),
+    };
+    const { children, fake } = setup(undefined, { windowTargets, onListener: (l) => (listener = l) });
+    const c = children[0]!;
+    await vi.waitFor(() => expect(listener).toBeDefined());
+    fake.script(() => ({ phase: 1, kind: 1, overlay: [] }));
+    listener!.onEvent({ phase: "start", x: 700, y: 500, window: { windowId: 7, appName: "Notes" } });
+    listener!.onEvent({ phase: "move", x: 150, y: 120 });
+    await vi.waitFor(() => expect(c.received.at(-1)).toEqual({ type: "windowUnder", id: 1, x: 150, y: 120, below: 7 }));
+    c.say({ type: "windowUnder", id: 1, window: 900 });
+    await vi.waitFor(() => expect(highlights).toEqual(["local:aurora"]));
+    // Another window over the tile there: no highlight.
+    listener!.onEvent({ phase: "move", x: 160, y: 120 });
+    await vi.waitFor(() => expect(c.received.at(-1)).toMatchObject({ type: "windowUnder", id: 2 }));
+    c.say({ type: "windowUnder", id: 2, window: 1234 });
+    await vi.waitFor(() => expect(highlights).toEqual(["local:aurora", null]));
+    // A helper that never answers: none, after the wait.
+    listener!.onEvent({ phase: "move", x: 170, y: 120 });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(highlights).toEqual(["local:aurora", null]);
+  });
+});
+
+describe("window drags onto the notch", () => {
+    it("follows window drags with the SDK's teleport handle once there is one", async () => {
+      let handle: { windowDragSupported(): boolean; windowDragPermitted(): boolean; requestWindowDragPermission(): boolean; startWindowDrag: ReturnType<typeof vi.fn>; captureWindowThumbnail(): ArrayBuffer } | null = null;
+      const t = notchTeleport(() => handle as never);
+      expect(t.windowDragSupported()).toBe(false);
+      expect(t.windowDragPermitted()).toBe(false);
+      await expect(t.startWindowDrag({ onEvent() {} })).rejects.toThrow(/not running/);
+      const monitor = { stop: vi.fn() };
+      handle = {
+        windowDragSupported: () => true,
+        windowDragPermitted: () => true,
+        requestWindowDragPermission: () => true,
+        startWindowDrag: vi.fn(() => monitor),
+        captureWindowThumbnail: () => new ArrayBuffer(3),
+      };
+      expect(t.windowDragSupported()).toBe(true);
+      const listener = { onEvent() {} };
+      const started = t.startWindowDrag(listener);
+      // Not inside the caller's own call: the event tap may take a while to start.
+      expect(handle.startWindowDrag).not.toHaveBeenCalled();
+      expect(await started).toBe(monitor);
+      expect(handle.startWindowDrag).toHaveBeenCalledWith(listener);
+      expect((t.captureWindowThumbnail(7, 320) as ArrayBuffer).byteLength).toBe(3);
+    });
+});
+
+// CUA-1618: window-drag tracking needs both the SDK (the launch's end) and
+// the notch (its helper connecting), in either order, and follows the
+// "Spaces tab in the notch" setting live.
+describe("window-drag tracking, whichever comes first", () => {
+  function lifecycle(o: { helperUp: boolean }) {
+    const clock = manualClock();
+    const children: FakeChild[] = [];
+    let helperUp = o.helperUp;
+    const monitors: { stop: ReturnType<typeof vi.fn> }[] = [];
+    // The SDK's teleport handle: none until the launch hands it over.
+    let sdk: unknown = null;
+    const sdkIn = () => {
+      sdk = {
+        windowDragSupported: () => true,
+        windowDragPermitted: () => true,
+        requestWindowDragPermission: () => true,
+        startWindowDrag: () => {
+          const m = { stop: vi.fn() };
+          monitors.push(m);
+          return m;
+        },
+        captureWindowThumbnail: () => null,
+      };
+    };
+    const listeners = new Set<() => void>();
+    const startup = {
+      isReady: false,
+      subscribe(l: () => void) {
+        listeners.add(l);
+        return () => void listeners.delete(l);
+      },
+      ready() {
+        this.isReady = true;
+        for (const l of [...listeners]) l();
+      },
+    };
+    const notch = startNotch(
+      {
+        core: fakeCore().core,
+        actions: { openSpace() {}, openMain() {}, openSettings() {}, openAccess() {}, dismissAccess() {}, teleport() {}, drop() {} },
+        teleport: notchTeleport(() => sdk as never),
+      },
+      {
+        path: "/helper",
+        clock,
+        log: () => {},
+        process: {
+          // The helper still connecting: its first start fails and it restarts after the backoff.
+          spawn: () => {
+            if (!helperUp) {
+              helperUp = true;
+              throw new Error("not yet");
+            }
+            const c = new FakeChild();
+            children.push(c);
+            return c as unknown as ChildProcess;
+          },
+          after: clock.after,
+          now: clock.now,
+        },
+      },
+    );
+    /** Lets the monitor's deferred start (`notchTeleport`) run. */
+    const settle = () => new Promise((r) => setTimeout(r, 5));
+    return { notch, clock, children, monitors, sdkIn, startup, settle };
+  }
+
+  it("starts when the launch finished before the notch was wired to it (the startup race)", async () => {
+    const { notch, monitors, sdkIn, startup, settle, clock, children } = lifecycle({ helperUp: false });
+    await settle();
+    expect(monitors).toHaveLength(0);
+    // The launch ends while the notch is still connecting: no change is seen after the wiring.
+    sdkIn();
+    startup.isReady = true;
+    followDragReadiness(notch, startup);
+    await settle();
+    expect(monitors).toHaveLength(1);
+    // The helper connects later: still one monitor.
+    clock.advance(500);
+    expect(children).toHaveLength(1);
+    await settle();
+    expect(monitors).toHaveLength(1);
+    notch.stop();
+  });
+
+  it("starts once a delayed helper connects, the SDK having come in meanwhile", async () => {
+    const { notch, monitors, sdkIn, settle, clock, children } = lifecycle({ helperUp: false });
+    await settle();
+    expect(children).toHaveLength(0);
+    sdkIn();
+    await settle();
+    expect(monitors).toHaveLength(0);
+    clock.advance(500);
+    expect(children).toHaveLength(1);
+    await vi.waitFor(() => expect(monitors).toHaveLength(1));
+    notch.stop();
+  });
+
+  it("starts once the launch finishes after the notch connected", async () => {
+    const { notch, monitors, sdkIn, startup, settle } = lifecycle({ helperUp: true });
+    followDragReadiness(notch, startup);
+    await settle();
+    expect(monitors).toHaveLength(0);
+    sdkIn();
+    startup.ready();
+    await vi.waitFor(() => expect(monitors).toHaveLength(1));
+    notch.stop();
+  });
+
+  it("stops when the setting hides the notch and starts again when it shows it, without a relaunch", async () => {
+    const { notch, monitors, sdkIn, startup, settle } = lifecycle({ helperUp: true });
+    notch.setShown(false);
+    sdkIn();
+    startup.ready();
+    followDragReadiness(notch, startup);
+    await settle();
+    expect(monitors).toHaveLength(0);
+    // Turned on while the app runs.
+    notch.setShown(true);
+    await vi.waitFor(() => expect(monitors).toHaveLength(1));
+    notch.setShown(false);
+    expect(monitors[0]!.stop).toHaveBeenCalledTimes(1);
+    notch.setShown(true);
+    await vi.waitFor(() => expect(monitors).toHaveLength(2));
+    expect(monitors[1]!.stop).not.toHaveBeenCalled();
+    notch.stop();
   });
 });

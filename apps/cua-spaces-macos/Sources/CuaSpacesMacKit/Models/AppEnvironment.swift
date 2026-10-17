@@ -69,7 +69,15 @@ public enum AppEnvironment {
         // until then the window shows the launch, on stand-ins that wait
         // for them. Nothing here reads the keychain or waits on the daemon.
         let gate = LiveGate<LiveServices>()
-        let backend: SpacesBackend = fixtures ? FixtureSpacesBackend(rows: FixtureSpacesBackend.rows(environment: env)) : PendingSpacesBackend(gate: gate)
+        let backend: SpacesBackend
+        if fixtures {
+            let fixture = FixtureSpacesBackend(rows: FixtureSpacesBackend.rows(environment: env))
+            fixture.fixtureRuns["local:aurora"] = FixtureSpacesBackend.sampleRuns
+            fixture.fixtureEvents = FixtureSpacesBackend.sampleEvents
+            backend = fixture
+        } else {
+            backend = PendingSpacesBackend(gate: gate)
+        }
         let keyvault = KeyvaultModel(client: fixtures ? nil : KeyvaultClient(cuaHome: nil))
         if !fixtures {
             // Icons: caches survive restarts; fixtures never resolve apps or
@@ -103,7 +111,7 @@ public enum AppEnvironment {
         }
         // This Mac on the relay: the session's device key (fixtures: an
         // in-memory account; presence answers yes there).
-        let devices: DevicesRunning = fixtures ? FixtureDevices() : PendingDevices(gate: gate)
+        let devices: DevicesRunning = fixtures ? fixtureDevices(env["CUA_SPACES_RELAY_USAGE"]) : PendingDevices(gate: gate)
         let startup = fixtures ? fixtureStartup(env["CUA_SPACES_STARTUP"]) : StartupModel(phase: .starting)
         let model = AppModel(backend: backend, keyvault: keyvault, onboarding: onboarding,
                              settingsPath: settingsPath,
@@ -112,7 +120,11 @@ public enum AppEnvironment {
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
-                             startup: startup)
+                             startup: startup,
+                             // Fixtures (UI tests, captures) keep the classic UI
+                             // unless they turn the New UI on.
+                             appVersion: fixtures ? nil : info.version)
+        if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
             LiveLocalNetworkPermission().request()
             // Signed out is nil (setup signs in first); anything else (no
@@ -128,6 +140,7 @@ public enum AppEnvironment {
             }
             onboarding.accountToken = token
             model.host.accountToken = token
+            model.teamsReader = LiveTeams(token: token)
             // The keychain check first (the bundled `cua`, without a prompt),
             // then the daemon and the SDK, all off the main thread.
             startup.keychain = bundledCua.map { BundledCuaKeychain(cua: $0) }
@@ -157,10 +170,7 @@ public enum AppEnvironment {
             : SparkleUpdater.start(channels: appAboutAllowedChannels(channel: channel))
         model.updates = UpdatesModel(updater: updater, channel: channel)
         model.updates.telemetry = telemetry
-        model.updates.saveChannel = { [weak model] channel in
-            model?.settings.updateChannel = channel
-            model?.saveSettings()
-        }
+        model.updates.saveChannel = { [weak model] channel in model?.setUpdateChannel(channel) }
         // End-to-end runs: check now, with no window unless one is found.
         if env["CUA_SPACES_UPDATE_CHECK"] == "background", let sparkle = updater as? SparkleUpdater {
             sparkle.checkInBackground()
@@ -333,6 +343,15 @@ public enum AppEnvironment {
         case "notFound": return FixtureLoginItem(.notFound)
         default: return FixtureLoginItem(.enabled)
         }
+    }
+
+    /// Fixtures' relay account: `CUA_SPACES_RELAY_USAGE` sets its allowance
+    /// (`reached`, `team`, `none`; default the free plan partway through
+    /// the month), for captures of Settings' Relay usage row and the notice.
+    static func fixtureDevices(_ usage: String?) -> FixtureDevices {
+        let devices = FixtureDevices()
+        devices.usage = FixtureDevices.usage(usage)
+        return devices
     }
 
     /// The supervision of this app's daemon ([`DaemonSupervisor`]), for the

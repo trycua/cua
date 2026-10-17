@@ -668,6 +668,8 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 ///   `input.pointer.click.right`, `input.pointer.click.double`,
 ///   `input.pointer.drag`, `input.pointer.scroll`,
 ///   `input.pointer.move`, `input.pointer.button` (raw down/up)
+/// - `input.scroll.coordinates` (the live scroll schema accepts numeric x/y;
+///   does not imply focus-free background delivery)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
 /// - `input.delivery_mode` (the live tool schema accepts the shared
@@ -835,6 +837,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
+        "browser_select" => &["browser.input.select"],
         "browser_dialog" => &["browser.dialog"],
         "browser_set_input_files" => &["browser.input.files"],
         "browser_download" => &["browser.download"],
@@ -857,10 +860,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// Capabilities advertised by a concrete runtime tool definition.
 ///
 /// Most capabilities are stable properties of a tool name and come from the
-/// typed portable contract (or the legacy runtime-only map). Delivery mode is
-/// different: the typed desktop SDK intentionally exposes a narrower,
-/// desktop-only input while the live platform schemas additionally accept
-/// window-targeted `delivery_mode`. Deriving this one token from the concrete
+/// typed portable contract (or the legacy runtime-only map). Delivery mode and
+/// scroll coordinates are derived from the live schema. The typed desktop SDK
+/// exposes a narrower, desktop-only input while the live schemas additionally accept
+/// window-targeted `delivery_mode`. Deriving these tokens from the concrete
 /// schema keeps `tools/list` truthful on every platform and prevents either
 /// overclaiming a tool that cannot accept the field or omitting support from a
 /// richer live schema.
@@ -873,6 +876,16 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
             .any(|capability| capability == "input.delivery_mode")
     {
         capabilities.push("input.delivery_mode".into());
+    }
+    if tool_name == "scroll"
+        && ["x", "y"].iter().all(|field| {
+            matches!(
+                input_schema["properties"][field]["type"].as_str(),
+                Some("number" | "integer")
+            )
+        })
+    {
+        capabilities.push("input.scroll.coordinates".into());
     }
     capabilities
 }
@@ -6380,6 +6393,7 @@ mod capability_tests {
         "browser_navigate",
         "browser_click",
         "browser_type",
+        "browser_select",
         "browser_dialog",
         "browser_set_input_files",
         "browser_download",
@@ -6401,6 +6415,7 @@ mod capability_tests {
         "input.pointer.click.double",
         "input.pointer.drag",
         "input.pointer.scroll",
+        "input.scroll.coordinates",
         "input.pointer.move",
         "input.pointer.button",
         // keyboard
@@ -6470,6 +6485,7 @@ mod capability_tests {
         "browser.navigate",
         "browser.input.click",
         "browser.input.type",
+        "browser.input.select",
         "browser.input.files",
         "browser.dialog",
         "browser.download",
@@ -6685,6 +6701,61 @@ mod capability_tests {
             .expect("capabilities array")
             .iter()
             .any(|capability| capability == "input.delivery_mode"));
+    }
+
+    #[test]
+    fn to_list_entry_advertises_scroll_coordinates_only_when_accepted() {
+        use serde_json::json;
+
+        for (name, properties, expected) in [
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                true,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
+                true,
+            ),
+            ("scroll", json!({}), false),
+            ("scroll", json!({"x": {"type": "number"}}), false),
+            ("scroll", json!({"y": {"type": "number"}}), false),
+            (
+                "scroll",
+                json!({"x": {"type": "string"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "string"}}),
+                false,
+            ),
+            (
+                "click",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "unknown",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+        ] {
+            let mut def = dummy_def(name);
+            def.input_schema = json!({"type": "object", "properties": properties});
+            let entry = def.to_list_entry();
+            let capabilities = entry["capabilities"].as_array().unwrap();
+            assert_eq!(
+                capabilities
+                    .iter()
+                    .filter(|capability| *capability == "input.scroll.coordinates")
+                    .count(),
+                usize::from(expected),
+                "{name}: {}",
+                def.input_schema
+            );
+        }
     }
 
     #[test]

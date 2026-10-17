@@ -29,16 +29,13 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-/// The relay the app and CLI use unless configured otherwise.
+/// The production relay (`CUA_RELAY_URL` and `CUA_ENV` change it).
 pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
 
-/// `CUA_RELAY_URL` when set and non-empty, else [`DEFAULT_RELAY_URL`].
+/// `CUA_RELAY_URL` when set and non-empty, else the relay of `CUA_ENV`
+/// ([`DEFAULT_RELAY_URL`] in production).
 pub fn relay_url_from_env() -> String {
-    std::env::var("CUA_RELAY_URL")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| DEFAULT_RELAY_URL.to_string())
+    cua_home::env::relay_url()
 }
 
 /// Supplies a fresh cua.ai account access token (refreshing as needed).
@@ -246,8 +243,9 @@ pub struct RelayInfo {
     /// Public base URL.
     #[serde(default)]
     pub public_url: String,
-    /// Assertion issuer.
-    #[serde(default)]
+    /// Assertion issuer (empty on a static-token relay, which sends
+    /// `null`).
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub issuer: String,
     /// Accepts account tokens.
     #[serde(default)]
@@ -255,6 +253,23 @@ pub struct RelayInfo {
     /// Accepts static relay tokens.
     #[serde(default)]
     pub static_tokens: bool,
+    /// The WireGuard®-based mesh this relay coordinates, if any.
+    #[serde(default)]
+    pub mesh: Option<RelayMeshInfo>,
+}
+
+fn null_as_empty<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
+/// What a relay says about its mesh (`/v1/info` `mesh`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayMeshInfo {
+    /// Mesh protocol version.
+    pub version: u32,
+    /// STUN servers it advertises.
+    #[serde(default)]
+    pub stun: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -456,6 +471,16 @@ const REGISTER_RETRY_BASE: Duration = Duration::from_secs(1);
 #[cfg(test)]
 const REGISTER_RETRY_BASE: Duration = Duration::from_millis(5);
 
+/// Times a read (a GET, which changes nothing) is tried again when the
+/// relay was not reached or answered 429, 502 or 503, before the caller
+/// sees the failure.
+const READ_RETRIES: u32 = 2;
+/// The first wait before reading again (tripled each time).
+#[cfg(not(test))]
+const READ_RETRY_BASE: Duration = Duration::from_millis(250);
+#[cfg(test)]
+const READ_RETRY_BASE: Duration = Duration::from_millis(5);
+
 /// HTTP client for one relay.
 #[derive(Clone, Debug)]
 pub struct RelayClient {
@@ -541,6 +566,26 @@ impl RelayClient {
         };
         serde_json::from_str(body)
             .map_err(|e| (Error::Relay(format!("bad relay response: {e}")), false))
+    }
+
+    /// `GET path`, tried again (twice, about a second in all) when the
+    /// relay is briefly unreachable or overloaded. A read changes nothing,
+    /// so sending it again is always safe.
+    async fn get<T: serde::de::DeserializeOwned>(&self, path: &str, bearer: &str) -> Result<T> {
+        let mut delay = READ_RETRY_BASE;
+        let mut attempt = 0;
+        loop {
+            match self.send_once(self.http.get(self.url(path)), bearer).await {
+                // Not a timeout: one that hung would hang again.
+                Err((e, true)) if attempt < READ_RETRIES => {
+                    attempt += 1;
+                    tracing::debug!(attempt, path, "relay read failed, retrying: {e}");
+                    tokio::time::sleep(delay).await;
+                    delay *= 3;
+                }
+                r => return r.map_err(|(e, _)| e),
+            }
+        }
     }
 
     /// One call with an optional JSON body (see [`RelayClient::send`]).
@@ -760,19 +805,13 @@ impl RelayClient {
 
     /// Machines the account owns or that are shared with it.
     pub async fn machines(&self, account_token: &str) -> Result<Vec<Machine>> {
-        let list: MachineList = self
-            .send(self.http.get(self.url("/v1/machines")), account_token)
-            .await?;
+        let list: MachineList = self.get("/v1/machines", account_token).await?;
         Ok(list.machines)
     }
 
     /// One machine (`credential` = account token or the machine token).
     pub async fn machine(&self, credential: &str, id: &str) -> Result<Machine> {
-        self.send(
-            self.http.get(self.url(&format!("/v1/machines/{id}"))),
-            credential,
-        )
-        .await
+        self.get(&format!("/v1/machines/{id}"), credential).await
     }
 
     /// Renames / changes the allowlist / toggles sharing (owner).
@@ -901,6 +940,19 @@ fn sharing_default() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_static_relays_info_parses() {
+        // A static-token relay has no OIDC issuer: `null`. Rejecting it
+        // kept self-hosted relays' clients off their mesh (CUA-1426).
+        let info: RelayInfo = serde_json::from_str(
+            r#"{"account_auth":false,"issuer":null,"mesh":{"stun":[],"version":1},"public_url":"http://relay","state_writable":true,"static_tokens":true}"#,
+        )
+        .unwrap();
+        assert_eq!(info.issuer, "");
+        assert!(info.static_tokens);
+        assert_eq!(info.mesh.map(|m| m.version), Some(1));
+    }
+
     use super::*;
 
     #[test]

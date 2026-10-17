@@ -413,3 +413,17 @@ Use this runbook when the canary issue opens, or when users report that default 
    - Run `python3 .github/scripts/validate_release_versions.py --product driver` and `python3 -m pytest libs/cua-driver/scripts/tests/test_install_version_fallback.py`.
 4. **Merge it.** The branded endpoints serve `main`. The canary runs on the push, so compare its installed version with the rollback version. To recheck the public one-liners after the endpoints refresh, dispatch `Monitor branded installer endpoints`.
 5. **Ship the fix as a new Release Please release.** Its tag run bakes the installers forward automatically once the published assets pass verification. Leave the withdrawn release and its assets in place for audit.
+
+## Cua Driver release gate before merge and nightly
+
+The stable tag run certifies the exact tag commit with the desktop E2E lanes. `E2E: Cua Driver release gate` (`.github/workflows/e2e-cua-driver-release-gate.yml`) runs the same lanes earlier, without publishing:
+
+| Trigger | When | Result |
+| --- | --- | --- |
+| Nightly, 06:00 UTC | main's HEAD | A failure opens or updates one issue, "Cua Driver release gate failing on main (nightly)". The failed run also posts to #releases through the GitHub Slack app workflow-run subscription. The first fully clean nightly closes the issue. |
+| Pull request | The `e2e-gate` label is present, or the PR touches the cursor overlay, focus, background input or browser routing paths (globs in `.github/scripts/cua_driver_e2e_gate_paths.py`), or it is the release-please PR for cua-driver-rs | The four lanes run on the PR merge commit. |
+| Other pull requests | Everything else | The lanes are skipped and `E2E gate / result` passes at once. |
+
+**Retry once.** Inside each lane a failed case is rerun once (`lib/e2e-retry-once.sh`, and `Invoke-CargoTest` in the Windows runner). A pass on the retry is flaky: it is listed under "Flaky cases" in the job summary and in the tracking issue, and does not fail the gate. Two failures are a real failure. The first attempt's rows, videos and log are kept under `retried-attempts/` in the lane artifact.
+
+**Required check.** Branch protection cannot require a check by path, so the workflow always runs and `E2E gate / result` is the one check to require on `main`. It is green when the lanes are not needed. A repository admin has to add it under Settings, Branches. Until then the gate is advisory on pull requests; the label, path and release-PR triggers still run the lanes.

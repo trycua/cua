@@ -82,10 +82,13 @@ jobs:
               --merge /tmp/cli.json --out /rel/cua-install-latest/release-artifacts.json
             (cd /rel && python3 -m http.server 8765 >/dev/null 2>&1 &)
             sleep 1
+            mkdir -p /qemu-stubs
+            for t in qemu-img "qemu-system-$(uname -m)"; do printf "#!/bin/sh\nexit 0\n" > "/qemu-stubs/$t" && chmod +x "/qemu-stubs/$t"; done
+            export PATH="/qemu-stubs:$PATH"
             CUA_INSTALL_BASE_URL=http://127.0.0.1:8765 sh /w/install.sh --yes --no-onboarding --mode client
             /usr/local/bin/cua --version
-            # Cua Spaces is macOS-only for now: Linux skips the app.
-            test ! -e /usr/local/bin/cua-spaces
+            # Linux installs the Spaces AppImage next to the CLI.
+            test -x /usr/local/bin/cua-spaces
             # --pair installs the CLI and adds the machine with the code.
             CUA_INSTALL_BASE_URL=http://127.0.0.1:8765 sh /w/install.sh --dry-run --pair K7QM-4XPB-2RHD | grep -q "host setup --pair K7QM-4XPB-2RHD"
           '

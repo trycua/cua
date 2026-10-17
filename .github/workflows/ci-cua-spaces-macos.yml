@@ -16,6 +16,8 @@ on:
     paths:
       - "apps/cua-spaces-macos/**"
       - "libs/cua/crates/cua-spaces-app-core/**"
+      # The shared keyboard shortcuts the core reads (palette.rs).
+      - "apps/cua-spaces-web/src/lib/keybindings.json"
       - "libs/cua/crates/cua-spaces-ffi/**"
       - "libs/cua/crates/cua-spaces-ext/**"
       - "libs/cua/crates/cua-teleport/**"
@@ -38,6 +40,11 @@ concurrency:
   group: ci-cua-spaces-macos-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   core:
     name: app core (Rust) + FFI mirror gate
@@ -49,11 +56,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust (toolchain from rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install
-      - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          workspaces: libs/cua
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
       - name: FFI mirrors match the core
         run: python3 scripts/generate-app-core-ffi.py --check
       - name: No UI keeps its own icon cache
@@ -79,11 +86,11 @@ jobs:
         working-directory: libs/cua
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       # The app loads the Cua Spaces app export (libcua_spaces_ffi, which
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
       # carries the cua SDK too), staged as libs/cua/swift/lib/libcua_sdk.dylib.
       - name: Build and stage the Cua Spaces app library
         working-directory: libs/cua
@@ -116,6 +123,14 @@ jobs:
           answers="$RUNNER_TEMP/bridge-answers.json"
           (cd apps/cua-spaces-macos && CUA_BRIDGE_ANSWERS="$answers" scripts/test.sh --filter BridgeContractTests)
           (cd apps/cua-spaces-web && CUA_BRIDGE_ANSWERS="$answers" npx vitest run src/bridge/__tests__/contract.test.ts)
+      # The Electron shell's TypeScript binding of the same library
+      # (apps/cua-spaces-desktop/src/native/generated). A stale one used to
+      # surface only in the release build; this fails the PR instead.
+      - name: The Electron TypeScript app core binding is up to date
+        working-directory: apps/cua-spaces-desktop
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm native -- --skip-build --check-bindings
       - name: Upload snapshot differences
         if: failure()
         uses: actions/upload-artifact@v4

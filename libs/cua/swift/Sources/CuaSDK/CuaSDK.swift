@@ -23815,6 +23815,7 @@ public struct LocalStorage: Equatable, Hashable {
      * Catalog image refs already pulled here at their published digest.
      */
     public var pulled: [String]
+    public var linuxRuntimeDownloadBytes: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -23838,13 +23839,14 @@ public struct LocalStorage: Equatable, Hashable {
          */container: StorageVolume?,
         /**
          * Catalog image refs already pulled here at their published digest.
-         */pulled: [String]) {
+         */pulled: [String], linuxRuntimeDownloadBytes: UInt64) {
         self.hostArch = hostArch
         self.reserveBytes = reserveBytes
         self.lume = lume
         self.qemu = qemu
         self.container = container
         self.pulled = pulled
+        self.linuxRuntimeDownloadBytes = linuxRuntimeDownloadBytes
     }
 
 
@@ -23868,7 +23870,8 @@ public struct FfiConverterTypeLocalStorage: FfiConverterRustBuffer {
                 lume: FfiConverterOptionTypeStorageVolume.read(from: &buf),
                 qemu: FfiConverterOptionTypeStorageVolume.read(from: &buf),
                 container: FfiConverterOptionTypeStorageVolume.read(from: &buf),
-                pulled: FfiConverterSequenceString.read(from: &buf)
+                pulled: FfiConverterSequenceString.read(from: &buf),
+                linuxRuntimeDownloadBytes: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -23879,6 +23882,7 @@ public struct FfiConverterTypeLocalStorage: FfiConverterRustBuffer {
         FfiConverterOptionTypeStorageVolume.write(value.qemu, into: &buf)
         FfiConverterOptionTypeStorageVolume.write(value.container, into: &buf)
         FfiConverterSequenceString.write(value.pulled, into: &buf)
+        FfiConverterUInt64.write(value.linuxRuntimeDownloadBytes, into: &buf)
     }
 }
 
@@ -24752,7 +24756,7 @@ public struct PairingCode: Equatable, Hashable {
      */
     public var code: String?
     /**
-     * `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+     * `https://cua.ai/add/<code>` (the link and the QR code): only
      * when just made.
      */
     public var url: String?
@@ -24799,7 +24803,7 @@ public struct PairingCode: Equatable, Hashable {
          * `XXXX-XXXX-XXXX`: only when just made.
          */code: String?,
         /**
-         * `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+         * `https://cua.ai/add/<code>` (the link and the QR code): only
          * when just made.
          */url: String?,
         /**
@@ -27886,6 +27890,11 @@ public struct SandboxInfo: Equatable, Hashable {
      * a registry, and the daemon topology.
      */
     public var imageInfo: ImageInfo?
+    /**
+     * Why a local sandbox stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+     */
+    public var stopReason: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -27947,7 +27956,11 @@ public struct SandboxInfo: Equatable, Hashable {
          * The image as resolved and pinned at create time (digest, variant).
          * `None` for direct connections, named pools, images not resolved from
          * a registry, and the daemon topology.
-         */imageInfo: ImageInfo? = nil) {
+         */imageInfo: ImageInfo? = nil,
+        /**
+         * Why a local sandbox stopped without being asked to, in plain words
+         * ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+         */stopReason: String? = nil) {
         self.name = name
         self.kind = kind
         self.runtime = runtime
@@ -27964,6 +27977,7 @@ public struct SandboxInfo: Equatable, Hashable {
         self.expiresAtUnix = expiresAtUnix
         self.providerDetails = providerDetails
         self.imageInfo = imageInfo
+        self.stopReason = stopReason
     }
 
 
@@ -27997,7 +28011,8 @@ public struct FfiConverterTypeSandboxInfo: FfiConverterRustBuffer {
                 location: FfiConverterString.read(from: &buf),
                 expiresAtUnix: FfiConverterOptionInt64.read(from: &buf),
                 providerDetails: FfiConverterDictionaryStringString.read(from: &buf),
-                imageInfo: FfiConverterOptionTypeImageInfo.read(from: &buf)
+                imageInfo: FfiConverterOptionTypeImageInfo.read(from: &buf),
+                stopReason: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -28018,6 +28033,7 @@ public struct FfiConverterTypeSandboxInfo: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.expiresAtUnix, into: &buf)
         FfiConverterDictionaryStringString.write(value.providerDetails, into: &buf)
         FfiConverterOptionTypeImageInfo.write(value.imageInfo, into: &buf)
+        FfiConverterOptionString.write(value.stopReason, into: &buf)
     }
 }
 
@@ -30290,6 +30306,12 @@ public struct SpaceInfo: Equatable, Hashable {
      * Empty for other Spaces.
      */
     public var cloudDelete: String
+    /**
+     * Why a local Space stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); empty otherwise,
+     * and once it is started again.
+     */
+    public var stopReason: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30374,7 +30396,12 @@ public struct SpaceInfo: Equatable, Hashable {
          * device created it), `host:<machine>` (the device that created it,
          * through the relay) or `elsewhere` (only there; `remove` keeps it).
          * Empty for other Spaces.
-         */cloudDelete: String) {
+         */cloudDelete: String,
+        /**
+         * Why a local Space stopped without being asked to, in plain words
+         * ("out of memory", "killed", "exited with code 1"); empty otherwise,
+         * and once it is started again.
+         */stopReason: String = "") {
         self.id = id
         self.name = name
         self.provider = provider
@@ -30396,6 +30423,7 @@ public struct SpaceInfo: Equatable, Hashable {
         self.cloud = cloud
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
+        self.stopReason = stopReason
     }
 
 
@@ -30434,7 +30462,8 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
                 powerState: FfiConverterString.read(from: &buf),
                 cloud: FfiConverterString.read(from: &buf),
                 cloudPlace: FfiConverterString.read(from: &buf),
-                cloudDelete: FfiConverterString.read(from: &buf)
+                cloudDelete: FfiConverterString.read(from: &buf),
+                stopReason: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -30460,6 +30489,7 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
         FfiConverterString.write(value.cloud, into: &buf)
         FfiConverterString.write(value.cloudPlace, into: &buf)
         FfiConverterString.write(value.cloudDelete, into: &buf)
+        FfiConverterString.write(value.stopReason, into: &buf)
     }
 }
 

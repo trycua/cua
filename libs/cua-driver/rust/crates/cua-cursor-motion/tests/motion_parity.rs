@@ -101,7 +101,12 @@ fn shipped_styles_match_the_motion_lab() {
                 .collect()
         } else {
             let mut rng = Rng::from_seed(seed);
-            let (mut raw, snap) = generate(style, &ctx, &MotionParams::default(), &mut rng);
+            // The lab case names its timing; the crate's default (`steady`) would add a floor.
+            let params = MotionParams {
+                timing,
+                ..MotionParams::default()
+            };
+            let (mut raw, snap) = generate(style, &ctx, &params, &mut rng);
             let mut events: Vec<f64> = snap.into_iter().collect();
             apply_timing(&mut raw, &mut events, &ctx, timing, fixed_ms);
             if let (Some(lab_snap), Some(rust_snap)) = (case["snap_ms"].as_f64(), events.first()) {

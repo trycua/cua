@@ -1208,6 +1208,8 @@ pub fn info_json(i: &SandboxInfo) -> serde_json::Value {
         "name": i.name,
         "status": row_status(i),
         "state": status_of(i),
+        // Why it stopped without being asked to ("out of memory"), or null.
+        "stop_reason": i.stop_reason,
         "location": i.location,
         "kind": i.kind,
         "runtime": i.runtime,
@@ -1226,6 +1228,16 @@ pub fn info_json(i: &SandboxInfo) -> serde_json::Value {
         "endpoints": i.endpoints,
         "provider_details": i.provider_details,
     })
+}
+
+/// A listing's STATUS cell: the row's status, and why it stopped when it
+/// stopped on its own (`stopped (out of memory)`).
+fn status_cell(row: &serde_json::Value) -> String {
+    let status = row["status"].as_str().unwrap_or_default();
+    match row["stop_reason"].as_str().filter(|r| !r.is_empty()) {
+        Some(why) if status == "stopped" => format!("{status} ({why})"),
+        _ => status.to_string(),
+    }
 }
 
 /// The status a listing shows: the portable phase, or `missing` for a
@@ -1521,9 +1533,30 @@ async fn create(
         eprintln!("Starting a cloud sandbox (first start of an image can take a few minutes)");
     }
     let requested_name = o.name.clone();
+    // Each step of the create on a terminal (never in --json output).
+    let steps = {
+        use std::io::IsTerminal as _;
+        (!json && std::io::stderr().is_terminal()).then(|| {
+            let mut words = crate::util::CreateWords::for_image(
+                &o.image,
+                o.kind.as_deref().unwrap_or_default(),
+                false,
+            );
+            words.macos |= o.os.as_deref() == Some("macos");
+            words.vm |= words.macos;
+            Arc::new(crate::util::StepLines::new(words))
+        })
+    };
     let created = {
         let sandboxes = cua.sandboxes();
-        let mut create = Box::pin(sandboxes.create(o));
+        let mut create: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
+            match &steps {
+                Some(steps) => {
+                    let steps = steps.clone();
+                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| steps.show(p))))
+                }
+                None => Box::pin(sandboxes.create(o)),
+            };
         tokio::select! {
             r = &mut create => r,
             _ = tokio::signal::ctrl_c() => {
@@ -1542,6 +1575,9 @@ async fn create(
         }
     };
     crate::util::exit_on_ctrl_c();
+    if let Some(steps) = &steps {
+        steps.finish();
+    }
     if created.is_err()
         && a.keep_on_failure
         && let Some(n) = &requested_name
@@ -1831,7 +1867,7 @@ pub async fn run(
                     } else {
                         line(out, format!("Name:     {}", i.name));
                         line(out, format!("Id:       {}", i.id));
-                        line(out, format!("Status:   {}", row_status(&i)));
+                        line(out, format!("Status:   {}", status_cell(&info_json(&i))));
                         line(out, format!("Location: {}", i.location));
                         line(out, format!("Expires:  {}", expires_of(i.expires_at_unix)));
                         if let Some(img) = &i.image {
@@ -2118,6 +2154,14 @@ fn direct_token(info: &SandboxInfo) -> Option<String> {
         .iter()
         .find_map(|k| tokens.get(k.as_str()).and_then(|v| v.as_str()))
         .map(str::to_string)
+        .or_else(|| {
+            cua_spaces::registry::Registry::new(util::cua_home())
+                .credential(&info.id)
+                .ok()
+                .flatten()
+                .filter(|c| c.service_urls.is_empty())
+                .and_then(|c| c.token)
+        })
         .or_else(|| {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()
@@ -2412,7 +2456,7 @@ async fn ls(
             .map(|r| {
                 let mut row = vec![
                     s(&r["id"]),
-                    s(&r["status"]),
+                    status_cell(r),
                     s(&r["location"]),
                     dash(&r["kind"]),
                     dash(&r["runtime"]),
@@ -3060,6 +3104,25 @@ pub(crate) fn confirm_delete(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_space_that_stopped_on_its_own_says_why_in_the_listing() {
+        let row = |status: &str, why: serde_json::Value| serde_json::json!({"status": status, "stop_reason": why});
+        assert_eq!(
+            status_cell(&row("stopped", "out of memory".into())),
+            "stopped (out of memory)"
+        );
+        assert_eq!(
+            status_cell(&row("stopped", serde_json::Value::Null)),
+            "stopped"
+        );
+        assert_eq!(status_cell(&row("ready", serde_json::Value::Null)), "ready");
+        // A row from a daemon that sends no reason.
+        assert_eq!(
+            status_cell(&serde_json::json!({"status": "stopped"})),
+            "stopped"
+        );
+    }
+
     use cua_sandbox_core::{
         InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
         RuntimeError,
@@ -3390,6 +3453,7 @@ mod tests {
                 ("namespace".to_string(), "cua-auto-abc".to_string()),
             ]),
             image_info: None,
+            stop_reason: None,
         };
         let m = kept_message(&info);
         assert!(m.contains("cloud:cua-e2e-kept"), "{m}");

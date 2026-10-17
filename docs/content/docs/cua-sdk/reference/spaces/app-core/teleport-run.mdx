@@ -33,6 +33,7 @@ Returned by [`app_picker_consent`](/cua-sdk/reference/spaces/app-core/teleport#a
 | `exclude` | `Vec<String>` |  | Consent items (keys) the user turned off. |
 | `from_vault` / `fromVault` | `Option<Vec<String>>` |  | Send these saved Keyvault items instead of reading the live app. |
 | `include_passwords` / `includePasswords` | `bool` |  | Also send the saved passwords (ticked in the review). |
+| `password_domains` / `passwordDomains` | `Option<Vec<String>>` |  | Reading the app: the sites whose saved passwords to send (the review's per-site choice); `None` when no password is sent this way. |
 
 ## `AppTeleportPlan` record
 

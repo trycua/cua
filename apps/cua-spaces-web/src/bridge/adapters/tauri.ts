@@ -34,6 +34,7 @@ import type { AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts
 import type { HostWindow } from "../detect";
 import { newSpaceTauriOps } from "../ops/new-space";
 import { tauriShareOps } from "../ops/share";
+import { tauriAgentDetailOps } from "../ops/agent-detail";
 import { tauriAgentKeysOps } from "../ops/agent-keys";
 import { KEYVAULT_MANAGE_TAURI_UNSUPPORTED } from "../ops/keyvault-manage";
 import { tauriKeyvaultSetupOps } from "../ops/keyvault-setup";
@@ -56,6 +57,9 @@ import { tauriHostSetupOps } from "../ops/host-setup";
 import { TAURI_SPACE_DETAIL_UNSUPPORTED, tauriSpaceDetailOps } from "../ops/space-detail";
 import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
+import { CHECKLIST_OPERATIONS } from "../ops/checklist";
+import { PRESENCE_OPERATIONS } from "../ops/presence";
+import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
 import { tauriTelemetryOps } from "../ops/telemetry";
 import { tauriStartupOps } from "../ops/startup";
 
@@ -81,12 +85,16 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "settings.choose",
   "agents.events",
   "agents.setupDriver",
+  "host.joinWithCode",
   ...TELEPORT_TAURI_UNSUPPORTED,
   ...KEYVAULT_MANAGE_TAURI_UNSUPPORTED,
   ...TAURI_SETTINGS_UNSUPPORTED,
   ...TAURI_SPACE_DETAIL_UNSUPPORTED,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...CHECKLIST_OPERATIONS,
+  ...PRESENCE_OPERATIONS,
+  ...RUNTIME_FIX_OPERATIONS,
 ];
 
 /** `persistent_agent_list`'s snake_case agents, as `PersistentAgent`s (as `src/native/persistent.ts` maps them). */
@@ -270,6 +278,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     ...newSpaceTauriOps(invoke, readUi),
     ...tauriTeleportOps(invoke, win.__TAURI_INTERNALS__, (e) => events.emit(e)),
     ...tauriShareOps(invoke),
+    ...tauriAgentDetailOps(invoke),
     ...tauriAgentKeysOps(invoke),
     ...tauriKeyvaultSetupOps(invoke),
     ...tauriVolumeOps(invoke, win),

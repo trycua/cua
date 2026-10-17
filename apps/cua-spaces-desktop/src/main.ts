@@ -10,6 +10,8 @@ import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
+import { applyChromiumKeychainSwitches } from "./chromium-keychain";
+import { installGlobalShortcut, type GlobalShortcut } from "./global-shortcut";
 import { applyVideoDecodeSwitches } from "./gpu";
 import { menuItems, realSpaces, startHost } from "./bridge/host-start";
 import { installBridgeIpc } from "./bridge/ipc";
@@ -21,17 +23,20 @@ import { recordLaunch, refreshAfterUpdate } from "./model/update-refresh";
 import { loadNative } from "./native/load";
 import { nativeDir } from "./native/location";
 import { connectNotch, type NotchCore } from "./notch";
-import { dropOnSpace, feedNotch, notchThumbnail, openSpaceFromNotch, type NotchFeedUi } from "./notch-feed";
+import { dropOnSpace, feedNotch, followDragReadiness, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
 import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
 import { readSettings, writeSettings } from "./settings";
+import { DEEP_LINK_SCHEME, deepLinkInArgv, routeForDeepLink } from "./deep-link";
 import { makeSystem } from "./system";
 import { initTheme, setThemeSource } from "./theme";
 import { closesToTray, installTray, isQuitting } from "./tray";
 import { countsVideo, startVideoBench, videoBenchEnv } from "./video-bench";
 import { createViewerWindows } from "./viewer";
+import { LinuxRuntime, nodeLinuxSystem } from "./model/linux-runtime";
 import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, setWindowBackground } from "./window";
+import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-drop";
 
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
 // Linux desktop entry in electron-builder.config.cjs.
@@ -57,6 +62,8 @@ if (process.platform === "linux") {
 if (process.env.CUA_SPACES_USER_DATA) app.setPath("userData", process.env.CUA_SPACES_USER_DATA);
 // The page decodes Spaces' video with WebCodecs: on the GPU where it can (gpu.ts).
 applyVideoDecodeSwitches(app.commandLine, process.platform, process.env);
+// macOS: Chromium's cookie key stays out of the keychain, so its prompt can't freeze the app (chromium-keychain.ts).
+applyChromiumKeychainSwitches(app.commandLine, process.platform);
 const VIDEO_BENCH = videoBenchEnv(process.env);
 // The Spaces' viewer windows ("Open in window"); the bench's own placement is never remembered.
 const viewers = createViewerWindows({ remember: !VIDEO_BENCH.bench });
@@ -85,8 +92,28 @@ function migrateSwiftApp() {
   }
 }
 
+/** One of the app's windows as the window-drop targets see it (one per window). */
+const dropWindows = new WeakMap<BrowserWindow, DropWindow>();
+function dropWindow(win: BrowserWindow): DropWindow {
+  let w = dropWindows.get(win);
+  if (!w) {
+    w = {
+      destroyed: () => win.isDestroyed(),
+      visible: () => win.isVisible() && !win.isMinimized(),
+      contentBounds: () => win.getContentBounds(),
+      zoom: () => win.webContents.getZoomFactor(),
+      number: () => windowNumberOf(win.getMediaSourceId()),
+      send: (event, payload) => {
+        if (!win.isDestroyed()) win.webContents.send(ELECTRON_EVENT_CHANNEL, { event, payload });
+      },
+    };
+    dropWindows.set(win, w);
+  }
+  return w;
+}
+
 /** The native host: the library, the model on it and the bridge. */
-async function startNativeHost(showRoute: (route: string) => void) {
+async function startNativeHost(showRoute: (route: string) => void, globalShortcut: GlobalShortcut | null) {
   const dir = nativeDir({
     platform: process.platform,
     arch: process.arch,
@@ -95,6 +122,11 @@ async function startNativeHost(showRoute: (route: string) => void) {
     appRoot: path.join(__dirname, ".."),
     override: process.env.CUA_SPACES_NATIVE_DIR,
   });
+  // The browser sign-in's loopback listener lives as long as the app waits
+  // for it (SignInRuns.timeoutMs), not the CLI's 5 minutes: a browser slow to
+  // start (Edge's first run) must not find the port closed while the app
+  // still offers its link.
+  process.env.CUA_OIDC_LOGIN_TIMEOUT_SECS ??= "600";
   const native = await loadNative(dir);
   // False without a browser here: the sign-in then uses the device flow.
   const openUrl = async (url: string) => {
@@ -110,13 +142,29 @@ async function startNativeHost(showRoute: (route: string) => void) {
   // first launch after taking over its settings is no update unless the build changed.
   const build = appBuild({ platform: process.platform, packaged: app.isPackaged, resourcesPath: process.resourcesPath, read: (f) => readFileSync(f, "utf8") });
   const refresh = recordLaunch(native, core.settings, app.getVersion(), build, readOnboardingCompleted(core.onboarding) ?? false);
-  const env = makeModel({ native, nativeDir: dir, userData: app.getPath("userData"), version: app.getVersion(), openUrl });
+  const env = makeModel({ native, nativeDir: dir, userData: app.getPath("userData"), version: app.getVersion(), openUrl, relaunch: relaunchApp });
   const pip = createPipWindows();
   app.on("will-quit", () => {
     pip.closeAll();
     viewers.closeAll();
+    // Closing the last window quits on Windows and Linux: send the usage
+    // events still queued (at most 1 s; the rest go with the next launch).
+    try {
+      native.telemetryFlush(1000);
+    } catch {
+      // Usage data never holds up quitting.
+    }
   });
   const prompts = await electronKeyvaultPrompts(native);
+  // macOS: a real window dragged onto a Space tile in the main window (the
+  // notch's drag monitor follows it; window-drop.ts). Which Spaces take a drop is the core's rule.
+  const windowDrops =
+    process.platform === "darwin"
+      ? new WindowDropTargets((spaceId) => {
+          const space = env.model.spaces.find((s) => s.id === spaceId);
+          return !!space && native.appSpaceAcceptsDrop(space as Parameters<typeof native.appSpaceAcceptsDrop>[0]);
+        })
+      : null;
   const bridge = createBridge({
     model: env.model,
     supervisor: env.supervisor,
@@ -124,7 +172,7 @@ async function startNativeHost(showRoute: (route: string) => void) {
     build,
     platform: process.platform,
     env: process.env,
-    system: makeSystem({ native, showRoute }),
+    system: makeSystem({ native, showRoute, globalShortcut }),
     ui: {
       openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {
@@ -132,6 +180,14 @@ async function startNativeHost(showRoute: (route: string) => void) {
         if (win instanceof BrowserWindow) setWindowBackground(win, color);
       },
       activate: () => app.focus({ steal: true }),
+      setDropTargets: (win, targets) => {
+        if (!windowDrops || !(win instanceof BrowserWindow)) return;
+        windowDrops.set(dropWindow(win), targets);
+        if (process.env.CUA_SPACES_NOTCH_DEBUG) {
+          const at = win.getContentBounds();
+          console.log(`[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`);
+        }
+      },
       chooseFiles: async (win) => {
         // Files and folders at once where the picker allows it (macOS); Windows and Linux pick files.
         const properties: ("openFile" | "openDirectory" | "multiSelections")[] =
@@ -182,13 +238,25 @@ async function startNativeHost(showRoute: (route: string) => void) {
       openAccess: () => showRoute("/keyvault?view=access"),
       // Hides the indicator and the tiles' key; nothing is revoked or wiped.
       dismissAccess: () => model.keyvault.dismiss(),
-      // No window-drag monitor yet (no `teleport` below), so no drag commits.
-      teleport: (spaceId) => showRoute(`/spaces/${encodeURIComponent(spaceId)}`),
+      // A window dragged onto a tile: the Teleport review for its app there.
+      teleport: (spaceId, app) => void teleportFromNotch(model, notchUi, spaceId, app),
       drop: (spaceId, paths) => void dropOnSpace(model, notchUi, spaceId, paths),
     },
+    teleport: notchTeleport(() => model.backend.teleportHandle()),
+    windowTargets: windowDrops ?? undefined,
   });
-  if (notch) feedNotch(notch, model);
+  if (notch) {
+    feedNotch(notch, model);
+    // Window drags need the SDK: look now and whenever the launch is (again) ready, whichever of the two came first.
+    followDragReadiness(notch, model.startup);
+  }
   return { env, bridge, background };
+}
+
+/** Starts `spec` once this app has exited, and exits (Linux: this app again under `sg docker`, CUA-1763). */
+function relaunchApp(spec: { execPath: string; args: string[] }): void {
+  app.relaunch(spec);
+  app.exit(0);
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -239,9 +307,37 @@ if (!app.requestSingleInstanceLock()) {
   const openSettings = () => tellMain("settings.openRequested");
   const gettingStarted = () => tellMain("checklist.openRequested");
 
-  app.on("second-instance", showMain);
+  // A `cua://add/<code>` link: the app on Machines, Join with a code filled in. Links that
+  // arrive before the app is ready wait for it.
+  let ready = false;
+  const pendingLinks: string[] = [];
+  const openLink = (link: string) => {
+    if (!ready) {
+      pendingLinks.push(link);
+      return;
+    }
+    const route = routeForDeepLink(link);
+    if (route) {
+      app.focus({ steal: true });
+      showRoute(route);
+    }
+  };
+  // Windows and Linux start a second copy with the link as an argument; macOS sends open-url.
+  app.on("second-instance", (_event, argv) => {
+    const link = deepLinkInArgv(argv);
+    if (link) openLink(link);
+    else showMain();
+  });
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    openLink(url);
+  });
+  const firstLink = deepLinkInArgv(process.argv);
+  if (firstLink) pendingLinks.push(firstLink);
 
   app.whenReady().then(async () => {
+    // Docker was installed and the user added to its group after this session began: start again with the group, so no logout or reboot is needed.
+    if (process.platform === "linux" && !E2E_DEMO && (await new LinuxRuntime(nodeLinuxSystem(relaunchApp)).relaunchIfNeeded().catch(() => false))) return;
     migrateSwiftApp();
     initTheme();
     installMenu({ newSpace, settings: openSettings, gettingStarted });
@@ -250,10 +346,17 @@ if (!app.requestSingleInstanceLock()) {
     const { webRoot } = handleAppProtocol();
     if (process.env.CUA_SPACES_LOG_STARTUP) console.log(`[cua-spaces] serving ${webRoot}`);
 
+    // ⌘⇧Space from any app: the main window, in front (never under the e2e switch).
+    const shortcut = E2E_DEMO
+      ? null
+      : installGlobalShortcut(process.platform, () => {
+          app.focus({ steal: true });
+          showMain();
+        });
     let host: Awaited<ReturnType<typeof startNativeHost>> | null = null;
     if (!E2E_DEMO) {
       try {
-        host = await startNativeHost(showRoute);
+        host = await startNativeHost(showRoute, shortcut);
       } catch (error) {
         // A broken install: say so plainly, never show the app without its data.
         const why = error instanceof Error ? error.message : String(error);
@@ -306,6 +409,12 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     app.on("activate", showMain);
+
+    // Make this app the one `cua://` links open (the installer registers it on macOS and in the Linux
+    // package; Windows only learns it here). A development run is not an installed app: leave links alone.
+    if (app.isPackaged) app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+    ready = true;
+    for (const link of pendingLinks.splice(0)) openLink(link);
   });
 
   app.on("window-all-closed", () => {

@@ -7,10 +7,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDemoAdapter } from "../adapters/demo";
 import { demoRelayUsage } from "../adapters/demo/relay-usage";
 import { createWebkitAdapter } from "../adapters/webkit";
-import { BridgeProvider, isUnsupported, relayUsageLine, useRelayUsage, type DataAdapter, type RelayUsage } from "..";
+import { BridgeProvider, UnsupportedOperationError, useRelayUsage, type DataAdapter, type RelayUsage } from "..";
+import { relayUsageView } from "../derive";
 import type { HostWindow } from "../detect";
 import { RELAY_USAGE_POLL_MS } from "../relay-usage";
-import { noCore } from "./testCore";
+import { noCore, testCore, wasmBuilt } from "./testCore";
 
 afterEach(() => {
   cleanup();
@@ -28,13 +29,19 @@ describe("relay.usage", () => {
     expect(await createDemoAdapter({ latencyMs: 0, signedIn: false }).call("relay.usage", {})).toBeNull();
   });
 
-  it("the SwiftUI host does not answer it, and the page shows nothing", async () => {
-    const postMessage = vi.fn();
+  it("the SwiftUI host answers it with the same method", async () => {
+    const postMessage = vi.fn(async (req: { id: string; method: string }) => ({ id: req.id, ok: true, result: demoRelayUsage() }));
     const win = { webkit: { messageHandlers: { cua: { postMessage } } }, addEventListener: () => {}, removeEventListener: () => {} } as unknown as HostWindow;
-    const adapter = createWebkitAdapter(win);
-    expect(isUnsupported(await adapter.call("relay.usage", {}).catch((e: unknown) => e))).toBe(true);
-    expect(postMessage).not.toHaveBeenCalled();
+    expect(await createWebkitAdapter(win).call("relay.usage", {})).toEqual(demoRelayUsage());
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ method: "relay.usage" }));
+  });
 
+  it("a host without it reads as nothing to show", async () => {
+    const demo = createDemoAdapter({ latencyMs: 0 });
+    const adapter: DataAdapter = {
+      ...demo,
+      call: (op, args) => (op === "relay.usage" ? Promise.reject(new UnsupportedOperationError("tauri", "relay.usage")) : demo.call(op, args)),
+    };
     const seen: { usage?: RelayUsage | null } = {};
     render(
       <BridgeProvider adapter={adapter} core={noCore}>
@@ -43,6 +50,24 @@ describe("relay.usage", () => {
     );
     await act(() => new Promise((r) => setTimeout(r, 10)));
     expect(seen.usage).toBeNull();
+  });
+
+  it.skipIf(!wasmBuilt)("the row and the notice are the core's words", async () => {
+    const core = await testCore();
+    const free = relayUsageView(core, demoRelayUsage())!;
+    expect(free).toMatchObject({ label: "Relay usage", line: "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", plan: "Free plan", notice: null });
+    expect(free.planCard).toMatchObject({ plan: "free", label: "Free plan", primary: { label: "Get Pro", url: "https://app.cua.ai/buy/pro?from=app_plan_card" }, secondary: { label: "Start a team", url: "https://app.cua.ai/buy/teams?from=app_plan_card" } });
+    const past = relayUsageView(core, { ...demoRelayUsage(), hoursUsed: 20.24, softLimitReached: true, reasons: ["hours"], team: { id: "acme", seats: 3 } })!;
+    expect(past.line).toBe("Live sessions 1 of 2 · Relay hours 20.2 of 20 this month · Team pool, 3 seats");
+    expect(past.notice).toEqual({
+      text: "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more.",
+      upgrade: "Upgrade",
+      upgradeUrl: "https://app.cua.ai/buy/pro?from=app_meter",
+      dismiss: "Dismiss",
+      dismissKey: "2026-10:hours",
+      level: "limit",
+    });
+    expect(relayUsageView(noCore, demoRelayUsage())).toBeNull();
   });
 
   it("reads once for every screen, again every 5 minutes, and drops it when signed out", async () => {
@@ -61,7 +86,6 @@ describe("relay.usage", () => {
     const reads = () => call.mock.calls.filter(([op]) => op === "relay.usage").length;
     expect(reads()).toBe(1);
     expect(seen.usage).toMatchObject({ plan: "free", liveSessions: 1 });
-    expect(relayUsageLine(seen.usage!)).toBe("Live sessions 1 of 2 · Relay hours 6.5 of 20 this month");
 
     await act(() => vi.advanceTimersByTimeAsync(RELAY_USAGE_POLL_MS - 100));
     expect(reads()).toBe(1);

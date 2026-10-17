@@ -132,6 +132,10 @@ pub struct SandboxInfo {
     /// a registry, and the daemon topology.
     #[uniffi(default = None)]
     pub image_info: Option<ImageInfo>,
+    /// Why a local sandbox stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+    #[uniffi(default = None)]
+    pub stop_reason: Option<String>,
 }
 
 impl From<SandboxRecord> for SandboxInfo {
@@ -164,6 +168,7 @@ impl From<SandboxRecord> for SandboxInfo {
             endpoints: r.endpoints.into_iter().collect(),
             image: r.image,
             image_info: r.image_info.map(Into::into),
+            stop_reason: r.stop_reason,
         }
     }
 }
@@ -971,7 +976,11 @@ pub struct Sandboxes {
 
 impl Sandboxes {
     /// Creates without applying overlays.
-    async fn create_bare(&self, options: SandboxCreateOptions) -> Result<Arc<Sandbox>> {
+    async fn create_bare(
+        &self,
+        options: SandboxCreateOptions,
+        progress: Option<cua_sandbox_core::progress::Sink>,
+    ) -> Result<Arc<Sandbox>> {
         let placement = options.placement()?;
         let mut req = options.to_request()?;
         let backend = self.backend.clone();
@@ -982,9 +991,12 @@ impl Sandboxes {
             if let Some(s) = secret {
                 req.registry_credentials = Some(s.credentials(&req.image).await?);
             }
-            Ok(match &backend {
-                Backend::Embedded(rt) => rt.create(req).await?,
-                Backend::Daemon(d) => d.create(req).await?,
+            Ok(match (&backend, progress) {
+                (Backend::Embedded(rt), progress) => {
+                    cua_sandbox_core::progress::carry(progress, rt.create(req)).await?
+                }
+                (Backend::Daemon(d), Some(progress)) => d.create_reporting(req, progress).await?,
+                (Backend::Daemon(d), None) => d.create(req).await?,
             })
         })
         .await
@@ -1021,6 +1033,28 @@ impl Sandboxes {
     /// Creates (Fleet, local) or connects (direct) a sandbox and waits for
     /// the provider and every readiness probe.
     pub async fn create(&self, options: SandboxCreateOptions) -> Result<Arc<Sandbox>> {
+        self.create_reported(options, None).await
+    }
+}
+
+impl Sandboxes {
+    /// Rust hosts: [`Sandboxes::create`], passing what the create does (the
+    /// image download with its bytes, creating, booting, the readiness
+    /// probes) to `progress` as it happens. Through a daemon that predates
+    /// streaming creates, `progress` hears nothing.
+    pub async fn create_reporting(
+        &self,
+        options: SandboxCreateOptions,
+        progress: cua_sandbox_core::progress::Sink,
+    ) -> Result<Arc<Sandbox>> {
+        self.create_reported(options, Some(progress)).await
+    }
+
+    async fn create_reported(
+        &self,
+        options: SandboxCreateOptions,
+        progress: Option<cua_sandbox_core::progress::Sink>,
+    ) -> Result<Arc<Sandbox>> {
         let facts = super::telemetry::CreateFacts::of(&options);
         let mut options = options;
         // A local sandbox's cua-spacesd reports aggregate health counts only
@@ -1031,20 +1065,22 @@ impl Sandboxes {
                 .entry("CUA_SPACESD_TELEMETRY".into())
                 .or_insert_with(|| "1".into());
         }
-        let r = self.create_recorded(options).await;
+        let r = self.create_recorded(options, progress).await;
         facts.record(&r);
         r
     }
-}
 
-impl Sandboxes {
-    async fn create_recorded(&self, options: SandboxCreateOptions) -> Result<Arc<Sandbox>> {
+    async fn create_recorded(
+        &self,
+        options: SandboxCreateOptions,
+        progress: Option<cua_sandbox_core::progress::Sink>,
+    ) -> Result<Arc<Sandbox>> {
         let overlays = options.overlays.clone();
         for o in &overlays {
             o.validate()?;
         }
         let ready_timeout_ms = options.ready_timeout_ms;
-        let sandbox = self.create_bare(options).await?;
+        let sandbox = self.create_bare(options, progress).await?;
         if overlays.is_empty() {
             return Ok(sandbox);
         }

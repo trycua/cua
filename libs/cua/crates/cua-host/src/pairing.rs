@@ -23,8 +23,15 @@ use serde::{Deserialize, Serialize};
 pub const PAIRING_TOKEN_PREFIX: &str = "cpc_";
 /// Characters of a code.
 pub const PAIRING_CODE_LEN: usize = 12;
-/// Where an add-machine link opens.
-pub const ADD_MACHINE_BASE_URL: &str = "https://spaces.cua.ai/add";
+/// Where an add-machine link opens in production.
+pub const ADD_MACHINE_BASE_URL: &str = "https://cua.ai/add";
+
+/// Where an add-machine link opens: `<Spaces site>/add`, the site of
+/// `CUA_SPACES_SITE_URL` or `CUA_ENV` ([`ADD_MACHINE_BASE_URL`] in
+/// production).
+pub fn add_machine_base_url() -> String {
+    format!("{}/add", cua_home::env::spaces_site_url())
+}
 
 const ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -72,17 +79,19 @@ pub fn display_pairing_code(code: &str) -> String {
     }
 }
 
-/// The add-machine link for `code`: `https://spaces.cua.ai/add/<code>`,
-/// plus `?relay=<url>` when the machine must join another relay than
-/// [`DEFAULT_RELAY_URL`].
+/// The add-machine link for `code`: `<add_machine_base_url>/<code>`
+/// (`https://cua.ai/add/<code>` in production), plus `?relay=<url>`
+/// when the machine must join another relay than the production
+/// [`DEFAULT_RELAY_URL`] (a staging relay is always named, since the
+/// machine being added has no `CUA_ENV`).
 pub fn add_machine_url(code: &str, relay: &str) -> String {
     let code = display_pairing_code(code);
     let relay = relay.trim().trim_end_matches('/');
+    let base = add_machine_base_url();
     if relay.is_empty() || relay == DEFAULT_RELAY_URL {
-        format!("{ADD_MACHINE_BASE_URL}/{code}")
+        format!("{base}/{code}")
     } else {
-        let mut url = url::Url::parse(&format!("{ADD_MACHINE_BASE_URL}/{code}"))
-            .expect("static add-machine URL");
+        let mut url = url::Url::parse(&format!("{base}/{code}")).expect("static add-machine URL");
         url.query_pairs_mut().append_pair("relay", relay);
         url.to_string()
     }
@@ -191,6 +200,17 @@ struct PairingCodeList {
     codes: Vec<PairingCode>,
 }
 
+/// A code for a team needs Teams on ([`cua_home::experimental`]).
+fn check_pairing_team(req: &PairingCodeRequest, teams: bool) -> Result<()> {
+    if req.team.is_some() && !teams {
+        return Err(Error::InvalidArgument(format!(
+            "{} A pairing code adds the machine to your account; leave out the team.",
+            cua_home::experimental::TEAMS_UNAVAILABLE
+        )));
+    }
+    Ok(())
+}
+
 impl RelayClient {
     /// Mints a one-time pairing code (from an enrolled device: needs
     /// [`RelayClient::with_device_session`]).
@@ -199,6 +219,7 @@ impl RelayClient {
         account_token: &str,
         req: &PairingCodeRequest,
     ) -> Result<PairingCode> {
+        check_pairing_team(req, cua_home::experimental::teams_enabled())?;
         self.send_json(
             reqwest::Method::POST,
             "/v1/pairing-codes",
@@ -243,9 +264,84 @@ impl RelayClient {
     }
 }
 
+impl RelayClient {
+    /// Waits (polling every `poll`) until the pairing code `code_id` adds a
+    /// machine, then makes that machine a machine of the team `org` on the
+    /// Spaces API (`POST /v1/orgs/{org}/machines`): pairing alone never puts
+    /// a machine in a team. A plan bought a moment ago is waited for (see
+    /// [`crate::spaces_api::SpacesApiClient::finishing_setup`]; `waiting`
+    /// is called meanwhile). Gives up when the code is revoked or expires,
+    /// or at `until` (Unix seconds). Returns the machine id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_paired_machine_to_team(
+        &self,
+        api: &crate::spaces_api::SpacesApiClient,
+        token: &str,
+        code_id: &str,
+        org: &str,
+        until: u64,
+        poll: std::time::Duration,
+        waiting: impl FnMut(std::time::Duration),
+    ) -> Result<String> {
+        let now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        };
+        let (machine, name) = loop {
+            let codes = self.pairing_codes(token).await?;
+            let c = codes.into_iter().find(|c| c.id == code_id);
+            match c {
+                Some(c) if c.state == "used" && c.machine.is_some() => {
+                    break (c.machine.unwrap_or_default(), c.name.unwrap_or_default());
+                }
+                Some(c) if c.state == "revoked" || c.state == "expired" => {
+                    return Err(Error::InvalidArgument(format!(
+                        "pairing code {code_id} was {} before a machine used it",
+                        c.state
+                    )));
+                }
+                None => {
+                    return Err(Error::NotFound(format!("pairing code {code_id}")));
+                }
+                Some(_) if now() >= until => {
+                    return Err(Error::InvalidArgument(format!(
+                        "no machine used pairing code {code_id} in time"
+                    )));
+                }
+                Some(_) => tokio::time::sleep(poll).await,
+            }
+        };
+        api.finishing_setup(
+            token,
+            crate::spaces_api::SETUP_RETRY_WINDOW,
+            waiting,
+            || api.add_org_machine(token, org, &machine, "", &name),
+        )
+        .await?;
+        Ok(machine)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_team_pairing_code_needs_teams_on() {
+        let team = PairingCodeRequest {
+            team: Some("team-aigis".into()),
+            ..Default::default()
+        };
+        let err = check_pairing_team(&team, false).unwrap_err().to_string();
+        assert!(
+            err.contains("Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0)."),
+            "{err}"
+        );
+        check_pairing_team(&team, true).unwrap();
+        check_pairing_team(&PairingCodeRequest::default(), false).unwrap();
+    }
 
     #[test]
     fn codes_read_the_way_people_type_them() {
@@ -253,6 +349,11 @@ mod tests {
             normalize_pairing_code("k7qm-4xpb-2rhd").as_deref(),
             Some("K7QM4XPB2RHD")
         );
+        assert_eq!(
+            normalize_pairing_code("https://cua.ai/add/K7QM-4XPB-2RHD?relay=x").as_deref(),
+            Some("K7QM4XPB2RHD")
+        );
+        // Links printed by older apps keep working.
         assert_eq!(
             normalize_pairing_code("https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=x").as_deref(),
             Some("K7QM4XPB2RHD")
@@ -268,10 +369,8 @@ mod tests {
             other => panic!("expected InvalidArgument, got {:?}", other.map(|t| t.0)),
         }
         assert_eq!(
-            pairing_link_relay(
-                "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
-            )
-            .as_deref(),
+            pairing_link_relay("https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example")
+                .as_deref(),
             Some("https://r.example")
         );
         assert_eq!(pairing_link_relay("K7QM-4XPB-2RHD"), None);
@@ -282,11 +381,11 @@ mod tests {
     fn links_and_commands_carry_a_custom_relay_only() {
         assert_eq!(
             add_machine_url("k7qm4xpb2rhd", DEFAULT_RELAY_URL),
-            "https://spaces.cua.ai/add/K7QM-4XPB-2RHD"
+            "https://cua.ai/add/K7QM-4XPB-2RHD"
         );
         assert_eq!(
             add_machine_url("K7QM4XPB2RHD", "https://relay.example.com/"),
-            "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Frelay.example.com"
+            "https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Frelay.example.com"
         );
         assert_eq!(
             install_command("K7QM4XPB2RHD", DEFAULT_RELAY_URL, "linux"),

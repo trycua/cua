@@ -9,6 +9,20 @@ use crate::{
 };
 use cua_proto::daemon::v1::{self as pb, space_service_server::SpaceService};
 
+/// A create's progress report as the daemon streams it (`CreateSpaceStream`,
+/// `CreateSandboxStream`).
+pub(crate) fn progress_pb(p: &cua_sandbox_core::progress::Progress) -> pb::CreateSpaceProgress {
+    pb::CreateSpaceProgress {
+        phase: p.phase.as_str().into(),
+        fraction: p.fraction,
+        detail: p.detail.clone(),
+        bytes_done: p.bytes.map(|b| b.done),
+        bytes_total: p.bytes.map(|b| b.total).filter(|t| *t > 0),
+        bytes_per_second: p.bytes.and_then(|b| b.per_second),
+        space: p.target.clone(),
+    }
+}
+
 #[cfg(feature = "spaces")]
 mod imp {
     use super::*;
@@ -48,6 +62,7 @@ mod imp {
             cloud: info.cloud.clone(),
             cloud_place: info.cloud_place.clone(),
             cloud_delete: info.cloud_delete.clone(),
+            stop_reason: info.stop_reason.clone(),
         }
     }
 
@@ -184,6 +199,7 @@ mod imp {
             let mut spaces = self.spaces().registry().list().map_err(|e| st(e.into()))?;
             for s in &mut spaces {
                 (s.power, s.power_state) = self.spaces().power_of(&s.id);
+                s.stop_reason = self.spaces().stop_reason_of(&s.id);
             }
             // Plus the signed-in account's relay machines (refreshed).
             for info in self.spaces().list_all().await.map_err(|e| st(e.into()))? {
@@ -345,15 +361,7 @@ mod imp {
             let progress = tx.clone();
             create.progress = Some(cua_spaces::ProgressSink::new(move |p| {
                 let _ = progress.try_send(Ok(pb::CreateSpaceStreamResponse {
-                    event: Some(Event::Progress(pb::CreateSpaceProgress {
-                        phase: p.phase.as_str().into(),
-                        fraction: p.fraction,
-                        detail: p.detail.clone(),
-                        bytes_done: p.bytes.map(|b| b.done),
-                        bytes_total: p.bytes.map(|b| b.total).filter(|t| *t > 0),
-                        bytes_per_second: p.bytes.and_then(|b| b.per_second),
-                        space: p.target.clone(),
-                    })),
+                    event: Some(Event::Progress(super::progress_pb(p))),
                 }));
             }));
             let spaces = self.spaces().clone();

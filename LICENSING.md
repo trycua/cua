@@ -100,6 +100,13 @@ targets and preferences). The SDK's `MediaSession` (open a stream, receive
 its encoded frames and audio packets) and `@trycua/cua/spaces/pip` (a
 picture-in-picture wrapper around a canvas you paint) stay MIT.
 
+The WireGuard®-based mesh node (`cua-mesh`: userspace tunnels, NAT
+traversal, the encrypted relay client, QUIC streams and the coordinator
+protocol) is MIT and depends only on MIT, Apache-2.0 and BSD code (the
+WireGuard protocol through Cloudflare's BSD-3-Clause `boringtun`). A hosted
+machine's side of it is part of cua-spacesd (FSL). No GPL or AGPL code is
+linked: not the WireGuard kernel module or `wireguard-tools`.
+
 ## Commercial use and trademarks
 
 Offering Cua Spaces, or a product built on it, to others as a hosted or

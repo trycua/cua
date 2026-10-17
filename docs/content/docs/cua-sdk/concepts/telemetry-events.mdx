@@ -34,8 +34,8 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_daemon_health` | `uptime_bucket`, `sandboxes` | Hourly aggregate health. |
 | `cua_spacesd_health` | `uptime_bucket`, `imports_failed` | In-sandbox health, hourly. |
 | `cua_spacesd_session_deliveries` | `delivery_grant` (`present` or `absent`), `count` | Session deliveries with and without a Keyvault grant. |
-| `cua_app_active` | `experiments_on` (the Cua Spaces experiments turned on in Settings, Experiments: `cua_volume`, `your_cloud`, `sharing` joined with `+`, or `none`) | Daily and weekly active installs and retention: at most one per install per UTC day. Also how many installs use each experiment. |
-| `cua_onboarding_page` | `page` (`welcome`, `signin`, `agents`, `presentation`, `volume`, `this_machine`, `done`), `action` (`shown`, `completed`, `skipped`, `back`), `choice` (a fixed word such as `signed_in`, `menu_bar_only`, `s3`, `host`, or `none`) | Which first-run page people leave on, and what they pick. |
+| `cua_app_active` | `experiments_on` (the Cua Spaces experiments turned on in Settings, Experiments: `cua_volume`, `your_cloud`, `sharing` joined with `+`, or `none`) | Daily and weekly active installs and retention: at most one per install per UTC day. Also installs per experiment. |
+| `cua_onboarding_page` | `page` (`welcome`, `command_line`, `signin`, `agents`, `presentation`, `volume`, `this_machine`, `done`), `action` (`shown`, `completed`, `skipped`, `back`), `choice` (a fixed word such as `installed`, `signed_in`, `menu_bar_only`, `s3`, `host`, or `none`) | Which first-run page people leave on, and what they pick. |
 | `cua_space_wizard` | `action` (`opened`, `cancelled`, `submitted`) | How often a New Space is started and abandoned. |
 | `cua_space_create_started` | `location`, `guest_os`, `kind`, `gpu` (GPU acceleration turned on) | Which Spaces are started, and how often with GPU acceleration. |
 | `cua_space_create` | `location`, `guest_os`, `kind`, `outcome` (`ok`, `error`, or `cancelled` when Cancel was pressed while it was being created), `error_kind`, `failed_phase` (the phase it failed or was cancelled in, or `none`), `stalled`, `time_bucket` (to ready, the failure, or cancel finishing), `gpu` | Space create success, failure and cancel rates, time to ready, and which phase fails. |
@@ -43,10 +43,10 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_persistent_agent` | `action` (`create`, `pause`, `resume`, `routine_add`, ...), `harness`, `outcome`, `error_kind` | Persistent agents and routines adoption. |
 | `cua_host_setup` | `mode` (`relay` or `direct`), `profile` (`desktop`, `spare`, `both`), `outcome`, `error_kind`, `signed_in`, `token_state` (`provided`, `expired`, `missing`, `not_needed`; never the token), `failed_stage` (`none`, `preflight`, `token`, `register`, `download`, `service`), `http_status` (the status a server answered a failure with, `0` when none) | Machines set up for access, and where a failed setup stopped. |
 | `cua_host_space_provided` | `kind`, `guest_os`, `outcome`, `error_kind` | Spaces a host machine created for your other devices. |
-| `cua_keyvault_action` | `action` (`setup`, `unlock`, `lock`, `import`, `site_login`), `method` (`os_key_store`, which is Touch ID on a Mac, `passphrase`, `recovery_key`, `none`), `outcome` | Keyvault adoption and how it is unlocked. Nothing about what is stored. |
+| `cua_keyvault_action` | `action` (`setup`, `unlock`, `lock`, `import`, `site_login`), `method` (`os_key_store` (Touch ID on a Mac), `passphrase`, `recovery_key`, `none`), `outcome` | Keyvault adoption and how it is unlocked. Nothing about what is stored. |
 | `cua_share` | `action` (`share`, `unshare`, `change_role`), `role` (`viewer`, `editor`, `none`), `outcome` | Sharing, and how often it is view-only. Never who. |
 | `cua_presence_session` | `outcome`, `participants` (bucketed), `duration_bucket` | Multiplayer sessions, their size and length. |
-| `cua_app_update` | `action` (`checked`, `found`, `not_found`, `installed`, `failed`), `channel` (`stable` or `beta`), `trigger` (`user` or `background`) | Whether people update. |
+| `cua_app_update` | `action` (`checked`, `found`, `not_found`, `downloaded`, `installed`, `failed`), `channel` (`stable` or `beta`), `trigger` (`user` or `background`) | Whether people update. |
 | `cua_device_enroll` | `method` (`sign_in`, `approval`, `rekey`), `outcome` | How devices join your account's relay. |
 | `cua_experiment` | `action` (`experiment_on` or `experiment_off`), `experiment` (`cua_volume`, `your_cloud`, `sharing`) | Which experiments people try, and turn off again. |
 

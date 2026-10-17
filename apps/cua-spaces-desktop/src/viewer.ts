@@ -17,6 +17,7 @@ import { fitViewerToStream, initialViewerBounds, viewerPath, VIEWER_MIN_HEIGHT, 
 import type { Rect } from "./pip-layout";
 import { readSettings, writeSettings } from "./settings";
 import { appWindow } from "./window";
+import { showWhenReady } from "./show-when-ready";
 
 export interface ViewerWindows {
   /** The Space's viewer, opened or brought to the front. */
@@ -93,7 +94,7 @@ export function createViewerWindows({ remember = true }: { remember?: boolean } 
       win.on("closed", () => {
         if (open.get(spaceId) === win) open.delete(spaceId);
       });
-      win.once("ready-to-show", () => {
+      showWhenReady(win, () => {
         if (!hidden()) win.show();
       });
       void win.loadURL(`${APP_ORIGIN}${viewerPath(spaceId, name, os)}`);

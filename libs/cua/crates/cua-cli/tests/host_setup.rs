@@ -254,7 +254,7 @@ async fn pair_never_signs_in_and_keeps_the_code_when_the_download_fails() {
     // A pasted link works as well as the typed code (any case). The driver
     // is installed before the code is used, so a failed download spends
     // nothing: the relay is never asked.
-    let o = setup(&h, &["--pair", "https://spaces.cua.ai/add/k7qm-4xpb-2rhd"]).await;
+    let o = setup(&h, &["--pair", "https://cua.ai/add/k7qm-4xpb-2rhd"]).await;
     assert_eq!(o.code, 2, "{o:?}");
     assert!(o.stderr.contains("host setup failed at download:"), "{o:?}");
     assert!(!o.stderr.contains("Sign in"), "{o:?}");

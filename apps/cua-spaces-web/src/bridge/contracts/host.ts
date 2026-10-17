@@ -148,6 +148,41 @@ export interface MachineRow extends SpaceHost {
   /** This machine only: why it cannot open the account's machines (signed
    * in, not enrolled), as the host's devices model says it. */
   accessNotice?: MachineAccessNotice | null;
+  /** The host listed the rows with the core (`machines.pageRows`): each
+   * computer is already once, so the store does not merge them again. */
+  merged?: boolean;
+  /** The core's status word for the row (`MachinePageRow.status`). */
+  status?: string;
+  /** The core's Spaces count for the row (`MachinePageRow.spacesLabel`). */
+  spacesLabel?: string;
+}
+
+/** One Machines row as the core lists it (`machines::MachinePageRow`),
+ * the same rows the SwiftUI app's Machines page shows. */
+export interface MachinePageRow {
+  id: string;
+  name: string;
+  online: boolean;
+  /** `macos`, `linux`, `windows`, or empty when unknown. */
+  os: string;
+  via: "local" | "relay";
+  current: boolean;
+  /** The device listed in this row. */
+  device: string | null;
+  /** A device that is none of the machines. */
+  deviceOnly: boolean;
+  /** The Spaces list's row that is this machine's own desktop. */
+  spaceId: string | null;
+  /** Online, but its owner stopped sharing it. */
+  stoppedSharing: boolean;
+  /** The device's last session (Unix seconds). */
+  lastSeen: number | null;
+  /** "Online", "Not sharing" or "Offline" (`machines::status_word`). */
+  status?: string;
+  /** The Spaces it runs (`machines::page_rows`). */
+  spaces?: number;
+  /** "1 Space", "3 Spaces", "No Spaces"; empty for a device of its own. */
+  spacesLabel?: string;
 }
 
 export interface ServiceState {
@@ -425,6 +460,12 @@ export interface SettingsInput {
   telemetry?: { enabled: boolean; lockedBy?: string | null } | null;
   /** The Keyvault's auto-wipe (none: no Keyvault section). */
   keyvaultAutoWipe?: boolean | null;
+  /** The unlock prompt shows (none: no row). */
+  keyvaultUnlockPrompt?: boolean | null;
+  /** Load site icons the browser had none for (the core's default: on). */
+  keyvaultSiteIcons?: boolean;
+  /** The Keyvault's protection facts (Touch ID, the daemon's signature). */
+  keyvaultProtection?: { label: string; value: string }[];
   /** "Connect to the desktop automatically" (none: no row). */
   autoConnect?: boolean | null;
   /** Which Lume macOS Spaces run on (none: no Runtimes section). */

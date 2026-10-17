@@ -91,6 +91,19 @@ export interface OnboardingModeChoice {
   preselected: boolean;
 }
 
+/** `PresentationCard`: a choice on the Menu bar page. */
+export interface PresentationCard {
+  /** Menu bar only. */
+  menuBar: boolean;
+  /** "Notch and menu bar". */
+  title: string;
+  /** `onboarding-notch`, `onboarding-menu-bar`. */
+  id: string;
+  /** The miniature's spoken description. */
+  imageLabel: string;
+  selected: boolean;
+}
+
 /** Welcome's "Share anonymous usage data" switch. */
 export interface OnboardingUsage {
   label: string;
@@ -114,12 +127,16 @@ export interface OnboardingView {
   preselectedMode: OnboardingMode;
   summary: OnboardingFact[];
   choices: OnboardingModeChoice[];
+  /** The Menu bar page's cards (on its page only). */
+  presentations?: PresentationCard[];
   notice?: string | null;
   noticeLinkLabel?: string | null;
   noticeLinkUrl?: string | null;
   usage?: OnboardingUsage | null;
   /** The Cua Volume page's card (on its page only). */
   drive?: DriveCard | null;
+  /** Done's example prompts, one line each (on Done only). */
+  prompts?: string[];
   /** Done's "Launch at login" checkbox (on Done only). */
   launchAtLogin?: OnboardingCheckbox | null;
 }

@@ -35,6 +35,7 @@ import type {
   StorageInput,
   StorageRequest,
   StorageState,
+  UpdateState,
 } from "./contracts/settings";
 import type { HostEvent, SettingsValues } from "./protocol";
 import {
@@ -60,7 +61,7 @@ import {
   storageSection,
 } from "./settings-derive";
 
-export type FeatureName = "about" | "experiments" | "loginItem" | "devices" | "storage" | "notifications";
+export type FeatureName = "about" | "update" | "experiments" | "loginItem" | "devices" | "storage" | "notifications";
 
 export interface FeatureResource<T> {
   data: T | undefined;
@@ -76,6 +77,12 @@ export interface AboutData {
   view: AboutView | null;
   /** The host can change the update controls. */
   canChange: boolean;
+}
+
+export interface UpdateData {
+  state: UpdateState;
+  /** "Restart to update" is running. */
+  installing: boolean;
 }
 
 export interface ExperimentsData {
@@ -130,6 +137,10 @@ export interface FeatureOptions {
 }
 
 const NOTIFICATIONS_POLL_MS = 5_000;
+/** The host also tells the page when its updater moves on (`update.changed`);
+ * this is the slow safety net, and the pace while a download runs. */
+const UPDATE_POLL_MS = 60_000;
+const UPDATE_DOWNLOAD_POLL_MS = 2_000;
 const STORAGE_POLL_MS = 2_000;
 const ENROLL_POLL_MS = 3_000;
 const ENROLL_POLL_LIMIT = 200;
@@ -164,6 +175,7 @@ export class SettingsFeature {
   private readonly options: FeatureOptions;
   private resources: { [K in FeatureName]: FeatureResource<unknown> } = {
     about: idle(),
+    update: idle(),
     experiments: idle(),
     loginItem: idle(),
     devices: idle(),
@@ -182,6 +194,8 @@ export class SettingsFeature {
 
   private about: AboutInput | undefined;
   private aboutCanChange = true;
+  private update: UpdateState | undefined;
+  private updateInstalling = false;
   private experiments: Experiments = {};
   private loginItem: LoginItemInput | undefined;
   private devices: DevicesInput | undefined;
@@ -236,6 +250,7 @@ export class SettingsFeature {
     this.ensured.add(name);
     // The launch-at-login line and Storage's place follow the experiments.
     if (name === "loginItem" || name === "storage") this.ensure("experiments");
+    if (name === "update") this.every("update-slow", UPDATE_POLL_MS, () => this.refresh("update"));
     if (name === "notifications") this.every("notifications", NOTIFICATIONS_POLL_MS, () => this.refresh("notifications"));
     void this.refresh(name);
   }
@@ -259,6 +274,15 @@ export class SettingsFeature {
           const about = await this.adapter.call("about.get", {});
           if (pinned()) return;
           this.about = about;
+          break;
+        }
+        case "update": {
+          const state = await this.adapter.call("update.get", {});
+          if (pinned()) return;
+          this.update = state;
+          // A running download is followed closely; the host's event covers the rest.
+          if (state.status === "downloading") this.every("update", UPDATE_DOWNLOAD_POLL_MS, () => this.refresh("update"));
+          else this.stop("update");
           break;
         }
         case "experiments": {
@@ -297,6 +321,10 @@ export class SettingsFeature {
       this.publish(name);
     } catch (e) {
       if (this.disposed) return;
+      if (name === "update" && isUnsupported(e)) {
+        this.stop("update");
+        this.stop("update-slow");
+      }
       this.set(name, { isLoading: false, error: isUnsupported(e) ? null : toError(e), unsupported: isUnsupported(e) });
     }
   }
@@ -318,6 +346,9 @@ export class SettingsFeature {
     switch (name) {
       case "about":
         if (this.about) done({ input: this.about, view: aboutView(this.core, this.about), canChange: this.aboutCanChange } satisfies AboutData);
+        break;
+      case "update":
+        if (this.update) done({ state: this.update, installing: this.updateInstalling } satisfies UpdateData);
         break;
       case "experiments":
         done({ experiments: this.experiments, page: experimentsPage(this.core, this.experiments) } satisfies ExperimentsData);
@@ -367,6 +398,23 @@ export class SettingsFeature {
     const t = this.timers.get(key);
     if (t) clearInterval(t);
     this.timers.delete(key);
+  }
+
+  /* ---- In-app update ---- */
+
+  /** "Restart to update". The host relaunches the app when it accepts. */
+  async installUpdate(): Promise<void> {
+    if (this.updateInstalling) return;
+    this.updateInstalling = true;
+    this.publish("update");
+    try {
+      this.update = await this.adapter.call("update.install", {});
+    } catch (e) {
+      throw toError(e);
+    } finally {
+      this.updateInstalling = false;
+      this.publish("update");
+    }
   }
 
   /* ---- About ---- */
@@ -706,12 +754,33 @@ export class SettingsFeature {
     await this.refresh("notifications");
   }
 
+  /** Marks one entry read (it was opened): this app's own entries here,
+   * the daemon's through `notifications.markRead`. Shown read at once. */
+  async markRead(id: string): Promise<void> {
+    if (this.local.some((n) => n.id === id && !n.read)) {
+      this.local = this.local.map((n) => (n.id === id ? { ...n, read: true } : n));
+      this.saveLocal();
+      this.publish("notifications");
+      return;
+    }
+    if (!this.feed.some((n) => n.id === id && !n.read)) return;
+    this.feed = this.feed.map((n) => (n.id === id ? { ...n, read: true } : n));
+    this.publish("notifications");
+    if (this.pinned.has("notifications")) return;
+    await this.adapter.call("notifications.markRead", { ids: [id] });
+    // A poll that started before the ack may answer it unread: read again after it.
+    await this.inflight.get("notifications");
+    await this.refresh("notifications");
+  }
+
   /** Adds one of this app's own entries (a Space became ready, a create
    * failed and why) to the list, so a missed toast can still be read. */
-  record(note: { kind: "message" | "error"; title: string; body?: string }): void {
+  record(note: { kind: "message" | "error"; title: string; body?: string; space?: string }): void {
     const atMs = this.options.now();
     const id = `app:${atMs}:${Math.random().toString(36).slice(2, 8)}`;
-    this.local = [...this.local, { id, atMs, agent: null, kind: note.kind, title: note.title, body: note.body ?? "", read: false }].slice(-LOCAL_LIMIT);
+    const entry: NotificationInput = { id, atMs, agent: null, kind: note.kind, title: note.title, body: note.body ?? "", read: false };
+    if (note.space) entry.space = note.space;
+    this.local = [...this.local, entry].slice(-LOCAL_LIMIT);
     this.saveLocal();
     if (this.resources.notifications.data !== undefined) this.publish("notifications");
   }
@@ -790,6 +859,10 @@ export class SettingsFeature {
     switch (e.type) {
       case "settings.changed":
         reload("about", "experiments", "loginItem");
+        break;
+      case "update.changed":
+        // Settings, About follows the same updater (Last checked, Checking...).
+        reload("update", "about");
         break;
       case "session.signedIn":
       case "session.signedOut":

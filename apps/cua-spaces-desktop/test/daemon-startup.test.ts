@@ -41,6 +41,8 @@ describe("the daemon's files", () => {
   it("finds the cua home in CUA_HOME, else ~/.cua", () => {
     expect(cuaHome({ CUA_HOME: "/x/.cua" })).toBe("/x/.cua");
     expect(cuaHome({ HOME: "/home/ada" })).toBe(path.join("/home/ada", ".cua"));
+    expect(cuaHome({ HOME: "/home/ada", CUA_ENV: "staging" })).toBe(path.join("/home/ada", ".cua", "envs", "staging"));
+    expect(cuaHome({ HOME: "/home/ada", CUA_ENV: "staging", CUA_HOME: "/x" })).toBe("/x");
   });
 
   it("backs off from 2 s to a minute", () => {

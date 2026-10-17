@@ -18,6 +18,7 @@ pub mod error;
 pub mod filesystem;
 pub mod host_spaces;
 pub mod http;
+pub mod mesh_host;
 pub mod peer;
 pub mod process;
 pub mod provider;

@@ -3,6 +3,7 @@
   "pages": [
     "connect-your-agent",
     "use-the-sdk",
+    "gemini",
     "browsers",
     "visual-regions",
     "trajectories",

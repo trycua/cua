@@ -232,6 +232,12 @@ pub struct SpaceInfo {
     /// Empty for other Spaces.
     #[serde(default)]
     pub cloud_delete: String,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); empty otherwise,
+    /// and once it is started again.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub stop_reason: String,
 }
 
 impl From<dpb::Space> for SpaceInfo {
@@ -265,6 +271,7 @@ impl From<dpb::Space> for SpaceInfo {
             cloud: s.cloud,
             cloud_place: s.cloud_place,
             cloud_delete: s.cloud_delete,
+            stop_reason: s.stop_reason,
         }
     }
 }
@@ -293,6 +300,7 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
             cloud: s.cloud,
             cloud_place: s.cloud_place,
             cloud_delete: s.cloud_delete,
+            stop_reason: s.stop_reason,
         }
     }
 }
@@ -1846,6 +1854,9 @@ impl From<cua_spaces::Error> for CuaError {
         match e {
             cua_spaces::Error::Env(env) => env.into(),
             cua_spaces::Error::Fleet(f) => f.into(),
+            // The refusal's own words: `CuaError::TeleportRefused` says
+            // "teleport refused:" itself (not twice).
+            cua_spaces::Error::TeleportRefused(why) => CuaError::TeleportRefused(why),
             _ => tag_error(kind, message),
         }
     }
@@ -4156,6 +4167,15 @@ fn parse_conflict(conflict: Option<&str>) -> Result<cua_spaces::files::Conflict>
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn a_teleport_refusal_says_teleport_refused_once() {
+        let err = CuaError::from(cua_spaces::Error::TeleportRefused(
+            "the approver declined".into(),
+        ));
+        assert!(matches!(err, CuaError::TeleportRefused(_)), "{err:?}");
+        assert_eq!(err.to_string(), "teleport refused: the approver declined");
+    }
 
     #[test]
     fn an_embedded_insufficient_disk_becomes_insufficient_disk() {

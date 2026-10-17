@@ -8,7 +8,7 @@
 #
 # In a terminal it shows a checklist of what to install. Items:
 #   cli         the cua CLI (always installed, except with --app-only)
-#   spaces      the Cua Spaces app (macOS only for now; default on macOS)
+#   spaces      the Cua Spaces app (macOS and Linux; default on both)
 #   cua-driver  cua-driver MCP and skill for your agents (default off)
 #   host        host this machine: `cua host setup` (default off)
 #
@@ -22,9 +22,13 @@
 #                       from the Cua Spaces app (Add a machine): installs and
 #                       runs `cua host setup --pair CODE`, no sign-in, no checklist
 #   --relay URL         relay for --pair (default https://relay.cua.ai)
+#                       A computer that already has a cua with `host setup --pair`
+#                       (and the app) uses them instead of downloading again;
+#                       --version, --prefix or CUA_INSTALL_REINSTALL=1 install anyway
 #   --version VERSION   install this CLI release (default: latest)
 #   --prefix DIR        install under DIR (DIR/bin, DIR/Applications)
-#   --modify-path       add the bin dir to your shell profile
+#   --modify-path       add the bin dir to your shell profile without asking
+#   --no-modify-path    never edit your shell profile (print the one-line command)
 #   --no-onboarding     do not run `cua auth login` afterwards
 #   --require-signature fail unless a signature (minisign/cosign) verifies
 #   --dry-run           print what would happen, change nothing
@@ -33,6 +37,7 @@
 #
 # Environment (mostly for testing and mirrors):
 #   CUA_INSTALL_NONINTERACTIVE=1      never prompt (defaults plus --select)
+#   CUA_INSTALL_REINSTALL=1           with --pair, install the CLI and app even if present
 #   CUA_INSTALL_MANIFEST_URL  release-artifacts.json to read
 #   CUA_INSTALL_BASE_URL      release download base (default GitHub releases)
 #   CUA_INSTALL_DRIVER_URL    cua-driver installer (default cua.ai/driver/install.sh)
@@ -70,12 +75,15 @@ relay_url=""
 version=""
 prefix=""
 modify_path=0
+no_modify_path=0
+sig_noted=0
 onboarding=1
 require_sig=0
 dry_run=0
 assume_yes=0
 tmp=""
 mounted=""
+existing_cua=""
 
 say() { printf '%s\n' "$*"; }
 info() { printf 'cua-install: %s\n' "$*"; }
@@ -158,6 +166,7 @@ parse_args() {
             ;;
         --prefix=*) prefix="${1#--prefix=}" ;;
         --modify-path) modify_path=1 ;;
+        --no-modify-path) no_modify_path=1 ;;
         --no-onboarding) onboarding=0 ;;
         --require-signature) require_sig=1 ;;
         --dry-run) dry_run=1 ;;
@@ -306,7 +315,7 @@ init_selection() {
         list="$only_list"
     else
         list="$select_list"
-        # The app is a default on macOS.
+        # The app is a default on macOS and Linux.
         if spaces_supported; then sel_spaces=1; fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
@@ -315,16 +324,47 @@ init_selection() {
         sel_spaces=1
     fi
     if [ "$sel_spaces" = 1 ] && ! spaces_supported; then
-        info "Cua Spaces is macOS-only for now; skipping the app on Linux"
+        info "Cua Spaces is not available for $os; skipping the app"
         sel_spaces=0
     fi
 }
 
-# Cua Spaces ships for macOS only for now (cd-cua-spaces.yml builds no Linux
-# app). To bring Linux back, return 0 for linux too (install_app_linux is
-# kept).
+# Cua Spaces ships for macOS (the SwiftUI app) and Linux (the Electron app,
+# .deb or AppImage).
 spaces_supported() {
-    [ "$os" = darwin ]
+    [ "$os" = darwin ] || [ "$os" = linux ]
+}
+
+# --pair on a computer that already has Cua: use the `cua` that is there
+# (it must know `host setup --pair`) and keep the app that is there, instead
+# of downloading both again. Anything else (--prefix, --version, an old cua,
+# nothing installed) installs as before.
+reuse_installed() {
+    [ -n "$pair_code" ] || return 0
+    [ -z "$prefix" ] && [ -z "$version" ] && [ "${CUA_INSTALL_REINSTALL:-0}" != 1 ] || return 0
+    [ "$app_only" = 0 ] || return 0
+    found=""
+    for candidate in "$(command -v cua 2>/dev/null || true)" "$HOME/.local/bin/cua" /usr/local/bin/cua \
+        "/Applications/Cua Spaces.app/Contents/MacOS/cua" "$HOME/Applications/Cua Spaces.app/Contents/MacOS/cua"; do
+        [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+        if "$candidate" host setup --help 2>&1 </dev/null | grep -q -e '--pair'; then
+            found="$candidate"
+            break
+        fi
+    done
+    [ -n "$found" ] || return 0
+    info "cua is already installed at $found; using it (CUA_INSTALL_REINSTALL=1 installs it again)"
+    existing_cua="$found"
+    want_cli=0
+    case "$os" in
+    darwin)
+        if [ -d "/Applications/Cua Spaces.app" ] || [ -d "$HOME/Applications/Cua Spaces.app" ]; then sel_spaces=0; fi
+        ;;
+    linux)
+        if has cua-spaces || [ -x "$HOME/.local/bin/cua-spaces" ]; then sel_spaces=0; fi
+        ;;
+    esac
+    if [ "$sel_spaces" = 0 ] && spaces_supported; then info "Cua Spaces is already installed; keeping it"; fi
 }
 
 # Show the checklist only when a human can answer it.
@@ -358,7 +398,7 @@ draw_rows() { # cursor row, or 0 for the numbered list
 # checklist: pick items with arrows/numbers + space, Enter to install.
 checklist() {
     rows="cli"
-    # Spaces is offered only where it ships (macOS).
+    # Spaces is offered only where it ships (macOS, Linux).
     if spaces_supported; then rows="$rows spaces"; fi
     rows="$rows cua-driver host"
     n=0
@@ -582,7 +622,11 @@ verify_signature() { # file entry
         die "no verifiable signature for ${1##*/} (install minisign or cosign)"
     fi
     if [ "$sig_ok" = 0 ] && { [ -n "$minisig" ] || [ -n "$bundle" ]; }; then
-        warn "${1##*/} is signed, but neither minisign nor cosign is installed; verified its sha256 only (install cosign, or pass --require-signature to insist)"
+        # One quiet line per run: sha256 is checked either way.
+        if [ "$sig_noted" = 0 ]; then
+            sig_noted=1
+            info "checked sha256 (cosign is not installed, so release signatures were not checked; --require-signature makes that an error)"
+        fi
     fi
 }
 
@@ -658,7 +702,17 @@ ensure_path() { # dir
     fi
     profile="$(profile_file)"
     line="$(path_line "$1" "$profile")"
-    if [ "$modify_path" = 1 ]; then
+    if [ "$modify_path" = 0 ] && [ "$no_modify_path" = 0 ] && [ "$assume_yes" = 0 ] && [ "$dry_run" = 0 ] && [ "${CUA_INSTALL_NONINTERACTIVE:-0}" != 1 ] && tty_ok; then
+        # Interactive default: offer to add it (Enter = yes).
+        printf 'Add %s to PATH in %s so cua works in new terminals? [Y/n] ' "$1" "$profile" >/dev/tty
+        answer=""
+        read -r answer </dev/tty || answer=""
+        case "$answer" in
+        [nN] | [nN][oO]) ;;
+        *) modify_path=1 ;;
+        esac
+    fi
+    if [ "$modify_path" = 1 ] && [ "$no_modify_path" = 0 ]; then
         if [ -f "$profile" ] && grep -qF "$line" "$profile"; then
             return
         fi
@@ -668,10 +722,10 @@ ensure_path() { # dir
         fi
         mkdir -p "$(dirname "$profile")"
         printf '\n# Added by the cua installer\n%s\n' "$line" >>"$profile"
-        info "added $1 to PATH in $profile (open a new shell to pick it up)"
+        info "added $1 to PATH in $profile (open a new terminal to pick it up)"
     else
         say ""
-        say "$1 is not on your PATH. Add it with:"
+        say "$1 is not on your PATH. Add it with this one line, then open a new terminal:"
         say "  echo '$line' >> $profile"
         say "(or rerun the installer with --modify-path)"
     fi
@@ -762,10 +816,17 @@ install_app_darwin() {
 
 install_app_linux() {
     deb_entry="$(manifest_entry app deb)"
-    if [ -z "$prefix" ] && [ "$(id -u)" = 0 ] && has apt-get && [ -n "$deb_entry" ]; then
-        if confirm "Install the Cua Spaces .deb with apt-get?" y; then
+    # Debian and Ubuntu: the .deb (apt resolves its dependencies), as root or
+    # with passwordless sudo. Anything else, or no privileges: the AppImage.
+    if [ -z "$prefix" ] && has apt-get && [ -n "$deb_entry" ]; then
+        sudo_cmd=""
+        if [ "$(id -u)" != 0 ]; then
+            if has sudo && sudo -n true 2>/dev/null; then sudo_cmd="sudo"; else sudo_cmd="none"; fi
+        fi
+        if [ "$sudo_cmd" != none ] && confirm "Install the Cua Spaces .deb with apt-get?" y; then
             download app deb
-            run apt-get install -y "$artifact"
+            # shellcheck disable=SC2086
+            run $sudo_cmd apt-get install -y "$artifact"
             app_path="cua-spaces"
             return
         fi
@@ -802,6 +863,37 @@ Terminal=false
 Categories=Development;
 EOF
     info "installed $target"
+}
+
+runtime_ready() {
+    [ -n "${DOCKER_HOST:-}" ] || { has docker && docker info >/dev/null 2>&1; } ||
+        { has "qemu-system-$(uname -m)" && has qemu-img; }
+}
+
+qemu_install_command() {
+    if has dnf; then
+        printf 'sudo dnf install -y qemu-kvm qemu-img\n'
+    elif [ "$arch" = arm64 ]; then
+        printf 'sudo apt-get install -y qemu-system-arm qemu-utils\n'
+    else
+        printf 'sudo apt-get install -y qemu-system-x86 qemu-utils\n'
+    fi
+}
+
+linux_runtime() {
+    if runtime_ready; then
+        info "VM runtime ok"
+        return
+    fi
+    if [ "$dry_run" = 1 ]; then
+        say "[dry-run] $cua_bin runtime setup qemu"
+        return
+    fi
+    if confirm "Cua Spaces on Linux needs QEMU; install it now ($cua_bin runtime setup qemu)?" y &&
+        "$cua_bin" runtime setup qemu </dev/null && runtime_ready; then
+        return
+    fi
+    die "Cua Spaces on Linux needs QEMU or Docker; install QEMU with: $(qemu_install_command) (or install Docker), then rerun the installer"
 }
 
 write_mode() {
@@ -901,6 +993,11 @@ host_pair() {
         say "[dry-run] $*"
         return
     fi
+    # A CLI released before pairing exists would fail with a bare
+    # "unexpected argument '--pair'"; say what to do instead.
+    if ! "$cua_bin" host setup --help 2>&1 </dev/null | grep -q -e '--pair'; then
+        die "the installed cua CLI ($("$cua_bin" --version 2>/dev/null || echo unknown)) cannot add a machine with a code (no 'cua host setup --pair'); update the CLI (cua update, or install a newer release: --version) or sign in instead: cua auth login && cua host setup"
+    fi
     info "adding this machine to your account (cua host setup --pair)"
     if "$@" </dev/null; then
         say ""
@@ -964,6 +1061,7 @@ main() {
     parse_args "$@"
     detect_platform
     init_selection
+    reuse_installed
     tmp="$(mktemp -d 2>/dev/null || mktemp -d -t cua-install)"
     if wants_checklist; then
         checklist
@@ -971,18 +1069,24 @@ main() {
     if [ "$dry_run" = 1 ]; then
         info "dry run: nothing will be changed"
     fi
-    load_manifest
-    info "platform $platform, manifest $manifest_url"
+    # Nothing to download (--pair on a computer that has Cua): no manifest to read.
+    if [ "$want_cli" = 1 ] || [ "$sel_spaces" = 1 ] || [ "$sel_driver" = 1 ]; then
+        load_manifest
+        info "platform $platform, manifest $manifest_url"
+    fi
     # Fail before installing anything when cua-driver cannot be installed.
     driver_url="${CUA_INSTALL_DRIVER_URL:-https://cua.ai/driver/install.sh}"
     if [ "$sel_driver" = 1 ]; then
         check_url "$driver_url"
         [ "$dry_run" = 1 ] || has bash || die "cua-driver: its installer needs bash; install bash and rerun"
     fi
-    cua_bin="cua"
+    cua_bin="${existing_cua:-cua}"
     app_path=""
     if [ "$want_cli" = 1 ]; then
         install_cli
+    fi
+    if [ "$os" = linux ] && [ "$sel_spaces" = 1 ] && { [ "$dry_run" = 1 ] || has "$cua_bin"; }; then
+        linux_runtime
     fi
     if [ "$sel_spaces" = 1 ]; then
         case "$os" in

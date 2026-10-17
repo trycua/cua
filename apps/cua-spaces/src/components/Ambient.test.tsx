@@ -42,9 +42,9 @@ describe("Ambient tab and activity (the core's notch module)", () => {
   it("is two rows: the count over the word", () => {
     const { container } = render(<Ambient spaces={FIXTURE_SPACES} displayStyle="notched" onExpand={vi.fn()} />);
     // The Spaces the user can open (the core's count, the menu bar item's too):
-    // the fixture's This Mac is shared and reachable, so it counts.
+    // the fixture's This Mac provides Spaces, but a machine is not a Space.
     const n = openableCount(FIXTURE_SPACES);
-    expect(n).toBe(remote.length + 1);
+    expect(n).toBe(remote.length);
     expect(container.querySelector(".ambient-tab-count")).toHaveTextContent(String(n));
     expect(container.querySelector(".ambient-tab-word")).toHaveTextContent(n === 1 ? "Space" : "Spaces");
   });

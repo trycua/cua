@@ -75,6 +75,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
   let events: BridgeEvent[];
   let opened: [string, string][];
   let backgrounds: [unknown, string, string | null][];
+  let dropTargets: [unknown, unknown][];
   const pipsOpen = new Map<string, () => void>();
 
   beforeAll(async () => {
@@ -109,6 +110,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     model.createAcceptTimeout = 5;
     opened = [];
     backgrounds = [];
+    dropTargets = [];
     bridge = createBridge({
       model,
       supervisor: null,
@@ -118,6 +120,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ui: {
         openSpace: (id, name) => opened.push([id, name]),
         setBackground: (win, color, appearance) => backgrounds.push([win, color, appearance]),
+        setDropTargets: (win, targets) => dropTargets.push([win, targets]),
         activate: () => {},
         chooseFiles: async () => ["/Users/ada/Desktop/picked.txt"],
         pip: { open: (spec, closed) => pipsOpen.set(`${spec.spaceId}|${spec.key}`, closed), close: (id, key) => pipsOpen.delete(`${id}|${key}`) },
@@ -148,6 +151,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["telemetry.track", { signals: [{ type: "step", step: "app_launched", ok: true }] }],
       ["window.setBackgroundColor", { color: "#16181c" }],
       ["window.setDragRegions", { rects: [{ x: 78, y: 0, width: 400, height: 38 }] }],
+      ["window.setDropTargets", { targets: [{ spaceId: space, x: 20, y: 60, width: 232, height: 180 }] }],
       ["startup.get", {}],
       ["startup.act", { action: "tryAgain" }],
       ["spaces.usage", { spaceId: space }],
@@ -164,14 +168,16 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["clouds.status", {}],
       ["clouds.test", { target: { provider: "aws", region: "us-west-2" } }],
       ["clouds.connect", { target: { provider: "aws", region: "us-west-2" }, makeDefault: false }],
+      ["checklist.get", {}],
+      ["checklist.send", { action: { type: "done", step: "teleport" } }],
       ["session.signOut", {}],
     ];
     const problems: string[] = [];
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; presence: presence-bridge.test.ts; the Windows runtime fix: below.)
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -180,7 +186,12 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const info = (await call("app.info")) as { platform: string; host: string; version: string; methods: string[] };
     expect(info).toMatchObject({ platform: "macos", host: "electron", version: "1.2.3" });
     expect(info.methods[0]).toBe("app.info");
-    expect(info.methods.at(-1)).toBe("relay.usage");
+    expect(info.methods.at(-1)).toBe("spaces.fixRuntime");
+  });
+
+  it("checks spaces.fixRuntime's action, and has no runtime fix off Windows", async () => {
+    await expect(call("spaces.fixRuntime", { action: "reboot" })).rejects.toMatchObject({ code: "bad_args" });
+    await expect(call("spaces.fixRuntime", { action: "start-docker" })).rejects.toMatchObject({ code: "unsupported" });
   });
 
   it("answers New Space's options while starting and once ready", () => {
@@ -214,6 +225,29 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(progress[1]).toMatchObject({ pendingId: "pending:1", bytesTotal: 10 });
     expect(model.spaces.some((s) => s.id === "local:dev")).toBe(true);
     expect(model.spaces.some((s) => s.id === "pending:1")).toBe(false);
+  });
+
+  it("shows a macOS create on another machine downloading, then each step, in the core's words", async () => {
+    const GB = 2 ** 30;
+    const step = (phase: string, bytes?: [number, number, number]) => ({
+      phase,
+      fraction: bytes ? bytes[0] / bytes[1] : undefined,
+      detail: "ghcr.io/trycua/macos:26",
+      bytesDone: bytes ? BigInt(Math.round(bytes[0])) : undefined,
+      bytesTotal: bytes ? BigInt(bytes[1]) : undefined,
+      bytesPerSecond: bytes ? bytes[2] : undefined,
+    });
+    backend.phases = [step("preparing"), step("pulling", [12.4 * GB, 30 * GB, 85 * 2 ** 20]), step("ready")];
+    let release = () => {};
+    backend.hold = new Promise<void>((r) => (release = r));
+    const create = bridge.registry.dispatch({ id: "m", method: "spaces.create", args: { pendingId: "pending:mac", config: { image: "macos", kind: "vm", on: "host:mac-mini" }, os: "macos" } });
+    await until(() => model.spaces.some((s) => s.id === "pending:mac" && s.progress?.transfer != null));
+    const row = model.spaces.find((s) => s.id === "pending:mac")!;
+    expect(row.progress).toMatchObject({ label: "Downloading macOS (first time only)…", transfer: "12.4 of 30.0 GB · 85 MB/s · about 4 min" });
+    expect(row.progress!.permille).toBeGreaterThan(10);
+    expect(row.detail).toBe("Another machine · Downloading macOS (first time only)…");
+    release();
+    await create;
   });
 
   it("refuses a create it cannot run", async () => {
@@ -313,11 +347,31 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
   });
 
+  it("records that the usage notice was seen once the first run leaves Welcome", async () => {
+    telemetry.current = { enabled: true, lockedBy: undefined, noticeShown: false };
+    const before = telemetry.acknowledged;
+    await call("telemetry.track", { signals: [{ type: "step", step: "onboarding_shown", ok: true }, { type: "onboarding-page", page: "welcome", action: "shown", choice: "none" }] });
+    expect(telemetry.acknowledged).toBe(before);
+    await call("telemetry.track", { signals: [{ type: "onboarding-page", page: "welcome", action: "completed", choice: "none" }, { type: "onboarding-page", page: "signin", action: "shown", choice: "none" }] });
+    expect(telemetry.acknowledged).toBe(before + 1);
+    // "Set up later" from Welcome counts too.
+    await call("telemetry.track", { signals: [{ type: "step", step: "onboarding_skipped", ok: true }] });
+    expect(telemetry.acknowledged).toBe(before + 2);
+  });
+
   it("sets the calling window's background, and checks the drag regions", async () => {
     await call("window.setBackgroundColor", { color: "16181C", appearance: "dark" });
     expect(backgrounds).toEqual([["win-1", "#16181c", "dark"]]);
     expect(await code("window.setBackgroundColor", { color: "dark" })).toBe("bad_args");
     expect(await code("window.setDragRegions", { rects: [{ x: 1 }] })).toBe("bad_args");
+  });
+
+  it("hands the calling window's Space tiles to the window drops, checked", async () => {
+    dropTargets.length = 0;
+    await call("window.setDropTargets", { targets: [{ spaceId: "local:aurora", x: 20, y: 60, width: 232, height: 180, extra: 1 }] });
+    expect(dropTargets).toEqual([["win-1", [{ spaceId: "local:aurora", x: 20, y: 60, width: 232, height: 180 }]]]);
+    expect(await code("window.setDropTargets", { targets: [{ spaceId: 4, x: 0, y: 0, width: 1, height: 1 }] })).toBe("bad_args");
+    expect(await code("window.setDropTargets", {})).toBe("bad_args");
   });
 
   it("tells the page when the list changed, once, and not when nothing did", async () => {
@@ -474,9 +528,10 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "spaces.add": { url: "http://studio.local:7400", token: null, name: "studio" },
       "clouds.test": { target: { provider: "aws", region: "us-west-2" } },
       "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
+      "checklist.send": { action: { type: "done", step: "teleport" } },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments.
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

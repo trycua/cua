@@ -10,6 +10,9 @@ import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 const src = (path: string) => fileURLToPath(new URL(`./src/${path}`, import.meta.url));
+// The cua SDK's browser-safe presence model and cursor art, from source, as
+// the shared presence layer (libs/cua/crates/cua-spacesd-html5) imports it.
+const presence = fileURLToPath(new URL("../../libs/cua/typescript/src/spaces/presence.ts", import.meta.url));
 
 export default defineConfig({
   plugins: [
@@ -35,6 +38,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^@\//, replacement: `${src("")}` },
+      { find: /^@trycua\/cua\/spaces\/presence$/, replacement: presence },
     ],
   },
   // Scan every source file up front: routes are code-split, so otherwise their

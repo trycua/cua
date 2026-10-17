@@ -6,23 +6,27 @@
 // SwiftUI host's names (`methods.ts`); this puts them in one table and tells
 // the page when what it shows changed (`cua:event`: `spaces.changed`,
 // `machines.changed`, `keyvault.changed`, `session.changed`, `settings.changed`,
-// `startup.changed`, `spaces.createProgress`). `ipc.ts` carries it over
+// `checklist.changed`, `update.changed`, `startup.changed`, `spaces.createProgress`). `ipc.ts` carries it over
 // Electron's IPC.
 import { aboutMethods } from "./about";
 import { agentKeysMethods } from "./agent-keys";
 import { agentsMethods, agentsSignature } from "./agents";
 import { appMethods } from "./app";
+import { checklistMethods } from "./checklist";
 import { cloudsMethods } from "./clouds";
 import type { BridgeContext } from "./context";
 import { devicesMethods } from "./devices";
 import { filesMethods } from "./files";
 import { BridgeEvents, BridgeRegistry } from "./host";
+import { updatesModel } from "./host-parts";
 import { hostSetupMethods } from "./host-setup";
+import { joinMethods } from "./join-with-code";
 import { keyvaultMethods } from "./keyvault";
 import { hostStatus, machinesMethods } from "./machines";
 import { ELECTRON_METHODS, METHODS } from "./methods";
 import { notificationsMethods } from "./notifications";
 import { onboardingMethods } from "./onboarding";
+import { presenceMethods } from "./presence";
 import { relayUsageMethods } from "./relay-usage";
 import { sessionMethods, sessionState } from "./session";
 import { settingsMethods } from "./settings";
@@ -57,6 +61,7 @@ export const AREAS = [
   spaceDetailMethods,
   filesMethods,
   hostSetupMethods,
+  joinMethods,
   settingsMethods,
   keyvaultMethods,
   windowMethods,
@@ -64,6 +69,8 @@ export const AREAS = [
   streamMethods,
   onboardingMethods,
   relayUsageMethods,
+  checklistMethods,
+  presenceMethods,
 ];
 
 export interface Bridge {
@@ -107,6 +114,9 @@ function followModel(ctx: BridgeContext): () => void {
     "agents.changed": () => agentsSignature(model),
     // The broker's overview, whether an action is running, and the copies dismissed from the notch.
     "keyvault.changed": () => [encode(model.keyvault.overview), model.keyvault.busy, model.keyvault.dismissed],
+    "checklist.changed": () => model.checklist.stored,
+    // Where the updater is: found, downloading, ready.
+    "update.changed": () => updatesModel(ctx).updateState,
   };
   const byChange: Record<string, string> = {
     spaces: "spaces.changed",
@@ -115,6 +125,8 @@ function followModel(ctx: BridgeContext): () => void {
     machines: "machines.changed",
     agents: "agents.changed",
     keyvault: "keyvault.changed",
+    checklist: "checklist.changed",
+    update: "update.changed",
   };
   const last = new Map<string, string>(Object.entries(read).map(([e, f]) => [e, signature(f())]));
   const due = new Set<string>();

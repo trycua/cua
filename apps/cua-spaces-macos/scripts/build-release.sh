@@ -126,7 +126,7 @@ for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
 done
 CARGO_TARGET_DIR="$joined" "$repo/libs/spaces-app-swift/scripts/stage-library.sh"
 
-CUA_APP_ARCHS="$archs" CUA_CLI_BIN="$joined/release/cua-spaces-cli" \
+CUA_APP_FLAVOR=prod CUA_APP_ARCHS="$archs" CUA_CLI_BIN="$joined/release/cua-spaces-cli" \
   "$here/scripts/build-app.sh" release "$out" >/dev/null
 app="$out/Cua Spaces.app"
 [ -x "$app/Contents/MacOS/cua" ] || { echo "$app has no bundled cua CLI" >&2; exit 1; }

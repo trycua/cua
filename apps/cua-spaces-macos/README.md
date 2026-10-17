@@ -51,8 +51,38 @@ cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-lib
 cd ../../apps/cua-spaces-macos
 swift build                      # the package
 scripts/test.sh                  # unit, parity and snapshot tests (swift-testing)
-scripts/build-app.sh release     # .build/app/Cua Spaces.app, ad hoc signed
+scripts/build-app.sh release     # .build/app/Cua Spaces Dev <instance>.app, a dev build (below)
 ```
+
+### Developing alongside the prod app
+
+`scripts/build-app.sh` builds a **dev** app by default, so a local build never
+touches an installed Cua Spaces (stopgap; the full Dev channel is designed in
+CUA-1776). Per instance, where the instance is `CUA_INSTANCE` or the worktree's
+directory name (several dev builds, one per worktree, run at once):
+
+| | Prod | Dev |
+|---|---|---|
+| App | `Cua Spaces.app` | `Cua Spaces Dev <instance>.app` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.macos.dev.<instance>` |
+| Updater | Sparkle feed and key | none (`SUFeedURL`, `SUPublicEDKey` removed) |
+| Cua deployment | prod | staging (`CuaEnv`) |
+| Cua home (sockets, `daemon.json`, locks) | `~/.cua` | `~/.cua-dev/<instance>` (`CuaHome`) |
+| Host service label | `com.trycua.spacesd.host` | `com.trycua.spacesd.host.dev-<instance>` (`CUA_SERVICE_SUFFIX`) |
+
+```sh
+scripts/build-app.sh                  # dev flavour; ends with scripts/check-dev-bundle.sh
+CUA_INSTANCE=feat-x scripts/build-app.sh debug /tmp/spaces-dev
+scripts/run-dev.sh                    # CUA_ENV=staging, CUA_HOME=~/.cua-dev/<instance>
+```
+
+Do not copy a dev app into `/Applications`; run it from the build directory.
+The release path (`scripts/build-release.sh`, CI) sets `CUA_APP_FLAVOR=prod`.
+Not yet separated, by design of the stopgap: `~/.local/bin/cua` (the first-run
+installer), the Lume server port and `~/.lume`, `~/Cua Volume`, the direct
+host ports 3211 and 3212, the Keyvault (an ad hoc dev app is not first party;
+see Keyvault identity), and the Tauri and Electron shells (their `pnpm dev`
+runs are not packaged and have no updater).
 
 `SNAPSHOT_RECORD=1 scripts/test.sh` re-records the snapshot references.
 UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then

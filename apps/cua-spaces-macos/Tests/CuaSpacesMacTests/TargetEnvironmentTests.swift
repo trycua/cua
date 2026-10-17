@@ -25,4 +25,18 @@ struct TargetEnvironmentTests {
         #expect(TargetEnvironment.pinned(env: [:], bundleEnv: "staging", home: "/Users/ada")
             == ["CUA_ENV": "staging", "CUA_HOME": "/Users/ada/.cua/envs/staging"])
     }
+
+    @Test func devBundleGetsItsOwnHomeAndServiceLabel() {
+        let pinned = TargetEnvironment.pinned(
+            env: [:], bundleEnv: "staging", home: "/Users/ada",
+            bundleHome: "~/.cua-dev/feat-x", bundleServiceSuffix: "dev-feat-x")
+        #expect(pinned == ["CUA_ENV": "staging", "CUA_HOME": "/Users/ada/.cua-dev/feat-x", "CUA_SERVICE_SUFFIX": "dev-feat-x"])
+    }
+
+    @Test func devBundleDefaultsYieldToTheEnvironment() {
+        let pinned = TargetEnvironment.pinned(
+            env: ["CUA_HOME": "/tmp/h", "CUA_SERVICE_SUFFIX": "x", "CUA_ENV": "staging"], bundleEnv: "staging",
+            home: "/Users/ada", bundleHome: "~/.cua-dev/feat-x", bundleServiceSuffix: "dev-feat-x")
+        #expect(pinned.isEmpty)
+    }
 }

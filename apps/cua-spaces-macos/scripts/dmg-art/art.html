@@ -50,6 +50,8 @@
     spaces: '<img src="src/spaces-tray-template.svg" style="opacity:.8;mix-blend-mode:multiply">',
     driver: '<img src="src/cua-driver-cursor.svg" style="opacity:.88">',
     lume: '<img src="src/lume-icon-white.svg" style="opacity:.88">',
+    // The app icon's key: the official Cua mark (unaltered), dark ink multiplied into the glaze.
+    cua: '<img src="src/cua-logo-black.svg" style="inset:20%;width:60%;height:60%;opacity:.8;mix-blend-mode:multiply">',
     apps: '<svg viewBox="0 0 100 100" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" opacity=".55"><path d="M58,14L24,78M42,14L76,78M16,60H84M20,86L28,72"/></svg>',
   };
   const TARGET = "product-1";
@@ -136,10 +138,9 @@
   } else if (mode === "icon") {
     Object.assign(stage.style, { width: ICON + "px", height: ICON + "px" });
     const clip = `path('${squircle(ICON, (ICON - TILE) / 2)}')`;
-    stage.innerHTML = `<div style="position:absolute;inset:0;clip-path:${clip};background:#050607;overflow:hidden">
-        <div style="position:absolute;inset:${(ICON - TILE) / 2}px;overflow:hidden">${sky}</div>
-        <div style="position:absolute;inset:0;background:radial-gradient(60% 55% at 50% 42%, rgba(120,170,215,.10), rgba(0,0,0,0) 70%)"></div>
-        ${iconKey((w) => sprite(TARGET, w, "spaces"))}
+    // Slate night: a vertical slate gradient, the key on a soft drop shadow.
+    stage.innerHTML = `<div style="position:absolute;inset:0;clip-path:${clip};background:linear-gradient(#33415a, #121a27);overflow:hidden">
+        <div style="position:absolute;inset:0;filter:drop-shadow(0 26px 28px rgba(0,0,0,.35))">${iconKey((w) => sprite(TARGET, w, "cua"))}</div>
       </div>`;
   } else if (mode === "alias") {
     Object.assign(stage.style, { width: ICON + "px", height: ICON + "px" });

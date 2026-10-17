@@ -126,7 +126,33 @@ pub(crate) struct SemanticNode {
     pub(crate) document_order: usize,
 }
 
+// AX ids are local to a renderer/document, not unique across merged frame trees.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct AxNodeKey<'a> {
+    frame_id: Option<&'a str>,
+    loader_id: Option<&'a str>,
+    target_id: Option<&'a str>,
+    ax_id: &'a str,
+}
+
 impl SemanticNode {
+    fn ax_key<'a>(&'a self, ax_id: &'a str) -> AxNodeKey<'a> {
+        AxNodeKey {
+            frame_id: self
+                .frame
+                .identity
+                .as_ref()
+                .map(|frame| frame.frame_id.as_str()),
+            loader_id: self
+                .frame
+                .identity
+                .as_ref()
+                .map(|frame| frame.loader_id.as_str()),
+            target_id: self.frame.oopif_target_id.as_deref(),
+            ax_id,
+        }
+    }
+
     pub(crate) fn to_ref_entry(&self) -> Option<RefEntry> {
         let backend_node_id = self.backend_node_id?;
         Some(RefEntry {
@@ -1021,10 +1047,10 @@ fn scoped_indices(
     query: Option<&str>,
     scope_backend_node_id: Option<i64>,
 ) -> Vec<usize> {
-    let by_ax_id: HashMap<&str, usize> = nodes
+    let by_ax_id: HashMap<AxNodeKey<'_>, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(idx, node)| (node.ax_id.as_str(), idx))
+        .map(|(idx, node)| (node.ax_key(&node.ax_id), idx))
         .collect();
     let mut allowed = HashSet::new();
     if let Some(scope_backend) = scope_backend_node_id {
@@ -1032,20 +1058,22 @@ fn scoped_indices(
             .iter()
             .find(|node| node.backend_node_id == Some(scope_backend))
         {
-            let mut stack = vec![scope.ax_id.as_str()];
+            let mut stack = vec![scope.ax_key(&scope.ax_id)];
             while let Some(ax_id) = stack.pop() {
-                if !allowed.insert(ax_id.to_owned()) {
+                if !allowed.insert(ax_id) {
                     continue;
                 }
-                if let Some(idx) = by_ax_id.get(ax_id) {
-                    stack.extend(nodes[*idx].child_ax_ids.iter().map(String::as_str));
+                if let Some(idx) = by_ax_id.get(&ax_id) {
+                    let node = &nodes[*idx];
+                    stack.extend(node.child_ax_ids.iter().map(|id| node.ax_key(id)));
                 }
             }
         }
     }
     let query = query.map(|value| value.trim().to_ascii_lowercase());
-    let in_scope =
-        |node: &SemanticNode| scope_backend_node_id.is_none() || allowed.contains(&node.ax_id);
+    let in_scope = |node: &SemanticNode| {
+        scope_backend_node_id.is_none() || allowed.contains(&node.ax_key(&node.ax_id))
+    };
     let exact_match_exists = query.as_ref().is_some_and(|query| {
         !query.is_empty()
             && nodes
@@ -1107,16 +1135,16 @@ fn query_score(node: &SemanticNode, query: &str) -> usize {
 }
 
 fn with_ancestors(nodes: &[SemanticNode], selected: &[usize]) -> HashSet<usize> {
-    let by_ax_id: HashMap<&str, usize> = nodes
+    let by_ax_id: HashMap<AxNodeKey<'_>, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(idx, node)| (node.ax_id.as_str(), idx))
+        .map(|(idx, node)| (node.ax_key(&node.ax_id), idx))
         .collect();
     let mut keep: HashSet<usize> = selected.iter().copied().collect();
     for idx in selected {
         let mut parent = nodes[*idx].parent_ax_id.as_deref();
         while let Some(parent_id) = parent {
-            let Some(parent_idx) = by_ax_id.get(parent_id).copied() else {
+            let Some(parent_idx) = by_ax_id.get(&nodes[*idx].ax_key(parent_id)).copied() else {
                 break;
             };
             if !keep.insert(parent_idx) {
@@ -1129,10 +1157,10 @@ fn with_ancestors(nodes: &[SemanticNode], selected: &[usize]) -> HashSet<usize> 
 }
 
 fn render_outline(nodes: &[SemanticNode], selected: &HashSet<usize>) -> String {
-    let by_ax_id: HashMap<&str, usize> = nodes
+    let by_ax_id: HashMap<AxNodeKey<'_>, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(idx, node)| (node.ax_id.as_str(), idx))
+        .map(|(idx, node)| (node.ax_key(&node.ax_id), idx))
         .collect();
     let mut ordered: Vec<usize> = selected.iter().copied().collect();
     ordered.sort_by_key(|idx| nodes[*idx].document_order);
@@ -1143,11 +1171,15 @@ fn render_outline(nodes: &[SemanticNode], selected: &HashSet<usize>) -> String {
             continue;
         }
         let mut depth = 0;
+        let mut visited = HashSet::from([idx]);
         let mut parent = node.parent_ax_id.as_deref();
         while let Some(parent_id) = parent {
-            let Some(parent_idx) = by_ax_id.get(parent_id).copied() else {
+            let Some(parent_idx) = by_ax_id.get(&node.ax_key(parent_id)).copied() else {
                 break;
             };
+            if !visited.insert(parent_idx) {
+                break;
+            }
             if selected.contains(&parent_idx)
                 && !matches!(nodes[parent_idx].role.as_str(), "rootwebarea" | "webarea")
             {
@@ -1202,10 +1234,133 @@ mod tests {
             vec![BrowserActionKind::Upload]
         );
     }
-    use crate::browser::store::FrameRef;
+    use crate::browser::store::{FrameIdentity, FrameKind, FrameRef};
 
     fn frame() -> FrameRef {
         FrameRef::main_unproven()
+    }
+
+    fn document_in_frame(frame_id: &str, ax: Value) -> SemanticDocument {
+        compose_accessibility_tree(
+            &ax,
+            &DomIndex::default(),
+            &LayoutIndex::default(),
+            &Viewport::default(),
+            FrameRef {
+                kind: if frame_id == "main" {
+                    FrameKind::Main
+                } else {
+                    FrameKind::Oopif
+                },
+                oopif_target_id: (frame_id != "main").then(|| format!("target-{frame_id}")),
+                identity: Some(FrameIdentity {
+                    frame_id: frame_id.into(),
+                    loader_id: format!("loader-{frame_id}"),
+                }),
+            },
+        )
+    }
+
+    #[test]
+    fn colliding_frame_ids_do_not_cross_scope_or_ancestor_boundaries() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"}, "name": {"value": "Main group"},
+                 "backendDOMNodeId": 101, "childIds": ["2"]},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Main button"}, "backendDOMNodeId": 102}
+            ]}),
+        );
+        document.extend(document_in_frame(
+            "child",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"}, "name": {"value": "Child group"},
+                 "backendDOMNodeId": 201, "childIds": ["2"]},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Child button"}, "backendDOMNodeId": 202}
+            ]}),
+        ));
+
+        let scoped = document.page(0, 300, None, Some(101));
+        let mut names: Vec<_> = scoped
+            .selected
+            .iter()
+            .filter_map(|node| node.name.as_deref())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["Main button", "Main group"]);
+        let queried = document.page(0, 300, Some("Main button"), None);
+        assert_eq!(
+            queried.outline,
+            "- group \"Main group\"\n  - button \"Main button\""
+        );
+    }
+
+    #[test]
+    fn dangling_parent_does_not_resolve_in_another_frame() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "ignored": true, "role": {"value": "generic"}},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Main button"}}
+            ]}),
+        );
+        document.extend(document_in_frame(
+            "child",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"}, "name": {"value": "Unrelated group"}}
+            ]}),
+        ));
+        let page = document.page(0, 300, Some("Main button"), None);
+        assert_eq!(page.outline, "- button \"Main button\"");
+    }
+
+    #[test]
+    fn colliding_frame_parent_ids_cannot_form_an_outline_cycle() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "parentId": "2", "role": {"value": "button"},
+                 "name": {"value": "Main button"}},
+                {"nodeId": "2", "ignored": true}
+            ]}),
+        );
+        document.extend(document_in_frame(
+            "child",
+            json!({"nodes": [
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Child button"}},
+                {"nodeId": "1", "ignored": true}
+            ]}),
+        ));
+        let page = document.page(0, 300, None, None);
+        assert_eq!(
+            page.outline,
+            "- button \"Main button\"\n- button \"Child button\""
+        );
+    }
+
+    #[test]
+    fn outline_parent_walk_stops_at_cycles_within_one_frame() {
+        for (parents, expected) in [
+            (["1", "1"], "- button \"First\"\n  - button \"Second\""),
+            (["2", "1"], "  - button \"First\"\n  - button \"Second\""),
+        ] {
+            let document = document_in_frame(
+                "main",
+                json!({"nodes": [
+                    {"nodeId": "1", "parentId": parents[0], "role": {"value": "button"},
+                     "name": {"value": "First"}},
+                    {"nodeId": "2", "parentId": parents[1], "role": {"value": "button"},
+                     "name": {"value": "Second"}}
+                ]}),
+            );
+            let page = document.page(0, 300, None, None);
+            assert_eq!(page.selected_nodes, 2);
+            assert_eq!(page.outline, expected);
+        }
     }
 
     #[test]

@@ -15,7 +15,6 @@ const PRODUCTS: Array<[string, string]> = [
   ['cua-sdk', 'Cua SDK'],
   ['cua-driver', 'Cua Driver'],
   ['spaces', 'Cua Spaces'],
-  ['fleets', 'Cua Fleets'],
   ['cua-bench', 'Cua Bench'],
   ['lume', 'Lume'],
   ['cua-cli', 'Cua CLI'],

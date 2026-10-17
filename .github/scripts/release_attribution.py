@@ -519,6 +519,27 @@ def unresolved_coauthor_identities(
     return sorted(unresolved.values(), key=lambda item: (item["email"], item["sha"]))
 
 
+def is_clean_main_sync(github, repository, sha, parents, main_sha) -> bool:
+    if len(parents) != 2 or not main_sha:
+        return False
+    try:
+        ancestry = github.get(f"repos/{repository}/compare/{parents[1]}...{main_sha}")
+        if ancestry.get("status") not in {"ahead", "identical"}:
+            return False
+        changed_paths = []
+        for parent in parents:
+            files = github.get(f"repos/{repository}/compare/{parent}...{sha}").get("files")
+            if files is None or len(files) >= 300:
+                return False
+            changed_paths.append(
+                {file.get(key) for file in files for key in ("filename", "previous_filename")}
+                - {None}
+            )
+        return changed_paths[0].isdisjoint(changed_paths[1])
+    except (ReleaseError, OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def validate_pr_attribution(
     *,
     repository: str,
@@ -527,6 +548,7 @@ def validate_pr_attribution(
     base_config: Mapping[str, Any],
     identity_changes: Mapping[str, str | None],
     github: GitHubClient,
+    main_sha: str = "",
 ) -> None:
     """Fail closed when preserved human authorship cannot reach a GitHub login.
 
@@ -625,7 +647,9 @@ def validate_pr_attribution(
         # A base synchronization merge imports a parent outside the PR commit set,
         # so it is not salvaged contributor work. Its distinct author must still
         # have explicit coauthor credit elsewhere in the PR.
-        if is_base_sync_merge and distinct_external_author:
+        if is_base_sync_merge and is_clean_main_sync(github, repository, sha, parents, main_sha):
+            pass
+        elif is_base_sync_merge and distinct_external_author:
             if author_login.lower() not in credited_coauthors:
                 trailer = f"Co-authored-by: {author_name} <{author_email}>"
                 early_errors.append(
@@ -1467,6 +1491,7 @@ def validate_pr_command(args: argparse.Namespace) -> None:
         base_config=base_config,
         identity_changes=identity_changes,
         github=client,
+        main_sha=trusted_sha,
     )
     print(f"contributor attribution is merge-ready for pull request #{number}")
 

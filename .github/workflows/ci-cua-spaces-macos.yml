@@ -76,7 +76,8 @@ jobs:
 
   swift:
     name: SwiftUI app (swift test, bundle, XCUITest)
-    needs: core
+    # Runs alongside the Linux core job instead of after it: waiting on it
+    # only added its minutes (and a macOS queue wait) to every PR.
     runs-on: macos-26
     env:
       CARGO_BUILD_JOBS: 4

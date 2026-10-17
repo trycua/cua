@@ -1,0 +1,75 @@
+name: "CI: gate"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
+  merge_group:
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-gate:
+    name: ci-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Wait for every other workflow on the pull request head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -uo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 120; done; return 1; }
+          sha=$PR_SHA
+          if [[ -n "$QUEUE_REF" ]]; then
+            pr=$(grep -oP '/pr-\K[0-9]+' <<<"$QUEUE_REF") || exit 1
+            sha=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha) || exit 1
+          fi
+          runs() {
+            api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=100" \
+              --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and (.event == \"pull_request\" or .event == \"pull_request_target\") and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates\") | not)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
+          }
+          GITHUB_WORKFLOW_ID=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id) || exit 1
+          sleep 90
+          previous=
+          while :; do
+            current=$(runs) || exit 1
+            if [[ -n "$current" && "$current" == "$previous" ]] && ! grep -qvP '\tcompleted$' <<<"$current"; then
+              break
+            fi
+            previous=$current
+            sleep 120
+          done
+          failed=0
+          for workflow in $(cut -f1 <<<"$current" | sort -u); do
+            verdict=skipped
+            name=$(awk -F'\t' -v w="$workflow" '$1 == w {print $3; exit}' <<<"$current")
+            newest=1
+            for run in $(awk -F'\t' -v w="$workflow" '$1 == w {print $2}' <<<"$current" | sort -rn); do
+              conclusion=$(awk -F'\t' -v r="$run" '$2 == r {print $4}' <<<"$current")
+              (( newest )) || [[ "$conclusion" != cancelled ]] || continue
+              newest=0
+              jobs=$(api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
+                --jq '.jobs[] | select(.conclusion != "skipped") | "\(.name)\t\(.conclusion)"') || exit 1
+              if [[ -z "$jobs" ]]; then
+                [[ "$conclusion" =~ ^(success|skipped|neutral)$ ]] && continue
+                jobs="run"$'\t'"$conclusion"
+              fi
+              verdict=pass
+              if grep -vP '\t(success|neutral)$' <<<"$jobs"; then
+                verdict=fail
+                failed=1
+              fi
+              break
+            done
+            echo "$name: $verdict"
+          done
+          exit $failed

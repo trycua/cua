@@ -4,7 +4,8 @@
 //! /proc/<pid>/cmdline is the full command line (NUL-separated).
 
 use std::fs;
-use std::path::Path;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
@@ -107,6 +108,152 @@ pub(crate) fn process_exit_observation(
     }
 }
 
+/// The program a process is running, judged so a desktop updated without a new
+/// login keeps working.
+///
+/// A package update replaces a running program's file while the process keeps
+/// running the old image, now unlinked; the kernel then reports the link as
+/// `<path> (deleted)` and the path names a different file, or none. The running
+/// image is opened once, and its name and metadata both come from that one open
+/// file, so an exec between two reads cannot pair one program's name with
+/// another's owner. The process's start time is read before and after, so a
+/// reused pid cannot mix two processes either.
+///
+/// - Still linked: as before, the file at the reported path is what is judged,
+///   and it must also be the very file the process runs.
+/// - Replaced (no links left): the reported path is gone, so the running image
+///   is judged instead, but only when both the process and the mount the image
+///   lives on are in the driver's own mount namespace. A same-user process in
+///   an unprivileged user namespace can mount a root-owned program under any
+///   name; such a mount is never in the driver's mount table, even when the
+///   program is run from the driver's namespace through a passed descriptor.
+#[derive(Debug)]
+pub(crate) struct RunningExecutable {
+    pub path: PathBuf,
+    /// The process name (`/proc/<pid>/comm`), read inside the same bracket.
+    pub comm: Option<String>,
+    /// `None` when the program cannot be judged; such a program is never a
+    /// system program.
+    pub metadata: Option<fs::Metadata>,
+}
+
+impl RunningExecutable {
+    /// Whether this is the system's own `name`: a process of that name running a
+    /// program of that file name, owned by root and writable by no one else.
+    pub(crate) fn is_system_program(&self, name: &str) -> bool {
+        self.comm.as_deref() == Some(name)
+            && self.path.file_name().and_then(|file| file.to_str()) == Some(name)
+            && self
+                .metadata
+                .as_ref()
+                .is_some_and(|meta| is_system_owned(meta.uid(), meta.mode()))
+    }
+}
+
+/// `None` only when `/proc/<pid>/exe` cannot be read at all; any later failure
+/// gives a program with no metadata, which is never trusted.
+pub(crate) fn running_executable(pid: u32) -> Option<RunningExecutable> {
+    let link = format!("/proc/{pid}/exe");
+    let reported = fs::read_link(&link).ok()?;
+    Some(judge(pid, &link).unwrap_or(RunningExecutable {
+        path: reported,
+        comm: None,
+        metadata: None,
+    }))
+}
+
+fn judge(pid: u32, link: &str) -> Option<RunningExecutable> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let instance = process_instance_id(pid)?;
+    let comm = fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|comm| comm.trim().to_owned());
+    // O_PATH follows the magic link to the running image without reading it.
+    let image = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH)
+        .open(link)
+        .ok()?;
+    let running = image.metadata().ok()?;
+    let reported = fs::read_link(format!("/proc/self/fd/{}", image.as_raw_fd())).ok()?;
+    if process_instance_id(pid)? != instance {
+        return None;
+    }
+    let (path, metadata) = match path_before_replacement(&reported, running.nlink() == 0) {
+        Some(original) => {
+            // The process's namespace is not enough: an executable descriptor
+            // opened in a private namespace can be run from ours. The image's
+            // own mount must be one of ours.
+            if !same_mount_namespace(pid) || !mounted_in_our_namespace(image.as_raw_fd()) {
+                return None;
+            }
+            (original, running)
+        }
+        None => {
+            let at_path = fs::metadata(&reported).ok()?;
+            if (at_path.dev(), at_path.ino()) != (running.dev(), running.ino()) {
+                return None;
+            }
+            (reported, at_path)
+        }
+    };
+    Some(RunningExecutable {
+        path,
+        comm,
+        metadata: Some(metadata),
+    })
+}
+
+/// The original path of a replaced program: `reported` without the kernel's
+/// ` (deleted)` suffix, only when the image really has no links left (a file
+/// actually named `... (deleted)` keeps its name). Works on raw bytes, so a
+/// parent directory that is not UTF-8 does not matter.
+fn path_before_replacement(reported: &Path, unlinked: bool) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let original = reported
+        .as_os_str()
+        .as_bytes()
+        .strip_suffix(b" (deleted)")?;
+    unlinked.then(|| PathBuf::from(std::ffi::OsStr::from_bytes(original)))
+}
+
+/// Whether the mount an open file lives on is in the driver's own mount table.
+fn mounted_in_our_namespace(fd: std::os::fd::RawFd) -> bool {
+    let Some(id) = fs::read_to_string(format!("/proc/self/fdinfo/{fd}"))
+        .ok()
+        .and_then(|info| {
+            info.lines()
+                .find_map(|line| line.strip_prefix("mnt_id:"))
+                .and_then(|id| id.trim().parse::<u64>().ok())
+        })
+    else {
+        return false;
+    };
+    fs::read_to_string("/proc/self/mountinfo").is_ok_and(|table| {
+        table.lines().any(|line| {
+            line.split(' ')
+                .next()
+                .and_then(|first| first.parse::<u64>().ok())
+                == Some(id)
+        })
+    })
+}
+
+fn same_mount_namespace(pid: u32) -> bool {
+    match (
+        fs::read_link(format!("/proc/{pid}/ns/mnt")),
+        fs::read_link("/proc/self/ns/mnt"),
+    ) {
+        (Ok(theirs), Ok(ours)) => theirs == ours,
+        _ => false,
+    }
+}
+
+fn is_system_owned(uid: u32, mode: u32) -> bool {
+    uid == 0 && mode & 0o022 == 0
+}
+
 /// Return all running processes by reading /proc/<pid>/status.
 pub fn list_processes() -> Vec<ProcessInfo> {
     let mut result = Vec::new();
@@ -162,7 +309,472 @@ pub fn list_processes() -> Vec<ProcessInfo> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_replaced_programs_path_loses_the_kernels_deleted_suffix_only_when_unlinked() {
+        use std::os::unix::ffi::OsStrExt;
+        let replaced = PathBuf::from("/usr/bin/gnome-shell (deleted)");
+        assert_eq!(
+            super::path_before_replacement(&replaced, true),
+            Some(PathBuf::from("/usr/bin/gnome-shell"))
+        );
+        // A file really named like this, still linked, keeps its name.
+        assert_eq!(super::path_before_replacement(&replaced, false), None);
+        assert_eq!(
+            super::path_before_replacement(std::path::Path::new("/usr/bin/gnome-shell"), true),
+            None
+        );
+        // A parent directory that is not UTF-8.
+        let raw = std::ffi::OsStr::from_bytes(b"/opt/\xff/gnome-shell (deleted)");
+        assert_eq!(
+            super::path_before_replacement(std::path::Path::new(raw), true),
+            Some(PathBuf::from(std::ffi::OsStr::from_bytes(
+                b"/opt/\xff/gnome-shell"
+            )))
+        );
+    }
+
+    #[test]
+    fn only_root_owned_images_writable_by_no_one_else_are_system_programs() {
+        assert!(super::is_system_owned(0, 0o100755));
+        assert!(super::is_system_owned(0, 0o100555));
+        assert!(!super::is_system_owned(1000, 0o100755));
+        assert!(!super::is_system_owned(0, 0o100775));
+        assert!(!super::is_system_owned(0, 0o100757));
+    }
+
+    /// A copy of `sleep` named `name`, running, whose file has then been
+    /// deleted: what a package update leaves behind for a program still running.
+    pub(crate) struct ReplacedProgram {
+        pub child: std::process::Child,
+        pub path: PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    impl Drop for ReplacedProgram {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// `own_mount_namespace` starts the copy in a new mount namespace; `None`
+    /// when that is not permitted (it needs root, or a run under `unshare -r`).
+    /// Kills and reaps a child when dropped, so a failed assertion or `expect`
+    /// never leaves it running (holding descriptors) under the parallel runner.
+    struct Reaped(std::process::Child);
+
+    impl Drop for Reaped {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    // Every copy of `sleep` runs with argv[0] "sleep": Nix's coreutils is one
+    // multi-call binary that picks the program from argv[0] and exits on
+    // "gnome-shell". The kernel names the process (comm) after the file, so
+    // the process is still called gnome-shell.
+
+    /// `spawn` can return before the child's exec shows in `/proc` (seen on CI
+    /// runners, never on kdesk): wait until the child has left this test binary.
+    fn wait_for_exec(pid: u32) {
+        let ours = std::fs::read_link("/proc/self/exe").expect("our image");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| exe == ours) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "child {pid} never exec'd"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            std::fs::read_link(format!("/proc/{pid}/exe")).is_ok(),
+            "child {pid} exited right after exec"
+        );
+    }
+
+    pub(crate) fn replaced_program(
+        name: &str,
+        own_mount_namespace: bool,
+    ) -> Option<(
+        ReplacedProgram,
+        super::RunningExecutable,
+        super::RunningExecutable,
+    )> {
+        use std::os::unix::process::CommandExt;
+        let sleep = std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|dir| dir.join("sleep"))
+            .find(|candidate| candidate.is_file())
+            .expect("sleep on PATH");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(name);
+        std::fs::copy(&sleep, &path).expect("copy sleep");
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .expect("chmod copy");
+        // A child another test forks while our copy is still open for writing
+        // keeps that descriptor until it execs, and exec then fails with
+        // ETXTBSY; retry briefly instead of racing the parallel runner.
+        let mut attempts = 0;
+        let child = loop {
+            let mut command = std::process::Command::new(&path);
+            command.arg0("sleep");
+            command.arg("30").stdin(std::process::Stdio::null());
+            if own_mount_namespace {
+                unsafe {
+                    command.pre_exec(|| {
+                        if libc::unshare(libc::CLONE_NEWNS) == 0 {
+                            Ok(())
+                        } else {
+                            Err(std::io::Error::last_os_error())
+                        }
+                    });
+                }
+            }
+            match command.spawn() {
+                Ok(child) => break child,
+                Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && attempts < 100 => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) if own_mount_namespace && error.raw_os_error() == Some(libc::EPERM) => {
+                    return None;
+                }
+                Err(error) => panic!("spawn copy: {error}"),
+            }
+        };
+        let program = ReplacedProgram {
+            child,
+            path,
+            _dir: dir,
+        };
+        let pid = program.child.id();
+        wait_for_exec(pid);
+        let before = super::running_executable(pid).expect("running executable");
+        assert_eq!(before.path, program.path);
+        std::fs::remove_file(&program.path).expect("unlink the running program");
+        let after = super::running_executable(pid).expect("running executable after unlink");
+        Some((program, before, after))
+    }
+
+    fn root_owned_copy() -> bool {
+        // The copy is ours and mode 0755: root-owned exactly when we are root,
+        // or appear to be in a user namespace (`unshare -r`).
+        unsafe { libc::geteuid() == 0 }
+    }
+
+    /// Linked, the program is judged by its path, as before; replaced, by the
+    /// image it runs, keeping its original path.
+    #[test]
+    fn a_running_program_whose_file_was_replaced_keeps_its_path_and_image() {
+        use std::os::unix::fs::MetadataExt;
+        let (program, before, after) = replaced_program("gnome-shell", false).expect("spawn");
+        assert_eq!(before.comm.as_deref(), Some("gnome-shell"));
+        assert_eq!(before.is_system_program("gnome-shell"), root_owned_copy());
+        assert_eq!(
+            after.path, program.path,
+            "the deleted suffix must be dropped"
+        );
+        let meta = after.metadata.as_ref().expect("running image metadata");
+        assert_eq!(meta.nlink(), 0);
+        assert_eq!(after.is_system_program("gnome-shell"), root_owned_copy());
+        assert!(!after.is_system_program("kwin_wayland"));
+    }
+
+    /// A replaced program in another mount namespace is never trusted, because
+    /// there a same-user process could mount a root-owned program under any name.
+    #[test]
+    fn a_replaced_program_in_another_mount_namespace_is_never_trusted() {
+        let Some((_program, before, after)) = replaced_program("gnome-shell", true) else {
+            eprintln!("skipped: creating a mount namespace needs root or `unshare -r`");
+            return;
+        };
+        // Still linked, the file at its path is what runs, as before.
+        assert_eq!(before.is_system_program("gnome-shell"), root_owned_copy());
+        assert!(after.metadata.is_none());
+        assert!(!after.is_system_program("gnome-shell"));
+    }
+
+    /// The namespace check on its own: the program is opened in the driver's
+    /// namespace, so its mount is one of ours, but the process that runs it
+    /// (through `/proc/self/fd/N`, named `gnome-shell`) lives in its own mount
+    /// namespace. Once the program is deleted, only the namespace check refuses.
+    #[test]
+    fn a_replaced_program_run_from_another_mount_namespace_is_never_trusted() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::process::CommandExt;
+        let sleep = std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|dir| dir.join("sleep"))
+            .find(|candidate| candidate.is_file())
+            .expect("sleep on PATH");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let program = dir.path().join("program");
+        std::fs::copy(&sleep, &program).expect("copy sleep");
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .expect("chmod copy");
+        let image = std::fs::File::open(&program).expect("open the program in our namespace");
+        let fd = image.as_raw_fd();
+        let alias = dir.path().join("gnome-shell");
+        std::os::unix::fs::symlink(format!("/proc/self/fd/{fd}"), &alias).expect("symlink");
+        let mut attempts = 0;
+        let child = Reaped(loop {
+            let mut command = std::process::Command::new(&alias);
+            command.arg0("sleep");
+            command.arg("30").stdin(std::process::Stdio::null());
+            unsafe {
+                command.pre_exec(move || {
+                    // Keep the descriptor across exec, then leave our namespace.
+                    if libc::fcntl(fd, libc::F_SETFD, 0) != 0
+                        || libc::unshare(libc::CLONE_NEWNS) != 0
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            match command.spawn() {
+                Ok(child) => break child,
+                Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && attempts < 100 => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) if error.raw_os_error() == Some(libc::EPERM) => {
+                    eprintln!("skipped: creating a mount namespace needs root or `unshare -r`");
+                    return;
+                }
+                Err(error) => panic!("spawn: {error}"),
+            }
+        });
+        let pid = child.0.id();
+        wait_for_exec(pid);
+        drop(image);
+        std::fs::remove_file(&program).expect("delete the program");
+        let judged = super::running_executable(pid).expect("running executable");
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).expect("child comm");
+        // Read both namespaces explicitly: a failed read must not pass as "different".
+        let theirs =
+            std::fs::read_link(format!("/proc/{pid}/ns/mnt")).expect("child mount namespace");
+        let ours = std::fs::read_link("/proc/self/ns/mnt").expect("our mount namespace");
+        let exe = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_PATH)
+            .open(format!("/proc/{pid}/exe"))
+            .expect("the child's image");
+        let image_mount_is_ours = super::mounted_in_our_namespace(exe.as_raw_fd());
+        drop(child);
+        assert_eq!(comm.trim(), "gnome-shell");
+        assert_ne!(
+            theirs, ours,
+            "the child must run in its own mount namespace"
+        );
+        assert!(
+            image_mount_is_ours,
+            "the image must come from one of our mounts"
+        );
+        assert!(judged.metadata.is_none());
+        assert!(!judged.is_system_program("gnome-shell"));
+    }
+
+    /// A process that mounts another program over a trusted path in its own
+    /// mount namespace and runs it is judged by what it runs, not by the file
+    /// the driver sees at that path (the old path-only check trusted it).
+    #[test]
+    fn a_program_run_from_behind_a_private_mount_is_judged_by_what_it_runs() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::process::CommandExt;
+        let sleep = std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|dir| dir.join("sleep"))
+            .find(|candidate| candidate.is_file())
+            .expect("sleep on PATH");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let trusted = dir.path().join("gnome-shell");
+        let impostor = dir.path().join("impostor");
+        for path in [&trusted, &impostor] {
+            std::fs::copy(&sleep, path).expect("copy sleep");
+            std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .expect("chmod copy");
+        }
+        let target = CString::new(trusted.as_os_str().as_bytes()).unwrap();
+        let source = CString::new(impostor.as_os_str().as_bytes()).unwrap();
+        let mut attempts = 0;
+        let child = Reaped(loop {
+            let (target, source) = (target.clone(), source.clone());
+            let mut command = std::process::Command::new(&trusted);
+            command.arg0("sleep");
+            command.arg("30").stdin(std::process::Stdio::null());
+            unsafe {
+                command.pre_exec(move || {
+                    let root = b"/\0";
+                    if libc::unshare(libc::CLONE_NEWNS) != 0
+                        || libc::mount(
+                            std::ptr::null(),
+                            root.as_ptr().cast(),
+                            std::ptr::null(),
+                            libc::MS_REC | libc::MS_PRIVATE,
+                            std::ptr::null(),
+                        ) != 0
+                        || libc::mount(
+                            source.as_ptr(),
+                            target.as_ptr(),
+                            std::ptr::null(),
+                            libc::MS_BIND,
+                            std::ptr::null(),
+                        ) != 0
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            match command.spawn() {
+                Ok(child) => break child,
+                Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && attempts < 100 => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) if error.raw_os_error() == Some(libc::EPERM) => {
+                    eprintln!("skipped: private mounts need root or `unshare -r`");
+                    return;
+                }
+                Err(error) => panic!("spawn behind a private mount: {error}"),
+            }
+        });
+        wait_for_exec(child.0.id());
+        let judged = super::running_executable(child.0.id()).expect("running executable");
+        drop(child);
+        assert_eq!(
+            judged.path, trusted,
+            "the kernel reports the mounted-over path"
+        );
+        // The file the driver sees at that path is root-owned here, but it is
+        // not what runs, so it must not be trusted.
+        assert!(judged.metadata.is_none());
+        assert!(!judged.is_system_program("gnome-shell"));
+    }
+
+    /// The reviewer's case: a helper runs a root-owned program from behind its
+    /// private mount, a process in the driver's namespace runs that same file
+    /// through the helper's `/proc/<pid>/exe` (as a passed descriptor would),
+    /// named `gnome-shell`, and the program is then deleted by an update. The
+    /// process is in our namespace, but the image's mount is not.
+    #[test]
+    fn a_replaced_program_run_through_another_namespaces_mount_is_never_trusted() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::process::CommandExt;
+        let sleep = std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|dir| dir.join("sleep"))
+            .find(|candidate| candidate.is_file())
+            .expect("sleep on PATH");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let named = dir.path().join("gnome-shell");
+        let program = dir.path().join("program");
+        for path in [&named, &program] {
+            std::fs::copy(&sleep, path).expect("copy sleep");
+            std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .expect("chmod copy");
+        }
+        let spawn = |command: &mut std::process::Command| {
+            let mut attempts = 0;
+            loop {
+                match command.spawn() {
+                    Ok(child) => return Some(child),
+                    Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && attempts < 100 => {
+                        attempts += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) if error.raw_os_error() == Some(libc::EPERM) => return None,
+                    Err(error) => panic!("spawn: {error}"),
+                }
+            }
+        };
+        let (target, source) = (
+            CString::new(named.as_os_str().as_bytes()).unwrap(),
+            CString::new(program.as_os_str().as_bytes()).unwrap(),
+        );
+        let mut helper = std::process::Command::new(&named);
+        helper.arg0("sleep");
+        helper.arg("30").stdin(std::process::Stdio::null());
+        unsafe {
+            helper.pre_exec(move || {
+                let root = b"/\0";
+                if libc::unshare(libc::CLONE_NEWNS) != 0
+                    || libc::mount(
+                        std::ptr::null(),
+                        root.as_ptr().cast(),
+                        std::ptr::null(),
+                        libc::MS_REC | libc::MS_PRIVATE,
+                        std::ptr::null(),
+                    ) != 0
+                    || libc::mount(
+                        source.as_ptr(),
+                        target.as_ptr(),
+                        std::ptr::null(),
+                        libc::MS_BIND,
+                        std::ptr::null(),
+                    ) != 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let Some(helper) = spawn(&mut helper).map(Reaped) else {
+            eprintln!("skipped: private mounts need root or `unshare -r`");
+            return;
+        };
+        // The runner execs the helper's image; a helper still in this test
+        // binary would make the runner run the test binary instead.
+        wait_for_exec(helper.0.id());
+        let alias_dir = tempfile::tempdir().expect("temp dir");
+        let alias = alias_dir.path().join("gnome-shell");
+        std::os::unix::fs::symlink(format!("/proc/{}/exe", helper.0.id()), &alias)
+            .expect("symlink");
+        let mut runner = std::process::Command::new(&alias);
+        runner.arg0("sleep");
+        runner.arg("30").stdin(std::process::Stdio::null());
+        let runner = Reaped(spawn(&mut runner).expect("run through the helper's mount"));
+        let pid = runner.0.id();
+        wait_for_exec(pid);
+        std::fs::remove_file(&program).expect("delete the program");
+        let judged = super::running_executable(pid).expect("running executable");
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).expect("runner comm");
+        let raw = std::fs::read_link(format!("/proc/{pid}/exe")).expect("runner image");
+        let theirs =
+            std::fs::read_link(format!("/proc/{pid}/ns/mnt")).expect("runner mount namespace");
+        let ours = std::fs::read_link("/proc/self/ns/mnt").expect("our mount namespace");
+        let runner_in_our_namespace = theirs == ours;
+        drop((runner, helper));
+        assert_eq!(comm.trim(), "gnome-shell");
+        assert!(
+            runner_in_our_namespace,
+            "the runner must share the driver's namespace"
+        );
+        assert!(
+            raw.as_os_str()
+                .as_bytes()
+                .ends_with(b"gnome-shell (deleted)"),
+            "the kernel reports the private mount's name: {raw:?}"
+        );
+        assert!(judged.metadata.is_none());
+        assert!(!judged.is_system_program("gnome-shell"));
+    }
+
     #[test]
     fn process_start_time_handles_spaces_in_comm() {
         let mut fields = vec!["S".to_owned()];

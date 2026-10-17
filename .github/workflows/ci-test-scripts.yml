@@ -137,6 +137,9 @@ jobs:
       - name: Test Windows installer daemon cleanup spares its launcher
         shell: powershell
         run: '& ./libs/cua-driver/scripts/tests/install-common-windows-regression.ps1'
+      - name: Test Windows installer cosign verification under Windows PowerShell
+        shell: powershell
+        run: '& ./libs/cua-driver/scripts/tests/install-cosign-verify-windows-regression.ps1'
 
   test:
     runs-on: ubuntu-latest

@@ -289,31 +289,45 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=macos-rust-${{ matrix.arch }}&per_page=20" \
-            --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == "'"$GITHUB_SHA"'" and .workflow_run.id != ('"$GITHUB_RUN_ID"' | tonumber))] | sort_by(.created_at) | last | .workflow_run.id // empty' \
+          # Pin the artifact id, its sha256 digest and the run that produced
+          # it; an artifact without a digest is not trusted.
+          spec="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=macos-rust-${{ matrix.arch }}&per_page=20" \
+            --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == "'"$GITHUB_SHA"'" and .workflow_run.id != ('"$GITHUB_RUN_ID"' | tonumber) and .digest != null)] | sort_by(.created_at) | last | if . == null then empty else "\(.id)\t\(.digest)\t\(.workflow_run.id)" end' \
             || true)"
-          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
-      # A failed or partial download leaves ok=false and falls back to building.
+          echo "spec<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$spec" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          [ -n "$spec" ] && echo "pinned artifact ${spec%%$'\t'*} from run ${spec##*$'\t'}"
+      # A failed download, a digest mismatch or a partial extraction leaves
+      # ok=false and falls back to building.
       - name: Restore the prior run's artifact
         id: restored-check
-        if: steps.prior.outputs.run-id != ''
+        if: steps.prior.outputs.spec != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.prior.outputs.run-id }}
+          SPEC: ${{ steps.prior.outputs.spec }}
         run: |
           ok=true
-          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
-            --name "macos-rust-${{ matrix.arch }}" \
-            --dir "libs/cua/target/${{ matrix.triple }}/release" || ok=false
+          IFS=$'\t' read -r aid digest rid <<< "$SPEC"
+          zip="$RUNNER_TEMP/macos-rust-$aid.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$aid/zip" > "$zip" || ok=false
+          if [ "$ok" = true ] && [ "$(shasum -a 256 "$zip" | cut -d' ' -f1)" != "${digest#sha256:}" ]; then
+            echo "::error::sha256 mismatch on pinned artifact $aid (run $rid)"
+            ok=false
+          fi
+          if [ "$ok" = true ]; then
+            unzip -oq "$zip" -d "libs/cua/target/${{ matrix.triple }}/release" || ok=false
+          fi
           for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
             test -f "libs/cua/target/${{ matrix.triple }}/release/$f" || ok=false
           done
-          # A partial download must not survive into the build's own outputs.
+          # A partial or untrusted artifact must not survive into the build's
+          # own outputs.
           if [ "$ok" = false ]; then
             rm -f "libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib" \
                   "libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli"
           fi
-            echo "prior-run artifact restore: ok=$ok"
+          echo "prior-run artifact restore: ok=$ok"
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
       - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
         uses: dtolnay/rust-toolchain@1.97.1

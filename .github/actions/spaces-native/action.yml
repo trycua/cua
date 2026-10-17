@@ -64,43 +64,70 @@ runs:
     # names cd-cua-spaces.yml's upload-artifact steps use) hands the layer
     # down instead of rebuilding it. Lookups failing or findings missing fall
     # through to the normal build.
-    - name: Find a prior run's artifact
+    # The provenance check: pin the artifact id, its sha256 digest and the
+    # run that produced it, then verify the digest before extracting. An
+    # artifact without a digest, or a byte that fails verification, leaves
+    # ok=false and falls back to building.
+    - name: Find a prior run's artifacts
       id: prior
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         LABEL: ${{ inputs.label }}
+        EXTRA_PATHS: ${{ inputs.extra-paths }}
       run: |
         set -euo pipefail
-        run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=electron-native-$LABEL&per_page=20" \
-          --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == "'"$GITHUB_SHA"'" and .workflow_run.id != ('"$GITHUB_RUN_ID"' | tonumber))] | sort_by(.created_at) | last | .workflow_run.id // empty' \
-          || true)"
-        echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
-    # The extra cache paths ship as their own artifact (darwin-arm64's
-    # `electron-native-darwin-arm64-lib`), named after the same label. A
-    # failed or partial download leaves ok=false and falls back to building.
+        # Emit one "<artifact-id>\t<digest>\t<run-id>\t<dest>" spec per needed
+        # artifact. The extra cache paths ship as their own artifact
+        # (darwin-arm64's `electron-native-darwin-arm64-lib`), named after the
+        # same label and extracted into the directory holding them.
+        emit() {
+          line="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$1&per_page=20" \
+            --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == "'"$GITHUB_SHA"'" and .workflow_run.id != ('"$GITHUB_RUN_ID"' | tonumber) and .digest != null)] | sort_by(.created_at) | last | if . == null then empty else "\(.id)\t\(.digest)\t\(.workflow_run.id)" end' \
+            || true)"
+          [ -n "$line" ] && printf '%s\t%s\n' "$line" "$2"
+        }
+        specs="$(emit "electron-native-$LABEL" "apps/cua-spaces-desktop/native/$LABEL")"
+        if [ -n "${EXTRA_PATHS// /}" ]; then
+          for p in $EXTRA_PATHS; do lib_dir="$(dirname "$p")"; break; done
+          specs="$specs"$'\n'"$(emit "electron-native-$LABEL-lib" "$lib_dir")"
+        fi
+        specs="$(echo "$specs" | grep '\S' || true)"
+        { echo "specs<<EOF"; echo "$specs"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+        echo "$specs" | while IFS=$'\t' read -r aid dig rid dest; do
+          [ -n "$aid" ] && echo "pinned artifact $aid ($dig) from run $rid -> $dest"
+        done
     - name: Restore the prior run's artifacts
       id: restored-check
-      if: steps.prior.outputs.run-id != ''
+      if: steps.prior.outputs.specs != ''
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-        RUN_ID: ${{ steps.prior.outputs.run-id }}
+        SPECS: ${{ steps.prior.outputs.specs }}
         LABEL: ${{ inputs.label }}
         EXTRA_PATHS: ${{ inputs.extra-paths }}
       run: |
         ok=true
+        while IFS=$'\t' read -r aid digest rid dest; do
+          [ -n "${aid:-}" ] || continue
+          zip="$RUNNER_TEMP/cua-prior-$aid.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$aid/zip" > "$zip" || { ok=false; continue; }
+          if [ "$(shasum -a 256 "$zip" | cut -d' ' -f1)" != "${digest#sha256:}" ]; then
+            echo "::error::sha256 mismatch on pinned artifact $aid (run $rid)"
+            ok=false
+            continue
+          fi
+          dest="$GITHUB_WORKSPACE/$dest"
+          mkdir -p "$dest"
+          case "$RUNNER_OS" in
+            Windows) powershell -NoProfile -Command "Expand-Archive -LiteralPath '$zip' -DestinationPath '$dest' -Force" || ok=false ;;
+            *) unzip -oq "$zip" -d "$dest" || ok=false ;;
+          esac
+        done <<< "$SPECS"
         dir="$GITHUB_WORKSPACE/apps/cua-spaces-desktop/native/$LABEL"
-        gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
-          --name "electron-native-$LABEL" --dir "$dir" || ok=false
-        for p in $EXTRA_PATHS; do
-          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
-            --name "electron-native-$LABEL-lib" \
-            --dir "$GITHUB_WORKSPACE/$(dirname "$p")" || ok=false
-          [ -e "$GITHUB_WORKSPACE/$p" ] || ok=false
-        done
         test -n "$(find "$dir" -mindepth 1 -print -quit 2>/dev/null)" || ok=false
+        for p in $EXTRA_PATHS; do [ -e "$GITHUB_WORKSPACE/$p" ] || ok=false; done
         if [ "$ok" = false ]; then
           rm -rf "$dir"
           for p in $EXTRA_PATHS; do rm -f "$GITHUB_WORKSPACE/$p"; done

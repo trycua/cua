@@ -4,7 +4,9 @@
 //! harness can read the target's state back and compare the transports:
 //!
 //! * `--transport skylight` — the `WindowClickDelivery::Background` path, which
-//!   prefers the private `SLEventPostToPid` transport when it resolves.
+//!   selects its transport by target class: a Chromium-class target takes the
+//!   private `SLEventPostToPid` transport, a plain AppKit target takes the
+//!   public pid-post transport with the window-local stamp.
 //! * `--transport public`   — the public pid-post transport
 //!   (`WindowClickDelivery::Foreground` resolves to `MousePostMode::PublicOnly`),
 //!   which stamps the window-local point the public `CGEventSetWindowLocation`

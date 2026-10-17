@@ -372,9 +372,11 @@ extern "C" {
 
 /// Like `click_at_xy` but also targets a specific window. Foreground delivery
 /// uses the supplied window-local point with one public pid post. Background
-/// delivery routes through SkyLight using the screen point; when the private
-/// symbol is unavailable it falls back to a public pid post that stamps the
-/// window-local point (the point public `CGEventSetWindowLocation` requires).
+/// delivery selects its transport by target class (see [`background_transport`]):
+/// Chromium-class targets keep the SkyLight route, which stamps the screen
+/// point and falls back to a public pid post only when the private symbol is
+/// absent; every other target takes the public pid-post transport, which stamps
+/// the window-local point that the public `CGEventSetWindowLocation` requires.
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
@@ -389,9 +391,20 @@ pub fn click_at_xy_with_window_local(
     delivery: WindowClickDelivery,
 ) -> anyhow::Result<()> {
     match delivery {
-        WindowClickDelivery::Background => {
-            click_at_xy_chromium(pid, x, y, wx, wy, wid, count, modifiers)
-        }
+        WindowClickDelivery::Background => match background_transport(&target_bundle_id(pid)) {
+            BackgroundTransport::ChromiumSkyLight => {
+                click_at_xy_chromium(pid, x, y, wx, wy, wid, count, modifiers)
+            }
+            BackgroundTransport::PlainPublicPid => click_at_xy_inner(
+                pid,
+                (x, y),
+                Some((wx, wy)),
+                Some(wid),
+                count,
+                modifiers,
+                MousePostMode::PublicOnly,
+            ),
+        },
         WindowClickDelivery::Foreground => click_at_xy_inner(
             pid,
             (x, y),
@@ -402,6 +415,53 @@ pub fn click_at_xy_with_window_local(
             MousePostMode::PublicOnly,
         ),
     }
+}
+
+/// Which native transport delivers a background window-local click.
+///
+/// The selection is a general, target-class invariant rather than a per-app
+/// special case:
+///
+/// * **Chromium-class targets** (Chrome, Chromium, Brave, Edge, Vivaldi, Opera,
+///   Thorium — the identity set the crate already uses, see
+///   [`crate::tools::is_chromium_identity`]) **require** the SkyLight route:
+///   `SLEventPostToPid` drives the `IOHIDPostEvent` path that tickles
+///   `CGSTickleActivityMonitor` and reaches the `cgAnnotatedSessionEventTap`
+///   their window handler subscribes to, which the public `CGEventPostToPid`
+///   path does not.
+/// * **Every other target** — plain AppKit/Cocoa controls, Catalyst-hosted
+///   non-Chromium views, and unknown or unbundled processes — takes the public
+///   `CGEventPostToPid` transport and stamps the window-local point via
+///   `CGEventSetWindowLocation`.
+///
+/// Measured 2026-10-17 on a backgrounded, pointer-free plain AppKit `NSButton`:
+/// the public transport with the window-local stamp delivers; the SkyLight
+/// transport with a screen-point stamp drops. The rule therefore keeps
+/// Chromium on SkyLight and routes the complement to public.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackgroundTransport {
+    ChromiumSkyLight,
+    PlainPublicPid,
+}
+
+/// Classify a target by bundle id and pick its background-click transport.
+fn background_transport(bundle_id: &str) -> BackgroundTransport {
+    if crate::tools::is_chromium_identity(bundle_id) {
+        BackgroundTransport::ChromiumSkyLight
+    } else {
+        BackgroundTransport::PlainPublicPid
+    }
+}
+
+/// The target's bundle id, or the empty string when unknown. A test seam can
+/// substitute it so the transport selection is exercised without a window
+/// server or a live process.
+fn target_bundle_id(pid: i32) -> String {
+    #[cfg(test)]
+    if let Some(id) = post_sink::target_bundle_id_override() {
+        return id;
+    }
+    crate::apps::bundle_id_for_pid(pid).unwrap_or_default()
 }
 
 /// `screen` is the click point in screen coordinates.
@@ -1883,6 +1943,9 @@ mod post_sink {
 
     struct State {
         skylight_available: bool,
+        /// Substitute for the target's bundle id, so the background-click
+        /// transport selection can be driven without a live process.
+        target_bundle_id: Option<String>,
         posted: Vec<Posted>,
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
@@ -1902,12 +1965,22 @@ mod post_sink {
             STATE.with(|state| {
                 *state.borrow_mut() = Some(State {
                     skylight_available,
+                    target_bundle_id: None,
                     posted: Vec::new(),
                     modifiers: Vec::new(),
                     window_routing: Vec::new(),
                 });
             });
             Self
+        }
+
+        /// Substitute the target's bundle id for transport classification.
+        pub(super) fn set_target_bundle_id(&self, bundle_id: &str) {
+            STATE.with(|state| {
+                if let Some(state) = state.borrow_mut().as_mut() {
+                    state.target_bundle_id = Some(bundle_id.to_owned());
+                }
+            });
         }
 
         /// Shift/control/option/command flags of each posted event. The rest of
@@ -1950,6 +2023,15 @@ mod post_sink {
                 .borrow()
                 .as_ref()
                 .map(|state| state.skylight_available)
+        })
+    }
+
+    pub(super) fn target_bundle_id_override() -> Option<String> {
+        STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .and_then(|state| state.target_bundle_id.clone())
         })
     }
 
@@ -2306,6 +2388,87 @@ mod tests {
         let posted = capture.posted();
         assert_eq!(posted.len(), 5);
         assert!(posted.iter().all(|p| p.route == PostRoute::PublicPid));
+    }
+
+    /// The transport selection is target-class based: a plain AppKit target (or
+    /// any non-Chromium / unknown process) is routed to the public pid-post
+    /// transport, which stamps the window-local point.
+    #[test]
+    fn plain_appkit_target_selects_the_public_pid_transport() {
+        for id in ["", "com.apple.TextEdit", "com.example.cua.fixture"] {
+            assert_eq!(
+                background_transport(id),
+                BackgroundTransport::PlainPublicPid,
+                "{id}"
+            );
+        }
+
+        // The selection reaches the public pipeline end to end: one primer
+        // move plus the down/up pair, all on the public transport.
+        let capture = Capture::start(true);
+        capture.set_target_bundle_id("com.example.cua.fixture");
+        click_at_xy_with_window_local(
+            1,
+            100.0,
+            100.0,
+            10.0,
+            10.0,
+            7,
+            1,
+            &[],
+            WindowClickDelivery::Background,
+        )
+        .unwrap();
+        let posted = capture.posted();
+        assert_eq!(posted.len(), 3);
+        assert!(
+            posted.iter().all(|p| p.route == PostRoute::PublicPid),
+            "{posted:?}"
+        );
+    }
+
+    /// A Chromium-class target keeps the SkyLight route exactly as before: the
+    /// selection changes nothing on that branch.
+    #[test]
+    fn chromium_class_target_keeps_the_skylight_background_route() {
+        for id in [
+            "com.google.Chrome",
+            "org.chromium.Chromium",
+            "com.microsoft.edgemac",
+            "com.brave.Browser",
+            "com.vivaldi.Vivaldi",
+        ] {
+            assert_eq!(
+                background_transport(id),
+                BackgroundTransport::ChromiumSkyLight,
+                "{id}"
+            );
+        }
+
+        let capture = Capture::start(true);
+        capture.set_target_bundle_id("com.google.Chrome");
+        click_at_xy_with_window_local(
+            1,
+            100.0,
+            100.0,
+            10.0,
+            10.0,
+            7,
+            1,
+            &[],
+            WindowClickDelivery::Background,
+        )
+        .unwrap();
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseDown", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseUp", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseDown", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseUp", PostRoute::SkyLight, 0),
+            ]
+        );
     }
 
     #[test]

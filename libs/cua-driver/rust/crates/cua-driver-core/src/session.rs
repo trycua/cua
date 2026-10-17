@@ -1055,7 +1055,9 @@ pub fn forget_suspended_runtime_scope(runtime_scope: &str) -> bool {
         .remove(runtime_scope)
 }
 
-pub(crate) fn public_session_label(session_id: &str) -> &str {
+/// The public label a runtime-namespaced session id carries
+/// (`__cua_runtime_<32 hex>:<label>`), or the id itself when it carries none.
+pub fn public_session_label(session_id: &str) -> &str {
     let Some(rest) = session_id.strip_prefix("__cua_runtime_") else {
         return session_id;
     };

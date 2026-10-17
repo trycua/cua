@@ -37,8 +37,12 @@ const SESSION_CURSOR_FILLS: &[[u8; 4]] = &[
 ///
 /// The anonymous/default cursor keeps the original Cua blue. Named sessions
 /// hash into the former multi-cursor palette so concurrent runs are visually
-/// distinct without accepting an agent-controlled styling argument.
+/// distinct without accepting an agent-controlled styling argument. The pick
+/// uses the session's public label, not the daemon generation the registry
+/// namespaces it with, so a name keeps its colour across daemon restarts and
+/// a host can colour its own UI to match.
 pub fn session_fill_rgba(session_id: &str) -> [u8; 4] {
+    let session_id = cua_driver_core::session::public_session_label(session_id);
     if session_id.is_empty() || session_id == "default" {
         return DEFAULT_CURSOR_FILL;
     }
@@ -264,6 +268,18 @@ mod tests {
         assert_eq!(session_fill_rgba("agent-1"), session_fill_rgba("agent-1"));
         assert_ne!(session_fill_rgba("agent-1"), session_fill_rgba("agent-2"));
         assert_ne!(session_fill_rgba("agent-2"), DEFAULT_CURSOR_FILL);
+    }
+
+    #[test]
+    fn named_session_color_ignores_the_daemon_generation() {
+        let first = "__cua_runtime_0123456789abcdef0123456789abcdef:TABS";
+        let second = "__cua_runtime_fedcba9876543210fedcba9876543210:TABS";
+        assert_eq!(session_fill_rgba(first), session_fill_rgba("TABS"));
+        assert_eq!(session_fill_rgba(second), session_fill_rgba("TABS"));
+        assert_eq!(
+            session_fill_rgba("__cua_runtime_0123456789abcdef0123456789abcdef:agent-2"),
+            session_fill_rgba("agent-2")
+        );
     }
 
     #[test]

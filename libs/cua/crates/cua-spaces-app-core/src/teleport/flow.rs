@@ -704,6 +704,37 @@ fn to_options(s: &PickerState, entry: &CatalogEntry, files: Vec<String>) -> Pick
     }
 }
 
+/// The first app the search shows that can move.
+fn first_enabled(s: &PickerState) -> Option<String> {
+    visible_entries(s)
+        .iter()
+        .find(|x| x.capability != Capability::Unsupported)
+        .map(|x| x.id.clone())
+}
+
+/// Back to the grid with no app open (the sheet's title goes back to
+/// "Teleport an app to …"), as the grid opens fresh: until the catalog is in
+/// (a dropped app opens without it), Loading, which shows the grid once it
+/// arrives. The grid keeps its selection while that is still listed.
+fn back_to_grid(n: &mut PickerState) {
+    n.step = if n.entries.is_some() {
+        Step::Pick
+    } else {
+        Step::Loading
+    };
+    n.plan = None;
+    n.entry = None;
+    n.moves = None;
+    n.sensitive.clear();
+    if n.step == Step::Pick
+        && !visible_entries(n).iter().any(|x| {
+            Some(&x.id) == n.selected_id.as_ref() && x.capability != Capability::Unsupported
+        })
+    {
+        n.selected_id = first_enabled(n);
+    }
+}
+
 /// Every word of `query` in the name, id or bundle id (case-insensitive).
 pub fn search_entries(entries: &[CatalogEntry], query: &str) -> Vec<CatalogEntry> {
     let q = query.to_lowercase();
@@ -1028,6 +1059,7 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
     match e {
         PickerEvent::Loaded { entries } => {
             if s.step != Step::Loading {
+                // Arrived after the grid was left: kept for Back.
                 n.entries = Some(entries.clone());
                 return n;
             }
@@ -1095,6 +1127,8 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
             }
         }
         PickerEvent::Preselect { entry, files } => {
+            // A drop starts the flow afresh: Back shows the whole grid.
+            n.query.clear();
             if entry.capability == Capability::Unsupported {
                 n.step = Step::Error;
                 n.entry = Some(entry.clone());
@@ -1107,7 +1141,7 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 n.error_back = Step::Pick;
                 return n;
             }
-            return to_options(s, entry, files.clone());
+            return to_options(&n, entry, files.clone());
         }
         PickerEvent::Move { moves } => {
             if s.step == Step::Options && s.entry.as_ref().is_some_and(|e| e.moves.contains(moves))
@@ -1318,18 +1352,7 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
             }
         }
         PickerEvent::Back => match s.step {
-            Step::Options => {
-                if s.entries.is_some() {
-                    n.step = Step::Pick;
-                    n.plan = None;
-                    // Back on the grid: no app is open any more (the sheet's
-                    // title goes back to "Teleport an app to …"); the grid
-                    // keeps its selection.
-                    n.entry = None;
-                    n.moves = None;
-                    n.sensitive.clear();
-                }
-            }
+            Step::Options => back_to_grid(&mut n),
             Step::Consent => {
                 n.step = Step::Options;
                 n.plan = None;
@@ -1339,13 +1362,11 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 n.choice = ReviewChoice::default();
             }
             Step::Error => {
-                n.step = s.error_back;
                 n.error = None;
                 n.install_prompt = None;
-                if n.step == Step::Pick {
-                    n.entry = None;
-                    n.moves = None;
-                    n.sensitive.clear();
+                match s.error_back {
+                    Step::Pick | Step::Loading => back_to_grid(&mut n),
+                    back => n.step = back,
                 }
             }
             _ => {}
@@ -1797,6 +1818,95 @@ mod tests {
             relay_unsealed: false,
             json: "{}".into(),
         }
+    }
+
+    fn textedit_entry() -> CatalogEntry {
+        serde_json::from_value(serde_json::json!({
+            "id": "com.apple.TextEdit", "name": "TextEdit", "capability": "unsupported",
+            "moves": [], "reason": "no Linux build in the install manifest", "json": "{}"
+        }))
+        .unwrap()
+    }
+
+    /// CUA-1671: a window dropped on a Space opens the sheet at its app,
+    /// before the catalog is in. Back from that app (refused here) shows the
+    /// whole grid with an empty search, the same as opening it fresh.
+    #[test]
+    fn back_from_a_dropped_app_shows_the_whole_grid() {
+        let chrome = chrome_entry();
+        let catalog = vec![textedit_entry(), chrome.clone()];
+        // Something typed on the Apps tab before the drop does not survive it.
+        let typed = PickerState {
+            query: "zzz".into(),
+            ..initial("dev")
+        };
+        let dropped = reduce(
+            &typed,
+            &PickerEvent::Preselect {
+                entry: textedit_entry(),
+                files: vec![],
+            },
+        );
+        assert_eq!(dropped.step, Step::Error);
+        assert_eq!(dropped.query, "");
+
+        // The catalog arrives under the error: Back is the fresh grid.
+        let loaded = reduce(
+            &dropped,
+            &PickerEvent::Loaded {
+                entries: catalog.clone(),
+            },
+        );
+        assert_eq!(loaded.step, Step::Error);
+        let back = reduce(&loaded, &PickerEvent::Back);
+        assert_eq!(back.step, Step::Pick);
+        assert_eq!(back.query, "");
+        assert_eq!(back.entry, None);
+        assert_eq!(back.error, None);
+        assert_eq!(visible_entries(&back), catalog);
+        assert_eq!(back.selected_id.as_deref(), Some(chrome.id.as_str()));
+        let fresh = reduce(
+            &initial("dev"),
+            &PickerEvent::Loaded {
+                entries: catalog.clone(),
+            },
+        );
+        assert_eq!(back, fresh);
+
+        // Back before the catalog is in waits for it, then shows the grid.
+        let early = reduce(&dropped, &PickerEvent::Back);
+        assert_eq!(early.step, Step::Loading);
+        assert_eq!(early.entry, None);
+        let then = reduce(
+            &early,
+            &PickerEvent::Loaded {
+                entries: catalog.clone(),
+            },
+        );
+        assert_eq!(then.step, Step::Pick);
+        assert_eq!(visible_entries(&then), catalog);
+        assert_eq!(then.selected_id.as_deref(), Some(chrome.id.as_str()));
+
+        // A dropped app that can move: Back from its options does the same.
+        let options = reduce(
+            &initial("dev"),
+            &PickerEvent::Preselect {
+                entry: chrome.clone(),
+                files: vec![],
+            },
+        );
+        assert_eq!(options.step, Step::Options);
+        assert_eq!(reduce(&options, &PickerEvent::Back).step, Step::Loading);
+        let options = reduce(
+            &options,
+            &PickerEvent::Loaded {
+                entries: catalog.clone(),
+            },
+        );
+        let back = reduce(&options, &PickerEvent::Back);
+        assert_eq!(back.step, Step::Pick);
+        assert_eq!(back.entry, None);
+        assert_eq!(visible_entries(&back), catalog);
     }
 
     /// Back from an app's options returns to the grid with no app open, so

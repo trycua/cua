@@ -129,4 +129,26 @@ struct TeleportGridTests {
         await m.activate(tiles[0])
         #expect(streamed == ["w-1"])
     }
+
+    /// CUA-1671: a window dropped on a Space opens the sheet at its app
+    /// before the catalog is in; Back from it is the whole grid, as fresh.
+    @Test func backFromADroppedAppShowsTheWholeGrid() async throws {
+        let fresh = try model()
+        let m = TeleportModel(spaceName: "Aurora", teleport: nil, space: nil, sources: PickerFixture.sources())
+        let textEdit = try #require(try appCatalogEntriesFromJson(json: """
+        [{"id":"com.apple.TextEdit","name":"TextEdit","capability":"unsupported","moves":[],
+          "reason":"no Linux build in the install manifest","json":"{}"}]
+        """).first)
+        m.send(.preselect(entry: textEdit, files: []))
+        #expect(m.state.step == .error)
+        // Back reads the catalog (here a fixture stands in for the SDK's).
+        m.send(.back)
+        #expect(m.state.step == .loading)
+        m.send(.loaded(entries: try PickerFixture.entries()))
+        #expect(m.state.step == .pick)
+        #expect(m.query == "")
+        #expect(m.state.entry == nil)
+        #expect(m.grid == fresh.grid)
+        #expect(!m.grid.sections.flatMap(\.tiles).isEmpty)
+    }
 }

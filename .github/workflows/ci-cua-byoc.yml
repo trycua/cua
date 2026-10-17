@@ -51,6 +51,7 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-byoc
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Format
         run: cargo fmt -p cua-byoc -- --check
       - name: Clippy

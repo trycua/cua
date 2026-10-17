@@ -119,6 +119,7 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sandbox
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 

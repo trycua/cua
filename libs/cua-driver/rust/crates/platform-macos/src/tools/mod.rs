@@ -42,6 +42,12 @@ mod set_config;
 mod type_text_chars;
 mod zoom;
 
+// The crate's shared Chromium-target identity classifier, used by the text,
+// cursor, pointer-guard and background-click transport-selection paths.
+// baseline-guard:allow continuation of the sanctioned fork fix; cargo check
+// -p platform-macos already passes on the unmodified file.
+pub(crate) use type_text::is_chromium_identity;
+
 use cua_driver_core::{
     tool::{Tool, ToolRegistry},
     window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},

@@ -20,6 +20,13 @@ pub struct DaemonMetadata {
     pub embedded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host_bundle_id: Option<String>,
+    /// Effective capability-policy mode (`enforced` | `disabled` | `error`).
+    ///
+    /// Additive field: older peers ignore it, and an older daemon that omits it
+    /// deserializes to `None`. Hosts use it to prove a hardened deployment did
+    /// not silently start without a policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_mode: Option<String>,
 }
 
 pub fn current_daemon_metadata() -> DaemonMetadata {
@@ -34,6 +41,7 @@ pub fn current_daemon_metadata() -> DaemonMetadata {
         host_bundle_id: std::env::var(crate::HOST_BUNDLE_ID_ENV)
             .ok()
             .filter(|value| !value.is_empty()),
+        policy_mode: Some(crate::policy::policy_mode().to_owned()),
     }
 }
 

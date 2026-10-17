@@ -25,7 +25,27 @@ use serde_json::{json, Value};
 #[test]
 fn registered_tool_contracts_match_on_active_backend() {
     let Some(mut driver) = RawDriver::spawn() else {
-        // Binary not built — testkit already printed a skip note.
+        // The testkit skips (returns None) when the platform binary was not
+        // built. That is fine for a headless `cargo test`, but it must never
+        // let this cross-platform schema/risk-class gate quietly pass in CI,
+        // where the binary is expected: the gate is meaningless without it.
+        let binary_required = std::env::var("CUA_DRIVER_REQUIRE_BINARY")
+            .map(|value| value == "1")
+            .unwrap_or(false)
+            || std::env::var("CI")
+                .map(|value| !value.is_empty() && value != "false" && value != "0")
+                .unwrap_or(false);
+        if binary_required {
+            panic!(
+                "schema consistency gate requires the cua-driver binary, but RawDriver::spawn() \
+                 found it was not built. Build `-p cua-driver` before running this test, or unset \
+                 CUA_DRIVER_REQUIRE_BINARY / CI to allow a local skip."
+            );
+        }
+        eprintln!(
+            "[schema_consistency_test] WARNING: cua-driver binary not built; skipping the \
+             cross-platform schema/risk-class gate. Set CUA_DRIVER_REQUIRE_BINARY=1 to fail instead."
+        );
         return;
     };
 

@@ -63,13 +63,34 @@ class EpisodeError(RuntimeError):
 
 
 def reward_of(evaluation: Any) -> Optional[float]:
-    """Scalar reward from an evaluate() result (a number or a list of numbers)."""
+    """Scalar reward from an evaluate() result.
+
+    ``evaluate()`` may return a number, a bool, a numpy scalar, a list of any
+    of those, or a dict carrying its reward under ``"reward"`` (see
+    ``adapters.base.Score``). Lists and nested lists are averaged; anything
+    else yields ``None``.
+    """
     if evaluation is None:
         return None
+    # numpy scalars (``np.bool_``, ``np.int64``, ``np.float32``, ...) are not
+    # instances of bool/int/float, but each exposes ``.item()`` returning the
+    # equivalent Python scalar. Unwrap once before the isinstance checks so a
+    # numpy-typed score does not silently collapse to ``None``.
+    item = getattr(evaluation, "item", None)
+    if callable(item):
+        try:
+            unwrapped = item()
+        except (TypeError, ValueError):
+            # e.g. a multi-element array has no single scalar value
+            unwrapped = evaluation
+        if unwrapped is not evaluation:
+            evaluation = unwrapped
     if isinstance(evaluation, bool):
         return 1.0 if evaluation else 0.0
     if isinstance(evaluation, (int, float)):
         return float(evaluation)
+    if isinstance(evaluation, dict):
+        return reward_of(evaluation["reward"]) if "reward" in evaluation else None
     if isinstance(evaluation, (list, tuple)) and evaluation:
         values = [reward_of(v) for v in evaluation]
         values = [v for v in values if v is not None]

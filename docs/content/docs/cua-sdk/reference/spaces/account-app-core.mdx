@@ -111,6 +111,8 @@ Returned by [`app_relay_usage_view`](#app_relay_usage_view).
 | `plan` | `String` |  | `free`, `teams`, ... |
 | `seats` | `i64` |  | Paid seats. |
 | `members` | [`Vec<AppTeamPersonInput>`](#appteampersoninput-record) |  |  |
+| `payment_failed` | `bool` |  | The team's last payment failed and it is in its grace period. |
+| `payment_failed_until` | `Option<String>` |  | The end of the grace period (RFC 3339), when known. |
 | `invites` | `Vec<String>` |  | Pending invites' emails (only owners and admins can read them). |
 
 ## `AppTeamPersonInput` record

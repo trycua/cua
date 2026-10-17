@@ -32903,6 +32903,14 @@ public struct AppTeamInput: Equatable, Hashable {
      * Pending invites' emails (only owners and admins can read them).
      */
     public var invites: [String]
+    /**
+     * The team's last payment failed and it is in its grace period.
+     */
+    public var paymentFailed: Bool
+    /**
+     * The end of the grace period (RFC 3339), when known.
+     */
+    public var paymentFailedUntil: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -32924,7 +32932,13 @@ public struct AppTeamInput: Equatable, Hashable {
          */seats: Int64, members: [AppTeamPersonInput],
         /**
          * Pending invites' emails (only owners and admins can read them).
-         */invites: [String]) {
+         */invites: [String],
+        /**
+         * The team's last payment failed and it is in its grace period.
+         */paymentFailed: Bool,
+        /**
+         * The end of the grace period (RFC 3339), when known.
+         */paymentFailedUntil: String?) {
         self.id = id
         self.alias = alias
         self.name = name
@@ -32933,6 +32947,8 @@ public struct AppTeamInput: Equatable, Hashable {
         self.seats = seats
         self.members = members
         self.invites = invites
+        self.paymentFailed = paymentFailed
+        self.paymentFailedUntil = paymentFailedUntil
     }
 
 
@@ -32958,7 +32974,9 @@ public struct FfiConverterTypeAppTeamInput: FfiConverterRustBuffer {
                 plan: FfiConverterString.read(from: &buf),
                 seats: FfiConverterInt64.read(from: &buf),
                 members: FfiConverterSequenceTypeAppTeamPersonInput.read(from: &buf),
-                invites: FfiConverterSequenceString.read(from: &buf)
+                invites: FfiConverterSequenceString.read(from: &buf),
+                paymentFailed: FfiConverterBool.read(from: &buf),
+                paymentFailedUntil: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -32971,6 +32989,8 @@ public struct FfiConverterTypeAppTeamInput: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.seats, into: &buf)
         FfiConverterSequenceTypeAppTeamPersonInput.write(value.members, into: &buf)
         FfiConverterSequenceString.write(value.invites, into: &buf)
+        FfiConverterBool.write(value.paymentFailed, into: &buf)
+        FfiConverterOptionString.write(value.paymentFailedUntil, into: &buf)
     }
 }
 

@@ -12,6 +12,21 @@ cleanup() {
 # Install trap for signals
 trap cleanup SIGTERM SIGINT SIGHUP SIGQUIT
 
+# Overlay mode: /golden mounted read-only, /storage starts empty
+if [ -d "/golden" ] && [ -z "$(ls -A /storage 2>/dev/null)" ]; then
+  echo "Overlay mode detected, setting up copy-on-write..."
+  if cp -al /golden/. /storage/ 2>/dev/null; then
+    echo "Overlay setup complete (hard links)."
+  else
+    echo "Hard links not supported, falling back to full copy..."
+    if ! cp -a /golden/. /storage/; then
+      echo "ERROR: overlay copy failed, cannot proceed."
+      exit 1
+    fi
+    echo "Overlay setup complete (full copy)."
+  fi
+fi
+
 # Start the VM in the background
 echo "Starting Ubuntu VM..."
 /usr/bin/tini -s /run/entry.sh &

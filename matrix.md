@@ -1,4 +1,4 @@
-# Hyprland plugin requalification, 2026-10-14T07:00:17Z
+# Hyprland plugin requalification, 2026-10-17T06:55:47Z
 
 CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.
 
@@ -10,9 +10,9 @@ CI requalification of the Cua Hyprland plugin per Hyprland build. Not native cer
 | omarchy-edge | 0.56.2-4 | `89cc2f58bf5a70e9` | main (`b477f0617505`) | pass | pass (20/20) | pass | pass | pass |
 | omarchy-edge | 0.56.2-4 | `89cc2f58bf5a70e9` | main, cua-driver-rs-v0.34.0 (`0dec07dc8358`) | pass | pass (20/20) | pass | pass | pass |
 | omarchy-edge | 0.56.2-4 | `89cc2f58bf5a70e9` | cua-driver-rs-v0.32.0 (`5b3d63841bb6`) | pass | pass (20/20) | pass | pass | pass |
-| omarchy-rc | 0.56.2-2 | `c80eed71005fef40` | main (`b477f0617505`) | pass | pass (20/20) | pass | pass | pass |
-| omarchy-rc | 0.56.2-2 | `c80eed71005fef40` | cua-driver-rs-v0.32.0 (`5b3d63841bb6`) | pass | pass (20/20) | pass | pass | pass |
-| omarchy-rc | 0.56.2-2 | `c80eed71005fef40` | main, cua-driver-rs-v0.34.0 (`0dec07dc8358`) | pass | pass (20/20) | pass | pass | pass |
+| omarchy-rc | 0.56.2-4 | `89cc2f58bf5a70e9` | main (`b477f0617505`) | pass | pass (20/20) | pass | pass | pass |
+| omarchy-rc | 0.56.2-4 | `89cc2f58bf5a70e9` | main, cua-driver-rs-v0.34.0 (`0dec07dc8358`) | pass | pass (20/20) | pass | pass | pass |
+| omarchy-rc | 0.56.2-4 | `89cc2f58bf5a70e9` | cua-driver-rs-v0.32.0 (`5b3d63841bb6`) | pass | pass (20/20) | pass | pass | pass |
 | omarchy-stable | 0.56.2-2 | `c80eed71005fef40` | main (`b477f0617505`) | pass | pass (20/20) | pass | pass | pass |
 | omarchy-stable | 0.56.2-2 | `c80eed71005fef40` | cua-driver-rs-v0.32.0 (`5b3d63841bb6`) | pass | pass (20/20) | pass | pass | pass |
 | omarchy-stable | 0.56.2-2 | `c80eed71005fef40` | main, cua-driver-rs-v0.34.0 (`0dec07dc8358`) | pass | pass (20/20) | pass | pass | pass |
@@ -31,3 +31,5 @@ CI requalification of the Cua Hyprland plugin per Hyprland build. Not native cer
 Upstream Hyprland: [v0.56.2](https://github.com/hyprwm/Hyprland/releases/tag/v0.56.2) (packaged).
 
 Omarchy `cua-hyprland-plugin 0.33.2-3` on omarchy-edge: installable.
+
+Omarchy `cua-hyprland-plugin 0.33.2-3` on omarchy-rc: installable.

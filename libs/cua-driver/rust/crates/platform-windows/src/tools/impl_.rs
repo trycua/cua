@@ -3496,13 +3496,17 @@ impl Tool for ClickTool {
                         3 => "triple-click",
                         _ => "click",
                     };
-                    let closed = !unsafe {
-                        windows::Win32::UI::WindowsAndMessaging::IsWindow(
-                            windows::Win32::Foundation::HWND(hwnd_u as usize as *mut _),
-                        )
-                    }
-                    .as_bool();
-                    let note = if closed { " The window closed." } else { "" };
+                    let target = windows::Win32::Foundation::HWND(hwnd_u as usize as *mut _);
+                    let gone = unsafe {
+                        !windows::Win32::UI::WindowsAndMessaging::IsWindow(target).as_bool()
+                            || !windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(target)
+                                .as_bool()
+                    };
+                    let note = if gone {
+                        " The window closed or hid."
+                    } else {
+                        ""
+                    };
                     ToolResult::text(format!(
                         "✅ Sent {click_word} via SendInput at screen ({sx},{sy}) on HWND 0x{hwnd_u:x} (desktop scope).{note}"
                     ))

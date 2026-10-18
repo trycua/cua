@@ -108,7 +108,7 @@ async def exercise(c: cua.Cua, fx: dict) -> None:
     listing = await sbx.list_with_warnings(None)
     rows = {s.name: s for s in listing.sandboxes}
     assert rows["py-direct"].location == "direct"
-    assert listing.warnings == []  # no Fleet credentials: no cloud, silently
+    assert listing.warnings == []  # Cua Cloud has ended: no cloud, silently
     # Local only: a direct URL is not local.
     assert "py-direct" not in [s.name for s in await sbx.list("local")]
     await sb.delete()
@@ -128,6 +128,42 @@ def test_embedded(fixtures, tmp_path):
     run(exercise(c, fixtures))
 
 
+def _assert_cloud_ended(info):
+    """Cua Cloud has ended (CUA-1854): the one message, as `Unsupported`."""
+    assert isinstance(info.value, cua.CuaError.Unsupported)
+    assert "Cua Cloud has ended" in str(info.value)
+
+
+def test_cloud_creates_fail_with_the_cloud_ended_error(fixtures, tmp_path):
+    # Even with Fleet credentials (the fake API), nothing reaches Fleet.
+    c = cua.embedded(
+        state_dir=str(tmp_path / "sbx"),
+        fleet_from_env=False,
+        fleet=cua.FleetSettings(base_url=fixtures["fleet_base_url"], token=fixtures["fleet_token"]),
+    )
+
+    with pytest.raises(cua.CuaError.Unsupported) as info:
+        c.fleet()
+    _assert_cloud_ended(info)
+
+    async def body():
+        sbx = c.sandboxes()
+        for opts in (
+            cua.SandboxCreateOptions(on="cloud", image="img:test", kind="vm"),
+            cua.SandboxCreateOptions(image="img:test", warm=True),
+            cua.SandboxCreateOptions(image="img:test", cloud=cua.CloudOptions()),
+        ):
+            with pytest.raises(cua.CuaError.Unsupported) as info:
+                await sbx.create(opts)
+            _assert_cloud_ended(info)
+        # Nothing was created, and cloud is not a listed location.
+        assert (await sbx.list_with_warnings("cloud")).sandboxes == []
+        assert "cloud" not in cua.sandbox_locations()
+
+    run(body())
+
+
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854); removed with the Fleet provider")
 def test_embedded_fleet_through_fake_api(fixtures, tmp_path):
     c = cua.embedded(
         state_dir=str(tmp_path / "sbx"),
@@ -157,10 +193,11 @@ def test_embedded_fleet_through_fake_api(fixtures, tmp_path):
     run(body())
 
 
-def test_unconfigured_fleet_is_a_typed_error(tmp_path):
+def test_fleet_fails_with_the_cloud_ended_error(tmp_path):
     c = cua.embedded(state_dir=str(tmp_path), fleet_from_env=False)
-    with pytest.raises(cua.CuaError.ProviderNotConfigured):
+    with pytest.raises(cua.CuaError.Unsupported) as info:
         c.fleet()
+    _assert_cloud_ended(info)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Unix socket")

@@ -373,6 +373,9 @@ impl Cua {
     /// from this process with this SDK's credentials (in daemon mode, from
     /// the environment).
     pub fn fleet(&self) -> Result<Arc<Fleet>> {
+        // Cua Cloud has ended: fails with the "Cua Cloud has ended" message
+        // and never connects. (Doc comment unchanged: it is in the bindings.)
+        Err::<(), _>(CuaError::Unsupported(cua_sandbox_core::CLOUD_ENDED.into()))?;
         let (client, pools) = match &self.backend {
             Backend::Embedded(rt) => (rt.fleet()?.clone(), rt.pools()?.clone()),
             Backend::Daemon(_) => {

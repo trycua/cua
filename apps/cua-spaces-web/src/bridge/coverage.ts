@@ -42,6 +42,7 @@ import { STREAM_COVERAGE } from "./ops/stream";
 import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
 import { PRESENCE_COVERAGE } from "./ops/presence";
+import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
 import { STARTUP_COVERAGE } from "./ops/startup";
 
@@ -135,6 +136,8 @@ export const HOST_COVERAGE = {
   "about.get": { webkit: { methods: ["about.get"] }, tauri: ST["about.get"] },
   "about.set": { webkit: { methods: ["about.set"] }, tauri: ST["about.set"], unsupported: { tauri: "the Tauri updater has one feed and no controls" } },
   "about.checkNow": { webkit: { methods: ["about.checkNow"] }, tauri: ST["about.checkNow"], unsupported: { tauri: "the Tauri updater has one feed and no controls" } },
+  "update.get": { webkit: { methods: ["update.get"] }, tauri: ST["update.get"], unsupported: { tauri: "the Tauri updater has no in-app indicator" } },
+  "update.install": { webkit: { methods: ["update.install"] }, tauri: ST["update.install"], unsupported: { tauri: "the Tauri updater has no in-app indicator" } },
   "experiments.get": { webkit: { methods: ["app.info"] }, tauri: ST["experiments.get"] },
   "experiments.set": { webkit: { methods: ["app.info", "settings.choose"] }, tauri: ST["experiments.set"] },
   "loginItem.get": { webkit: { methods: ["loginItem.get"] }, tauri: ST["loginItem.get"] },
@@ -165,6 +168,7 @@ export const HOST_COVERAGE = {
   ...RELAY_USAGE_COVERAGE,
   ...CHECKLIST_COVERAGE,
   ...PRESENCE_COVERAGE,
+  ...RUNTIME_FIX_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;
 
 /**

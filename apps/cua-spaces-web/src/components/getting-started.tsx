@@ -116,7 +116,7 @@ export function GettingStarted() {
           <p className="mt-0.5 text-xs text-muted-foreground">{view.detail}</p>
         </div>
         <span className="mt-0.5 text-xs tabular-nums text-muted-foreground" data-checklist-count="">
-          {view.progress}
+          {view.progress} done
         </span>
         <Button variant="ghost" size="icon-sm" aria-label={view.closeLabel} onClick={() => dismiss()}>
           <XIcon className="size-3.5 text-muted-foreground" />

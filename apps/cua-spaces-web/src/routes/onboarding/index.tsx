@@ -4,11 +4,24 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 
-import { useFirstSpaceOffers, useOnboarding, useOnboardingVolume, useSession, useSpaces, useThisMachine, type OnboardingHook, type OnboardingView, type SandboxImage } from "@/bridge";
+import {
+  useFirstSpaceOffers,
+  useMachines,
+  useOnboarding,
+  useOnboardingVolume,
+  useSession,
+  useSpaces,
+  useThisMachine,
+  type OnboardingHook,
+  type OnboardingView,
+  type SandboxImage,
+} from "@/bridge";
+import { AddMachineDialog } from "@/components/add-machine-dialog";
 import { CuaLogo } from "@/components/cua-logo";
 import { useAgentsStep, type AgentsStep } from "@/components/volume/use-agents-step";
 import { OsIcon } from "@/components/os-icon";
-import { ModeCard } from "@/components/onboarding-mode";
+import { ExamplePrompts } from "@/components/onboarding-prompts";
+import { ModeCard, ModeContinue, useModeChoice, type ModeChoice } from "@/components/onboarding-mode";
 import { PresentationCards } from "@/components/onboarding-presentation";
 import { pressPrimaryOnReturn } from "@/components/onboarding-keys";
 import { SetUpLater } from "@/components/onboarding-skip";
@@ -18,12 +31,20 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
+import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
 
 export const Route = createFileRoute("/onboarding/")({ component: OnboardingPage });
 
 // The AI agents and Cua Volume cards load when their page shows.
 const AgentsCard = lazy(() => import("@/components/volume/agents-step").then((m) => ({ default: m.AgentsCard })));
 const DriveCardView = lazy(() => import("@/components/volume/drive-card").then((m) => ({ default: m.DriveCardView })));
+
+/** Done's example prompts when the core doesn't send them (`OnboardingView.prompts` is the core's `PROMPTS`). */
+const EXAMPLE_PROMPTS = [
+  "Open a Linux Space and run my test suite in it",
+  "Use my Space's browser to finish the checkout test and show me",
+  "Share this Space with a teammate as a viewer",
+];
 
 /** Sign in is optional: everything local works without an account. */
 const NO_ACCOUNT_NEEDED = "No account needed to start.";
@@ -41,6 +62,25 @@ function OnboardingPage() {
   const { view } = flow;
   useOnboardingVolume(flow);
   const agents = useAgentsStep(view?.step === "agents");
+  // Host setup's form and the choice on This machine, which the footer's Continue shares.
+  const { data: session } = useSession();
+  const host = useThisMachine(session?.identity ?? null);
+  const choice = useModeChoice(flow, view, host);
+
+  // Return with nothing focused (the window just opened, or focus is on the
+  // page itself) presses the primary button too.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (e.target !== document.body && e.target !== document.documentElement) return;
+      const primary = document.querySelector<HTMLButtonElement>("[data-step] [data-onboarding-primary]:not(:disabled)");
+      if (!primary) return;
+      e.preventDefault();
+      primary.click();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const leave = () => {
     flow.skip();
@@ -69,9 +109,9 @@ function OnboardingPage() {
     <div className="relative flex h-full flex-col" data-step={view.step} onKeyDown={pressPrimaryOnReturn}>
       {view.step !== "done" ? <SetUpLater onClick={leave} /> : null}
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-10 py-6">
-        {view.step === "welcome" ? <Welcome flow={flow} view={view} /> : <Columns flow={flow} view={view} agents={agents} />}
+        {view.step === "welcome" ? <Welcome flow={flow} view={view} /> : <Columns flow={flow} view={view} agents={agents} host={host} choice={choice} />}
       </div>
-      <Footer flow={flow} view={view} agents={agents} onFinish={() => void finish()} />
+      <Footer flow={flow} view={view} agents={agents} host={host} choice={choice} onFinish={() => void finish()} />
     </div>
   );
 }
@@ -132,10 +172,21 @@ function Welcome({ flow, view }: { flow: OnboardingHook; view: OnboardingView })
 
 /* ---- Two-column pages --------------------------------------------------------- */
 
-function Columns({ flow, view, agents }: { flow: OnboardingHook; view: OnboardingView; agents: AgentsStep }) {
-  const { data: session } = useSession();
-  // Host setup's form, opened from the host choice on This machine.
-  const host = useThisMachine(session?.identity ?? null);
+type HostSetup = ReturnType<typeof useThisMachine>;
+
+function Columns({
+  flow,
+  view,
+  agents,
+  host,
+  choice,
+}: {
+  flow: OnboardingHook;
+  view: OnboardingView;
+  agents: AgentsStep;
+  host: HostSetup;
+  choice: ModeChoice;
+}) {
   const settingUpHost = view.step === "mode" && host.formView !== null;
   // Leaving the page (Back) leaves the form too.
   const formOpen = host.form !== null;
@@ -177,12 +228,13 @@ function Columns({ flow, view, agents }: { flow: OnboardingHook; view: Onboardin
               </Suspense>
             </Card>
           ) : null}
-          {view.step === "mode" ? <ModeCard flow={flow} view={view} host={host} /> : null}
+          {view.step === "mode" ? <ModeCard flow={flow} view={view} host={host} choice={choice} /> : null}
           {view.step === "done" ? <DoneCard view={view} flow={flow} /> : null}
         </div>
       </div>
       {/* Only hosts need Screen Recording and Accessibility (the core's host setup). */}
-      {settingUpHost && flow.permissions.length > 0 ? <Permissions flow={flow} /> : null}
+      {settingUpHost && (flow.permissions.length > 0 || flow.grantedPermissions.length > 0) ? <Permissions flow={flow} /> : null}
+      {view.step === "done" ? <ExamplePrompts prompts={view.prompts ?? EXAMPLE_PROMPTS} /> : null}
       {view.step === "done" ? <FirstSpace images={flow.images} /> : null}
     </div>
   );
@@ -281,6 +333,14 @@ function Permissions({ flow }: { flow: OnboardingHook }) {
       </h2>
       <p className="mb-3 text-xs text-muted-foreground">macOS asks for each one itself. Cua Spaces can't turn them on for you.</p>
       <Card className="divide-y p-0">
+        {flow.grantedPermissions.map((p) => (
+          <div key={p.id} className="flex items-center justify-between gap-6 px-4 py-3" data-granted="true">
+            <div className="text-[13px]">{p.title}</div>
+            <span className="text-xs text-muted-foreground" aria-label={`${p.title} granted`}>
+              ✓ Granted
+            </span>
+          </div>
+        ))}
         {flow.permissions.map((p) => {
           const url = p.settingsUrl?.startsWith("x-apple.systempreferences:") ? p.settingsUrl : null;
           return (
@@ -340,7 +400,9 @@ function FirstSpace({ images }: { images: SandboxImage[] }) {
   const [started, setStarted] = useState<SandboxImage | null>(null);
   const create = (image: SandboxImage) => {
     setStarted(image);
-    createSpace({ image: image.ref, os: image.os }).catch((e: unknown) => {
+    // The hosts' create needs the kind (Electron and the SwiftUI bridge
+    // reject a config without one), as New Space's plan sends it.
+    createSpace({ image: image.ref, kind: image.variant, os: image.os }).catch((e: unknown) => {
       setStarted(null);
       toast(`Couldn't create ${image.name}`, { description: e instanceof Error ? e.message : String(e) });
     });
@@ -377,13 +439,46 @@ function FirstSpace({ images }: { images: SandboxImage[] }) {
           );
         })}
       </ul>
+      {/* Windows without Docker Desktop: install or start it from here, and the cards follow. */}
+      {images.some((image) => first.blockedReason(image.ref) !== null) ? <RuntimeFixRow /> : null}
+      {/* Nothing runs here (no runtime, virtualization off): another computer can run them. */}
+      {first.known && images.length > 0 && images.every((image) => first.blockedReason(image.ref) !== null) ? <AnotherComputer /> : null}
     </section>
+  );
+}
+
+/** "Or run Spaces on another computer": Add a machine, from the last page. */
+function AnotherComputer() {
+  const [adding, setAdding] = useState(false);
+  const { setupGuide } = useMachines();
+  return (
+    <div data-first-space-elsewhere="" className="mt-3 flex items-center gap-3">
+      <p className="text-xs text-muted-foreground">Or run Spaces on another computer you use: add it here and create Spaces on it from this one.</p>
+      <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+        Add a machine
+      </Button>
+      <AddMachineDialog open={adding} onOpenChange={setAdding} guide={setupGuide} />
+    </div>
   );
 }
 
 /* ---- Footer ---------------------------------------------------------------------- */
 
-function Footer({ flow, view, agents, onFinish }: { flow: OnboardingHook; view: OnboardingView; agents: AgentsStep; onFinish: () => void }) {
+function Footer({
+  flow,
+  view,
+  agents,
+  host,
+  choice,
+  onFinish,
+}: {
+  flow: OnboardingHook;
+  view: OnboardingView;
+  agents: AgentsStep;
+  host: HostSetup;
+  choice: ModeChoice;
+  onFinish: () => void;
+}) {
   return (
     <div className="relative flex h-16 shrink-0 items-center px-6 pb-2">
       <div className="z-10">
@@ -394,7 +489,7 @@ function Footer({ flow, view, agents, onFinish }: { flow: OnboardingHook; view: 
         ) : null}
       </div>
       <Dots view={view} />
-      <div className="z-10 ml-auto flex items-center gap-2">{view.step !== "welcome" ? <Trailing flow={flow} view={view} agents={agents} onFinish={onFinish} /> : null}</div>
+      <div className="z-10 ml-auto flex items-center gap-2">{view.step !== "welcome" ? <Trailing flow={flow} view={view} agents={agents} host={host} choice={choice} onFinish={onFinish} /> : null}</div>
     </div>
   );
 }
@@ -417,7 +512,21 @@ function Dots({ view }: { view: OnboardingView }) {
   );
 }
 
-function Trailing({ flow, view, agents, onFinish }: { flow: OnboardingHook; view: OnboardingView; agents: AgentsStep; onFinish: () => void }) {
+function Trailing({
+  flow,
+  view,
+  agents,
+  host,
+  choice,
+  onFinish,
+}: {
+  flow: OnboardingHook;
+  view: OnboardingView;
+  agents: AgentsStep;
+  host: HostSetup;
+  choice: ModeChoice;
+  onFinish: () => void;
+}) {
   const { data: session, signIn } = useSession();
   const skip = view.canSkip ? (
     <Button variant="ghost" size="lg" onClick={() => flow.send({ type: "signin-done" })}>
@@ -488,8 +597,8 @@ function Trailing({ flow, view, agents, onFinish }: { flow: OnboardingHook; view
         </Button>
       );
     case "mode":
-      // The choices are the buttons.
-      return null;
+      // The cards select; Continue (and Return) moves on.
+      return <ModeContinue view={view} host={host} choice={choice} />;
     case "done":
       return (
         <Button size="lg" data-onboarding-primary="" onClick={onFinish}>

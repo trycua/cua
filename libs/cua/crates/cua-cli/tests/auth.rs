@@ -189,6 +189,7 @@ async fn whoami_reports_client_credentials_and_workload_tokens() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_user_api_keys() {
     let fake = FakeFleet::new();
     let fleet = cua_daemon::fixtures::start_fleet_http(fake.clone()).await;

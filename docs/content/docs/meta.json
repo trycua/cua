@@ -7,7 +7,6 @@
     "cua-sdk",
     "cua-driver",
     "spaces",
-    "fleets",
     "cua-bench",
     "lume",
     "cua-cli"

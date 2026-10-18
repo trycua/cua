@@ -410,7 +410,10 @@ struct RelayAllowanceBanner: View {
                 Text(notice.text).lineLimit(2).foregroundStyle(.secondary).help(notice.text)
                 Spacer(minLength: 8)
                 if let url = notice.upgradeUrl.flatMap(URL.init(string:)) {
-                    Button(notice.upgrade) { openURL(url) }
+                    Button(notice.upgrade) {
+                        devices.recordUpsell("upsell_meter_click")
+                        openURL(url)
+                    }
                         .controlSize(.small)
                         .accessibilityIdentifier("relay-upgrade")
                 }
@@ -430,13 +433,18 @@ struct RelayAllowanceBanner: View {
             .background(.bar)
             .overlay(alignment: .bottom) { Divider() }
             .accessibilityIdentifier("relay-allowance")
+            .onAppear { devices.recordUpsell("upsell_meter_shown") }
         }
     }
 }
 
-/// Settings → Account: the relay allowance this month, where it applies.
+/// Settings → Account: the plan and the relay allowance this month, where
+/// it applies. The plan card is always there, never a prompt: Free offers
+/// Pro and a team; each button opens its checkout on the account app.
 struct RelayUsageRow: View {
     let view: AppRelayUsageView
+    var onPlanLink: () -> Void = {}
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         LabeledContent {
@@ -446,5 +454,25 @@ struct RelayUsageRow: View {
             Text(view.line)
         }
         .accessibilityIdentifier("settings-relay-usage")
+        LabeledContent {
+            HStack {
+                if let link = view.planCard.secondary { planButton(link, id: "plan-secondary") }
+                if let link = view.planCard.primary { planButton(link, id: "plan-primary") }
+            }
+        } label: {
+            Text(view.planCard.label)
+            Text(view.planCard.detail)
+        }
+        .accessibilityIdentifier("settings-plan-card")
+    }
+
+    private func planButton(_ link: AppPlanLink, id: String) -> some View {
+        Button(link.label) {
+            guard let url = URL(string: link.url) else { return }
+            onPlanLink()
+            openURL(url)
+        }
+        .controlSize(.small)
+        .accessibilityIdentifier(id)
     }
 }

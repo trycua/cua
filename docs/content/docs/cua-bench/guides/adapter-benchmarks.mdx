@@ -90,9 +90,8 @@ uv run samples/python/3_osworld_fleet.py                  # OSWORLD_LOCAL=1 boot
 - Downscale the 1920x1080 screenshot to about 1280 px for the model and scale
   clicks back.
 - Local VM guests have outbound network by default (`network="none"` turns it off).
-- A cloud sandbox that never becomes ready: the probe is TCP on `5000`, so the
-  image is still pulling or the guest has no DHCP lease. `cua fleet pools ls`
-  shows its capacity.
+- A sandbox that never becomes ready: the probe is TCP on `5000`, so the
+  image is still pulling or the guest has no DHCP lease.
 
 ## bench-web
 

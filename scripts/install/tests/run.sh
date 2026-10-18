@@ -54,7 +54,18 @@ make_cua() { # dir platform
     cat >"$1/cua" <<EOF
 #!/bin/sh
 if [ "\${1:-}" = --version ]; then echo "cua $version ($2)"; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "host setup --help" ]; then
+    echo "Usage: cua host setup [OPTIONS]"
+    [ -n "\${CUA_FAKE_NO_PAIR:-}" ] || echo "      --pair <CODE>  add this machine with a code"
+    exit 0
+fi
 echo "\$*" >>"\${CUA_FAKE_LOG:-/dev/null}"
+if [ "\$*" = "runtime setup qemu" ]; then
+    [ -z "\${CUA_FAKE_QEMU_DIR:-}" ] || for t in qemu-img qemu-system-\$(uname -m); do
+        printf '#!/bin/sh\n' >"\$CUA_FAKE_QEMU_DIR/\$t" && chmod +x "\$CUA_FAKE_QEMU_DIR/\$t"
+    done
+    exit "\${CUA_FAKE_RUNTIME_STATUS:-0}"
+fi
 EOF
     chmod +x "$1/cua"
 }
@@ -123,6 +134,16 @@ chmod +x "$bin/cua-driver"
 EOF
 driver_url="$base/driver/install.sh"
 
+mkdir -p "$work/qemu" "$work/host-bin"
+for f in $(printf '%s' "$PATH" | tr ':' '\n' | sed 's#$#/*#'); do
+    case "${f##*/}" in qemu* | docker) continue ;; esac
+    [ -x "$f" ] && [ ! -e "$work/host-bin/${f##*/}" ] && ln -s "$f" "$work/host-bin/${f##*/}"
+done
+host_path="$work/host-bin"
+for t in qemu-img "qemu-system-$(uname -m)"; do printf '#!/bin/sh\n' >"$work/qemu/$t"; done
+chmod +x "$work/qemu"/*
+PATH="$work/qemu:$PATH"
+
 # ------------------------------------------------------------ harness
 
 # inst [ENV=VAL ...] -- ARGS: run install.sh with a fresh fake HOME.
@@ -162,6 +183,18 @@ check "linux x64: uses the rolling latest manifest" has_out "cua-install-latest/
 check "non-interactive: prints next steps, no login" sh -c "grep -q 'cua auth login' '$work/out' && [ ! -e '$home/cua.log' ]"
 check "prefix bin not on PATH: prints a hint" has_out "is not on your PATH"
 check "no --modify-path: profile untouched" absent "$home/.profile"
+
+check "VM runtime present: no runtime setup" sh -c "grep -q 'VM runtime ok' '$work/out' && ! grep -q 'runtime setup' '$home/cua.log' 2>/dev/null"
+
+mkdir -p "$work/qemu-r1"
+inst PATH="$work/qemu-r1:$host_path" CUA_FAKE_QEMU_DIR="$work/qemu-r1" -- --yes --no-onboarding --prefix "$work/r1"
+check "VM runtime missing, setup succeeds: installs the app" sh -c "[ $status = 0 ] && grep -qx 'runtime setup qemu' '$home/cua.log' && [ -x '$work/r1/bin/cua-spaces' ]"
+inst PATH="$host_path" CUA_FAKE_RUNTIME_STATUS=1 -- --yes --no-onboarding --prefix "$work/r2"
+check "VM runtime setup fails: exits with the fix before the app download" sh -c "[ $status != 0 ] && grep -q 'needs QEMU or Docker; install QEMU with: sudo .* install -y qemu' '$work/out' && ! grep -q 'cua-spaces-$version' '$work/out' && [ ! -e '$work/r2/bin/cua-spaces' ]"
+inst PATH="$host_path" -- --yes --no-onboarding --prefix "$work/r3"
+check "VM runtime setup leaves QEMU missing: exits with the fix" sh -c "[ $status != 0 ] && grep -q 'needs QEMU or Docker' '$work/out' && [ ! -e '$work/r3/bin/cua-spaces' ]"
+inst PATH="$host_path" -- --dry-run --no-onboarding --prefix "$work/r4"
+check "VM runtime missing, --dry-run: prints the setup only" sh -c "[ $status = 0 ] && grep -q 'dry-run. $work/r4/bin/cua runtime setup qemu' '$work/out' && [ ! -e '$work/r4' ] && [ ! -e '$home/cua.log' ]"
 
 # ------------------------------------------------------------ selection
 
@@ -212,6 +245,9 @@ check "--only host: runs 'cua host setup', no app" sh -c "[ $status = 0 ] && gre
 
 inst -- --pair k7qm-4xpb-2rhd --prefix "$work/pr1"
 check "--pair: runs 'cua host setup --pair', no sign-in, no checklist" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair k7qm-4xpb-2rhd' '$home/cua.log' && ! grep -q 'auth login' '$home/cua.log' && grep -q 'This machine is added' '$work/out'"
+
+inst CUA_FAKE_NO_PAIR=1 -- --pair K7QM-4XPB-2RHD --prefix "$work/pr0"
+check "--pair: a CLI without 'host setup --pair' fails early with a clear message" sh -c "[ $status != 0 ] && grep -q \"no 'cua host setup --pair'\" '$work/out' && ! grep -q 'host setup --pair' '$home/cua.log' 2>/dev/null"
 
 inst -- --pair K7QM-4XPB-2RHD --relay https://relay.example.com --cli-only --prefix "$work/pr2"
 check "--pair --relay --cli-only: passes the relay on" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com' '$home/cua.log'"
@@ -391,6 +427,57 @@ if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then
     check "root + apt: the app is the .deb" sh -c "[ $status = 0 ] && grep -q 'apt-get install' '$work/out' && grep -q 'cua-spaces-$version-linux-x64.deb' '$work/out'"
 fi
 
+# PATH: not on PATH prints one exact line for the detected shell; never edits
+# the profile without consent; --no-modify-path stays silent about editing.
+inst SHELL=/bin/zsh -- --yes --cli-only --prefix "$work/pp1"
+check "PATH hint: exact one-liner for the user's shell (.zshrc)" sh -c "grep -qF \"echo 'export PATH=\\\"$work/pp1/bin:\\\$PATH\\\"' >> $home/.zshrc\" '$work/out' && [ ! -e '$home/.zshrc' ]"
+inst -- --yes --cli-only --no-modify-path --prefix "$work/pp2"
+check "--no-modify-path: profile untouched, hint printed" sh -c "[ $status = 0 ] && grep -q 'is not on your PATH' '$work/out' && [ ! -e '$home/.profile' ]"
+inst -- --yes --cli-only --modify-path --no-modify-path --prefix "$work/pp3"
+check "--no-modify-path wins over --modify-path" absent "$home/.profile"
+inst -- --pair K7QM-4XPB-2RHD --prefix "$work/pp4"
+check "--pair runs the CLI by absolute path even when it is not on PATH" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD' '$home/cua.log' && grep -q 'This machine is added' '$work/out'"
+
+# --pair on a computer that already has Cua: reuse the cua and the app that are
+# there instead of downloading them again.
+seed="$work/seed/bin"
+make_cua "$seed" linux-x64
+sed -i.bak "s/cua $version/cua 9.9.9/" "$seed/cua" && rm -f "$seed/cua.bak"
+printf '#!/bin/sh\necho existing cua-spaces\n' >"$seed/cua-spaces"
+chmod +x "$seed/cua-spaces"
+inst PATH="$seed:$PATH" -- --pair K7QM-4XPB-2RHD
+check "--pair with Cua installed: uses it, no download" sh -c "[ $status = 0 ] && grep -q 'already installed at $seed/cua' '$work/out' && grep -qx 'host setup --pair K7QM-4XPB-2RHD' '$home/cua.log' && ! grep -q 'manifest' '$work/out' && [ ! -e '$home/.local/bin/cua' ]"
+check "--pair with the app installed: keeps it, no AppImage" sh -c "grep -q 'Cua Spaces is already installed' '$work/out' && [ ! -e '$home/.local/bin/cua-spaces' ]"
+# Installing anyway writes the default bin dir (/usr/local/bin as root): only as a user.
+if [ "$(id -u)" != 0 ]; then
+    inst PATH="$seed:$PATH" CUA_INSTALL_REINSTALL=1 -- --pair K7QM-4XPB-2RHD
+    check "--pair with CUA_INSTALL_REINSTALL=1: installs again" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ] && '$home/.local/bin/cua' --version | grep -q $version"
+    inst PATH="$seed:$PATH" -- --pair K7QM-4XPB-2RHD --version "$version"
+    check "--pair --version: installs that release" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ]"
+    inst PATH="$seed:$PATH" -- --yes --cli-only --prefix "$work/rp1"
+    check "without --pair an installed cua is not reused" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$work/rp1/bin/cua' ]"
+    # (A real cua at one of the fixed places would be reused: skip there.)
+    if [ ! -x /usr/local/bin/cua ] && [ ! -x "/Applications/Cua Spaces.app/Contents/MacOS/cua" ] && [ ! -x "$HOME/Applications/Cua Spaces.app/Contents/MacOS/cua" ]; then
+        old="$work/seed-old/bin"
+        make_cua "$old" linux-x64
+        sed -i.bak 's/--pair <CODE>  add this machine with a code/--no-such-flag/' "$old/cua" && rm -f "$old/cua.bak"
+        inst PATH="$old:$PATH" -- --pair K7QM-4XPB-2RHD
+        check "--pair with an old cua (no --pair): installs the current one" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ]"
+    fi
+fi
+
+# One quiet info line when signatures cannot be checked (neither minisign nor cosign).
+sig2="$release/sig2"
+mkdir -p "$sig2"
+cp "$tag_dir"/cua-cli-* "$tag_dir"/cua-spaces-"$version"-linux-x64.AppImage "$sig2/"
+for f in "$sig2"/cua-cli-*.tar.gz "$sig2"/*.AppImage; do printf 'sig\n' >"$f.minisig"; done
+python3 "$manifest_tool" --component cli --version "$version" --dir "$sig2" --out "$sig2/cli.json"
+python3 "$manifest_tool" --component app --version "$version" --dir "$sig2" --merge "$sig2/cli.json" --out "$sig2/release-artifacts.json"
+inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg1"
+check "unverifiable signatures: one info line, no warning" sh -c "[ $status = 0 ] && [ \"\$(grep -c 'release signatures were not checked' '$work/out')\" = 1 ] && ! grep -qi 'warning.*minisign' '$work/out'"
+inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg2"
+check "--require-signature still fails without minisign or cosign" sh -c "[ $status != 0 ] && grep -q 'no verifiable signature' '$work/out'"
+
 inst -- --help
 check "--help prints usage" sh -c "[ $status = 0 ] && grep -q -- '--cli-only' '$work/out'"
 
@@ -407,6 +494,29 @@ if script --version 2>/dev/null | grep -q util-linux; then
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
     check "interactive + --no-onboarding: no login" absent "$home/cua2.log"
 
+    # PATH prompt on a terminal: Enter adds it to the profile, n leaves it.
+    # `script` runs its command through $SHELL, so zsh (absent from the CI
+    # containers) is only set inside the command, never as the outer shell.
+    if command -v timeout >/dev/null 2>&1; then
+        pty_path() { # KEYS PREFIX
+            home="$work/home.pty.$RANDOM_SEQ"
+            RANDOM_SEQ=$((RANDOM_SEQ + 1))
+            mkdir -p "$home"
+            (
+                sleep 2
+                printf '%b' "$1"
+                sleep 2
+            ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" \
+                CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
+                timeout 60 script -qec "env SHELL=/bin/zsh $sh_bin '$installer' --cli-only --no-onboarding --prefix '$2'" /dev/null >"$work/out" 2>&1
+            status=$?
+        }
+        pty_path '\r\r' "$work/pt1"
+        check "PATH prompt: Enter adds the bin dir to .zshrc" sh -c "[ $status = 0 ] && grep -q '$work/pt1/bin' '$home/.zshrc' && grep -q 'Add .* to PATH' '$work/out'"
+        pty_path '\rn\r' "$work/pt2"
+        check "PATH prompt: n leaves the profile alone and prints the one-liner" sh -c "[ $status = 0 ] && [ ! -e '$home/.zshrc' ] && grep -q 'is not on your PATH' '$work/out'"
+    fi
+
     # The checklist, driven through a pty. Keys arrive after the prompt shows.
     # tty_inst KEYS ARGS...: run install.sh in a pty with a fresh HOME.
     tty_inst() {
@@ -422,7 +532,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
         ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh TERM="${tty_term:-xterm}" CUA_HOME="$home/.cua" \
             CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
             CUA_INSTALL_DRIVER_URL="$driver_url" \
-            timeout 60 script -qec "$sh_bin '$installer' --no-onboarding $*" /dev/null >"$work/out" 2>&1
+            timeout 60 script -qec "$sh_bin '$installer' --no-onboarding --no-modify-path $*" /dev/null >"$work/out" 2>&1
         status=$?
     }
     logged() { grep -q -- "$1" "$home/cua.log" 2>/dev/null; }

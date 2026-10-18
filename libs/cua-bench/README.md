@@ -1,6 +1,8 @@
 # cua-bench
 
-Run computer-use benchmark datasets on local and cloud sandboxes.
+Run computer-use benchmark datasets on local sandboxes.
+
+Cua Cloud has ended; `--on cloud` now fails with a pointer to [the notice](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
 
 **[Documentation](https://cua.ai/docs/cuabench)** - Installation, guides, and API reference.
 
@@ -20,12 +22,12 @@ once into `~/.cua/cbregistry`. `CUA_BENCH_REGISTRY` points at another index.
 
 ## Running tasks
 
-One command runs a task or a dataset on this machine or in the cloud. There is no pool or
+One command runs a task or a dataset on this machine. There is no pool or
 provider to set up.
 
 ```bash
 cb run example_tasks/hello_file_env                   # local gVisor container (default)
-cb run datasets/cua-bench-basic -j 8 --on cloud       # 8 at a time on cua cloud
+cb run datasets/cua-bench-basic -j 8                  # 8 at a time, locally
 cb run my_task --agent cua-agent --model anthropic/claude-sonnet-4-20250514
 cb run my_task --dry-run                              # what would run, nothing starts
 ```
@@ -36,9 +38,9 @@ dataset (every task and variant). It runs in the foreground with per-variant sta
 
 | Flag | Meaning |
 | --- | --- |
-| `--on local\|cloud` | Where. `local`: sandboxes on this machine through the cua SDK. `cloud`: managed Fleet pools. Default: `CUA_DEFAULT_ON`, then `cua config set default.on`, then `local`. |
+| `--on local` | Where. `local`: sandboxes on this machine through the cua SDK. `cloud` is removed (Cua Cloud has ended). Default: `CUA_DEFAULT_ON`, then `cua config set default.on`, then `local`. |
 | `--kind auto\|container\|vm` | What kind. `auto` (default): Linux runs as a container unless the task or the image's variant index says VM; Windows, macOS and Android are VM-only. Default: `CUA_DEFAULT_KIND`, then `default.kind`. |
-| `--runtime auto\|gvisor\|runc\|qemu\|lume\|kubevirt` | Which engine, and it implies the kind. Local containers: `gvisor`, `runc`; local VMs: `qemu`, `lume`; cloud: `gvisor` (containers), `kubevirt` (VMs). `auto` (default) lets the SDK pick. A combination that does not exist is an error listing the valid values. Default: `CUA_DEFAULT_RUNTIME`, then `default.runtime` (skipped for a task it does not fit). |
+| `--runtime auto\|gvisor\|runc\|qemu\|lume\|kubevirt` | Which engine, and it implies the kind. Local containers: `gvisor`, `runc`; local VMs: `qemu`, `lume`. `auto` (default) lets the SDK pick. A combination that does not exist is an error listing the valid values. Default: `CUA_DEFAULT_RUNTIME`, then `default.runtime` (skipped for a task it does not fit). |
 | `--image REF` | Image for every task: an OS alias (`linux`, `windows`, `macos:tahoe`), `ghcr.io/trycua/<os>`, any registry ref or a digest, or `pool:<name>` to claim from an existing Fleet pool (`fleet:<name>` is a deprecated alias). Otherwise the task's `setup_config.image`, then `CUA_BENCH_IMAGE`, then the canonical image for the OS. |
 | `--cpu`, `--memory` | Resources per sandbox (`--memory 4G`), local and cloud. |
 | `-j`, `--max-parallel` | Variants at once. In the cloud this is also the pool's max size. |
@@ -179,9 +181,6 @@ Opt-in live tests (they start real sandboxes):
 
 ```bash
 CUA_BENCH_E2E_LOCAL=1 uv run pytest -s cua_bench/tests/live/test_local_live.py
-
-set -a; source ~/.env; set +a
-CUA_E2E_FLEET=1 uv run pytest -s cua_bench/tests/live/test_cloud_live.py
 ```
 
 The ALE check runs agents-last-exam's own loader and harness against this cua-bench:

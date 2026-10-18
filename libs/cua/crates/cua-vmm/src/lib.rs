@@ -30,6 +30,7 @@ pub mod error;
 pub mod exec;
 pub mod gpu;
 pub mod host;
+pub mod local_network;
 #[cfg(feature = "lume")]
 pub mod lume;
 pub mod managed;

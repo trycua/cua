@@ -55,7 +55,7 @@ SDK call, `Spaces::create(SpaceCreate { on, image, kind, runtime, name, .. })`:
 | Where | `on` | `kind` / `runtime` |
 |---|---|---|
 | This machine | `local` | container / `auto` (gVisor when available), vm / `qemu`, vm / `lume`; plus `cpus`, `memory_mb` |
-| Cua Cloud | `cloud` | container / `gvisor`, vm / `kubevirt`. Needs `cua auth login` (or `CUA_CLIENT_ID`/`CUA_CLIENT_SECRET`); metered until deleted. |
+| Cua Cloud | `cloud` | Ended: a cloud plan fails with "Cua Cloud has ended; use a local sandbox or your own machine". Create the Space on This machine instead. |
 
 **Add by address** (in the wizard footer or the empty state) registers a
 machine that already runs cua-spacesd, for example a local container:

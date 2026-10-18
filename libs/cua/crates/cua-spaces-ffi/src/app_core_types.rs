@@ -136,6 +136,9 @@ pub struct AppSpacePower {
     pub turning_on: Option<bool>,
     /// Why the last power action failed, until the next one.
     pub error: Option<String>,
+    /// Why it stopped without being asked to, in plain words ("out of
+    /// memory"), while it is off.
+    pub stop_reason: Option<String>,
 }
 
 /// One Space as the shells show it.
@@ -257,6 +260,10 @@ pub struct AppSpaceRow {
     /// Where Delete permanently can delete it: `here`, `host:<machine>`
     /// (that machine created it) or `elsewhere` (another device did).
     pub cloud_delete: Option<String>,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"), as the SDK
+    /// recorded it; absent otherwise.
+    pub stop_reason: Option<String>,
 }
 
 /// Where new Spaces can be created.
@@ -5792,8 +5799,8 @@ pub struct AppOnboardingView {
     /// The presentation page's two cards, side by side.
     pub presentations: Vec<AppPresentationCard>,
     /// Done's example prompts ([`PROMPTS`]), one line each: shown under
-    /// both columns, scrolling slowly, to suggest what to ask a coding
-    /// agent. Not interactive.
+    /// both columns under "Try asking your agent:", to suggest what to ask a
+    /// coding agent. Each copies to the clipboard on click.
     pub prompts: Vec<String>,
     /// The first-run telemetry notice (the Welcome page, so the first run
     /// itself can be measured): nothing is sent before it has been shown
@@ -6264,11 +6271,11 @@ pub struct AppAboutLink {
 pub type AppAboutUpdates = core::about::AboutUpdates;
 #[uniffi::remote(Record)]
 pub struct AppAboutUpdates {
-    /// "Automatically check for updates".
+    /// "Check for and download updates automatically".
     pub auto_check_label: String,
     /// Checked.
     pub auto_check: bool,
-    /// "Install updates automatically".
+    /// "Install a downloaded update when Cua Spaces quits".
     pub auto_install_label: String,
     /// Checked.
     pub auto_install: bool,
@@ -9562,6 +9569,37 @@ pub struct AppRelayAllowanceNotice {
     /// What a dismissal remembers: the month and the reasons. A new month,
     /// or another limit reached, shows the notice again.
     pub dismiss_key: String,
+    /// `warn` (80% of the relay hours) or `limit` (the allowance is used).
+    /// A `warn` is a prompt: the shells hold it back while a live session
+    /// or an agent run is going ([`crate::upsell`]). A `limit` is only the
+    /// status, so it always shows.
+    pub level: String,
+}
+
+/// A button that opens a page on the account app.
+pub type AppPlanLink = core::relay_usage::PlanLink;
+#[uniffi::remote(Record)]
+pub struct AppPlanLink {
+    /// "Get Pro".
+    pub label: String,
+    /// https, on the account app.
+    pub url: String,
+}
+
+/// The plan as Settings draws it: always there, never a prompt.
+pub type AppPlanCard = core::relay_usage::PlanCard;
+#[uniffi::remote(Record)]
+pub struct AppPlanCard {
+    /// `free`, `pro` or `teams`.
+    pub plan: String,
+    /// "Free plan".
+    pub label: String,
+    /// What the plan includes, in one sentence.
+    pub detail: String,
+    /// The main button ("Get Pro"); none when there is nothing to buy.
+    pub primary: Option<AppPlanLink>,
+    /// The other one ("Start a team").
+    pub secondary: Option<AppPlanLink>,
 }
 
 /// The allowance as drawn.
@@ -9575,6 +9613,8 @@ pub struct AppRelayUsageView {
     pub line: String,
     /// "Free plan" (empty when the relay names none).
     pub plan: String,
-    /// Past the allowance.
+    /// At 80% of the relay hours, or past the allowance.
     pub notice: Option<AppRelayAllowanceNotice>,
+    /// Settings' plan card.
+    pub plan_card: AppPlanCard,
 }

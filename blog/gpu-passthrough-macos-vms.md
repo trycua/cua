@@ -6,7 +6,7 @@ If you've been following Cua from the start, you may remember that it began with
 
 A macOS guest running through Apple's `Virtualization.framework` uses a virtual GPU backed by the host's Apple GPU. In our stock Tahoe VM, that device reported a conservative Metal capability profile. Applications use those answers to select kernels and rendering paths, which left llama.cpp running much slower GPU code.
 
-We built a small, process-scoped compatibility layer that changes selected capability answers for one guest process, allowing llama.cpp to select newer Metal kernels. This is the first result from our broader effort to connect Lume's virtualization foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/cua-driver/quickstart) and the infrastructure behind [Cua Cloud and Fleets](https://cua.ai/signup?redirect_url=%2Fwaitlist).
+We built a small, process-scoped compatibility layer that changes selected capability answers for one guest process, allowing llama.cpp to select newer Metal kernels. This is the first result from our broader effort to connect Lume's virtualization foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/cua-driver/quickstart) and [Cua Spaces](https://cua.ai/spaces).
 
 We're releasing this work today as a research release under the same permissive license as Lume and Cua, so others can reproduce the results and help map which Apple Silicon chips, macOS releases, and Metal workloads benefit.
 

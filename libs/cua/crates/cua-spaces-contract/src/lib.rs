@@ -362,18 +362,18 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
     },
     ErrorKind {
         kind: "fleet",
-        meaning: "The Fleet control plane failed a cloud Space call.",
-        fix: "See the Fleet errors reference for the HTTP status in the message.",
+        meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call.",
+        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "fleet_admission_denied",
-        meaning: "Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit. The message is Fleet's and names the limit.",
-        fix: "Pick a size within the limit the message names (most accounts run 1-8 vCPUs and 1-32 GiB), or contact Cua support to raise the account's limits.",
+        meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit.",
+        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "cloud_credit_exhausted",
-        meaning: "The account is out of Cua Cloud credit (no credit left, and no card or plan): Fleet refused the new cloud Space. Running Spaces keep running; local Spaces are never affected. The message ends with the billing page's URL.",
-        fix: "Add credit on the billing page the message names (a plan, or a card for pay as you go), or create the Space locally.",
+        meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space.",
+        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "invalid_placement",
@@ -679,7 +679,7 @@ pub fn tools() -> Vec<Tool> {
                 "ambiguous_host",
                 "limit_exceeded",
             ],
-            instructions: "Creates a new sandbox where `on` says (local: this machine, free; cloud: Cua cloud, metered; aws, gcp or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name> or cloud:<name>. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own machines: on=\"host:<machine>\" creates the Space on a machine set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The machine is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<machine> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the machine's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on.",
+            instructions: "Creates a new sandbox where `on` says (local: this machine, free; aws, gcp or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own machines: on=\"host:<machine>\" creates the Space on a machine set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The machine is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<machine> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the machine's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on.",
             providers: &CREATE_PROVIDERS,
             metering: Metering::Cloud,
             capabilities: &["space.create"],

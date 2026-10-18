@@ -2326,31 +2326,10 @@ fn resolve_launched_windows(
     let started = std::time::Instant::now();
     loop {
         let all = crate::wayland::list_windows_dispatch(None);
-        let own: Vec<_> = all
-            .iter()
-            .filter(|w| w.pid == Some(launcher_pid))
-            .cloned()
-            .collect();
-        if !own.is_empty() {
-            return LaunchedWindows {
-                pid: Some(launcher_pid),
-                windows: own,
-                handed_off: false,
-            };
-        }
-        let fresh: Vec<_> = all
-            .iter()
-            .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
-            .filter(|w| window_matches_launch(w, query))
-            .cloned()
-            .collect();
-        if let Some(pid) = fresh.first().and_then(|w| w.pid) {
-            let windows = fresh.into_iter().filter(|w| w.pid == Some(pid)).collect();
-            return LaunchedWindows {
-                pid: Some(pid),
-                windows,
-                handed_off: true,
-            };
+        if let Some(launched) = settle_launch(&all, launcher_pid, query, before, |w| {
+            crate::x11::window_is_splash(w.xid)
+        }) {
+            return launched;
         }
         let launcher_exited = process_exited(launcher_pid);
         let budget = if launcher_exited {
@@ -2367,6 +2346,39 @@ fn resolve_launched_windows(
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+fn settle_launch(
+    all: &[crate::x11::WindowInfo],
+    launcher_pid: u32,
+    query: &str,
+    before: &std::collections::HashSet<u64>,
+    is_splash: impl Fn(&crate::x11::WindowInfo) -> bool,
+) -> Option<LaunchedWindows> {
+    let own: Vec<_> = all
+        .iter()
+        .filter(|w| w.pid == Some(launcher_pid) && !is_splash(w))
+        .cloned()
+        .collect();
+    if !own.is_empty() {
+        return Some(LaunchedWindows {
+            pid: Some(launcher_pid),
+            windows: own,
+            handed_off: false,
+        });
+    }
+    let fresh: Vec<_> = all
+        .iter()
+        .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
+        .filter(|w| window_matches_launch(w, query) && !is_splash(w))
+        .cloned()
+        .collect();
+    let pid = fresh.first()?.pid?;
+    Some(LaunchedWindows {
+        pid: Some(pid),
+        windows: fresh.into_iter().filter(|w| w.pid == Some(pid)).collect(),
+        handed_off: true,
+    })
 }
 
 #[cfg(test)]
@@ -13257,7 +13269,7 @@ impl Tool for CheckPermissionsTool {
         PERMS_DEF.get_or_init(|| ToolDef {
             name: "check_permissions".into(),
             description: "Check required permissions for cua-driver-rs on Linux.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{"prompt":{"type":"boolean","description":"Ignored: Linux has no permission prompts."}},"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -13316,6 +13328,16 @@ impl Tool for CheckPermissionsTool {
         ToolResult::text(status_text)
             .with_structured(json!({ "x11": x11_ok, "wayland": wayland_display.is_some(), "wayland_enabled": crate::wayland::wayland_enabled(), "atspi": atspi_ok, "dbus_session_bus_address": dbus_address, "xsend_event": x11_ok }))
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn check_permissions_accepts_the_status_prompt_argument() {
+    let result = build_registry_with_provider(false, None)
+        .invoke("check_permissions", json!({ "prompt": false }))
+        .await;
+    let wire = serde_json::to_value(&result).unwrap();
+    assert!(wire["structuredContent"].get("x11").is_some(), "{wire}");
 }
 
 // ── get_config ────────────────────────────────────────────────────────────────

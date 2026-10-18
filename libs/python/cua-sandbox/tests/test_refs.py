@@ -25,6 +25,7 @@ def test_refs_parse_with_the_legacy_spellings():
         _refs.parse("moon:x")
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_resolve_qualified_narrowed_and_ambiguous(monkeypatch):
     local_names = {"box", "only-local"}
     is_local = local_names.__contains__

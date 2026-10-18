@@ -19,7 +19,7 @@ export function EmptyHome({ home, unread = false }: { home: EmptyHomeView; unrea
   const wizard = useNewSpaceWizard();
   const start = (tile: EmptyTile) => wizard.show(null, tile.os);
   return (
-    <section data-empty-home="" aria-labelledby="empty-home-title" className="flex flex-col items-center px-8 pt-20 pb-10 text-center">
+    <section data-empty-home="" aria-labelledby="empty-home-title" className="flex flex-col items-center px-8 pt-8 pb-10 text-center">
       <MonitorGlyph />
       <h2 id="empty-home-title" className="mt-4 text-[22px] font-bold tracking-[-0.01em] text-muted-foreground">
         {unread ? "Spaces could not be loaded" : home.title}

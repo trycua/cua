@@ -97,7 +97,7 @@ numbers will grow once the real web UI replaces the placeholder.
 | `src/system.ts`, `src/login-item.ts` | The bridge's system services: links and settings panes, Show in Finder / Explorer, notifications, the owner check before approving a device, launch at login on each system |
 | `src/migrate-swift.ts` | macOS: takes over the Swift app's settings once (files, defaults domain) |
 | `src/notch.ts`, `src/notch/` | The macOS notch: the app core's notch model and the Swift helper that draws it (see "The macOS notch") |
-| `src/updater.ts` | electron-updater behind Settings → About (automatic checks and installs, the channel, Check Now with its own windows), beta channel only until the Sparkle cutover, off by default |
+| `src/updater.ts` | electron-updater behind Settings → About (checks on launch and every few hours, on by default; background download; the in-app "Restart to update" indicator through `update.get` and `update.install`; the channel; Check Now), beta channel only until the Sparkle cutover on macOS |
 | `scripts/sparkle/` | Sparkle's own update checks against an Electron build (`accepts.sh`, `selftest.sh`; [docs/sparkle-cutover.md](docs/sparkle-cutover.md)) |
 | `scripts/feed-urls.mjs` | Makes a feed's installer URLs absolute (CI) |
 | `scripts/smoke/` | Linux and Windows package checks in Docker |

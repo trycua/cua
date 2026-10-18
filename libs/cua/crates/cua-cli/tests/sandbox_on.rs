@@ -110,6 +110,7 @@ fn row<'a>(rows: &'a Value, name: &str) -> &'a Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_managed_pool_full_lifecycle() {
     let w = fleet_world("box", &[("web", 8080)]).await;
     let h = &w.h;
@@ -375,6 +376,7 @@ async fn fleet_managed_pool_full_lifecycle() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn launch_is_a_create_alias_on_fleet_with_generated_names() {
     let w = fleet_world("unused", &[]).await;
     let h = &w.h;
@@ -438,6 +440,7 @@ async fn launch_is_a_create_alias_on_fleet_with_generated_names() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn the_daemon_is_started_and_holds_fleet_claims() {
     let w = fleet_world("held", &[]).await;
     let mut h = w.h;
@@ -624,13 +627,13 @@ async fn create_validates_on_and_flags() {
         .await;
     assert_eq!(o.code, 2, "{o:?}");
     assert!(o.stderr.contains("unknown location"), "{o:?}");
-    assert!(o.stderr.contains("valid on: local, cloud"), "{o:?}");
+    assert!(o.stderr.contains("valid on: local, e2b"), "{o:?}");
     // Engines and kinds are not locations: the error names the right flag.
     for (on, hint) in [
         ("qemu", "use `--runtime qemu`"),
         ("lume", "use `--runtime lume`"),
         ("docker", "use `--kind container`"),
-        ("fleet", "the cloud location is `cloud`"),
+        ("fleet", "Cua Cloud has ended"),
     ] {
         let o = h
             .run(&["--embedded", "sb", "create", "img", "--on", on])
@@ -639,22 +642,6 @@ async fn create_validates_on_and_flags() {
         assert!(o.stderr.contains(hint), "{on}: {o:?}");
     }
     // An impossible location x kind x runtime lists the valid runtimes.
-    let o = h
-        .run(&[
-            "--embedded",
-            "sb",
-            "create",
-            "img",
-            "--on",
-            "cloud",
-            "--kind",
-            "vm",
-            "--runtime",
-            "gvisor",
-        ])
-        .await;
-    assert_eq!(o.code, 2, "{o:?}");
-    assert!(o.stderr.contains("valid runtime: auto, kubevirt"), "{o:?}");
     let o = h
         .run(&[
             "--embedded",
@@ -673,62 +660,34 @@ async fn create_validates_on_and_flags() {
             .contains("valid runtime: auto, gvisor, runc, qemu, lume"),
         "{o:?}"
     );
-    let o = h
-        .run(&["--embedded", "sb", "create", "--on", "cloud"])
-        .await;
-    assert_eq!(o.code, 2, "{o:?}");
-    assert!(
-        o.stderr.contains("IMAGE is required for --on cloud"),
-        "{o:?}"
-    );
-    // --pool locally runs that pool's template; an existing machine refuses.
-    let o = h
-        .run(&[
-            "--embedded",
-            "sb",
-            "create",
-            "--on",
-            "direct:127.0.0.1:1",
-            "--pool",
-            "p",
-        ])
-        .await;
-    assert_eq!(o.code, 2, "{o:?}");
-    let o = h
-        .run(&[
-            "--embedded",
-            "sb",
-            "create",
+    // Cua Cloud has ended: --on cloud and --pool (any location) fail with
+    // the one message before anything else.
+    for args in [
+        &[
             "img",
             "--on",
-            "local",
-            "--pool",
-            "p",
-        ])
-        .await;
-    assert_eq!(o.code, 2, "{o:?}");
-    assert!(o.stderr.contains("not both"), "{o:?}");
-    // launch --local --pool (deprecated spelling) needs no --name (a local
-    // template run); without cloud credentials it fails naming the backend.
+            "cloud",
+            "--kind",
+            "vm",
+            "--runtime",
+            "gvisor",
+        ][..],
+        &["--on", "cloud"],
+        &["ghcr.io/x/y@sha256:1", "--on", "cloud"],
+        &["--on", "direct:127.0.0.1:1", "--pool", "p"],
+        &["img", "--on", "local", "--pool", "p"],
+    ] {
+        let o = h
+            .run(&[&["--embedded", "sb", "create"][..], args].concat())
+            .await;
+        assert_eq!(o.code, 4, "{args:?}: {o:?}");
+        assert!(o.stderr.contains("Cua Cloud has ended"), "{args:?}: {o:?}");
+    }
     let o = h
         .run(&["--embedded", "sb", "launch", "--local", "--pool", "p"])
         .await;
-    assert_ne!(o.code, 2, "{o:?}");
-    assert!(o.stderr.contains("[local]"), "{o:?}");
-    assert!(o.stderr.contains("`--local` is deprecated"), "{o:?}");
-    // The cloud without credentials names the backend.
-    let o = h
-        .run(&[
-            "--embedded",
-            "sb",
-            "create",
-            "ghcr.io/x/y@sha256:1",
-            "--on",
-            "cloud",
-        ])
-        .await;
     assert_eq!(o.code, 4, "{o:?}");
-    assert!(o.stderr.contains("[cloud]"), "{o:?}");
+    assert!(o.stderr.contains("Cua Cloud has ended"), "{o:?}");
     // The flags `create` never shipped are gone.
     for gone in ["--vm", "--container", "--provider", "--url", "--local"] {
         let o = h.run(&["--embedded", "sb", "create", "img", gone]).await;
@@ -783,7 +742,11 @@ async fn the_default_location_is_configurable() {
     let o = h.run(&["config", "get", "default.on"]).await;
     o.ok();
     assert_eq!(o.stdout.trim(), "local");
-    h.run(&["config", "set", "default.on", "cloud"]).await.ok();
+    // Cua Cloud has ended: refused with the one message.
+    let o = h.run(&["config", "set", "default.on", "cloud"]).await;
+    assert_ne!(o.code, 0, "{o:?}");
+    assert!(o.stderr.contains("Cua Cloud has ended"), "{o:?}");
+    h.run(&["config", "set", "default.on", "aws"]).await.ok();
     let o = h.run(&["--json", "config", "list"]).await;
     o.ok();
     let on = o
@@ -796,17 +759,7 @@ async fn the_default_location_is_configurable() {
         .unwrap();
     assert_eq!(
         (on["value"].as_str(), on["source"].as_str()),
-        (Some("cloud"), Some("config"))
-    );
-    // No credentials: the error says how to log in or switch back.
-    let o = h
-        .run(&["--embedded", "sb", "create", "ghcr.io/x/y@sha256:1"])
-        .await;
-    assert_eq!(o.code, 4, "{o:?}");
-    assert!(o.stderr.contains("cua auth login"), "{o:?}");
-    assert!(
-        o.stderr.contains("cua config set default.on local"),
-        "{o:?}"
+        (Some("aws"), Some("config"))
     );
     // The environment beats the config file.
     h.set("CUA_DEFAULT_ON", "local");

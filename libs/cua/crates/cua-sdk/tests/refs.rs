@@ -298,6 +298,7 @@ async fn suite(daemon: bool) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn embedded() {
     tokio::time::timeout(Duration::from_secs(120), suite(false))
         .await
@@ -305,6 +306,7 @@ async fn embedded() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn daemon() {
     tokio::time::timeout(Duration::from_secs(120), suite(true))
         .await

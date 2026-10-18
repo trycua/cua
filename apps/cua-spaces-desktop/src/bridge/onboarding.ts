@@ -19,6 +19,8 @@ export function onboardingMethods(ctx: BridgeContext): Handlers {
       const mode = args.mode;
       if (mode !== "client" && mode !== "host") throw Failure.badArgs("mode: client | host");
       parts().onboarding.finish(mode);
+      // Done is past Welcome and its usage notice.
+      ctx.model.telemetry?.acknowledgeNotice();
       // Every machine, host or not: its own macOS Spaces live on the local
       // network (vmnet), so ask while someone is here.
       ctx.model.host.requestLocalNetwork();

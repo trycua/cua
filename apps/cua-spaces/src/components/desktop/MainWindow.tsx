@@ -247,7 +247,7 @@ export function MainWindow({
     const q = new URLSearchParams(window.location.search);
     const actions: ({ type: string } & Record<string, unknown>)[] = [];
     if (q.get('image')) actions.push({ type: 'choose-image', ref: q.get('image') });
-    actions.push({ type: 'set-placement', placement: q.get('on') === 'cloud' ? 'cloud' : 'local' });
+    actions.push({ type: 'set-placement', placement: 'local' });
     actions.push({ type: 'next' });
     if (Number(q.get('disk'))) actions.push({ type: 'set-disk', diskGb: Number(q.get('disk')) });
     if (Number(q.get('cpus'))) actions.push({ type: 'set-cpus', cpus: Number(q.get('cpus')) });
@@ -941,11 +941,7 @@ export function MainWindow({
         >
           <NewSpaceWizard
             defaultLocation={
-              sync.defaultLocation.value === 'cloud'
-                ? 'cloud'
-                : isCloudWord(sync.defaultLocation.value)
-                  ? 'yours'
-                  : 'local'
+              isCloudWord(sync.defaultLocation.value) ? 'yours' : 'local'
             }
             clouds={clouds}
             hosts={hosts}

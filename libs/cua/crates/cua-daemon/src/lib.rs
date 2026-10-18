@@ -397,6 +397,7 @@ impl From<cua_sandbox_core::Error> for Error {
         let m = e.to_string();
         match e {
             E::InvalidArgument(a) => Error::InvalidArgument(a),
+            E::CloudEnded => Error::Unsupported(m),
             E::InvalidPlacement(p) => Error::from(p),
             E::NotFound(_) => Error::NotFound(m),
             E::AmbiguousSandbox {
@@ -411,7 +412,7 @@ impl From<cua_sandbox_core::Error> for Error {
                 cua_sandbox_core::ProviderKind::Local => {
                     "local runtimes are not available in this build yet (cua-vmm)".into()
                 }
-                cua_sandbox_core::ProviderKind::Fleet => cua_fleet::MISSING_CREDENTIALS.into(),
+                cua_sandbox_core::ProviderKind::Fleet => cua_sandbox_core::CLOUD_ENDED.into(),
                 cua_sandbox_core::ProviderKind::Direct
                 | cua_sandbox_core::ProviderKind::Contrib => m,
             }),

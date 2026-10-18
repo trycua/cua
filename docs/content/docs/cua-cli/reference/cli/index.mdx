@@ -86,14 +86,6 @@ Pull, build and push OCI images, and manage Fleet image resources; list the imag
 | <span id="cua-image-pull"></span><span id="cua-image-build"></span><span id="cua-image-push"></span><span id="cua-image-ls"></span><span id="cua-image-info"></span><span id="cua-image-rm"></span><span id="cua-image-create"></span>[`cua image`](/cua-cli/reference/cli/image#cua-image) | Images: local OCI pull/build/push and Fleet image resources. | [`pull`](/cua-cli/reference/cli/image#cua-image-pull), [`build`](/cua-cli/reference/cli/image#cua-image-build), [`push`](/cua-cli/reference/cli/image#cua-image-push), [`ls`](/cua-cli/reference/cli/image#cua-image-ls), [`info`](/cua-cli/reference/cli/image#cua-image-info), [`rm`](/cua-cli/reference/cli/image#cua-image-rm), [`create`](/cua-cli/reference/cli/image#cua-image-create) |
 | <span id="cua-images"></span><span id="cua-images-ls"></span><span id="cua-images-info"></span><span id="cua-images-build"></span><span id="cua-images-pack"></span><span id="cua-images-publish"></span><span id="cua-images-release"></span><span id="cua-images-promote"></span>[`cua images`](/cua-cli/reference/cli/image#cua-images) | The sandbox image catalog (the images the docs list): which exist, their variants, and which ship cua-spacesd and a browser. | [`ls`](/cua-cli/reference/cli/image#cua-images-ls), [`info`](/cua-cli/reference/cli/image#cua-images-info), [`build`](/cua-cli/reference/cli/image#cua-images-build), [`pack`](/cua-cli/reference/cli/image#cua-images-pack), [`publish`](/cua-cli/reference/cli/image#cua-images-publish), [`release`](/cua-cli/reference/cli/image#cua-images-release), [`promote`](/cua-cli/reference/cli/image#cua-images-promote) |
 
-### `cua fleet`
-
-Managed Fleet pools behind `cua sandbox create`. [Reference](/cua-cli/reference/cli/fleet).
-
-| Command | Description | Subcommands |
-| --- | --- | --- |
-| <span id="cua-fleet-pools"></span><span id="cua-fleet-pools-ls"></span><span id="cua-fleet-pools-gc"></span><span id="cua-fleet-pool"></span><span id="cua-fleet-pool-export"></span>[`cua fleet`](/cua-cli/reference/cli/fleet#cua-fleet) | Fleet: managed pools behind `cua sandbox create` without `--pool`. | [`pools`](/cua-cli/reference/cli/fleet#cua-fleet-pools), [`pools ls`](/cua-cli/reference/cli/fleet#cua-fleet-pools-ls), [`pools gc`](/cua-cli/reference/cli/fleet#cua-fleet-pools-gc), [`pool`](/cua-cli/reference/cli/fleet#cua-fleet-pool), [`pool export`](/cua-cli/reference/cli/fleet#cua-fleet-pool-export) |
-
 ### `cua mcp`
 
 The stdio MCP server for AI assistants. [Reference](/cua-cli/reference/cli/mcp).
@@ -276,8 +268,8 @@ Accepted by every command, before or after the subcommand.
 | `1` | Failure, or `cua do` reported an error. |
 | `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`, `cloud:NAME`). |
 | `3` | Not found: sandbox, window, skill or image (or an image not published yet). |
-| `4` | Not supported, or not configured (for example no Fleet credentials). |
+| `4` | Not supported, or not configured (for example no cloud credentials). |
 | `5` | No cua-spacesd answered, or a transport failure. |
-| `6` | Unauthenticated or permission denied (by Cua, Fleet or your cloud account). |
+| `6` | Unauthenticated or permission denied (by Cua or your cloud account). |
 | `7` | Not enough free disk space (see `cua cache`). |
 | `130` | Cancelled (Ctrl-C during a create): what it made was removed. |

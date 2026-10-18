@@ -180,6 +180,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["about.get", {}],
       ["about.set", { channel: "beta" }],
       ["about.checkNow", {}],
+      ["update.get", {}],
+      ["update.install", {}],
       ["loginItem.get", {}],
       ["loginItem.set", { on: true }],
       ["loginItem.openSettings", {}],
@@ -209,7 +211,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every method of this area has its case (the Electron-only ones are checked below).
-    const electronOnly = new Set(["onboarding.get", "onboarding.complete"]);
+    // (host.joinWithCode runs the bundled cua: join-with-code.test.ts.)
+    const electronOnly = new Set(["onboarding.get", "onboarding.complete", "host.joinWithCode"]);
     expect(HOST_METHODS.filter((m) => !electronOnly.has(m) && !cases.some(([c]) => c === m))).toEqual([]);
     expect(HOST_METHODS.filter((m) => NOT_YET.includes(m))).toEqual([]);
   });
@@ -249,7 +252,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     });
     expect(mine.filter((op) => !HOST_OPS.includes(op))).toEqual([]);
     const problems: string[] = [];
-    for (const op of HOST_OPS as OpName[]) {
+    for (const op of (HOST_OPS as OpName[]).filter((o) => o !== "host.joinWithCode")) {
       try {
         const result = await adapter.call(op, (args[op] ?? {}) as never);
         problems.push(...validate(OP_SHAPES[op], result, SHAPE_DEFS).map((e) => `${op} ${e}`));
@@ -508,7 +511,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await call("settings.choose", { row: "team-current", option: "org-2" });
     expect(model.settings.currentTeamId).toBe("org-2");
     await call("settings.choose", { row: "default-location", option: "cloud" });
-    expect(model.settings.defaultLocation).toBe(native.AppLocation.Cloud);
+    // Cua Cloud has ended: the default stays on this machine.
+    expect(model.settings.defaultLocation).toBe(native.AppLocation.Local);
     await call("settings.choose", { row: "telemetry", option: "off" });
     expect(model.telemetry?.status().enabled).toBe(false);
     await call("settings.choose", { row: "launch-at-login", option: "on" });
@@ -627,6 +631,37 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(((await call("about.get")) as Record<string, unknown>).updater).toBe(false);
     expect(await code("about.set", { autoCheck: true })).toBe("unsupported");
     expect(await code("about.checkNow")).toBe("unsupported");
+  });
+
+  it("the update indicator reads the updater, installs only when asked, and the page hears of each change", async () => {
+    expect(await call("update.get")).toMatchObject({ status: "idle", version: null, percent: null });
+    system.updater.report({ type: "available", version: "0.9.3" }, "found");
+    system.updater.report({ type: "progress", percent: 40 });
+    await tick(5);
+    expect(await call("update.get")).toMatchObject({ status: "downloading", version: "0.9.3", percent: 40 });
+    // Nothing is installed while it downloads, or when the page asks early.
+    await call("update.install");
+    await tick(5);
+    expect(system.updater.installs).toBe(0);
+    system.updater.report({ type: "downloaded", version: "0.9.3" }, "downloaded");
+    await tick(5);
+    expect(events.some((e) => e.event === "update.changed")).toBe(true);
+    expect(await call("update.get")).toMatchObject({ status: "downloaded", version: "0.9.3", percent: 100, notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3" });
+    expect(system.updater.installs).toBe(0);
+    const answer = await call("update.install");
+    expect((answer as { status: string }).status).toBe("downloaded");
+    await tick(5);
+    expect(system.updater.installs).toBe(1);
+  });
+
+  it("records found, downloaded and installed as updater steps", async () => {
+    const telemetry = model.telemetry as FixtureTelemetry;
+    const before = telemetry.recorded.length;
+    system.updater.report({ type: "available", version: "0.9.3" }, "found");
+    system.updater.report({ type: "downloaded", version: "0.9.3" }, "downloaded");
+    system.updater.installNow();
+    const actions = telemetry.recorded.slice(before).map((s) => (s as unknown as { inner: { action: string } }).inner.action);
+    expect(actions).toEqual(["checked", "found", "downloaded", "installed"]);
   });
 
   it("About carries the bundle's build, for \"Version 0.7.2 (0.7.2.41)\" as the SwiftUI app shows it", async () => {
@@ -762,6 +797,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     events.length = 0;
     expect(await call("onboarding.complete", { mode: "host", launchAtLogin: true })).toEqual({ completed: true, mode: "host" });
     expect(asked).toBe(1);
+    // Done is past Welcome's usage notice.
+    expect((model.telemetry as FixtureTelemetry).acknowledged).toBe(1);
     expect(system.loginItem.calls).toEqual(["register"]);
     expect(model.settings.launchAtLogin).toBe(true);
     expect(events.some((e) => e.event === "session.changed")).toBe(true);

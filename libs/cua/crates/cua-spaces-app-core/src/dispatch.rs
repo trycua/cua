@@ -14,10 +14,10 @@ use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, drive_mount_preview,
-    drive_page, drive_settings, driver_preview, experiments, host, login_item, machines, notch,
-    notifications, onboarding, onboarding_preview, palette, paths, persistent, presence,
-    relay_usage, settings, share, telemetry, window, wizard,
+    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
+    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
+    machines, notch, notifications, onboarding, onboarding_preview, palette, paths, persistent,
+    presence, relay_usage, settings, share, telemetry, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -178,6 +178,9 @@ pub const METHODS: &[&str] = &[
     "agentKeys.removeConfirm",
     "agentKeys.nameProblem",
     "about.view",
+    "diagnostics.createReport",
+    "diagnostics.reportMailto",
+    "diagnostics.redact",
     "about.afterLaunch",
     "about.restartDaemon",
     "about.refreshNotice",
@@ -286,6 +289,9 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "upsell.prompt",
+    "upsell.allows",
+    "telemetry.upsell",
 ];
 
 struct Args(Value);
@@ -474,6 +480,25 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 _ => relay_usage::view(&usage),
             })
         }
+        // The Pro and Teams prompts: the rules and words are `upsell`'s.
+        "upsell.prompt" => {
+            let usage = a.get("usage")?;
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::prompt(
+                &a.get::<String>("surface")?,
+                &usage,
+                &app,
+                &a.get("state")?,
+            ))
+        }
+        "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "telemetry.upsell" => out(telemetry::upsell(
+            &a.get::<String>("surface")?,
+            &a.get::<String>("action")?,
+        )),
         "wizard.pickerImages" => out(wizard::picker_images()),
         "wizard.pickerGroups" => out(wizard::picker_groups()),
         "wizard.findImage" => out(wizard::find_image(&a.get::<String>("ref")?)),
@@ -734,6 +759,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "agentKeys.nameProblem" => out(agent_keys::name_problem(&a.get::<String>("name")?)),
         "about.view" => out(about::view(&a.get::<about::AboutInput>("input")?)),
+        "diagnostics.createReport" => out(diagnostics::create_report(&a.get("input")?)),
+        "diagnostics.reportMailto" => out(diagnostics::report_mailto(
+            &a.get("send")?,
+            &a.get::<Option<Vec<String>>>("names")?.unwrap_or_default(),
+        )),
+        "diagnostics.redact" => out(diagnostics::redact(&a.get::<String>("text")?)),
         "about.afterLaunch" => out(about::after_launch(&a.get::<about::LaunchInput>("input")?)),
         "about.restartDaemon" => out(about::restart_daemon(
             &a.get::<about::DaemonCheck>("check")?,
@@ -1097,6 +1128,48 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn upsell_prompts_follow_the_rules_through_dispatch() {
+        let usage =
+            json!({"metered": true, "plan": "free", "liveSessionsLimit": 2, "hoursLimit": 20.0});
+        let state = |quiet: bool| json!({"nowMs": 1_000_000_000_000u64, "quiet": quiet});
+        let p = call_value(
+            "upsell.prompt",
+            json!({"surface": "share", "usage": usage, "accountApp": "https://app.cua.ai", "state": state(false)}),
+        )
+        .unwrap();
+        assert_eq!(
+            p["cta"]["url"],
+            "https://app.cua.ai/buy/teams?from=app_share"
+        );
+        let quiet = call_value(
+            "upsell.prompt",
+            json!({"surface": "share", "usage": usage, "state": state(true)}),
+        )
+        .unwrap();
+        assert!(quiet.is_null());
+        assert_eq!(
+            call_value("upsell.allows", json!({"state": state(true)})).unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "meter", "action": "shown"})
+            )
+            .unwrap(),
+            json!([{"type": "feature", "feature": "upsell_meter_shown"}])
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "plan_card", "action": "shown"})
+            )
+            .unwrap(),
+            json!([])
+        );
+    }
+
+    #[test]
     fn dispatch_covers_every_method() {
         for m in METHODS {
             let r = call_value(m, Value::Object(Default::default()));
@@ -1113,10 +1186,10 @@ mod tests {
         ));
     }
 
-    /// The page's core has no environment: Upgrade's billing fallback is the
+    /// The page's core has no environment: Upgrade's checkout is on the
     /// account app the host names, else production's; only https is taken.
     #[test]
-    fn relay_upgrade_falls_back_to_the_hosts_account_app() {
+    fn relay_upgrade_opens_the_hosts_account_app() {
         let usage = json!({
             "metered": true, "plan": "free", "hoursUsed": 20.2, "hoursLimit": 20.0,
             "softLimitReached": true, "reasons": ["hours"], "upgradeUrl": null,
@@ -1126,15 +1199,21 @@ mod tests {
         };
         assert_eq!(
             upgrade(json!({"usage": usage, "accountApp": "https://app.staging.cua.ai"})),
-            json!("https://app.staging.cua.ai/billing")
+            json!("https://app.staging.cua.ai/buy/pro?from=app_meter")
         );
         assert_eq!(
             upgrade(json!({"usage": usage, "accountApp": "javascript:alert(1)"})),
-            json!(format!("{}/billing", cua_home::env::account_app_url()))
+            json!(format!(
+                "{}/buy/pro?from=app_meter",
+                cua_home::env::account_app_url()
+            ))
         );
         assert_eq!(
             upgrade(json!({"usage": usage})),
-            json!(format!("{}/billing", cua_home::env::account_app_url()))
+            json!(format!(
+                "{}/buy/pro?from=app_meter",
+                cua_home::env::account_app_url()
+            ))
         );
     }
 

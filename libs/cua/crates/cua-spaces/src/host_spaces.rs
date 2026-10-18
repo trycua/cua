@@ -371,51 +371,102 @@ fn host_progress(c: &pb::HostSpaceCreating) -> Option<crate::CreateProgress> {
 /// How often a client asks a host how its create is doing.
 const HOST_PROGRESS_POLL: Duration = Duration::from_secs(1);
 
-/// How long a client asks before it decides the host does not list
-/// creates (it predates [`pb::GetHostSpacesResponse::creating`]) and stops.
+/// How long a client asks every [`HOST_PROGRESS_POLL`] before it decides
+/// the host does not list creates (it predates
+/// [`pb::GetHostSpacesResponse::creating`], or its answers do not get
+/// through) and asks only every [`HOST_PROGRESS_SLOW_POLL`].
 const HOST_PROGRESS_UNLISTED: Duration = Duration::from_secs(20);
+
+/// How often a client asks a host that has not listed the create yet, past
+/// [`HOST_PROGRESS_UNLISTED`]: a host that lists it late is still followed.
+const HOST_PROGRESS_SLOW_POLL: Duration = Duration::from_secs(10);
+
+/// How long one ask may take: a host (or relay) that does not answer must
+/// not stop the following.
+const HOST_PROGRESS_ASK: Duration = Duration::from_secs(10);
+
+/// How long a create on a host may go without a report to the caller: past
+/// it, the last report (or "preparing") is said again. The host's create
+/// is one call that can run for the whole download of a 20+ GB macOS
+/// image; the apps' create stream fails a create that reports nothing for
+/// 15 minutes, so a host that reports nothing (an older one, or one whose
+/// listing does not get through) must not read as a lost create.
+const HOST_PROGRESS_HEARTBEAT: Duration = Duration::from_secs(60);
 
 /// Runs `call` (the `CreateHostSpace` of the create `key`) and meanwhile
 /// reports what the host lists that create doing as this create's own
 /// progress, in order: the image download with its bytes, the disk, the
-/// boot. A host that predates the listing reports nothing, as before.
+/// boot. A host that does not list it gets the last report again every
+/// [`HOST_PROGRESS_HEARTBEAT`], so the create stays alive while the host
+/// works.
 async fn following_host<T>(
     host: &cua_spacesd_client::SpacesdClient,
     key: &str,
     call: impl std::future::Future<Output = T>,
 ) -> T {
+    let ask = || async {
+        let r = tokio::time::timeout(
+            HOST_PROGRESS_ASK,
+            host.host_spaces()
+                .get_host_spaces(pb::GetHostSpacesRequest {}),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        Some(r.into_inner().creating)
+    };
+    following_host_with(ask, key, call).await
+}
+
+/// [`following_host`] with `ask` for the host's list of creates (`None`:
+/// no answer).
+async fn following_host_with<T, A, F>(
+    mut ask: A,
+    key: &str,
+    call: impl std::future::Future<Output = T>,
+) -> T
+where
+    A: FnMut() -> F,
+    F: std::future::Future<Output = Option<Vec<pb::HostSpaceCreating>>>,
+{
+    use cua_sandbox_core::progress::{Phase, Progress, report};
     let poll = async {
         let started = tokio::time::Instant::now();
         let mut listed = false;
         let mut last: Option<crate::CreateProgress> = None;
+        let mut said = tokio::time::Instant::now();
         loop {
-            tokio::time::sleep(HOST_PROGRESS_POLL).await;
-            if !listed && started.elapsed() >= HOST_PROGRESS_UNLISTED {
-                return std::future::pending::<()>().await;
-            }
-            let Ok(r) = host
-                .host_spaces()
-                .get_host_spaces(pb::GetHostSpacesRequest {})
+            let every = if listed || started.elapsed() < HOST_PROGRESS_UNLISTED {
+                HOST_PROGRESS_POLL
+            } else {
+                HOST_PROGRESS_SLOW_POLL
+            };
+            tokio::time::sleep(every).await;
+            let fresh = ask()
                 .await
-            else {
-                continue;
-            };
-            let Some(c) = r.into_inner().creating.into_iter().find(|c| c.key == key) else {
-                continue;
-            };
-            listed = true;
-            let Some(p) = host_progress(&c) else {
-                continue;
-            };
-            // Never back to an earlier phase, never the same report twice.
-            if last
-                .as_ref()
-                .is_some_and(|l| p.phase.rank() < l.phase.rank() || *l == p)
-            {
-                continue;
+                .and_then(|all| all.into_iter().find(|c| c.key == key))
+                .and_then(|c| {
+                    listed = true;
+                    host_progress(&c)
+                })
+                // Never back to an earlier phase, never the same report twice.
+                .filter(|p| {
+                    !last
+                        .as_ref()
+                        .is_some_and(|l| p.phase.rank() < l.phase.rank() || l == p)
+                });
+            if let Some(p) = fresh {
+                report(p.clone());
+                last = Some(p);
+                said = tokio::time::Instant::now();
+            } else if said.elapsed() >= HOST_PROGRESS_HEARTBEAT {
+                // Still working on the host: say so again.
+                report(
+                    last.clone()
+                        .unwrap_or_else(|| Progress::phase(Phase::Preparing)),
+                );
+                said = tokio::time::Instant::now();
             }
-            cua_sandbox_core::progress::report(p.clone());
-            last = Some(p);
         }
     };
     tokio::pin!(call);
@@ -778,7 +829,13 @@ impl HostSpacesServer {
             } else {
                 cua_telemetry::Outcome::Error
             },
-            r.is_err().then_some("other"),
+            // The cause the error's text names (`image_pull_auth`,
+            // `insufficient_disk`, ...), else the error's tag; only the
+            // word is sent, never the text.
+            r.as_ref().err().map(|e| {
+                let message = e.to_string();
+                cua_create_failure::create_failure_kind(&message, "", e.tag(), true)
+            }),
         ));
         r
     }
@@ -2494,6 +2551,79 @@ impl Spaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a create on a host reports to its caller, by elapsed minute,
+    /// when the host call takes `call` and the host answers `ask`.
+    async fn reports_while_following(
+        call: Duration,
+        ask: impl Fn(Duration) -> Option<Vec<pb::HostSpaceCreating>>,
+    ) -> Vec<(u64, crate::CreateProgress)> {
+        let start = tokio::time::Instant::now();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = seen.clone();
+        let sink: cua_sandbox_core::progress::Sink = Arc::new(move |p: &crate::CreateProgress| {
+            s.lock()
+                .unwrap()
+                .push((start.elapsed().as_secs() / 60, p.clone()))
+        });
+        let ask = |d: Duration| std::future::ready(ask(d));
+        cua_sandbox_core::progress::scope(
+            sink,
+            following_host_with(|| ask(start.elapsed()), "space-1", tokio::time::sleep(call)),
+        )
+        .await;
+        seen.lock().unwrap().clone()
+    }
+
+    /// A host that never lists the create (an older one, or one whose
+    /// answers do not get through) still keeps the caller's create alive:
+    /// "preparing" again every minute, so the apps' 15 min silent-stream
+    /// limit never fails a 20+ GB macOS download on another machine.
+    #[tokio::test(start_paused = true)]
+    async fn a_host_that_lists_nothing_still_keeps_a_long_create_alive() {
+        let seen = reports_while_following(Duration::from_secs(40 * 60), |_| None).await;
+        let minutes: Vec<u64> = seen.iter().map(|(m, _)| *m).collect();
+        assert!(seen.len() >= 39, "{minutes:?}");
+        assert!(
+            seen.iter()
+                .all(|(_, p)| p.phase == cua_sandbox_core::progress::Phase::Preparing),
+            "{seen:?}"
+        );
+        assert!(
+            minutes.windows(2).all(|w| w[1] - w[0] <= 1),
+            "never silent for more than a minute: {minutes:?}"
+        );
+    }
+
+    /// A host that lists the create only after a while (past the first
+    /// 20 s) is still followed: its download shows, then the heartbeat
+    /// repeats the last report while nothing new comes.
+    #[tokio::test(start_paused = true)]
+    async fn a_host_that_lists_the_create_late_is_still_followed() {
+        let seen = reports_while_following(Duration::from_secs(20 * 60), |d| {
+            (d > Duration::from_secs(90)).then(|| {
+                vec![pb::HostSpaceCreating {
+                    key: "space-1".into(),
+                    phase: "pulling".into(),
+                    bytes_done: Some(5),
+                    bytes_total: Some(10),
+                    ..Default::default()
+                }]
+            })
+        })
+        .await;
+        let pulls = seen
+            .iter()
+            .filter(|(_, p)| p.phase == cua_sandbox_core::progress::Phase::Pulling)
+            .count();
+        assert!(pulls >= 15, "the download, then said again: {seen:?}");
+        assert!(
+            seen.iter()
+                .skip_while(|(_, p)| p.phase != cua_sandbox_core::progress::Phase::Pulling)
+                .all(|(_, p)| p.phase == cua_sandbox_core::progress::Phase::Pulling),
+            "never back to preparing: {seen:?}"
+        );
+    }
 
     #[test]
     fn a_loopback_relay_is_reached_at_the_host_from_a_guest() {

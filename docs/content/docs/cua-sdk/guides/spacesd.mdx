@@ -32,7 +32,7 @@ In Python, `Sandbox.connect(url="http://127.0.0.1:3211", token=...)` returns a
 regular `Sandbox`; in TypeScript, `embedded().spacesd(url, token)` returns the
 typed spacesd client.
 
-Addresses can be direct (`http://10.0.0.5:3211`), a cloud sandbox's `env`
+Addresses can be direct (`http://10.0.0.5:3211`), a sandbox's `env`
 service URL, or a relay URL (`https://<relay>/m/<machine-id>`). To run spacesd
 on a machine, see [Run spacesd yourself](#run-spacesd-yourself); its RPCs are in the
 [protocol reference](/cua-sdk/reference/protocol).
@@ -88,7 +88,7 @@ command to it.
 
 spacesd takes the first non-empty token from `--token`, `CUA_ENV_TOKEN`, then
 `--token-file`. Clients send it as `authorization: Bearer <token>` or
-`x-cua-env-authorization` (the Fleet gateway keeps `authorization` for itself).
+`x-cua-env-authorization` (use it when a gateway keeps `authorization` for itself).
 
 | Mode | Behavior |
 | --- | --- |

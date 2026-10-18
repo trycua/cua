@@ -366,7 +366,7 @@ struct WebUIHostTests {
 
     @Test func everyPageOperationIsRouted() {
         for m in ["spaces.add", "clouds.status", "teleport.catalog", "teleport.run", "sharing.share", "volume.overview",
-                  "agents.setupDriver", "about.set", "loginItem.set", "devices.approve", "storage.run",
+                  "agents.setupDriver", "about.set", "update.get", "update.install", "loginItem.set", "devices.approve", "storage.run",
                   "notifications.list", "telemetry.track", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
                   "host.openSettings"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
@@ -568,6 +568,26 @@ struct WebUIHostTests {
         #expect(updater.checks == 0)
         await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
         #expect(updater.checks == 1)
+    }
+
+    @Test func updateInstallRestartsOnlyAfterADownload() async throws {
+        let (bridge, model) = bridge()
+        let updater = FixtureUpdater()
+        model.updates = UpdatesModel(updater: updater, channel: .stable)
+        updater.simulateFound(version: "0.9.3")
+        let a = try #require(try await bridge.handle("update.get", [:]) as? [String: Any])
+        #expect(a["status"] as? String == "available" && a["version"] as? String == "0.9.3")
+        let b = try #require(try await bridge.handle("update.install", [:]) as? [String: Any])
+        #expect(b["status"] as? String == "available")
+        await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
+        #expect(updater.installs == 0)
+        updater.simulateDownloaded()
+        let c = try #require(try await bridge.handle("update.install", [:]) as? [String: Any])
+        // The answer comes before the install starts.
+        #expect(c["status"] as? String == "downloaded")
+        #expect(updater.installs == 0)
+        await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
+        #expect(updater.installs == 1)
     }
 
     @Test func showWelcomeAgainRestartsTheFirstRun() async throws {

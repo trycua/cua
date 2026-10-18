@@ -102,7 +102,7 @@ function SpacesPage() {
             </Button>
           }
         >
-          Create one on {thisComputerText()} or on Cua Cloud.
+          Create one on {thisComputerText()}.
         </EmptyState>
       ) : shown.length === 0 && query.trim() ? (
         <EmptyState icon={<SearchIcon />} title="No matches">

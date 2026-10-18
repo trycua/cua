@@ -3,18 +3,18 @@ with the same meaning local and in the cloud.
 
 Lanes:
 
-* hermetic: the fake Fleet admits sidecars like Fleet (on KubeVirt too) and
-  refuses the reserved service names ``main`` / ``sidecars`` / ``sc`` with
-  sidecars; cloud layer builds fail with the "not deployed yet" error before
-  anything is created; a local core create refuses layers on a VM image.
+* hermetic: Cua Cloud has ended, so every cloud create (sidecars, reserved
+  service names, layer builds) fails with the one "Cua Cloud has ended"
+  error before anything is created; a local core create refuses layers on a
+  VM image.
 * container: ``python:3.12-slim`` with a ``redis:7-alpine`` sidecar named
   ``db`` and a ``busybox`` sidecar named ``relay``, through a private
   ``cua daemon`` on runc. The sandbox reaches ``db:6379`` by name and the
   relay reaches the sandbox at ``main``; refused on gVisor without an
   explicit runc.
-* fleet: the same group on Fleet gVisor and Fleet KubeVirt (a companion pod),
-  plus a ``processMode: Run`` command with ``env`` serving HTTP on both
-  runtimes. Pools are garbage-collected in the test.
+* fleet: skipped, Cua Cloud has ended. It ran the same group on Fleet gVisor
+  and Fleet KubeVirt (a companion pod), plus a ``processMode: Run`` command
+  with ``env`` serving HTTP on both runtimes.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ import pytest
 
 import cua
 
-KUBEVIRT_IMAGE = "registry.example/workspace@sha256:0123"
 ROOTFS_IMAGE = "registry.example/mcp:docker-e2e"
 # Live Fleet: a container image for gVisor, the canonical VM disk for
 # KubeVirt (its guest has python3 and cloud-init).
@@ -115,58 +114,29 @@ async def _expect_group(sb) -> None:
 
 
 @pytest.mark.e2e("sandbox-parity", "hermetic")
-def test_parity_admits_sidecars_and_refuses_what_fleet_refuses(fixtures, fake_fleet, tmp_path):
+def test_parity_cloud_ended_and_local_vm_refuses_layers(fixtures, fake_fleet, tmp_path):
     async def body():
+        # Cua Cloud has ended: sidecars, reserved service names and cloud
+        # layer builds all fail with the one message, before anything is
+        # created (they used to reach Fleet's admission).
         sbx = fake_fleet.sandboxes()
-        # With sidecars, main / sidecars / sc are reserved service names.
-        for reserved in ("main", "sidecars", "sc"):
-            with pytest.raises(cua.CuaError) as err:
-                await sbx.create(
-                    _opts(
-                        "cloud",
-                        ROOTFS_IMAGE,
-                        "parity",
-                        sidecars=[_redis("db")],
-                        services={reserved: 6379},
-                    )
+        for kw in (
+            {"sidecars": [_redis("db")], "services": {"db": 6379}},
+            {"sidecars": [_redis("db")], "services": {"main": 6379}},
+            {"sidecars": [_redis("main")]},
+            {
+                "build": cua.ImageBuild(
+                    layers=[cua.ImageLayer.PIP_INSTALL(packages=["mcp"])],
+                    env={},
+                    ports=[],
+                    files=[],
+                    timeout_ms=None,
                 )
-            assert "reserved" in str(err.value), err.value
-        # A sidecar may not be named main.
-        with pytest.raises(cua.CuaError) as err:
-            await sbx.create(_opts("cloud", ROOTFS_IMAGE, "parity", sidecars=[_redis("main")]))
-        assert "main" in str(err.value), err.value
-        # Cloud layers need Fleet's builder, which does not run them yet.
-        with pytest.raises(cua.CuaError) as err:
-            await sbx.create(
-                _opts(
-                    "cloud",
-                    ROOTFS_IMAGE,
-                    "parity",
-                    build=cua.ImageBuild(
-                        layers=[cua.ImageLayer.PIP_INSTALL(packages=["mcp"])],
-                        env={},
-                        ports=[],
-                        files=[],
-                        timeout_ms=None,
-                    ),
-                )
-            )
-        assert "not deployed yet" in str(err.value), err.value
-        assert not await fake_fleet.fleet().pools().list(), "nothing was created"
-        # A cloud VM image takes sidecars (Fleet runs them in a companion pod).
-        sb = await sbx.create(
-            _opts(
-                "cloud",
-                KUBEVIRT_IMAGE,
-                "parity-vm",
-                sidecars=[_redis("db")],
-                services={"db": 6379},
-            )
-        )
-        try:
-            assert sb.info().services.get("db") == 6379
-        finally:
-            await sb.delete()
+            },
+        ):
+            with pytest.raises(cua.CuaError.Unsupported, match=e2e.CLOUD_ENDED):
+                await sbx.create(_opts("cloud", ROOTFS_IMAGE, "parity", **kw))
+        await e2e.assert_cloud_ended(fake_fleet, sidecars=[_redis("db")])
         # Locally, layers build into the container engine (the container
         # lane runs that); a VM image takes none, refused before anything runs.
         local = cua.embedded(state_dir=str(tmp_path / "local"), fleet_from_env=False)

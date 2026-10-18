@@ -238,16 +238,17 @@ fn transport_name(t: Transport) -> &'static str {
 /// containers. CUA_BENCH_CONTAINER overrides the prefix (CI uses a run-scoped
 /// one it can clean up after a crash).
 fn run_container_name(runtime: &str) -> String {
-    let prefix = std::env::var("CUA_BENCH_CONTAINER")
-        .ok()
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| {
-            let secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            format!("cua-e2e-bench-space-{}-{secs}", std::process::id())
-        });
+    container_name(std::env::var("CUA_BENCH_CONTAINER").ok(), runtime)
+}
+
+fn container_name(prefix: Option<String>, runtime: &str) -> String {
+    let prefix = prefix.filter(|p| !p.is_empty()).unwrap_or_else(|| {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("cua-e2e-bench-space-{}-{secs}", std::process::id())
+    });
     format!("{prefix}-{runtime}")
 }
 
@@ -707,16 +708,27 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::run_container_name;
+    use super::container_name;
 
+    // Pass the prefix in rather than reading CUA_BENCH_CONTAINER, which the
+    // bench workflow sets for the whole job, tests included.
     #[test]
     fn container_names_are_unique_per_run_and_runtime() {
         // Not the old fixed name another run (or a user) could own.
-        let runc = run_container_name("runc");
+        let runc = container_name(None, "runc");
         assert!(runc.starts_with("cua-e2e-bench-space-"));
         assert_ne!(runc, "cua-e2e-bench-space");
         assert!(runc.contains(&std::process::id().to_string()));
         assert!(runc.ends_with("-runc"));
-        assert_ne!(runc, run_container_name("runsc"));
+        assert_ne!(runc, container_name(None, "runsc"));
+    }
+
+    #[test]
+    fn container_name_uses_a_non_empty_prefix_override() {
+        assert_eq!(
+            container_name(Some("ci-run-7".into()), "runsc"),
+            "ci-run-7-runsc"
+        );
+        assert!(container_name(Some(String::new()), "runc").starts_with("cua-e2e-bench-space-"));
     }
 }

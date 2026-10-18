@@ -166,17 +166,28 @@ async fn launch_validates_arguments() {
     assert_eq!(o.code, 2, "{o:?}");
     assert!(o.stderr.contains("--name is required"), "{o:?}");
     let o = h
-        .run(&["--embedded", "sb", "launch", "linux", "--memory", "lots"])
+        .run(&[
+            "--embedded",
+            "sb",
+            "launch",
+            "linux",
+            "--on",
+            "local",
+            "--memory",
+            "lots",
+        ])
         .await;
     assert_eq!(o.code, 2, "{o:?}");
-    // Fleet without credentials.
+    // Cua Cloud has ended: launch's cloud default and --pool fail with it.
     let o = h
         .run(&["--embedded", "sb", "launch", "--pool", "p", "--name", "x"])
         .await;
     assert_eq!(o.code, 4, "{o:?}");
+    assert!(o.stderr.contains("Cua Cloud has ended"), "{o:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_pool_launch_list_suspend_and_release() {
     let fake = FakeFleet::new();
     let fleet = fixtures::start_fleet_http(fake.clone()).await;
@@ -852,6 +863,7 @@ async fn sandbox_mcp_tools_call_and_content() {
 /// vault only when the session marker says one is stored (a stand-in vault
 /// here; it counts its reads).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn default_ls_reads_a_keychain_session_only_with_the_marker() {
     let fake = FakeFleet::new();
     let fleet = fixtures::start_fleet_http(fake.clone()).await;

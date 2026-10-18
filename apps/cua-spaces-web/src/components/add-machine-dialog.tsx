@@ -96,7 +96,7 @@ export function AddMachineDialog({
             <Notice>
               {pairing.error?.unsupported
                 ? "Your Cua relay can't make links yet. Set the computer up by hand instead."
-                : `Couldn't make a link: ${pairing.error?.message ?? "unknown error"}. Set the computer up by hand instead.`}
+                : `${pairing.error?.message ?? "Couldn't make a link."} Set the computer up by hand instead.`}
               <Button variant="outline" size="sm" className="mt-2 flex" onClick={pairing.renew}>
                 Try again
               </Button>
@@ -200,6 +200,13 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
             <div className="mb-1 text-xs font-medium text-muted-foreground">Link</div>
             {code.url ? <CopyField text={code.url} label="Copy link" /> : null}
           </div>
+          {code.code ? (
+            <div data-pairing-code>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">Code</div>
+              <CopyField text={code.code} label="Copy code" mono />
+              <p className="mt-1.5 text-xs text-muted-foreground">Already have Cua Spaces there? Open Machines, choose Join with a code and enter it.</p>
+            </div>
+          ) : null}
           <div>
             <Segmented aria-label="The other computer's system" value={shell} options={SHELLS} onValueChange={setShell} />
             {command ? <CopyField text={command} label="Copy command" mono /> : null}

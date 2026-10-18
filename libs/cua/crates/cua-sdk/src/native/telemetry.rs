@@ -252,18 +252,26 @@ pub(crate) fn variant<T>(r: &Result<T>) -> Option<&'static str> {
     r.as_ref().err().map(CuaError::variant)
 }
 
-/// A create's error kind: a local runtime failure split by cause
-/// (`runtime_missing`, `runtime_not_running`, `runtime_permission`,
-/// `image_pull`), else the variant. Only the bounded word leaves the
-/// process, never the message.
+/// A create's error kind: the cause the error's text names
+/// (`image_pull_not_found`, `runtime_not_running`, `vm_boot_timeout`, ...;
+/// [`cua_create_failure::create_failure_kind`]), else the variant. Only the
+/// bounded word leaves the process, never the message. A cloud create's
+/// "X is not available" is its provider, not a local runtime.
 fn create_error_kind<T>(on: &str, r: &Result<T>) -> Option<&'static str> {
     let e = r.as_ref().err()?;
-    let local_runtime =
-        on == "local" && matches!(e, CuaError::Runtime(_) | CuaError::ProviderNotConfigured(_));
-    if local_runtime && let Some(kind) = cua_sandbox_core::runtime_failure_kind(&e.to_string()) {
-        return Some(kind);
-    }
-    Some(e.variant())
+    let local = on == "local";
+    let variant = match e {
+        // A cloud account that is not set up stays provider_not_configured.
+        CuaError::ProviderNotConfigured(_) if !local => return Some(e.variant()),
+        CuaError::ProviderNotConfigured(_) => "Runtime",
+        _ => e.variant(),
+    };
+    Some(cua_create_failure::create_failure_kind(
+        &e.to_string(),
+        "",
+        variant,
+        local,
+    ))
 }
 
 fn outcome<T>(r: &Result<T>) -> Outcome {
@@ -460,6 +468,27 @@ mod tests {
                 CuaError::ProviderNotConfigured("x is not available: y".into())
             ),
             Some("provider_not_configured")
+        );
+        assert_eq!(
+            kind(
+                "local",
+                CuaError::Runtime("container engine: pull ghcr.io/x/y:1: manifest unknown".into())
+            ),
+            Some("image_pull_not_found")
+        );
+        assert_eq!(
+            kind(
+                "local",
+                CuaError::Runtime("Docker is not running: start Docker Desktop".into())
+            ),
+            Some("runtime_not_running")
+        );
+        assert_eq!(
+            kind(
+                "cloud",
+                CuaError::Runtime("sandbox quota exceeded for this account".into())
+            ),
+            Some("quota_exceeded")
         );
         assert_eq!(create_error_kind::<()>("local", &Ok(())), None);
     }

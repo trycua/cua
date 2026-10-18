@@ -89,6 +89,8 @@ describe("host setup failures", () => {
     const svc = presentHostFailure("schtasks /Create failed: access denied", "win32");
     expect(svc.kind).toBe("service");
     expect(svc.message).toContain("Windows didn’t start");
+    expect(svc.message).toContain("Run as administrator");
+    expect(svc.message).not.toContain("restart this PC");
     expect(presentHostFailure("systemctl --user start failed", "linux").message).toContain("restart this computer");
     expect(presentHostFailure("relay: HTTP 401", "linux").message).toBe("Your Cua account isn’t signed in on this computer. Sign in, then try again.");
   });

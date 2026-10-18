@@ -12,7 +12,7 @@ description: "Pools, templates, sandbox specs and pool errors of cua-sandbox."
 
 `Pool` keeps warm cloud capacity for a `SandboxSpec`. `Sandbox.create` uses shared capacity; a named pool is for dedicated capacity.
 
-Most programs never touch pools: a cloud `Sandbox.create` claims from a pool the SDK manages per image and shape (`cua-auto-*`), tuned with `CloudOptions`. A named `Pool` is dedicated capacity you size and own; `Sandbox.create(cloud=CloudOptions(pool=...))` claims from it, and fields that differ from its template raise `PoolSpecMismatch`.
+Pools and `CloudOptions` belonged to Cua Cloud, which has ended. Every call here fails with a clear error, and the module is removed in `cua-sandbox` 0.10.0.
 
 ## Pools and templates
 
@@ -72,25 +72,6 @@ The old form `Pool.apply(image, *, name=..., replicas=..., cpu=...,
 memory_mb=..., services=..., autoscaling=..., ttl_seconds_after_created=...,
 runtime=...)` still works and is converted to the new one, with a
 `DeprecationWarning`.
-
-**Example**
-
-{/* Examples: scripts/docs-generators/examples/cua-sdk/python/Pool.apply.py */}
-
-```python test="docs" id="pool-apply-py" session="pool-apply-py" prelude="fakefleet"
-import asyncio
-
-from cua_sandbox import CloudOptions, Image, Pool, PoolOptions, Sandbox, SandboxSpec
-
-async def main():
-    pool = await Pool.apply("my-team-linux", SandboxSpec(image=Image.linux()), PoolOptions(replicas=2))
-    sb = await Sandbox.create(cloud=CloudOptions(pool=pool))  # or CloudOptions(pool="my-team-linux")
-    print(sb.id)
-    await sb.destroy()
-    await pool.delete()
-
-asyncio.run(main())
-```
 
 #### Pool.export
 
@@ -195,20 +176,10 @@ async def reconcile(request: CreateTemplateRequest) -> 'Template'
 
 ### pools
 
-Managed Fleet pools: list them and garbage-collect them.
+Managed Fleet pools: Cua Cloud has ended (CUA-1854).
 
-`Sandbox.ephemeral(image, local=False)` claims sandboxes from this
-account's managed pools (`cua-auto-*`), one per image spec, created on
-first use and scaled to zero when idle. Idle pools are deleted automatically
-after `CUA_FLEET_POOL_IDLE_GC`; these calls inspect them or collect now.
-
-```python
-from cua_sandbox import pools
-
-for pool in await pools.list_pools():
-    print(pool.name, pool.claims, pool.last_used)
-report = await pools.gc(idle_after=1800)
-```
+Every call raises `cua_sandbox._ended.CloudEnded`; the module goes
+away in the next minor release.
 
 ### list_pools
 

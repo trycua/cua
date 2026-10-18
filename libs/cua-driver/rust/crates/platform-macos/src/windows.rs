@@ -106,6 +106,34 @@ pub(crate) fn pid_windows_with_space_snapshot(pid: i32, on_screen_only: bool) ->
     )
 }
 
+/// On-screen windows of `pid` on every layer, without the Space snapshot.
+/// Cheap enough to poll during a gesture (the drag tool watches for a
+/// drag-image window at the dragging level).
+pub(crate) fn pid_on_screen_windows_any_layer(pid: i32) -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(pid),
+        false,
+    )
+    .windows
+}
+
+/// On-screen windows of every app on every layer, front to back, without the
+/// Space snapshot. Use this, not [`all_windows_any_layer`], to compare two
+/// apps' window order: the all-windows list (off-screen windows included) did
+/// not follow a raise in Bench v2 (a Chromium window raised over the user's
+/// window still read as behind it), while the on-screen list does.
+pub(crate) fn on_screen_windows_any_layer() -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        None,
+        false,
+    )
+    .windows
+}
+
 pub(crate) fn prefer_layer0(windows: &mut Vec<WindowInfo>) {
     if windows.iter().any(|w| w.layer == 0) {
         windows.retain(|w| w.layer == 0);

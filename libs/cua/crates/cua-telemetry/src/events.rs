@@ -153,6 +153,11 @@ pub fn location(on: &str) -> &'static str {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
+    // Cua Cloud has ended: an attempt there reports `other`. `cloud` stays
+    // in the schema for the events recorded before.
+    if word == "cloud" {
+        return "other";
+    }
     pick(schema::LOCATIONS, &word, "other")
 }
 
@@ -895,7 +900,11 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
     };
     let error_kind = match outcome {
         Outcome::Error if s.stalled && s.error_variant.is_empty() => "timeout",
-        Outcome::Error => error_kind(s.error_variant),
+        // A failure never reports `none`.
+        Outcome::Error => match error_kind(s.error_variant) {
+            "none" => "other",
+            k => k,
+        },
         _ => "none",
     };
     Event::new(event::SPACE_CREATE)
@@ -1047,7 +1056,10 @@ pub fn host_space_provided(
         .s("outcome", outcome.as_str())
         .s(
             "error_kind",
-            error_variant.map(error_kind).unwrap_or("none"),
+            match (outcome, error_variant.map(error_kind)) {
+                (Outcome::Error, None | Some("none")) => "other",
+                (_, k) => k.unwrap_or("none"),
+            },
         )
 }
 

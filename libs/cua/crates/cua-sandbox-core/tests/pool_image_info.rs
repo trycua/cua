@@ -23,6 +23,7 @@ fn claim_opts(pool: &str) -> CreateOptions {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn named_pool_claims_report_the_template_image() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();

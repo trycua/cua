@@ -19,6 +19,8 @@
 //!   builds: a Cua-signed build moves a file-backed build's copy into the
 //!   vault, and an unsigned macOS build reads the vault's copy when it has
 //!   none (never writing it back to a file).
+//!   A process without a terminal (an agent, a script, a service) never
+//!   waits on a macOS keychain prompt: see [`KEYCHAIN_NONINTERACTIVE_ENV`].
 //! - **Session**: a refreshing access token. Every call reads the store, so
 //!   a sign-out or a token another process rotated is seen at once instead
 //!   of being refreshed twice.
@@ -430,15 +432,23 @@ impl Store {
     /// approved the sign-in. Other stores and console sessions always pass.
     pub fn check_writable(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
-        if matches!(self, Store::Keyring) && !macos_keychain::has_graphic_access() {
-            if macos_keychain::default_keychain_unlocked() == Some(false) {
-                return Err(Error::Store(KEYCHAIN_LOCKED_HINT.into()));
-            }
-            // No prompt can appear here: a read that needs one fails.
-            if let Err(e) = keyring_entry()?.get_password()
-                && interaction_not_allowed(&e)
-            {
-                return Err(Error::Store(KEYCHAIN_LOCKED_HINT.into()));
+        if matches!(self, Store::Keyring) {
+            let no_window_server = !macos_keychain::has_graphic_access();
+            if no_window_server || keychain_noninteractive() {
+                if macos_keychain::default_keychain_unlocked() == Some(false) {
+                    return Err(Error::Store(KEYCHAIN_LOCKED_HINT.into()));
+                }
+                // No prompt can appear here (an SSH session cannot show one;
+                // a non-interactive process does not wait for one): a read
+                // that needs one fails.
+                if let Err(e) = vault_get(keyring_entry()?) {
+                    if no_window_server && interaction_not_allowed(&e) {
+                        return Err(Error::Store(KEYCHAIN_LOCKED_HINT.into()));
+                    }
+                    if is_prompt_refusal(&e) {
+                        return Err(vault_err(e));
+                    }
+                }
             }
         }
         Ok(())
@@ -491,7 +501,7 @@ impl Store {
             if matches!(item.state, KeychainState::NeedsAccess)
                 && let Ok(entry) = keyring::Entry::new(keyring_service(), &item.account)
             {
-                let _ = vault_delete(&entry);
+                let _ = vault_delete(entry);
             }
         }
         Ok(self.check_keychain(false))
@@ -594,7 +604,7 @@ impl Store {
                 Err(e) => return Err(store_err(e)),
             },
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match vault_get(&keyring_entry()?) {
+            Store::Keyring => match vault_get(keyring_entry()?) {
                 Ok(s) => {
                     adopt_read(KEYRING_ACCOUNT, &s);
                     Some(s)
@@ -667,7 +677,7 @@ impl Store {
                 Err(e) => Err(store_err(e)),
             },
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match vault_delete(&keyring_entry()?) {
+            Store::Keyring => match vault_delete(keyring_entry()?) {
                 Ok(()) => Ok(true),
                 Err(keyring::Error::NoEntry) => Ok(false),
                 Err(e) => Err(store_err(e)),
@@ -741,7 +751,7 @@ impl Store {
         let path = self.secret_path(name)?;
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match vault_get(&secret_entry(name)?) {
+            Store::Keyring => match vault_get(secret_entry(name)?) {
                 Ok(s) => {
                     adopt_read(&format!("{KEYRING_ACCOUNT}.{name}"), &s);
                     Ok(Some(s))
@@ -762,7 +772,7 @@ impl Store {
         }
         #[cfg(target_os = "macos")]
         {
-            vault_get(&secret_entry(name).ok()?).ok()
+            vault_get(secret_entry(name).ok()?).ok()
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -888,7 +898,7 @@ impl Store {
         let path = self.secret_path(name)?;
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match vault_delete(&secret_entry(name)?) {
+            Store::Keyring => match vault_delete(secret_entry(name)?) {
                 Ok(()) => Ok(true),
                 Err(keyring::Error::NoEntry) => Ok(false),
                 Err(e) => Err(store_err(e)),
@@ -1047,23 +1057,59 @@ impl KeychainCheck {
     }
 }
 
-/// `CUA_KEYCHAIN_NONINTERACTIVE=1`: this process never shows a keychain
-/// prompt. A read or write that would need one fails at once with
-/// [`KEYCHAIN_NEEDS_ACCESS`] instead of waiting on a dialog nobody may see.
-/// The Cua Spaces app sets it for itself and the daemon it starts (the one
-/// interactive read is its explicit `cua auth keychain --prompt`); a `cua`
-/// run from a terminal stays interactive.
+/// `CUA_KEYCHAIN_NONINTERACTIVE`: whether this process may show a keychain
+/// prompt. A process that may not never waits on one: a read or write that
+/// would need a prompt fails at once with [`KEYCHAIN_NEEDS_ACCESS`] instead
+/// of waiting on a dialog nobody may see, and a call that macOS does not
+/// answer within [`KEYCHAIN_TIMEOUT_ENV`] seconds (it is queued behind a
+/// dialog that is already open) fails the same way.
+///
+/// `1` turns prompts off, `0` allows them. Unset, a process with a terminal
+/// (a `cua` a person runs) stays interactive and one without (an agent, a
+/// script, a pipe, a service) is non-interactive: nobody is there to answer
+/// the dialog, and the call used to wait on it for ever. The Cua Spaces app
+/// sets it for itself and the daemon it starts (the one interactive read is
+/// its explicit `cua auth keychain --prompt`).
 pub const KEYCHAIN_NONINTERACTIVE_ENV: &str = "CUA_KEYCHAIN_NONINTERACTIVE";
 
-/// Why a non-interactive keychain read failed.
+/// Seconds a non-interactive keychain call may take before it counts as
+/// blocked (default 5; a call that is not blocked takes milliseconds).
+pub const KEYCHAIN_TIMEOUT_ENV: &str = "CUA_KEYCHAIN_TIMEOUT_SECS";
+
+/// Why a non-interactive keychain call failed: it needs a prompt this
+/// process does not show, or macOS did not answer (a dialog is already open).
 pub const KEYCHAIN_NEEDS_ACCESS: &str = "the macOS keychain needs your permission to read the Cua \
-     sign-in (needs access); open Cua Spaces and click Allow access, or run `cua auth status` in \
-     a terminal";
+     sign-in (needs access), and this process does not wait for a prompt (it has no terminal, \
+     or CUA_KEYCHAIN_NONINTERACTIVE is on). At the Mac: answer the keychain dialog if one is \
+     open, or run `cua auth keychain --prompt` in a terminal (or open Cua Spaces and click \
+     Allow access) and choose Always Allow. Scripts and agents can keep the session in a file \
+     instead: sign in again with CUA_CREDENTIAL_STORE=file and keep it set";
 
 /// Whether this process may not show keychain prompts
 /// ([`KEYCHAIN_NONINTERACTIVE_ENV`]).
 pub fn keychain_noninteractive() -> bool {
-    std::env::var(KEYCHAIN_NONINTERACTIVE_ENV).is_ok_and(|v| truthy(&v))
+    noninteractive_from(
+        std::env::var(KEYCHAIN_NONINTERACTIVE_ENV).ok().as_deref(),
+        has_terminal(),
+    )
+}
+
+/// The decision of [`keychain_noninteractive`]: an explicit setting wins,
+/// else a process is non-interactive when it has no terminal.
+fn noninteractive_from(setting: Option<&str>, has_terminal: bool) -> bool {
+    match setting.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(v) => truthy(v),
+        None => !has_terminal,
+    }
+}
+
+/// Whether a person may be at this process: any of its standard streams is
+/// a terminal.
+fn has_terminal() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
+        || std::io::stdout().is_terminal()
+        || std::io::stderr().is_terminal()
 }
 
 fn truthy(v: &str) -> bool {
@@ -1073,25 +1119,142 @@ fn truthy(v: &str) -> bool {
     )
 }
 
-/// Keychain prompts off while it lives, when this process is
-/// non-interactive.
-#[cfg(target_os = "macos")]
-fn quiet() -> Option<macos_keychain::Quiet> {
-    keychain_noninteractive().then(macos_keychain::Quiet::new)
+/// A keychain call that did not answer in time.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug)]
+struct KeychainBlocked;
+
+#[cfg(any(target_os = "macos", test))]
+impl std::fmt::Display for KeychainBlocked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the macOS keychain did not answer (a dialog may be waiting for you)")
+    }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn vault_get(entry: &VaultEntry) -> keyring::Result<String> {
-    #[cfg(target_os = "macos")]
-    let _quiet = quiet();
+#[cfg(any(target_os = "macos", test))]
+impl std::error::Error for KeychainBlocked {}
+
+/// How long a non-interactive keychain call may take.
+#[cfg(any(target_os = "macos", test))]
+fn keychain_deadline() -> Duration {
+    let secs = std::env::var(KEYCHAIN_TIMEOUT_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .unwrap_or(5);
+    Duration::from_secs(secs)
+}
+
+/// Runs `f` on its own thread and gives up on it after `deadline`: the
+/// keychain call it makes cannot be cancelled, so a call that never returns
+/// (macOS holds it behind an open dialog) is left to end with the process.
+#[cfg(any(target_os = "macos", test))]
+fn run_with_deadline<T: Send + 'static>(
+    deadline: Duration,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, KeychainBlocked> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("cua-keychain".into())
+        .spawn(move || {
+            let _ = tx.send(f());
+        })
+        .map_err(|_| KeychainBlocked)?;
+    rx.recv_timeout(deadline).map_err(|_| KeychainBlocked)
+}
+
+/// After one blocked call, later ones fail at once for this long, so a
+/// command that reads the keychain several times waits once.
+#[cfg(any(target_os = "macos", test))]
+const BLOCKED_COOLDOWN: Duration = Duration::from_secs(30);
+
+/// When a blocked call's cooldown ends.
+#[cfg(any(target_os = "macos", test))]
+type Cooldown = std::sync::Mutex<Option<std::time::Instant>>;
+
+#[cfg(target_os = "macos")]
+static BLOCKED_UNTIL: Cooldown = std::sync::Mutex::new(None);
+
+/// Runs `f` with a deadline unless the last call was blocked less than
+/// [`BLOCKED_COOLDOWN`] ago. `blocked` is the error for a call that did not
+/// answer.
+#[cfg(any(target_os = "macos", test))]
+fn guarded<T: Send + 'static, E: Send + 'static>(
+    cooldown: &Cooldown,
+    deadline: Duration,
+    f: impl FnOnce() -> Result<T, E> + Send + 'static,
+    blocked: impl FnOnce() -> E,
+) -> Result<T, E> {
+    let in_cooldown = cooldown
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+        .is_some_and(|t| t > std::time::Instant::now());
+    if in_cooldown {
+        return Err(blocked());
+    }
+    match run_with_deadline(deadline, f) {
+        Ok(r) => r,
+        Err(KeychainBlocked) => {
+            if let Ok(mut g) = cooldown.lock() {
+                *g = Some(std::time::Instant::now() + BLOCKED_COOLDOWN);
+            }
+            Err(blocked())
+        }
+    }
+}
+
+/// One keychain call of a non-interactive process: prompts off and a
+/// deadline, so it fails instead of waiting. An interactive process just
+/// calls `f`.
+#[cfg(target_os = "macos")]
+fn keychain_call<T: Send + 'static, E: Send + 'static>(
+    f: impl FnOnce() -> Result<T, E> + Send + 'static,
+    blocked: impl FnOnce() -> E,
+) -> Result<T, E> {
+    if !keychain_noninteractive() {
+        return f();
+    }
+    let _quiet = macos_keychain::Quiet::new();
+    guarded(&BLOCKED_UNTIL, keychain_deadline(), f, blocked)
+}
+
+#[cfg(target_os = "macos")]
+fn blocked_vault_error() -> keyring::Error {
+    keyring::Error::NoStorageAccess(Box::new(KeychainBlocked))
+}
+
+#[cfg(target_os = "macos")]
+fn vault_get(entry: VaultEntry) -> keyring::Result<String> {
+    keychain_call(move || entry.get_password(), blocked_vault_error)
+}
+
+#[cfg(target_os = "windows")]
+fn vault_get(entry: VaultEntry) -> keyring::Result<String> {
     entry.get_password()
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn vault_delete(entry: &VaultEntry) -> keyring::Result<()> {
-    #[cfg(target_os = "macos")]
-    let _quiet = quiet();
+#[cfg(target_os = "macos")]
+fn vault_delete(entry: VaultEntry) -> keyring::Result<()> {
+    keychain_call(move || entry.delete_credential(), blocked_vault_error)
+}
+
+#[cfg(target_os = "windows")]
+fn vault_delete(entry: VaultEntry) -> keyring::Result<()> {
     entry.delete_credential()
+}
+
+/// Whether a vault failure is macOS refusing to ask (a prompt this process
+/// does not show) or not answering (a dialog is already open).
+#[cfg(target_os = "macos")]
+fn is_prompt_refusal(e: &keyring::Error) -> bool {
+    let blocked = match e {
+        keyring::Error::PlatformFailure(inner) | keyring::Error::NoStorageAccess(inner) => {
+            inner.downcast_ref::<KeychainBlocked>().is_some()
+        }
+        _ => false,
+    };
+    blocked || interaction_not_allowed(e) || auth_failed(e)
 }
 
 /// A vault read's failure; one that needed a prompt this process may not
@@ -1099,7 +1262,7 @@ fn vault_delete(entry: &VaultEntry) -> keyring::Result<()> {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn vault_err(e: keyring::Error) -> Error {
     #[cfg(target_os = "macos")]
-    if keychain_noninteractive() && (interaction_not_allowed(&e) || auth_failed(&e)) {
+    if keychain_noninteractive() && is_prompt_refusal(&e) {
         return Error::Store(KEYCHAIN_NEEDS_ACCESS.into());
     }
     store_err(e)
@@ -1122,8 +1285,12 @@ fn auth_failed(e: &keyring::Error) -> bool {
 /// `macos_keychain`).
 #[cfg(target_os = "macos")]
 fn vault_set(account: &str, text: &str) -> Result<()> {
-    let _quiet = quiet();
-    macos_keychain::set_generic_password(keyring_service(), account, text.as_bytes()).map_err(|e| {
+    let (account, text) = (account.to_string(), text.as_bytes().to_vec());
+    keychain_call(
+        move || macos_keychain::set_generic_password(keyring_service(), &account, &text),
+        || macos_keychain::Status(macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED),
+    )
+    .map_err(|e| {
         if e.0 == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED && keychain_noninteractive() {
             Error::Store(KEYCHAIN_NEEDS_ACCESS.into())
         } else if e.0 == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED {
@@ -2270,6 +2437,77 @@ mod tests {
         // store, a test keychain, or an override (and never in tests).
         assert!(!vault.imports_file_session());
         assert!(!Store::File(file.clone()).imports_file_session());
+    }
+
+    #[test]
+    fn a_process_without_a_terminal_never_waits_on_a_keychain_prompt() {
+        // Unset: the terminal decides (an agent or a script has none).
+        assert!(noninteractive_from(None, false));
+        assert!(noninteractive_from(Some(""), false));
+        assert!(noninteractive_from(Some("  "), false));
+        assert!(!noninteractive_from(None, true));
+        // Set: the setting decides, either way.
+        assert!(noninteractive_from(Some("1"), true));
+        assert!(!noninteractive_from(Some("0"), false));
+        assert!(!noninteractive_from(Some("false"), false));
+    }
+
+    #[test]
+    fn a_call_that_never_answers_is_given_up_on() {
+        let cooldown = Cooldown::default();
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = |ran: &std::sync::Arc<std::sync::atomic::AtomicUsize>| {
+            let ran = ran.clone();
+            move || {
+                ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok::<u8, &'static str>(7)
+            }
+        };
+        // An answer within the deadline is the call's own.
+        let deadline = Duration::from_secs(5);
+        assert_eq!(
+            guarded(&cooldown, deadline, count(&ran), || "blocked"),
+            Ok(7)
+        );
+
+        // A call macOS holds behind an open dialog fails at the deadline.
+        let started = std::time::Instant::now();
+        let held = guarded(
+            &cooldown,
+            Duration::from_millis(100),
+            || {
+                std::thread::sleep(Duration::from_secs(30));
+                Ok::<u8, &'static str>(1)
+            },
+            || "blocked",
+        );
+        assert_eq!(held, Err("blocked"));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+
+        // The next call does not wait again, and does not even start.
+        let started = std::time::Instant::now();
+        assert_eq!(
+            guarded(&cooldown, deadline, count(&ran), || "blocked"),
+            Err("blocked")
+        );
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_blocked_keychain_call_reads_as_needing_access() {
+        let blocked = blocked_vault_error();
+        assert!(is_prompt_refusal(&blocked));
+        assert!(!is_prompt_refusal(&keyring::Error::NoEntry));
+        // The error a person sees names the way out, not a raw failure.
+        for hint in ["cua auth keychain --prompt", "CUA_CREDENTIAL_STORE=file"] {
+            assert!(KEYCHAIN_NEEDS_ACCESS.contains(hint), "{hint}");
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@
   "pages": [
     "index",
     "quickstart",
+    "recipes",
     "guides",
     "examples",
     "reference"

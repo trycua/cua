@@ -1,0 +1,44 @@
+---
+title: Connect a Windows PC
+description: 'Run one install command on a Windows PC, then see and use its desktop from your Mac.'
+---
+
+Use a Windows PC from your Mac.
+
+The Cua Spaces app runs on a Mac. A Windows PC joins from the other direction:
+you run one install command on the PC, and the PC then shows up in Cua Spaces
+on your Mac.
+
+## You need
+
+- A Windows PC that is switched on and signed in to Windows.
+- Cua Spaces on your Mac, signed in to your Cua account.
+- A few minutes at the PC, once. You will paste one line into PowerShell.
+
+## Steps
+
+Do steps 1 to 4 on the Windows PC.
+
+1. Open the Start menu, type **PowerShell** and open it.
+2. Paste this line and press Enter:
+
+   ```powershell skip="host-install"
+   irm https://cua.ai/install.ps1 | iex
+   ```
+
+3. When the list of items appears, type `3` and press Enter, so that **Host this machine** shows `[x]`. Press Enter again to install.
+4. When your browser opens, sign in with the same Cua account you use on your Mac. Then go back to PowerShell and wait for it to finish.
+5. On your Mac, open Cua Spaces, click the PC in the sidebar and click **Open**.
+
+{/* capture: A 20 to 30 second screen recording on the Windows PC, with a large PowerShell font. Show pasting the line, the list with "Host this machine" switched to [x], the browser sign-in page, and the finished message. Cut to the Mac: the PC in the Cua Spaces sidebar, then its Windows desktop opening. Hide email addresses. */}
+
+## It worked if
+
+- The PC appears in the sidebar of Cua Spaces on your Mac and says it is online.
+- After you click **Open**, you see the PC's desktop and can use it.
+
+## If it didn't
+
+- **The PC isn't in the list.** Check that it is switched on, awake and signed in to Windows, and that you used the same Cua account on both. It can take a moment to appear.
+- **PowerShell says it can't finish setting up.** Run `cua host setup` in the same window. Run `cua auth login` first if it asks you to sign in.
+- **Your Mac says it needs enrolling.** Open **Settings > Devices** and click **Enroll**. Choose **Sign in again**.

@@ -841,7 +841,7 @@ pub fn after_login(
         line(out, "");
         match prompt.yes_no_never(
             out,
-            "Configure cua skills and the cua MCP server for your AI coding agent(s)?",
+            "Let your AI coding agents (like Claude Code and Codex) use cua?",
         ) {
             Choice::Yes => {}
             Choice::No => {

@@ -638,7 +638,7 @@ async fn interactive_login_onboarding_prompts() {
         let mut p = Pty::spawn(&h, &["auth", "login"]);
         let at = p.expect("Logged in to Cua as tester", 0);
         let at = p.expect(
-            "Configure cua skills and the cua MCP server for your AI coding agent(s)? [y/n/never]",
+            "Let your AI coding agents (like Claude Code and Codex) use cua? [y/n/never]",
             at,
         );
         p.send("y\r");

@@ -4614,9 +4614,9 @@ fn hyprland_input_result(result: anyhow::Result<Value>, foreground: bool) -> Too
                 .as_u64()
                 .and_then(|count| u32::try_from(count).ok())
                 .filter(|count| *count > 0);
-            let outcome = if value["effect"] == "partial"
-                && delivered.is_some_and(|count| foreground || count == 1)
-            {
+            // Keys or wheel packets the compositor acknowledged before the
+            // stop stay reported, so a caller does not read them as unsent.
+            let outcome = if value["effect"] == "partial" && delivered.is_some() {
                 record(ActionEffect::Partial)
                     .actual_delivery(actual)
                     .delivered_count(delivered.unwrap())
@@ -5334,6 +5334,26 @@ fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let public = partial.action_record.unwrap().public_result().unwrap();
     assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
     assert_eq!(public.delivery.unwrap().delivered_count, Some(1));
+
+    // Text interrupted after three keys: those keys landed, so the result is
+    // partial with its count, never a refusal that reads as "nothing sent".
+    let typed = isolated_hyprland_result(Ok(json!({
+        "ok": false, "code": "text_interrupted", "detail": "lane lost",
+        "effect": "partial", "delivery": {"mode": "background", "delivered_count": 3}
+    })));
+    let content = typed.structured_content.as_ref().unwrap();
+    assert_eq!(content["effect"], "partial");
+    assert_eq!(content["delivery"]["delivered_count"], 3);
+    assert!(content.get("escalation").is_none());
+    let public = typed.action_record.unwrap().public_result().unwrap();
+    public.validate_invariants().unwrap();
+    assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
+    let delivery = public.delivery.unwrap();
+    assert_eq!(
+        delivery.mode,
+        cua_driver_contract::ActionDeliveryMode::Background
+    );
+    assert_eq!(delivery.delivered_count, Some(3));
 
     let unknown = isolated_hyprland_result(Err(anyhow::anyhow!("connection lost")));
     let public = unknown.action_record.unwrap().public_result().unwrap();

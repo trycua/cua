@@ -129,11 +129,12 @@ Describe 'functions' {
         $sel = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $shown = @(& { $null = Read-CuaSelection $sel { $script:answers.Dequeue() } } 6>&1 | ForEach-Object { "$($_.MessageData)" })
         $text = $shown -join "`n"
-        $text | Should -Match 'Cua Spaces: computers for you and your AI agents\.'
-        $text | Should -Match 'Always installed: the cua command-line tool\.'
-        $text | Should -Match '1 \[x\] Cua Spaces app'
-        $text | Should -Match '2 \[ \] Cua Driver, so coding agents can use apps in the background'
-        $text | Should -Match 'Installs Cua Driver and adds it to Claude Code, Codex and other agents\.'
+        $text | Should -Match 'Cua Spaces lets your AI agents use computers, and lets you watch them work\.'
+        $text | Should -Match 'Needed, so always installed:'
+        $text | Should -Match 'Command-line tools: the "cua" program that the app and your AI agents use\.'
+        $text | Should -Match '1 \[x\] Cua Spaces app: lets your AI agents use computers'
+        $text | Should -Match '2 \[ \] Cua Driver: lets AI agents use your apps while you keep working'
+        $text | Should -Match 'For advanced users\. Adds it to Claude Code, Codex and other coding agents\.'
         $text | Should -Not -Match 'Host this machine'
         $text | Should -Not -Match 'cua CLI \(required\)'
         $script:Picked = $false
@@ -143,7 +144,7 @@ Describe 'functions' {
         $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@(''))
         $sel = Get-CuaSelection -SelectList 'host' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $shown = @(& { $null = Read-CuaSelection $sel { $script:answers.Dequeue() } } 6>&1 | ForEach-Object { "$($_.MessageData)" })
-        ($shown -join "`n") | Should -Match 'Also: let your other devices use this computer'
+        ($shown -join "`n") | Should -Match 'Also: your other devices will be able to use this computer'
         $script:Picked = $false
     }
 
@@ -199,18 +200,18 @@ Describe 'install.ps1' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p1'
         $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix }
         Join-Path $prefix 'bin/cua.exe' | Should -Exist
-        $out | Should -Match 'Installed the cua command-line tool \(checksums verified\)\.'
-        $out | Should -Match 'Next: cua auth login, then cua agents setup'
-        $out | Should -Match 'To let your other devices use this computer: cua host setup'
+        $out | Should -Match 'Installed the command-line tools \(downloads checked\)\.'
+        $out | Should -Match 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents\.'
+        $out | Should -Match 'To let your other devices use this computer, run "cua host setup"\.'
         $out | Should -Match 'is not on your PATH'
     }
 
     It 'prints one plain line per step by default, and the detail with -Verbose' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p-quiet'
         $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix }
-        $out | Should -Match 'Installing the cua command-line tool to '
+        $out | Should -Match 'Installing the command-line tools to '
         $out | Should -Not -Match 'cua-install:'
-        $out | Should -Not -Match 'manifest'
+        $out | Should -Not -Match 'manifest|checksum|sha256'
         $verbose = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-verbose'); Verbose = $true }
         $verbose | Should -Match 'cua-install: platform windows-x64, manifest '
     }
@@ -220,7 +221,7 @@ Describe 'install.ps1' {
         $out = Invoke-Installer @{ DryRun = $true; CliOnly = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p11') }
         $out | Should -Match '\[dry-run\] add .*p11.bin to the user PATH'
         $out | Should -Not -Match 'is not on your PATH'
-        $out | Should -Not -Match 'Install the cua CLI to'
+        $out | Should -Not -Match 'Install the command-line tools to'
         $out | Should -Not -Match 'signing in'
         $out | Should -Not -Match 'setup.exe'
     }
@@ -259,7 +260,7 @@ Describe 'install.ps1' {
             PATH = ((Get-Command python3).Source | Split-Path)
         }
         $out | Should -Not -Match 'has not been set'
-        $out | Should -Match 'Installed the cua command-line tool \(checksums verified\)\.'
+        $out | Should -Match 'Installed the command-line tools \(downloads checked\)\.'
         $out | Should -Not -Match 'cosign|minisign|signatures were not'
         Join-Path $prefix 'bin/cua.exe' | Should -Exist
         # The detail is for -Verbose.

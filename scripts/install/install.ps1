@@ -9,12 +9,12 @@ Cua installer for Windows: the `cua` CLI, the Cua Spaces app and agent extras.
     & ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair K7QM-4XPB-2RHD
 
 At a console it first says what Cua Spaces is, then shows a numbered list of
-what to add to the cua command-line tool (always installed, except with
--AppOnly). Items:
+what to add to the command-line tools (the `cua` program: always installed,
+except with -AppOnly). Items:
     spaces      the Cua Spaces app (the Electron app's setup.exe; on by default)
-    cua-driver  Cua Driver, so coding agents can use apps in the background:
-                installs it and adds its skill and MCP server to your agents
-                (off by default)
+    cua-driver  Cua Driver, which lets AI agents use apps while you keep
+                working: installs it and adds its skill and MCP server to
+                your agents (off by default)
 The list does not offer hosting. The app's first run asks how to use this
 computer (-Mode host|client preselects the answer). For scripts, `-Select host`
 and `-Only host` still run `cua host setup`, which lets your other devices use
@@ -114,7 +114,6 @@ $script:Picked = $false
 # (cd-cua-spaces.yml). Set this to $false to skip a selected `spaces` with a note.
 $script:SpacesSupported = $true
 $script:SigNoted = $false
-$script:SigChecked = $false
 $script:DidCli = $null
 $script:DidApp = $false
 $script:DidDriver = $false
@@ -207,21 +206,22 @@ function Test-WantsChecklist {
 # Numbered list: what Cua Spaces is, what is always installed, then the
 # optional rows. Toggle numbers, Enter to install. `host` is not a row (the
 # app's first run asks how to use this computer; -Select host is for scripts).
-function Read-CuaSelection($Sel, [scriptblock]$Reader = { Read-Host 'Type a number to toggle it, Enter to install' }) {
+function Read-CuaSelection($Sel, [scriptblock]$Reader = { Read-Host 'Type a number to switch an item on or off. Press Enter to install' }) {
     $rows = @()
     if ($script:SpacesSupported) { $rows += 'spaces' }
     $rows += 'cua-driver'
-    $labels = @{ spaces = 'Cua Spaces app'; 'cua-driver' = 'Cua Driver, so coding agents can use apps in the background' }
+    $labels = @{ spaces = 'Cua Spaces app: lets your AI agents use computers'; 'cua-driver' = 'Cua Driver: lets AI agents use your apps while you keep working' }
     $help = @{
-        spaces = 'The app: sign in, connect your AI agents and watch them work.'
-        'cua-driver' = 'Installs Cua Driver and adds it to Claude Code, Codex and other agents.'
+        spaces = 'Open the app to sign in, connect your AI agents and watch them work.'
+        'cua-driver' = 'For advanced users. Adds it to Claude Code, Codex and other coding agents.'
     }
     Write-Host ''
-    Write-Host 'Cua Spaces: computers for you and your AI agents.'
-    Write-Host 'A Space is a desktop an agent can use and you can watch, from any device.'
+    Write-Host 'Cua Spaces lets your AI agents use computers, and lets you watch them work.'
     Write-Host ''
-    Write-Host 'Always installed: the cua command-line tool.'
-    if ($Sel.host) { Write-Host 'Also: let your other devices use this computer (from -Select host).' }
+    Write-Host 'Needed, so always installed:'
+    Write-Host '  Command-line tools: the "cua" program that the app and your AI agents use.'
+    if ($Sel.host) { Write-Host 'Also: your other devices will be able to use this computer (you asked for this with -Select host).' }
+    Write-Host ''
     Write-Host 'Choose what else to add:'
     Write-Host ''
     while ($true) {
@@ -338,7 +338,6 @@ function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
     if (-not $ok -and $RequireSignature) {
         Stop-Install "no verifiable signature for $(Split-Path -Leaf $File) (install minisign or cosign)"
     }
-    if ($ok) { $script:SigChecked = $true }
     if (-not $ok -and ($Entry.PSObject.Properties['minisig'] -or $Entry.PSObject.Properties['cosign_bundle'])) {
         # sha256 is checked either way; the closing summary says so. The
         # detail is for -Verbose.
@@ -363,7 +362,7 @@ function Get-Artifact($Manifest, [string]$ManifestUrl, [string]$Component, [stri
     Get-Remote $url $dest $ManifestUrl
     $actual = Get-Sha256Hex $dest
     if ($actual -ne $entry.sha256.ToLowerInvariant()) {
-        Stop-Install "checksum mismatch for $($entry.name) (expected $($entry.sha256), got $actual); aborting"
+        Stop-Install "checksum mismatch for $($entry.name) (the download is damaged or was changed; expected $($entry.sha256), got $actual); nothing was installed"
     }
     Test-Signature $dest $entry $ManifestUrl
     return $dest
@@ -383,15 +382,15 @@ function Add-UserPath([string]$Dir) {
     if (@($env:Path -split ';') -notcontains $Dir) { $env:Path = "$env:Path;$Dir" }
     if ($parts -contains $Dir) { return }
     [Environment]::SetEnvironmentVariable('Path', (($parts + $Dir) -join ';'), 'User')
-    Write-Step "Added $Dir to your user PATH (new terminals pick it up)"
+    Write-Step "Added $Dir to your user PATH (open a new terminal window to use cua)"
 }
 
 function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string]$Tmp) {
     $bin = Get-CliBinDir
     $target = Join-Path $bin 'cua.exe'
     # -CliOnly / -Only already said what to install.
-    if (-not ($CliOnly -or $Only) -and -not (Confirm-Step "Install the cua CLI to ${target}?")) { Stop-Install 'cancelled; rerun with -Prefix DIR to choose another location' }
-    Write-Step "Installing the cua command-line tool to $target"
+    if (-not ($CliOnly -or $Only) -and -not (Confirm-Step "Install the command-line tools to ${target}?")) { Stop-Install 'cancelled; rerun with -Prefix DIR to choose another location' }
+    Write-Step "Installing the command-line tools to $target"
     $zip = Get-Artifact $Manifest $ManifestUrl 'cli' $Platform 'zip' $Tmp
     if ($DryRun) {
         Write-Host "[dry-run] install cua.exe -> $target"
@@ -410,7 +409,8 @@ function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string
         else {
             # Said at the end, after what was installed.
             $script:PathHint = @(
-                "$bin is not on your PATH. To use cua, run this, then open a new terminal:",
+                "$bin is not on your PATH, the list of places your terminal looks for programs.",
+                "To use cua, run this, then open a new terminal window:",
                 "  [Environment]::SetEnvironmentVariable('Path', `"`$([Environment]::GetEnvironmentVariable('Path','User'));$bin`", 'User')"
             )
         }
@@ -483,7 +483,7 @@ function Install-CuaDriver([string]$Cua, [string]$Tmp, [string]$ManifestUrl) {
         Write-Host "[dry-run] download $url"
         Write-Host "[dry-run] $exe -NoProfile -ExecutionPolicy Bypass -File cua-driver-install.ps1 $($driverArgs -join ' ')"
     } else {
-        Write-Step 'Installing Cua Driver and adding it to your agents'
+        Write-Step 'Installing Cua Driver and adding it to your AI agents'
         Get-Remote $url $script $ManifestUrl
         $saved = $env:CUA_DRIVER_RS_INSTALL_DIR
         if ($Prefix) { $env:CUA_DRIVER_RS_INSTALL_DIR = $binDir }
@@ -533,7 +533,7 @@ function Invoke-HostPair([string]$Cua) {
 function Invoke-HostSetup([string]$Cua) {
     if ($Pair) { Invoke-HostPair $Cua; return }
     if ($DryRun) { Write-Host "[dry-run] $Cua host setup"; return }
-    Write-Step 'Setting up this computer so your other devices can use it (cua host setup)'
+    Write-Step 'Letting your other devices use this computer (cua host setup)'
     if (Test-Interactive) { & $Cua host setup } else { $null | & $Cua host setup }
     if ($LASTEXITCODE -ne 0) { Write-Warning "host setup did not finish; run 'cua host setup' after 'cua auth login'" }
 }
@@ -562,32 +562,32 @@ function Join-And([string[]]$Items) {
     return (($Items[0..($Items.Count - 2)] -join ', ') + " and $($Items[-1])")
 }
 
-# The closing lines: what was installed, then what to do next.
+# The closing lines: what was installed, then what to do next, in plain words.
 function Write-CuaSummary($Sel) {
     if ($DryRun -or $Pair) { return }
     $did = @()
-    if ($script:DidCli) { $did += 'the cua command-line tool' }
+    if ($script:DidCli) { $did += 'the command-line tools' }
     if ($script:DidApp) { $did += 'the Cua Spaces app' }
     if ($script:DidDriver) { $did += 'Cua Driver' }
     Write-Host ''
     if ($did.Count -gt 0) {
-        $checked = ''
-        if ($script:DidCli -or $script:DidApp) {
-            $checked = if ($script:SigChecked) { ' (checksums and signatures verified)' } else { ' (checksums verified)' }
-        }
+        $checked = if ($script:DidCli -or $script:DidApp) { ' (downloads checked)' } else { '' }
         Write-Host "Installed $(Join-And $did)$checked."
     }
     if ($script:DidApp) {
-        if ($script:SignedIn) { Write-Host 'Next: open Cua Spaces from the Start menu to choose how to use this computer.' }
-        else { Write-Host 'Next: open Cua Spaces from the Start menu. It asks you to sign in, connect your AI agents and choose how to use this computer.' }
+        if ($script:SignedIn) { Write-Host 'Next: open Cua Spaces from the Start menu. There you can also let your other devices use this computer.' }
+        else { Write-Host 'Next: open Cua Spaces from the Start menu. It guides you through signing in and connecting your AI agents. You can also let your other devices use this computer.' }
         if ($Sel.cli) {
-            if ($script:SignedIn) { Write-Host 'Connect more AI agents any time: cua agents setup' }
-            else { Write-Host 'Without the app: cua auth login, then cua agents setup to connect your AI agents.' }
+            if ($script:SignedIn) { Write-Host 'To connect more AI agents later, run "cua agents setup" in a terminal.' }
+            else { Write-Host 'Prefer a terminal? Run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.' }
         }
     } elseif ($Sel.cli) {
-        if ($script:SignedIn) { Write-Host 'Next: cua agents setup connects your AI agents.' }
-        else { Write-Host 'Next: cua auth login, then cua agents setup to connect your AI agents.' }
-        if (-not $Sel.host) { Write-Host 'To let your other devices use this computer: cua host setup' }
+        if ($script:SignedIn) { Write-Host 'Next: run "cua agents setup" to connect your AI agents.' }
+        else {
+            Write-Host 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.'
+            Write-Host '(No web browser on this computer? Run "cua auth login --remote" instead.)'
+        }
+        if (-not $Sel.host) { Write-Host 'To let your other devices use this computer, run "cua host setup".' }
     }
 }
 
@@ -656,7 +656,7 @@ function Invoke-CuaInstall {
             Write-Host ''
             Write-Step 'Signing in to Cua'
             & $cua auth login
-            if ($LASTEXITCODE -ne 0) { Write-Warning "sign-in did not finish; run 'cua auth login' later" } else { $script:SignedIn = $true }
+            if ($LASTEXITCODE -ne 0) { Write-Warning 'Sign-in did not finish. Run "cua auth login" later (add --remote if this computer has no web browser).' } else { $script:SignedIn = $true }
         }
         if ($sel.host) { Invoke-HostSetup $cua }
         Write-CuaSummary $sel

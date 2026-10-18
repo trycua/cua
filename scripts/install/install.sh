@@ -7,11 +7,12 @@
 #   curl -fsSL https://cua.ai/install.sh | sh -s -- --pair K7QM-4XPB-2RHD
 #
 # In a terminal it first says what Cua Spaces is, then lets you choose what to
-# add to the cua command-line tool (always installed, except with --app-only):
+# add to the command-line tools (the `cua` program: always installed, except
+# with --app-only):
 #   spaces      the Cua Spaces app (macOS and Linux; default on both)
-#   cua-driver  Cua Driver, so coding agents can use apps in the background:
-#               installs it and adds its skill and MCP server to your agents
-#               (default off)
+#   cua-driver  Cua Driver, which lets AI agents use apps while you keep
+#               working: installs it and adds its skill and MCP server to
+#               your agents (default off)
 # The checklist does not offer hosting. The app's first run asks how to use
 # this computer (--mode host|client preselects the answer). For scripts,
 # `--select host` / `--only host` still runs `cua host setup`, which lets
@@ -84,7 +85,6 @@ prefix=""
 modify_path=0
 no_modify_path=0
 sig_noted=0
-sig_checked=0
 path_hint=""
 verbose=0
 no_tty_noted=0
@@ -283,7 +283,7 @@ note_no_tty() {
     [ "$no_tty_noted" = 0 ] || return 0
     no_tty_noted=1
     [ "$assume_yes" = 1 ] || [ "${CUA_INSTALL_NONINTERACTIVE:-}" = 1 ] ||
-        step "No terminal to ask questions on, so the installer is using its defaults (--yes hides this note)."
+        step "The installer can't ask you questions here, so it is using the usual choices (add --yes to hide this note)."
 }
 
 # confirm "question" default(y|n): 0 for yes. Answered once the checklist
@@ -348,15 +348,15 @@ item_toggle() {
 # use this computer; `--select host` stays for scripts.
 item_label() {
     case "$1" in
-    spaces) printf 'Cua Spaces app' ;;
-    cua-driver) printf 'Cua Driver, so coding agents can use apps in the background' ;;
+    spaces) printf 'Cua Spaces app: lets your AI agents use computers' ;;
+    cua-driver) printf 'Cua Driver: lets AI agents use your apps while you keep working' ;;
     esac
 }
 
 item_help() {
     case "$1" in
-    spaces) printf 'The app: sign in, connect your AI agents and watch them work.' ;;
-    cua-driver) printf 'Installs Cua Driver and adds it to Claude Code, Codex and other agents.' ;;
+    spaces) printf 'Open the app to sign in, connect your AI agents and watch them work.' ;;
+    cua-driver) printf 'For advanced users. Adds it to Claude Code, Codex and other coding agents.' ;;
     esac
 }
 
@@ -460,19 +460,19 @@ checklist() {
     n=0
     for r in $rows; do n=$((n + 1)); done
     {
-        printf '\nCua Spaces: computers for you and your AI agents.\n'
-        printf 'A Space is a desktop an agent can use and you can watch, from any device.\n\n'
-        printf 'Always installed: the cua command-line tool.\n'
+        printf '\nCua Spaces lets your AI agents use computers, and lets you watch them work.\n\n'
+        printf 'Needed, so always installed:\n'
+        printf '  Command-line tools: the "cua" program that the app and your AI agents use.\n'
         if [ "$sel_host" = 1 ]; then
-            printf 'Also: let your other devices use this computer (from --select host).\n'
+            printf 'Also: your other devices will be able to use this computer (you asked for this with --select host).\n'
         fi
-        printf 'Choose what else to add:\n\n'
+        printf '\nChoose what else to add:\n\n'
     } >/dev/tty
     if [ "${TERM:-dumb}" = dumb ] || ! tty_saved="$(stty -g </dev/tty 2>/dev/null)"; then
         tty_saved=""
         while :; do
             draw_rows 0 >/dev/tty
-            printf 'Type a number to toggle it, Enter to install: ' >/dev/tty
+            printf 'Type a number to switch an item on or off. Press Enter to install: ' >/dev/tty
             line=""
             read -r line </dev/tty || line=""
             [ -n "$line" ] || break
@@ -682,7 +682,6 @@ verify_signature() { # file entry
             die "cosign signature check failed for ${1##*/}"
         sig_ok=1
     fi
-    [ "$sig_ok" = 0 ] || sig_checked=1
     if [ "$sig_ok" = 0 ] && [ "$require_sig" = 1 ]; then
         die "no verifiable signature for ${1##*/} (install minisign or cosign)"
     fi
@@ -717,7 +716,7 @@ download() {
     fetch "$url" "$artifact"
     actual="$(sha256_of "$artifact")"
     if [ "$actual" != "$sum" ]; then
-        die "checksum mismatch for $name (expected $sum, got $actual); aborting"
+        die "checksum mismatch for $name (the download is damaged or was changed; expected $sum, got $actual); nothing was installed"
     fi
     verify_signature "$artifact" "$entry"
 }
@@ -771,7 +770,7 @@ ensure_path() { # dir
     if [ "$modify_path" = 0 ] && [ "$no_modify_path" = 0 ] && [ "$assume_yes" = 0 ] && [ "$dry_run" = 0 ] && [ "${CUA_INSTALL_NONINTERACTIVE:-0}" != 1 ] && tty_ok; then
         # Interactive default: offer to add it (Enter = yes). No answer
         # (the terminal closed) leaves the profile alone.
-        if ask "Add $1 to PATH in $profile so cua works in new terminals? [Y/n]"; then
+        if ask "Make \"cua\" work in new Terminal windows? This adds $1 to PATH in $profile. [Y/n]"; then
             case "$answer" in
             [nN] | [nN][oO]) ;;
             *) modify_path=1 ;;
@@ -788,10 +787,11 @@ ensure_path() { # dir
         fi
         mkdir -p "$(dirname "$profile")"
         printf '\n# Added by the cua installer\n%s\n' "$line" >>"$profile"
-        step "Added $1 to PATH in $profile (open a new terminal to pick it up)"
+        step "Added $1 to PATH in $profile (open a new Terminal window to use cua)"
     else
         # Said at the end, after what was installed.
-        path_hint="$1 is not on your PATH. To use cua, run this one line, then open a new terminal:
+        path_hint="$1 is not on your PATH, the list of places your Terminal looks for programs.
+To use cua, run this one line, then open a new Terminal window:
   echo '$line' >> $profile
 (or rerun the installer with --modify-path)"
     fi
@@ -800,10 +800,10 @@ ensure_path() { # dir
 install_cli() {
     bindir="$(cli_bin_dir)"
     target="$bindir/cua"
-    if ! confirm "Install the cua CLI to $target?" y; then
+    if ! confirm "Install the command-line tools to $target?" y; then
         die "cancelled; rerun with --prefix DIR to choose another location"
     fi
-    step "Installing the cua command-line tool to $target"
+    step "Installing the command-line tools to $target"
     download cli tar.gz
     if [ "$dry_run" = 1 ]; then
         say "[dry-run] install cua -> $target"
@@ -891,8 +891,8 @@ install_app_linux() {
         if [ "$(id -u)" != 0 ]; then
             if has sudo && sudo -n true 2>/dev/null; then sudo_cmd="sudo"; else sudo_cmd="none"; fi
         fi
-        if [ "$sudo_cmd" != none ] && confirm "Install the Cua Spaces .deb with apt-get?" y; then
-            step "Installing the Cua Spaces app (.deb, with apt-get)"
+        if [ "$sudo_cmd" != none ] && confirm "Install the Cua Spaces app with apt-get?" y; then
+            step "Installing the Cua Spaces app with apt-get"
             download app deb
             # shellcheck disable=SC2086
             run $sudo_cmd apt-get install -y "$artifact"
@@ -903,7 +903,7 @@ install_app_linux() {
     fi
     bindir="$(cli_bin_dir)"
     target="$bindir/cua-spaces"
-    if ! confirm "Install the Cua Spaces AppImage to $target?" y; then
+    if ! confirm "Install the Cua Spaces app to $target?" y; then
         step "Skipping the Cua Spaces app"
         return
     fi
@@ -960,8 +960,8 @@ linux_runtime() {
         say "[dry-run] $cua_bin runtime setup qemu"
         return
     fi
-    if confirm "Cua Spaces on Linux needs QEMU; install it now ($cua_bin runtime setup qemu)?" y; then
-        step "Setting up QEMU for Cua Spaces on Linux (cua runtime setup qemu)"
+    if confirm "Cua Spaces on Linux needs QEMU, a program that runs virtual computers. Install it now?" y; then
+        step "Installing QEMU, which Cua Spaces on Linux uses to run virtual computers"
         if "$cua_bin" runtime setup qemu </dev/null && runtime_ready; then
             return
         fi
@@ -1013,7 +1013,7 @@ install_driver() {
         say "[dry-run] download $driver_url"
         say "[dry-run] bash ${script##*/} $*"
     else
-        step "Installing Cua Driver and adding it to your agents"
+        step "Installing Cua Driver and adding it to your AI agents"
         fetch "$driver_url" "$script"
         bash "$script" "$@" </dev/null || die "the cua-driver installer failed"
     fi
@@ -1043,7 +1043,7 @@ host_setup() {
         say "[dry-run] $cua_bin host setup"
         return
     fi
-    step "Setting up this computer so your other devices can use it (cua host setup)"
+    step "Letting your other devices use this computer (cua host setup)"
     if tty_ok; then
         if "$cua_bin" host setup </dev/tty; then
             say "  cua runtime setup lume  # also needed to provide macOS VM Spaces (cua host setup --profile spare --provide-spaces)"
@@ -1106,42 +1106,41 @@ app_where() {
     esac
 }
 
-# The closing lines: what was installed, then what to do next.
+# The closing lines: what was installed, then what to do next, in plain words.
 summary() {
     [ "$dry_run" = 0 ] && [ -z "$pair_code" ] || return 0
     set --
-    [ -z "$did_cli" ] || set -- "$@" "the cua command-line tool"
+    [ -z "$did_cli" ] || set -- "$@" "the command-line tools"
     [ -z "$did_app" ] || set -- "$@" "the Cua Spaces app"
     [ -z "$did_driver" ] || set -- "$@" "Cua Driver"
     say ""
     if [ $# -gt 0 ]; then
         checked=""
-        if [ -n "$did_cli$did_app" ]; then
-            if [ "$sig_checked" = 1 ]; then checked=" (checksums and signatures verified)"; else checked=" (checksums verified)"; fi
-        fi
+        [ -z "$did_cli$did_app" ] || checked=" (downloads checked)"
         say "Installed $(join_and "$@")$checked."
     fi
     if [ -n "$did_app" ]; then
         if [ "$signed_in" = 1 ]; then
-            say "Next: $(app_where) to choose how to use this computer."
+            say "Next: $(app_where). There you can also let your other devices use this computer."
         else
-            say "Next: $(app_where). It asks you to sign in, connect your AI agents and choose how to use this computer."
+            say "Next: $(app_where). It guides you through signing in and connecting your AI agents. You can also let your other devices use this computer."
         fi
         if [ "$want_cli" = 1 ]; then
             if [ "$signed_in" = 1 ]; then
-                say "Connect more AI agents any time: cua agents setup"
+                say 'To connect more AI agents later, run "cua agents setup" in the Terminal.'
             else
-                say "Without the app: cua auth login, then cua agents setup to connect your AI agents."
+                say 'Prefer the Terminal? Run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.'
             fi
         fi
     elif [ "$want_cli" = 1 ]; then
         if [ "$signed_in" = 1 ]; then
-            say "Next: cua agents setup connects your AI agents."
+            say 'Next: run "cua agents setup" to connect your AI agents.'
         else
-            say "Next: cua auth login (over ssh or without a browser: cua auth login --remote), then cua agents setup to connect your AI agents."
+            say 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.'
+            say '(No web browser on this computer? Run "cua auth login --remote" instead.)'
         fi
         if [ "$sel_host" = 0 ]; then
-            say "To let your other devices use this computer: cua host setup"
+            say 'To let your other devices use this computer, run "cua host setup".'
         fi
     fi
 }
@@ -1162,7 +1161,7 @@ run_onboarding() {
     if "$cua_bin" auth login </dev/tty; then
         signed_in=1
     else
-        warn "sign-in did not finish; run 'cua auth login' later (or 'cua auth login --remote' over ssh)"
+        warn "sign-in did not finish. Run \"cua auth login\" later (add --remote if this computer has no web browser)"
     fi
 }
 

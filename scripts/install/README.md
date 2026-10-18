@@ -14,13 +14,13 @@ The Cua Spaces app is the graphical path. Its first run installs the bundled `cu
 
 ## Choose what to install
 
-In a terminal, install.sh first says what Cua Spaces is, then lists what to add to the `cua` CLI (arrow or number keys to move or toggle, space to select, Enter to install; install.ps1 asks for numbers to toggle, with a line under each row). The CLI is always installed, so it is not a row. Hosting is not a row either: the app's first run asks how you use this computer (`--mode host|client` preselects the answer). Without a terminal, with `--yes`, or with `CUA_INSTALL_NONINTERACTIVE=1`, the defaults plus `--select` are installed without asking. `--only` installs exactly the listed items plus the CLI and never shows the list.
+In a terminal, install.sh first says what Cua Spaces is, then lists what to add to the command-line tools (the `cua` CLI; arrow or number keys to move or toggle, space to select, Enter to install; install.ps1 asks for numbers to toggle, with a line under each row). The command-line tools are always installed, so they are not a row. Letting your other devices use this computer (`cua host setup`) is not a row either: the app's first run asks (`--mode host|client` preselects the answer). Without a terminal, with `--yes`, or with `CUA_INSTALL_NONINTERACTIVE=1`, the defaults plus `--select` are installed without asking. `--only` installs exactly the listed items plus the CLI and never shows the list.
 
 | Item | What it does | In the list | Default |
 |---|---|---|---|
 | `cli` | The `cua` CLI | No, always installed (not with `--app-only`) | Always |
-| `spaces` | The Cua Spaces app | "Cua Spaces app" | On for macOS (the SwiftUI app), Linux (the Electron app) and Windows (the Electron app). `--app-only` and `--mode` imply it |
-| `cua-driver` | Installs Cua Driver with its own release installer (`cua.ai/driver/install.sh` / `install.ps1`, which verify SHA256SUMS and the Sigstore bundle), then `cua agents setup --cua-driver --agents all --yes` registers its skill and MCP server for your agents | "Cua Driver, so coding agents can use apps in the background" | Off |
+| `spaces` | The Cua Spaces app | "Cua Spaces app: lets your AI agents use computers" | On for macOS (the SwiftUI app), Linux (the Electron app) and Windows (the Electron app). `--app-only` and `--mode` imply it |
+| `cua-driver` | Installs Cua Driver with its own release installer (`cua.ai/driver/install.sh` / `install.ps1`, which verify SHA256SUMS and the Sigstore bundle), then `cua agents setup --cua-driver --agents all --yes` registers its skill and MCP server for your agents | "Cua Driver: lets AI agents use your apps while you keep working" | Off |
 | `host` | Runs `cua host setup` after sign-in, so your other devices can use this computer through the relay | No: a script flag (`--select host`, `--only host`, `--pair`). Interactively, the app's first run asks | Off |
 
 The Cua Spaces app registers the cua-driver skill and MCP server with your agents in its first run, but it does not install or update the Cua Driver program yet (CUA-1440). Until it does, the `cua-driver` item is how the installer puts Cua Driver on this computer.
@@ -56,11 +56,11 @@ Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsS
 
 ## What it prints
 
-One plain line per step ("Installing the cua command-line tool to ...", "Installing the Cua Spaces app to ..."), then what was installed and what to do next: open Cua Spaces, or sign in and run `cua agents setup` to connect your agents. `--verbose` adds `cua-install:` lines with the platform, the manifest, each download and the signature checks.
+One plain line per step ("Installing the command-line tools to ...", "Installing the Cua Spaces app to ..."), then what was installed and what to do next: open Cua Spaces, or sign in and run `cua agents setup` to connect your AI agents. `--verbose` adds `cua-install:` lines with the platform, the manifest, each download and the signature checks.
 
-Every download is checked against its sha256 from the release manifest, and the summary says so. Signatures are checked as well when `minisign` or `cosign` is installed; without one, the detail shows only with `--verbose`, and `--require-signature` turns it into an error.
+Every download is checked against its sha256 from the release manifest, and the summary says "(downloads checked)". Signatures are checked as well when `minisign` or `cosign` is installed; without one, a note shows only with `--verbose`, and `--require-signature` turns it into an error.
 
-Questions read from the terminal, never from the script on stdin, so they work under `curl | sh`. With no terminal to ask on, the defaults apply and the installer says so once. End of input (Ctrl-D, a closed terminal) is never an answer: the install questions take their default, and the PATH question leaves your profile alone.
+Questions read from the terminal, never from the script on stdin, so they work under `curl | sh`. With no terminal to ask on, the usual choices apply and the installer says so once. End of input (Ctrl-D, a closed terminal) is never an answer: the install questions take their default, and the PATH question leaves your profile alone.
 
 ## Where things go
 

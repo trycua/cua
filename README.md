@@ -148,7 +148,7 @@ curl -fsSL https://cua.ai/install.sh | sh
 irm https://cua.ai/install.ps1 | iex
 ```
 
-In a terminal the script first says what Cua Spaces is. The `cua` CLI is always installed; you choose whether to add the Cua Spaces app (on by default) and Cua Driver, which lets coding agents use apps in the background (off by default). It then runs `cua auth login`, which signs you in and offers to set up your AI coding agents (Claude Code, Codex, Cursor, and others). The app asks how you want to use this computer on its first run. Add Cua Driver with `sh -s -- --select cua-driver`, or skip the choice with `--only cua-driver`. See [the installer options](scripts/install/README.md).
+In a terminal the script first says what Cua Spaces is. The command-line tools (the `cua` program) are always installed; you choose whether to add the Cua Spaces app (on by default) and Cua Driver, which lets AI agents use your apps while you keep working (off by default). It then runs `cua auth login`, which signs you in and offers to set up your AI coding agents (Claude Code, Codex, Cursor, and others). The app asks on its first run whether your other devices may use this computer. Add Cua Driver with `sh -s -- --select cua-driver`, or skip the choice with `--only cua-driver`. See [the installer options](scripts/install/README.md).
 
 ```sh
 cua sb create ubuntu --name dev          # a gVisor container, set up on first use

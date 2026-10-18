@@ -192,23 +192,23 @@ check "VM runtime present: no runtime setup" sh -c "grep -q 'VM runtime ok' '$wo
 # what to do next. The cua-install: detail lines are --verbose only.
 inst -- --yes --no-onboarding --prefix "$work/q1"
 check "quiet default: no cua-install: lines" sh -c "[ $status = 0 ] && ! grep -q '^cua-install:' '$work/out'"
-check "quiet default: one 'Installing' line per step" sh -c "[ \"\$(grep -c '^Installing ' '$work/out')\" = 2 ] && grep -q '^Installing the cua command-line tool to ' '$work/out' && grep -q '^Installing the Cua Spaces app to ' '$work/out'"
-check "quiet default: closes with what was installed" has_out "^Installed the cua command-line tool and the Cua Spaces app (checksums verified)\\.\$"
-check "quiet default: says what to do next" sh -c "grep -q '^Next: run .*cua-spaces. It asks you to sign in, connect your AI agents' '$work/out' && grep -q 'cua auth login, then cua agents setup' '$work/out'"
-check "quiet default: no signature or sha256 jargon" sh -c "! grep -qi 'cosign\|minisign\|sha256' '$work/out'"
+check "quiet default: one 'Installing' line per step" sh -c "[ \"\$(grep -c '^Installing ' '$work/out')\" = 2 ] && grep -q '^Installing the command-line tools to ' '$work/out' && grep -q '^Installing the Cua Spaces app to ' '$work/out'"
+check "quiet default: closes with what was installed" has_out "^Installed the command-line tools and the Cua Spaces app (downloads checked)\\.\$"
+check "quiet default: says what to do next" sh -c "grep -q '^Next: run .*cua-spaces. It guides you through signing in and connecting your AI agents.' '$work/out' && grep -q 'Prefer the Terminal? Run \"cua auth login\" to sign in, then \"cua agents setup\"' '$work/out'"
+check "quiet default: no signature, checksum or manifest jargon" sh -c "! grep -qi 'cosign\|minisign\|sha256\|checksum\|manifest' '$work/out'"
 check "quiet default: the PATH hint comes last" sh -c "tail -4 '$work/out' | grep -q 'is not on your PATH'"
 inst CUA_INSTALL_VERBOSE=1 -- --yes --no-onboarding --cli-only --prefix "$work/q2"
 check "CUA_INSTALL_VERBOSE=1 is --verbose" has_out "^cua-install: platform "
 inst -- --yes --no-onboarding --cli-only --prefix "$work/q3"
-check "--cli-only: summary points at sign-in, agents and hosting" sh -c "grep -q '^Installed the cua command-line tool (checksums verified)' '$work/out' && grep -q '^Next: cua auth login (over ssh or without a browser: cua auth login --remote), then cua agents setup' '$work/out' && grep -q 'To let your other devices use this computer: cua host setup' '$work/out'"
+check "--cli-only: summary points at sign-in, agents and hosting" sh -c "grep -q '^Installed the command-line tools (downloads checked)' '$work/out' && grep -q '^Next: run \"cua auth login\" to sign in, then \"cua agents setup\" to connect your AI agents.' '$work/out' && grep -q 'No web browser on this computer? Run \"cua auth login --remote\"' '$work/out' && grep -q 'To let your other devices use this computer, run \"cua host setup\".' '$work/out'"
 inst -- --yes --no-onboarding --app-only --prefix "$work/q4"
-check "--app-only: summary names the app, not the CLI" sh -c "grep -q '^Installed the Cua Spaces app (checksums verified)' '$work/out' && ! grep -q 'cua auth login' '$work/out'"
+check "--app-only: summary names the app, not the CLI" sh -c "grep -q '^Installed the Cua Spaces app (downloads checked)' '$work/out' && ! grep -q 'cua auth login' '$work/out'"
 inst -- --no-onboarding --cli-only --prefix "$work/q5"
-check "no terminal and no --yes: says it uses the defaults, once" sh -c "[ $status = 0 ] && [ \"\$(grep -c 'No terminal to ask questions on' '$work/out')\" = 1 ]"
+check "no terminal and no --yes: says it uses the defaults, once" sh -c "[ $status = 0 ] && [ \"\$(grep -c 'ask you questions here' '$work/out')\" = 1 ]"
 inst -- --yes --no-onboarding --cli-only --prefix "$work/q6"
-check "--yes: no 'no terminal' note" sh -c "! grep -q 'No terminal' '$work/out'"
+check "--yes: no note about not asking questions" sh -c "! grep -q 'ask you questions' '$work/out'"
 inst CUA_INSTALL_NONINTERACTIVE=1 -- --no-onboarding --cli-only --prefix "$work/q7"
-check "CUA_INSTALL_NONINTERACTIVE=1: no 'no terminal' note" sh -c "! grep -q 'No terminal' '$work/out'"
+check "CUA_INSTALL_NONINTERACTIVE=1: no note about not asking questions" sh -c "! grep -q 'ask you questions' '$work/out'"
 
 mkdir -p "$work/qemu-r1"
 inst PATH="$work/qemu-r1:$host_path" CUA_FAKE_QEMU_DIR="$work/qemu-r1" -- --yes --no-onboarding --prefix "$work/r1"
@@ -500,7 +500,7 @@ python3 "$manifest_tool" --component app --version "$version" --dir "$sig2" --me
 inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --verbose --select spaces --prefix "$work/sg1"
 check "unverifiable signatures: one --verbose info line, no warning" sh -c "[ $status = 0 ] && [ \"\$(grep -c 'release signatures were not checked' '$work/out')\" = 1 ] && ! grep -qi 'warning.*minisign' '$work/out'"
 inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg3"
-check "unverifiable signatures, default output: plain checksum line only" sh -c "[ $status = 0 ] && grep -q '(checksums verified)' '$work/out' && ! grep -qi 'cosign\|minisign\|signatures were not' '$work/out'"
+check "unverifiable signatures, default output: plain checksum line only" sh -c "[ $status = 0 ] && grep -q '(downloads checked)' '$work/out' && ! grep -qi 'cosign\|minisign\|signatures were not\|checksum' '$work/out'"
 inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg2"
 check "--require-signature still fails without minisign or cosign" sh -c "[ $status != 0 ] && grep -q 'no verifiable signature' '$work/out'"
 
@@ -515,7 +515,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
     check "interactive: runs 'cua auth login'" sh -c "grep -qx 'auth login' '$home/cua.log'"
-    check "interactive: after sign-in, the closing line points at agents setup" sh -c "grep -q 'Signing in to Cua' '$work/out' && grep -q 'Next: cua agents setup connects your AI agents.' '$work/out' && ! grep -q 'Next: cua auth login' '$work/out'"
+    check "interactive: after sign-in, the closing line points at agents setup" sh -c "grep -q 'Signing in to Cua' '$work/out' && grep -q 'Next: run \"cua agents setup\" to connect your AI agents.' '$work/out' && ! grep -q 'Next: run \"cua auth login\"' '$work/out'"
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua2.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
@@ -539,7 +539,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
             status=$?
         }
         pty_path '\r\r' "$work/pt1"
-        check "PATH prompt: Enter adds the bin dir to .zshrc" sh -c "[ $status = 0 ] && grep -q '$work/pt1/bin' '$home/.zshrc' && grep -q 'Add .* to PATH' '$work/out'"
+        check "PATH prompt: Enter adds the bin dir to .zshrc" sh -c "[ $status = 0 ] && grep -q '$work/pt1/bin' '$home/.zshrc' && grep -q 'adds .* to PATH' '$work/out'"
         pty_path '\rn\r' "$work/pt2"
         check "PATH prompt: n leaves the profile alone and prints the one-liner" sh -c "[ $status = 0 ] && [ ! -e '$home/.zshrc' ] && grep -q 'is not on your PATH' '$work/out'"
 
@@ -585,11 +585,11 @@ if script --version 2>/dev/null | grep -q util-linux; then
     logged() { grep -q -- "$1" "$home/cua.log" 2>/dev/null; }
     if command -v bash >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
         tty_inst '\r' --prefix "$work/t1"
-        check "checklist: says what Cua Spaces is and what is always installed" sh -c "grep -q 'Cua Spaces: computers for you and your AI agents.' '$work/out' && grep -q 'Always installed: the cua command-line tool.' '$work/out' && grep -q 'Choose what else to add:' '$work/out'"
-        check "checklist: Cua Spaces app and Cua Driver rows, with a line on the highlighted one" sh -c "grep -q '> \\[x\\] Cua Spaces app' '$work/out' && grep -q '\\[ \\] Cua Driver, so coding agents can use apps in the background' '$work/out' && grep -q 'The app: sign in, connect your AI agents and watch them work.' '$work/out'"
+        check "checklist: says what Cua Spaces is and what is always installed" sh -c "grep -q 'Cua Spaces lets your AI agents use computers, and lets you watch them work.' '$work/out' && grep -q 'Needed, so always installed:' '$work/out' && grep -q 'Command-line tools: the \"cua\" program that the app and your AI agents use.' '$work/out' && grep -q 'Choose what else to add:' '$work/out'"
+        check "checklist: Cua Spaces app and Cua Driver rows, with a line on the highlighted one" sh -c "grep -q '> \\[x\\] Cua Spaces app: lets your AI agents use computers' '$work/out' && grep -q '\\[ \\] Cua Driver: lets AI agents use your apps while you keep working' '$work/out' && grep -q 'Open the app to sign in, connect your AI agents and watch them work.' '$work/out'"
         check "checklist: no CLI row, no hosting row, short keyboard help" sh -c "! grep -q 'cua CLI (required)' '$work/out' && ! grep -qi 'host this machine' '$work/out' && grep -q 'Up/down to move, space to select, Enter to install' '$work/out'"
         check "checklist: Enter accepts the defaults (CLI and the app)" sh -c "[ $status = 0 ] && [ -e '$work/t1/bin/cua' ] && [ ! -e '$work/t1/bin/cua-driver' ] && [ -x '$work/t1/bin/cua-spaces' ]"
-        check "checklist: no per-item prompt afterwards" sh -c "! grep -q 'Install the cua CLI to' '$work/out'"
+        check "checklist: no per-item prompt afterwards" sh -c "! grep -q 'Install the command-line tools to' '$work/out'"
         tty_inst '2\r' --prefix "$work/t2"
         check "checklist: number key toggles cua-driver on" sh -c "[ $status = 0 ] && [ -e '$work/t2/bin/cua-driver' ] && grep -q 'agents setup --cua-driver' '$home/cua.log'"
         tty_inst '\033[B \r' --prefix "$work/t3"
@@ -607,7 +607,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
         tty_inst '' --prefix "$work/t8"
         check "checklist: no input (EOF) accepts defaults, no hang" sh -c "[ $status = 0 ] && [ -e '$work/t8/bin/cua' ]"
         tty_inst '\r' --select host --prefix "$work/t8b"
-        check "checklist: --select host (a script flag) is not a row, but is said and honoured" sh -c "[ $status = 0 ] && grep -q 'Also: let your other devices use this computer' '$work/out' && ! grep -qi 'host this machine' '$work/out' && grep -qx 'host setup' '$home/cua.log'"
+        check "checklist: --select host (a script flag) is not a row, but is said and honoured" sh -c "[ $status = 0 ] && grep -q 'Also: your other devices will be able to use this computer' '$work/out' && ! grep -qi 'host this machine' '$work/out' && grep -qx 'host setup' '$home/cua.log'"
         tty_inst '\r' --yes --select host --prefix "$work/t9"
         check "checklist: --yes skips it" sh -c "[ $status = 0 ] && ! grep -q 'Choose what to install' '$work/out' && grep -qx 'host setup' '$home/cua.log'"
         tty_inst '\r' --only cua-driver --prefix "$work/t10"
@@ -615,7 +615,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
         tty_term=dumb
         tty_inst '2\n\n' --prefix "$work/t11"
         tty_term=""
-        check "checklist (TERM=dumb): numbered prompt with a line per row toggles cua-driver" sh -c "[ $status = 0 ] && grep -q 'Type a number to toggle it' '$work/out' && grep -q 'Installs Cua Driver and adds it to Claude Code, Codex and other agents.' '$work/out' && [ -e '$work/t11/bin/cua-driver' ] && ! grep -qx 'host setup' '$home/cua.log'"
+        check "checklist (TERM=dumb): numbered prompt with a line per row toggles cua-driver" sh -c "[ $status = 0 ] && grep -q 'Type a number to switch an item on or off' '$work/out' && grep -q 'For advanced users. Adds it to Claude Code, Codex and other coding agents.' '$work/out' && [ -e '$work/t11/bin/cua-driver' ] && ! grep -qx 'host setup' '$home/cua.log'"
         [ -n "${CUA_INSTALL_TRANSCRIPT:-}" ] && tty_inst '\033[B \r' --prefix "$work/t12" && cp "$work/out" "$CUA_INSTALL_TRANSCRIPT"
     else
         printf 'skip interactive checklist (needs bash and timeout)\n'

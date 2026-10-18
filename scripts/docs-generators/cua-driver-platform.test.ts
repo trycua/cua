@@ -19,7 +19,7 @@ import { stableJson } from './lib/mdx';
 const CLI_COMMANDS = [
   'mcp', 'mcp-config', 'list-tools', 'describe', 'call', 'manifest', 'dump-docs', 'serve', 'stop', 'status', 'sessions',
   'revoke', 'autostart', 'permissions', 'doctor', 'diagnose', 'recording', 'history', 'config', 'telemetry',
-  'cursor-theme', 'skills', 'extension', 'perception', 'check-update', 'update', 'channel',
+  'cursor-theme', 'cursor', 'skills', 'extension', 'perception', 'check-update', 'update', 'channel',
 ];
 
 function docs(description = 'Inspect the native tree.'): DumpDocsOutput {

@@ -158,7 +158,7 @@ fn build_keyvault(
     let os_protector = test_presence.is_none()
         // A debug daemon serving a test identity never touches the login
         // keychain (passphrase-only vault, file generation anchor).
-        && cfg!(target_os = "macos")
+        && cfg!(any(target_os = "macos", target_os = "windows", target_os = "linux"))
         && !keyvault::test_identity_active();
     let presence = test_presence
         .unwrap_or_else(|| Arc::new(keyvault::OsPresence) as Arc<dyn cua_keyvault::UserPresence>);
@@ -211,12 +211,13 @@ impl AttachedExtension for Attached {
         // The Keyvault socket (`$CUA_HOME/keyvault.sock`, beside `cua.sock`)
         // for external first-party clients (the SDK and the CLI). The broker
         // also mediates the daemon-hosted teleport MCP tools in-process.
-        #[cfg(unix)]
+        // (On Windows `keyvault.sock` only names the pipe that serves it.)
+        #[cfg(any(unix, windows))]
         if let (Some(kv), Some(dir)) = (self.keyvault.as_ref(), socket_dir) {
             let path = dir.join("keyvault.sock");
             tasks.push(tokio::spawn(keyvault::serve_socket(kv.broker(), path)));
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let _ = socket_dir;
         // The drive's change feed, and this machine's mount when the user
         // turned it on.

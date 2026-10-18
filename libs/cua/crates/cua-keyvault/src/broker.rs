@@ -240,6 +240,10 @@ pub struct ImportSpec {
     /// the destination browser's own key.
     #[serde(default)]
     pub passwords: bool,
+    /// The registrable domains whose saved passwords to read (the review's
+    /// own per-site choice of passwords); `None`: those of `domains`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// One domain a browser holds secrets for, as the inventory shows it:
@@ -760,6 +764,16 @@ pub struct TeleportOutcome {
     pub expires_ms: u64,
 }
 
+/// The [`ImportSpec::password_domains`] filter is honored: a capture
+/// reads only the saved passwords of those sites. A daemon that does not
+/// list it ignores the field and reads the passwords of `domains`, so a
+/// caller must not send a narrower choice of passwords to one.
+pub const FEATURE_PASSWORD_DOMAINS: &str = "password_domains";
+
+/// What this daemon supports beyond the original protocol
+/// ([`Status::features`]).
+pub const FEATURES: &[&str] = &[FEATURE_PASSWORD_DOMAINS];
+
 /// Vault status (safe for any caller).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
@@ -812,6 +826,10 @@ pub struct Status {
     /// new one is created (one line for the UI).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_notice: Option<String>,
+    /// What this daemon supports beyond the original protocol
+    /// ([`FEATURES`]); empty from a daemon that predates the list.
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 /// Creating a vault. Its `Debug` never prints the passphrase, and the
@@ -1133,16 +1151,21 @@ impl Broker {
                     .into(),
             );
         }
-        if cfg!(not(any(target_os = "macos", target_os = "windows"))) {
-            return Some("this platform has no OS key store protector yet".into());
+        if cfg!(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux"
+        ))) {
+            return Some("this platform has no OS key store protector".into());
         }
         None
     }
 
     /// Why this daemon cannot create a new OS key store protector (`None`: it
     /// can). On macOS only the signed Cua daemon may create one (red-team
-    /// F2), so this is checked here, before any presence prompt, rather
-    /// than discovered after the user confirmed.
+    /// F2); on Linux a desktop with no Secret Service on the session bus has
+    /// none to use. Checked here, before any presence prompt, rather than
+    /// discovered after the user confirmed.
     fn os_enroll_block(&self) -> Option<String> {
         if let Some(why) = self.os_use_block() {
             return Some(why);
@@ -1158,7 +1181,11 @@ impl Broker {
                                 .into()
                         })
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(target_os = "linux")]
+                {
+                    crate::protector::secret_service_available().err()
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 {
                     None
                 }
@@ -1311,6 +1338,7 @@ impl Broker {
                 }
                 _ => Vec::new(),
             },
+            features: FEATURES.iter().map(|f| f.to_string()).collect(),
         }
     }
 
@@ -3653,10 +3681,19 @@ impl Broker {
                 .collect()
         };
         let mut wiped_ids = Vec::new();
+        let mut gone_ids: Vec<String> = Vec::new();
         let mut errors = Vec::new();
         for d in &live {
             match self.backend.wipe(&d.target, &d.import_id).await {
                 Ok(_) => wiped_ids.push(d.import_id.clone()),
+                // The Space or the import is gone (the user removed the
+                // Space, or the target's own expiry already wiped it): the
+                // copy no longer exists, so the delivery counts as wiped
+                // and must not block deleting the item.
+                Err(Error::NotFound(_)) => {
+                    gone_ids.push(d.import_id.clone());
+                    wiped_ids.push(d.import_id.clone());
+                }
                 Err(e) => errors.push(format!("{}: {e}", d.target)),
             }
         }
@@ -3673,7 +3710,14 @@ impl Broker {
         for d in live.iter().filter(|d| wiped_ids.contains(&d.import_id)) {
             let mut e = ev("target.wipe", caller, "ok");
             e.target = Some(d.target.clone());
-            e.detail = format!("import={}", d.import_id);
+            e.detail = if gone_ids.contains(&d.import_id) {
+                format!(
+                    "import={} already gone (target or import missing)",
+                    d.import_id
+                )
+            } else {
+                format!("import={}", d.import_id)
+            };
             Self::audit(&mut st, e);
         }
         if !errors.is_empty() {

@@ -19,6 +19,7 @@ use std::time::Duration;
 const IMAGE: &str = "ghcr.io/trycua/linux:24.04-disk";
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn create_in_the_cloud_binds_connects_through_the_gateway_and_registers() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -166,6 +167,7 @@ async fn create_in_the_cloud_binds_connects_through_the_gateway_and_registers() 
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_runtime_image_mismatch_is_refused_before_any_request() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -193,6 +195,7 @@ async fn a_runtime_image_mismatch_is_refused_before_any_request() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_tools_without_credentials_name_the_missing_host_capability() {
     let reg = tempfile::tempdir().unwrap();
     let spaces = Spaces::builder().home(reg.path()).build();
@@ -349,6 +352,63 @@ async fn create_locally_starts_with_a_fresh_token_and_delete_deletes() {
     fresh.delete(&info.id).await.unwrap();
     assert_eq!(rt.deleted.lock().unwrap().as_slice(), ["cua-e2e-local-1"]);
     assert!(fresh.list().unwrap().is_empty());
+}
+
+/// A local Space is listed under the name it was created with (or the
+/// generated `space-<hex>`), not the guest's hostname (a container's short
+/// id); `add` without a name still shows the hostname (#4707).
+#[tokio::test]
+async fn a_local_space_is_named_what_it_was_created_as() {
+    let srv = MockServer::start(MockAuth::default()).await;
+    let rt = Arc::new(FakeRuntime {
+        port: srv.addr.port(),
+        started: Mutex::new(vec![]),
+        deleted: Mutex::new(vec![]),
+        running: Mutex::new(BTreeMap::new()),
+    });
+    let reg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(reg.path())
+        .sandboxes(
+            cua_sandbox_core::Sandboxes::builder()
+                .local(rt.clone())
+                .state_dir(state.path())
+                .build(),
+        )
+        .build();
+    let create = |name: Option<&str>| SpaceCreate {
+        on: Some(On::Local),
+        image: Some("cua-e2e-local/linux:docker-local-arm64".into()),
+        spacesd: Some(true),
+        name: name.map(str::to_string),
+        timeout: Some(Duration::from_secs(20)),
+        ..Default::default()
+    };
+    let named = spaces
+        .create(create(Some("todo7b-probe")))
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert_eq!(named.id, "local:todo7b-probe");
+    assert_eq!(named.name, "todo7b-probe");
+    let generated = spaces.create(create(None)).await.unwrap().ready().unwrap();
+    let short = generated.id.strip_prefix("local:").unwrap();
+    assert!(short.starts_with("space-"), "{}", generated.id);
+    assert_eq!(generated.name, short);
+    let listed: BTreeMap<String, String> = spaces
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|i| (i.id, i.name))
+        .collect();
+    assert_eq!(listed[&named.id], "todo7b-probe");
+    assert_eq!(listed[&generated.id], short);
+
+    // Control: a Space added without a name shows the guest's hostname.
+    let added = spaces.add(&srv.url(), None, None).await.unwrap();
+    assert_eq!(added.name, "mock");
 }
 
 /// `cua spaces create linux` (and `macos:26`, `macos:26-slim`) on this
@@ -703,6 +763,7 @@ async fn a_stopped_local_space_deletes() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_cloud_space_gets_the_size_asked_for_within_the_absolute_ceiling() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -808,6 +869,7 @@ async fn a_cloud_space_gets_the_size_asked_for_within_the_absolute_ceiling() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_cloud_space_out_of_credit_fails_typed_and_leaves_local_alone() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();

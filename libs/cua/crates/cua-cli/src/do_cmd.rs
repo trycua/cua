@@ -4,9 +4,10 @@
 //! `~/.cua/do_target.json`; coordinates are in screenshot-image space and
 //! are mapped to screen points with the last screenshot's scale and origin.
 //!
-//! Targets are SDK sandboxes (Fleet, local or direct). `host` is a direct
-//! sandbox pointing at a cua-spacesd on this machine (default
-//! `http://127.0.0.1:3211`), gated behind `cua do-host-consent`.
+//! Targets are SDK sandboxes (Fleet, local or direct) and relay Spaces
+//! (`relay:<machine-id>`). `host` is a direct sandbox pointing at a
+//! cua-spacesd on this machine (default `http://127.0.0.1:3211`), gated
+//! behind `cua do-host-consent`.
 
 use crate::{
     computer::{self, Computer, MAX_LENGTH, split_keys},
@@ -15,6 +16,7 @@ use crate::{
 };
 use clap::{Args, Subcommand};
 use cua_sdk::{Cua, CuaError, SandboxCreateOptions};
+use cua_spaces::registry::Registry;
 use serde::{Deserialize, Serialize};
 use std::{io::Write, path::PathBuf, sync::Arc};
 
@@ -45,15 +47,16 @@ pub struct DoArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum DoAction {
-    /// Select the target: a sandbox name, `host`, `url <URL>`, or a legacy
-    /// `<provider> <name>` pair.
+    /// Select the target: a sandbox name or ref, a relay Space (`relay:<id>`),
+    /// `host`, `url <URL>`, or a legacy `<provider> <name>` pair.
     #[command(after_help = "Examples:
   cua do switch dev
   cua do switch cloud:dev
+  cua do switch relay:0123abcd4567ef89
   # This machine (after `cua do-host-consent`)
   cua do switch host")]
     Switch {
-        /// Sandbox name or ref, `host`, `url`, or a legacy provider word.
+        /// Sandbox name or ref, `relay:<id>`, `host`, `url`, or a legacy provider word.
         target: String,
         /// The URL after `url`, or the sandbox name after a provider word.
         name: Option<String>,
@@ -572,7 +575,9 @@ pub async fn run(cua: &Arc<Cua>, args: DoArgs, out: &mut dyn Write) -> Result<i3
                 Err(Exit(code, msg)) => {
                     if !msg.is_empty() {
                         eprintln!("❌ {msg}");
-                        util::line(out, r.state.context());
+                        if r.state.provider.is_some() {
+                            util::line(out, r.state.context());
+                        }
                     }
                     Ok(code)
                 }
@@ -636,8 +641,16 @@ impl Run<'_> {
                 (p.to_string(), n)
             }
             _ => {
-                self.cua.sandboxes().get(target.clone()).await?;
-                ("sandbox".to_string(), target)
+                if let Some(id) = crate::sandbox::relay_space_id(&target) {
+                    // The same open later actions use. A missing or
+                    // unreachable relay Space fails here, as
+                    // `sandboxes().get` does for every other target.
+                    crate::sandbox::env_of(self.cua, &id).await?;
+                    ("relay".to_string(), id)
+                } else {
+                    self.cua.sandboxes().get(target.clone()).await?;
+                    ("sandbox".to_string(), target)
+                }
             }
         };
         self.state.provider = Some(provider.clone());
@@ -727,10 +740,47 @@ impl Run<'_> {
         Ok(0)
     }
 
-    async fn computer(&self) -> Result<Computer, CuaError> {
-        Ok(Computer::new(
-            crate::sandbox::env_of(self.cua, &self.state.name).await?,
-        ))
+    async fn computer(&mut self) -> Result<Computer, CuaError> {
+        let name = self.state.name.clone();
+        let err = match crate::sandbox::env_of(self.cua, &name).await {
+            Ok(env) => return Ok(Computer::new(env)),
+            Err(e @ CuaError::SpacesdNotAvailable(_))
+                if crate::sandbox::relay_space_id(&name).is_none() =>
+            {
+                e
+            }
+            Err(e) => return Err(e),
+        };
+        let Some(url) = self
+            .cua
+            .sandboxes()
+            .get(name.clone())
+            .await
+            .ok()
+            .filter(|i| i.location == "direct")
+            .and_then(|i| i.endpoints.get("env").cloned())
+        else {
+            return Err(err);
+        };
+        if State::load().name == name {
+            std::fs::remove_file(state_path()).map_err(internal)?;
+            self.state.provider = None;
+        }
+        let next = match Registry::new(util::cua_home())
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .find_map(|s| crate::sandbox::relay_space_id(&s.id))
+        {
+            Some(id) => format!("Registered relay Space: cua do switch {id}"),
+            None => "List Spaces: cua spaces ls".into(),
+        };
+        Err(CuaError::SpacesdNotAvailable(format!(
+            "{name} ({url}) did not answer; it may have moved or gone offline. Unselected it.\n   \
+             Select it again once it is back: cua do switch {name}\n   \
+             Forget it: cua sandbox rm {name}\n   \
+             {next}"
+        )))
     }
 
     async fn zoom_ref(&self, c: &Computer) -> Option<cua_spacesd_client::pb::WindowRef> {

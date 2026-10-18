@@ -601,8 +601,19 @@ fn newest(items: &[&KvItem]) -> u64 {
     items.iter().map(|i| i.updated_ms).max().unwrap_or(0)
 }
 
-/// The list as drawn.
+/// The list as drawn, in a Mac's words.
 pub fn view(o: &KeyvaultOverview, state: &VaultState, now: i64) -> VaultView {
+    view_on(o, state, now, crate::model::SpaceOs::Macos)
+}
+
+/// [`view`] in the words of the system the Keyvault runs on (`os`): how it
+/// confirms showing the names.
+pub fn view_on(
+    o: &KeyvaultOverview,
+    state: &VaultState,
+    now: i64,
+    os: crate::model::SpaceOs,
+) -> VaultView {
     let items = shown(o, state);
     let searching = !state.query.trim().is_empty();
     let names_hidden = !o.items.is_empty() && !o.names_visible;
@@ -769,8 +780,12 @@ pub fn view(o: &KeyvaultOverview, state: &VaultState, now: i64) -> VaultView {
         apps,
         empty_text,
         names_hidden,
-        hidden_note: names_hidden
-            .then(|| "Names are hidden. Confirm with Touch ID to see what is saved.".into()),
+        hidden_note: names_hidden.then(|| {
+            format!(
+                "Names are hidden. Confirm with {} to see what is saved.",
+                super::credential::presence_word(os)
+            )
+        }),
         show_names_label: "Show Items".into(),
         search_prompt: SEARCH_PROMPT.into(),
         selection,
@@ -816,6 +831,14 @@ pub struct KvVaultSource {
     /// only when ticked in the review.
     #[serde(default)]
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value),
+    /// for the review to list and pick from.
+    #[serde(default)]
+    pub passwords: Vec<crate::teleport::review::VaultPassword>,
+    /// The daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status): the review may offer one.
+    #[serde(default)]
+    pub password_picks: bool,
 }
 
 /// The saved items of `provider_id` a teleport can send.
@@ -825,17 +848,27 @@ pub fn vault_source(o: &KeyvaultOverview, provider_id: &str) -> KvVaultSource {
         ..Default::default()
     };
     let all = shown(o, &state);
-    let password_ids: Vec<String> = all
+    let passwords: Vec<crate::teleport::review::VaultPassword> = all
         .iter()
         .filter(|i| KvKind::from_wire(&i.kind) == KvKind::Password)
-        .map(|i| i.id.clone())
+        .map(|i| crate::teleport::review::VaultPassword {
+            id: i.id.clone(),
+            site: i.domain.as_deref().map(site_of).unwrap_or_default(),
+            username: i.key.clone(),
+        })
         .collect();
+    let password_ids: Vec<String> = passwords.iter().map(|p| p.id.clone()).collect();
     let items: Vec<&KvItem> = all
         .into_iter()
         .filter(|i| KvKind::from_wire(&i.kind) != KvKind::Password)
         .collect();
     KvVaultSource {
         password_ids,
+        passwords,
+        password_picks: o
+            .status
+            .as_ref()
+            .is_some_and(|s| s.features.iter().any(|f| f == "password_domains")),
         count: items.len() as u32,
         newest_ms: items.iter().map(|i| i.updated_ms as i64).max().unwrap_or(0),
         ids: items.iter().map(|i| i.id.clone()).collect(),
@@ -1312,6 +1345,7 @@ mod tests {
         }
         // "Never ask again" skips the prompt, never the Touch ID check.
         o.status = Some(KvStatus {
+            features: vec![],
             version: "0".into(),
             initialized: true,
             unlocked: true,
@@ -1404,6 +1438,16 @@ mod tests {
         assert!(v.names_hidden);
         assert_eq!(v.show_names_label, "Show Items");
         assert!(v.hidden_note.as_deref().unwrap().contains("Touch ID"));
+        // Off a Mac, the host's own confirmation.
+        let note = |os| view_on(&o, &st(), NOW, os).hidden_note.unwrap();
+        assert_eq!(
+            note(crate::model::SpaceOs::Windows),
+            "Names are hidden. Confirm with Windows Hello or your password to see what is saved."
+        );
+        assert_eq!(
+            note(crate::model::SpaceOs::Linux),
+            "Names are hidden. Confirm with your password to see what is saved."
+        );
         assert_eq!(v.apps[0].count, 9, "counts survive");
         // Rows still render (type only), and nothing names a site.
         assert!(v.apps[0].sites.iter().all(|s| s.site == "Unnamed"));
@@ -1430,6 +1474,24 @@ mod tests {
         assert_eq!(src.newest_ms, (NOW - 120_000));
         assert_eq!(vault_source(&o, "slack").count, 2);
         assert_eq!(vault_source(&o, "arc"), KvVaultSource::default());
+        // Its saved passwords by site and username (never a value), and a
+        // choice of them only from a daemon that enforces one.
+        assert!(
+            src.passwords
+                .iter()
+                .all(|p| src.password_ids.contains(&p.id))
+        );
+        assert!(!src.password_picks, "an older daemon lists no features");
+        let mut newer = o.clone();
+        newer.status = Some(KvStatus {
+            features: vec!["password_domains".into()],
+            ..serde_json::from_value(serde_json::json!({
+                "version": "1", "initialized": true, "unlocked": true, "disabled": false,
+                "caller_first_party": true, "caller_display": "Cua", "items": 9, "pending": 0,
+            }))
+            .unwrap()
+        });
+        assert!(vault_source(&newer, "chrome").password_picks);
     }
 
     #[test]

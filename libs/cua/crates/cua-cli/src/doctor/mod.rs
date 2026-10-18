@@ -17,6 +17,7 @@
 
 pub mod host;
 pub mod identity;
+pub mod local_network;
 pub mod parity;
 pub mod shim;
 

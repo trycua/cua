@@ -42,6 +42,7 @@ class FakePool:
         self.deletes += 1
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_create_with_pool_name_uses_read_only_pool_lookup(monkeypatch):
     pool = FakePool()
@@ -62,6 +63,7 @@ async def test_create_with_pool_name_uses_read_only_pool_lookup(monkeypatch):
     assert sandbox.claim_name == "job-123"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_create_with_fleet_image_claims_from_managed_pool(monkeypatch, tmp_path):
     # Was test_create_with_fleet_image_requires_explicit_pool: a Fleet image
@@ -86,6 +88,7 @@ async def test_create_with_fleet_image_claims_from_managed_pool(monkeypatch, tmp
     assert sandbox_state.load("job-123")["managed"] is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_pool_create_persists_generated_claim_pool_mapping(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
@@ -112,6 +115,7 @@ async def test_pool_create_persists_generated_claim_pool_mapping(monkeypatch, tm
     assert sandbox_state.load("generated-claim-1")["pool_name"] == "workspace"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize("source", ["existing-pool", "pool-object"])
 @pytest.mark.asyncio
 async def test_keep_alive_failure_releases_claim_without_persisting_state(
@@ -145,6 +149,7 @@ async def test_keep_alive_failure_releases_claim_without_persisting_state(
     assert sandbox_state.load("job-123") is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_state_persistence_failure_releases_acquired_claim(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
@@ -171,6 +176,7 @@ async def test_state_persistence_failure_releases_acquired_claim(monkeypatch, tm
     claimed.close.assert_awaited_once()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_keep_alive_failure_preserves_error_when_claim_close_fails(monkeypatch):
     claimed = SimpleNamespace(
@@ -190,6 +196,7 @@ async def test_keep_alive_failure_preserves_error_when_claim_close_fails(monkeyp
     assert str(error.value.__cause__) == "close failed"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_create_compares_an_image_given_with_a_pool(monkeypatch):
     from cua_sandbox import Pool, PoolSpecMismatch
@@ -208,6 +215,7 @@ async def test_create_compares_an_image_given_with_a_pool(monkeypatch):
     assert seen == [("pool", "registry.example/workspace:latest")]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_create_rejects_pool_configuration_for_existing_pool():
     with pytest.raises(ValueError, match="existing pool"):
@@ -304,6 +312,7 @@ def test_to_dict_serializes_claim_not_bound_transport():
     assert "sandbox-1" not in str(sandbox.to_dict())
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_ephemeral_pool_closes_claim(monkeypatch):
     closed: list[bool] = []
@@ -323,6 +332,7 @@ async def test_ephemeral_pool_closes_claim(monkeypatch):
     assert closed == [True]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_ephemeral_image_uses_name_for_the_claim_on_a_managed_pool(monkeypatch):
     # Was test_ephemeral_image_uses_name_for_owned_pool_and_claim: name= now
@@ -351,6 +361,7 @@ async def test_ephemeral_image_uses_name_for_the_claim_on_a_managed_pool(monkeyp
     claimed.close.assert_awaited_once()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -381,6 +392,7 @@ async def test_keep_pool_is_a_deprecated_no_op(monkeypatch, kwargs):
             pass
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_ephemeral_image_without_name_never_creates_a_disposable_pool(monkeypatch):
     # Was test_ephemeral_image_without_name_applies_random_disposable_pool:
@@ -403,6 +415,7 @@ async def test_ephemeral_image_without_name_never_creates_a_disposable_pool(monk
     claimed.close.assert_awaited_once()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_ephemeral_image_propagates_acquire_failure(monkeypatch):
     # Was test_ephemeral_image_deletes_owned_pool_when_claim_fails: the
@@ -416,6 +429,7 @@ async def test_ephemeral_image_propagates_acquire_failure(monkeypatch):
             pass
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_ephemeral_image_preserves_body_error_when_claim_cleanup_fails(monkeypatch):
     # Was ..._when_owned_pool_cleanup_fails.
@@ -434,6 +448,7 @@ async def test_ephemeral_image_preserves_body_error_when_claim_cleanup_fails(mon
     claimed.close.assert_awaited_once()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_ephemeral_forwards_the_fleet_runtime_to_the_managed_pool(monkeypatch):
     # Was ..._to_the_owned_pool: the runtime is part of the managed pool key.
@@ -448,6 +463,7 @@ async def test_ephemeral_forwards_the_fleet_runtime_to_the_managed_pool(monkeypa
     assert acquire.await_args.kwargs["runtime"] == "gvisor"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_a_fleet_runtime_belongs_to_the_pool_not_the_claim(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state

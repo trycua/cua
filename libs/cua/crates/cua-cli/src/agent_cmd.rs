@@ -116,6 +116,17 @@ pub enum AgentCmd {
   cua agent harnesses
   cua --json agent harnesses")]
     Harnesses,
+    /// The provider keys agents get, kept in the Keychain by the Cua daemon
+    /// (Cua Spaces → Settings → Agents). Values are read from stdin and never
+    /// printed.
+    #[command(after_help = "Examples:
+  cua agent keys
+  cua agent keys set anthropic
+  cua agent keys rm OPENAI_API_KEY")]
+    Keys {
+        #[command(subcommand)]
+        cmd: Option<crate::agent_keys_cmd::KeysCmd>,
+    },
     #[command(flatten)]
     Persistent(crate::persistent_cmd::PersistentCmd),
 }
@@ -228,6 +239,259 @@ async fn follow(
     Ok(cursor)
 }
 
+/// The harnesses with the readiness the Spaces server reports
+/// (`agent_capabilities`, which counts the keys saved in Cua Spaces →
+/// Settings → Agents and the server's environment), so `cua agent
+/// harnesses`, MCP and the app agree. Without a server: the static list.
+async fn harnesses(cua: &Arc<Cua>) -> serde_json::Value {
+    let caps = cua
+        .spaces()
+        .call_tool_json("agent_capabilities".into(), None)
+        .await;
+    if let Ok(r) = caps
+        && !r.is_error
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.text)
+        && v["harnesses"].is_array()
+    {
+        return v["harnesses"].clone();
+    }
+    serde_json::from_str(&cua_sdk::agent_harnesses()).unwrap_or_default()
+}
+
+/// The provider key variables `--env-from-host` may name.
+fn provider_key_names() -> Vec<String> {
+    let v: serde_json::Value =
+        serde_json::from_str(&cua_sdk::agent_harnesses()).unwrap_or_default();
+    let mut names: Vec<String> = v
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|h| h["keys"].as_array().cloned().unwrap_or_default())
+        .filter_map(|k| k.as_str().map(str::to_string))
+        .chain(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"].map(String::from))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+/// `--env-from-host`: names set in this shell go as the run's env (this
+/// shell's value wins, as before); the others are left to the server,
+/// which gives a run the keys saved in Cua Spaces and its own environment.
+fn split_env_from_host(
+    names: &[String],
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<(serde_json::Map<String, serde_json::Value>, Vec<String>), CuaError> {
+    let allowed = provider_key_names();
+    let mut env = serde_json::Map::new();
+    let mut server = vec![];
+    for n in names {
+        match lookup(n).filter(|v| !v.is_empty()) {
+            Some(v) if allowed.contains(n) => {
+                env.insert(n.clone(), v.into());
+            }
+            Some(_) => {
+                return Err(CuaError::InvalidArgument(format!(
+                    "{n} is not a provider key variable; allowed: {}",
+                    allowed.join(", ")
+                )));
+            }
+            None => server.push(n.clone()),
+        }
+    }
+    Ok((env, server))
+}
+
+/// The `agent_start` arguments for `cua agent run`.
+fn start_args(a: &RunArgs, space: &str) -> Result<serde_json::Value, CuaError> {
+    let (env, env_from_host) = split_env_from_host(&a.env_from_host, |n| std::env::var(n).ok())?;
+    let mut files = vec![];
+    for p in &a.files {
+        let abs = std::fs::canonicalize(p)
+            .map_err(|e| CuaError::InvalidArgument(format!("{}: {e}", p.display())))?;
+        files.push(abs.to_string_lossy().to_string());
+    }
+    let mut mcp = vec![];
+    for m in &a.mcp {
+        let m = mcp_arg(m)?;
+        mcp.push(serde_json::json!({
+            "name": m.name, "url": m.url, "command": m.command, "args": m.args,
+        }));
+    }
+    Ok(serde_json::json!({
+        "space": space,
+        "agent": a.harness,
+        "prompt": a.prompt,
+        "env": env,
+        "env_from_host": env_from_host,
+        "repo": a.repo,
+        "branch": a.branch,
+        "cwd": a.cwd,
+        "model": a.model,
+        "base_url": a.base_url,
+        "wire": a.wire,
+        "mcp_servers": mcp,
+        "files": files,
+        "sandbox_mcp": !a.no_sandbox_mcp,
+        "skills": !a.no_skills,
+        "exit_when_idle": a.exit_when_idle,
+        "label": a.label,
+    }))
+}
+
+/// A tool error as the CLI reports it.
+fn tool_error(r: &cua_sdk::SpaceToolResult) -> CuaError {
+    let structured: serde_json::Value = r
+        .structured_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    let msg = structured["error"]["message"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            r.text
+                .strip_prefix("error: ")
+                .unwrap_or(&r.text)
+                .to_string()
+        });
+    match structured["error"]["kind"].as_str() {
+        Some("invalid_argument") => CuaError::InvalidArgument(msg),
+        Some("not_found") => CuaError::NotFound(msg),
+        _ => CuaError::Env(msg),
+    }
+}
+
+/// `cua agent run`: the Spaces server's `agent_start`, the one path MCP
+/// and the app take too (saved keys, readiness, the failure
+/// notification). A direct sandbox the server does not know (its token is
+/// kept by this CLI) is started from here.
+async fn start(
+    cua: &Arc<Cua>,
+    a: RunArgs,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    let sandbox = a.at.apply(&a.sandbox)?;
+    let args = start_args(&a, &sandbox)?;
+    let r = cua
+        .spaces()
+        .call_tool_json("agent_start".into(), Some(args.to_string()))
+        .await?;
+    if r.is_error {
+        let e = tool_error(&r);
+        // A direct sandbox the server does not know: its token is here.
+        if matches!(e, CuaError::NotFound(_))
+            && let Ok(info) = cua.sandboxes().get(sandbox.clone()).await
+            && info.location == "direct"
+        {
+            return start_direct(cua, a, &sandbox, json, out).await;
+        }
+        return Err(e);
+    }
+    let v: serde_json::Value = serde_json::from_str(&r.text).unwrap_or_default();
+    let run_id = v["run_id"].as_str().unwrap_or_default().to_string();
+    let harness = v["agent"].as_str().unwrap_or(&a.harness).to_string();
+    if json && !a.follow {
+        line(
+            out,
+            serde_json::json!({"run_id": run_id, "harness": harness}).to_string(),
+        );
+    } else {
+        for n in v["notes"].as_array().into_iter().flatten() {
+            if let Some(n) = n.as_str() {
+                eprintln!("note: {n}");
+            }
+        }
+        eprintln!(
+            "{run_id} started ({harness}); follow with: cua agent logs {} {run_id} -f",
+            a.sandbox
+        );
+    }
+    if !a.follow {
+        return Ok(0);
+    }
+    let run = env_of(cua, &sandbox)
+        .await?
+        .agents()
+        .await?
+        .get(run_id)
+        .await?;
+    finish(&run, json, out).await
+}
+
+/// Follows `run` to the end of its turn; 1 when it failed.
+async fn finish(run: &AgentRun, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+    follow(run, 0, true, false, json, out).await?;
+    let r = run.result().await?;
+    Ok(if r.error.is_some() || r.status == "failed" {
+        1
+    } else {
+        0
+    })
+}
+
+/// `cua agent run` on a direct sandbox: the SDK's runner over the token
+/// this CLI keeps (no keys saved in Cua Spaces; `--env-from-host` reads
+/// this shell).
+async fn start_direct(
+    cua: &Arc<Cua>,
+    a: RunArgs,
+    sandbox: &str,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    let agents = env_of(cua, sandbox).await?.agents().await?;
+    let mut files = vec![];
+    for p in &a.files {
+        let bytes = std::fs::read(p)
+            .map_err(|e| CuaError::InvalidArgument(format!("{}: {e}", p.display())))?;
+        files.push(AgentFile {
+            name: p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            bytes,
+        });
+    }
+    let opts = AgentRunOptions {
+        cwd: a.cwd,
+        repo: a.repo,
+        branch: a.branch,
+        env: HashMap::new(),
+        env_from_host: a.env_from_host,
+        model: a.model,
+        base_url: a.base_url,
+        wire: a.wire,
+        mcp_servers: a.mcp.iter().map(|m| mcp_arg(m)).collect::<Result<_, _>>()?,
+        sandbox_mcp: Some(!a.no_sandbox_mcp),
+        skills: Some(!a.no_skills),
+        install: None,
+        files,
+        exit_when_idle: a.exit_when_idle,
+        label: a.label,
+    };
+    let run = agents.run(a.harness, a.prompt, Some(opts)).await?;
+    if json && !a.follow {
+        line(
+            out,
+            serde_json::json!({"run_id": run.run_id(), "harness": run.harness()}).to_string(),
+        );
+    } else {
+        eprintln!(
+            "{} started ({}); follow with: cua agent logs {} {} -f",
+            run.run_id(),
+            run.harness(),
+            a.sandbox,
+            run.run_id()
+        );
+    }
+    if a.follow {
+        return finish(&run, json, out).await;
+    }
+    Ok(0)
+}
+
 pub async fn run(
     cua: &Arc<Cua>,
     cmd: AgentCmd,
@@ -237,19 +501,22 @@ pub async fn run(
     if let AgentCmd::Persistent(p) = cmd {
         return crate::persistent_cmd::run(cua, p, json, out).await;
     }
+    if let AgentCmd::Keys { cmd } = cmd {
+        return crate::agent_keys_cmd::run(cua, cmd, json, out).await;
+    }
     if let AgentCmd::Harnesses = cmd {
-        let h = cua_sdk::agent_harnesses();
+        let v = harnesses(cua).await;
         if json {
-            line(out, h);
+            line(out, serde_json::to_string_pretty(&v).unwrap_or_default());
         } else {
-            let v: serde_json::Value = serde_json::from_str(&h).unwrap_or_default();
             for x in v.as_array().into_iter().flatten() {
                 line(
                     out,
                     format!(
-                        "{:<20} {:<6} keys: {}",
+                        "{:<20} {:<6} {:<12} keys: {}",
                         x["id"].as_str().unwrap_or(""),
                         if x["ready"] == true { "ready" } else { "no" },
+                        format!("auth: {}", x["auth"].as_str().unwrap_or("unknown")),
                         x["keys"]
                             .as_array()
                             .map(|k| k
@@ -260,12 +527,19 @@ pub async fn run(
                             .unwrap_or_default()
                     ),
                 );
+                if x["ready"] != true
+                    && let Some(hint) = x["auth_hint"].as_str()
+                {
+                    line(out, format!("  {hint}"));
+                }
             }
         }
         return Ok(0);
     }
+    if let AgentCmd::Run(a) = cmd {
+        return start(cua, *a, json, out).await;
+    }
     let (at, sandbox) = match &cmd {
-        AgentCmd::Run(a) => (a.at, a.sandbox.clone()),
         AgentCmd::Ls { at, sandbox }
         | AgentCmd::Logs { at, sandbox, .. }
         | AgentCmd::Send { at, sandbox, .. }
@@ -274,7 +548,10 @@ pub async fn run(
         | AgentCmd::Status { at, sandbox, .. }
         | AgentCmd::Rm { at, sandbox, .. }
         | AgentCmd::Ensure { at, sandbox, .. } => (*at, sandbox.clone()),
-        AgentCmd::Harnesses | AgentCmd::Persistent(_) => unreachable!(),
+        AgentCmd::Run(_)
+        | AgentCmd::Harnesses
+        | AgentCmd::Keys { .. }
+        | AgentCmd::Persistent(_) => unreachable!(),
     };
     let guest = env_of(cua, &at.apply(&sandbox)?).await?;
     let agents = guest.agents().await?;
@@ -298,61 +575,6 @@ pub async fn run(
         )
     };
     match cmd {
-        AgentCmd::Run(a) => {
-            let mut files = vec![];
-            for p in &a.files {
-                let bytes = std::fs::read(p)
-                    .map_err(|e| CuaError::InvalidArgument(format!("{}: {e}", p.display())))?;
-                files.push(AgentFile {
-                    name: p
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    bytes,
-                });
-            }
-            let opts = AgentRunOptions {
-                cwd: a.cwd,
-                repo: a.repo,
-                branch: a.branch,
-                env: HashMap::new(),
-                env_from_host: a.env_from_host,
-                model: a.model,
-                base_url: a.base_url,
-                wire: a.wire,
-                mcp_servers: a.mcp.iter().map(|m| mcp_arg(m)).collect::<Result<_, _>>()?,
-                sandbox_mcp: Some(!a.no_sandbox_mcp),
-                skills: Some(!a.no_skills),
-                install: None,
-                files,
-                exit_when_idle: a.exit_when_idle,
-                label: a.label,
-            };
-            let run = agents.run(a.harness, a.prompt, Some(opts)).await?;
-            if json && !a.follow {
-                line(
-                    out,
-                    serde_json::json!({"run_id": run.run_id(), "harness": run.harness()})
-                        .to_string(),
-                );
-            } else {
-                eprintln!(
-                    "{} started ({}); follow with: cua agent logs {sandbox} {} -f",
-                    run.run_id(),
-                    run.harness(),
-                    run.run_id()
-                );
-            }
-            if a.follow {
-                follow(&run, 0, true, false, json, out).await?;
-                let r = run.result().await?;
-                return Ok(if r.error.is_some() || r.status == "failed" {
-                    1
-                } else {
-                    0
-                });
-            }
-        }
         AgentCmd::Ls { .. } => {
             let runs = agents.list().await?;
             if json {
@@ -433,7 +655,99 @@ pub async fn run(
                 line(out, p);
             }
         }
-        AgentCmd::Harnesses | AgentCmd::Persistent(_) => {}
+        AgentCmd::Run(_)
+        | AgentCmd::Harnesses
+        | AgentCmd::Keys { .. }
+        | AgentCmd::Persistent(_) => {}
     }
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        cmd: AgentCmd,
+    }
+
+    fn run_args(argv: &[&str]) -> RunArgs {
+        let mut v = vec!["agent", "run"];
+        v.extend_from_slice(argv);
+        match Cli::parse_from(v).cmd {
+            AgentCmd::Run(a) => *a,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn env_from_host_uses_this_shell_then_the_server() {
+        let shell = |n: &str| match n {
+            "ANTHROPIC_API_KEY" => Some("sk-ant-test-0000".to_string()),
+            "AWS_SECRET_ACCESS_KEY" => Some("aws".to_string()),
+            "OPENAI_API_KEY" => Some(String::new()),
+            _ => None,
+        };
+        let names = [
+            "ANTHROPIC_API_KEY".to_string(),
+            "OPENAI_API_KEY".to_string(),
+        ];
+        let (env, server) = split_env_from_host(&names, shell).unwrap();
+        assert_eq!(env["ANTHROPIC_API_KEY"], "sk-ant-test-0000");
+        // Unset (or empty) here: the server resolves it from the keys saved
+        // in Cua Spaces or its own environment.
+        assert_eq!(server, vec!["OPENAI_API_KEY"]);
+        let e = split_env_from_host(&["AWS_SECRET_ACCESS_KEY".into()], shell).unwrap_err();
+        assert!(
+            !e.to_string().contains("aws"),
+            "the value is never quoted: {e}"
+        );
+        assert!(e.to_string().contains("not a provider key variable"));
+    }
+
+    #[test]
+    fn agent_run_is_a_valid_agent_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("brief.md");
+        std::fs::write(&f, "x").unwrap();
+        let a = run_args(&[
+            "local:dev",
+            "claude-code",
+            "fix it",
+            "--file",
+            f.to_str().unwrap(),
+            "--mcp",
+            "docs=http://127.0.0.1:9/mcp",
+            "--no-skills",
+            "--exit-when-idle",
+            "--label",
+            "e2e",
+            "--wire",
+            "anthropic",
+        ]);
+        let v = start_args(&a, "local:dev").unwrap();
+        // No key is named, so none is sent: the server adds the saved one.
+        assert_eq!(v["env"], serde_json::json!({}));
+        assert_eq!(v["env_from_host"], serde_json::json!([]));
+        assert_eq!(v["skills"], false);
+        assert_eq!(v["sandbox_mcp"], true);
+        assert_eq!(
+            v["files"][0],
+            std::fs::canonicalize(&f).unwrap().to_str().unwrap()
+        );
+        let parsed: cua_spaces::contract::inputs::AgentStart =
+            serde_json::from_value(v).expect("the contract's agent_start input");
+        assert_eq!(parsed.agent, "claude-code");
+        assert_eq!(
+            parsed.mcp_servers[0].url.as_deref(),
+            Some("http://127.0.0.1:9/mcp")
+        );
+        assert_eq!(parsed.label.as_deref(), Some("e2e"));
+        assert_eq!(parsed.exit_when_idle, Some(true));
+        let missing = run_args(&["local:dev", "claude-code", "x", "--file", "/no/such/file"]);
+        assert!(start_args(&missing, "local:dev").is_err());
+    }
 }

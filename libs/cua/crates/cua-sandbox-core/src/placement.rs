@@ -119,7 +119,7 @@ impl On {
             return Ok(On::Provider(lower));
         }
         let hint = match lower.as_str() {
-            "fleet" => " (the cloud location is `cloud`)".to_string(),
+            "fleet" => " (Cua Cloud has ended)".to_string(),
             "docker" | "container" => {
                 " (`--on` says where it runs; use `--kind container`)".to_string()
             }
@@ -532,9 +532,11 @@ pub fn provider(name: &str) -> Option<Capabilities> {
         .cloned()
 }
 
-/// Every location: `local`, `cloud`, then the registered providers.
+/// Every location: `local`, then the registered providers. Cua Cloud
+/// (`cloud`) has ended and is no longer listed; it still parses, and a
+/// create there fails with [`crate::CLOUD_ENDED`].
 pub fn locations() -> Vec<Capabilities> {
-    let mut v = vec![local_capabilities(), cloud_capabilities()];
+    let mut v = vec![local_capabilities()];
     v.extend(
         providers_lock()
             .read()
@@ -1037,13 +1039,13 @@ mod tests {
             ("gvisor", "--runtime gvisor"),
             ("docker", "--kind container"),
             ("vm", "--kind vm"),
-            ("fleet", "`cloud`"),
+            ("fleet", "Cua Cloud has ended"),
         ] {
             let e = On::parse(word).unwrap_err();
             assert_eq!(e.axis, Axis::On, "{word}");
             assert!(e.message.contains(hint), "{word}: {}", e.message);
             assert!(e.valid.contains(&"local".to_string()), "{word}");
-            assert!(e.valid.contains(&"cloud".to_string()), "{word}");
+            assert!(!e.valid.contains(&"cloud".to_string()), "{word}");
         }
         assert!(
             On::parse("direct:")

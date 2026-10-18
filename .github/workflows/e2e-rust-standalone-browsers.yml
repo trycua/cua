@@ -20,6 +20,12 @@ permissions:
   actions: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  # Failed cases are rerun once inside the gate; a pass on the rerun is
+  # reported as flaky, two failures fail. See scripts/ci/lib/e2e-retry-once.sh.
+  CUA_E2E_RETRY_ONCE: "1"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -87,6 +93,9 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua-driver/rust
       - name: Install Windows video tools
         if: runner.os == 'Windows'
         shell: pwsh
@@ -173,6 +182,7 @@ jobs:
           else
             echo "Standalone browser summary was not produced." >> "$GITHUB_STEP_SUMMARY"
           fi
+          scripts/ci/summarize-flaky-cases.sh artifacts/cua-driver/standalone-browser >> "$GITHUB_STEP_SUMMARY"
       - name: Upload browser evidence
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4

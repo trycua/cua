@@ -101,7 +101,16 @@ test("embedded", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") }, as
   await exercise(c)
 })
 
-test("managed Fleet pools through the fake API", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") }, async () => {
+// Cua Cloud has ended (CUA-1854): `fleet()` and every `on: "cloud"` create
+// fail with the one "Cua Cloud has ended" message, and never reach Fleet.
+const CLOUD_REMOVED = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"
+const cloudEnded = (e) => {
+  assert.ok(cua.CuaError.Unsupported.instanceOf(e), String(e))
+  assert.match(e.message, /Cua Cloud has ended/)
+  return true
+}
+
+test("managed Fleet pools through the fake API", { skip: CLOUD_REMOVED }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "cua-ts-"))
   const c = cua.embedded({
     stateDir: join(dir, "sandboxes"),
@@ -149,9 +158,44 @@ test("managed Fleet pools through the fake API", { skip: !binary("CUA_TEST_FIXTU
   assert.deepEqual(await pools.list(), [])
 })
 
-test("unconfigured fleet is a typed error", () => {
-  const c = cua.embedded({ stateDir: mkdtempSync(join(tmpdir(), "cua-ts-")), fleetFromEnv: false })
-  assert.throws(() => c.fleet(), (e) => cua.CuaError.ProviderNotConfigured.instanceOf(e))
+test("cloud creates fail with the cloud-ended error, even with Fleet credentials", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cua-ts-"))
+  const c = cua.embedded({
+    stateDir: join(dir, "sandboxes"),
+    fleetFromEnv: false,
+    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
+  })
+  // A digest-pinned image: nothing resolves tags against a registry.
+  const image = "ghcr.io/trycua/cua-e2e-ts@sha256:0123"
+  const sbx = c.sandboxes()
+  await assert.rejects(
+    sbx.create(cua.SandboxCreateOptions.create({ on: "cloud", image, kind: "vm", warm: true, maxPoolSize: 3 })),
+    cloudEnded,
+  )
+  // Cloud options imply the cloud too.
+  await assert.rejects(
+    sbx.create(cua.SandboxCreateOptions.create({ image, warm: true })),
+    cloudEnded,
+  )
+  await assert.rejects(
+    sbx.create(cua.SandboxCreateOptions.create({ image, cloud: cua.CloudOptions.create({}) })),
+    cloudEnded,
+  )
+  // Nothing was created, and cloud is not a listed location.
+  assert.deepEqual((await sbx.listWithWarnings("cloud")).sandboxes, [])
+  assert.ok(!cua.sandboxLocations().includes("cloud"))
+})
+
+test("fleet() fails with the cloud-ended error, with or without credentials", () => {
+  const bare = cua.embedded({ stateDir: mkdtempSync(join(tmpdir(), "cua-ts-")), fleetFromEnv: false })
+  assert.throws(() => bare.fleet(), cloudEnded)
+  if (!fx?.fleet_base_url) return
+  const configured = cua.embedded({
+    stateDir: mkdtempSync(join(tmpdir(), "cua-ts-")),
+    fleetFromEnv: false,
+    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
+  })
+  assert.throws(() => configured.fleet(), cloudEnded)
 })
 
 test(

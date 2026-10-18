@@ -45,9 +45,9 @@ Branch on `kind`; the message is for people. Every tool can return `invalid_argu
 | [`cancelled`](#cancelled) | The create was cancelled (cancel_create, or its caller went away); what it made is gone. |
 | [`stream`](#stream) | The media plane failed to open or run the stream. |
 | [`env`](#env) | A cua-spacesd call failed. |
-| [`fleet`](#fleet) | The Fleet control plane failed a cloud Space call. |
-| [`fleet_admission_denied`](#fleet_admission_denied) | Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit. The message is Fleet's and names the limit. |
-| [`cloud_credit_exhausted`](#cloud_credit_exhausted) | The account is out of Cua Cloud credit (no credit left, and no card or plan): Fleet refused the new cloud Space. Running Spaces keep running; local Spaces are never affected. The message ends with the billing page's URL. |
+| [`fleet`](#fleet) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call. |
+| [`fleet_admission_denied`](#fleet_admission_denied) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit. |
+| [`cloud_credit_exhausted`](#cloud_credit_exhausted) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space. |
 | [`invalid_placement`](#invalid_placement) | The location, kind or runtime does not exist, or the combination (with the image) does not. |
 | [`sandbox`](#sandbox) | Starting, stopping or deleting the Space's sandbox failed. |
 | [`cloud`](#cloud) | Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error. |
@@ -204,25 +204,25 @@ Fix: Retry; if it persists, check the spacesd log in the Space.
 
 ### fleet
 
-The Fleet control plane failed a cloud Space call.
+Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call.
 
-Fix: See the Fleet errors reference for the HTTP status in the message.
+Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
 
 Listed by [`create_space`](/spaces/reference/lifecycle#create_space), [`delete_space`](/spaces/reference/lifecycle#delete_space), [`agent_resume`](/spaces/reference/persistent-agents#agent_resume).
 
 ### fleet_admission_denied
 
-Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit. The message is Fleet's and names the limit.
+Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit.
 
-Fix: Pick a size within the limit the message names (most accounts run 1-8 vCPUs and 1-32 GiB), or contact Cua support to raise the account's limits.
+Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
 
 Listed by [`create_space`](/spaces/reference/lifecycle#create_space).
 
 ### cloud_credit_exhausted
 
-The account is out of Cua Cloud credit (no credit left, and no card or plan): Fleet refused the new cloud Space. Running Spaces keep running; local Spaces are never affected. The message ends with the billing page's URL.
+Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space.
 
-Fix: Add credit on the billing page the message names (a plan, or a card for pay as you go), or create the Space locally.
+Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
 
 Listed by [`create_space`](/spaces/reference/lifecycle#create_space).
 

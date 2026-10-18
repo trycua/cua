@@ -10,6 +10,8 @@ they scale to zero when idle and are garbage collected after
 """
 
 from __future__ import annotations
+from cua_bench._ended import CLOUD_ENDED
+
 from ._help import examples
 
 import asyncio
@@ -150,6 +152,9 @@ def execute(args) -> int:
     if command not in ("ls", "list", "gc"):
         print("Usage: cb env ls [--local] | cb env gc [--idle 30m]")
         return 1
+    # Cua Cloud has ended: there are no managed pools to list or collect.
+    print(f"{RED}Error: {CLOUD_ENDED}{RESET}")
+    return 1
     if not _require_auth():
         return 1
     try:

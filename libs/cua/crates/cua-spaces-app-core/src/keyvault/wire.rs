@@ -406,7 +406,7 @@ pub struct KvStatus {
     #[serde(default)]
     pub passphrase_available: bool,
     /// Protector kinds that can unlock this vault now (`macos-keychain`,
-    /// `windows-credential`, `passphrase`, `recovery`).
+    /// `windows-credential`, `linux-secret-service`, `passphrase`, `recovery`).
     #[serde(default)]
     pub unlock_protectors: Vec<String>,
     /// The browse window is open until this time, Unix ms: item names are
@@ -416,6 +416,11 @@ pub struct KvStatus {
     /// "Never ask again" on the unlock prompt is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_unlock_prompt: Option<bool>,
+    /// What the daemon supports beyond the original protocol
+    /// (`password_domains`: it reads only the saved passwords of the sites
+    /// picked for them); empty from a daemon that predates the list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
     /// An earlier preview's vault was found and set aside.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_notice: Option<String>,

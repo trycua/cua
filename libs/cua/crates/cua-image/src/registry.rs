@@ -1,7 +1,10 @@
 //! Thin wrapper over `oci-client` with credential resolution, retries for
 //! registry rate limits, streaming blob download/upload and raw manifests.
 
+use std::collections::HashSet;
+use std::future::Future;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::TryStreamExt;
@@ -102,6 +105,12 @@ pub struct RegistryClient {
     /// that break the chunked-upload status codes (Amazon ECR answers a
     /// chunk PATCH with 201 instead of 202).
     monolithic: Client,
+    /// Pulls from repositories that refused anonymous access, with the
+    /// credential helper's credentials. A client of its own: oci-client keeps
+    /// the first credentials it sees for a registry.
+    authed: Client,
+    /// The `registry/repository`s that refused anonymous access.
+    gated: Arc<Mutex<HashSet<String>>>,
     /// Explicit credentials; they win over [`auth::resolve`] for the
     /// registry they apply to.
     creds: Option<cua_vmm::RegistryCredentials>,
@@ -148,6 +157,8 @@ impl RegistryClient {
         Self {
             client: Client::new(config(false)),
             monolithic: Client::new(config(true)),
+            authed: Client::new(config(false)),
+            gated: Arc::default(),
             creds: None,
         }
     }
@@ -165,7 +176,9 @@ impl RegistryClient {
         &self.client
     }
 
-    async fn auth_for(&self, r: &Reference, op: RegistryOperation) -> Result<RegistryAuth> {
+    /// Credentials for pushing to `r`: the whole chain, helper included (a
+    /// push is someone's deliberate act).
+    async fn push_auth(&self, r: &Reference) -> Result<RegistryAuth> {
         let (a, source) = match &self.creds {
             Some(c) if c.applies_to(r.resolve_registry()) => (
                 RegistryAuth::Basic(c.username.clone(), c.password.clone()),
@@ -174,55 +187,114 @@ impl RegistryClient {
             _ => auth::resolve(r.resolve_registry()).await,
         };
         tracing::debug!(registry = r.resolve_registry(), ?source, "registry auth");
-        if matches!(op, RegistryOperation::Push) {
-            self.client.auth(r, &a, op).await?;
-        } else {
-            self.client
-                .store_auth_if_needed(r.resolve_registry(), &a)
-                .await;
-        }
+        self.client.auth(r, &a, RegistryOperation::Push).await?;
         Ok(a)
+    }
+
+    fn gate_key(r: &Reference) -> String {
+        format!("{}/{}", r.resolve_registry(), r.repository())
+    }
+
+    fn is_gated(&self, r: &Reference) -> bool {
+        self.gated.lock().unwrap().contains(&Self::gate_key(r))
+    }
+
+    /// The client and credentials for a pull from `r`, and where the
+    /// credentials came from. They never come from the credential helper
+    /// (see [`auth::resolve_quiet`]) unless this repository already refused
+    /// anonymous access: [`Self::pull_with`] is what asks the helper.
+    async fn pull_route(&self, r: &Reference) -> (Client, RegistryAuth, auth::AuthSource) {
+        let registry = r.resolve_registry();
+        let (client, a, source) = match &self.creds {
+            Some(c) if c.applies_to(registry) => (
+                self.client.clone(),
+                RegistryAuth::Basic(c.username.clone(), c.password.clone()),
+                auth::AuthSource::Explicit,
+            ),
+            _ if self.is_gated(r) => {
+                let (a, source) = auth::resolve(registry).await;
+                (self.authed.clone(), a, source)
+            }
+            _ => {
+                let (a, source) = auth::resolve_quiet(registry).await;
+                (self.client.clone(), a, source)
+            }
+        };
+        tracing::debug!(registry, ?source, "registry auth");
+        client.store_auth_if_needed(registry, &a).await;
+        (client, a, source)
+    }
+
+    /// Runs a pull with [`Self::pull_route`]'s client and credentials. A
+    /// registry that refuses anonymous access (`Unauthorized`) gets one more
+    /// try with the user's credential helper, if it has credentials for it,
+    /// and the repository is remembered as needing them: a public image
+    /// never reaches the helper.
+    async fn pull_with<T, Fut>(
+        &self,
+        r: &Reference,
+        op: impl Fn(Client, RegistryAuth) -> Fut,
+    ) -> Result<T>
+    where
+        Fut: Future<Output = Result<T>>,
+    {
+        let (client, a, source) = self.pull_route(r).await;
+        let refused = match op(client, a).await {
+            Err(e @ ImageError::Unauthorized(_)) if source == auth::AuthSource::Anonymous => e,
+            other => return other,
+        };
+        let registry = r.resolve_registry();
+        let Some((a, source)) = auth::resolve_helper(registry).await else {
+            return Err(refused);
+        };
+        tracing::debug!(
+            registry,
+            ?source,
+            "anonymous pull refused; using the credential helper's"
+        );
+        self.gated.lock().unwrap().insert(Self::gate_key(r));
+        self.authed.store_auth_if_needed(registry, &a).await;
+        op(self.authed.clone(), a).await
     }
 
     /// Raw manifest (index or image) and its digest. Retries rate limits.
     pub async fn manifest(&self, reference: &str) -> Result<(Manifest, String)> {
         let r = pull_ref(reference)?;
-        let a = self.auth_for(&r, RegistryOperation::Pull).await?;
-        let mut delay = Duration::from_secs(2);
-        for attempt in 0..6 {
-            match self
-                .client
-                .pull_manifest_raw(&r, &a, ACCEPTED_MANIFESTS)
-                .await
-            {
-                Ok((raw, digest)) => return Ok((Manifest::parse(&raw)?, digest)),
-                Err(e) => {
-                    let msg = e.to_string();
-                    let retryable = msg.contains("TOOMANYREQUESTS")
-                        || msg.contains("429")
-                        || msg.contains("Rate exceeded");
-                    if !retryable || attempt == 5 {
-                        return Err(e.into());
+        let r = &r;
+        self.pull_with(r, |client, a| async move {
+            let mut delay = Duration::from_secs(2);
+            for attempt in 0..6 {
+                match client.pull_manifest_raw(r, &a, ACCEPTED_MANIFESTS).await {
+                    Ok((raw, digest)) => return Ok((Manifest::parse(&raw)?, digest)),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let retryable = msg.contains("TOOMANYREQUESTS")
+                            || msg.contains("429")
+                            || msg.contains("Rate exceeded");
+                        if !retryable || attempt == 5 {
+                            return Err(e.into());
+                        }
+                        tracing::warn!(reference, "registry rate limited; retrying in {delay:?}");
+                        tokio::time::sleep(delay).await;
+                        delay *= 2;
                     }
-                    tracing::warn!(reference, "registry rate limited; retrying in {delay:?}");
-                    tokio::time::sleep(delay).await;
-                    delay *= 2;
                 }
             }
-        }
-        unreachable!()
+            unreachable!()
+        })
+        .await
     }
 
     /// The manifest document exactly as the registry serves it, with its
     /// digest (what a descriptor pointing at it must carry).
     pub async fn manifest_bytes(&self, reference: &str) -> Result<(Vec<u8>, String)> {
         let r = pull_ref(reference)?;
-        let a = self.auth_for(&r, RegistryOperation::Pull).await?;
-        let (raw, digest) = self
-            .client
-            .pull_manifest_raw(&r, &a, ACCEPTED_MANIFESTS)
-            .await?;
-        Ok((raw.to_vec(), digest))
+        let r = &r;
+        self.pull_with(r, |client, a| async move {
+            let (raw, digest) = client.pull_manifest_raw(r, &a, ACCEPTED_MANIFESTS).await?;
+            Ok((raw.to_vec(), digest))
+        })
+        .await
     }
 
     /// Resolve `reference` to the single-platform manifest for `linux/<arch>`.
@@ -269,37 +341,68 @@ impl RegistryClient {
 
     /// [`RegistryClient::blob_to_file`], calling `on_bytes` with the bytes
     /// written so far as the blob arrives.
+    ///
+    /// A connection that breaks mid-blob does not lose what arrived: the
+    /// download continues from `<dest>.partial` with a `Range` request, up to
+    /// [`BLOB_ATTEMPTS`] times, and a pull that still fails leaves the
+    /// partial file for the next pull to continue. A 6 GB single-layer
+    /// image (the Windows containerDisk) on a slow or flaky link used to
+    /// start from zero on every try. The whole file is checked against the
+    /// descriptor's digest before it is renamed to `dest`.
     pub async fn blob_to_file_with_progress(
         &self,
         reference: &str,
         desc: &Descriptor,
         dest: &Path,
-        on_bytes: impl FnMut(u64) + Send + Unpin,
+        mut on_bytes: impl FnMut(u64) + Send + Unpin,
     ) -> Result<()> {
         let r = pull_ref(reference)?;
-        self.auth_for(&r, RegistryOperation::Pull).await?;
+        // The blob's manifest was read first, which found out whether this
+        // repository wants credentials (`pull_with`).
+        let (client, _, _) = self.pull_route(&r).await;
         if let Some(p) = dest.parent() {
             tokio::fs::create_dir_all(p).await?;
         }
         let partial = dest.with_extension("partial");
-        let file = tokio::fs::File::create(&partial).await?;
-        let mut w = Counting {
-            inner: tokio::io::BufWriter::with_capacity(1 << 20, file),
-            written: 0,
-            on_bytes,
-        };
         let layer = oci_client::manifest::OciDescriptor {
             media_type: desc.media_type.clone(),
             digest: desc.digest.clone(),
             size: desc.size as i64,
             ..Default::default()
         };
-        let res = self.client.pull_blob(&r, &layer, &mut w).await;
-        if let Err(e) = res {
-            let _ = tokio::fs::remove_file(&partial).await;
-            return Err(e.into());
+        let mut attempt = 1;
+        loop {
+            match download_blob(&client, &r, &layer, desc.size, &partial, &mut on_bytes).await {
+                Ok(()) => break,
+                Err(e) if attempt < BLOB_ATTEMPTS && continues_after(&e) => {
+                    let have = tokio::fs::metadata(&partial).await.map_or(0, |m| m.len());
+                    tracing::warn!(reference, digest = %desc.digest, attempt, have, size = desc.size, error = %e, "blob download broke; continuing it");
+                    tokio::time::sleep(blob_retry_delay(attempt)).await;
+                    attempt += 1;
+                }
+                Err(e) => {
+                    // Kept when the next pull can continue it.
+                    if !continues_after(&e) {
+                        let _ = tokio::fs::remove_file(&partial).await;
+                    }
+                    return Err(e);
+                }
+            }
         }
-        w.flush().await?;
+        // oci-client checks a whole-blob response only; a continued one is
+        // checked here, from the file.
+        let check = partial.clone();
+        let (actual, _) = tokio::task::spawn_blocking(move || crate::digest::sha256_file(&check))
+            .await
+            .map_err(|e| ImageError::Registry(e.to_string()))??;
+        if desc.digest.starts_with("sha256:") && actual != desc.digest {
+            let _ = tokio::fs::remove_file(&partial).await;
+            return Err(ImageError::Digest {
+                what: format!("blob of {reference}"),
+                expected: desc.digest.clone(),
+                actual,
+            });
+        }
         tokio::fs::rename(&partial, dest).await?;
         Ok(())
     }
@@ -307,22 +410,25 @@ impl RegistryClient {
     /// Small blob into memory (configs).
     pub async fn blob_bytes(&self, reference: &str, desc: &Descriptor) -> Result<Vec<u8>> {
         let r = pull_ref(reference)?;
-        self.auth_for(&r, RegistryOperation::Pull).await?;
-        let layer = oci_client::manifest::OciDescriptor {
-            media_type: desc.media_type.clone(),
-            digest: desc.digest.clone(),
-            size: desc.size as i64,
-            ..Default::default()
-        };
-        let mut out = Vec::with_capacity(desc.size as usize);
-        self.client.pull_blob(&r, &layer, &mut out).await?;
-        Ok(out)
+        let r = &r;
+        self.pull_with(r, |client, _| async move {
+            let layer = oci_client::manifest::OciDescriptor {
+                media_type: desc.media_type.clone(),
+                digest: desc.digest.clone(),
+                size: desc.size as i64,
+                ..Default::default()
+            };
+            let mut out = Vec::with_capacity(desc.size as usize);
+            client.pull_blob(r, &layer, &mut out).await?;
+            Ok(out)
+        })
+        .await
     }
 
     /// Upload a blob from a file (streamed, skipped if already present).
     pub async fn push_blob_file(&self, reference: &str, path: &Path, digest: &str) -> Result<()> {
         let r = parse_ref(reference)?;
-        self.auth_for(&r, RegistryOperation::Push).await?;
+        self.push_auth(&r).await?;
         if self.client.blob_exists(&r, digest).await.unwrap_or(false) {
             return Ok(());
         }
@@ -366,7 +472,7 @@ impl RegistryClient {
         digest: &str,
     ) -> Result<()> {
         let r = parse_ref(reference)?;
-        self.auth_for(&r, RegistryOperation::Push).await?;
+        self.push_auth(&r).await?;
         if self.client.blob_exists(&r, digest).await.unwrap_or(false) {
             return Ok(());
         }
@@ -382,7 +488,7 @@ impl RegistryClient {
         media_type: &str,
     ) -> Result<String> {
         let r = parse_ref(reference)?;
-        self.auth_for(&r, RegistryOperation::Push).await?;
+        self.push_auth(&r).await?;
         let digest = crate::digest::sha256_bytes(&body);
         let ct = http::HeaderValue::from_str(media_type)
             .map_err(|e| ImageError::Registry(e.to_string()))?;
@@ -402,48 +508,96 @@ impl RegistryClient {
 
     pub async fn list_tags(&self, reference: &str) -> Result<Vec<String>> {
         let r = pull_ref(reference)?;
-        let a = self.auth_for(&r, RegistryOperation::Pull).await?;
-        Ok(self.client.list_tags(&r, &a, None, None).await?.tags)
+        let r = &r;
+        self.pull_with(r, |client, a| async move {
+            Ok(client.list_tags(r, &a, None, None).await?.tags)
+        })
+        .await
     }
 }
 
 /// An `AsyncWrite` that reports the bytes written through it.
-struct Counting<W, F> {
-    inner: W,
-    written: u64,
-    on_bytes: F,
+/// How many times one pull asks for a blob: the first request, then a
+/// continuation (`Range`) after each break.
+pub const BLOB_ATTEMPTS: u32 = 5;
+
+/// The pause before continuation `attempt` (1 s, 2 s, 4 s, ...; at most 15 s).
+fn blob_retry_delay(attempt: u32) -> Duration {
+    Duration::from_secs((1u64 << attempt.saturating_sub(1).min(4)).min(15))
 }
 
-impl<W: tokio::io::AsyncWrite + Unpin, F: FnMut(u64) + Unpin> tokio::io::AsyncWrite
-    for Counting<W, F>
-{
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-        let polled = std::pin::Pin::new(&mut this.inner).poll_write(cx, buf);
-        if let std::task::Poll::Ready(Ok(n)) = &polled {
-            this.written += *n as u64;
-            (this.on_bytes)(this.written);
+/// Whether a failed blob download may continue from what arrived: a broken
+/// connection, a short body, a server error. Not a refusal (not found, not
+/// authorized) or wrong content.
+fn continues_after(e: &ImageError) -> bool {
+    matches!(e, ImageError::Io(_) | ImageError::Registry(_))
+}
+
+/// One request for the blob into `partial`: continues after the bytes it
+/// already holds (a `206` answer) or starts again (a `200` answer, or a
+/// file longer than the blob). `on_bytes` gets the blob bytes on disk so far.
+async fn download_blob(
+    client: &Client,
+    r: &Reference,
+    layer: &oci_client::manifest::OciDescriptor,
+    size: u64,
+    partial: &Path,
+    on_bytes: &mut (impl FnMut(u64) + Send),
+) -> Result<()> {
+    use oci_client::client::BlobResponse;
+    let mut have = tokio::fs::metadata(partial).await.map_or(0, |m| m.len());
+    if size > 0 && have > size {
+        have = 0;
+    }
+    if size > 0 && have == size {
+        on_bytes(have);
+        return Ok(());
+    }
+    let (stream, append) = if have == 0 {
+        (client.pull_blob_stream(r, layer).await?, false)
+    } else {
+        match client
+            .pull_blob_stream_partial(r, layer, have, None)
+            .await?
+        {
+            BlobResponse::Partial(s) => (s, true),
+            // The registry sent the whole blob: start the file again.
+            BlobResponse::Full(s) => (s, false),
         }
-        polled
+    };
+    let mut written = if append { have } else { 0 };
+    let file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .open(partial)
+        .await?;
+    let mut out = tokio::io::BufWriter::with_capacity(1 << 20, file);
+    on_bytes(written);
+    let mut stream = stream.stream;
+    let res: Result<()> = async {
+        while let Some(chunk) = stream.try_next().await? {
+            out.write_all(&chunk).await?;
+            written += chunk.len() as u64;
+            on_bytes(written);
+        }
+        Ok(())
     }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    .await;
+    // What arrived stays on disk for the next request, also on a break.
+    out.flush().await?;
+    res?;
+    if size > 0 && written < size {
+        return Err(ImageError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "blob {} ended after {written} of {size} bytes",
+                layer.digest
+            ),
+        )));
     }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
-    }
+    Ok(())
 }
 
 #[cfg(test)]

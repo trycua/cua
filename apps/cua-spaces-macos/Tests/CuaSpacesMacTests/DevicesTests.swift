@@ -35,6 +35,26 @@ struct DevicesTests {
         #expect(!m.view.labels.signedOut.isEmpty)
     }
 
+    /// The Machines page reads who the relay sees connected now: a host
+    /// that rejoined after the last read shows online once the answer is
+    /// older than half a minute.
+    @Test func relayPresenceIsReadAgainOnceStale() async {
+        let fixture = FixtureDevices(snapshot: FixtureDevices.sample(now: Self.now))
+        let m = model(fixture)
+        var now = TimeInterval(Self.now)
+        m.clock = { Date(timeIntervalSince1970: now) }
+        await m.refreshIfStale()
+        #expect(m.relayOnline == ["m1": true, "m2": false])
+        #expect(m.deviceStates["dev_work"] == "pending")
+        fixture.current.machines[1].online = true
+        now += 10
+        await m.refreshIfStale()
+        #expect(m.relayOnline["m2"] == false, "a fresh answer is kept")
+        now += 30
+        await m.refreshIfStale()
+        #expect(m.relayOnline["m2"] == true)
+    }
+
     @Test func aDeviceAskingIsAnnouncedOnceAndOpensTheSheet() async {
         let m = model()
         var announced: [String] = []
@@ -208,4 +228,121 @@ final class RelayAnswering: DevicesRunning, @unchecked Sendable {
     func rename(id: String, name: String) async throws { try await fixture.rename(id: id, name: name) }
     func revoke(id: String) async throws { try await fixture.revoke(id: id) }
     func confirmMachine(id: String) async throws { try await fixture.confirmMachine(id: id) }
+    func createPairingCode(team: String?) async throws -> PairingCode { try await fixture.createPairingCode(team: team) }
+    func pairingCodes() async throws -> [PairingCode] { try await fixture.pairingCodes() }
+    func revokePairingCode(id: String) async throws { try await fixture.revokePairingCode(id: id) }
+    func relayUsage() async throws -> AppRelayUsage? { try await fixture.relayUsage() }
+}
+
+/// Settings' Relay usage row and the notice above the main window: the
+/// core's words, read as the web UI reads them.
+@MainActor
+@Suite("Relay usage")
+struct RelayUsageTests {
+    func model(_ fixture: FixtureDevices) -> (DevicesModel, UserDefaults) {
+        let suite = "cua-relay-usage-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let m = DevicesModel(devices: fixture, presence: FixturePresence(), defaults: defaults)
+        m.signedIn = true
+        return (m, defaults)
+    }
+
+    @Test func withinTheAllowanceOneRowAndNoNotice() async throws {
+        let (m, _) = model(FixtureDevices())
+        await m.readRelayUsage()
+        let view = try #require(m.relayUsageView)
+        #expect(view.label == "Relay usage")
+        #expect(view.line == "Live sessions 1 of 2 \u{b7} Relay hours 6.5 of 20 this month")
+        #expect(view.plan == "Free plan")
+        #expect(m.relayNotice == nil)
+    }
+
+    @Test func pastItTheNoticeShowsUntilDismissedForThatMonthAndReason() async throws {
+        let fixture = FixtureDevices()
+        fixture.usage = FixtureDevices.usage("reached")
+        let (m, defaults) = model(fixture)
+        await m.readRelayUsage()
+        let notice = try #require(m.relayNotice)
+        #expect(notice.text == "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more.")
+        #expect(notice.upgrade == "Upgrade")
+        #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
+        #expect(notice.level == "limit")
+        m.dismissRelayNotice()
+        #expect(m.relayNotice == nil)
+        #expect(defaults.string(forKey: DevicesModel.relayNoticeDismissedKey) == "2026-10:hours")
+        // Kept across launches; another reason shows it again.
+        let again = DevicesModel(devices: fixture, presence: FixturePresence(), defaults: defaults)
+        again.signedIn = true
+        await again.readRelayUsage()
+        #expect(again.relayNotice == nil)
+        fixture.usage?.reasons = ["sessions", "hours"]
+        await again.readRelayUsage()
+        #expect(again.relayNotice?.dismissKey == "2026-10:hours,sessions")
+    }
+
+    @Test func atEightyPercentOfHoursAFreePlanGetsAHeadsUpThatWaitsForLiveSessions() async throws {
+        let fixture = FixtureDevices()
+        fixture.usage = FixtureDevices.usage("warn")
+        let (m, _) = model(fixture)
+        await m.readRelayUsage()
+        // The fixture has a session going: the prompt waits.
+        #expect(m.relayNotice == nil)
+        fixture.usage?.liveSessions = 0
+        await m.readRelayUsage()
+        let notice = try #require(m.relayNotice)
+        #expect(notice.level == "warn")
+        #expect(notice.text == "You've used 16.5 of 20 relay hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions.")
+        #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
+        #expect(notice.dismissKey == "2026-10:warn")
+    }
+
+    @Test func theFreePlanCardOffersProAndATeam() async throws {
+        let (m, _) = model(FixtureDevices())
+        await m.readRelayUsage()
+        let card = try #require(m.relayUsageView?.planCard)
+        #expect(card.label == "Free plan")
+        #expect(card.primary?.label == "Get Pro")
+        #expect(card.primary?.url == "https://app.cua.ai/buy/pro?from=app_plan_card")
+        #expect(card.secondary?.label == "Start a team")
+        #expect(card.secondary?.url == "https://app.cua.ai/buy/teams?from=app_plan_card")
+    }
+
+    @Test func signedOutUnmeteredAndFailedReads() async {
+        let fixture = FixtureDevices()
+        let (m, _) = model(fixture)
+        await m.readRelayUsage()
+        #expect(m.relayUsage != nil)
+        // A recent read is not repeated.
+        await m.readRelayUsage(maxAge: 60)
+        #expect(fixture.calls.filter { $0 == "relay-usage" }.count == 1)
+        m.signedIn = false
+        #expect(m.relayUsage == nil)
+        await m.readRelayUsage()
+        #expect(m.relayUsageView == nil)
+        m.signedIn = true
+        fixture.usage = FixtureDevices.usage("none")
+        await m.readRelayUsage()
+        #expect(m.relayUsage == nil)
+        fixture.usage = FixtureDevices.usage(nil)
+        fixture.usage?.metered = false
+        await m.readRelayUsage()
+        #expect(m.relayUsageView == nil)
+    }
+
+    @Test func theWebUIGetsTheSameAnswer() async throws {
+        let fixture = FixtureDevices()
+        fixture.usage = FixtureDevices.usage("team")
+        let (m, _) = model(fixture)
+        await m.readRelayUsage()
+        #expect(m.relayUsageView?.line.hasSuffix("Team pool, 3 seats") == true)
+        let encoded = BridgeValue.encode(try #require(fixture.usage)) as? [String: Any]
+        #expect(encoded?["liveSessionsLimit"] as? NSNumber == 6)
+        #expect((encoded?["team"] as? [String: Any])?["seats"] as? NSNumber == 3)
+        #expect(encoded?["upgradeUrl"] as? String == "https://cua.ai/pricing")
+        let unlimited = BridgeValue.encode(AppRelayUsage(
+            metered: true, period: "", plan: "", team: nil, liveSessions: 0, liveSessionsLimit: nil, hoursUsed: 0,
+            hoursLimit: nil, myHoursUsed: 0, softLimitReached: false, reasons: [], upgradeUrl: nil)) as? [String: Any]
+        #expect(unlimited?["team"] is NSNull && unlimited?["hoursLimit"] is NSNull)
+    }
 }

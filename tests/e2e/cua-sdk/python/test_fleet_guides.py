@@ -1,5 +1,12 @@
 """The Fleet guides, through the cua SDK (``cua``) directly.
 
+Cua Cloud has ended (CUA-1854): ``Cua.fleet()`` and every ``on="cloud"``
+create fail with the one "Cua Cloud has ended" `Unsupported` error. The
+hermetic tests assert exactly that, even with Fleet credentials (the fake
+Fleet API of ``cua-test-fixtures``). The live ``fleet`` and ``fleet-env``
+lanes skip (``e2e.lane_enabled``); their bodies below are the guides' flows
+and are removed with the Fleet provider.
+
 * your-first-cloud-fleet: apply pool -> claim -> ``uname -a`` -> screenshot
   PNG -> delete.
 * create-fleet-capacity / claim-a-sandbox (formerly create-pool-with-*): warm pool, readiness, named claim
@@ -7,11 +14,6 @@
   managed ``cua-auto-*`` pool (the test then GCs that pool), name collision
   is a typed error.
 * expire-pools-and-claims: pool TTL and claim TTL reach Fleet.
-
-hermetic: the fake Fleet API (+ the MockServer spacesd for the desktop
-steps). fleet: live run.cua.ai with the guides' public legacy image (its
-desktop is computer-server on 8000, reached through the ``server``
-service). fleet-env: live Fleet with the spacesd reference image.
 """
 
 from __future__ import annotations
@@ -27,13 +29,11 @@ import pytest
 
 import cua
 
-FAKE_IMAGE = "registry.test/cua-e2e:fake"
-
 
 def _is_404(e: Exception) -> bool:
     # A Fleet 404, and the 403 live Fleet answers for reads once a pool's
-    # namespace is gone, are CuaError.NotFound (test_fleet_404_is_not_found);
-    # a delete in a namespace that is already gone still answers 403.
+    # namespace is gone, are CuaError.NotFound; a delete in a namespace that
+    # is already gone still answers 403.
     return isinstance(e, cua.CuaError.NotFound) or (
         isinstance(e, cua.CuaError.Fleet) and "403" in str(e)
     )
@@ -70,10 +70,13 @@ async def _claim_gone(fleet: cua.Fleet, pool: str, claim: str) -> None:
 
 
 @pytest.mark.e2e("create-pool", "hermetic")
-def test_fleet_404_is_not_found(fake_fleet):
+def test_cloud_ended_fleet_and_pool_creates_fail(fake_fleet):
     async def body():
-        with pytest.raises(cua.CuaError.NotFound):
-            await fake_fleet.fleet().get_pool(e2e.name("missing"))
+        # A named pool, then a managed (warm, autoscaled) one.
+        await e2e.assert_cloud_ended(fake_fleet, pool=e2e.name("pool"), name=e2e.name("claim"))
+        await e2e.assert_cloud_ended(
+            fake_fleet, runtime="gvisor", warm=True, max_pool_size=2, fleet_ttl_seconds=3600
+        )
 
     e2e.run_async(body(), timeout=60)
 
@@ -162,32 +165,10 @@ async def _ok(fut):
 
 
 @pytest.mark.e2e("your-first-cloud-fleet", "hermetic")
-def test_first_cloud_fleet_fake(fake_fleet, fixtures):
-    async def desktop(sb):
-        # The fake gateway cannot host a spacesd; the desktop steps run
-        # against the MockServer spacesd by URL.
-        assert (await sb.service("server").request("GET", "/status", None, 5_000)).status == 200
-        d = await fake_fleet.sandboxes().connect_url(
-            fixtures["env_url"], fixtures["env_token"], e2e.name("first-env")
-        )
-        try:
-            env = await d.spacesd(5_000)
-            out = await env.run(cua.SpacesdCommand(program="echo", args=["Linux", "mock"]))
-            return out.stdout.decode(), (await env.screenshot(None)).image
-        finally:
-            await d.delete()
-
-    print(
-        e2e.run_async(
-            _first_fleet(
-                fake_fleet,
-                image=FAKE_IMAGE,
-                runtime="kubevirt",
-                desktop=desktop,
-                services={"server": 8000},
-            ),
-            timeout=120,
-        )
+def test_first_cloud_fleet_is_cloud_ended(fake_fleet):
+    e2e.run_async(
+        e2e.assert_cloud_ended(fake_fleet, pool=e2e.name("first"), name=e2e.name("first-claim")),
+        timeout=60,
     )
 
 
@@ -357,11 +338,11 @@ async def _gc_managed_pool(fleet: cua.Fleet, pool: str) -> None:
 
 
 @pytest.mark.e2e("create-pool", "hermetic")
-def test_create_pool_fake(fake_fleet):
+def test_ephemeral_create_is_cloud_ended(fake_fleet):
     e2e.run_async(
-        _create_pool(fake_fleet, image=FAKE_IMAGE, runtime="gvisor", live=False), timeout=120
+        e2e.assert_cloud_ended(fake_fleet, runtime="gvisor", services={"server": 8000}),
+        timeout=60,
     )
-    e2e.run_async(_ephemeral(fake_fleet, image=FAKE_IMAGE, runtime="gvisor"), timeout=120)
 
 
 @pytest.mark.e2e("create-pool", "fleet")
@@ -462,8 +443,8 @@ async def _expire(c: cua.Cua, *, image: str, live: bool) -> None:
 
 
 @pytest.mark.e2e("expire-pools-and-claims", "hermetic")
-def test_expire_fake(fake_fleet):
-    e2e.run_async(_expire(fake_fleet, image=FAKE_IMAGE, live=False), timeout=120)
+def test_expiring_claims_are_cloud_ended(fake_fleet):
+    e2e.run_async(e2e.assert_cloud_ended(fake_fleet, fleet_ttl_seconds=3600), timeout=60)
 
 
 @pytest.mark.e2e("expire-pools-and-claims", "fleet")

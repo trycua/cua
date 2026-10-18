@@ -29,7 +29,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -40,10 +40,13 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -74,7 +77,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -85,10 +88,13 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -119,7 +125,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -130,10 +136,13 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -163,7 +172,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -173,10 +182,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -218,10 +229,12 @@
           "Kind: Virtual machine",
           "Runtime: Virtual machine on Mac mini",
           "Resources: 4 cores, 8 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -251,7 +264,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -261,10 +274,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -294,7 +309,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -304,10 +319,12 @@
           "Kind: Container",
           "Runtime: Container on lab",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -340,7 +357,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -350,10 +367,12 @@
           "Kind: Container",
           "Runtime: Container on lab",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -400,11 +419,11 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | AWS does not run this image. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
         ]
       }
@@ -437,7 +456,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -448,10 +467,13 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -481,7 +503,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -491,10 +513,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -520,7 +544,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 1,
         "summary": [
@@ -530,10 +554,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -559,7 +585,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 2,
         "summary": [
@@ -569,10 +595,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -595,7 +623,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -605,10 +633,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -628,7 +658,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -639,10 +669,13 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -662,7 +695,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -673,10 +706,13 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     }
   ]

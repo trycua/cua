@@ -1,0 +1,83 @@
+{
+  "mailbox": "accounts@kestrelwharf.example",
+  "messages": [
+    {
+      "id": "LLM-104",
+      "from": "Mara Venn",
+      "from_address": "billing@orchardcoast.example",
+      "to": "Kestrel Wharf Workshop Accounts <accounts@kestrelwharf.example>",
+      "sent_at": "2026-09-28T09:14:00-05:00",
+      "subject": "Invoice OCP-4821 · September paper stock",
+      "labels": ["invoice", "paper supplies"],
+      "body": "Hello Kestrel Wharf accounts,\n\nAttached is invoice OCP-4821 for the archival paper and board delivered September 24. Payment is due October 28; please use the attached invoice total for reconciliation.\n\nThank you,\nMara",
+      "attachments": [
+        { "id": "att-ocp-4821", "name": "OCP-4821.txt", "media_type": "text/plain", "file": "OCP-4821.txt" }
+      ]
+    },
+    {
+      "id": "LLM-109",
+      "from": "Mara Venn",
+      "from_address": "billing@orchardcoast.example",
+      "to": "Kestrel Wharf Workshop Accounts <accounts@kestrelwharf.example>",
+      "sent_at": "2026-10-03T14:26:00-05:00",
+      "subject": "Invoice OCP-4827 · binding cloth shipment",
+      "labels": ["invoice", "paper supplies"],
+      "body": "Hello,\n\nPlease find invoice OCP-4827 for the binding cloth and endpaper shipment received October 1. The balance is due November 2; the attached invoice is the source of record for the amount.\n\nRegards,\nMara",
+      "attachments": [
+        { "id": "att-ocp-4827", "name": "OCP-4827.txt", "media_type": "text/plain", "file": "OCP-4827.txt" }
+      ]
+    },
+    {
+      "id": "LLM-113",
+      "from": "Tobin Rusk",
+      "from_address": "invoices@sablevertex.example",
+      "to": "Kestrel Wharf Workshop Accounts <accounts@kestrelwharf.example>",
+      "sent_at": "2026-10-07T11:42:00-05:00",
+      "subject": "Freight invoice SVL-119",
+      "labels": ["invoice", "freight"],
+      "body": "Accounts team,\n\nAttached is SVL-119 for the two scheduled freight runs completed October 5. Terms are net 21; use the attached freight invoice for the amount due.\n\nTobin Rusk\nSable Vertex Logistics",
+      "attachments": [
+        { "id": "att-svl-119", "name": "SVL-119.txt", "media_type": "text/plain", "file": "SVL-119.txt" }
+      ]
+    },
+    {
+      "id": "LLM-118",
+      "from": "Ione Pell",
+      "from_address": "accounts@nacreaudio.example",
+      "to": "Kestrel Wharf Workshop Accounts <accounts@kestrelwharf.example>",
+      "sent_at": "2026-10-10T16:08:00-05:00",
+      "subject": "NAR-773 · bench amplifier repair",
+      "labels": ["invoice", "equipment repair"],
+      "body": "Hello Kestrel Wharf,\n\nInvoice NAR-773 covers the amplifier repair completed October 9 and is due November 9. The repaired unit was returned with your afternoon delivery; the attached service invoice contains the total.\n\nBest,\nIone",
+      "attachments": [
+        { "id": "att-nar-773", "name": "NAR-773.txt", "media_type": "text/plain", "file": "NAR-773.txt" }
+      ]
+    },
+    {
+      "id": "LLM-121",
+      "from": "Emil Hart",
+      "from_address": "receiving@kestrelwharf.example",
+      "to": "Kestrel Wharf Workshop Accounts <accounts@kestrelwharf.example>",
+      "sent_at": "2026-10-12T08:37:00-05:00",
+      "subject": "Receiving log · invoice cross-check",
+      "labels": ["receiving", "supporting record"],
+      "body": "Accounts,\n\nI attached the receiving log for the current reconciliation. It confirms the delivery or service date tied to each vendor reference. This is a receiving record, not an invoice or request for payment.\n\nEmil",
+      "attachments": [
+        { "id": "att-receiving-log", "name": "receiving-log-october.txt", "media_type": "text/plain", "file": "receiving-log-october.txt" }
+      ]
+    },
+    {
+      "id": "LLM-125",
+      "from": "Priya Fen",
+      "from_address": "events@harborandhearth.example",
+      "to": "Kestrel Wharf Workshop Accounts <accounts@kestrelwharf.example>",
+      "sent_at": "2026-10-13T10:05:00-05:00",
+      "subject": "Autumn open-house menu ideas",
+      "labels": ["events", "reference"],
+      "body": "Hi,\n\nHere is the draft tasting menu we discussed for next month's open house. It is for planning only. There is no order, invoice, or payment request attached.\n\nPriya",
+      "attachments": [
+        { "id": "att-decoy-menu", "name": "open-house-menu.txt", "media_type": "text/plain", "file": "open-house-menu.txt" }
+      ]
+    }
+  ]
+}

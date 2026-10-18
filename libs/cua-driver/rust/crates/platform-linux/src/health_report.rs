@@ -104,8 +104,7 @@ async fn check_ax_capability() -> CheckEntry {
             NAME_AX_CAPABILITY,
             "Wayland session: org.a11y.Bus is not reachable on the session bus; \
              AT-SPI inspection will fail.",
-            "Start the AT-SPI bus (`/usr/libexec/at-spi-bus-launcher`) or enable \
-             accessibility in your desktop's settings.",
+            START_ATSPI_BUS_HINT,
         );
     }
     // Mirror the existing `check_permissions` Linux probe: X11
@@ -425,6 +424,9 @@ fn probe_x11_connect() -> bool {
 fn probe_x11_connect() -> bool {
     false
 }
+
+pub(crate) const START_ATSPI_BUS_HINT: &str = "Start the AT-SPI bus \
+    (`/usr/libexec/at-spi-bus-launcher`) or enable accessibility in your desktop's settings.";
 
 /// Probe whether `org.a11y.Bus` is reachable on the session bus — the
 /// canonical AT-SPI prerequisite on Wayland, where there is no X server to

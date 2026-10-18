@@ -1023,10 +1023,11 @@ impl SystemService for SystemServiceImpl {
             )
         })?;
         let principal = grant.principal();
-        let (ticket, expires_at) = self.ctx.mint_ticket(
+        let (ticket, expires_at) = self.ctx.mint_ticket_issued(
             crate::auth::TicketScope::Viewer,
             &resource,
             Some(&principal),
+            caller.account.as_ref().map(|a| a.issued_at),
             ttl,
         );
         // Hints for the page (the server enforces the grant either way).

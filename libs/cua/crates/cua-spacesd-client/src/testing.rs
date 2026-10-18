@@ -152,6 +152,8 @@ pub struct MockState {
     /// Features reported unsupported, with their limitation (a host that
     /// does not share its desktop).
     withheld_features: Mutex<Vec<(String, String)>>,
+    /// Override the reported OS, including absence for an older host.
+    pub os: Mutex<Option<Option<pb::OperatingSystem>>>,
     /// `GetCapabilities.version` (default `0.0.0-mock`).
     version: Mutex<Option<String>>,
     /// `GetCapabilitiesResponse::machine_seal_public_key` (S1); empty (an
@@ -235,6 +237,11 @@ impl MockState {
     /// `TeleportService.WipeImport` requests received, in order.
     pub fn teleport_wipes(&self) -> Vec<pb::WipeImportRequest> {
         self.teleport_wipes.lock().unwrap().clone()
+    }
+
+    /// Forgets every import, as the target's own expiry would.
+    pub fn expire_teleport_imports(&self) {
+        self.teleport_imports.lock().unwrap().clear();
     }
 
     /// Stored file content.
@@ -612,13 +619,19 @@ impl SystemService for Svc {
                 .unwrap_or_else(|| "0.0.0-mock".into()),
             protocol_version: cua_proto::ENV_PROTOCOL_VERSION,
             protocol_revision: cua_proto::ENV_PROTOCOL_REVISION,
-            os: Some(pb::OperatingSystem {
-                family: pb::OsFamily::Linux as i32,
-                name: "MockOS".into(),
-                version: "1".into(),
-                kernel: "mock".into(),
-                pretty_name: "MockOS 1.0.3 LTS".into(),
-            }),
+            os: self
+                .0
+                .os
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or(Some(pb::OperatingSystem {
+                    family: pb::OsFamily::Linux as i32,
+                    name: "MockOS".into(),
+                    version: "1".into(),
+                    kernel: "mock".into(),
+                    pretty_name: "MockOS 1.0.3 LTS".into(),
+                })),
             runtime: pb::Runtime::Container as i32,
             features: vec![
                 pb::Feature {
@@ -824,6 +837,9 @@ impl Svc {
 
 enum Script {
     Echo(String),
+    /// `printf %s WORD`: the word without its quotes and no newline;
+    /// `$HOME` is the mock guest user's home (`/home/cua`).
+    Printf(String),
     Fail(i32),
     Ticker(u32, u64),
     Cat,
@@ -858,6 +874,11 @@ fn parse_script(cfg: &pb::ProcessConfig) -> Script {
     let num = |i: usize, d: u64| words.get(i).and_then(|w| w.parse().ok()).unwrap_or(d);
     match prog.rsplit('/').next().unwrap_or_default() {
         "echo" => Script::Echo(words.join(" ")),
+        "printf" if words.len() == 2 && words[0] == "%s" => Script::Printf(
+            words[1]
+                .trim_matches(|c| c == '"' || c == '\'')
+                .replace("$HOME", "/home/cua"),
+        ),
         "fail" => Script::Fail(num(0, 1) as i32),
         "ticker" => Script::Ticker(num(0, 3) as u32, num(1, 10)),
         "cat" => Script::Cat,
@@ -1072,6 +1093,10 @@ impl ProcessService for Svc {
                 match script {
                     Script::Echo(s) => {
                         svc.emit(pid, out_kind, format!("{s}\n").into_bytes());
+                        (Some(0), String::new())
+                    }
+                    Script::Printf(s) => {
+                        svc.emit(pid, out_kind, s.into_bytes());
                         (Some(0), String::new())
                     }
                     Script::Fail(code) => {

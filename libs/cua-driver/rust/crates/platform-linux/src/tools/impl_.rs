@@ -6410,39 +6410,90 @@ impl ClickTool {
                         ))
                         .with_structured(foreground_structured("ax_fg", report, extra))
                     }
-                    Ok(Err(error)) => {
-                        if error.is::<crate::atspi::native::CachedElementGone>() {
-                            return ToolResult::error(format!(
-                                "click: stale_element_token: observed AT-SPI object [{idx}] is no \
-                                 longer present ({error}); re-snapshot with get_window_state"
-                            ))
-                            .with_structured(json!({
-                                "code": "stale_element_token",
-                                "effect": "none",
-                            }));
-                        }
-                        if crate::input::foreground::error_code(&error).is_some() {
-                            return input_error_result(error);
-                        }
-                        ToolResult::error(format!(
-                            "click: element [{idx}] (pid {pid}) has no usable on-screen bounds \
-                             ({reason}) and its AT-SPI action failed ({error:#}); no input was \
-                             sent. Open the containing menu first, re-snapshot with \
-                             get_window_state, or click by pixel from a screenshot."
-                        ))
-                        .with_structured(json!({
-                            "code": "element_bounds_unavailable",
-                            "effect": "none",
-                            "element_index": idx,
-                            "reason": reason,
-                            "ax_error": format!("{error:#}"),
-                        }))
-                    }
+                    Ok(Err(error)) => foreground_ax_action_error(pid, idx, &reason, error),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 }
             }
         }
     }
+}
+
+/// The result for a failed AT-SPI action of an X11 foreground element click
+/// whose element has no usable bounds. A `doAction` that failed after it was
+/// sent may have clicked, so it is an unknown outcome, never the
+/// "no input was sent" bounds refusal that invites a second click.
+fn foreground_ax_action_error(
+    pid: u32,
+    idx: usize,
+    reason: &str,
+    error: anyhow::Error,
+) -> ToolResult {
+    if crate::atspi::input_may_have_landed(&error) {
+        return atspi_click_outcome_unknown(
+            &format!("element [{idx}] (pid {pid})"),
+            crate::input::delivery::DeliveryMode::Foreground,
+            &error,
+        );
+    }
+    if error.is::<crate::atspi::native::CachedElementGone>() {
+        return ToolResult::error(format!(
+            "click: stale_element_token: observed AT-SPI object [{idx}] is no \
+             longer present ({error}); re-snapshot with get_window_state"
+        ))
+        .with_structured(json!({
+            "code": "stale_element_token",
+            "effect": "none",
+        }));
+    }
+    if crate::input::foreground::error_code(&error).is_some() {
+        return input_error_result(error);
+    }
+    ToolResult::error(format!(
+        "click: element [{idx}] (pid {pid}) has no usable on-screen bounds \
+         ({reason}) and its AT-SPI action failed ({error:#}); no input was \
+         sent. Open the containing menu first, re-snapshot with \
+         get_window_state, or click by pixel from a screenshot."
+    ))
+    .with_structured(json!({
+        "code": "element_bounds_unavailable",
+        "effect": "none",
+        "element_index": idx,
+        "reason": reason,
+        "ax_error": format!("{error:#}"),
+    }))
+}
+
+#[cfg(test)]
+#[test]
+fn a_boundless_foreground_click_whose_action_may_have_landed_is_not_refused() {
+    let sent = anyhow::Error::new(crate::atspi::InputMayHaveLanded(
+        "doAction failed: raised after acting".into(),
+    ));
+    let result = foreground_ax_action_error(123, 4, "menu_closed", sent);
+    assert_eq!(result.is_error, Some(true));
+    let wire = serde_json::to_value(&result).unwrap();
+    let structured = &wire["structuredContent"];
+    assert_ne!(
+        structured["code"], "element_bounds_unavailable",
+        "{structured}"
+    );
+    assert_eq!(structured["effect"], "unverifiable");
+    assert_eq!(structured["delivery"], json!({"mode": "unknown"}));
+    assert!(structured.get("escalation").is_none(), "{structured}");
+    assert!(structured.get("suggestion").is_none(), "{structured}");
+    let text = wire["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains("no input was sent"), "{text}");
+    assert!(text.contains("before clicking again"), "{text}");
+
+    // An action that failed before it was sent keeps the bounds refusal.
+    let unsent = anyhow::anyhow!("element has no Action interface");
+    let refusal = foreground_ax_action_error(123, 4, "menu_closed", unsent);
+    let wire = serde_json::to_value(&refusal).unwrap();
+    assert_eq!(
+        wire["structuredContent"]["code"],
+        "element_bounds_unavailable"
+    );
+    assert_eq!(wire["structuredContent"]["effect"], "none");
 }
 
 /// Decide whether a foreground element click has a real point to press.

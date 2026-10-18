@@ -8,7 +8,7 @@ Name the user's postcondition and any method constraint before acting.
 2. For exact window geometry, prefer `set_window_frame` and verify with `list_windows`. For a known native menu path, use `invoke_menu` and verify the command's effect. It can temporarily activate the target, so apply the foreground authorization boundary.
 3. For supported browser page content, use [BROWSER.md](BROWSER.md) when page-aware automation is permitted. GUI-only or native-input proof stays on the native route.
 4. For native controls, prefer snapshot-bound accessibility actions. If semantics cannot reach the target, use a fresh, valid screenshot and the window pixel route.
-5. If the selected background route refuses or visibly fails, consider explicitly authorized foreground delivery for that action.
+5. If the selected background route refuses or visibly fails, consider explicitly authorized foreground delivery for that action, under [No blind retry](#no-blind-retry).
 6. If exact-window observation or delivery is unavailable, use the desktop route only when the task and authorization admit full-display capture and visible input.
 
 Skip a route whose prerequisite is demonstrably absent: no valid window image means no window-pixel attempt. Do not exhaust impossible actions just to reach a later rung. A refusal never grants broader authority.
@@ -96,7 +96,7 @@ cua-driver run_steps '{"session":"run-1","steps":[
 - Every step is validated before the first runs, so a malformed step changes nothing. Each step then passes the same session, permission, capability-manifest and approval checks as a direct call; a batch grants nothing a single call lacks, and a refused step ends the batch like any other failure.
 - A batch has one session. Set `session` on `run_steps`; a step may repeat it but not name another.
 - `observe` is optional and reads once, after the last executed step (also after a failure). Pass `true` or `get_window_state` arguments; `pid`/`window_id` come from the last step that names both. Defaults: `since:"latest"` (only what changed since your last read of that window with the same view; a full read if there is none), `include_screenshot:false`, `max_elements:250`. Pass `include_screenshot:true` to see the window, or `since:null` for a full read. Omit `observe` to read nothing.
-- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action. When a step fails because another window of the app holds focus (a dialog opened mid-batch), the end read is of that window, even without `observe`; when a pixel step names a window with no screenshot yet, the end read includes its screenshot. A step refused because its app ignores background input (Electron, LibreOffice) says how to re-send it; set `foreground_fallback:true` on `run_steps` to retry such steps once in the foreground (the window is activated and the pointer may move).
+- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action. When a step fails because another window of the app holds focus (a dialog opened mid-batch), the end read is of that window, even without `observe`; when a pixel step names a window with no screenshot yet, the end read includes its screenshot. A step refused because its app ignores background input (Electron, LibreOffice) says how to re-send it; set `foreground_fallback:true` on `run_steps` to retry such steps once in the foreground (the window is activated and the pointer may move). That retry runs without reading state first, so leave it off for steps whose background refusal can follow delivered input ([No blind retry](#no-blind-retry)).
 
 ## Script a flow
 
@@ -154,7 +154,7 @@ Action facts are not task outcomes:
 | `partial`            | Only the reported delivered portion landed; inspect before repair                                     |
 | `unverifiable`       | Delivery cannot prove effect; observe before retrying                                                 |
 | `suspected_noop`     | Available evidence suggests no useful change                                                          |
-| `refused`            | The route deliberately did not deliver                                                                |
+| `refused`            | The route refused; only the refusals under [No blind retry](#no-blind-retry) prove nothing was sent   |
 | `route`              | Public actuator class: `accessibility`, `synthetic_events`, `global_input`, `dom`, or `trusted_input` |
 | `escalation`         | Suggested next route/reason, never authorization or an automatic retry                                |
 
@@ -162,7 +162,20 @@ Successful action escalation uses `target` (`pixel`, `foreground`, or `page`) an
 
 When the postcondition is visibly satisfied, stop acting. For media, selection alone is not playback: check the title, playing/pause indicator, and elapsed progress after preroll/buffering. For closure, verify the requested window disappeared. State only what the evidence proves.
 
-Never replay canceled, partial, or unknown actions automatically. An interrupted transport may have delivered input before losing its response. Report the interruption accurately and obtain fresh state before any further action.
+### No blind retry
+
+Sending input again, on the same route or another one (pixels, `delivery_mode:"foreground"`, a desktop target, `run_steps` with `foreground_fallback`), is safe only when the earlier attempt provably did not happen. Two things prove that:
+
+- A refusal the driver raises before it sends any input: `stale_element_token`, `ambiguous_window_target`, `window_scope_unproven`, and Linux `browser_dialog` refusing `delivery_mode:"background"`. Take a fresh snapshot and act on its target.
+- A fresh `get_window_state`, or `verify_state` with `include_screenshot:true`, taken after the attempt, whose tree or image shows the attempt had no effect.
+
+Every other result may already have taken effect: `unverifiable`, `partial`, `suspected_noop`, any other `refused`, `background_unavailable`, a `verify_state` of `unknown` or `unsatisfied`, a timeout, a canceled call, or any error. An interrupted transport may have delivered input before losing its response. On Linux/Wayland, `background_unavailable` can follow an AT-SPI write or action that already ran (see [Linux](LINUX.md#gnomemutter)), and Hyprland isolated input can report `refused` after delivering part of a text. A result's suggestion to retry with `delivery_mode:"foreground"` names a route; it does not prove that nothing landed.
+
+After any of these, read fresh state first. Never decide from a tree or image taken before the attempt.
+
+- Fresh state shows the action took effect, fully or partly: do not send it again. Continue from that state.
+- It shows no effect: send the input again with the target from that fresh state, and apply this rule to the new attempt.
+- It cannot show either way: stop and report the uncertain effect.
 
 ## Filesystem outcomes and GUI fallbacks
 

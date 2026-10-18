@@ -6462,6 +6462,99 @@ async fn gnome_window_bound_element_async(
         })
 }
 
+/// Whether a snapshot of window `xid` may bind its elements to that window as
+/// element tokens. Hyprland needs a correlated top-level. Elsewhere a native
+/// walk's correlated top-level counts, or else the window-scope rule for an
+/// uncorrelated walk: always on X11 and on compositors without a GNOME Shell,
+/// and on GNOME only when the attested Shell lists exactly `xid` for the PID.
+pub(crate) fn snapshot_binds_window(
+    hyprland_session: bool,
+    window_scoped: bool,
+    trusted: bool,
+    unscoped_walk_proven: impl FnOnce() -> bool,
+) -> bool {
+    if hyprland_session {
+        return window_scoped;
+    }
+    (trusted && window_scoped) || unscoped_walk_proven()
+}
+
+pub fn snapshot_binds_window_for(pid: u32, xid: u64, window_scoped: bool, trusted: bool) -> bool {
+    snapshot_binds_window(
+        crate::wayland::is_wayland() && crate::wayland::hyprland::is_session(),
+        window_scoped,
+        trusted,
+        || window_scope_proven(pid, xid, None),
+    )
+}
+
+/// The element a window-bound action names: an index into a walk of that
+/// window, or the AT-SPI identity a snapshot observed.
+pub enum WindowElement {
+    Index(usize),
+    Identity(super::AtspiIdentity),
+}
+
+/// Membership of an element found at `element_frame` (`None` when the fresh
+/// walk no longer has it) in a window-bound walk.
+pub(crate) fn window_element_membership(
+    element_frame: Option<usize>,
+    scoped_frame: Option<usize>,
+    scope_proven: impl FnOnce() -> bool,
+) -> Result<()> {
+    let frame = element_frame.ok_or(WindowMembershipUnproven(
+        "the element is no longer in the application's accessibility tree",
+    ))?;
+    window_bound_element(frame, scoped_frame, scope_proven)
+}
+
+/// Fresh-walk proof that `element` still belongs to window `xid`, for an
+/// action on behalf of that window. The walk is scoped to `xid` and judged by
+/// the rule window-bound bounds use. X11, Hyprland and compositors without a
+/// GNOME Shell keep their own routes.
+pub fn require_window_element(pid: u32, xid: u64, element: WindowElement) -> Result<()> {
+    if xid == 0 || !crate::wayland::is_wayland() || crate::wayland::hyprland::is_session() {
+        return Ok(());
+    }
+    let shell_windows = crate::wayland::shell_helper::trusted_window_ids_for_pid(pid);
+    if shell_windows.is_none() && !crate::wayland::shell_helper::gnome_shell_session() {
+        return Ok(());
+    }
+    bounded_for(
+        INDEX_RESOLVE_BUDGET,
+        async move {
+            let conn = shared_connection().await?;
+            let Collected {
+                visited,
+                scoped_frame,
+                ..
+            } = collect_visited_bounded(conn, pid, xid, None, None)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let element_frame = match &element {
+                WindowElement::Index(idx) => visited
+                    .iter()
+                    .filter(|v| is_indexable(v))
+                    .nth(*idx)
+                    .map(|v| v.frame_ordinal),
+                WindowElement::Identity(identity) => visited
+                    .iter()
+                    .find(|v| v.identity.as_ref() == Some(identity))
+                    .map(|v| v.frame_ordinal),
+            };
+            window_element_membership(element_frame, scoped_frame, || {
+                gnome_window_scope_proven(xid, scoped_frame, false, || true, || shell_windows)
+            })
+        },
+        || {
+            Err(WindowMembershipUnproven(
+                "the window-membership walk timed out (app unresponsive to AT-SPI)",
+            )
+            .into())
+        },
+    )
+}
+
 /// Screen-coordinate bounds for the exact visited sequence rendered into the
 /// current snapshot. Nodes without a usable Component interface, or whose
 /// extents query fails/times out, are omitted rather than borrowing another
@@ -8277,5 +8370,109 @@ mod window_scope_tests {
         assert_eq!(accessibility_window_id(6079, 0), 6079 << 16);
         assert_eq!(accessibility_window_id(6079, 3), (6079 << 16) | 3);
         assert_eq!(accessibility_window_id(0, 0), 1);
+    }
+}
+
+#[cfg(test)]
+mod token_scope_tests {
+    use super::{
+        gnome_window_scope_proven, is_window_membership_unproven, lone_top_level_renders,
+        snapshot_binds_window, window_element_membership, ELEMENT_OUTSIDE_WINDOW,
+        WINDOW_SCOPE_UNPROVEN,
+    };
+
+    // One PID owns Shell windows A and B; `get_window_state` reads B.
+    const PID: u32 = 6079;
+    const SIBLING_A: u64 = 1;
+    const REQUESTED_B: u64 = 2;
+
+    /// The binding decision `get_window_state` makes for B on GNOME with an
+    /// attested Shell: the walk's frame resolution, then the token rule.
+    fn binds_b(shell_windows: &[u64], top_levels: usize) -> bool {
+        let shell = || Some(shell_windows.to_vec());
+        let window_scoped =
+            top_levels == 1 && lone_top_level_renders(PID, REQUESTED_B, || true, shell);
+        snapshot_binds_window(false, window_scoped, true, || {
+            gnome_window_scope_proven(REQUESTED_B, None, false, || true, shell)
+        })
+    }
+
+    #[test]
+    fn previously_every_gnome_snapshot_bound_its_elements_to_the_window() {
+        // Before: `!(wayland && hyprland) || window_scoped`.
+        let (wayland, hyprland, window_scoped) = (true, false, false);
+        assert!(!(wayland && hyprland) || window_scoped);
+    }
+
+    #[test]
+    fn an_unproven_gnome_snapshot_binds_no_tokens() {
+        for (shell_windows, top_levels) in [
+            (&[SIBLING_A, REQUESTED_B][..], 1),
+            (&[REQUESTED_B, SIBLING_A][..], 1),
+            (&[SIBLING_A, REQUESTED_B][..], 2),
+            (&[SIBLING_A][..], 1),
+            (&[][..], 1),
+        ] {
+            assert!(
+                !binds_b(shell_windows, top_levels),
+                "{shell_windows:?} with {top_levels} top-level(s)"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_window_snapshot_binds() {
+        assert!(binds_b(&[REQUESTED_B], 1));
+        // A popover top-level beside the window: the Shell still vouches.
+        assert!(binds_b(&[REQUESTED_B], 2));
+    }
+
+    #[test]
+    fn x11_hyprland_and_other_compositors_bind_as_before() {
+        for window_scoped in [false, true] {
+            for trusted in [false, true] {
+                // X11 and compositors without a GNOME Shell: the uncorrelated
+                // walk rule holds, so the previous `true` stands.
+                assert!(snapshot_binds_window(false, window_scoped, trusted, || {
+                    gnome_window_scope_proven(REQUESTED_B, None, false, || false, || None)
+                }));
+                // Hyprland keeps its correlated-top-level rule.
+                assert_eq!(
+                    snapshot_binds_window(true, window_scoped, trusted, || {
+                        panic!("Hyprland asks no Shell")
+                    }),
+                    window_scoped
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn action_time_membership_uses_the_bounds_rule() {
+        let proven = |scoped: Option<usize>, shell: Vec<u64>| {
+            move || gnome_window_scope_proven(REQUESTED_B, scoped, false, || true, || Some(shell))
+        };
+        let gone = window_element_membership(None, Some(0), || true).unwrap_err();
+        assert!(is_window_membership_unproven(&gone));
+        let sibling =
+            window_element_membership(Some(0), None, proven(None, vec![SIBLING_A, REQUESTED_B]))
+                .unwrap_err();
+        assert!(is_window_membership_unproven(&sibling));
+        assert_eq!(sibling.to_string(), WINDOW_SCOPE_UNPROVEN);
+        let outside = window_element_membership(
+            Some(0),
+            Some(1),
+            proven(Some(1), vec![SIBLING_A, REQUESTED_B]),
+        )
+        .unwrap_err();
+        assert!(is_window_membership_unproven(&outside));
+        assert_eq!(outside.to_string(), ELEMENT_OUTSIDE_WINDOW);
+        assert!(window_element_membership(
+            Some(1),
+            Some(1),
+            proven(Some(1), vec![SIBLING_A, REQUESTED_B])
+        )
+        .is_ok());
+        assert!(window_element_membership(Some(0), None, proven(None, vec![REQUESTED_B])).is_ok());
     }
 }

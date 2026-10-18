@@ -1361,6 +1361,9 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
+            let binds_window = tree_result.as_ref().is_some_and(|tree| {
+                crate::atspi::snapshot_binds_window(pid, xid, tree.window_scoped, tree.trusted)
+            });
             // Bounds and element indices come from the same captured AT-SPI
             // traversal. Joining two live walks by ordinal mis-associated
             // Chromium controls when its lazy subtree changed between walks.
@@ -1474,12 +1477,19 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
-            Ok((tree_result, screenshot, bounds, screenshot_error, overlays))
+            Ok((
+                tree_result,
+                screenshot,
+                bounds,
+                screenshot_error,
+                overlays,
+                binds_window,
+            ))
         })
         .await;
 
         match result {
-            Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error, overlays))) => {
+            Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error, overlays, binds_window))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": xid, "pid": pid });
                 let screenshot_scale = shot_opt.as_ref().map(|(_, _, w, _, original_w, _)| {
@@ -1536,9 +1546,9 @@ impl Tool for GetWindowStateTool {
                     structured["timeout_ms"] = json!(timeout_ms);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
-                    let target_scoped = !(crate::wayland::is_wayland()
-                        && crate::wayland::hyprland::is_session())
-                        || tr.window_scoped;
+                    // Elements bind to this window only when the walk proved
+                    // the window's scope (`snapshot_binds_window`).
+                    let target_scoped = binds_window;
                     if !observation_only && !target_scoped {
                         invalidated.extend(state.snapshots.remove(pid as i32, xid));
                         crate::atspi::snapshot::forget_window(pid, xid);
@@ -2568,6 +2578,70 @@ fn coordinate_frame_schema() -> Value {
 fn coordinate_frame_is_desktop(args: &Value) -> bool {
     args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop")
 }
+
+fn window_scope_unproven_refusal(tool: &str, xid: u64, reason: &str) -> ToolResult {
+    let message = format!(
+        "{tool}: the element's membership in window_id {xid} is unproven ({reason}); \
+         call get_window_state again"
+    );
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "refusal": { "code": "window_scope_unproven", "message": message }
+    }))
+}
+
+/// Refuse an element-token action when a fresh walk cannot place the observed
+/// element in the token's window. Runs before any dispatch. X11, Hyprland and
+/// compositors without a GNOME Shell pass unchecked.
+async fn refuse_unproven_window_element(
+    pid: u32,
+    resolved: &cua_driver_core::element_token::ResolvedElement<
+        crate::atspi::snapshot::CachedElement,
+    >,
+    tool: &str,
+) -> Option<ToolResult> {
+    let cua_driver_core::element_token::ResolvedElement::Element {
+        window_id, element, ..
+    } = resolved
+    else {
+        return None;
+    };
+    let (xid, identity) = (*window_id, element.identity.clone());
+    let proof = tokio::task::spawn_blocking(move || {
+        crate::atspi::require_window_element(
+            pid,
+            xid,
+            crate::atspi::WindowElement::Identity(identity),
+        )
+    })
+    .await
+    .unwrap_or_else(|error| Err(anyhow::anyhow!("task error: {error}")));
+    window_element_refusal(tool, xid, proof)
+}
+
+fn window_element_refusal(tool: &str, xid: u64, proof: anyhow::Result<()>) -> Option<ToolResult> {
+    proof
+        .err()
+        .map(|error| window_scope_unproven_refusal(tool, xid, &error.to_string()))
+}
+
+/// The cursor glides to an element before its click. A failed lookup skips
+/// only the glide, except a window-membership failure, which refuses.
+fn element_click_placement(
+    placement: anyhow::Result<(u64, f64, f64)>,
+    xid: Option<u64>,
+) -> Result<Option<(u64, f64, f64)>, ToolResult> {
+    match placement {
+        Ok(point) => Ok(Some(point)),
+        Err(error) if crate::atspi::is_window_membership_unproven(&error) => Err(
+            window_scope_unproven_refusal("click", xid.unwrap_or(0), &error.to_string()),
+        ),
+        Err(_) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod token_window_scope_tests;
 
 fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
     use x11rb::connection::Connection;
@@ -6600,6 +6674,9 @@ impl Tool for ClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if let Some(refusal) = refuse_unproven_window_element(pid, &resolved, "click").await {
+            return refusal;
+        }
         let elem_idx_resolved: Option<usize> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -6655,10 +6732,16 @@ impl Tool for ClickTool {
                     Ok((xid, cx, cy))
                 }),
             )
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .and_then(Result::ok);
+            .await;
+            let placement = match placement {
+                Ok(Ok(placement)) => placement,
+                Ok(Err(error)) => Err(anyhow::anyhow!("task error: {error}")),
+                Err(_elapsed) => Err(anyhow::anyhow!("element placement timed out")),
+            };
+            let placement = match element_click_placement(placement, xid_hint) {
+                Ok(placement) => placement,
+                Err(refusal) => return refusal,
+            };
             // X11 foreground element click: behave like a user — activate the
             // window and XTest-click the element's screen centre. No AT-SPI
             // action, no second tree walk. Element bounds come from the
@@ -7530,6 +7613,9 @@ impl Tool for TypeTextTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if let Some(refusal) = refuse_unproven_window_element(pid, &resolved, "type_text").await {
+            return refusal;
+        }
         let (resolved_elem_idx, resolved_window_id) = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element {
                 element_index,
@@ -8476,6 +8562,9 @@ impl Tool for PressKeyTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if let Some(refusal) = refuse_unproven_window_element(pid, &resolved, "press_key").await {
+            return refusal;
+        }
         let resolved_element_index = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -8900,6 +8989,9 @@ impl Tool for HotkeyTool {
             Ok(resolved) => resolved,
             Err(error) => return error,
         };
+        if let Some(refusal) = refuse_unproven_window_element(pid, &resolved, "hotkey").await {
+            return refusal;
+        }
         let resolved_element_index = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -9308,6 +9400,9 @@ impl Tool for SetValueTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if let Some(refusal) = refuse_unproven_window_element(pid, &resolved, "set_value").await {
+            return refusal;
+        }
         let (idx, xid) = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element {
                 element_index,
@@ -9823,6 +9918,9 @@ impl Tool for ScrollTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if let Some(refusal) = refuse_unproven_window_element(pid, &resolved, "scroll").await {
+            return refusal;
+        }
         let xid_opt: Option<u64> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
                 Some(*window_id)
@@ -10340,6 +10438,10 @@ impl Tool for DoubleClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if let Some(refusal) = refuse_unproven_window_element(pid, &resolved, "double_click").await
+        {
+            return refusal;
+        }
         let elem_idx_resolved = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -10627,6 +10729,9 @@ impl Tool for RightClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if let Some(refusal) = refuse_unproven_window_element(pid, &resolved, "right_click").await {
+            return refusal;
+        }
         let elem_idx_resolved = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)

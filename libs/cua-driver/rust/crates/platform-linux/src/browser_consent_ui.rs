@@ -221,6 +221,22 @@ fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
     })
 }
 
+/// Act on element `index` of a walk of `window_id`. `perform_action` acts on
+/// the application-wide index, so the element's window membership is proven
+/// first.
+fn exact_window_action(
+    pid: u32,
+    window_id: u64,
+    index: usize,
+) -> anyhow::Result<(String, bool, bool)> {
+    crate::atspi::require_window_element(
+        pid,
+        window_id,
+        crate::atspi::WindowElement::Index(index),
+    )?;
+    crate::atspi::perform_action(pid, index)
+}
+
 pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
     prove_window_owner(pid, window_id)?;
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -238,7 +254,7 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
                 "the exact remote-debugging consent prompt exposed no semantic cancel action",
             )
         })?;
-        crate::atspi::perform_action(pid, index).map_err(|error| {
+        exact_window_action(pid, window_id, index).map_err(|error| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("the exact browser consent cancel action failed: {error}"),
@@ -327,7 +343,7 @@ pub async fn handle(
         match exact_allow_button(&tree.nodes, &tree.bounds)? {
             Some(index) if accessibility_action_at.is_none() => {
                 consent_action(&request.action, deadline, move || {
-                    crate::atspi::perform_action(pid, index)
+                    exact_window_action(pid, window_id, index)
                 })
                 .await?;
                 accessibility_action_at = Some(Instant::now());

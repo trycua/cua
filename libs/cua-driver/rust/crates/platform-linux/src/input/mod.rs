@@ -27,15 +27,15 @@ pub mod targeted;
 pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
 pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
-    real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
-    KeyboardDeliveryReport, MPX_UINPUT_PATH,
+    real_keyboard_input_available, send_popup_keyboard_key, send_popup_keyboard_text,
+    send_virtual_keyboard_key, send_virtual_keyboard_text, KeyboardDeliveryReport, MPX_UINPUT_PATH,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -155,8 +155,8 @@ static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_OP_LOCK: Mutex<()> = Mutex::new(());
 static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
 static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
-/// Popups that each session's last click opened.
 static MPX_CLICK_POPUPS: OnceLock<Mutex<HashMap<String, Vec<u64>>>> = OnceLock::new();
+static MPX_POPUP_WAITERS: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 /// A session's retained master pair is removed after this much inactivity;
 /// `end_session` and the startup reaper cover the explicit and crash cases.
 /// `XIRemoveMaster` churns the XInput hierarchy, and mutter 42.x segfaults when
@@ -199,6 +199,37 @@ fn mpx_last_use() -> &'static Mutex<HashMap<String, std::time::Instant>> {
 
 fn mpx_click_popups() -> &'static Mutex<HashMap<String, Vec<u64>>> {
     MPX_CLICK_POPUPS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn popup_click_session(window: u64) -> Option<String> {
+    let pointers = mpx_pointers().lock().unwrap();
+    let appeared = mpx_click_popups().lock().unwrap();
+    popup_owner(window, &appeared, |id| pointers.contains_key(id))
+}
+
+fn popup_owner(
+    window: u64,
+    appeared: &HashMap<String, Vec<u64>>,
+    live: impl Fn(&str) -> bool,
+) -> Option<String> {
+    appeared
+        .iter()
+        .find(|(id, popups)| popups.contains(&window) && live(id))
+        .map(|(id, _)| id.clone())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("the session whose click opened the popup has no master pair any more")]
+pub struct PopupOwnerGone;
+
+fn popup_owner_guard(owner: &str) -> Result<std::sync::MutexGuard<'static, ()>> {
+    let guard = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !mpx_pointers().lock().unwrap().contains_key(owner) {
+        return Err(PopupOwnerGone.into());
+    }
+    Ok(guard)
 }
 
 /// Take the MPX operation lock for one call on `cursor_id`, stamp its last
@@ -738,10 +769,17 @@ fn forget_master_pointer_locked(cursor_id: &str) {
     let popups = mpx_click_popups()
         .lock()
         .unwrap()
-        .remove(cursor_id)
+        .get(cursor_id)
+        .cloned()
         .unwrap_or_default();
     if popups_mapped(&popups) {
-        forget_after_popups(cursor_id.to_owned(), popups);
+        if MPX_POPUP_WAITERS
+            .lock()
+            .unwrap()
+            .insert(cursor_id.to_owned())
+        {
+            forget_after_popups(cursor_id.to_owned());
+        }
         return;
     }
     remove_master_pair(cursor_id);
@@ -761,11 +799,20 @@ fn popups_mapped(popups: &[u64]) -> bool {
     mapped
 }
 
-/// Remove an ended session's master pair [`MPX_POPUP_QUIET`] after `popups`
-/// close, or after [`MPX_IDLE_TTL`]; a session that is used again keeps it.
-fn forget_after_popups(cursor_id: String, popups: Vec<u64>) {
+/// Remove an ended session's master pair [`MPX_POPUP_QUIET`] after its click
+/// popups close, or after [`MPX_IDLE_TTL`]; a session that is used again keeps it.
+fn forget_after_popups(cursor_id: String) {
     let started = std::time::Instant::now();
     let revived = |cursor_id: &str| mpx_last_use().lock().unwrap().contains_key(cursor_id);
+    let waiting = move |cursor_id: &str| {
+        let popups = mpx_click_popups()
+            .lock()
+            .unwrap()
+            .get(cursor_id)
+            .cloned()
+            .unwrap_or_default();
+        started.elapsed() < MPX_IDLE_TTL && popups_mapped(&popups)
+    };
     std::thread::Builder::new()
         .name("cua-mpx-popup-wait".into())
         .spawn(move || loop {
@@ -775,9 +822,10 @@ fn forget_after_popups(cursor_id: String, popups: Vec<u64>) {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 if revived(&cursor_id) {
+                    MPX_POPUP_WAITERS.lock().unwrap().remove(&cursor_id);
                     return;
                 }
-                if started.elapsed() < MPX_IDLE_TTL && popups_mapped(&popups) {
+                if waiting(&cursor_id) {
                     continue;
                 }
             }
@@ -785,9 +833,15 @@ fn forget_after_popups(cursor_id: String, popups: Vec<u64>) {
             let _op = MPX_OP_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if !revived(&cursor_id) {
-                remove_master_pair(&cursor_id);
+            if revived(&cursor_id) {
+                MPX_POPUP_WAITERS.lock().unwrap().remove(&cursor_id);
+                return;
             }
+            if waiting(&cursor_id) {
+                continue;
+            }
+            MPX_POPUP_WAITERS.lock().unwrap().remove(&cursor_id);
+            remove_master_pair(&cursor_id);
             return;
         })
         .ok();
@@ -798,6 +852,7 @@ fn remove_master_pair(cursor_id: &str) {
     // removal below never has to hand a live slave back to the user's core
     // devices (XIAttachToMaster only re-homes slaves that still exist).
     uinput_pointers().lock().unwrap().remove(cursor_id);
+    mpx_click_popups().lock().unwrap().remove(cursor_id);
     mpx_keyboard::forget_uinput_keyboard(cursor_id);
     let Some(ids) = mpx_pointers().lock().unwrap().remove(cursor_id) else {
         return;
@@ -1881,11 +1936,7 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
     if attrs.width <= 1 || attrs.height <= 1 {
         return None;
     }
-    let pid = crate::x11::window_pid(child).or_else(|| {
-        window_children(display, child)
-            .into_iter()
-            .find_map(crate::x11::window_pid)
-    });
+    let pid = window_or_child_pid(display, child);
     Some(PopupWindow {
         window: child,
         x: attrs.x,
@@ -1894,6 +1945,14 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
         height: attrs.height as u32,
         title: window_title_for_report(display, child),
         pid,
+    })
+}
+
+fn window_or_child_pid(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> Option<u32> {
+    crate::x11::window_pid(window).or_else(|| {
+        window_children(display, window)
+            .into_iter()
+            .find_map(crate::x11::window_pid)
     })
 }
 
@@ -2705,9 +2764,19 @@ pub fn send_virtual_pointer_click(
             click.y,
         );
         effect.retargeted_to = retargeted_to;
+        let target_pid = if effect.popups.is_empty() {
+            None
+        } else {
+            window_or_child_pid(display, click.target_window as x11::xlib::Window)
+        };
         mpx_click_popups().lock().unwrap().insert(
             cursor_id.to_owned(),
-            effect.popups.iter().map(|popup| popup.window).collect(),
+            effect
+                .popups
+                .iter()
+                .filter(|popup| popup.pid.is_some() && popup.pid == target_pid)
+                .map(|popup| popup.window)
+                .collect(),
         );
         Ok(effect)
     })();
@@ -4936,6 +5005,49 @@ mod path_tests {
         stale.sort();
         assert_eq!(stale, vec!["edge".to_owned(), "old".to_owned()]);
         assert!(stale_cursor_ids(&std::collections::HashMap::new(), now, MPX_IDLE_TTL).is_empty());
+    }
+
+    #[test]
+    fn a_popup_belongs_to_the_live_session_whose_click_saw_it_appear() {
+        use super::popup_owner;
+        use std::collections::HashMap;
+        let appeared = HashMap::from([
+            ("ctx".to_owned(), vec![25165852]),
+            ("combo".to_owned(), vec![]),
+        ]);
+        let live = |_: &str| true;
+        assert_eq!(
+            popup_owner(25165852, &appeared, live).as_deref(),
+            Some("ctx")
+        );
+        assert_eq!(popup_owner(25165982, &appeared, live), None);
+        assert_eq!(
+            popup_owner(25165852, &appeared, |id: &str| id != "ctx"),
+            None
+        );
+    }
+
+    #[test]
+    fn keys_for_a_popup_neither_stamp_nor_recreate_the_owner_pair() {
+        use super::{
+            mpx_last_use, mpx_pointers, popup_owner_guard, MasterPointerIds, PopupOwnerGone,
+        };
+        let gone = popup_owner_guard("popup-owner-gone").unwrap_err();
+        assert!(gone.is::<PopupOwnerGone>());
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-live".to_owned(),
+            MasterPointerIds {
+                pointer_id: 90,
+                keyboard_id: 91,
+                _slave_pointer_id: 92,
+                slave_keyboard_id: None,
+            },
+        );
+        drop(popup_owner_guard("popup-owner-live").unwrap());
+        mpx_pointers().lock().unwrap().remove("popup-owner-live");
+        let last_use = mpx_last_use().lock().unwrap();
+        assert!(!last_use.contains_key("popup-owner-gone"));
+        assert!(!last_use.contains_key("popup-owner-live"));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { useRef, type PointerEvent } from "react";
+import { useRef, type PointerEvent, type ReactNode } from "react";
 
 import { LogOutIcon } from "lucide-react";
 
@@ -17,7 +17,7 @@ import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
 import { SignInLink } from "@/components/sign-in-link";
 import { useNavItems } from "./nav";
-import { SidebarUpdateIndicator } from "./update-indicator";
+import { SidebarUpdateButton } from "./update-indicator";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
@@ -67,21 +67,21 @@ export function Sidebar() {
         })}
       </nav>
       <div className="mt-auto">
-        <SidebarUpdateIndicator />
-        <AccountFooter />
+        <AccountFooter trailing={<SidebarUpdateButton />} />
       </div>
       <ResizeHandle />
     </aside>
   );
 }
 
-/** The account, or "Sign in"; and a way back into a first run left halfway. */
-export function AccountFooter() {
+/** The account, or "Sign in"; and a way back into a first run left halfway.
+ * `trailing` (the update button) sits at the far right of its row. */
+export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
   const { mode, core } = useBridge();
   const { data: session, signIn, signOut, cancelSignIn, openExternal } = useSession();
   const plan = useRelayUsageView()?.planCard;
   const trackPlanClick = useTrackPlanClick();
-  if (!session) return <div className="mt-auto h-12 border-t" />;
+  if (!session) return <div className="mt-auto flex h-12 items-center justify-end border-t px-3">{trailing}</div>;
 
   const identity = session.signedIn ? (session.identity ?? "Signed in") : null;
   const phase = session.signIn.kind;
@@ -130,6 +130,7 @@ export function AccountFooter() {
               </Button>
             </Tooltip>
           ) : null}
+          {trailing}
         </div>
       ) : waiting ? (
         // As in the first run: the code to confirm, the page to open again
@@ -160,6 +161,7 @@ export function AccountFooter() {
             >
               Cancel
             </button>
+            <span className="ml-auto">{trailing}</span>
           </div>
         </div>
       ) : (
@@ -167,7 +169,8 @@ export function AccountFooter() {
           <Button variant="outline" size="sm" onClick={() => void run(signIn, "Couldn't sign in")}>
             {phase === "failed" ? "Try again" : "Sign in"}
           </Button>
-          {phase === "failed" ? <span className="truncate text-2xs text-destructive">{session.signIn.message}</span> : null}
+          {phase === "failed" ? <span className="min-w-0 flex-1 truncate text-2xs text-destructive">{session.signIn.message}</span> : null}
+          <span className="ml-auto">{trailing}</span>
         </div>
       )}
     </div>

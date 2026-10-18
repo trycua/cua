@@ -36,7 +36,7 @@ fn rejected_serve(socket: &str, extra_args: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn mcp_rejects_serve_only_authorization_flags() {
+fn mcp_rejects_serve_only_flags() {
     let cases: &[(&[&str], &str)] = &[
         (
             &["mcp", "--direct", "--permission-mode", "bounded"],
@@ -62,6 +62,8 @@ fn mcp_rejects_serve_only_authorization_flags() {
             &["mcp", "--approve-session-policy"],
             "--approve-session-policy",
         ),
+        (&["mcp", "--no-permissions-gate"], "--no-permissions-gate"),
+        (&["mcp", "--development"], "--development"),
         (&["--permission-mode=bounded"], "--permission-mode"),
     ];
 
@@ -71,7 +73,7 @@ fn mcp_rejects_serve_only_authorization_flags() {
             .stdin(Stdio::null())
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
             .output()
-            .expect("run cua-driver mcp with a serve-only authorization flag");
+            .expect("run cua-driver mcp with a serve-only flag");
         assert_eq!(output.status.code(), Some(64), "args={args:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(

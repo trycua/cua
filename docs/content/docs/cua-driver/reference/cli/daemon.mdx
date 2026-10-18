@@ -57,6 +57,7 @@ cua-driver serve [OPTIONS]
 | <span id="cua-driver-serve--approve-capability-manifest"></span>`--approve-capability-manifest` | boolean | `false` | Trusted-launcher confirmation that the exact capability manifest was reviewed. |
 | <span id="cua-driver-serve--approve-session-policy"></span>`--approve-session-policy` | boolean | `false` | Deprecated alias for approve-capability-manifest. |
 | <span id="cua-driver-serve--no-permissions-gate"></span>`--no-permissions-gate` | boolean | `false` | Skip the macOS first-launch permissions gate. |
+| <span id="cua-driver-serve--development"></span>`--development` | boolean | `false` | Run a locally built daemon without installed-app obligations: history stays unadmitted and the first-launch permissions gate is skipped. Still binds the standard socket; stop an installed daemon first or pass --socket. |
 | <span id="cua-driver-serve--embedded"></span>`--embedded` | boolean | `false` | Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1. |
 | <span id="cua-driver-serve--no-overlay"></span>`--no-overlay` | boolean | `false` | Disable the agent cursor overlay for this daemon. |
 | <span id="cua-driver-serve--experimental-history"></span>`--experimental-history` | boolean | `false` | Admit the encrypted local Computer History early preview for this daemon launch. |

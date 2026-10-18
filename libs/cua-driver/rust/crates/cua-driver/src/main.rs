@@ -394,8 +394,24 @@ fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
     runtime.block_on(proxy::run_direct(driver))
 }
 
-fn history_admission_requested(explicit: bool, persisted: bool) -> bool {
-    explicit || persisted
+/// Whether the daemon must pass installed-app verification for Computer
+/// History. `development` vetoes any request: a locally built binary cannot
+/// satisfy admission, so the dev flag serves the daemon unadmitted instead of
+/// failing startup.
+fn history_admission_requested(explicit: bool, persisted: bool, development: bool) -> bool {
+    (explicit || persisted) && !development
+}
+
+/// A persisted `history enable` preference is ambient state rather than a
+/// request in this launch, so `--development` warns once and ignores it.
+/// Called after `reexec_disclaimed_if_needed` so the message is not printed
+/// by both the pre-reexec parent and the re-executed child.
+fn warn_development_ignores_persisted_admission(persisted: bool, development: bool) {
+    if development && persisted {
+        eprintln!(
+            "cua-driver: --development: ignoring the persisted Computer History admission; this daemon runs unadmitted."
+        );
+    }
 }
 
 #[cfg(test)]
@@ -404,14 +420,22 @@ mod history_admission_tests {
 
     #[test]
     fn persisted_preview_admission_survives_a_relaunch_without_the_cli_flag() {
-        assert!(history_admission_requested(false, true));
+        assert!(history_admission_requested(false, true, false));
     }
 
     #[test]
     fn admission_requires_an_explicit_or_persisted_request() {
-        assert!(!history_admission_requested(false, false));
-        assert!(history_admission_requested(true, false));
-        assert!(history_admission_requested(true, true));
+        assert!(!history_admission_requested(false, false, false));
+        assert!(history_admission_requested(true, false, false));
+        assert!(history_admission_requested(true, true, false));
+    }
+
+    #[test]
+    fn development_vetoes_explicit_and_persisted_requests() {
+        assert!(!history_admission_requested(false, false, true));
+        assert!(!history_admission_requested(true, false, true));
+        assert!(!history_admission_requested(false, true, true));
+        assert!(!history_admission_requested(true, true, true));
     }
 }
 
@@ -583,7 +607,9 @@ fn main() {
             claude_code_compat,
             grants,
             experimental_history,
+            development,
         } => {
+            let persisted_history = history_runtime::preview_admitted_preference();
             if let Err(error) = configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
@@ -596,24 +622,28 @@ fn main() {
             }
             responsibility::reexec_disclaimed_if_needed();
             responsibility::warn_if_unbundled();
+            warn_development_ignores_persisted_admission(persisted_history, development);
             if let Err(error) = history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
-                history_runtime::preview_admitted_preference(),
+                persisted_history,
+                development,
             )) {
                 eprintln!("cua-driver: Computer History admission error: {error}");
                 std::process::exit(1);
             }
-            history_runtime::configure_daemon_launch_state(
-                permission_mode.as_deref(),
+            history_runtime::configure_daemon_launch_state(history_runtime::DaemonLaunchState {
+                permission_mode,
                 dangerously_bypass_approvals,
-                capability_manifest.as_deref(),
+                capability_manifest,
                 approve_capability_manifest,
                 no_permissions_gate,
                 claude_code_compat,
-                &grants,
+                development,
+                grants,
+            });
+            let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
+                no_permissions_gate || development,
             );
-            let gate_opts =
-                platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
             if let Some((progress, context)) =
                 platform_macos::permissions::gate::prepare_telemetry_context(gate_opts.opt_out)
             {
@@ -1007,7 +1037,9 @@ fn main() -> anyhow::Result<()> {
             claude_code_compat,
             grants,
             experimental_history,
+            development,
         } => {
+            let persisted_history = history_runtime::preview_admitted_preference();
             configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
@@ -1017,19 +1049,22 @@ fn main() -> anyhow::Result<()> {
             )?;
             responsibility::reexec_disclaimed_if_needed();
             responsibility::warn_if_unbundled();
+            warn_development_ignores_persisted_admission(persisted_history, development);
             history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
-                history_runtime::preview_admitted_preference(),
+                persisted_history,
+                development,
             ))?;
-            history_runtime::configure_daemon_launch_state(
-                permission_mode.as_deref(),
+            history_runtime::configure_daemon_launch_state(history_runtime::DaemonLaunchState {
+                permission_mode,
                 dangerously_bypass_approvals,
-                capability_manifest.as_deref(),
+                capability_manifest,
                 approve_capability_manifest,
                 no_permissions_gate,
                 claude_code_compat,
-                &grants,
-            );
+                development,
+                grants,
+            });
             telemetry::capture_start(
                 telemetry::event::SERVE_START_LEGACY,
                 telemetry::Transport::Daemon,
@@ -1038,10 +1073,10 @@ fn main() -> anyhow::Result<()> {
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
-            // On Windows / Linux the flag is silently accepted for
-            // CLI uniformity and ignored. The Claude-Code compat screenshot
-            // surface is accepted on every platform for CLI uniformity.
-            let _ = no_permissions_gate;
+            // On Windows / Linux the flag is recorded in the launch state for
+            // relaunch fidelity and otherwise ignored. The Claude-Code compat
+            // screenshot surface is accepted on every platform for CLI
+            // uniformity.
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let driver = build_driver(

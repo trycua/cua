@@ -35,6 +35,15 @@ printed.
 is a new app to the Keychain every time it is rebuilt, so it uses the file and
 never asks for Keychain access.
 
+On macOS, `cua` never waits on a Keychain dialog it cannot show. Run from a
+terminal it lets macOS ask for access. Run without one (by an agent, a script
+or a service) it fails within seconds with a message instead of hanging, also
+when a dialog is already open on the Mac's screen and macOS holds the read
+behind it. Answer the dialog, or run `cua auth keychain --prompt` in a
+terminal once and choose Always Allow. `CUA_KEYCHAIN_NONINTERACTIVE=1` turns
+prompts off, `0` allows them without a terminal, and
+`CUA_KEYCHAIN_TIMEOUT_SECS` (default 5) sets how long a call may take.
+
 ## Which credential the CLI uses
 
 The first that is set wins:

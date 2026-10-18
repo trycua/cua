@@ -46,7 +46,7 @@ pkgs.rustPlatform.buildRustPackage {
     python3
   ];
   # Transport tests launch an isolated D-Bus session instead of using the host bus.
-  nativeCheckInputs = [ pkgs.dbus ];
+  nativeCheckInputs = [ pkgs.dbus pkgs.xorg.xorgserver ];
   CUA_TEST_PYTHON = "${pkgs.python3}/bin/python3";
   CUA_TEST_PYTHON_DYNAMIC_LINKER = pkgs.stdenv.cc.bintools.dynamicLinker;
   CUA_TEST_GLIBC_STATIC_LIB = "${pkgs.glibc.static}/lib";
@@ -62,7 +62,7 @@ pkgs.rustPlatform.buildRustPackage {
     libei
   ];
 
-  # The default Cargo test set is deliberately headless. The ignored desktop
+  # Focus unit tests launch private Xvfb servers. The ignored desktop
   # matrix is run by the manual Linux e2e workflow and is not hidden in Nix.
   doCheck = true;
 

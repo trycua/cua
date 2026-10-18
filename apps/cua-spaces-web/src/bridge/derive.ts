@@ -597,7 +597,7 @@ export function settingsPage(
     signIn: signIn ?? { kind: "idle" },
     canSignOut: session?.fleet.authMode === "user",
     menuBar: settings.values.menuBar,
-    defaultLocation: loc === "cloud" ? "cloud" : loc === "local" ? "local" : loc.startsWith("host:") ? "host" : "yours",
+    defaultLocation: loc === "cloud" || loc === "local" ? "local" : loc.startsWith("host:") ? "host" : "yours",
     locationLockedBy: settings.defaultLocation?.source === "env" ? (settings.defaultLocation.env ?? null) : null,
     telemetry: settings.telemetry
       ? {

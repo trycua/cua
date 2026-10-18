@@ -64,11 +64,11 @@ export interface DemoNewSpaceState {
 export const demoNewSpaceState = (macHost: boolean): DemoNewSpaceState => ({ macHost: macHost ? { vmsRunning: 2 } : null });
 
 /** The SwiftUI host's answer (`WebUIBridge.createOptions`) for this demo Mac. */
-export function demoMacHostOptions(defaultLocation: string, vmsRunning: number, pending: boolean): NewSpaceOptions {
+export function demoMacHostOptions(_defaultLocation: string, vmsRunning: number, pending: boolean): NewSpaceOptions {
   const d = DEMO_NEW_SPACE_OPTIONS;
   const hd = { availableBytes: 212 * GB, totalBytes: 494 * GB, name: "Macintosh HD" };
   const env: WizardEnv & { localDetails: Record<string, string> | null; lumeSource: string | null; linuxSource: string | null } = {
-    defaultLocation: defaultLocation === "cloud" ? "cloud" : "local",
+    defaultLocation: "local",
     cloudAvailable: !pending,
     localAvailable: true,
     localReason: null,

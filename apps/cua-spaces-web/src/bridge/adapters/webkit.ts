@@ -560,7 +560,7 @@ export function createWebkitAdapter(
           await choose("telemetry", value ? "on" : "off");
           break;
         case "defaultLocation":
-          if (value !== "local" && value !== "cloud") throw new HostError("New Spaces can start on This Mac or Cua Cloud here", "unsupported");
+          if (value !== "local") throw new HostError("New Spaces can start on This Mac here", "unsupported");
           await choose("default-location", value);
           break;
         case "launchAtLogin":

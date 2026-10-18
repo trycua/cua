@@ -2,7 +2,7 @@
 
 Sandboxed VM and container environments with a unified Python API. A thin
 wrapper over the [cua SDK](../../cua/README.md) (`cua>=0.2.0`, Rust core), which
-handles Fleet claims, local runtimes and the spacesd client.
+handles local runtimes and the spacesd client.
 
 ```bash
 pip install --extra-index-url https://wheels.cua.ai/simple cua-sandbox
@@ -15,7 +15,7 @@ plane (claims, spacesd, local runtimes) goes through the `cua` SDK.
 
 | Backend | Implementation |
 |---|---|
-| Fleet (cloud) | `cua` SDK |
+| Cua Cloud (Fleet) | Ended: raises `CloudEnded` |
 | Local containers (Docker/Podman, gVisor when available), QEMU, Lume | `cua` SDK (cua-vmm), zero pre-setup |
 | Direct: any reachable cua-spacesd | `Sandbox.connect(url=..., token=...)` |
 | Tart, Hyper-V, Android emulator, OSWorld | Legacy Python adapters |
@@ -64,23 +64,23 @@ Shell, files, terminals and the other Sandbox interfaces are unaffected.
 
 See the [wire contract](../../cua-driver/docs/mcp-envelope-carrier.md) for limits.
 
-## Any image, local or cloud
+## Any image, locally
 
-The same code runs locally and in the cloud. Three separate choices, each
-optional:
+Cua Cloud has ended; use a local sandbox or your own machine. Three separate
+choices, each optional:
 
-- `on`: `"local"` or `"cloud"` (`local=True`/`False` is the same switch).
+- `on`: `"local"` (`on="cloud"` and `local=False` raise: Cua Cloud has ended).
 - `kind`: `"auto"`, `"container"` or `"vm"`.
 - `runtime`: the engine. `"auto"`, or locally `gvisor`/`runc` (containers)
-  and `qemu`/`lume` (VMs); in the cloud `gvisor` and `kubevirt`. A combination
+  and `qemu`/`lume` (VMs). A combination
   that does not exist raises `InvalidPlacement`, listing the valid values.
 
 Unset values come from `CUA_DEFAULT_ON`/`CUA_DEFAULT_KIND`/`CUA_DEFAULT_RUNTIME`,
-then `~/.cua/config.toml` (`cua config set default.on cloud`), then
+then `~/.cua/config.toml`, then
 `local`/`auto`/`auto`.
 
 ```python
-from cua_sandbox import CloudOptions, Image, Sandbox, http
+from cua_sandbox import Image, Sandbox, http
 
 async with Sandbox.ephemeral(
     Image.from_registry("python:3.12-slim"),
@@ -88,8 +88,7 @@ async with Sandbox.ephemeral(
     env={"FOO": "bar"},
     services={"web": 8000},              # named guest ports
     wait_for=http("web", "/"),           # or tcp("web"), or a list
-    on="cloud",                          # or "local"; unset: your default
-    cloud=CloudOptions(warm=True),       # cloud-only options
+    on="local",                          # the default
 ) as sb:
     r = await sb.service("web").request("GET", "/")
     url = await sb.service("web").url()           # usable from this machine
@@ -260,19 +259,6 @@ unless you pass `local=False`. The `cua_sandbox.localhost` module, `Localhost`,
 and the `computer_server`, `http`, `local` and `websocket` transports are
 removed; control the local machine with cua-driver instead.
 
-## Cloud credentials
-
-The cloud backend is Cua Fleet at `https://run.cua.ai` (override with
-`configure(fleet_base_url=...)` or `CUA_FLEET_BASE_URL`). Sign in with
-`cua auth login`, or set `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`. The cloud runs
-amd64 images, does not support snapshots or custom disks, and currently
-supports only `us-east-1`.
-
-A cloud sandbox outlives a crashed process by at most `claim_ttl` (15 minutes
-by default); `await sb.keep_alive(minutes=120)` holds it longer. The first
-start of an image can take a few minutes; `CloudOptions(warm=True)` keeps one
-ready (the default for the canonical images).
-
 ## Guest services and cua-spacesd
 
 Sandboxes are daemon-agnostic: readiness is the provider's "running" plus your
@@ -281,68 +267,4 @@ Sandboxes are daemon-agnostic: readiness is the provider's "running" plus your
 the image has it and raise `SpacesdNotAvailable` otherwise. `await sb.spacesd()`
 returns the SDK's typed `SpacesdClient` and is optional.
 
-## Advanced: dedicated capacity
-
-By default a cloud sandbox comes from shared capacity the SDK manages per image
-and shape. To own a named, sized pool, apply one and claim from it with
-`CloudOptions(pool=...)`. Supplying a pool never changes its configuration.
-
-```python
-from cua_sandbox import CloudOptions, Image, Pool, Sandbox
-
-pool = await Pool.apply(
-    Image.linux(),
-    name="desktop-workspace",
-    replicas=1,
-    cpu=4,
-    memory_mb=4096,
-    services={"env": 3211, "web": 8080},
-)
-
-sb = await Sandbox.create(cloud=CloudOptions(pool="desktop-workspace"), name="workflow-123")
-reference = sb.to_dict()
-await sb.disconnect()  # the claim remains held
-
-# A later process re-resolves the live claim.
-sb = await Sandbox.from_dict(reference)
-await sb.keep_alive(minutes=30)
-await sb.close()  # idempotently releases the claim
-```
-
-`Pool.claim()` is also awaitable and an async context manager:
-
-```python
-async with pool.claim(name="job-123") as sb:
-    await sb.shell.run("echo hello")
-```
-
-A pool can scale with claim demand instead of a static `replicas` count:
-
-```python
-from cua_sandbox import Image, Pool, WarmPoolAutoscaling
-
-pool = await Pool.apply(
-    Image.linux(),
-    name="desktop-workspace",
-    cpu=4,
-    memory_mb=4096,
-    autoscaling=WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10),
-)
-```
-
-- Pool names are globally unique across accounts; a name owned by another
-  account raises `PoolAccessDeniedError`.
-- A pool's runtime follows the image: a container rootfs runs on gVisor, a
-  containerDisk (`kind="vm"`) on KubeVirt. Pass `runtime=` to `Pool.apply`, or
-  `Sandbox.create(..., on="cloud", runtime=...)`, to choose; a mismatch raises
-  before anything is created.
-- Shared-capacity limits: `CloudOptions(max_pool_size=..., claim_ttl=...)`, or
-  `CUA_FLEET_MAX_POOL_SIZE`, `CUA_FLEET_CLAIM_TTL`, `CUA_FLEET_WARM` and
-  `CUA_FLEET_POOL_IDLE_GC` (`off` disables automatic GC).
-- The flat `pool=`, `warm=`, `max_pool_size=` and `claim_ttl=` keywords still
-  work and warn; pass them in `cloud=`.
-- `Pool.reconcile(CreatePoolRequest(...))` and
-  `Template.reconcile(CreateTemplateRequest(...))` remain for generated-schema
-  configuration.
-
-Cua Cloud (Fleets) ended on 16 October 2026; see [Cua Cloud (Fleets) has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+Cua Cloud has ended; see [Cua Cloud has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended). `on="cloud"`, `local=False`, `CloudOptions`, `Pool` and `cua_sandbox.pools` now raise that error.

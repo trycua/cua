@@ -384,7 +384,7 @@ export function SettingsPanel({
     signIn: phase,
     canSignOut: Boolean(auth) && Boolean(identity),
     menuBar,
-    defaultLocation: defaultLocation?.value === "cloud" ? "cloud" : "local",
+    defaultLocation: "local",
     locationLockedBy: defaultLocation?.source === "env" ? (defaultLocation.env ?? "CUA_DEFAULT_ON") : null,
     telemetry: telemetryView
       ? {

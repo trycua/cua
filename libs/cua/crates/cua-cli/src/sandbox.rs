@@ -1311,10 +1311,17 @@ fn print(out: &mut dyn Write, v: serde_json::Value, json: bool, text: impl FnOnc
 /// flags, else `--pool` means the cloud, else the user defaults
 /// (`cua config`, `CUA_DEFAULT_*`), each with its source.
 pub fn resolve_placement(a: &CreateArgs) -> Result<cua_sandbox_core::settings::Resolved, CuaError> {
-    let on = a.on.clone().or_else(|| a.pool.as_ref().map(|_| On::Cloud));
+    // Cua Cloud has ended: `--pool` (a cloud pool, or its template run
+    // locally) and `--on cloud`, given or as the default.
+    if a.pool.is_some() {
+        return Err(auth::cloud_ended());
+    }
     let r = settings()?
-        .resolve(on, a.kind, a.runtime.clone())
+        .resolve(a.on.clone(), a.kind, a.runtime.clone())
         .map_err(|e| CuaError::InvalidArgument(e.0))?;
+    if r.on == On::Cloud {
+        return Err(auth::cloud_ended());
+    }
     cua_sandbox_core::placement::validate(&r.on, r.kind, &r.runtime)
         .map_err(|e| CuaError::InvalidPlacement(e.message))?;
     Ok(r)
@@ -1792,20 +1799,8 @@ pub async fn run(
             let _ = all; // deprecated no-op: everything is the default
             return ls(cua, local, cloud, !no_size, json_global, out).await;
         }
-        SandboxCmd::KeepAlive { name, at, duration } => {
-            let name = at.apply(&name)?;
-            let sb = sbx.connect(name.clone()).await?;
-            sb.keep_alive(duration).await?;
-            let until =
-                std::time::SystemTime::now() + std::time::Duration::from_secs(u64::from(duration));
-            let until = humantime::format_rfc3339_seconds(until).to_string();
-            print(
-                out,
-                serde_json::json!({"name": name, "expires_at": until}),
-                json_global,
-                || format!("Sandbox '{name}' is kept alive until {until}"),
-            );
-        }
+        // Extends a Fleet claim's lease: Cua Cloud has ended.
+        SandboxCmd::KeepAlive { .. } => return Err(auth::cloud_ended()),
         SandboxCmd::Cp { src, dst, at } => return cp(cua, &src, &dst, at, json_global, out).await,
         SandboxCmd::Url {
             name,
@@ -3374,30 +3369,27 @@ mod tests {
     #[test]
     fn placement_resolves_flags_then_pool_then_defaults() {
         let _env = crate::util::test_env::isolated();
-        let a = CreateArgs {
+        // Cua Cloud has ended: --pool (either location) and --on cloud.
+        let ended = |a: &CreateArgs| {
+            let e = resolve_placement(a).unwrap_err();
+            assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
+        };
+        ended(&CreateArgs {
             pool: Some("p".into()),
             ..Default::default()
-        };
-        assert_eq!(resolve_placement(&a).unwrap().on, On::Cloud);
-        let a = CreateArgs {
+        });
+        ended(&CreateArgs {
             on: Some(On::Local),
             pool: Some("p".into()),
             ..Default::default()
-        };
-        assert_eq!(resolve_placement(&a).unwrap().on, On::Local);
-        let a = CreateArgs::default();
-        assert_eq!(resolve_placement(&a).unwrap().on, On::Local);
-        let a = CreateArgs {
+        });
+        ended(&CreateArgs {
             on: Some(On::Cloud),
             runtime: Some(Runtime::Qemu),
             ..Default::default()
-        };
-        let e = resolve_placement(&a).unwrap_err();
-        assert!(
-            e.to_string()
-                .contains("valid runtime: auto, gvisor, kubevirt"),
-            "{e}"
-        );
+        });
+        let a = CreateArgs::default();
+        assert_eq!(resolve_placement(&a).unwrap().on, On::Local);
     }
 
     #[test]

@@ -215,6 +215,7 @@ class TestCloudAuth:
         with pytest.raises(sandboxes.CloudAuthError, match="cua auth login"):
             sandboxes.cloud_auth_source(lambda: None)
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     def test_cloud_run_stops_before_any_claim_without_credentials(
         self, fake_sdk, monkeypatch, tmp_path, capsys
     ):
@@ -313,6 +314,7 @@ class Recorder:
 
 
 class TestBatchRunner:
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     def test_cloud_batch_claims_one_pool_sized_to_concurrency(self, fake_sdk, task_dir, tmp_path):
         statuses = []
         recorder = Recorder()
@@ -353,6 +355,7 @@ class TestBatchRunner:
         )
         assert ("s0", "running") in statuses and ("s2", "failed") in statuses
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     def test_first_cloud_claim_per_pool_is_single_flight(self, fake_sdk, task_dir, tmp_path):
         order = []
         real = fake_sdk.Sandbox.ephemeral
@@ -390,6 +393,7 @@ class TestBatchRunner:
         )
         assert results[0].backend == "local-gvisor"
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     def test_cancel_releases_every_claim(self, fake_sdk, task_dir, tmp_path):
         fake_sdk.delay = 30  # hold the claims until cancelled
         runner = BatchRunner(Target(on="cloud", concurrency=3), AgentOptions(oracle=True))
@@ -482,6 +486,7 @@ if sys.platform == "win32":  # pragma: no cover
     pytestmark = pytest.mark.skip("fcntl-based run bookkeeping")
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_pool_image_opens_a_claim_from_that_pool(monkeypatch):
     from cua_bench.targets import resolve_env_spec as resolve
 

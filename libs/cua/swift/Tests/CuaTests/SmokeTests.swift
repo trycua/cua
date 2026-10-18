@@ -79,10 +79,13 @@ struct Fixtures {
             .appendingPathComponent("cua-swift-\(UUID().uuidString)")
         let cua = try Cua.embedded(stateDir: dir.path, fleetFromEnv: false)
         #expect(cua.mode() == .embedded)
+        // Cua Cloud has ended: `fleet()` fails with the one message, as
+        // `Unsupported`, and never connects.
         do {
             _ = try cua.fleet()
-            Issue.record("expected ProviderNotConfigured")
-        } catch CuaError.ProviderNotConfigured {
+            Issue.record("expected Unsupported (Cua Cloud has ended)")
+        } catch CuaError.Unsupported(let message) {
+            #expect(message.contains("Cua Cloud has ended"))
         }
     }
 

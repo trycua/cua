@@ -1457,7 +1457,7 @@ public final class AppModel {
                 show(error: LiveSpacesBackend.words(error))
             }
         case "default-location":
-            settings.defaultLocation = option == "cloud" ? .cloud : .local
+            settings.defaultLocation = .local  // Cua Cloud has ended: only This Mac is a default
             saveSettings()
         case "auto-connect":
             settings.autoConnect = option == "on"

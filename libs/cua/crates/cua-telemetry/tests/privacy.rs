@@ -975,7 +975,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(e.props["failed_phase"], "other");
     assert_eq!(e.props["error_kind"], "other");
     assert_eq!(e.props["time_bucket"], "gte_30m");
-    assert_eq!(e.props["location"], "cloud");
+    // Cua Cloud has ended: never reported as `cloud` any more.
+    assert_eq!(e.props["location"], "other");
     assert_eq!(e.props["gpu"], true);
     let disk = events::space_create(
         &events::SpaceCreate {
@@ -1088,7 +1089,7 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     let s = events::space_create_started("cloud", "windows", "vm", true);
     assert_eq!(
         (&s.props["location"], &s.props["gpu"]),
-        (&serde_json::json!("cloud"), &serde_json::json!(true))
+        (&serde_json::json!("other"), &serde_json::json!(true))
     );
     let v = events::volume_setup(
         &events::VolumeSetup {

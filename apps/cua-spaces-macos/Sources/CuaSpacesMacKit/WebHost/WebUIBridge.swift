@@ -556,7 +556,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let pendingId = try string(args, "pendingId")
         guard appCreatesIsPending(id: pendingId) else { throw Failure.badArgs("pendingId: pending:<id>") }
         guard let config = args["config"] as? [String: Any] else { throw Failure.badArgs("config: object") }
-        let createArgs = try Self.createArgs(config, defaultOn: model.settings.defaultLocation == .cloud ? "cloud" : "local")
+        let createArgs = try Self.createArgs(config, defaultOn: "local")
         // The page sends the plan's OS (the pending row's icon).
         let os = (args["os"] as? String).flatMap(AppSpaceOs.init(word:)) ?? .unknown
         let id: String

@@ -7,6 +7,7 @@ import warnings
 from dataclasses import replace
 from typing import Any, Callable, Coroutine, Generic, Optional, TypeVar, cast
 
+from cua_sandbox._ended import CloudEnded
 from cua_sandbox._sdk import ENV_SERVICE
 from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox
@@ -149,6 +150,7 @@ class Template:
 
     @classmethod
     async def reconcile(cls, request: CreateTemplateRequest) -> "Template":
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         if not isinstance(request, CreateTemplateRequest):
             raise TypeError("Template.reconcile requires a CreateTemplateRequest")
         client = _FleetClient()
@@ -338,6 +340,7 @@ class Pool:
 
     @classmethod
     async def reconcile(cls, request: CreatePoolRequest) -> "Pool":
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         if not isinstance(request, CreatePoolRequest):
             raise TypeError("Pool.reconcile requires a CreatePoolRequest")
         client = _FleetClient()
@@ -355,6 +358,7 @@ class Pool:
 
     @classmethod
     async def get(cls, name: str) -> "Pool":
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         client = _FleetClient()
         try:
             return cls(await client.get_pool(name))
@@ -379,6 +383,7 @@ class Pool:
         runtime=...)`` still works and is converted to the new one, with a
         ``DeprecationWarning``.
         """
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         if (args and isinstance(args[0], Image)) or "image" in kwargs:
             warnings.warn(
                 "Pool.apply(image, name=..., ...) is deprecated; use "
@@ -482,6 +487,7 @@ class Pool:
         whose ``spec`` / ``options`` are the native records), or with
         ``terraform=True`` the equivalent Terraform ``fleets_pool`` block
         (attributes the provider lacks yet are commented)."""
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         exported = await call_native(native_fleet().export_pool(name))
         if terraform:
             return cast(str, exported.terraform)
@@ -498,6 +504,7 @@ class Pool:
         """Raise :class:`~cua_sandbox.PoolSpecMismatch` (with a readable diff)
         when the set fields of ``spec`` differ from pool ``name``'s
         template."""
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         await call_native(native_fleet().check_pool_spec(name, spec.native()))
 
     @staticmethod
@@ -505,6 +512,7 @@ class Pool:
         """Lay the set fields of ``spec`` over pool ``name``'s template and
         write it (the pool's capacity is kept; a no-op when nothing
         differs)."""
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         await call_native(native_fleet().apply_pool_template(name, spec.native()))
 
     async def _claim_with_token(
@@ -544,6 +552,7 @@ class Pool:
 
     async def delete(self) -> None:
         """Delete this Fleet pool."""
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         client = _FleetClient()
         try:
             await client.delete_pool(self._resource)
@@ -578,6 +587,7 @@ class Pool:
         name: str | None = None,
         ttl_seconds_after_created: int | None = None,
     ) -> _ClaimHandle:
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         spec = self._claim_spec(spec, ttl_seconds_after_created)
         request = CreateClaimRequest(pool=self._resource, spec=spec, name=name)
         client = _FleetClient()
@@ -611,6 +621,7 @@ class Pool:
         spec must set ``claim_secrets=True``. The claim waits (at most 90 s
         after it binds) until the sandbox has it, else it is released and
         :class:`~cua_sandbox.ClaimSecretsNotDelivered` is raised."""
+        raise CloudEnded()  # Cua Cloud has ended (CUA-1854)
         claim_agent_type = agent_type or self._agent_type
         service = claim_service_for(claim_agent_type, service)
         if claim_token is not None:

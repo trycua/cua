@@ -125,6 +125,35 @@ pub fn env_token_command(token: &str) -> Vec<String> {
     ]
 }
 
+/// Cua Cloud has ended: `Cua::fleet()` and every cloud create fail with this
+/// message (`CLOUD_ENDED` in cua-sandbox-core). The live Fleet lanes skip
+/// with `CLOUD_ENDED_SKIP`, which run.py allows under --strict.
+pub const CLOUD_ENDED: &str = "Cua Cloud has ended";
+pub const CLOUD_ENDED_SKIP: &str = "Cua Cloud has ended (CUA-1854): there is no live Fleet lane";
+
+pub fn is_cloud_ended(e: &CuaError) -> bool {
+    matches!(e, CuaError::Unsupported(m) if m.contains(CLOUD_ENDED))
+}
+
+/// `c.fleet()` and a cloud create (`on: "cloud"`, shaped further by `shape`)
+/// fail with the one `Unsupported` message, even when `c` holds Fleet
+/// credentials; nothing is created.
+pub async fn assert_cloud_ended(c: &Arc<Cua>, shape: impl FnOnce(&mut SandboxCreateOptions)) -> Res {
+    match c.fleet() {
+        Err(e) => assert!(is_cloud_ended(&e), "{e}"),
+        Ok(_) => panic!("fleet() must fail: Cua Cloud has ended"),
+    }
+    let mut o = opts("cloud");
+    o.image = "registry.test/cua-e2e:fake".into();
+    shape(&mut o);
+    match c.sandboxes().create(o).await {
+        Err(e) => assert!(is_cloud_ended(&e), "{e}"),
+        Ok(_) => panic!("a cloud create must fail: Cua Cloud has ended"),
+    }
+    assert!(!c.sandboxes().list(None).await?.iter().any(|s| s.location == "cloud"));
+    Ok(())
+}
+
 /// `None` when `lane` can run here, else the skip reason.
 pub fn lane_enabled(lane: &str) -> Option<String> {
     match lane {
@@ -134,20 +163,8 @@ pub fn lane_enabled(lane: &str) -> Option<String> {
         "container" => (!flag("CUA_E2E_CONTAINER")).then(|| "set CUA_E2E_CONTAINER=1 for the container lane".into()),
         "qemu" => (!flag("CUA_E2E_QEMU")).then(|| "set CUA_E2E_QEMU=1 for the QEMU lane".into()),
         "lume" => (!flag("CUA_E2E_LUME")).then(|| "set CUA_E2E_LUME=1 for the Lume lane".into()),
-        "fleet" => {
-            if !flag("CUA_E2E_FLEET") {
-                Some("set CUA_E2E_FLEET=1 for live Fleet".into())
-            } else if std::env::var("FLEETS_TOKEN").is_err() && std::env::var("CUA_CLIENT_ID").is_err() {
-                Some("no Fleet credentials".into())
-            } else {
-                None
-            }
-        }
-        "fleet-env" => lane_enabled("fleet").or_else(|| {
-            std::env::var("CUA_E2E_FLEET_ENV_IMAGE").is_err().then(|| {
-                "CUA_E2E_FLEET_ENV_IMAGE is unset: no linux (spacesd) image in a registry Fleet can pull".into()
-            })
-        }),
+        // Cua Cloud has ended (CUA-1854): there is no live Fleet to run on.
+        "fleet" | "fleet-env" => Some(CLOUD_ENDED_SKIP.into()),
         "conformance" => (!flag("CUA_E2E_CONFORMANCE") || !flag("CUA_E2E_CONTAINER"))
             .then(|| "set CUA_E2E_CONTAINER=1 CUA_E2E_CONFORMANCE=1 to run the spacesd conformance suite".into()),
         other => panic!("unknown lane {other}"),

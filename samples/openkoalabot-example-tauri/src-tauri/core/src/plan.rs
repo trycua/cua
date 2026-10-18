@@ -11,7 +11,7 @@
 //! | Where | Call |
 //! |---|---|
 //! | This machine | `Spaces::create(SpaceCreate { on: local, image, kind, runtime, name, cpus, memory_mb, spacesd })` |
-//! | Cua Cloud | `Spaces::create(SpaceCreate { on: cloud, image, kind, runtime, name, spacesd })` |
+//! | Cua Cloud | `Spaces::create(SpaceCreate { on: cloud, image, kind, runtime, name, spacesd })`; Cua Cloud has ended, so it fails with `CLOUD_ENDED` |
 //!
 //! `kind` comes from the entry's `variant` (container or vm) and `runtime`
 //! from its `local` (container: auto, gVisor when available; qemu; lume) or

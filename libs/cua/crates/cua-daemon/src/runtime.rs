@@ -198,7 +198,9 @@ pub struct Listing {
 }
 
 /// The account's live Fleet claims as records (`location` `cloud`).
-/// Namespaces this principal may not read are skipped.
+/// Namespaces this principal may not read are skipped. Unused since Cua
+/// Cloud ended; removed with the Fleet runtime.
+#[allow(dead_code)]
 async fn cloud_claims(fleet: &FleetClient) -> Result<Vec<SandboxRecord>> {
     let namespaces = fleet
         .sdk()
@@ -690,7 +692,9 @@ impl Runtime {
         };
         let provider = match &resolved.on {
             On::Local => ProviderKind::Local,
-            On::Cloud => ProviderKind::Fleet,
+            On::Cloud => {
+                return Err(Error::Unsupported(cua_sandbox_core::CLOUD_ENDED.into()));
+            }
             On::Direct(addr) => {
                 if !addr.is_empty() {
                     req.url = Some(addr.clone());
@@ -1151,47 +1155,24 @@ impl Runtime {
     }
 
     /// The sandbox listing every surface shows: the known sandboxes of
-    /// `provider` (all when `None`) and, with `include_cloud` when the
-    /// filter allows cloud rows, the account's live Fleet claims, each
-    /// tagged with its `location`. The cloud part never fails the listing:
-    /// without Fleet credentials it is skipped silently (a warning only when
-    /// only cloud rows were asked for), and a Fleet error or a Fleet call
-    /// slower than [`LIST_CLOUD_TIMEOUT`] becomes a warning.
+    /// `provider` (all when `None`), each tagged with its `location`. Cua
+    /// Cloud has ended, so `include_cloud` no longer adds the account's
+    /// Fleet claims (Fleet is never called).
     pub async fn list_filtered(
         &self,
         provider: Option<ProviderKind>,
         include_cloud: bool,
     ) -> Result<Listing> {
-        let mut out: BTreeMap<String, SandboxRecord> = self
+        let out: BTreeMap<String, SandboxRecord> = self
             .list(provider)
             .await?
             .into_iter()
             .map(|r| (r.id.clone(), r))
             .collect();
-        let mut warnings = Vec::new();
-        if include_cloud && provider.is_none_or(|p| p == ProviderKind::Fleet) {
-            let cloud = match self.fleet() {
-                Ok(fleet) => {
-                    match tokio::time::timeout(LIST_CLOUD_TIMEOUT, cloud_claims(fleet)).await {
-                        Ok(r) => r,
-                        Err(_) => Err(Error::Timeout(format!(
-                            "Fleet did not answer within {}s",
-                            LIST_CLOUD_TIMEOUT.as_secs()
-                        ))),
-                    }
-                }
-                Err(e) => Err(e),
-            };
-            match cloud {
-                Ok(rows) => {
-                    for r in rows {
-                        out.entry(r.id.clone()).or_insert(r);
-                    }
-                }
-                Err(Error::ProviderNotConfigured(_)) if provider.is_none() => {}
-                Err(e) => warnings.push(format!("cloud sandboxes not listed: {e}")),
-            }
-        }
+        // Cua Cloud has ended: the account's cloud claims are no longer
+        // listed (Fleet is never called); `include_cloud` is ignored.
+        let _ = include_cloud;
+        let warnings = Vec::new();
         Ok(Listing {
             sandboxes: out.into_values().collect(),
             warnings,
@@ -1355,33 +1336,11 @@ impl Runtime {
         self.inner.handles.lock().unwrap().remove(name);
     }
 
-    /// Reattaches every running named sandbox on a managed Fleet pool, so
-    /// this (daemon) runtime renews their claims again after a restart.
-    /// Returns the names held. Claims that expired meanwhile are skipped.
+    /// Reattached every running named sandbox on a managed Fleet pool after
+    /// a restart. Cua Cloud has ended: holds nothing.
     pub async fn adopt_managed_fleet_sandboxes(&self) -> Vec<String> {
-        if self.inner.fleet.is_none() {
-            return vec![];
-        }
-        let mut held = vec![];
-        for s in self.inner.sandboxes.state().list_all() {
-            let cua_sandbox_core::SandboxState::Fleet(f) = s else {
-                continue;
-            };
-            if !f
-                .pool_name
-                .starts_with(cua_fleet::autopool::AUTO_POOL_PREFIX)
-                || f.status != "running"
-            {
-                continue;
-            }
-            match self.connect(&format!("cloud:{}", f.name)).await {
-                Ok(_) => held.push(f.name),
-                Err(e) => {
-                    tracing::info!(sandbox = %f.name, error = %e, "managed Fleet sandbox not reattached")
-                }
-            }
-        }
-        held
+        // Cua Cloud has ended: nothing to reattach, and Fleet is never called.
+        vec![]
     }
 
     /// Restarts.

@@ -239,6 +239,7 @@ class TestFleetServerPortForwarding:
     def _select_fleet(self, monkeypatch):
         monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: api_key is None))
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     async def test_create_forwards_server_port_to_the_managed_pool(self):
         # Was test_create_with_fleet_image_requires_explicit_pool.
         apply = AsyncMock()
@@ -259,6 +260,7 @@ class TestFleetServerPortForwarding:
         apply.assert_not_awaited()
         assert acquire.await_args.kwargs["server_port"] == 5000
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     async def test_ephemeral_forwards_server_port(self):
         claimed = _managed_sandbox()
         acquire = AsyncMock(return_value=claimed)
@@ -275,6 +277,7 @@ class TestFleetServerPortForwarding:
         assert acquire.await_args.kwargs["server_port"] == 5000
         claimed.close.assert_awaited_once()
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     async def test_create_passes_server_port_to_fleet_transport(self):
         # _create (the sandbox() helper path) routes to the managed pool too.
         acquire = AsyncMock(return_value=_managed_sandbox())
@@ -292,6 +295,7 @@ class TestFleetServerPortForwarding:
 
         assert acquire.await_args.kwargs["server_port"] == 5000
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     async def test_existing_pool_does_not_pass_server_port_to_fleet_transport(self):
         transport = _make_cloud_transport(name="existing-pool")
 
@@ -368,6 +372,7 @@ class TestEphemeralCleanup:
     def _select_fleet(self, monkeypatch):
         monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: api_key is None))
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     async def test_ephemeral_destroys_on_normal_exit(self):
         claimed = _managed_sandbox()
         with patch("cua_sandbox._autopool.acquire", new=AsyncMock(return_value=claimed)):
@@ -380,6 +385,7 @@ class TestEphemeralCleanup:
 
         claimed.close.assert_awaited_once()
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     async def test_ephemeral_destroys_on_test_failure(self):
         claimed = _managed_sandbox()
         with patch("cua_sandbox._autopool.acquire", new=AsyncMock(return_value=claimed)):
@@ -393,6 +399,7 @@ class TestEphemeralCleanup:
 
         claimed.close.assert_awaited_once()
 
+    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     async def test_ephemeral_propagates_claim_failure(self):
         acquire = AsyncMock(side_effect=httpx.ReadTimeout("poll timed out"))
         with patch("cua_sandbox._autopool.acquire", new=acquire):

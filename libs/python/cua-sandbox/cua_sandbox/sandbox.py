@@ -82,6 +82,7 @@ except ImportError:
 
 from cua_sandbox import _placement, _refs
 from cua_sandbox._config import has_fleet_access
+from cua_sandbox._ended import CloudEnded
 from cua_sandbox._refs import AmbiguousSandbox  # noqa: F401 - re-exported
 from cua_sandbox._sdk import (  # noqa: F401 - InvalidPlacement is re-exported
     ENV_SERVICE,
@@ -260,7 +261,10 @@ async def _lookup(name: str, local: Optional[bool]) -> tuple[str, bool]:
             f"{name}: a direct machine is not managed by cua-sandbox; connect to it with "
             f"Sandbox.connect({name!r})"
         )
-    return plain, bool(is_local)
+    if not is_local:
+        # A name that is not a local sandbox was a cloud one.
+        raise CloudEnded()
+    return plain, True
 
 
 def _fleet_lifecycle_unsupported(name: str, operation: str) -> Unsupported:
@@ -2025,6 +2029,8 @@ class Sandbox:
         if local is False:
             return await cls._list_cloud(api_key=api_key)
         rows = await cls._list_local()
+        # Cua Cloud has ended (CUA-1854): the default listing is local only.
+        return rows
         from cua_sandbox._config import (
             get_api_key,
             has_fleet_auth,
@@ -2148,6 +2154,7 @@ class Sandbox:
 
     @classmethod
     async def _list_cloud(cls, *, api_key: Optional[str] = None) -> "list[SandboxInfo]":
+        raise CloudEnded()
         if not cls._uses_fleet(api_key):
             from cua_sandbox.transport.cloud import cloud_list_vms
 
@@ -2647,6 +2654,11 @@ class Sandbox:
             await sb._connect()
             _record_sandbox_create(sb, image=None, local=local, ephemeral=False, t_start=_t_start)
             return sb
+
+        if not local and not (image and runtime):
+            # Cua Cloud has ended (CUA-1854): a pool claim, a cloud create
+            # and a connect by cloud name all stop here.
+            raise CloudEnded()
 
         if pool:
             transport = FleetCloudTransport(

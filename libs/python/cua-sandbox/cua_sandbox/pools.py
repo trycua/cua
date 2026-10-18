@@ -1,27 +1,35 @@
-"""Managed Fleet pools: list them and garbage-collect them.
+"""Managed Fleet pools: Cua Cloud has ended (CUA-1854).
 
-``Sandbox.ephemeral(image, local=False)`` claims sandboxes from this
-account's managed pools (``cua-auto-*``), one per image spec, created on
-first use and scaled to zero when idle. Idle pools are deleted automatically
-after ``CUA_FLEET_POOL_IDLE_GC``; these calls inspect them or collect now.
-
-    from cua_sandbox import pools
-
-    for pool in await pools.list_pools():
-        print(pool.name, pool.claims, pool.last_used)
-    report = await pools.gc(idle_after=1800)
+Every call raises :class:`~cua_sandbox._ended.CloudEnded`; the module goes
+away in the next minor release.
 """
 
+from typing import Any
+
+from cua_sandbox._ended import CloudEnded
 from cua_sandbox._autopool import (
     ClaimInfo,
     GcReport,
     ManagedPoolInfo,
-    gc,
-    gc_pools,
     is_managed_pool_name,
-    list_claims,
-    list_pools,
 )
+
+
+async def list_pools(*args: Any, **kwargs: Any) -> list[ManagedPoolInfo]:
+    raise CloudEnded()
+
+
+async def list_claims(*args: Any, **kwargs: Any) -> list[ClaimInfo]:
+    raise CloudEnded()
+
+
+async def gc(*args: Any, **kwargs: Any) -> GcReport:
+    raise CloudEnded()
+
+
+async def gc_pools(*args: Any, **kwargs: Any) -> GcReport:
+    raise CloudEnded()
+
 
 __all__ = [
     "ClaimInfo",

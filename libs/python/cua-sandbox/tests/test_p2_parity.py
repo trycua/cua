@@ -139,6 +139,7 @@ def _capture(monkeypatch) -> list:
     return seen
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_cloud_create_hands_sidecars_secret_and_layers_to_the_sdk(monkeypatch):
     pytest.importorskip("cua")
     seen = _capture(monkeypatch)
@@ -163,6 +164,7 @@ def test_cloud_create_hands_sidecars_secret_and_layers_to_the_sdk(monkeypatch):
     assert (o.on, o.runtime) == ("cloud", "gvisor"), "a build's output is a container rootfs"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_cloud_create_passes_an_explicit_warm(monkeypatch):
     pytest.importorskip("cua")
     seen = _capture(monkeypatch)
@@ -172,6 +174,7 @@ def test_cloud_create_passes_an_explicit_warm(monkeypatch):
     assert seen[0].sidecars == [] and seen[0].registry_secret is None and seen[0].build is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_an_existing_pool_compares_sidecars_with_its_template(monkeypatch):
     from cua_sandbox import Pool, PoolSpecMismatch
 
@@ -215,7 +218,8 @@ async def test_cloud_vm_images_take_sidecars(fleet):  # noqa: F811
 
 @pytest.mark.parametrize("reserved", ["main", "sidecars", "sc"])
 async def test_sidecars_reserve_service_names_before_creating_anything(
-    fleet, reserved  # noqa: F811 - fixture
+    fleet,
+    reserved,  # noqa: F811 - fixture
 ):
     with pytest.raises(Exception, match="reserved"):
         await Sandbox.create(

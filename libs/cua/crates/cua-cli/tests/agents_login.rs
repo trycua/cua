@@ -598,6 +598,11 @@ impl Pty {
         }
     }
 
+    /// Everything printed so far.
+    fn output(&self) -> String {
+        self.buf.lock().unwrap().clone()
+    }
+
     fn send(&mut self, s: &str) {
         self.writer.write_all(s.as_bytes()).unwrap();
         self.writer.flush().unwrap();
@@ -702,6 +707,92 @@ async fn interactive_login_onboarding_prompts() {
         assert!(!out.contains("default cua skills"), "--mcp-only: {out}");
         let claude = read_json(&h.dir.path().join(".claude.json"));
         assert_eq!(claude["mcpServers"]["cua"]["command"], "/opt/cua/bin/cua");
+    })
+    .await
+    .unwrap();
+    drop(iss);
+}
+
+/// The sign-in's agent question is answered by a person, not by input that
+/// was already waiting (an extra Enter at an earlier prompt, a key pressed
+/// during the browser step) and not by the input ending.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn onboarding_question_is_not_answered_by_typeahead() {
+    let (iss, _) = issuer(true).await;
+    let mut h = home();
+    h.set("CUA_OIDC_ISSUER", &iss.url)
+        .set("CUA_OIDC_POLL_UNIT_MS", "5")
+        .set("CUA_AUTH_FLOW", "device");
+    mkdirs(&h, &[".claude"]);
+    let h = h;
+    tokio::task::spawn_blocking(move || {
+        let mut p = Pty::spawn(&h, &["auth", "login"]);
+        // Two Enters typed before the question exists.
+        p.send("\r\r");
+        let at = p.expect("[y/n/never]", 0);
+        // Had the stray Enter been taken as "no", this would already be there.
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(
+            !p.output().contains("Skipped."),
+            "typeahead answered the question: {}",
+            p.output()
+        );
+        p.send("y\r");
+        let at = p.expect("✓ Claude Code", at);
+        let at = p.expect("default cua skills? [Y/n]", at);
+        p.send("\r");
+        p.expect("Configure cua MCP server connection? [Y/n]", at);
+        p.send("n\r");
+        let (code, out) = p.wait();
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            h.dir
+                .path()
+                .join(".claude/skills/cua-driver/SKILL.md")
+                .is_file(),
+            "the answer after the wait was taken: {out}"
+        );
+    })
+    .await
+    .unwrap();
+    drop(iss);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn onboarding_question_with_no_answer_changes_nothing() {
+    let (iss, _) = issuer(true).await;
+    let mut h = home();
+    h.set("CUA_OIDC_ISSUER", &iss.url)
+        .set("CUA_OIDC_POLL_UNIT_MS", "5")
+        .set("CUA_AUTH_FLOW", "device");
+    mkdirs(&h, &[".claude"]);
+    let h = h;
+    tokio::task::spawn_blocking(move || {
+        let mut p = Pty::spawn(&h, &["auth", "login"]);
+        p.expect("[y/n/never]", 0);
+        // Ctrl-D at an empty line: the input ends.
+        p.send("\x04");
+        let (code, out) = p.wait();
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            out.contains("No answer (the input ended), so your agents are unchanged."),
+            "{out}"
+        );
+        assert!(!out.contains("Skipped."), "no input is not a 'no': {out}");
+        assert!(
+            !h.dir.path().join(".claude/skills").exists(),
+            "nothing was installed"
+        );
+        // Not recorded as "never": the next sign-in asks again.
+        let cfg = std::fs::read_to_string(h.cua_home().join("config")).unwrap_or_default();
+        assert!(!cfg.contains("never"), "{cfg}");
+        let mut p = Pty::spawn(&h, &["auth", "login"]);
+        p.expect("[y/n/never]", 0);
+        p.send("n\r");
+        let (code, out) = p.wait();
+        assert_eq!(code, 0, "{out}");
     })
     .await
     .unwrap();

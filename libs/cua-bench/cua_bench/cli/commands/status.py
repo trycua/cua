@@ -6,6 +6,8 @@ Usage:
     cb status                           # Show system overview
 """
 
+from cua_bench._ended import CLOUD_ENDED
+
 from ._help import examples
 import asyncio
 import os
@@ -58,10 +60,9 @@ async def _execute_async(args) -> int:
     if system == "Darwin":
         _check("Lume:", shutil.which("lume") is not None, "installed", "not installed (macOS VMs)")
 
-    print(f"\n{BOLD}Cloud{RESET} (--on cloud)")
+    print(f"\n{BOLD}Cloud{RESET}")
     print("-" * 70)
-    source = _cloud_auth()
-    _check("Auth:", bool(source), source, "not signed in (cua auth login)")
+    print(f"  {YELLOW}{CLOUD_ENDED}{RESET}")
 
     print(f"\n{BOLD}Images{RESET} (canonical; any registry image works with --image)")
     print("-" * 70)

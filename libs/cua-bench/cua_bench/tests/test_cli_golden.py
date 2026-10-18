@@ -248,6 +248,7 @@ def test_run_list_info_logs_and_trace_lookup(cli_env, tmp_path, capsys):
     assert [name for name, _ in traces] == ["hello_file_env_v1"]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_dry_run_plans_without_a_sandbox(cli_env, tmp_path, capsys):
     out = tmp_path / "out"
     code = run_cb(["run", str(HELLO), "--dry-run", "--kind", "auto", "--output-dir", str(out)])
@@ -273,6 +274,7 @@ def test_dry_run_plans_without_a_sandbox(cli_env, tmp_path, capsys):
     assert "valid runtime: auto, gvisor, runc, qemu, lume" in capsys.readouterr().out
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_the_user_default_location_drives_cb_run(cli_env, monkeypatch, capsys):
     monkeypatch.setenv("CUA_DEFAULT_ON", "cloud")
     assert run_cb(["run", str(HELLO), "--dry-run"]) == 0
@@ -328,6 +330,7 @@ def test_results_record_what_ran(cli_env, tmp_path):
     ]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_env_ls_and_gc_use_the_sdk_pools_api(cli_env, monkeypatch, capsys):
     from types import SimpleNamespace
 

@@ -228,9 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
         **examples(
             ("Run variant 0 with the oracle solution", "cb run task ./tasks/hello_file_env"),
             (
-                "Run variant 2 with an agent in the cloud",
+                "Run variant 2 with an agent on this machine",
                 "cb run task ./tasks/hello_file_env --variant-id 2 --agent cua-agent "
-                "--model anthropic/claude-sonnet-4-20250514 --on cloud",
+                "--model anthropic/claude-sonnet-4-20250514 --on local",
             ),
             (
                 "Show what would run without starting a sandbox",
@@ -435,7 +435,7 @@ def build_parser() -> argparse.ArgumentParser:
     # login command (top-level) - authenticate with CUA Cloud
     login_parser = subparsers.add_parser(
         "login",
-        help="Sign in for --on cloud (runs `cua auth login`)",
+        help="Removed: Cua Cloud has ended",
         **examples(
             ("Sign in with a browser", "cb login"),
             ("Print the sign-in URL instead of opening a browser", "cb login --no-browser"),

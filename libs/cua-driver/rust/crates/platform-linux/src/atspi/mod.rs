@@ -624,6 +624,20 @@ fn cached_bounds(pid: u32, xid: Option<u64>, idx: usize) -> Option<(i32, i32, u3
     }
 }
 
+pub use native::{is_window_membership_unproven, WindowElement};
+
+/// Whether `get_window_state` may bind this snapshot's elements to window
+/// `xid` as element tokens. See [`native::snapshot_binds_window_for`].
+pub fn snapshot_binds_window(pid: u32, xid: u64, window_scoped: bool, trusted: bool) -> bool {
+    native::snapshot_binds_window_for(pid, xid, window_scoped, trusted)
+}
+
+/// Prove from a fresh walk that `element` still belongs to window `xid`
+/// before acting for that window. See [`native::require_window_element`].
+pub fn require_window_element(pid: u32, xid: u64, element: WindowElement) -> Result<()> {
+    native::require_window_element(pid, xid, element)
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Minimal X11 property-based tree (fallback when AT-SPI is unavailable).

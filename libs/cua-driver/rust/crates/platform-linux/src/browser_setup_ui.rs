@@ -379,7 +379,15 @@ impl SetupUiHandle {
                 .flatten()
                 .filter(|node| node.checked == Some(true))
                 .and_then(|node| node.element_index)
-                .is_some_and(|index| crate::atspi::perform_action(self.pid, index).is_ok());
+                .is_some_and(|index| {
+                    crate::atspi::require_window_element(
+                        self.pid,
+                        self.window_id,
+                        crate::atspi::WindowElement::Index(index),
+                    )
+                    .is_ok()
+                        && crate::atspi::perform_action(self.pid, index).is_ok()
+                });
         if restored {
             self.enabled_remote_debugging = false;
         }

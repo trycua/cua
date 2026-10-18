@@ -27,8 +27,8 @@ pub mod targeted;
 pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
 pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
-    real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
-    KeyboardDeliveryReport, MPX_UINPUT_PATH,
+    real_keyboard_input_available, send_popup_keyboard_key, send_popup_keyboard_text,
+    send_virtual_keyboard_key, send_virtual_keyboard_text, KeyboardDeliveryReport, MPX_UINPUT_PATH,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -217,6 +217,37 @@ fn track_click_popups(cursor_id: &str, opened: impl IntoIterator<Item = u64>) {
     windows.extend(opened);
     windows.sort_unstable();
     windows.dedup();
+}
+
+pub fn popup_click_session(window: u64) -> Option<String> {
+    let pointers = mpx_pointers().lock().unwrap();
+    let appeared = mpx_click_popups().lock().unwrap();
+    popup_owner(window, &appeared, |id| pointers.contains_key(id))
+}
+
+fn popup_owner(
+    window: u64,
+    appeared: &HashMap<String, ClickPopups>,
+    live: impl Fn(&str) -> bool,
+) -> Option<String> {
+    appeared
+        .iter()
+        .find(|(id, popups)| popups.windows.contains(&window) && live(id))
+        .map(|(id, _)| id.clone())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("the session whose click opened the popup has no master pair any more")]
+pub struct PopupOwnerGone;
+
+fn popup_owner_guard(owner: &str) -> Result<std::sync::MutexGuard<'static, ()>> {
+    let guard = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !mpx_pointers().lock().unwrap().contains_key(owner) {
+        return Err(PopupOwnerGone.into());
+    }
+    Ok(guard)
 }
 
 /// Take the MPX operation lock for one call on `cursor_id`, stamp its last
@@ -1902,11 +1933,7 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
     if attrs.width <= 1 || attrs.height <= 1 {
         return None;
     }
-    let pid = crate::x11::window_pid(child).or_else(|| {
-        window_children(display, child)
-            .into_iter()
-            .find_map(crate::x11::window_pid)
-    });
+    let pid = window_or_child_pid(display, child);
     Some(PopupWindow {
         window: child,
         x: attrs.x,
@@ -1915,6 +1942,14 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
         height: attrs.height as u32,
         title: window_title_for_report(display, child),
         pid,
+    })
+}
+
+fn window_or_child_pid(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> Option<u32> {
+    crate::x11::window_pid(window).or_else(|| {
+        window_children(display, window)
+            .into_iter()
+            .find_map(crate::x11::window_pid)
     })
 }
 
@@ -2722,7 +2757,19 @@ pub fn send_virtual_pointer_click(
             click.y,
         );
         effect.retargeted_to = retargeted_to;
-        track_click_popups(cursor_id, effect.popups.iter().map(|popup| popup.window));
+        let target_pid = if effect.popups.is_empty() {
+            None
+        } else {
+            window_or_child_pid(display, click.target_window as x11::xlib::Window)
+        };
+        track_click_popups(
+            cursor_id,
+            effect
+                .popups
+                .iter()
+                .filter(|popup| popup.pid.is_some() && popup.pid == target_pid)
+                .map(|popup| popup.window),
+        );
         Ok(effect)
     })();
 
@@ -5228,6 +5275,55 @@ mod path_tests {
         let mut quiet = quiet_elapsed;
         assert!(popup_wait_over(Some(false), &mut quiet, deadline));
         assert!(popup_wait_over(Some(true), &mut None, now));
+    }
+
+    #[test]
+    fn a_popup_belongs_to_the_live_session_whose_click_saw_it_appear() {
+        use super::{popup_owner, ClickPopups};
+        use std::collections::HashMap;
+        let appeared = HashMap::from([
+            (
+                "ctx".to_owned(),
+                ClickPopups {
+                    windows: vec![25165852],
+                    removal_due: None,
+                },
+            ),
+            ("combo".to_owned(), ClickPopups::default()),
+        ]);
+        let live = |_: &str| true;
+        assert_eq!(
+            popup_owner(25165852, &appeared, live).as_deref(),
+            Some("ctx")
+        );
+        assert_eq!(popup_owner(25165982, &appeared, live), None);
+        assert_eq!(
+            popup_owner(25165852, &appeared, |id: &str| id != "ctx"),
+            None
+        );
+    }
+
+    #[test]
+    fn keys_for_a_popup_neither_stamp_nor_recreate_the_owner_pair() {
+        use super::{
+            mpx_last_use, mpx_pointers, popup_owner_guard, MasterPointerIds, PopupOwnerGone,
+        };
+        let gone = popup_owner_guard("popup-owner-gone").unwrap_err();
+        assert!(gone.is::<PopupOwnerGone>());
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-live".to_owned(),
+            MasterPointerIds {
+                pointer_id: 90,
+                keyboard_id: 91,
+                _slave_pointer_id: 92,
+                slave_keyboard_id: None,
+            },
+        );
+        drop(popup_owner_guard("popup-owner-live").unwrap());
+        mpx_pointers().lock().unwrap().remove("popup-owner-live");
+        let last_use = mpx_last_use().lock().unwrap();
+        assert!(!last_use.contains_key("popup-owner-gone"));
+        assert!(!last_use.contains_key("popup-owner-live"));
     }
 
     #[test]

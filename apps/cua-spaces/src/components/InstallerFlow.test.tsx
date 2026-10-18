@@ -197,21 +197,24 @@ describe("InstallerFlow", () => {
 
     // Mode choice (§8.9), then done.
     expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Access other machines"));
+    click("Continue");
     expect(await screen.findByText("You're all set")).toBeInTheDocument();
     expect(screen.getByText("/Users/ada/.local/bin/cua")).toBeInTheDocument();
     expect(screen.getByText("ada@example.com")).toBeInTheDocument();
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
     expect(screen.getByText("Menu bar only")).toBeInTheDocument();
     expect(drive.tools()).toEqual(["volume_mount_status", "volume_storage"]);
-    // The example prompts scroll under both columns: the core's list, once
-    // for assistive technology (the loop's second copy is hidden).
-    const ticker = screen.getByRole("list", { name: "Example prompts" });
-    const rows = within(ticker).getAllByRole("listitem");
-    expect(rows).toHaveLength(7);
-    expect(rows[0]).toHaveTextContent("\u201Cqa my app on windows, macos and linux\u201D");
-    expect(ticker.querySelectorAll(".ob-ticker-again[aria-hidden='true']")).toHaveLength(7);
-    expect(within(ticker).queryByRole("button")).toBeNull();
+    // Three static example prompts under a label; each copies on click.
+    expect(screen.getByText("Try asking your agent:")).toBeInTheDocument();
+    const prompts = within(screen.getByRole("list", { name: "Try asking your agent:" })).getAllByRole("button");
+    expect(prompts).toHaveLength(3);
+    expect(prompts[0]).toHaveTextContent("\u201COpen a Linux Space and run my test suite in it\u201D");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    fireEvent.click(prompts[0]!);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Open a Linux Space and run my test suite in it"));
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+    expect(document.querySelector(".ob-ticker")).toBeNull();
     click("Start using Cua Spaces");
     expect(onDone).toHaveBeenCalledWith("client");
     expect(host.calls).toEqual(["onboarding:client"]);
@@ -267,7 +270,8 @@ describe("InstallerFlow", () => {
     click("Continue");
     await screen.findByRole("heading", { name: "Cua Volume" });
     click("Continue");
-    fireEvent.click(await screen.findByText("Access other machines"));
+    await screen.findByText("How will you use this machine?");
+    click("Continue");
     click(await screen.findByRole("button", { name: "Start using Cua Spaces" }).then((b) => b.textContent!));
     expect(telemetry.signals).toEqual([]);
     expect(telemetry.log).not.toContain("signals");
@@ -500,11 +504,11 @@ describe("InstallerFlow Cua Volume page", () => {
     expect(await screen.findByText("Not available on this Mac yet")).toBeInTheDocument();
     expect(box()).toBeDisabled();
     expect(box()).not.toBeChecked();
+    // No storage answer: no choice to make.
+    expect(screen.queryByRole("radiogroup")).toBeNull();
     click("Continue");
     expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
     expect(drive.tools()).toEqual(["volume_mount_status", "volume_storage"]);
-    // No storage answer: no choice to make.
-    expect(screen.queryByRole("radiogroup")).toBeNull();
   });
 
   it("shows why mounting failed and stays; unticking an earlier mount unmounts", async () => {
@@ -881,6 +885,24 @@ describe("InstallerFlow launch at login", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledWith("client"));
     expect(loginItem.calls).toEqual([true]);
     expect(readLaunchChoice()).toBe(true);
+  });
+
+  it("is ticked after choosing 'Access other machines' and registers nothing until Start", async () => {
+    const { fakeLoginItemBridge } = await import("../native/loginItem");
+    window.localStorage.clear();
+    const loginItem = fakeLoginItemBridge("notRegistered");
+    render(
+      <InstallerFlow
+        installer={createFakeInstallerBridge()}
+        host={createFakeHostBridge()}
+        initialStep="mode"
+        loginItem={loginItem}
+        onDone={vi.fn()}
+      />,
+    );
+    click("Continue");
+    expect(await screen.findByRole("checkbox", { name: "Launch at login" })).toBeChecked();
+    expect(loginItem.calls).toEqual([]);
   });
 
   it("respects an unticked box", async () => {

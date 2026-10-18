@@ -44,6 +44,30 @@ impl ElectronJs {
         false
     }
 
+    /// Evaluate JavaScript in the Electron app's main (Node.js) process at
+    /// `pid` through its inspector, opening it with SIGUSR1 when no inspector
+    /// is listening yet. Apps built with the inspector fuse off refuse.
+    pub async fn execute_main(javascript: &str, pid: i32) -> anyhow::Result<String> {
+        let existing_ports = listening_ports(pid).await;
+        for &port in &existing_ports {
+            if CdpClient::is_node_inspector(port).await {
+                return CdpClient::evaluate_node(javascript, port).await;
+            }
+        }
+        unsafe {
+            libc::kill(pid, libc::SIGUSR1);
+        }
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            for port in listening_ports(pid).await {
+                if !existing_ports.contains(&port) && CdpClient::is_node_inspector(port).await {
+                    return CdpClient::evaluate_node(javascript, port).await;
+                }
+            }
+        }
+        anyhow::bail!("no Node inspector for Electron pid {pid} (the app may disable it)")
+    }
+
     /// Evaluate JavaScript in the Electron app at `pid` via CDP.
     pub async fn execute(javascript: &str, pid: i32) -> anyhow::Result<String> {
         // Only inspect listeners owned by the requested process. Probing common

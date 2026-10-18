@@ -51,8 +51,16 @@ pub struct MainChrome {
     pub settings_shortcut: String,
     /// With no Spaces: the heading.
     pub empty_title: String,
-    /// With no Spaces: the button.
+    /// With no Spaces: the default Linux Space's tile.
     pub empty_action: String,
+    /// Under it: the time and disk.
+    pub empty_linux_detail: String,
+    /// With no Spaces: the line under the heading.
+    pub empty_detail: String,
+    /// With no Spaces: the default macOS Space's tile.
+    pub empty_macos_action: String,
+    /// Under it: the download size.
+    pub empty_macos_detail: String,
     /// The sidebar's Volume page entry ("Volume"); none while the Cua Volume
     /// experiment is off (the page and its route are hidden; a mounted
     /// volume stays mounted).
@@ -80,9 +88,26 @@ pub fn chrome(input: &ChromeInput) -> MainChrome {
         settings_label: "Settings".into(),
         settings_shortcut: "\u{2318},".into(),
         empty_title: "No Spaces yet".into(),
-        empty_action: "New Space".into(),
+        empty_action: "Linux".into(),
+        // Measured (#4817); catalog sizes omit the runtime and what a Space writes.
+        empty_linux_detail: "About 1 minute \u{b7} 3.2\u{2013}7.1 GB of disk".into(),
+        empty_detail: "Choose a system for your first Space.".into(),
+        empty_macos_action: "macOS".into(),
+        empty_macos_detail: empty_macos_detail(),
         volume_label: volume_shown(input.experiments.as_ref()).then(|| "Volume".into()),
     }
+}
+
+fn empty_macos_detail() -> String {
+    use crate::wizard::{picker_images, platform_size, size_text};
+    let images = picker_images();
+    let found = images.iter().find(|i| i.os == crate::SpaceOs::Macos);
+    let image = found.expect("a macOS image");
+    let cpu = crate::this_host_arch();
+    let arch = crate::run_arch(&image.arch, true, Some(cpu));
+    let row = platform_size(image, arch.as_deref());
+    let text = size_text(row.expect("a macOS download size").download);
+    format!("About {text} download")
 }
 
 /// Whether Cua Volume shows (its page, the menu's sync line): with its
@@ -350,10 +375,18 @@ mod tests {
     fn the_menu_and_the_notch_count_the_same_spaces() {
         use crate::host::{HostSummaryInput, this_machine_space};
         use crate::model::{SpaceOs, SpaceStatus};
+        // A Space your machine "studio" provides (This machine and studio's
+        // own desktop are machines, not Spaces).
         let mut remote = this_machine_space(None, 0, SpaceOs::Linux);
-        remote.id = "relay:studio".into();
-        remote.name = "Studio".into();
+        remote.id = "relay:studio/dev".into();
+        remote.name = "Dev".into();
         remote.status = SpaceStatus::Running;
+        remote.provider = Some(crate::model::SpaceProvider::Relay);
+        remote.host = Some("studio".into());
+        let mut studio = remote.clone();
+        studio.id = "relay:studio".into();
+        studio.name = "Studio".into();
+        studio.host = None;
         let hosting = HostSummaryInput {
             configured: true,
             service_running: true,
@@ -362,9 +395,10 @@ mod tests {
         };
         for (host, extra, want) in [
             (None, vec![], 0),
-            (Some(hosting.clone()), vec![], 1),
+            (Some(hosting.clone()), vec![], 0),
+            (None, vec![studio.clone()], 0),
             (None, vec![remote.clone()], 1),
-            (Some(hosting), vec![remote], 2),
+            (Some(hosting), vec![studio, remote], 1),
         ] {
             let mut spaces = vec![this_machine_space(host.as_ref(), 0, SpaceOs::Macos)];
             spaces.extend(extra);

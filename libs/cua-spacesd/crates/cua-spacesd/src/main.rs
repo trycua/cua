@@ -778,6 +778,19 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
         ));
         ctx.mark_joined_at_start();
         tracing::info!(relay = %join.relay, machine = %machine_id, "joining relay; clients connect to <relay>/m/{machine_id}");
+        // The WireGuard®-based mesh next to the relay connection, when
+        // allowed (`CUA_MESH`, see cua_mesh::policy) and the relay
+        // coordinates one: end-to-end encrypted, direct when possible. The
+        // relay path stays for clients that lack it.
+        let mesh = ctx.mesh_host_config(
+            &join.relay,
+            join.relay_token.as_deref().unwrap_or_default(),
+            join.relay_token_file.clone(),
+            &machine_id,
+            join_config.account.clone(),
+            addr,
+        );
+        tokio::spawn(cua_spacesd_server::mesh_host::run(mesh, shutdown.clone()));
         tokio::spawn(cua_relay::client::run(join_config, shutdown.clone()));
     }
     server.serve(listener).await?;

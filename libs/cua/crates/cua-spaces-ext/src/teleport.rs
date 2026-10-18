@@ -476,9 +476,13 @@ impl AppSessions {
                     self.providers().join(", ")
                 ))
             })?;
+        // Keep the variant the caller named (Microsoft Edge is a Chromium
+        // variant of the Chrome provider): its own profile is the source.
         let app_id = provider
             .app_ids()
-            .first()
+            .iter()
+            .find(|id| id.eq_ignore_ascii_case(app))
+            .or_else(|| provider.app_ids().first())
             .map(|s| s.to_string())
             .unwrap_or_else(|| app.to_string());
         let app_ref = AppRef {
@@ -497,13 +501,25 @@ impl AppSessions {
         self.resolve(app).map(|_| ())
     }
 
+    /// The provider id `app` resolves to (`chrome` for Microsoft Edge), or
+    /// `None` when no provider handles it.
+    pub fn provider_id(&self, app: &str) -> Option<String> {
+        self.resolve(app).ok().map(|(p, _)| p.id().to_string())
+    }
+
     /// The manifest for `app` on this host.
     pub fn manifest(&self, app: &str, scope: TeleportScope) -> Result<TeleportManifest> {
         let (provider, app_ref) = self.resolve(app)?;
         let m = provider
             .manifest(&app_ref, None, scope.transfer())
             .map_err(|e| Error::TeleportRefused(format!("{app}: {e}")))?;
-        Ok(TeleportManifest::from_transfer(provider.id(), scope, m))
+        let mut tm = TeleportManifest::from_transfer(provider.id(), scope, m);
+        // Microsoft Edge goes through the Chrome provider but keeps its own
+        // name, so the approval, the capture and the export read Edge's profile.
+        if cua_teleport::layout::chrome::is_edge(app) {
+            tm.app = app.to_ascii_lowercase();
+        }
+        Ok(tm)
     }
 
     /// Writes the approved items as a session bundle (through the provider's
@@ -556,6 +572,9 @@ pub struct TeleportSelection {
     /// only when the user ticked them in the review. They are re-encrypted
     /// for the destination browser's own key.
     pub include_passwords: bool,
+    /// The sites whose saved passwords to send (the review's own choice of
+    /// passwords); `None`: those of `cookie_domains`.
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// Session teleport on a [`Space`]: what it can import, and the export and
@@ -702,7 +721,12 @@ impl SpaceTeleport for Space {
                 self.id()
             )));
         }
-        self.require(&format!("teleport.{}", approval.app))?;
+        self.require(&format!(
+            "teleport.{}",
+            sessions
+                .provider_id(&approval.app)
+                .unwrap_or_else(|| approval.app.clone())
+        ))?;
         // Local, read-only pre-check: a clear "no such provider" error
         // before the network round trip, not a second capture path.
         sessions.resolve_checked(&approval.app)?;
@@ -728,6 +752,10 @@ impl SpaceTeleport for Space {
             paths: Some(approval.paths.clone()),
             domains: selection.cookie_domains.clone(),
             passwords: selection.include_passwords,
+            password_domains: selection
+                .password_domains
+                .clone()
+                .filter(|_| selection.include_passwords),
         };
         let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
             .await
@@ -756,16 +784,29 @@ impl SpaceTeleport for Space {
                 stage(cua_keyvault::broker::TeleportStage::Importing);
                 out
             }
-            None => client
-                .import_and_teleport_launching(
-                    spec,
-                    self.id().to_string(),
-                    options.save_to_keyvault,
-                    options.launch_after,
-                    stage,
-                )
-                .await
-                .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?,
+            None => {
+                // A narrower choice of passwords goes only to a daemon that
+                // enforces it: an older one would read the passwords of
+                // every chosen site instead.
+                if spec.password_domains.is_some() {
+                    let status = client
+                        .status()
+                        .await
+                        .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
+                    password_domains_enforced(&status)
+                        .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
+                }
+                client
+                    .import_and_teleport_launching(
+                        spec,
+                        self.id().to_string(),
+                        options.save_to_keyvault,
+                        options.launch_after,
+                        stage,
+                    )
+                    .await
+                    .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?
+            }
         };
         let delivery = outcome.deliveries.first();
         Ok(TeleportReceipt {
@@ -779,6 +820,28 @@ impl SpaceTeleport for Space {
             skipped: delivery.map(|d| d.skipped.clone()).unwrap_or_default(),
             launched: delivery.is_some_and(|d| d.launched),
         })
+    }
+}
+
+/// Whether the daemon reads only the saved passwords of the sites picked
+/// for them ([`cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS`]). One that
+/// predates it would ignore the choice and send the passwords of every
+/// chosen site, so a teleport with a narrower choice is refused instead.
+pub fn password_domains_enforced(
+    status: &cua_keyvault::broker::Status,
+) -> std::result::Result<(), String> {
+    if status
+        .features
+        .iter()
+        .any(|f| f == cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS)
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "the Cua Keyvault (version {}) cannot send the passwords of only the sites you picked; \
+             quit and reopen Cua to update it, or send the passwords of the chosen sites",
+            status.version
+        ))
     }
 }
 
@@ -1014,6 +1077,28 @@ async fn teleport_app_broker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An older daemon's status has no `features`: a narrower choice of
+    /// passwords is refused, never sent for it to widen (CUA-1641).
+    #[test]
+    fn a_daemon_that_predates_password_domains_is_refused() {
+        let old: cua_keyvault::broker::Status = serde_json::from_value(serde_json::json!({
+            "version": "0.8.0", "initialized": true, "unlocked": true, "disabled": false,
+            "caller_first_party": true, "caller_display": "Cua", "items": 3, "pending": 0,
+        }))
+        .unwrap();
+        assert!(old.features.is_empty());
+        let why = password_domains_enforced(&old).unwrap_err();
+        assert!(
+            why.contains("0.8.0") && why.contains("only the sites you picked"),
+            "{why}"
+        );
+        let new = cua_keyvault::broker::Status {
+            features: vec![cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS.into()],
+            ..old
+        };
+        assert!(password_domains_enforced(&new).is_ok());
+    }
 
     #[test]
     fn catalog_lists_every_provider_with_names_and_aliases() {

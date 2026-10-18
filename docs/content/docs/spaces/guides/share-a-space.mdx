@@ -106,8 +106,8 @@ tools are `relay_register_space` and `relay_unregister_space`.
 - The relay shares with accounts, not teams: share with each member.
 - Presence cursors travel on the relay stream, not QUIC datagrams, so remote
   cursors update a little less often than on your own network.
-- A cloud Space that is released (for example a paused persistent agent)
-  leaves the relay. Share it again after it is created again.
+- A Space that is released (for example a paused persistent agent in your
+  cloud) leaves the relay. Share it again after it is created again.
 
 <Callout type="warn">
   An editor gets full control of the Space, including anything signed in

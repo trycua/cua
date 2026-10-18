@@ -344,14 +344,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Booting… 36%",
+              "Status: Booting Linux… 36%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Booting…",
+            "previewText": "Booting Linux…",
             "progress": 360,
             "progressText": null
           }
@@ -364,7 +364,7 @@
           "os-omarchy New Space [Starting] 360 36%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, This Mac, Starting 360 Booting…"
+          "os-omarchy New Space, Linux, This Mac, Starting 360 Booting Linux…"
         ]
       }
     },
@@ -388,14 +388,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Booting… 36%",
+              "Status: Booting Linux… 36%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Booting…",
+            "previewText": "Booting Linux…",
             "progress": 361,
             "progressText": null
           }
@@ -408,7 +408,7 @@
           "os-omarchy New Space [Starting] 361 36%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, This Mac, Starting 361 Booting…"
+          "os-omarchy New Space, Linux, This Mac, Starting 361 Booting Linux…"
         ]
       }
     },
@@ -432,14 +432,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 36%",
+              "Status: Starting Cua inside the Space… 36%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 362,
             "progressText": null
           }
@@ -452,7 +452,7 @@
           "os-omarchy New Space [Starting] 362 36%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, This Mac, Starting 362 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 362 Starting Cua inside the Space…"
         ]
       }
     },
@@ -476,14 +476,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 52%",
+              "Status: Starting Cua inside the Space… 52%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 525,
             "progressText": null
           }
@@ -496,7 +496,7 @@
           "os-omarchy New Space [Starting] 525 52%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, This Mac, Starting 525 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 525 Starting Cua inside the Space…"
         ]
       }
     },
@@ -520,14 +520,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 85%",
+              "Status: Starting Cua inside the Space… 85%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 851,
             "progressText": null
           }
@@ -540,7 +540,7 @@
           "os-omarchy New Space [Starting] 851 85%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, This Mac, Starting 851 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 851 Starting Cua inside the Space…"
         ]
       }
     },
@@ -564,14 +564,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 96%",
+              "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 963,
             "progressText": null
           }
@@ -584,7 +584,7 @@
           "os-omarchy New Space [Starting] 963 96%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, This Mac, Starting 963 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 963 Starting Cua inside the Space…"
         ]
       }
     },
@@ -608,14 +608,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 96%",
+              "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 968,
             "progressText": null
           }
@@ -628,7 +628,7 @@
           "os-omarchy New Space [Starting] 968 96%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting Cua inside the Space…"
         ]
       }
     },
@@ -674,14 +674,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 96%",
+              "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 968,
             "progressText": null
           }
@@ -697,7 +697,7 @@
         ],
         "tiles": [
           "os-ubuntu New Space, Linux, This Mac, Starting 10 Starting…",
-          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting Cua inside the Space…"
         ]
       }
     },
@@ -721,14 +721,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Creating… 5%",
+              "Status: Creating the container… 5%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Creating…",
+            "previewText": "Creating the container…",
             "progress": 59,
             "progressText": null
           },
@@ -743,14 +743,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 96%",
+              "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 968,
             "progressText": null
           }
@@ -765,8 +765,8 @@
           "os-omarchy New Space [Starting] 968 96%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 59 Creating…",
-          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 59 Creating the container…",
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting Cua inside the Space…"
         ]
       }
     },
@@ -790,14 +790,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Creating… 12%",
+              "Status: Creating the container… 12%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Creating…",
+            "previewText": "Creating the container…",
             "progress": 124,
             "progressText": null
           },
@@ -812,14 +812,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 96%",
+              "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
               "Architecture: x64"
             ],
             "id": "pending:1",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 968,
             "progressText": null
           }
@@ -834,8 +834,8 @@
           "os-omarchy New Space [Starting] 968 96%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 124 Creating…",
-          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 124 Creating the container…",
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting Cua inside the Space…"
         ]
       }
     },
@@ -859,14 +859,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Creating… 12%",
+              "Status: Creating the container… 12%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Creating…",
+            "previewText": "Creating the container…",
             "progress": 124,
             "progressText": null
           },
@@ -903,7 +903,7 @@
           "os-omarchy New Space [Starting] 987 98%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 124 Creating…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 124 Creating the container…",
           "os-omarchy New Space, Linux, This Mac, Starting 987 Connecting…"
         ]
       }
@@ -928,14 +928,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 17%",
+              "Status: Starting Cua inside the Space… 17%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 172,
             "progressText": null
           },
@@ -972,7 +972,7 @@
           "os-omarchy New Space [Starting] 987 98%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 172 Starting services…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 172 Starting Cua inside the Space…",
           "os-omarchy New Space, Linux, This Mac, Starting 987 Connecting…"
         ]
       }
@@ -997,14 +997,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 83%",
+              "Status: Starting Cua inside the Space… 83%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 831,
             "progressText": null
           },
@@ -1041,7 +1041,7 @@
           "os-omarchy New Space [Starting] 989 98%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting Cua inside the Space…",
           "os-omarchy New Space, Linux, This Mac, Starting 989 Connecting…"
         ]
       }
@@ -1066,14 +1066,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 83%",
+              "Status: Starting Cua inside the Space… 83%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 831,
             "progressText": null
           },
@@ -1110,7 +1110,7 @@
           "os-omarchy New Space [Starting] 989 98%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting Cua inside the Space…",
           "os-omarchy New Space, Linux, This Mac, Starting 989 Downloading image…"
         ]
       }
@@ -1135,14 +1135,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 83%",
+              "Status: Starting Cua inside the Space… 83%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 831,
             "progressText": null
           },
@@ -1179,7 +1179,7 @@
           "os-omarchy New Space [Starting] 1000 100%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting Cua inside the Space…",
           "os-omarchy New Space, Linux, This Mac, Starting 1000 Ready"
         ]
       }
@@ -1204,14 +1204,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 90%",
+              "Status: Starting Cua inside the Space… 90%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 900,
             "progressText": null
           },
@@ -1248,7 +1248,7 @@
           "os-omarchy New Space [Starting] 1000 100%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting services…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting Cua inside the Space…",
           "os-omarchy New Space, Linux, This Mac, Starting 1000 Ready"
         ]
       }
@@ -1273,14 +1273,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Starting services… 90%",
+              "Status: Starting Cua inside the Space… 90%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Ubuntu 24.04",
               "Kind: Container",
               "Architecture: ARM"
             ],
             "id": "pending:2",
-            "previewText": "Starting services…",
+            "previewText": "Starting Cua inside the Space…",
             "progress": 900,
             "progressText": null
           },
@@ -1315,11 +1315,11 @@
         "pending": true,
         "rows": [
           "os-ubuntu New Space [Starting] 900 90%",
-          "os-omarchy Omarchy [Running] - -"
+          "os-omarchy omarchy [Running] - -"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting services…",
-          "os-omarchy Omarchy, Linux, This Mac, Running - -"
+          "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting Cua inside the Space…",
+          "os-omarchy omarchy, Linux, This Mac, Running - -"
         ]
       }
     }

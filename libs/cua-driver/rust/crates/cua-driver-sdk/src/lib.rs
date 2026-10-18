@@ -28,6 +28,7 @@ use thiserror::Error;
 mod abi;
 mod activity_observer;
 mod authorization_host;
+mod cursor_motion;
 mod embedded;
 pub mod remote;
 pub mod remote_foreign;
@@ -43,6 +44,7 @@ pub use authorization_host::{
     DriverAuthorizationAction, DriverAuthorizationDecision, DriverAuthorizationHost,
     DriverAuthorizationHostError, DriverAuthorizationRequest,
 };
+pub use cursor_motion::*;
 pub use embedded::*;
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
 pub use remote_mcp::{
@@ -755,8 +757,15 @@ macro_rules! define_native_window_methods {
 
             pub async fn get_window_state(
                 &self,
-                input: GetWindowStateInput,
+                mut input: GetWindowStateInput,
             ) -> Result<WindowStateOutput, DriverError> {
+                // The typed snapshot is read by programs, not budgeted
+                // against a model context: keep the full response (both tree
+                // representations, platform walk limits) unless the caller
+                // picks a leaner shape.
+                if input.tree_format.is_none() && input.full_output.is_none() {
+                    input.full_output = Some(true);
+                }
                 self.invoke_typed(GetWindowStateInput::TOOL_NAME, input)
                     .await?
                     .window_state_success()
@@ -2247,6 +2256,7 @@ mod tests {
                 session: Some(public.clone()),
                 capture_scope: None,
                 cursor_theme: None,
+                cursor_motion: None,
             })
             .await
             .unwrap();
@@ -3082,6 +3092,7 @@ mod tests {
                 session: Some("run-2".into()),
                 capture_scope: Some(cua_driver_contract::CaptureScope::Auto),
                 cursor_theme: None,
+                cursor_motion: None,
             })
             .await
             .unwrap();

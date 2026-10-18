@@ -1,0 +1,24 @@
+{
+  "$comment": "Raw bytes. Budgets are the sizes on update plus 15%; run `pnpm perf --update` to reset them. firstRenderMs is loose because timing varies by machine.",
+  "entry": 757760,
+  "routes": {
+    "agents": 202752,
+    "keyvault": 172032,
+    "machines": 66560,
+    "notifications": 5120,
+    "onboarding": 69632,
+    "settings": 89088,
+    "settings/about": 76800,
+    "settings/agents": 23552,
+    "settings/devices": 74752,
+    "settings/experiments": 81920,
+    "settings/route": 4096,
+    "spaces": 28672,
+    "spaces/$spaceId": 45056,
+    "volume": 11264
+  },
+  "totalJs": 1321984,
+  "totalCss": 69632,
+  "wasm": 4806656,
+  "firstRenderMs": 200
+}

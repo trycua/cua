@@ -41,6 +41,11 @@ test(
     await assert.rejects(cua.spacesd(fx.env_url, "wrong"), (e) =>
       sdk.CuaError.Unauthenticated.instanceOf(e),
     )
-    assert.throws(() => cua.fleet(), (e) => sdk.CuaError.ProviderNotConfigured.instanceOf(e))
+    // Cua Cloud has ended: the browser Fleet client never connects.
+    assert.throws(() => cua.fleet(), (e) => {
+      assert.ok(sdk.CuaError.Unsupported.instanceOf(e), String(e))
+      assert.match(e.message, /Cua Cloud has ended/)
+      return true
+    })
   },
 )

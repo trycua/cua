@@ -43,6 +43,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional
 
+from cua_bench._ended import CLOUD_ENDED
 from cua_bench.images import CANONICAL
 
 #: Contrib providers (third-party platforms) the cua SDK knows; mirrors
@@ -147,6 +148,13 @@ _warned_simulated = False
 
 class TargetError(ValueError):
     """An execution target or task environment that cannot run as asked."""
+
+
+class CloudEnded(TargetError):
+    """``--on cloud`` (Cua Cloud, Fleet-backed) no longer exists."""
+
+    def __init__(self) -> None:
+        super().__init__(CLOUD_ENDED)
 
 
 def parse_memory_mb(value: Any) -> Optional[int]:
@@ -362,6 +370,8 @@ def resolve_target(
         on, on_source = default("default.on")
         on = on or "local"
     on = _choice(on, "--on", ON_CHOICES, on_source) or "local"
+    if on == "cloud":
+        raise CloudEnded()
 
     kind = _choice(kind, "--kind", KIND_FLAG_CHOICES, kind_source)
     runtime = _choice(runtime, "--runtime", RUNTIME_FLAG_CHOICES, runtime_source)
@@ -683,6 +693,7 @@ def resolve_env_spec(
     pool = parse_pool_image(image)
     if pool is not None:
         # `pool:<name>`: an existing Fleet pool; its template decides the rest.
+        raise CloudEnded()  # pool:<name> names a Fleet pool; Cua Cloud has ended
         if not target.cloud:
             raise TargetError(f"pool:{pool} names a Fleet pool: run it with --on cloud")
         kind = (

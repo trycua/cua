@@ -3,5 +3,6 @@ packages:
   - "agent"
   - "fleet"
   - "playground"
+  - "cursor-motion"
 
 minimumReleaseAge: 46080

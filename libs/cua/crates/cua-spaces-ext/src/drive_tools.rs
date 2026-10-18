@@ -96,7 +96,16 @@ pub async fn service_tool(
                 .drive()?;
             Ok(ToolOutcome::json(&check))
         }
-        "volume_mount_status" => Ok(ToolOutcome::json(&svc.mount_status().await)),
+        "volume_mount_status" => {
+            // This machine's mount, plus the Spaces' own: mounted, or why
+            // not (a local Linux Space on runc has no /dev/fuse).
+            let mut v = serde_json::to_value(svc.mount_status().await)
+                .map_err(|e| Error::invalid(e.to_string()))?;
+            let (volumes, errors) = space_volumes(spaces, &ctx).await?;
+            v["volumes"] = volumes;
+            v["volume_errors"] = errors;
+            Ok(ToolOutcome::json(&v))
+        }
         "volume_mount" => Ok(ToolOutcome::json(&svc.mount().await.drive()?)),
         "volume_unmount" => Ok(ToolOutcome::json(&svc.unmount().await.drive()?)),
         "volume_sync_events" => {
@@ -130,7 +139,6 @@ pub async fn service_tool(
 pub async fn sync_status_for(spaces: &cua_spaces::Spaces, ctx: &Context) -> Result<Value> {
     let svc = spaces.drive_service().await?;
     let mut s = svc.sync_status().await;
-    let mut volumes = spaces.volumes().await;
     if ctx.principal != Principal::User {
         let session = spaces.drive().session(ctx.clone());
         let readable = |p: &str| session.mode(p).ok().flatten().is_some();
@@ -142,23 +150,34 @@ pub async fn sync_status_for(spaces: &cua_spaces::Spaces, ctx: &Context) -> Resu
         if let Some(c) = s.cache.as_mut() {
             c.dir.clear();
         }
-        volumes.retain(|v| ctx.space.as_deref() == Some(v.space.as_str()));
     }
+    let mut v = serde_json::to_value(&s).map_err(|e| Error::invalid(e.to_string()))?;
+    let (volumes, errors) = space_volumes(spaces, ctx).await?;
+    v["volumes"] = volumes;
+    v["volume_errors"] = errors;
+    Ok(v)
+}
+
+/// The volumes mounted in Spaces, and the Spaces that connected without
+/// one and why (`space`, `error`), as `ctx` may see them: the user sees
+/// every Space, anyone else only their own.
+async fn space_volumes(spaces: &cua_spaces::Spaces, ctx: &Context) -> Result<(Value, Value)> {
+    let mut volumes = spaces.volumes().await;
     let mut unavailable = spaces
         .drive_extension()
         .map(|e| e.runtime.unavailable())
         .unwrap_or_default();
     if ctx.principal != Principal::User {
-        unavailable.retain(|(space, _)| ctx.space.as_deref() == Some(space.as_str()));
+        let own = |space: &str| ctx.space.as_deref() == Some(space);
+        volumes.retain(|v| own(&v.space));
+        unavailable.retain(|(space, _)| own(space));
     }
-    let mut v = serde_json::to_value(&s).map_err(|e| Error::invalid(e.to_string()))?;
-    v["volumes"] = serde_json::to_value(&volumes).map_err(|e| Error::invalid(e.to_string()))?;
-    // Spaces that connected without a volume, and why.
-    v["volume_errors"] = unavailable
+    let volumes = serde_json::to_value(&volumes).map_err(|e| Error::invalid(e.to_string()))?;
+    let errors = unavailable
         .into_iter()
         .map(|(space, error)| json!({"space": space, "error": error}))
         .collect();
-    Ok(v)
+    Ok((volumes, errors))
 }
 
 fn args<T: DeserializeOwned>(tool: &str, value: Value) -> Result<T> {

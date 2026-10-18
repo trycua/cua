@@ -10293,7 +10293,8 @@ export type LocalStorage = {
     /**
      * Catalog image refs already pulled here at their published digest.
      */
-    pulled: Array<string>
+    pulled: Array<string>,
+    linuxRuntimeDownloadBytes: bigint
 }
 
 /**
@@ -10322,7 +10323,8 @@ const FfiConverterTypeLocalStorage = (() => {
                 lume: FfiConverterOptionalTypeStorageVolume.read(from),
                 qemu: FfiConverterOptionalTypeStorageVolume.read(from),
                 container: FfiConverterOptionalTypeStorageVolume.read(from),
-                pulled: FfiConverterSequenceString.read(from)
+                pulled: FfiConverterSequenceString.read(from),
+                linuxRuntimeDownloadBytes: FfiConverterUInt64.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -10332,6 +10334,7 @@ const FfiConverterTypeLocalStorage = (() => {
             FfiConverterOptionalTypeStorageVolume.write(value.qemu, into);
             FfiConverterOptionalTypeStorageVolume.write(value.container, into);
             FfiConverterSequenceString.write(value.pulled, into);
+            FfiConverterUInt64.write(value.linuxRuntimeDownloadBytes, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hostArch) +
@@ -10339,7 +10342,8 @@ const FfiConverterTypeLocalStorage = (() => {
              FfiConverterOptionalTypeStorageVolume.allocationSize(value.lume) +
              FfiConverterOptionalTypeStorageVolume.allocationSize(value.qemu) +
              FfiConverterOptionalTypeStorageVolume.allocationSize(value.container) +
-             FfiConverterSequenceString.allocationSize(value.pulled);
+             FfiConverterSequenceString.allocationSize(value.pulled) +
+             FfiConverterUInt64.allocationSize(value.linuxRuntimeDownloadBytes);
 
         }
     };
@@ -10977,6 +10981,123 @@ const FfiConverterTypeOverlayResult = (() => {
              FfiConverterString.allocationSize(value.previousSha256) +
              FfiConverterUInt64.allocationSize(value.size) +
              FfiConverterString.allocationSize(value.restarted);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A one-time code that adds a machine to the account ("Add a machine"
+ * by link or QR code).
+ */
+export type PairingCode = {
+    /**
+     * `pc_…` (to revoke it).
+     */
+    id: string,
+    /**
+     * `XXXX-XXXX-XXXX`: only when just made.
+     */
+    code?: string,
+    /**
+     * `https://cua.ai/add/<code>` (the link and the QR code): only
+     * when just made.
+     */
+    url?: string,
+    /**
+     * `curl … | sh -s -- --pair <code>` (macOS, Linux): only when just made.
+     */
+    installSh?: string,
+    /**
+     * The PowerShell one-liner (Windows): only when just made.
+     */
+    installPowershell?: string,
+    /**
+     * `active`, `used`, `revoked` or `expired`.
+     */
+    state: string,
+    /**
+     * Team the machine is added for.
+     */
+    team?: string,
+    /**
+     * Unix seconds.
+     */
+    createdAt: bigint,
+    /**
+     * Unix seconds.
+     */
+    expiresAt: bigint,
+    /**
+     * When a machine used it.
+     */
+    usedAt?: bigint,
+    /**
+     * The machine it added (relay machine id).
+     */
+    machine?: string
+}
+
+/**
+ * Generated factory for {@link PairingCode} record objects.
+ */
+export const PairingCode = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<PairingCode, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<PairingCode>,
+    });
+})();
+
+const FfiConverterTypePairingCode = (() => {
+    type TypeName = PairingCode;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                code: FfiConverterOptionalString.read(from),
+                url: FfiConverterOptionalString.read(from),
+                installSh: FfiConverterOptionalString.read(from),
+                installPowershell: FfiConverterOptionalString.read(from),
+                state: FfiConverterString.read(from),
+                team: FfiConverterOptionalString.read(from),
+                createdAt: FfiConverterUInt64.read(from),
+                expiresAt: FfiConverterUInt64.read(from),
+                usedAt: FfiConverterOptionalUInt64.read(from),
+                machine: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterOptionalString.write(value.code, into);
+            FfiConverterOptionalString.write(value.url, into);
+            FfiConverterOptionalString.write(value.installSh, into);
+            FfiConverterOptionalString.write(value.installPowershell, into);
+            FfiConverterString.write(value.state, into);
+            FfiConverterOptionalString.write(value.team, into);
+            FfiConverterUInt64.write(value.createdAt, into);
+            FfiConverterUInt64.write(value.expiresAt, into);
+            FfiConverterOptionalUInt64.write(value.usedAt, into);
+            FfiConverterOptionalString.write(value.machine, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterOptionalString.allocationSize(value.code) +
+             FfiConverterOptionalString.allocationSize(value.url) +
+             FfiConverterOptionalString.allocationSize(value.installSh) +
+             FfiConverterOptionalString.allocationSize(value.installPowershell) +
+             FfiConverterString.allocationSize(value.state) +
+             FfiConverterOptionalString.allocationSize(value.team) +
+             FfiConverterUInt64.allocationSize(value.createdAt) +
+             FfiConverterUInt64.allocationSize(value.expiresAt) +
+             FfiConverterOptionalUInt64.allocationSize(value.usedAt) +
+             FfiConverterOptionalString.allocationSize(value.machine);
 
         }
     };
@@ -12772,7 +12893,12 @@ export type SandboxInfo = {
      * `None` for direct connections, named pools, images not resolved from
      * a registry, and the daemon topology.
      */
-    imageInfo?: ImageInfo
+    imageInfo?: ImageInfo,
+    /**
+     * Why a local sandbox stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+     */
+    stopReason?: string
 }
 
 /**
@@ -12780,7 +12906,8 @@ export type SandboxInfo = {
  */
 export const SandboxInfo = (() => {
     const defaults = () => ({
-        imageInfo: undefined
+        imageInfo: undefined,
+        stopReason: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<SandboxInfo, ReturnType<typeof defaults>>(defaults);
@@ -12812,7 +12939,8 @@ const FfiConverterTypeSandboxInfo = (() => {
                 location: FfiConverterString.read(from),
                 expiresAtUnix: FfiConverterOptionalInt64.read(from),
                 providerDetails: FfiConverterMapStringString.read(from),
-                imageInfo: FfiConverterOptionalTypeImageInfo.read(from)
+                imageInfo: FfiConverterOptionalTypeImageInfo.read(from),
+                stopReason: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -12832,6 +12960,7 @@ const FfiConverterTypeSandboxInfo = (() => {
             FfiConverterOptionalInt64.write(value.expiresAtUnix, into);
             FfiConverterMapStringString.write(value.providerDetails, into);
             FfiConverterOptionalTypeImageInfo.write(value.imageInfo, into);
+            FfiConverterOptionalString.write(value.stopReason, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.name) +
@@ -12849,7 +12978,8 @@ const FfiConverterTypeSandboxInfo = (() => {
              FfiConverterString.allocationSize(value.location) +
              FfiConverterOptionalInt64.allocationSize(value.expiresAtUnix) +
              FfiConverterMapStringString.allocationSize(value.providerDetails) +
-             FfiConverterOptionalTypeImageInfo.allocationSize(value.imageInfo);
+             FfiConverterOptionalTypeImageInfo.allocationSize(value.imageInfo) +
+             FfiConverterOptionalString.allocationSize(value.stopReason);
 
         }
     };
@@ -14241,7 +14371,13 @@ export type SpaceInfo = {
      * through the relay) or `elsewhere` (only there; `remove` keeps it).
      * Empty for other Spaces.
      */
-    cloudDelete: string
+    cloudDelete: string,
+    /**
+     * Why a local Space stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); empty otherwise,
+     * and once it is started again.
+     */
+    stopReason: string
 }
 
 /**
@@ -14249,6 +14385,7 @@ export type SpaceInfo = {
  */
 export const SpaceInfo = (() => {
     const defaults = () => ({
+        stopReason: ""
     });
     const create = (() => {
         return uniffiCreateRecord<SpaceInfo, ReturnType<typeof defaults>>(defaults);
@@ -14285,7 +14422,8 @@ const FfiConverterTypeSpaceInfo = (() => {
                 powerState: FfiConverterString.read(from),
                 cloud: FfiConverterString.read(from),
                 cloudPlace: FfiConverterString.read(from),
-                cloudDelete: FfiConverterString.read(from)
+                cloudDelete: FfiConverterString.read(from),
+                stopReason: FfiConverterString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14310,6 +14448,7 @@ const FfiConverterTypeSpaceInfo = (() => {
             FfiConverterString.write(value.cloud, into);
             FfiConverterString.write(value.cloudPlace, into);
             FfiConverterString.write(value.cloudDelete, into);
+            FfiConverterString.write(value.stopReason, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -14332,7 +14471,8 @@ const FfiConverterTypeSpaceInfo = (() => {
              FfiConverterString.allocationSize(value.powerState) +
              FfiConverterString.allocationSize(value.cloud) +
              FfiConverterString.allocationSize(value.cloudPlace) +
-             FfiConverterString.allocationSize(value.cloudDelete);
+             FfiConverterString.allocationSize(value.cloudDelete) +
+             FfiConverterString.allocationSize(value.stopReason);
 
         }
     };
@@ -20873,6 +21013,12 @@ export interface DevicesLike {
  */
     confirmMachine(machineId: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RelayMachine>;
 /**
+ * Makes a one-time code (link, QR, install commands) that adds another
+ * computer to the account, or to `team` (from this enrolled device).
+ * It expires after `ttl_secs` (30 minutes when `None`).
+ */
+    createPairingCode(team: string | undefined, ttlSecs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PairingCode>;
+/**
  * This device's id, when it has a key (no network).
  */
     deviceId() /*throws*/: string | undefined;
@@ -20883,6 +21029,10 @@ export interface DevicesLike {
  * code to approve from an enrolled device.
  */
     enroll(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<DeviceEnrollment>;
+/**
+ * The account's pairing codes, newest first (without the codes).
+ */
+    pairingCodes(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<PairingCode>>;
 /**
  * The relay base URL.
  */
@@ -20896,6 +21046,10 @@ export interface DevicesLike {
  * also deletes its key.
  */
     revoke(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RelayDevice>;
+/**
+ * Revokes an unused pairing code (`pc_…`).
+ */
+    revokePairingCode(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * The account's devices, the grace period, the newest `audit_limit`
  * audit events and the machines' names. Only the device list must
@@ -21041,6 +21195,43 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * Makes a one-time code (link, QR, install commands) that adds another
+ * computer to the account, or to `team` (from this enrolled device).
+ * It expires after `ttl_secs` (30 minutes when `None`).
+ */
+    async createPairingCode(team: string | undefined, ttlSecs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<PairingCode> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_devices_create_pairing_code(
+                    uniffiTypeDevicesObjectFactory.clonePointer(this),FfiConverterOptionalString.lower(team, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt64.lower(ttlSecs, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePairingCode.lift.bind(FfiConverterTypePairingCode),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * This device's id, when it has a key (no network).
  */
     deviceId(): string | undefined /*throws*/ {
@@ -21087,6 +21278,41 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeDeviceEnrollment.lift.bind(FfiConverterTypeDeviceEnrollment),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * The account's pairing codes, newest first (without the codes).
+ */
+    async pairingCodes(asyncOpts_?: { signal: AbortSignal }): Promise<Array<PairingCode>> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_devices_pairing_codes(
+                    uniffiTypeDevicesObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypePairingCode.lift.bind(FfiConverterSequenceTypePairingCode),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -21178,6 +21404,36 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeRelayDevice.lift.bind(FfiConverterTypeRelayDevice),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Revokes an unused pairing code (`pc_…`).
+ */
+    async revokePairingCode(id: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(
+                    uniffiTypeDevicesObjectFactory.clonePointer(this),FfiConverterString.lower(id, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -30567,7 +30823,10 @@ export interface SpaceLike {
  */
     id(): string;
 /**
- * The registry entry.
+ * Connection-time snapshot; never refreshed. With spacesd, handshake
+ * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+ * families clear them. Other fields and non-spacesd services retain
+ * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
  */
     info(): SpaceInfo;
 /**
@@ -31394,7 +31653,10 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * The registry entry.
+ * Connection-time snapshot; never refreshed. With spacesd, handshake
+ * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+ * families clear them. Other fields and non-spacesd services retain
+ * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
  */
     info(): SpaceInfo {
     return ((__rb: Uint8Array) => {
@@ -36598,6 +36860,9 @@ const FfiConverterSequenceTypeAgentRunInfo = new FfiConverterArray(FfiConverterT
 // FfiConverter for AgentRunOptions | undefined
 const FfiConverterOptionalTypeAgentRunOptions = new FfiConverterOptional(FfiConverterTypeAgentRunOptions);
 
+// FfiConverter for Array<PairingCode>
+const FfiConverterSequenceTypePairingCode = new FfiConverterArray(FfiConverterTypePairingCode);
+
 // FfiConverter for Array<FleetClaim>
 const FfiConverterSequenceTypeFleetClaim = new FfiConverterArray(FfiConverterTypeFleetClaim);
 
@@ -37079,11 +37344,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_confirm_machine() !== 44995) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_confirm_machine");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_devices_create_pairing_code() !== 19274) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_create_pairing_code");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_device_id() !== 58064) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_device_id");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_enroll() !== 25682) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_enroll");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_devices_pairing_codes() !== 10069) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_pairing_codes");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_relay_url() !== 39774) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_relay_url");
@@ -37093,6 +37364,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_revoke() !== 27802) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_revoke");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() !== 3143) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_snapshot() !== 26132) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_snapshot");
@@ -37595,7 +37869,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_id() !== 55610) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_id");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_space_info() !== 1726) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_info() !== 20024) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_info");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_join_presence() !== 56636) {
@@ -38223,6 +38497,7 @@ export default Object.freeze({
     FfiConverterTypeNotificationInfo,
     FfiConverterTypeOverlay,
     FfiConverterTypeOverlayResult,
+    FfiConverterTypePairingCode,
     FfiConverterTypePersistentAgentInfo,
     FfiConverterTypePersistentAgentOptions,
     FfiConverterTypePoint,

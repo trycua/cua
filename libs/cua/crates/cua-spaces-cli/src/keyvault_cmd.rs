@@ -204,6 +204,7 @@ fn kind_name(k: ProtectorKind) -> &'static str {
     match k {
         ProtectorKind::MacosKeychain => "macOS keychain",
         ProtectorKind::WindowsCredential => "Windows Credential Manager",
+        ProtectorKind::LinuxSecretService => "desktop keyring",
         ProtectorKind::Passphrase => "passphrase",
         ProtectorKind::Recovery => "recovery key",
     }
@@ -404,6 +405,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                 paths: None,
                 domains: None,
                 passwords: false,
+                password_domains: None,
             };
             let r = c.import(spec).await.map_err(kv_error)?;
             if json {

@@ -1,0 +1,104 @@
+{
+  "name": "machines",
+  "about": "The Machines page lists each computer once: a Mac on the relay and the enrolled device on it (named after its hostname) are one row, with the machine's id and friendlier name, online when the app reached it or the relay sees it connected. Two Macs that share a name are never merged. A device that is none of the machines is listed on its own (online after a session in the last 15 minutes), and is never a Run on choice. The page itself (machines.pageRows) is built the same way in every UI from what the shell has: This machine first, then the machines its Spaces list shows (a machine sharing its own desktop, one that provides Spaces), then the devices of their own; a machine whose system is unknown still merges with its device.",
+  "now": 1800000000,
+  "cases": [
+    {
+      "name": "a Mac on the relay and its enrolled device, the app's probe timed out",
+      "machines": [
+        { "id": "this-mac", "name": "This Mac", "online": true, "os": "macos", "current": true },
+        { "id": "96fedb7e1be65c3d31fa18587febde2c", "name": "gamma-4 Mac Studio", "online": false, "presence": true, "os": "macos" }
+      ],
+      "devices": [
+        { "id": "dev_2278814aabab5c117d348c6b", "name": "gamma-4.example.com", "platform": "macos", "lastSeen": 1799000000, "state": "enrolled" },
+        { "id": "dev_c3961dbae4080a90e6849a43", "name": "juno-2.example.com", "platform": "macos", "lastSeen": 1799999000, "current": true, "state": "enrolled" }
+      ]
+    },
+    {
+      "name": "the hostname its cua-spacesd reported names the device",
+      "machines": [
+        { "id": "this-mac", "name": "This Mac", "online": true, "os": "macos", "current": true },
+        { "id": "m-mini", "name": "Spare Mac mini", "online": true, "hostname": "build-box.lan", "os": "macos" }
+      ],
+      "devices": [
+        { "id": "dev_b", "name": "Build-Box.lan", "platform": "macOS", "lastSeen": 1799999900 }
+      ]
+    },
+    {
+      "name": "two Macs that share a name, one device",
+      "machines": [
+        { "id": "this-mac", "name": "This Mac", "online": true, "os": "macos", "current": true },
+        { "id": "m1", "name": "studio Mac Studio", "online": true, "os": "macos" },
+        { "id": "m2", "name": "studio Mac mini", "online": false, "presence": false, "os": "macos" }
+      ],
+      "devices": [
+        { "id": "dev_s", "name": "studio.lan", "platform": "macos", "lastSeen": 1799999500 }
+      ]
+    },
+    {
+      "name": "devices that are no machine of yours",
+      "machines": [
+        { "id": "this-mac", "name": "This Mac", "online": true, "os": "macos", "current": true }
+      ],
+      "devices": [
+        { "id": "dev_w", "name": "Work laptop", "platform": "windows", "lastSeen": 1799999400, "state": "enrolled" },
+        { "id": "dev_o", "name": "Old laptop", "platform": "linux", "lastSeen": 1797300000, "state": "expired" },
+        { "id": "dev_x", "name": "Lost phone", "platform": "ios", "state": "revoked" }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "a spare Mac with one Space, a machine that stopped sharing and devices only in the device list",
+      "input": {
+        "hostOs": "macos",
+        "now": 1800000000,
+        "spaces": [
+          { "name": "This Mac", "os": "macos", "status": "local", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "this-mac" },
+          { "name": "fbd1", "os": "linux", "status": "suspended", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "local:fbd1", "provider": "local" },
+          {
+            "name": "studio-2.local",
+            "os": "unknown",
+            "status": "suspended",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "relay:b6953d14ff94b10fcbb38bdd13c47824",
+            "provider": "relay",
+            "sdk": {
+              "features": [],
+              "spacesdVersion": "",
+              "reachable": false,
+              "error": "unauthenticated: studio-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+            }
+          }
+        ],
+        "devices": [
+          { "id": "dev_me", "name": "Mac.localdomain", "platform": "macos", "lastSeen": 1799999990, "current": true, "state": "enrolled" },
+          { "id": "dev_s", "name": "studio-2.local", "platform": "macos", "lastSeen": 1799000000, "state": "enrolled" },
+          { "id": "dev_byoc", "name": "BYOC tests", "platform": "macos", "lastSeen": 1797000000, "state": "enrolled" },
+          { "id": "dev_l1", "name": "Ana's MacBook Pro", "platform": "macos", "lastSeen": 1799999500, "state": "enrolled" },
+          { "id": "dev_l2", "name": "Ana's MacBook Pro", "platform": "macos", "lastSeen": 1796000000, "state": "expired" },
+          { "id": "dev_x", "name": "Lost phone", "platform": "ios", "state": "revoked" }
+        ],
+        "hostnames": {},
+        "presence": { "b6953d14ff94b10fcbb38bdd13c47824": false}
+      }
+    },
+    {
+      "name": "a machine that provides Spaces and one sharing its desktop, signed out",
+      "input": {
+        "hostOs": "linux",
+        "now": 1800000000,
+        "spaces": [
+          { "name": "Spare Mac mini", "os": "macos", "status": "running", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "relay:m-mini", "provider": "relay" },
+          { "name": "dev box", "os": "linux", "status": "running", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "relay:m-box/space-1", "provider": "relay", "host": "m-box", "hostName": "Build box" },
+          { "name": "ci", "os": "linux", "status": "suspended", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "relay:m-box/space-2", "provider": "relay", "host": "m-box", "hostName": "Build box" }
+        ],
+        "devices": [],
+        "hostnames": { "m-mini": "mini.lan" },
+        "presence": { "m-box": true}
+      }
+    }
+  ]
+}

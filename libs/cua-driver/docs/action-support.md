@@ -31,7 +31,7 @@ Foreground rows listed here are delivered for both AX and PX.
 | --- | --- | --- | --- |
 | Windows | Electron | left click and child window AX/PX | right click and double click AX/PX, plus drag PX: `background_occluded`; type text, press key, hotkey, and scroll AX/PX plus editor save AX: `background_unavailable`; `start_minimized` launch: `background_unavailable` when Windows denies the foreground lock, with no process spawned |
 | Windows | Tauri | left/right/double click AX/PX, type text AX/PX, press key AX/PX, child window AX/PX, scroll AX, editor save AX | hotkey AX/PX and scroll PX: `background_unavailable`; drag PX: `background_occluded` |
-| macOS | Electron | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, child window AX/PX, editor save AX | scroll AX/PX and drag PX: `background_unavailable` |
+| macOS | Electron | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, child window AX/PX, editor save AX, drag PX (sent from the app's main process; refuses with `background_unavailable` when the app's inspector is off) | scroll AX/PX: `background_unavailable` |
 | macOS | Tauri | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, scroll AX/PX, child window AX/PX, editor save AX | drag PX: `background_unavailable` |
 | macOS | WKWebView | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, scroll AX/PX, child window AX/PX, editor save AX | drag PX: `background_unavailable` |
 | Linux X11 | Electron | Background AX left click and child-window actions deliver with strict focus, z-order, cursor, and input-leak oracles | Background PX left click, AX/PX right and double click, PX child window and drag, AX/PX keyboard and scroll, and AX editor save return exact `background_unavailable` |
@@ -63,9 +63,9 @@ integrity-level harness can exercise it.
 
 | Harness | Proven contracts | Refusals and gaps |
 | --- | --- | --- |
-| AppKit | AX tree/capture; AX background left click, set value, and type text; PX background left/right/double click; PX foreground right/double click and slider drag; AX foreground/background scroll; desktop PX foreground left click | PX background slider drag returns exact `background_unavailable`. Native press key, hotkey, AX-addressed right/double click, and broader control combinations remain unproven. |
+| AppKit | AX tree/capture; AX background left click, set value, and type text; PX background left/right/double click and slider drag; PX foreground right/double click and slider drag; AX foreground/background scroll; desktop PX foreground left click | A background drag that starts an AppKit drag-and-drop session (table reordering) returns `background_unavailable` with `reason: drag_and_drop_session`. Native press key, hotkey, AX-addressed right/double click, and broader control combinations remain unproven. |
 | SwiftUI | AX tree/capture; AX background left click and set value; foreground popover-trigger activation | The fixture proves `popover_open=true`, but the transient panel remains absent from targeted AX enumeration. Other native pointer and keyboard combinations remain unproven. |
-| WKWebView | Full 40-cell shared-web catalog through the dedicated repo-local native host | PX background drag returns exact `background_unavailable`; the other 39 shared cells deliver. Native host-specific controls are outside this fixture. |
+| WKWebView | Full 40-cell shared-web catalog through the dedicated repo-local native host | PX background drag is delivered to the window without moving the pointer (CUA-1207); not yet re-run on this host. The other 39 shared cells deliver. Native host-specific controls are outside this fixture. |
 
 ## Native Linux
 

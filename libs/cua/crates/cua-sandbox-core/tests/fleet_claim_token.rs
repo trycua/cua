@@ -89,6 +89,7 @@ async fn claim_secrets_pool(o: &CreateOptions) -> String {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn cloud_sandboxes_deliver_their_spacesd_token_with_the_claim() {
     // The published image carries only the pre-rename labels; the
     // upcoming one `ai.cua.spacesd`. Both run the same token scripts.

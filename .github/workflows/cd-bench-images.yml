@@ -79,6 +79,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -169,7 +172,7 @@ jobs:
           echo "ASSUME=$assume" >>"$GITHUB_ENV"
       - name: cua CLI and the SDK binding for the smoke
         run: |
-          (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli)
+          (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli --features cua-cli/byoc)
           cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
           install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           # The later jobs (index, verify, promote) reuse these instead of
@@ -234,7 +237,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/bench-cli/cua" ]; then
             install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+            (cd libs/cua && cargo build --release -p cua-cli --features byoc) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           fi
       - name: cua images release (publish the indexes as immutable pins)
         run: |
@@ -300,7 +303,7 @@ jobs:
             cp "$RUNNER_TEMP/bench-cli/libcua_sdk.so" libs/cua/python/src/cua/
             install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli)
+            (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli --features cua-cli/byoc)
             cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
             install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
             rm -rf libs/cua/target
@@ -364,7 +367,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/bench-cli/cua" ]; then
             install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+            (cd libs/cua && cargo build --release -p cua-cli --features byoc) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           fi
       - name: cua images release (promote <ver> and <ver>-disk; doctor evidence required)
         run: |

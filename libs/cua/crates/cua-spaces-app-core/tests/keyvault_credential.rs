@@ -355,3 +355,41 @@ async fn the_vault_page_end_to_end_through_the_client() {
     let inv = page.inventory("chrome", None).await.unwrap();
     assert_eq!(inv.domains[0].domain, "github.com");
 }
+
+/// An app not signed by Cua is told why before any click: it cannot create
+/// the Keyvault (the broker refuses its setup), so the page offers no setup.
+#[tokio::test]
+async fn an_unsigned_app_is_not_offered_setup() {
+    let dir = tempfile::tempdir().unwrap();
+    let broker = Arc::new(
+        Broker::new(
+            BrokerConfig {
+                dir: dir.path().join("keyvault"),
+                keychain_path: Some(dir.path().join("never-created.keychain")),
+                os_protector: false,
+            },
+            Arc::new(NoBackend),
+            Arc::new(FakePresence::new(true)),
+        )
+        .unwrap(),
+    );
+    let page = KeyvaultCommands::new(Arc::new(DirectTransport {
+        broker,
+        caller: CallerIdentity::for_tests("com.trycua.spaces.macos", false),
+    }));
+    let o = page.overview().await;
+    assert_eq!(o.availability, "not_first_party");
+    let message = o.message.clone().unwrap();
+    assert!(message.contains("can set up the Keyvault"), "{message}");
+    let p = view::page(&o, 0);
+    assert!(!p.can_setup);
+    assert!(p.form.is_none());
+    assert_eq!(
+        p.unavailable_title.as_deref(),
+        Some(
+            "Keyvault is unavailable: this app is not signed by Cua (a development build, or a modified copy)"
+        )
+    );
+    // The setup it is not offered is refused anyway.
+    assert_eq!(page.setup(false).await.unwrap_err().code, "forbidden");
+}

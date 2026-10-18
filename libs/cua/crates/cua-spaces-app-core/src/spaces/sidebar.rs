@@ -43,7 +43,7 @@ pub fn status_text(space: &Space) -> String {
             return power_verb(power.control, on).into();
         }
         if power.off && space.status == SpaceStatus::Suspended {
-            return super::off_label(power.control).into();
+            return super::off_text(power);
         }
     }
     match space.status {
@@ -292,26 +292,28 @@ pub fn percent(permille: u32) -> String {
 }
 
 /// The selection the window shows: the chosen id if it still exists, else
-/// the first Space that is not this machine, else the first.
+/// the first Space that is not this machine (none: the empty home).
 pub fn effective_selection<'a>(spaces: &'a [Space], selected_id: &str) -> Option<&'a Space> {
     spaces
         .iter()
         .find(|s| s.id == selected_id)
         .or_else(|| spaces.iter().find(|s| s.id != THIS_MACHINE_ID))
-        .or_else(|| spaces.first())
+}
+
+/// Whether a search `query` keeps a row with these `fields` (a Space's
+/// name, detail and id): an empty query keeps every row, else any field
+/// holds the trimmed query, ignoring case. The sidebar's search and the
+/// web UI's Spaces filter box both use it.
+pub fn matches(query: &str, fields: &[&str]) -> bool {
+    let needle = query.trim().to_lowercase();
+    needle.is_empty() || fields.iter().any(|f| f.to_lowercase().contains(&needle))
 }
 
 /// Builds the sidebar for `spaces` filtered by `query`.
 pub fn sidebar(spaces: &[Space], query: &str, selected_id: &str) -> SidebarView {
-    let needle = query.trim().to_lowercase();
     let visible: Vec<&Space> = spaces
         .iter()
-        .filter(|s| {
-            needle.is_empty()
-                || [&s.name, &s.detail, &s.id]
-                    .iter()
-                    .any(|f| f.to_lowercase().contains(&needle))
-        })
+        .filter(|s| matches(query, &[&s.name, &s.detail, &s.id]))
         .collect();
     let selected = effective_selection(spaces, selected_id).map(|s| s.id.clone());
     let sel = selected.as_deref();
@@ -337,7 +339,7 @@ pub fn sidebar(spaces: &[Space], query: &str, selected_id: &str) -> SidebarView 
         })
         .collect();
     let empty_text = sections.is_empty().then(|| {
-        if needle.is_empty() {
+        if query.trim().is_empty() {
             "No Spaces yet".to_string()
         } else {
             "No matches".to_string()
@@ -712,7 +714,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
         message: if remove_only {
             "It is only removed from the list."
         } else {
-            "Its sandbox is deleted."
+            "Everything inside it, including its files, is deleted and can't be recovered."
         }
         .into(),
         confirm_label: delete_label.into(),
@@ -784,6 +786,9 @@ pub fn usage_text(used: u64, total: u64) -> String {
 /// The OS in words: the full string the Space reported ("Ubuntu 24.04.3
 /// LTS"), else its product name, else the family ("Linux").
 pub fn system_text(space: &Space) -> String {
+    if space.os == crate::model::SpaceOs::Unknown {
+        return space.os.label().into();
+    }
     [&space.os_pretty_name, &space.os_name]
         .into_iter()
         .flatten()
@@ -826,7 +831,24 @@ fn detail_facts(
     usage: Option<&SpaceUsage>,
     host_arch: Option<&str>,
 ) -> Vec<Fact> {
-    let mut facts = vec![fact("Status", status)];
+    let hint = space
+        .power
+        .as_ref()
+        .filter(|p| p.off && p.turning_on.is_none() && space.status == SpaceStatus::Suspended)
+        .filter(|_| !space.progress.as_ref().is_some_and(|p| p.error.is_some()))
+        .map(|p| super::off_hint(p.control).to_string());
+    // Unreachable: why, in the shell's words, as the Status row's help.
+    let why = space
+        .sdk
+        .as_ref()
+        .filter(|sdk| !sdk.reachable && status == UNREACHABLE)
+        .and_then(|sdk| sdk.error.as_deref())
+        .filter(|e| !e.trim().is_empty())
+        .map(crate::errors::plain_error);
+    let mut facts = vec![Fact {
+        help: hint.or(why),
+        ..fact("Status", status)
+    }];
     if let Some(place) = space
         .cloud_place
         .as_deref()
@@ -878,6 +900,9 @@ pub fn detail(space: &Space) -> SpaceDetail {
     detail_live(space, None, None)
 }
 
+/// The Status of a Space the app cannot reach (why is the row's help).
+const UNREACHABLE: &str = "Unreachable";
+
 /// The detail of `space` with its current memory and storage use.
 /// `host_arch` is this machine's CPU architecture (`arm64`, `x86_64`, ...):
 /// a local Space of another one shows a warning on its Architecture.
@@ -899,13 +924,14 @@ pub fn detail_live(
         _ if deleting || powered => status_text(space),
         (_, Some(p)) => match &p.error {
             Some(_) => "Failed".to_string(),
+            // Downloading with a byte count: the bytes line under the bar
+            // says how far ("15.2 of 22.2 GB"); an overall percentage here
+            // (the whole create's, 58%) would disagree with it (68%).
+            None if p.transfer.is_some() => p.label.clone(),
             None => format!("{} {}", p.label, percent(p.permille)),
         },
-        (Some(sdk), None) if !sdk.reachable => sdk
-            .error
-            .clone()
-            .filter(|e| !e.is_empty())
-            .unwrap_or_else(|| "Unreachable".into()),
+        // The probe's error is its help (the row's tooltip), not the value.
+        (Some(sdk), None) if !sdk.reachable => UNREACHABLE.into(),
         _ => status_text(space),
     };
     let preview_text = match (creating, &failed) {
@@ -1136,8 +1162,44 @@ mod tests {
     use super::*;
     use crate::model::SpaceRow;
 
-    /// Sharing off (the default): no Share button; on: Share, between
-    /// Picture in picture and Delete as before.
+    /// Only This machine is not a Space to open: an empty id selects nothing,
+    /// choosing it does, and a real Space wins over it.
+    #[test]
+    fn matches_name_detail_or_id_ignoring_case_and_spaces() {
+        let f = ["Design Review", "Agent testing", "relay:mini/space-1"];
+        assert!(matches("", &f));
+        assert!(matches("   ", &f));
+        assert!(matches("  design ", &f));
+        assert!(matches("TESTING", &f));
+        assert!(matches("mini/", &f));
+        assert!(!matches("ubuntu", &f));
+        assert!(!matches("x", &[]));
+    }
+
+    #[test]
+    fn this_machine_alone_selects_nothing() {
+        use crate::host::this_machine_space;
+        use crate::model::SpaceOs;
+        let machine = this_machine_space(None, 0, SpaceOs::Macos);
+        assert!(effective_selection(std::slice::from_ref(&machine), "").is_none());
+        assert_eq!(
+            effective_selection(std::slice::from_ref(&machine), "this-mac").map(|s| s.id.as_str()),
+            Some("this-mac")
+        );
+        let real = super::super::row_to_space(&local_row("local:box", None, None, None), 0);
+        let both = [machine, real];
+        assert_eq!(
+            effective_selection(&both, "").map(|s| s.id.as_str()),
+            Some("local:box")
+        );
+        assert_eq!(
+            effective_selection(&both, "this-mac").map(|s| s.id.as_str()),
+            Some("this-mac")
+        );
+    }
+
+    /// Sharing on (the default): Share, between
+    /// Picture in picture and Delete as before; off: no Share button.
     #[test]
     fn the_sharing_experiment_decides_the_share_button() {
         use crate::experiments::Experiments;
@@ -1149,11 +1211,14 @@ mod tests {
                 .map(|a| a.id)
                 .collect()
         };
-        assert!(!ids(&Experiments::default()).contains(&DetailActionId::Share));
-        let on = ids(&Experiments {
-            sharing: true,
-            ..Default::default()
-        });
+        assert!(
+            !ids(&Experiments {
+                sharing: false,
+                ..Default::default()
+            })
+            .contains(&DetailActionId::Share)
+        );
+        let on = ids(&Experiments::default());
         assert_eq!(
             on.iter().position(|a| *a == DetailActionId::Share),
             Some(2),
@@ -1186,6 +1251,34 @@ mod tests {
 
     fn fact_of<'a>(d: &'a SpaceDetail, label: &str) -> Option<&'a Fact> {
         d.facts.iter().find(|f| f.label == label)
+    }
+
+    /// A Space the app cannot reach says "Unreachable"; the probe's error
+    /// is the row's help (in plain words), never the Status itself.
+    #[test]
+    fn an_unreachable_space_says_unreachable_with_why_as_help() {
+        let x = crate::experiments::Experiments::default();
+        for (raw, why) in [
+            (
+                "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused)",
+                "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused)",
+            ),
+            (
+                "transport: Connection refused (os error 61)",
+                crate::errors::DAEMON_NOT_RUNNING,
+            ),
+        ] {
+            let mut space = machine(&[], false);
+            space.sdk.as_mut().unwrap().error = Some(raw.into());
+            let d = detail_with(&space, None, None, &x);
+            let status = fact_of(&d, "Status").unwrap();
+            assert_eq!(status.value, "Unreachable");
+            assert_eq!(status.help.as_deref(), Some(why));
+        }
+        // No error: no help.
+        let d = detail_with(&machine(&[], false), None, None, &x);
+        assert_eq!(fact_of(&d, "Status").unwrap().value, "Unreachable");
+        assert_eq!(fact_of(&d, "Status").unwrap().help, None);
     }
 
     /// One of your machines on the relay, as the app's probe saw it.
@@ -1592,6 +1685,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         };
         let d = detail(&super::super::row_to_space(&row, 0));
         // Added by address: no image row, so only the identifier copies.
@@ -1640,6 +1734,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         };
         let space = super::super::creating::deleting_space(&super::super::row_to_space(&row, 0));
         let d = detail(&space);
@@ -1712,6 +1807,32 @@ mod tests {
         super::super::row_to_space(&row, 0)
     }
 
+    #[test]
+    fn a_space_that_stopped_on_its_own_says_why() {
+        let row: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": "local:a", "name": "box", "provider": "local", "os": "linux",
+            "reachable": false, "power": "stop", "powerState": "stopped",
+            "stopReason": "out of memory",
+        }))
+        .unwrap();
+        let s = super::super::row_to_space(&row, 0);
+        assert_eq!(status_text(&s), "Stopped: out of memory");
+        assert_eq!(s.detail, "Stopped: out of memory");
+        // Turned off on purpose: one word, as before.
+        let asked = powered("local:a", "stop", Some("stopped"), false);
+        assert_eq!(status_text(&asked), "Stopped");
+        // A reason never shows on a Space that runs again.
+        let running: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": "local:a", "name": "box", "provider": "local", "os": "linux",
+            "reachable": true, "power": "stop", "powerState": "running",
+            "stopReason": "out of memory",
+        }))
+        .unwrap();
+        let s = super::super::row_to_space(&running, 0);
+        assert_eq!(status_text(&s), "Running");
+        assert_eq!(s.power.and_then(|p| p.stop_reason), None);
+    }
+
     fn help(s: &Space) -> Option<(String, bool, bool)> {
         power_button(s).map(|b| (b.help, b.turn_on, b.enabled))
     }
@@ -1750,13 +1871,27 @@ mod tests {
         let off = powered("local:a", "stop", Some("stopped"), true);
         assert_eq!(
             (off.status, status_text(&off).as_str()),
-            (SpaceStatus::Suspended, "Off")
+            (SpaceStatus::Suspended, "Stopped")
         );
-        assert_eq!(off.detail, "Off");
+        assert_eq!(off.detail, "Stopped");
         let d = detail(&off);
         assert_eq!(
             (d.facts[0].value.as_str(), d.preview_text.as_str()),
-            ("Off", "Off")
+            ("Stopped", "Stopped")
+        );
+        // One word for off; how it is off is the Status fact's tooltip.
+        assert_eq!(
+            d.facts[0].help.as_deref(),
+            Some(super::super::off_hint(PowerControl::Stop))
+        );
+        let suspended = detail(&powered("local:b", "suspend", Some("suspended"), true));
+        assert_eq!(suspended.facts[0].value, "Stopped");
+        assert!(
+            suspended.facts[0]
+                .help
+                .as_deref()
+                .unwrap()
+                .starts_with("Suspended in memory")
         );
         let ids: Vec<DetailActionId> = d.actions.iter().map(|a| a.id).collect();
         assert_eq!(
@@ -1800,6 +1935,34 @@ mod tests {
             cancelling: false,
         });
         assert!(power_button(&s).is_none());
+    }
+
+    #[test]
+    fn a_download_status_has_one_measure_of_progress() {
+        let mut s = powered("pending:1", "", None, false);
+        s.power = None;
+        s.status = SpaceStatus::Provisioning;
+        let progress = |transfer: Option<&str>| crate::model::SpaceProgress {
+            phase: "pulling".into(),
+            permille: 580,
+            label: "Downloading image\u{2026}".into(),
+            error: None,
+            credit_url: None,
+            transfer: transfer.map(str::to_string),
+            cancellable: true,
+            cancelling: false,
+        };
+        // Bytes known: the bytes line says how far, not a second percentage.
+        s.progress = Some(progress(Some("15.2 of 22.2 GB \u{b7} 107 MB/s")));
+        let d = detail(&s);
+        assert_eq!(d.facts[0].value, "Downloading image\u{2026}");
+        assert_eq!(
+            d.progress_text.as_deref(),
+            Some("15.2 of 22.2 GB \u{b7} 107 MB/s")
+        );
+        // No bytes: the percentage is all there is.
+        s.progress = Some(progress(None));
+        assert_eq!(detail(&s).facts[0].value, "Downloading image\u{2026} 58%");
     }
 
     #[test]

@@ -29,9 +29,11 @@ pub mod client;
 pub mod device_api;
 pub mod devices;
 pub mod directory;
+pub mod handover;
 pub mod mux;
 pub mod oidc;
 pub mod server;
+mod transport;
 pub mod ws;
 
 /// Machine connect path on the relay.

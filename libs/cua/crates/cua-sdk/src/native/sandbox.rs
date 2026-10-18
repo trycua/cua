@@ -132,6 +132,10 @@ pub struct SandboxInfo {
     /// a registry, and the daemon topology.
     #[uniffi(default = None)]
     pub image_info: Option<ImageInfo>,
+    /// Why a local sandbox stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+    #[uniffi(default = None)]
+    pub stop_reason: Option<String>,
 }
 
 impl From<SandboxRecord> for SandboxInfo {
@@ -164,6 +168,7 @@ impl From<SandboxRecord> for SandboxInfo {
             endpoints: r.endpoints.into_iter().collect(),
             image: r.image,
             image_info: r.image_info.map(Into::into),
+            stop_reason: r.stop_reason,
         }
     }
 }
@@ -771,6 +776,9 @@ impl SandboxCreateOptions {
         let r = settings
             .resolve(on, kind, runtime)
             .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
+        if r.on == On::Cloud {
+            return Err(CuaError::Unsupported(cua_sandbox_core::CLOUD_ENDED.into()));
+        }
         cua_sandbox_core::placement::validate(&r.on, r.kind, &r.runtime).map_err(place)?;
         Ok(r)
     }
@@ -971,7 +979,11 @@ pub struct Sandboxes {
 
 impl Sandboxes {
     /// Creates without applying overlays.
-    async fn create_bare(&self, options: SandboxCreateOptions) -> Result<Arc<Sandbox>> {
+    async fn create_bare(
+        &self,
+        options: SandboxCreateOptions,
+        progress: Option<cua_sandbox_core::progress::Sink>,
+    ) -> Result<Arc<Sandbox>> {
         let placement = options.placement()?;
         let mut req = options.to_request()?;
         let backend = self.backend.clone();
@@ -982,9 +994,12 @@ impl Sandboxes {
             if let Some(s) = secret {
                 req.registry_credentials = Some(s.credentials(&req.image).await?);
             }
-            Ok(match &backend {
-                Backend::Embedded(rt) => rt.create(req).await?,
-                Backend::Daemon(d) => d.create(req).await?,
+            Ok(match (&backend, progress) {
+                (Backend::Embedded(rt), progress) => {
+                    cua_sandbox_core::progress::carry(progress, rt.create(req)).await?
+                }
+                (Backend::Daemon(d), Some(progress)) => d.create_reporting(req, progress).await?,
+                (Backend::Daemon(d), None) => d.create(req).await?,
             })
         })
         .await
@@ -1021,6 +1036,28 @@ impl Sandboxes {
     /// Creates (Fleet, local) or connects (direct) a sandbox and waits for
     /// the provider and every readiness probe.
     pub async fn create(&self, options: SandboxCreateOptions) -> Result<Arc<Sandbox>> {
+        self.create_reported(options, None).await
+    }
+}
+
+impl Sandboxes {
+    /// Rust hosts: [`Sandboxes::create`], passing what the create does (the
+    /// image download with its bytes, creating, booting, the readiness
+    /// probes) to `progress` as it happens. Through a daemon that predates
+    /// streaming creates, `progress` hears nothing.
+    pub async fn create_reporting(
+        &self,
+        options: SandboxCreateOptions,
+        progress: cua_sandbox_core::progress::Sink,
+    ) -> Result<Arc<Sandbox>> {
+        self.create_reported(options, Some(progress)).await
+    }
+
+    async fn create_reported(
+        &self,
+        options: SandboxCreateOptions,
+        progress: Option<cua_sandbox_core::progress::Sink>,
+    ) -> Result<Arc<Sandbox>> {
         let facts = super::telemetry::CreateFacts::of(&options);
         let mut options = options;
         // A local sandbox's cua-spacesd reports aggregate health counts only
@@ -1031,20 +1068,22 @@ impl Sandboxes {
                 .entry("CUA_SPACESD_TELEMETRY".into())
                 .or_insert_with(|| "1".into());
         }
-        let r = self.create_recorded(options).await;
+        let r = self.create_recorded(options, progress).await;
         facts.record(&r);
         r
     }
-}
 
-impl Sandboxes {
-    async fn create_recorded(&self, options: SandboxCreateOptions) -> Result<Arc<Sandbox>> {
+    async fn create_recorded(
+        &self,
+        options: SandboxCreateOptions,
+        progress: Option<cua_sandbox_core::progress::Sink>,
+    ) -> Result<Arc<Sandbox>> {
         let overlays = options.overlays.clone();
         for o in &overlays {
             o.validate()?;
         }
         let ready_timeout_ms = options.ready_timeout_ms;
-        let sandbox = self.create_bare(options).await?;
+        let sandbox = self.create_bare(options, progress).await?;
         if overlays.is_empty() {
             return Ok(sandbox);
         }
@@ -2131,24 +2170,27 @@ mod tests {
         let r = o.to_request().unwrap();
         assert_eq!(r.location.as_deref(), Some("local"));
         assert_eq!(r.provider, Some(CoreProvider::Local));
-        // Cloud options imply the cloud.
+        // Cloud options imply the cloud, and Cua Cloud has ended.
         o.cloud = Some(CloudOptions::default());
-        assert_eq!(o.placement().unwrap().on, On::Cloud);
-        assert_eq!(o.to_request().unwrap().provider, Some(CoreProvider::Fleet));
+        let e = o.placement().unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            format!("unsupported: {}", cua_sandbox_core::CLOUD_ENDED)
+        );
         // ...and contradict an explicit local.
         o.on = Some("local".into());
         assert!(matches!(o.placement(), Err(CuaError::InvalidArgument(_))));
         // A deprecated flat cloud field implies the cloud too.
         let mut o = SandboxCreateOptions::auto("x");
         o.warm = Some(true);
-        assert_eq!(o.placement().unwrap().on, On::Cloud);
+        assert!(matches!(o.placement(), Err(CuaError::Unsupported(_))));
         // direct:<addr> carries the address.
         let o = SandboxCreateOptions::new("direct:127.0.0.1:3211", "");
         let r = o.to_request().unwrap();
         assert_eq!(r.url.as_deref(), Some("127.0.0.1:3211"));
         assert_eq!(r.location.as_deref(), Some("direct:127.0.0.1:3211"));
         // kind and runtime go out resolved.
-        let mut o = SandboxCreateOptions::new("cloud", "img");
+        let mut o = SandboxCreateOptions::new("local", "img");
         o.kind = Some("vm".into());
         let p = o.placement().unwrap();
         assert_eq!((p.kind, p.runtime), (Kind::Vm, Runtime::Auto));
@@ -2158,13 +2200,13 @@ mod tests {
     #[test]
     fn invalid_placements_are_typed_and_list_the_valid_values() {
         let _env = super::super::test_env::EnvGuard::isolated();
-        let mut o = SandboxCreateOptions::new("cloud", "img");
-        o.runtime = Some("qemu".into());
+        let mut o = SandboxCreateOptions::new("local", "img");
+        o.runtime = Some("kubevirt".into());
         let e = o.placement().unwrap_err();
         let CuaError::InvalidPlacement(m) = &e else {
             panic!("{e:?}")
         };
-        assert!(m.ends_with("valid runtime: auto, gvisor, kubevirt"), "{m}");
+        assert!(m.contains("valid runtime: auto"), "{m}");
         assert_eq!(e.variant(), "InvalidPlacement");
         let mut o = SandboxCreateOptions::new("local", "img");
         o.kind = Some("container".into());
@@ -2183,20 +2225,23 @@ mod tests {
         let mut s = cua_sandbox_core::settings::Settings::load().unwrap();
         s.set(
             cua_sandbox_core::settings::key("default.on").unwrap(),
-            "cloud",
+            "aws",
         )
         .unwrap();
         let o = SandboxCreateOptions::auto("img");
         let p = o.placement().unwrap();
-        assert_eq!(p.on, On::Cloud);
+        assert_eq!(p.on, On::Provider("aws".into()));
         assert!(matches!(
             p.on_source,
             cua_sandbox_core::settings::Source::Config(_)
         ));
         env.set("CUA_DEFAULT_ON", "local");
         assert_eq!(o.placement().unwrap().on, On::Local);
+        let o = SandboxCreateOptions::new("local", "img");
+        assert_eq!(o.placement().unwrap().on, On::Local);
+        // Cua Cloud has ended.
         let o = SandboxCreateOptions::new("cloud", "img");
-        assert_eq!(o.placement().unwrap().on, On::Cloud);
+        assert!(matches!(o.placement(), Err(CuaError::Unsupported(_))));
     }
 
     #[test]
@@ -2207,7 +2252,7 @@ mod tests {
         assert_eq!(r.provider, Some(CoreProvider::Contrib));
         assert_eq!(r.location.as_deref(), Some("e2b"));
         o.on = Some("cloud".into());
-        assert_eq!(o.to_request().unwrap().provider, Some(CoreProvider::Fleet));
+        assert!(matches!(o.to_request(), Err(CuaError::Unsupported(_))));
         o.on = Some("direct:127.0.0.1:3211".into());
         assert_eq!(
             o.to_request().unwrap().url.as_deref(),
@@ -2219,6 +2264,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
     fn cloud_options_win_over_the_deprecated_flat_fields() {
         let mut o = SandboxCreateOptions::new("cloud", "python:3.12-slim");
         o.warm = Some(false);
@@ -2290,7 +2336,8 @@ pub struct SandboxRefParts {
 /// includes that provider (see [`contrib_providers_built`]).
 #[uniffi::export]
 pub fn sandbox_locations() -> Vec<String> {
-    let mut out: Vec<String> = ["local", "cloud"]
+    // Cua Cloud (`cloud`) has ended and is no longer offered.
+    let mut out: Vec<String> = ["local"]
         .into_iter()
         .chain(cua_sandbox_core::CONTRIB_LOCATIONS.iter().copied())
         .map(str::to_string)

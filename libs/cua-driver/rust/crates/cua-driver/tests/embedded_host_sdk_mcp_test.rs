@@ -46,7 +46,7 @@ fn isolated_driver_host(
             .into_iter()
             // The SDK forwards only its safe allowlist; without XDG overrides
             // the driver derives its XDG state from the isolated HOME.
-            .filter(|(name, _)| matches!(*name, "HOME" | "APPDATA" | "LOCALAPPDATA"))
+            .filter(|(name, _)| matches!(*name, "HOME" | "CUA_DRIVER_RS_HOME"))
             .map(|(name, value)| EmbeddedEnvironmentVariable {
                 name: name.into(),
                 value: value.to_string_lossy().into_owned(),
@@ -191,6 +191,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
             session: Some("embedded-sdk-window".into()),
             capture_scope: Some(CaptureScope::Window),
             cursor_theme: None,
+            cursor_motion: None,
         })
         .await
         .expect("start SDK-owned session");

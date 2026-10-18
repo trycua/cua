@@ -174,7 +174,7 @@ export interface OnboardingCopy {
   teams: string;
   /** Its link ("Join the waitlist"). */
   teamsLink: string;
-  /** The website's Teams waitlist (the app collects nothing). */
+  /** The website's Teams page (the app collects nothing). */
   teamsUrl: string;
 }
 

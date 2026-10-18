@@ -375,6 +375,7 @@ async fn an_spacesd_space_also_reaches_its_declared_services() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn claim_fleet_plain_image_is_ready_without_spacesd() {
     {
         let reg = tempfile::tempdir().unwrap();
@@ -449,6 +450,7 @@ async fn claim_fleet_plain_image_is_ready_without_spacesd() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_env_and_commands_run_on_both_runtimes() {
     let reg = tempfile::tempdir().unwrap();
     let fleet = FakeFleet::new();

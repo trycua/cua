@@ -60,12 +60,12 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Demo [Deleting…] - -",
-          "os-linux Keep [Running] - -"
+          "os-linux demo [Deleting…] - -",
+          "os-linux keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
-          "os-linux Keep, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": true,
@@ -130,12 +130,12 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Demo [Deleting…] - -",
-          "os-linux Keep [Running] - -"
+          "os-linux demo [Deleting…] - -",
+          "os-linux keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
-          "os-linux Keep, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": null,
@@ -200,12 +200,12 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Demo [Deleting…] - -",
-          "os-linux Keep [Running] - -"
+          "os-linux demo [Deleting…] - -",
+          "os-linux keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
-          "os-linux Keep, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": null,
@@ -270,12 +270,12 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Demo [Deleting…] - -",
-          "os-linux Keep [Running] - -"
+          "os-linux demo [Deleting…] - -",
+          "os-linux keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
-          "os-linux Keep, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": true,
@@ -319,10 +319,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Keep [Running] - -"
+          "os-linux keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, This Mac, Running - -"
+          "os-linux keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": true,
@@ -366,10 +366,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Keep [Running] - -"
+          "os-linux keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, This Mac, Running - -"
+          "os-linux keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": null,
@@ -411,10 +411,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Keep [Running] - -"
+          "os-linux keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, This Mac, Running - -"
+          "os-linux keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": null,
@@ -458,17 +458,17 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Keep [Deleting…] - -"
+          "os-linux keep [Deleting…] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, This Mac, Deleting… - Deleting…"
+          "os-linux keep, Linux, This Mac, Deleting… - Deleting…"
         ]
       },
       "isDeleting": true,
       "step": "delete keep"
     },
     {
-      "banner": "Could not delete Keep: lume is not running",
+      "banner": "Could not delete keep: lume is not running",
       "deleting": [],
       "frame": {
         "activity": {
@@ -503,10 +503,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Keep [Running] - -"
+          "os-linux keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, This Mac, Running - -"
+          "os-linux keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": false,

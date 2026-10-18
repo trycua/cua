@@ -147,6 +147,25 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         if case let .key(key, _, _, _) = enter.first { #expect(key == "enter") } else { Issue.record("\(enter)") }
     }
 
+    /// A Linux or Windows guest gets ⌘ chords as Control chords (Command
+    /// would arrive as Super); a macOS or unknown guest keeps ⌘.
+    @Test func commandGoesAsControlToALinuxGuest() {
+        #expect(InputEncoder.commandAsControl(guestOS: "linux"))
+        #expect(InputEncoder.commandAsControl(guestOS: "windows"))
+        #expect(!InputEncoder.commandAsControl(guestOS: "macos"))
+        #expect(!InputEncoder.commandAsControl(guestOS: ""))
+        let mapped = InputEncoder.commandAsControl([
+            .key(key: "c", down: true, modifiers: [.command, .shift], repeatKey: false),
+            .key(key: "v", down: true, modifiers: [.command, .control], repeatKey: false),
+        ])
+        guard case let .key(_, _, copy, _) = mapped[0], case let .key(_, _, paste, _) = mapped[1] else {
+            Issue.record("\(mapped)"); return
+        }
+        #expect(copy == [.control, .shift])
+        #expect(paste == [.control])
+        #expect(OfflineStreamSourceProvider().commandAsControl == false)
+    }
+
     /// The stream view is the hit-test target inside the app's grouped Form
     /// (no SwiftUI container swallows the click) and takes the first mouse,
     /// so a click on an inactive window reaches the Space too.
@@ -277,6 +296,46 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(!session.activatesOnInput)
         #expect(provider.policies.last == "allow_activation")
         await session.stop()
+    }
+
+    /// A Command chord typed while the stream has the keyboard goes to the
+    /// Space (Super on a Linux guest) before the app's own shortcuts: here a
+    /// SwiftUI ⌘N in the same window, which used to take it (#4609).
+    @Test func commandChordReachesTheSpaceBeforeTheAppsShortcuts() throws {
+        _ = NSApplication.shared
+        var shortcutFired = false
+        let session = LiveStreamSession(provider: OfflineStreamSourceProvider())
+        let root = VStack {
+            Button("New Space") { shortcutFired = true }.keyboardShortcut("n", modifiers: .command)
+            LiveStreamView(session: session, isInteractive: true).frame(width: 400, height: 300)
+        }
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 500, height: 400),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: root)
+        host.frame = CGRect(x: 0, y: 0, width: 500, height: 400)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        defer { window.contentView = nil; window.close() }
+
+        func find(_ v: NSView) -> LiveStreamInputView? {
+            if let s = v as? LiveStreamInputView { return s }
+            for sub in v.subviews { if let f = find(sub) { return f } }
+            return nil
+        }
+        let stream = try #require(find(host))
+        var keys: [String] = []
+        stream.onInput = { events in
+            for case let .key(key, down, modifiers, _) in events {
+                keys.append("\(modifiers.map(\.rawValue).joined(separator: "+"))+\(key) \(down ? "down" : "up")")
+            }
+        }
+        #expect(window.makeFirstResponder(stream))
+        NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                         windowNumber: window.windowNumber, context: nil, characters: "n",
+                                         charactersIgnoringModifiers: "n", isARepeat: false, keyCode: 45)!)
+        #expect(keys == ["command+n down", "command+n up"], "the chord reached the Space")
+        #expect(!shortcutFired, "the app's ⌘N did not run")
     }
 }
 #endif

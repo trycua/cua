@@ -26,6 +26,7 @@ VM_NAME = os.environ.get("CUA_TEST_CLOUD_VM_NAME", "steady-bluebird")
 skip_no_key = pytest.mark.skipif(not API_KEY, reason="CUA_API_KEY not set")
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize(
     "auth_environment",
     [
@@ -102,6 +103,7 @@ async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(
     ]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize("legacy_source", ["configured", "environment", "credentials"])
 async def test_registry_image_uses_legacy_auth_when_fleet_auth_is_unavailable(
     monkeypatch, legacy_source
@@ -151,6 +153,7 @@ async def test_registry_image_uses_legacy_auth_when_fleet_auth_is_unavailable(
     assert [route["name"] for route in routes] == ["legacy-demo"]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_ephemeral_registry_image_uses_legacy_auth_selector(monkeypatch):
     monkeypatch.setattr(_config, "_global_config", _config._Config(api_key="sk-configured"))
     for variable in ("FLEETS_TOKEN", "CUA_CLIENT_ID", "CUA_CLIENT_SECRET"):
@@ -251,6 +254,7 @@ async def test_cloud_environment():
     await sb.disconnect()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_cloud_no_api_key_errors():
     """Connecting with no credentials names every way to get them."""
     old = os.environ.pop("CUA_API_KEY", None)
@@ -262,6 +266,7 @@ async def test_cloud_no_api_key_errors():
             os.environ["CUA_API_KEY"] = old
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_cloud_no_image_no_name_errors():
     """Creating without an image raises a clear error."""
     with pytest.raises((ValueError, TypeError)):
@@ -306,6 +311,7 @@ async def test_cloud_invalid_api_key_errors():
         await sb.disconnect()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_backed_create_persists_claim_pool_mapping(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 
@@ -332,6 +338,7 @@ async def test_pool_backed_create_persists_claim_pool_mapping(monkeypatch, tmp_p
     assert sandbox_state.load("wif-smoke-123")["pool_name"] == "cua-cli-wif-smoke"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_backed_connect_loads_claim_pool_mapping(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 
@@ -359,6 +366,7 @@ async def test_pool_backed_connect_loads_claim_pool_mapping(monkeypatch, tmp_pat
     assert created[0]["pool_name"] == "cua-cli-wif-smoke"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_backed_delete_removes_mapping_only_after_success(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 
@@ -380,6 +388,7 @@ async def test_pool_backed_delete_removes_mapping_only_after_success(monkeypatch
     assert sandbox_state.load("wif-smoke-123") is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_backed_delete_keeps_mapping_when_claim_delete_fails(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 

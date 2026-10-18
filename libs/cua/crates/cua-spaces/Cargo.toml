@@ -34,7 +34,7 @@ spaces-hotspot = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
 # Cua Volume mounted in a Space's guest, served from this host.
 spaces-volume = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
 # Agent CLIs in a Space as detached, tagged spacesd processes.
-spaces-agents = ["dep:cua-agents", "dep:reqwest", "dep:tar"]
+spaces-agents = ["dep:cua-agents", "dep:cua-auth", "dep:reqwest", "dep:tar"]
 # The Spaces MCP server (stdio). Hosted by `cua daemon mcp`.
 mcp = []
 # The same server over MCP streamable HTTP.
@@ -51,17 +51,23 @@ required-features = ["mcp-client"]
 [dependencies]
 # Host Spaces use counts (fixed words only).
 cua-telemetry.workspace = true
+cua-create-failure.workspace = true
 cua-spaces-contract = { path = "../cua-spaces-contract" }
 cua-proto = { workspace = true, features = ["client", "serde"] }
 cua-spacesd-client.workspace = true
 cua-home.workspace = true
 cua-icon-cache.workspace = true
 cua-agents = { workspace = true, optional = true }
+# Agent provider keys saved in the OS credential vault (agents::keys).
+cua-auth = { workspace = true, optional = true }
 cua-fleet.workspace = true
 cua-image.workspace = true
 cua-sandbox-core.workspace = true
+cua-vmm.workspace = true
 # The cua-relay machine directory (`space://relay/<id>`) and AccountTokens.
 cua-host.workspace = true
+# `relay:` Spaces over the WireGuard®-based mesh.
+cua-mesh.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 bytes.workspace = true
@@ -94,6 +100,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 axum = { workspace = true, optional = true, features = ["json"] }
 
 [dev-dependencies]
+cua-mesh = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-host = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }

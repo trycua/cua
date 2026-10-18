@@ -23,6 +23,9 @@ pub mod mcp;
 pub mod placement;
 /// Clean-up a dropped (cancelled) create hands off ([`cleanup::settle`]).
 pub use cua_vmm::cleanup;
+/// Why a local create failed, as a bounded telemetry word
+/// ([`cua_vmm::error::failure_kind`]).
+pub use cua_vmm::error::failure_kind as runtime_failure_kind;
 /// GPU options per runtime ([`gpu::GpuSupport`]).
 pub use cua_vmm::gpu;
 /// Create progress: what a create is doing (pulling, booting, waiting for
@@ -61,7 +64,7 @@ pub use fleet_local::{
 pub use http::{HttpResponse, RequestBody, ServiceEndpoint, StreamingResponse};
 pub use mcp::{McpClient, McpConfig};
 pub use pool_image::pool_image_info;
-pub use power::{PowerControl, PowerState};
+pub use power::{PowerControl, PowerState, StopReason};
 pub use provider::{
     CLOUD_LOCATIONS, CONTRIB_LOCATIONS, ImageMode, PortExposure, Provider, ProviderCapabilities,
     ProviderCreate, ProviderImage, ProviderInstance, RunKind, is_cloud_location,
@@ -81,6 +84,12 @@ pub use sandbox::{
 };
 /// Why a cloud (Fleet) sandbox cannot have a GPU yet.
 pub const FLEET_NO_GPU_REASON: &str = sandbox::FLEET_NO_GPU;
+
+/// The one "Cua Cloud has ended" message: every Cua Cloud (`on="cloud"`,
+/// `cloud:` refs, pools) entry point in the SDKs, the CLI, the MCP server and
+/// Spaces fails with it ([`Error::CloudEnded`]) instead of calling Fleet.
+pub const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own machine. \
+     See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
 pub use state::{EphemeralLease, FleetState, LEASE_DIR, LocalState, SandboxState, StateStore};
 
 /// Errors.
@@ -89,6 +98,10 @@ pub enum Error {
     /// Bad input.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+    /// Cua Cloud (`on="cloud"`, a `cloud:` sandbox, a pool) has ended
+    /// ([`CLOUD_ENDED`]). Use a local sandbox or your own machine.
+    #[error("{}", CLOUD_ENDED)]
+    CloudEnded,
     /// A location, kind or runtime that does not exist, or a combination
     /// of them (or with the image) that does not; the error lists the
     /// valid values ([`placement::PlacementError::valid`]).
@@ -172,7 +185,7 @@ pub enum Error {
 
 fn provider_not_configured(p: &ProviderKind) -> String {
     match p {
-        ProviderKind::Fleet => cua_fleet::MISSING_CREDENTIALS.into(),
+        ProviderKind::Fleet => CLOUD_ENDED.into(),
         ProviderKind::Contrib => "no contrib provider is configured".into(),
         other => format!("provider {other:?} is not configured"),
     }

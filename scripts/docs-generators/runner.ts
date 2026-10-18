@@ -391,12 +391,7 @@ function testGeneratorRouting(config: Config): void {
     ['libs/cua/crates/cua-spaces-contract/src/lib.rs', 'docs/content/docs/spaces/reference/agents.mdx', 'scripts/docs-generators/spaces.ts'],
     ['cua-cli', 'spaces']
   );
-  assertSelection(
-    config,
-    ['libs/fleet/backend/docs/swagger.json', 'docs/content/docs/fleets/reference/pool.mdx', 'scripts/docs-generators/fleet.ts'],
-    ['fleet']
-  );
-  assertSelection(config, ['libs/cua/crates/cua-fleet/src/lib.rs'], ['cua-rust', 'fleet']);
+  assertSelection(config, ['libs/cua/crates/cua-fleet/src/lib.rs'], ['cua-rust']);
   assertSelection(config, ['docs/content/docs/cua-cli/guides/mcp-server.mdx'], []);
   assertSelection(config, ['docs/content/docs/lume/reference/cli/vms.mdx'], ['lume']);
   assertSelection(

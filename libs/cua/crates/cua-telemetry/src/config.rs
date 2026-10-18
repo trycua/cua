@@ -31,6 +31,8 @@ pub const ENV_SYNTHETIC: &str = "CUA_TELEMETRY_SYNTHETIC";
 pub const ENV_DEBUG: &str = "CUA_TELEMETRY_DEBUG";
 /// Override the ingest endpoint (self-hosting, tests).
 pub const ENV_ENDPOINT: &str = "CUA_TELEMETRY_ENDPOINT";
+/// Override the PostHog project key (wins over the `CUA_ENV` default).
+pub const ENV_POSTHOG_KEY: &str = "CUA_POSTHOG_KEY";
 /// Refuse every non-loopback send (set for all test runs).
 pub const ENV_FORBID_NETWORK: &str = "CUA_TELEMETRY_FORBID_NETWORK";
 /// Set (to the run id) in the environment of every Cua agent run, by the
@@ -78,11 +80,14 @@ pub enum Source {
     Ci,
     /// The built-in default.
     Default,
+    /// The `CUA_ENV` deployment has no PostHog project (and no
+    /// `CUA_POSTHOG_KEY`): nothing is sent, never to production's.
+    NoProject(&'static str),
 }
 
 impl Source {
     /// Short name (`do_not_track`, `env`, `legacy_env`, `config`, `ci`,
-    /// `default`).
+    /// `default`, `no_project`).
     pub fn kind(&self) -> &'static str {
         match self {
             Source::DoNotTrack => "do_not_track",
@@ -91,6 +96,7 @@ impl Source {
             Source::Config(_) => "config",
             Source::Ci => "ci",
             Source::Default => "default",
+            Source::NoProject(_) => "no_project",
         }
     }
 }
@@ -104,6 +110,10 @@ impl std::fmt::Display for Source {
             Source::Config(p) => write!(f, "config {}", p.display()),
             Source::Ci => f.write_str("CI environment (set CUA_TELEMETRY=1 to send)"),
             Source::Default => f.write_str("default"),
+            Source::NoProject(env) => write!(
+                f,
+                "CUA_ENV={env} has no PostHog project (set {ENV_POSTHOG_KEY} to send)"
+            ),
         }
     }
 }
@@ -203,6 +213,34 @@ pub fn write_config_value(home: &Path, enabled: bool) -> std::io::Result<PathBuf
     Ok(path)
 }
 
+/// The Cua deployment (`prod` or `staging`), resolved as `cua_home::env`
+/// does: `CUA_ENV`, else the build's `CUA_DEFAULT_ENV`; anything else is
+/// `prod`. Kept here (not a cua-home dependency) so cua-driver, which links
+/// this crate, keeps building with its older toolchain.
+fn deployment(env: Env<'_>) -> &'static str {
+    let value = env("CUA_ENV").or_else(|| option_env!("CUA_DEFAULT_ENV").map(str::to_string));
+    match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("staging") => "staging",
+        _ => "prod",
+    }
+}
+
+/// The PostHog project key events go to: `CUA_POSTHOG_KEY`, else the
+/// project of the `CUA_ENV` deployment. `None` when that deployment has no
+/// project yet (staging never falls back to production's).
+pub fn posthog_key(env: Env<'_>) -> Option<String> {
+    if let Some(k) = env(ENV_POSTHOG_KEY).map(|k| k.trim().to_string())
+        && !k.is_empty()
+    {
+        return Some(k);
+    }
+    let key = match deployment(env) {
+        "staging" => crate::sink::STAGING_POSTHOG_API_KEY,
+        _ => crate::sink::POSTHOG_API_KEY,
+    };
+    (!key.is_empty()).then(|| key.to_string())
+}
+
 /// The effective decision for `env` and the config under `home`.
 pub fn decide(env: Env<'_>, home: Option<&Path>) -> Decision {
     let ci = is_ci(env);
@@ -211,6 +249,9 @@ pub fn decide(env: Env<'_>, home: Option<&Path>) -> Decision {
         source,
         is_ci: ci,
     };
+    if posthog_key(env).is_none() {
+        return d(false, Source::NoProject(deployment(env)));
+    }
     if env(ENV_DO_NOT_TRACK).is_some_and(|v| {
         let v = v.trim();
         !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
@@ -244,4 +285,47 @@ pub fn network_forbidden(env: Env<'_>) -> bool {
             .as_deref()
             .and_then(parse_bool)
             .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod env_project_tests {
+    use super::*;
+
+    fn lookup(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |k| {
+            vars.iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn production_keeps_its_project() {
+        let env = lookup(&[]);
+        assert_eq!(
+            posthog_key(&env).as_deref(),
+            Some(crate::sink::POSTHOG_API_KEY)
+        );
+        assert_eq!(decide(&env, None).source.kind(), "default");
+    }
+
+    #[test]
+    fn staging_never_sends_to_the_production_project() {
+        let env = lookup(&[("CUA_ENV", "staging"), ("CUA_TELEMETRY", "1")]);
+        let key = posthog_key(&env);
+        assert_ne!(key.as_deref(), Some(crate::sink::POSTHOG_API_KEY));
+        if crate::sink::STAGING_POSTHOG_API_KEY.is_empty() {
+            assert_eq!(key, None);
+            let d = decide(&env, None);
+            assert!(!d.enabled);
+            assert_eq!(d.source, Source::NoProject("staging"));
+        }
+    }
+
+    #[test]
+    fn an_explicit_key_wins() {
+        let env = lookup(&[("CUA_ENV", "staging"), ("CUA_POSTHOG_KEY", " phc_test ")]);
+        assert_eq!(posthog_key(&env).as_deref(), Some("phc_test"));
+        assert_eq!(decide(&env, None).source.kind(), "default");
+    }
 }

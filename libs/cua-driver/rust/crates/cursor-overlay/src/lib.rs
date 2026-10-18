@@ -3,28 +3,40 @@
 //! Platform renderers (macOS, Windows, Linux) depend on this crate for:
 //! - `CursorConfig` — theme, accessibility, visibility, and motion settings
 //! - `MotionConfig` — glide duration, spring, dwell, idle-hide timings
-//! - `CubicBezier` + `PathPlanner` — Bezier path math (ported 1:1 from C#)
+//! - `CubicBezier` — Bezier path math (from Cua Driver's Swift `Bezier.swift` /
+//!   `CursorMotionPath.swift`; arc-length helper after trope-cua, see
+//!   THIRD_PARTY_NOTICES.md)
+//! - `trajectory` — the motion styles, timing and effect geometry, which live
+//!   in the `cua-cursor-motion` crate (shared with the `@trycua/cursor-motion` web package)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
 //! - `SurfaceFit` — keeps each platform's overlay surface fitted to the live
 //!   display geometry, so screen-coordinate cursors stay on the pointer
 
 pub mod badge_glyphs;
+pub mod badge_mode;
 pub mod bezier;
 pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
-pub mod path_planner;
+pub mod motion_defaults;
 pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
 pub mod surface_fit;
 pub mod theme;
 pub mod theme_artifact;
+pub mod trajectory;
+/// The `classic` glide's Dubins planner, now in `cua-cursor-motion`.
+pub use cua_cursor_motion::dubins as path_planner;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
+pub use badge_mode::BadgeMode;
 pub use bezier::CubicBezier;
-pub use motion::{MotionConfig, Spring};
+pub use motion::{
+    MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
+    DEFAULT_FIXED_MS,
+};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_map::{
     keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
@@ -104,6 +116,10 @@ impl CursorConfig {
     /// ```
     pub fn from_args() -> Self {
         let args: Vec<String> = std::env::args().collect();
+        // Load the saved `cursor.motion.*` defaults; the render map layers
+        // them under each cursor it creates.
+        motion_defaults::load_active();
+        badge_mode::load_active();
         Self::parse(&args[1..])
     }
 
@@ -349,6 +365,10 @@ pub enum OverlayCommand {
         x: f64,
         y: f64,
         end_heading_radians: f64,
+        /// Screen rect `[x, y, width, height]` of the element being targeted,
+        /// when known (AX frame, browser element box). Drives Fitts timing,
+        /// adaptive dispatch and the magnet glow; `None` uses a 24 pt box.
+        target: Option<[f64; 4]>,
     },
     /// Snap the cursor immediately to a screen position, optionally updating heading.
     SnapTo {
@@ -364,6 +384,10 @@ pub enum OverlayCommand {
     SetEnabled(bool),
     /// Update the motion/timing config live.
     SetMotion(MotionConfig),
+    /// Apply `set_agent_cursor_motion`-shaped fields on top of the cursor's
+    /// current motion (the `cursor_motion` of `start_session`). Invalid
+    /// values are ignored; the tool boundary already rejected them.
+    ApplyMotion(serde_json::Value),
     /// Pin the overlay above a specific window (by platform window id).
     PinAbove(u64),
     /// Begin a best-effort semantic cursor cue.
@@ -381,36 +405,21 @@ pub enum OverlayCommand {
     },
     /// Set the sanitized public label shown beneath this cursor.
     SetSessionLabel(String),
+    /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
+    /// minimal badge shows it briefly; other badge modes ignore it.
+    ShowKeyCombo(Vec<String>),
     /// Show a focus-highlight rectangle around an AX-targeted element.
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.
     ShowFocusRect(Option<[f64; 4]>),
 }
 
-/// Distance, in points, between a cursor's pointer point and its anchor.
-///
-/// `RenderStateCore::pos` is the anchor that path motion, the session badge,
-/// and platform damage regions follow. The theme hotspot is drawn at the
-/// pointer point, `POINTER_ANCHOR_OFFSET` points from the anchor opposite the
-/// heading, so a cursor anchored by [`anchor_for_pointer`] draws its tip on
-/// the requested coordinate at every heading and backing scale.
-pub const POINTER_ANCHOR_OFFSET: f64 = 16.0;
-
-/// Anchor that places a cursor's hotspot on `(x, y)` at `heading`.
-pub fn anchor_for_pointer(x: f64, y: f64, heading: f64) -> (f64, f64) {
-    (
-        x + heading.cos() * POINTER_ANCHOR_OFFSET,
-        y + heading.sin() * POINTER_ANCHOR_OFFSET,
-    )
-}
-
-/// Pointer point, where the theme hotspot is drawn, for an anchor at `heading`.
-pub fn pointer_for_anchor(x: f64, y: f64, heading: f64) -> (f64, f64) {
-    (
-        x - heading.cos() * POINTER_ANCHOR_OFFSET,
-        y - heading.sin() * POINTER_ANCHOR_OFFSET,
-    )
-}
+// `RenderStateCore::pos` is the anchor that path motion, the session badge,
+// and platform damage regions follow. The theme hotspot is drawn at the
+// pointer point, `POINTER_ANCHOR_OFFSET` points from the anchor opposite the
+// heading, so a cursor anchored by `anchor_for_pointer` draws its tip on the
+// requested coordinate at every heading and backing scale.
+pub use cua_cursor_motion::{anchor_for_pointer, pointer_for_anchor, POINTER_ANCHOR_OFFSET};
 
 /// Cursor key for a named session's keyboard and text feedback: the explicit
 /// `session` label, else the trusted lifecycle `_session_id`. Anonymous calls

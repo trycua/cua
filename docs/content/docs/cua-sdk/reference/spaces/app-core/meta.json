@@ -21,10 +21,10 @@
     "keyvault-screens",
     "onboarding-settings",
     "about",
-    "billing",
     "this-machine",
     "window",
     "devices",
+    "agent-keys",
     "share",
     "telemetry"
   ]

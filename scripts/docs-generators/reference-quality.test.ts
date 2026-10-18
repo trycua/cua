@@ -14,6 +14,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { anchors, assertUniqueAnchors } from './cli-mdx.test';
+import { cliReference } from './cua-cli';
 import { type CLIDocumentation, type CommandDoc, commandAnchor } from './lib/cli-mdx';
 import { DOCS_CONTENT, GENERATED_MARKER } from './lib/mdx';
 
@@ -59,10 +60,11 @@ for (const [product, spec] of PRODUCTS) {
     const groupPages = pages.filter((f) => f.includes(`${join('reference', 'cli')}`) && !f.endsWith('index.mdx'));
     const text = groupPages.map((f) => readFileSync(f, 'utf-8')).join('\n');
     const ids = new Set(groupPages.flatMap((f) => anchors(readFileSync(f, 'utf-8'))));
+    const omitted = new Set(product === 'cua-cli' ? (cliReference(cli).omit ?? []) : []);
     const missing: string[] = [];
     const noExample: string[] = [];
     const visit = (cmd: CommandDoc, parents: string[]) => {
-      if (cmd.hidden) return;
+      if (cmd.hidden || (parents.length === 1 && omitted.has(cmd.name))) return;
       const path = [...parents, cmd.name];
       const anchor = commandAnchor(path);
       if (!ids.has(anchor)) missing.push(path.join(' '));

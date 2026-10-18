@@ -22,6 +22,7 @@ cua --version          # check install; if missing: curl -fsSL https://cua.ai/in
 
 # Connect to target (pick one)
 cua do switch my-sandbox                    # any sandbox from `cua sb ls`
+cua do switch relay:<machine-id>            # a relay Space from `cua spaces ls`
 cua do switch url http://127.0.0.1:3211 --as dev   # a cua-spacesd by URL
 cua do-host-consent && cua do switch host   # local machine (one-time consent)
 ```
@@ -152,6 +153,7 @@ Tell the user where the trajectory is (`cua trajectory ls` prints the path).
 | Target            | Example                                      |
 | ----------------- | -------------------------------------------- |
 | a sandbox         | `cua do switch my-sandbox` (see `cua sb ls`) |
+| a relay Space     | `cua do switch relay:<machine-id>` (`cua spaces ls`) |
 | a spacesd URL | `cua do switch url http://host:3211 --as x`  |
 | this machine      | `cua do switch host`                         |
 

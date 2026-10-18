@@ -142,6 +142,23 @@ pub const ERROR_KINDS: &[&str] = &[
     "runtime_not_running",
     "runtime_permission",
     "image_pull",
+    // A failed create split by cause (cua_space_create, cua_sandbox_created,
+    // cua_host_space_provided; `classify::create_failure_kind`): the image is
+    // not in the registry, the registry refused the credentials, the network
+    // failed during the download, the registry rate-limited it.
+    "image_pull_not_found",
+    "image_pull_auth",
+    "image_pull_network",
+    "image_pull_rate_limited",
+    // The VM did not finish booting in time; it booted but its services
+    // (cua-spacesd, the computer server) never answered.
+    "vm_boot_timeout",
+    "services_unreachable",
+    // The machine cannot run VMs (no Virtualization.framework, no KVM, no
+    // hardware virtualization).
+    "virtualization_unavailable",
+    // The account's sandbox quota, plan limit or credits ran out.
+    "quota_exceeded",
     "env",
     "http",
     "unauthenticated",
@@ -560,7 +577,7 @@ const OUTCOME: Prop = p("outcome", Kind::Enum(OUTCOMES), "ok, error or cancelled
 const ERROR_KIND: Prop = p(
     "error_kind",
     Kind::Enum(ERROR_KINDS),
-    "Typed error category (the error enum variant); never the message.",
+    "Typed error category (the error enum variant, or a fixed cause word for a failed create); never the message.",
 );
 const DURATION: Prop = p(
     "duration_bucket",
@@ -691,7 +708,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SANDBOX_CREATED,
-        version: 1,
+        version: 2,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: CLIENTS,
@@ -1078,7 +1095,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SPACE_CREATE,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1200,7 +1217,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::HOST_SPACE_PROVIDED,
-        version: 1,
+        version: 2,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["daemon"],

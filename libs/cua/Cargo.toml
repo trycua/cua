@@ -60,6 +60,8 @@ members = [
     "crates/cua-logging",
     # Anonymous product telemetry.
     "crates/cua-telemetry",
+    # A failed create's cause as a fixed telemetry word (no dependencies).
+    "crates/cua-create-failure",
     "crates/cua-viewer",
     # The HTML5 viewer (embedded in cua-spacesd at /viewer; standalone server).
     "crates/cua-spacesd-html5",
@@ -176,6 +178,7 @@ cua-spaces-app-core = { path = "crates/cua-spaces-app-core", version = "0.1.0" }
 cua-spaces-ext = { path = "crates/cua-spaces-ext", version = "0.1.0" }
 cua-byoc = { path = "crates/cua-byoc", version = "0.1.0", default-features = false }
 cua-telemetry = { path = "crates/cua-telemetry", version = "0.1.0" }
+cua-create-failure = { path = "crates/cua-create-failure", version = "0.1.0" }
 cua-media-protocol = { path = "crates/cua-media-protocol" }
 cua-media-transport = { path = "crates/cua-media-transport" }
 cua-media-codec = { path = "crates/cua-media-codec", default-features = false }

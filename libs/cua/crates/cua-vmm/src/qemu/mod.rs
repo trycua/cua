@@ -475,6 +475,32 @@ impl QemuRuntime {
         spec: &StartSpec,
         loadvm: Option<String>,
     ) -> Result<()> {
+        match self.launch_once(st, spec, loadvm.clone(), false).await {
+            Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
+                tracing::warn!(
+                    sandbox = %st.name,
+                    "KVM did not start a vCPU (QEMU stopped answering QMP; see `dmesg` for kvm errors), so retrying under slow TCG emulation"
+                );
+                if let Some(pid) = st.pid {
+                    let _ = host::run("kill", &["-9", &pid.to_string()]).await;
+                    if !Self::wait_exit(pid, Duration::from_secs(5)).await {
+                        return Err(e);
+                    }
+                }
+                st.pid = None;
+                self.launch_once(st, spec, loadvm, true).await
+            }
+            r => r,
+        }
+    }
+
+    async fn launch_once(
+        &self,
+        st: &mut QemuState,
+        spec: &StartSpec,
+        loadvm: Option<String>,
+        force_tcg: bool,
+    ) -> Result<()> {
         let bin = self.binary(st.arch).await?;
         let dir = self.dir(&st.name);
         let mut guest_ports: Vec<u16> = spec.ports.clone();
@@ -490,7 +516,11 @@ impl QemuRuntime {
         } else {
             None
         };
-        st.accel = self.accel_for(st.arch, &host::kvm_usable())?;
+        st.accel = if force_tcg {
+            "tcg".into()
+        } else {
+            self.accel_for(st.arch, &host::kvm_usable())?
+        };
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
         st.restrict_network = spec.restrict_network;
@@ -903,6 +933,10 @@ pub fn usernet_established(table: &str, host_port: u16, guest_port: u16) -> bool
     })
 }
 
+fn kvm_stalled(e: &VmmError) -> bool {
+    matches!(e, VmmError::Qmp(m) if m.contains("timed out"))
+}
+
 fn unique_suffix() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -945,7 +979,49 @@ fn missing_tools(
     ))
 }
 
+pub async fn grant_kvm(
+    probe: impl Fn() -> std::io::Result<()>,
+    user: Option<String>,
+    dry_run: bool,
+    run: impl AsyncFn(&str, &[&str]) -> Result<String>,
+) -> Result<Option<String>> {
+    let e = match probe() {
+        Ok(()) => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => e,
+        Err(e) => return Ok(Some(host::kvm_hint(&e))),
+    };
+    let user = user.filter(|user| !user.is_empty());
+    if dry_run {
+        let user = user.as_deref().unwrap_or("$USER");
+        return Ok(Some(format!(
+            "would: add {user} to the kvm group and grant it /dev/kvm now (setfacl)"
+        )));
+    }
+    let denied = || VmmError::PermissionDenied(host::kvm_hint(&e));
+    let group = run("stat", &["-c", "%G", "/dev/kvm"]).await;
+    if group.map_err(|_| denied())?.trim() != "kvm" {
+        return Err(denied());
+    }
+    let user = match user {
+        Some(user) => user,
+        None => run("id", &["-un"]).await?.trim().to_string(),
+    };
+    run("sudo", &["-n", "usermod", "-aG", "kvm", &user])
+        .await
+        .map_err(|_| denied())?;
+    let acl = format!("u:{user}:rw");
+    let setfacl = run("sudo", &["-n", "setfacl", "-m", &acl, "/dev/kvm"]).await;
+    Ok(Some(match setfacl.is_ok() && probe().is_ok() {
+        true => format!("added {user} to the kvm group and granted /dev/kvm now"),
+        false => {
+            format!("added {user} to the kvm group; log out and back in (or run `newgrp kvm`)")
+        }
+    }))
+}
+
 /// Install QEMU through the host package manager (explicit opt-in).
+const PACKAGE_ATTEMPTS: u32 = 3;
+
 pub async fn install_qemu() -> Result<()> {
     match host::HostOs::current() {
         host::HostOs::Macos => {
@@ -965,7 +1041,28 @@ pub async fn install_qemu() -> Result<()> {
             let program = program.display().to_string();
             tracing::info!("installing QEMU with {manager:?} (sudo -n)");
             for args in manager.commands(&program) {
-                host::run("sudo", &args).await?;
+                let refresh = args.last() == Some(&"update");
+                let mut attempt = 1;
+                loop {
+                    match host::run("sudo", &args).await {
+                        Ok(_) => break,
+                        Err(e) if attempt < PACKAGE_ATTEMPTS => {
+                            tracing::warn!(
+                                "`sudo {}` failed (attempt {attempt}), retrying: {e}",
+                                args.join(" ")
+                            );
+                            attempt += 1;
+                            tokio::time::sleep(Duration::from_secs(3 * attempt as u64)).await;
+                        }
+                        Err(e) if refresh => {
+                            tracing::warn!(
+                                "package index refresh failed, installing from the current lists: {e}"
+                            );
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
             }
         }
         host::HostOs::Windows => {
@@ -1518,6 +1615,19 @@ mod tests {
     }
 
     #[test]
+    fn only_a_qmp_timeout_counts_as_a_stalled_kvm_launch() {
+        assert!(kvm_stalled(&VmmError::Qmp(
+            "timed out waiting for QEMU".into()
+        )));
+        assert!(!kvm_stalled(&VmmError::Qmp(
+            "connection closed by QEMU".into()
+        )));
+        assert!(!kvm_stalled(&VmmError::other(
+            "qemu started but VM status is 'paused'"
+        )));
+    }
+
+    #[test]
     fn explicit_tcg_override_is_allowed() {
         let tmp = tempfile::tempdir().unwrap();
         let r = QemuRuntime::new(QemuConfig {
@@ -1746,6 +1856,189 @@ mod tests {
             "nothing is pulled"
         );
         assert!(matches!(r.load("win"), Err(VmmError::NotFound(_))));
+    }
+
+    fn recording(
+        calls: &std::sync::Mutex<Vec<String>>,
+        group: &'static str,
+        failing: &'static str,
+    ) -> impl AsyncFn(&str, &[&str]) -> Result<String> {
+        async move |program: &str, args: &[&str]| {
+            calls
+                .lock()
+                .unwrap()
+                .push(format!("{program} {}", args.join(" ")));
+            match program {
+                "stat" => Ok(format!("{group}\n")),
+                "id" => Ok("alice\n".to_string()),
+                _ if args.contains(&failing) => {
+                    Err(VmmError::PermissionDenied("a password is required".into()))
+                }
+                _ => Ok(String::new()),
+            }
+        }
+    }
+
+    fn denied() -> std::io::Result<()> {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    }
+
+    fn denied_until_setfacl(
+        calls: &std::sync::Mutex<Vec<String>>,
+    ) -> impl Fn() -> std::io::Result<()> {
+        move || match calls.lock().unwrap().iter().any(|c| c.contains("setfacl")) {
+            true => Ok(()),
+            false => denied(),
+        }
+    }
+
+    #[tokio::test]
+    async fn denied_kvm_adds_the_user_to_the_kvm_group_then_grants_it_now() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied_until_setfacl(&calls),
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            calls.into_inner().unwrap(),
+            [
+                "stat -c %G /dev/kvm",
+                "sudo -n usermod -aG kvm bob",
+                "sudo -n setfacl -m u:bob:rw /dev/kvm",
+            ]
+        );
+        assert_eq!(note, "added bob to the kvm group and granted /dev/kvm now");
+    }
+
+    #[tokio::test]
+    async fn a_failed_setfacl_still_adds_the_group_with_a_relogin_note() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied_until_setfacl(&calls),
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", "setfacl"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let calls = calls.into_inner().unwrap();
+        assert!(calls.contains(&"sudo -n usermod -aG kvm bob".to_string()));
+        assert!(note.starts_with("added bob to the kvm group; "), "{note}");
+        assert!(note.contains("log out and back in"), "{note}");
+        assert!(note.contains("newgrp kvm"), "{note}");
+    }
+
+    #[tokio::test]
+    async fn kvm_still_denied_after_setfacl_keeps_the_relogin_note() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied,
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            calls.into_inner().unwrap().last().unwrap(),
+            "sudo -n setfacl -m u:bob:rw /dev/kvm"
+        );
+        assert!(note.contains("log out and back in"), "{note}");
+    }
+
+    #[tokio::test]
+    async fn an_empty_user_falls_back_to_id_un() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied_until_setfacl(&calls),
+            Some(String::new()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let calls = calls.into_inner().unwrap();
+        assert!(calls.contains(&"id -un".to_string()), "{calls:?}");
+        assert!(calls.contains(&"sudo -n usermod -aG kvm alice".to_string()));
+        assert!(note.starts_with("added alice "), "{note}");
+    }
+
+    #[tokio::test]
+    async fn denied_kvm_without_sudo_is_an_error_naming_the_usermod_fix() {
+        let calls = Default::default();
+        let err = grant_kvm(
+            denied,
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", "usermod"),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.to_string(), host::kvm_hint(&denied().unwrap_err()));
+        assert!(err.to_string().contains("sudo usermod -aG kvm"), "{err}");
+        let calls = calls.into_inner().unwrap();
+        assert!(!calls.iter().any(|c| c.contains("setfacl")), "{calls:?}");
+    }
+
+    #[tokio::test]
+    async fn kvm_owned_by_another_group_is_the_hint_without_sudo() {
+        let calls = Default::default();
+        let err = grant_kvm(
+            denied,
+            Some("bob".into()),
+            false,
+            recording(&calls, "root", ""),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.to_string(), host::kvm_hint(&denied().unwrap_err()));
+        let calls = calls.into_inner().unwrap();
+        assert!(!calls.iter().any(|c| c.starts_with("sudo")), "{calls:?}");
+    }
+
+    #[tokio::test]
+    async fn missing_kvm_runs_nothing_and_is_only_a_note() {
+        let calls = Default::default();
+        let missing = || Err(std::io::ErrorKind::NotFound.into());
+        let note = grant_kvm(
+            missing,
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(note.contains("/dev/kvm is missing"), "{note}");
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dry_run_only_says_it_would_add_the_user_and_grant_kvm() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied,
+            Some("bob".into()),
+            true,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            note.starts_with("would: add bob to the kvm group"),
+            "{note}"
+        );
+        assert!(note.contains("grant it /dev/kvm now (setfacl)"), "{note}");
+        assert!(calls.lock().unwrap().is_empty());
     }
 
     #[test]

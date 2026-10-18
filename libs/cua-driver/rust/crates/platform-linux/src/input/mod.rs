@@ -321,6 +321,10 @@ fn master_keyboard_device_name(master_name: &str) -> String {
 }
 
 fn open_display() -> Result<*mut x11::xlib::Display> {
+    open_named_display(ptr::null())
+}
+
+fn open_named_display(name: *const std::ffi::c_char) -> Result<*mut x11::xlib::Display> {
     match XLIB_THREADS_READY.get_or_init(|| {
         let rc = unsafe { x11::xlib::XInitThreads() };
         if rc == 0 {
@@ -332,7 +336,7 @@ fn open_display() -> Result<*mut x11::xlib::Display> {
         Ok(()) => {}
         Err(err) => bail!("{err}"),
     }
-    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    let display = unsafe { x11::xlib::XOpenDisplay(name) };
     if display.is_null() {
         bail!("XOpenDisplay returned null");
     }
@@ -2861,7 +2865,12 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         // ours has landed — so don't stop at first success: require the
         // active window to hold stable for consecutive checks, re-sending on
         // every regression, within a bounded budget.
-        let conn = RustConnection::connect(None).ok().map(|(conn, _)| conn);
+        let name = unsafe { std::ffi::CStr::from_ptr(x11::xlib::XDisplayString(display)) };
+        let conn = name
+            .to_str()
+            .ok()
+            .and_then(|name| RustConnection::connect(Some(name)).ok())
+            .map(|(conn, _)| conn);
         let prev_pid = conn
             .as_ref()
             .zip(u32::try_from(prev).ok())
@@ -2965,12 +2974,7 @@ fn is_own_dialog(conn: &RustConnection, previous_pid: u32, active: x11::xlib::Wi
     {
         return true;
     }
-    let atom = |name: &str| {
-        conn.intern_atom(false, name.as_bytes())
-            .ok()
-            .and_then(|cookie| cookie.reply().ok())
-            .map(|reply| reply.atom)
-    };
+    let atom = |name: &str| crate::x11::get_atom(conn, name).ok();
     let (Some(window_type), Some(dialog)) = (
         atom("_NET_WM_WINDOW_TYPE"),
         atom("_NET_WM_WINDOW_TYPE_DIALOG"),
@@ -4232,116 +4236,144 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 
 #[cfg(test)]
 mod own_dialog_tests {
-    use super::{is_own_dialog, open_display, restore_focus_state, RustConnection, SavedFocus};
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::*;
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use x11rb::protocol::{xproto::*, Event};
     use x11rb::wrapper::ConnectionExt as _;
 
-    fn window(
-        conn: &impl Connection,
-        root: Window,
-        pid: Option<u32>,
-        transient_for: Option<Window>,
-    ) -> Window {
-        let window = conn.generate_id().unwrap();
-        conn.create_window(
-            0,
-            window,
-            root,
-            0,
-            0,
-            50,
-            50,
-            0,
-            WindowClass::INPUT_OUTPUT,
-            0,
-            &CreateWindowAux::new(),
-        )
-        .unwrap();
-        if let Some(pid) = pid {
-            let pid_atom = conn
-                .intern_atom(false, b"_NET_WM_PID")
-                .unwrap()
-                .reply()
-                .unwrap()
-                .atom;
-            conn.change_property32(
-                PropMode::REPLACE,
-                window,
-                pid_atom,
-                AtomEnum::CARDINAL,
-                &[pid],
-            )
-            .unwrap();
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
         }
-        if let Some(parent) = transient_for {
-            conn.change_property32(
-                PropMode::REPLACE,
-                window,
-                AtomEnum::WM_TRANSIENT_FOR,
-                AtomEnum::WINDOW,
-                &[parent],
-            )
-            .unwrap();
-        }
-        window
     }
-
-    #[test]
-    #[ignore = "requires an isolated X11 display"]
-    fn focus_restore_leaves_focus_on_a_dialog_the_app_opened() {
-        let (conn, screen) = RustConnection::connect(None).unwrap();
-        let root = conn.setup().roots[screen].root;
-        let main = window(&conn, root, Some(4242), None);
-        let dialog = window(&conn, root, Some(4242), Some(main));
-        let sibling = window(&conn, root, Some(4242), None);
-        let foreign = window(&conn, root, Some(4343), Some(main));
-        let typed_dialog = window(&conn, root, Some(4242), None);
-        let pidless = window(&conn, root, None, Some(main));
-        let atom = |name: &str| {
-            conn.intern_atom(false, name.as_bytes())
-                .unwrap()
-                .reply()
-                .unwrap()
-                .atom
-        };
-        conn.change_property32(
-            PropMode::REPLACE,
-            typed_dialog,
-            atom("_NET_WM_WINDOW_TYPE"),
-            AtomEnum::ATOM,
-            &[atom("_NET_WM_WINDOW_TYPE_DIALOG")],
-        )
-        .unwrap();
-        let active = conn
-            .intern_atom(false, b"_NET_ACTIVE_WINDOW")
-            .unwrap()
-            .reply()
-            .unwrap()
-            .atom;
-        conn.change_property32(PropMode::REPLACE, root, active, AtomEnum::WINDOW, &[dialog])
+    fn set32(conn: &RustConnection, win: u32, name: &str, ty: AtomEnum, values: &[u32]) {
+        let atom = crate::x11::get_atom(conn, name).unwrap();
+        conn.change_property32(PropMode::REPLACE, win, atom, ty, values)
             .unwrap();
-        conn.get_input_focus().unwrap().reply().unwrap();
-
-        assert!(is_own_dialog(&conn, 4242, dialog.into()));
-        assert!(!is_own_dialog(&conn, 4242, sibling.into()));
-        assert!(!is_own_dialog(&conn, 4242, foreign.into()));
-        assert!(is_own_dialog(&conn, 4242, typed_dialog.into()));
-        assert!(!is_own_dialog(&conn, 4242, pidless.into()));
-
-        let display = open_display().unwrap();
-        let saved = SavedFocus {
-            ewmh_active: Some(main.into()),
-            core_focus: 0,
-            core_revert_to: 0,
+    }
+    #[test]
+    fn focus_restore_leaves_focus_on_a_dialog_the_app_opened() {
+        let mut server = Server(
+            Command::new("Xvfb")
+                .args(["-displayfd", "1", "-nolisten", "tcp"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("install xvfb to run focus tests"),
+        );
+        let mut number = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut number)
+            .unwrap();
+        let name = format!(":{}", number.trim());
+        let (conn, screen) = RustConnection::connect(Some(&name)).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let window = |pid, transient| {
+            let win = conn.generate_id().unwrap();
+            conn.create_window(
+                0,
+                win,
+                root,
+                0,
+                0,
+                50,
+                50,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new(),
+            )
+            .unwrap();
+            if pid != 0 {
+                set32(&conn, win, "_NET_WM_PID", AtomEnum::CARDINAL, &[pid]);
+            }
+            if transient != 0 {
+                set32(
+                    &conn,
+                    win,
+                    "WM_TRANSIENT_FOR",
+                    AtomEnum::WINDOW,
+                    &[transient],
+                );
+            }
+            conn.map_window(win).unwrap();
+            win
         };
-        let start = std::time::Instant::now();
-        restore_focus_state(display, &saved);
-        let elapsed = start.elapsed();
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        conn.delete_property(root, active).unwrap();
+        let main = window(4242, 0);
+        let dialog = window(4242, main);
+        let sibling = window(4242, 0);
+        let foreign = window(4343, main);
+        let typed = window(4242, 0);
+        let pidless = window(0, main);
+        set32(
+            &conn,
+            typed,
+            "_NET_WM_WINDOW_TYPE",
+            AtomEnum::ATOM,
+            &[crate::x11::get_atom(&conn, "_NET_WM_WINDOW_TYPE_DIALOG").unwrap()],
+        );
+        assert!(is_own_dialog(&conn, 4242, dialog.into()));
+        assert!(is_own_dialog(&conn, 4242, typed.into()));
+        for win in [sibling, foreign, pidless] {
+            assert!(!is_own_dialog(&conn, 4242, win.into()));
+        }
         conn.get_input_focus().unwrap().reply().unwrap();
-        assert!(elapsed.as_millis() < 200, "focus restore took {elapsed:?}");
+        let cname = std::ffi::CString::new(name.clone()).unwrap();
+        let display = open_named_display(cname.as_ptr()).unwrap();
+        // The WM honors every activation, except the first delayed request opens a dialog.
+        for delayed in [false, true] {
+            let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
+            wm.change_window_attributes(
+                root,
+                &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+            set32(
+                &conn,
+                root,
+                "_NET_ACTIVE_WINDOW",
+                AtomEnum::WINDOW,
+                &[sibling],
+            );
+            conn.set_input_focus(InputFocus::PARENT, sibling, 0u32)
+                .unwrap();
+            conn.get_input_focus().unwrap().reply().unwrap();
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done = stop.clone();
+            let thread = std::thread::spawn(move || {
+                let mut first = delayed;
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    match wm.poll_for_event().unwrap() {
+                        Some(Event::ClientMessage(event)) => {
+                            let target = if first { dialog } else { event.window };
+                            first = false;
+                            set32(&wm, root, "_NET_ACTIVE_WINDOW", AtomEnum::WINDOW, &[target]);
+                            wm.set_input_focus(InputFocus::PARENT, target, 0u32)
+                                .unwrap();
+                            wm.flush().unwrap();
+                        }
+                        _ => std::thread::sleep(Duration::from_millis(1)),
+                    }
+                }
+            });
+            restore_focus_state(
+                display,
+                &SavedFocus {
+                    ewmh_active: Some(main.into()),
+                    core_focus: 0,
+                    core_revert_to: 0,
+                },
+            );
+            let focus = conn.get_input_focus().unwrap().reply().unwrap().focus;
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            thread.join().unwrap();
+            assert_eq!(focus, if delayed { dialog } else { main });
+        }
+        unsafe { x11::xlib::XCloseDisplay(display) };
     }
 }
 

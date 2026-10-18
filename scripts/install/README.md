@@ -1,6 +1,6 @@
 # Cua installers
 
-Two scripts install the `cua` CLI, the Cua Spaces app and agent extras, then sign in and set up your AI coding agents with `cua auth login`.
+Two scripts install the `cua` CLI, the Cua Spaces app and agent extras, then sign in and set up your AI coding agents with `cua auth login`. Two more remove them again: [`uninstall.sh` and `uninstall.ps1`](#uninstall).
 
 ```sh
 curl -fsSL https://cua.ai/install.sh | sh
@@ -66,6 +66,46 @@ On Linux and macOS, when the bin dir is not on PATH, install.sh in a terminal as
 `--pair` (`-Pair`) on a computer that already has Cua reuses what is there: a `cua` that knows `host setup --pair` (on PATH, in `~/.local/bin`, or inside the Cua Spaces app) and, on macOS and Linux, the installed app. It then downloads nothing and does not read the release manifest. `--prefix`, `--version` and `CUA_INSTALL_REINSTALL=1` install anyway; an older `cua` without `--pair` is replaced as before.
 
 MDM on macOS: `apps/cua-spaces/scripts/build-pkg.sh` builds a `.pkg` (signed with `--sign`, install mode baked with `--mode`) that installs the app and links `/usr/local/bin/cua` to the CLI bundled inside it. The macOS app is the SwiftUI app (`apps/cua-spaces-macos`, `scripts/build-release.sh`), which carries the CLI as `Contents/MacOS/cua`; the Linux and Windows Electron app (`apps/cua-spaces-desktop`) bundles it itself, and the Tauri bundles (disabled) carry it as a sidecar (`apps/cua-spaces/scripts/prepare-cli-sidecar.sh` + `src-tauri/tauri.sidecar.conf.json`).
+
+## Uninstall
+
+```sh
+curl -fsSL https://cua.ai/uninstall.sh | sh
+```
+
+```powershell
+irm https://cua.ai/uninstall.ps1 | iex
+```
+
+It lists what it found, asks once (`--yes` skips the question; without a terminal it refuses to remove anything unless you pass `--yes`), and can be run again at any time: a computer with nothing left, or only part of Cua, is fine. It only touches Cua's own paths and never a file outside them.
+
+| install.sh | install.ps1 | Effect |
+|---|---|---|
+| (default) | (default) | Removes the app, the CLI, the host service, the agent integrations, launch at login, your sign-in and Cua's settings and caches. Keeps Spaces and their data |
+| `--keep-data` | `-KeepData` | Keeps `~/.cua` (settings, the Spaces registry, the Cua Volume cache, the device key) and the app's settings. Still removes programs, services, integrations and the sign-in |
+| `--delete-spaces` | `-DeleteSpaces` | Also deletes the Spaces on this computer and their data: Space disks, the local Cua Volume files, the Keyvault. Running Spaces are listed and stopped first; asks you to type `delete` (not with `--yes`). Cannot be combined with `--keep-data` |
+| `--all` | `-All` | Also runs the Cua Driver uninstaller (`cua.ai/driver/uninstall.sh` / `.ps1`) and, on macOS, Lume's (`cua.ai/lume/uninstall.sh`). Lume keeps your VMs unless `--delete-spaces` is given too |
+| `--prefix DIR` | `-Prefix DIR` | Also removes what `install.sh --prefix DIR` put under `DIR/bin` and `DIR/Applications` |
+| `--no-modify-path` | `-NoModifyPath` | Never edits your shell profile (user PATH on Windows) |
+| `--dry-run` | `-DryRun` | Prints what would be removed, changes nothing |
+| `--yes` | `-Yes` | Accepts every prompt |
+
+What it removes, in this order (each step is best effort and bounded, so one failure never stops the rest):
+
+1. Quits the Cua Spaces app, lists the Spaces on this computer and stops the running ones (their disks stay).
+2. `cua host remove --force --uninstalling`: unregisters this computer from the relay and removes the host service. When `cua` is not there to do it, it removes the service itself (launchd `com.trycua.spacesd.host` on macOS, the systemd unit `cua-spacesd-host` on Linux, the `Cua\SpacesdHost` scheduled task on Windows, and the names used before the rename).
+3. `cua agents remove --agents all --yes`: the Cua skills and MCP entries (including the cua-driver ones Cua added) in your agents.
+4. `cua daemon stop`, and the Cua Volume mount (`~/Cua Volume` on macOS, `~/cua-volume` on Linux) is unmounted before any file is deleted.
+5. Signs out (`cua auth logout`, which revokes the session) and removes a leftover `credentials.json`.
+6. The app: `Cua Spaces.app` in `/Applications` and `~/Applications` (macOS, only when its bundle id is Cua's); the `cua-spaces` package with apt (Linux .deb), the AppImage, its desktop entry and autostart entry; on Windows the app's own uninstaller (silent), which also removes launch at login. On macOS the app registered itself as a login item, which a script cannot unregister: with the app gone it has nothing to start, and System Settings, Login Items shows how to remove a leftover row.
+7. The CLI: `~/.local/bin/cua`, `/usr/local/bin/cua` (and `DIR/bin/cua`), only when it is the Cua CLI (`cua --version` says `cua X.Y.Z`, or a link into the app). A `cua` from pip, npm or Homebrew is left alone and named. On Windows, `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` and its user PATH entry.
+8. The `# Added by the cua installer` PATH line in your shell profile (kept while `cua-driver` or `lume` still lives in the same folder).
+9. Credentials: the macOS Keychain items of service `run.cua.ai` and `staging.run.cua.ai` (account `cua-cli` for the session; the device key and agent keys too unless `--keep-data`; this includes the legacy `run.cua.ai` label), and the Windows Credential Manager entries `cua-cli.*.run.cua.ai`. With `--delete-spaces` also the Keyvault master key (`Cua Keyvault`).
+10. Settings and caches: in `~/.cua` the config, caches, telemetry, runtimes, skills, the host folder and the Cua Volume cache (`volume/cache`); on macOS the app's Application Support, Preferences, Caches, saved state and WebKit folders; on Linux and Windows the app's own settings folder. Everything else in `~/.cua` (sandboxes, vmm, images, `volume/data`, the Keyvault, trajectories, the Spaces registry) stays until you pass `--delete-spaces`.
+
+The scripts are published next to the installers on the rolling `cua-install-latest` release (`release-installers-feed.yml`, and the CLI and app release workflows through `stamp_installers.py`), and cua.ai redirects `/uninstall.sh` and `/uninstall.ps1` to them the way it does `/install.sh`.
+
+Tests: `python3 -m unittest discover -s scripts/install/tests -p 'test_uninstall.py'` (a throwaway HOME, recording fakes for `cua`, `launchctl`, `systemctl`, `security`, and an `rm` that refuses anything outside the sandbox) and the Pester file `tests/uninstall.Tests.ps1` (every step that touches the machine is mocked).
 
 ## Release manifest
 

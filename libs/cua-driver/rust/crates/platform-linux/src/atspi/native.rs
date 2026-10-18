@@ -3710,8 +3710,64 @@ mod input_dispatch_tests {
         }
     }
 
+    /// Passive labels, one per `doAction` behavior, under [`LABELS`].
+    const LABELS: &str = "/org/a11y/atspi/accessible/label";
+    const LABEL_REPLIES: [&str; 4] = ["acts", "declines", "raises", "stalls"];
+
+    /// A `label` with an Action: a passive node the at-point hit-test fires
+    /// only as its last resort.
+    struct Label;
+    #[zbus::interface(name = "org.a11y.atspi.Accessible")]
+    impl Label {
+        fn get_role_name(&self) -> String {
+            "label".into()
+        }
+        fn get_interfaces(&self) -> Vec<String> {
+            vec![
+                "org.a11y.atspi.Accessible".into(),
+                "org.a11y.atspi.Action".into(),
+            ]
+        }
+        #[zbus(property)]
+        fn name(&self) -> String {
+            "Label".into()
+        }
+    }
+
+    /// The label's one action, `click`, answers as `reply` says.
+    struct LabelAction {
+        reply: &'static str,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+    #[zbus::interface(name = "org.a11y.atspi.Action")]
+    impl LabelAction {
+        #[zbus(property, name = "NActions")]
+        fn n_actions(&self) -> i32 {
+            1
+        }
+        fn get_name(&self, _index: i32) -> String {
+            "click".into()
+        }
+        async fn do_action(&self, _index: i32) -> zbus::fdo::Result<bool> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("label:{}", self.reply));
+            match self.reply {
+                "declines" => Ok(false),
+                "raises" => Err(zbus::fdo::Error::Failed("raised after acting".into())),
+                "stalls" => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Ok(true)
+                }
+                _ => Ok(true),
+            }
+        }
+    }
+
     /// A private session bus with a fake accessible serving `Field` and
-    /// `Button`, plus a client connection. `None` when dbus-daemon is missing.
+    /// `Button`, and the [`LABELS`], plus a client connection. `None` when
+    /// dbus-daemon is missing.
     fn fake_accessible(
         log: Arc<Mutex<Vec<String>>>,
     ) -> Option<(PrivateBus, zbus::Connection, zbus::Connection)> {
@@ -3751,17 +3807,29 @@ mod input_dispatch_tests {
         // Built on the AT-SPI runtime, so its worker serves the fake while a
         // test thread blocks on that runtime.
         let (service, client) = runtime().block_on(async {
-            let service = zbus::connection::Builder::address(address.as_str())
+            let mut service = zbus::connection::Builder::address(address.as_str())
                 .unwrap()
                 .name(SERVICE)
                 .unwrap()
                 .serve_at(PATH, Field(log.clone()))
                 .unwrap()
-                .serve_at(PATH, Button(log))
-                .unwrap()
-                .build()
-                .await
+                .serve_at(PATH, Button(log.clone()))
                 .unwrap();
+            for reply in LABEL_REPLIES {
+                let path = format!("{LABELS}/{reply}");
+                service = service
+                    .serve_at(path.clone(), Label)
+                    .unwrap()
+                    .serve_at(
+                        path,
+                        LabelAction {
+                            reply,
+                            log: log.clone(),
+                        },
+                    )
+                    .unwrap();
+            }
+            let service = service.build().await.unwrap();
             let client = zbus::connection::Builder::address(address.as_str())
                 .unwrap()
                 .build()
@@ -3847,6 +3915,78 @@ mod input_dispatch_tests {
             &raised.context("context added by a caller")
         ));
         assert_eq!(take(), ["action:0", "action:1", "action:2"]);
+    }
+
+    #[test]
+    fn a_passive_hit_that_was_sent_never_reaches_the_full_walk() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let Some((_bus, _service, client)) = fake_accessible(log.clone()) else {
+            return;
+        };
+        // One at-point click on a label: the GetAccessibleAtPoint tier fires
+        // it, then the tier decision says whether the full walk runs.
+        let click = |reply: &str| {
+            let path = format!("{LABELS}/{reply}");
+            let chain = runtime().block_on(async {
+                let acc = super::AccessibleProxy::builder(&client)
+                    .destination(SERVICE)
+                    .unwrap()
+                    .path(path.clone())
+                    .unwrap()
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await
+                    .unwrap();
+                vec![super::HitNode {
+                    acc,
+                    oref: super::RawObjectRef {
+                        name: SERVICE.into(),
+                        path,
+                    },
+                }]
+            });
+            let live = bounded_for(
+                Duration::from_millis(600),
+                super::actuate_chain(&chain, 1, 1, false),
+                || Ok(None),
+            );
+            let mut walked = false;
+            let outcome = crate::atspi::walk_unless_fired(live, || {
+                walked = true;
+                Ok(None)
+            });
+            (outcome, walked, std::mem::take(&mut *log.lock().unwrap()))
+        };
+
+        // A doAction that does not answer was dispatched: a hit, so the
+        // full walk, which would send it again, never runs.
+        let (outcome, walked, sent) = click("stalls");
+        let hit = outcome
+            .unwrap()
+            .expect("an unanswered passive action is a hit");
+        assert_eq!((hit.action.as_str(), hit.role.as_str()), ("click", "label"));
+        assert!(!walked, "the full walk ran after a dispatched action");
+        assert_eq!(sent, ["label:stalls"]);
+
+        // Same for an accepted action, and for an error reply, which may
+        // have acted.
+        let (outcome, walked, sent) = click("acts");
+        assert!(outcome.unwrap().is_some());
+        assert!(!walked);
+        assert_eq!(sent, ["label:acts"]);
+        let (outcome, walked, sent) = click("raises");
+        assert!(landed(&outcome.unwrap_err()));
+        assert!(!walked);
+        assert_eq!(sent, ["label:raises"]);
+
+        // Only a declined action fired nothing: the full walk runs.
+        let (outcome, walked, sent) = click("declines");
+        assert!(outcome.unwrap().is_none());
+        assert!(
+            walked,
+            "a declined action must leave the point to the next tier"
+        );
+        assert_eq!(sent, ["label:declines"]);
     }
 }
 
@@ -4508,7 +4648,9 @@ async fn actuate_chain(
         let Some(Ok(ap)) = call(proxies.action()).await else {
             return Ok(None);
         };
-        if let Some(true) = do_action(&ap, chosen as i32).await? {
+        // As above: only a declined action fired nothing. An unanswered one
+        // was dispatched, and a later tier would send it again.
+        if do_action(&ap, chosen as i32).await? != Some(false) {
             return Ok(Some(AtPointHit::fired(
                 actions.get(chosen).cloned().unwrap_or_default(),
                 role,

@@ -9,8 +9,8 @@
 //! digest when the reference is digest-pinned.
 
 use crate::runtime::ImageInfo;
-use cua_fleet::{FleetClient, RegistryCredentials, RuntimeKind};
-use cua_image::resolve::Backend;
+use cua_fleet::{FleetClient, RuntimeKind};
+use cua_image::{RegistryCredentials, resolve::Backend};
 use std::{
     collections::HashMap,
     sync::{Mutex, OnceLock},

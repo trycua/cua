@@ -191,5 +191,12 @@ fn provider_not_configured(p: &ProviderKind) -> String {
     }
 }
 
+impl From<cua_image::InvalidArgument> for Error {
+    /// A build spec, sidecar or service name the image rules refuse.
+    fn from(e: cua_image::InvalidArgument) -> Self {
+        Error::InvalidArgument(e.0)
+    }
+}
+
 /// Result alias.
 pub type Result<T, E = Error> = std::result::Result<T, E>;

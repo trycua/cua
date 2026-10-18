@@ -170,9 +170,9 @@ export interface OnboardingCopy {
   agentsDoneLede: string;
   permissionsTitle: string;
   openSettings: string;
-  /** The Sign in page's Teams line ("Teams · coming soon"). */
+  /** The Sign in page's Teams line ("Teams · manage them at app.cua.ai"). */
   teams: string;
-  /** Its link ("Join the waitlist"). */
+  /** Its link ("Open the account app"). */
   teamsLink: string;
   /** The website's Teams page (the app collects nothing). */
   teamsUrl: string;

@@ -1,6 +1,7 @@
 // Unified sandbox refs through the native binding: parse, narrow, the typed
-// ambiguity error, and a lookup against an embedded runtime with no Fleet
-// credentials (temp state; nothing reaches a cloud or the host).
+// ambiguity error, and lookups against an embedded runtime (temp state;
+// nothing reaches a cloud or the host). A `cloud:` ref parses, but looking
+// it up fails: Cua Cloud has ended.
 import assert from "node:assert/strict"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -51,6 +52,10 @@ test("lookups take refs", async () => {
   })
   const sbx = c.sandboxes()
   await assert.rejects(sbx.get("nope"), (e) => cua.CuaError.NotFound.instanceOf(e))
-  await assert.rejects(sbx.get("cloud:nope"), (e) => cua.CuaError.ProviderNotConfigured.instanceOf(e))
+  await assert.rejects(sbx.get("cloud:nope"), (e) => {
+    assert.ok(cua.CuaError.Unsupported.instanceOf(e), String(e))
+    assert.match(e.message, /Cua Cloud has ended/)
+    return true
+  })
   await assert.rejects(sbx.get("moon:x"), (e) => cua.CuaError.InvalidArgument.instanceOf(e))
 })

@@ -270,6 +270,7 @@ fn seed_template(fake: &FakeFleet, pool: &str, template: &str, vm: serde_json::V
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_pool_runs_locally_with_its_template() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -341,6 +342,7 @@ async fn fleet_pool_runs_locally_with_its_template() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_macos_template_is_unsupported_locally() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -769,6 +771,7 @@ fn fleet_fake() -> FakeFleet {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_claim_on_existing_pool_reports_template_services() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -791,6 +794,7 @@ async fn fleet_claim_on_existing_pool_reports_template_services() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_runtime_defaults_from_the_image_and_is_validated() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -869,6 +873,7 @@ fn never_ready(name: &str) -> CreateOptions {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_named_sandbox_that_fails_readiness_releases_its_claim() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -897,6 +902,7 @@ async fn fleet_named_sandbox_that_fails_readiness_releases_its_claim() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_named_sandbox_kept_on_failure_keeps_its_claim() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -926,6 +932,7 @@ async fn fleet_named_sandbox_kept_on_failure_keeps_its_claim() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_named_sandbox_lifecycle() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -1087,6 +1094,7 @@ async fn fleet_named_sandbox_lifecycle() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_ephemeral_sandboxes_share_a_managed_pool_and_release_claims() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -1149,6 +1157,7 @@ async fn fleet_ephemeral_sandboxes_share_a_managed_pool_and_release_claims() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_managed_detach_keeps_the_claim_and_windows_gets_efi() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -1172,6 +1181,7 @@ async fn fleet_managed_detach_keeps_the_claim_and_windows_gets_efi() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_probe_timeout_releases_resources() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -1198,6 +1208,7 @@ async fn fleet_probe_timeout_releases_resources() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_explicit_pool_keeps_its_semantics() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -1232,6 +1243,7 @@ async fn fleet_explicit_pool_keeps_its_semantics() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_env_through_gateway_and_missing_env_service() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -1461,7 +1473,7 @@ async fn unconfigured_providers() {
         sbx.create(CreateOptions::new(ProviderKind::Fleet, IMAGE))
             .await
             .unwrap_err(),
-        Error::ProviderNotConfigured(ProviderKind::Fleet)
+        Error::CloudEnded
     ));
     assert!(matches!(
         sbx.create(CreateOptions::new(ProviderKind::Local, IMAGE))
@@ -1529,6 +1541,7 @@ async fn local_command_env_and_named_service_probes() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_command_and_env_are_hashed_and_run_on_both_runtimes() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();
@@ -1620,6 +1633,7 @@ async fn fleet_command_and_env_are_hashed_and_run_on_both_runtimes() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_named_pool_is_checked_against_the_given_fields_or_applied() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fleet_fake();

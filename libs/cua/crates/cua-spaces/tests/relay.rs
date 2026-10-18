@@ -586,3 +586,55 @@ async fn signed_out_lists_this_machines_spaces() {
     *tokens.token.lock().unwrap() = Some("owner".into());
     assert_eq!(spaces.list_all().await.unwrap().len(), 2);
 }
+
+/// A relay deploy (the proxy in front of it answers 503 "no available
+/// server" for a while) keeps the machines it listed a moment ago instead
+/// of failing the whole Space list; with nothing listed before, or a
+/// failure that is not a hiccup, the list fails as before.
+#[tokio::test]
+async fn a_relay_hiccup_lists_the_last_directory() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner-token", "user-1", Some("ada@example.com"));
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "owner-token",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "studio-mac".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let account = || RelayAccount::new(&relay.url, Arc::new(StaticToken("owner-token".into())));
+    let home = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder().home(home.path()).relay(account()).build();
+    assert_eq!(spaces.list_all().await.unwrap().len(), 1);
+
+    relay.set_reads_down(true);
+    let all = spaces.list_all().await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].id, format!("relay:{MACHINE}"));
+
+    // Nothing listed before: the failure shows.
+    let other = tempfile::tempdir().unwrap();
+    let fresh = Spaces::builder()
+        .home(other.path())
+        .relay(account())
+        .build();
+    let err = fresh.list_all().await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Could not refresh relay machines."),
+        "{err}"
+    );
+
+    // Not a hiccup (a 500): the failure shows.
+    relay.set_reads_down(false);
+    relay.fail_reads(&[500]);
+    assert!(spaces.list_all().await.is_err());
+    assert_eq!(spaces.list_all().await.unwrap().len(), 1);
+}

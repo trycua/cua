@@ -10,7 +10,7 @@ Cua installer for Windows: the `cua` CLI, the Cua Spaces app and agent extras.
 
 At a console it first shows a numbered checklist of what to install. Items:
     cli         the cua CLI (always installed, except with -AppOnly)
-    spaces      the Cua Spaces app (the Electron app's setup.exe; off by default here, pick it or use -Select spaces)
+    spaces      the Cua Spaces app (the Electron app's setup.exe; on by default)
     cua-driver  cua-driver MCP and skill for your agents (off by default)
     host        host this machine: `cua host setup` (off by default)
 Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt.
@@ -18,7 +18,9 @@ Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt.
 Reads release-artifacts.json (see scripts/install/README.md), downloads the
 artifacts for this machine, verifies their sha256 (and a minisign or cosign
 signature when available), installs `cua` to %LOCALAPPDATA%\Programs\cua\bin
-(or -Prefix\bin), then runs `cua auth login` when a user is at the console.
+(or -Prefix\bin) and adds that directory to your user PATH (-NoModifyPath
+skips it), then runs `cua auth login` when a user is at the console (not
+with -CliOnly, -Pair or -NoOnboarding).
 -AppOnly, -Mode and the `spaces` item install the Cua Spaces app: its signed
 setup.exe for this machine's architecture, run silently (/S) after the sha256
 (and cosign, when available) check.
@@ -28,7 +30,7 @@ Preselect items (comma list: spaces, cua-driver, host); the checklist still show
 .PARAMETER Only
 Install exactly these items plus the CLI, without the checklist.
 .PARAMETER CliOnly
-Install only the `cua` CLI (same as -Only cli).
+Install only the `cua` CLI (same as -Only cli), without prompts or sign-in.
 .PARAMETER AppOnly
 Install only the Cua Spaces app (no CLI).
 .PARAMETER Mode
@@ -36,7 +38,9 @@ Preselect the app's first-run choice: host or client (implies spaces).
 .PARAMETER Pair
 Add this machine to your account with a one-time code from the Cua Spaces app
 (Add a machine): installs the CLI and runs `cua host setup --pair <code>`, with
-no sign-in and no checklist.
+no sign-in and no checklist. A computer that already has a cua with
+`host setup --pair` uses it instead of downloading again; -Prefix, -Version or
+CUA_INSTALL_REINSTALL=1 install anyway.
 .PARAMETER Relay
 Relay for -Pair (default https://relay.cua.ai).
 .PARAMETER Version
@@ -44,7 +48,9 @@ Install this CLI release (default: latest).
 .PARAMETER Prefix
 Install the CLI under Prefix\bin.
 .PARAMETER ModifyPath
-Add the CLI directory to the user PATH.
+Kept for older commands: the CLI directory is added to the user PATH by default.
+.PARAMETER NoModifyPath
+Do not add the CLI directory to the user PATH.
 .PARAMETER NoOnboarding
 Do not run `cua auth login` afterwards.
 .PARAMETER RequireSignature
@@ -68,6 +74,7 @@ param(
     [string]$Version = '',
     [string]$Prefix = '',
     [switch]$ModifyPath,
+    [switch]$NoModifyPath,
     [switch]$NoOnboarding,
     [switch]$RequireSignature,
     [ValidateSet('msi', 'nsis')][string]$Installer = 'nsis',
@@ -99,6 +106,7 @@ $script:Picked = $false
 # Cua Spaces ships for Windows as the Electron app's NSIS setup.exe
 # (cd-cua-spaces.yml). Set this to $false to skip a selected `spaces` with a note.
 $script:SpacesSupported = $true
+$script:SigNoted = $false
 
 function Get-Sha256Hex([string]$Path) {
     # .NET directly: Get-FileHash is missing when the Utility module is not
@@ -161,6 +169,9 @@ function Get-CuaSelection {
     if ($App -and ($extra -contains 'cua-driver' -or $extra -contains 'host')) { Stop-Install '-AppOnly skips the CLI, which cua-driver and host need' }
     $sel = [ordered]@{ cli = -not $App; spaces = $false; 'cua-driver' = $false; host = $false }
     $list = if ($OnlyList -or $Cli) { $OnlyList } else { $SelectList }
+    # The app is a default, as on macOS and Linux (not with -Only, -CliOnly
+    # or a pairing code, which adds a host machine).
+    if (-not ($OnlyList -or $Cli -or $Pair)) { $sel.spaces = $true }
     foreach ($item in @(ConvertTo-CuaItems $list)) { $sel[$item] = $true }
     # A pairing code adds this machine: the CLI and host setup.
     if ($Pair) {
@@ -177,11 +188,10 @@ function Test-WantsChecklist {
         $env:CUA_INSTALL_NONINTERACTIVE -ne '1' -and (Test-Interactive))
 }
 
-# Numbered checklist: toggle numbers, Enter to install. The CLI row is locked;
-# Spaces shows only when preselected (-Select spaces, -Mode).
+# Numbered checklist: toggle numbers, Enter to install. The CLI row is locked.
 function Read-CuaSelection($Sel, [scriptblock]$Reader = { Read-Host 'Toggle numbers (e.g. 2 3), Enter to install' }) {
     $rows = @('cli')
-    if ($Sel.spaces) { $rows += 'spaces' }
+    if ($script:SpacesSupported) { $rows += 'spaces' }
     $rows += 'cua-driver', 'host'
     $labels = @{ cli = 'cua CLI (required)'; spaces = 'Cua Spaces app'; 'cua-driver' = 'cua-driver MCP and skill for your agents'; host = 'Host this machine' }
     Write-Host ''
@@ -300,7 +310,11 @@ function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
         Stop-Install "no verifiable signature for $(Split-Path -Leaf $File) (install minisign or cosign)"
     }
     if (-not $ok -and ($Entry.PSObject.Properties['minisig'] -or $Entry.PSObject.Properties['cosign_bundle'])) {
-        Write-Warning "$(Split-Path -Leaf $File) is signed, but neither minisign nor cosign is installed; verified its sha256 only (install cosign, or pass -RequireSignature to insist)"
+        # One quiet line per run: sha256 is checked either way.
+        if (-not $script:SigNoted) {
+            $script:SigNoted = $true
+            Write-Info 'checked sha256 (cosign is not installed, so release signatures were not checked; -RequireSignature makes that an error)'
+        }
     }
 }
 
@@ -333,17 +347,19 @@ function Get-CliBinDir {
 function Add-UserPath([string]$Dir) {
     $current = [Environment]::GetEnvironmentVariable('Path', 'User')
     $parts = @(if ($current) { $current -split ';' | Where-Object { $_ } })
-    if ($parts -contains $Dir) { return }
     if ($DryRun) { Write-Host "[dry-run] add $Dir to the user PATH"; return }
+    # This terminal too, so `cua` works right away.
+    if (@($env:Path -split ';') -notcontains $Dir) { $env:Path = "$env:Path;$Dir" }
+    if ($parts -contains $Dir) { return }
     [Environment]::SetEnvironmentVariable('Path', (($parts + $Dir) -join ';'), 'User')
-    $env:Path = "$env:Path;$Dir"
     Write-Info "added $Dir to your user PATH (new terminals pick it up)"
 }
 
 function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string]$Tmp) {
     $bin = Get-CliBinDir
     $target = Join-Path $bin 'cua.exe'
-    if (-not (Confirm-Step "Install the cua CLI to ${target}?")) { Stop-Install 'cancelled; rerun with -Prefix DIR to choose another location' }
+    # -CliOnly / -Only already said what to install.
+    if (-not ($CliOnly -or $Only) -and -not (Confirm-Step "Install the cua CLI to ${target}?")) { Stop-Install 'cancelled; rerun with -Prefix DIR to choose another location' }
     $zip = Get-Artifact $Manifest $ManifestUrl 'cli' $Platform 'zip' $Tmp
     if ($DryRun) {
         Write-Host "[dry-run] install cua.exe -> $target"
@@ -358,12 +374,11 @@ function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string
     }
     $onPath = @($env:Path -split ';') -contains $bin
     if (-not $onPath) {
-        if ($ModifyPath) { Add-UserPath $bin }
+        if (-not $NoModifyPath) { Add-UserPath $bin }
         else {
             Write-Host ""
             Write-Host "$bin is not on your PATH. Add it with:"
             Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"`$([Environment]::GetEnvironmentVariable('Path','User'));$bin`", 'User')"
-            Write-Host "(or rerun the installer with -ModifyPath)"
         }
     }
     return $target
@@ -408,7 +423,7 @@ function Get-DriverBinDir {
 function Get-DriverInstallArgs {
     $a = @()
     if ($RequireSignature) { $a += '-RequireSignature' }
-    if (-not $ModifyPath) { $a += '-NoPathUpdate' }
+    if ($NoModifyPath) { $a += '-NoPathUpdate' }
     return $a
 }
 
@@ -463,6 +478,13 @@ function Invoke-HostPair([string]$Cua) {
     $pairArgs = @('host', 'setup', '--pair', $Pair)
     if ($Relay) { $pairArgs += @('--relay', $Relay) }
     if ($DryRun) { Write-Host "[dry-run] $Cua $($pairArgs -join ' ')"; return }
+    # A CLI released before pairing exists would fail with a bare
+    # "unexpected argument '--pair'"; say what to do instead.
+    $setupHelp = (& $Cua host setup --help 2>&1 | Out-String)
+    if ($setupHelp -notmatch '--pair') {
+        $have = (& $Cua --version 2>&1 | Out-String).Trim()
+        Stop-Install "the installed cua CLI ($have) cannot add a machine with a code (no 'cua host setup --pair'); install a newer release (-Version) or sign in instead: cua auth login; cua host setup"
+    }
     Write-Info 'adding this machine to your account (cua host setup --pair)'
     $null | & $Cua @pairArgs
     if ($LASTEXITCODE -ne 0) { Stop-Install 'adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>' }
@@ -477,6 +499,23 @@ function Invoke-HostSetup([string]$Cua) {
     Write-Info 'setting up this machine as a host (cua host setup)'
     if (Test-Interactive) { & $Cua host setup } else { $null | & $Cua host setup }
     if ($LASTEXITCODE -ne 0) { Write-Warning "host setup did not finish; run 'cua host setup' after 'cua auth login'" }
+}
+
+# -Pair on a computer that already has Cua: the `cua` that is there (it must
+# know `host setup --pair`), or $null. -Prefix, -Version and
+# CUA_INSTALL_REINSTALL=1 install anyway.
+function Find-ExistingCua {
+    if (-not $Pair -or $Prefix -or $Version -or $env:CUA_INSTALL_REINSTALL -eq '1') { return $null }
+    $candidates = @()
+    $onPath = Get-Command cua -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($onPath) { $candidates += $onPath.Source }
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\cua\bin\cua.exe') }
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path -LiteralPath $candidate)) { continue }
+        $help = (& $candidate host setup --help 2>&1 | Out-String)
+        if ($help -match '--pair') { return $candidate }
+    }
+    return $null
 }
 
 function Invoke-CuaInstall {
@@ -497,13 +536,23 @@ function Invoke-CuaInstall {
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("cua-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     try {
-        $manifestUrl = Get-ManifestUrl
-        $manifestFile = Join-Path $tmp 'release-artifacts.json'
-        Get-Remote $manifestUrl $manifestFile
-        $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
-        if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
-        Write-Info "platform $platform, manifest $manifestUrl"
         $cua = $null
+        $existing = Find-ExistingCua
+        if ($existing) {
+            Write-Info "cua is already installed at $existing; using it (CUA_INSTALL_REINSTALL=1 installs it again)"
+            $sel.cli = $false
+            $cua = $existing
+        }
+        $manifestUrl = $null
+        # Nothing to download (-Pair on a computer that has Cua): no manifest to read.
+        if ($sel.cli -or $sel.spaces -or $sel['cua-driver']) {
+            $manifestUrl = Get-ManifestUrl
+            $manifestFile = Join-Path $tmp 'release-artifacts.json'
+            Get-Remote $manifestUrl $manifestFile
+            $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
+            if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
+            Write-Info "platform $platform, manifest $manifestUrl"
+        }
         if ($sel.cli) { $cua = Install-Cli $manifest $manifestUrl $platform $tmp }
         if ($sel.spaces) {
             if ($Mode) {
@@ -531,7 +580,7 @@ function Invoke-CuaInstall {
         $env:CUA_INSTALL_CHANNEL = 'install_script'
         if ($sel['cua-driver']) { Install-CuaDriver $cua $tmp $manifestUrl }
         Write-Info 'done'
-        if ($cua -and -not $Pair -and -not $NoOnboarding -and -not $DryRun -and (Test-Interactive)) {
+        if ($cua -and -not $Pair -and -not $CliOnly -and -not $NoOnboarding -and -not $DryRun -and (Test-Interactive)) {
             Write-Info 'signing in (cua auth login)'
             & $cua auth login
             if ($LASTEXITCODE -ne 0) { Write-Warning "sign-in did not finish; run 'cua auth login' later" }

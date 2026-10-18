@@ -242,6 +242,7 @@ export class LiveSpacesBackend implements SpacesBackend {
           cloud: text(info.cloud),
           cloudPlace: text(info.cloudPlace),
           cloudDelete: text(info.cloudDelete),
+          stopReason: text(info.stopReason),
         };
         // Turned off on purpose: no probe (it would only time out).
         if (info.powerState === "suspended" || info.powerState === "stopped") return row;

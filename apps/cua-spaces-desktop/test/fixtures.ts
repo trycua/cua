@@ -386,4 +386,9 @@ export class FixtureTelemetry implements TelemetryRunning {
   record(signals: AppTelemetrySignal[]) {
     if (this.current.enabled) this.recorded.push(...signals);
   }
+  acknowledged = 0;
+  acknowledgeNotice() {
+    this.acknowledged += 1;
+    this.current = { ...this.current, noticeShown: true };
+  }
 }

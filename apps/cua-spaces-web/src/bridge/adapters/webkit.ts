@@ -61,6 +61,7 @@ import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { HostChecklistState } from "../ops/checklist";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
+import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
 import type { SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
@@ -121,6 +122,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     hostName: opt(s.hostName),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
+    stopReason: off ? opt(s.power?.stopReason) : undefined,
     cloud: opt(s.cloud),
     cloudPlace: opt(s.cloudPlace),
     cloudDelete: opt(s.cloudDelete),
@@ -419,6 +421,7 @@ const EVENTS: Record<string, HostEvent[]> = {
   "checklist.changed": [{ type: "checklist.changed" }],
   "keyvault.changed": [{ type: "keyvault.changed" }],
   "settings.changed": [{ type: "settings.changed" }],
+  "update.changed": [{ type: "update.changed" }],
   "session.changed": [{ type: "session.changed" }],
 };
 
@@ -557,7 +560,7 @@ export function createWebkitAdapter(
           await choose("telemetry", value ? "on" : "off");
           break;
         case "defaultLocation":
-          if (value !== "local" && value !== "cloud") throw new HostError("New Spaces can start on This Mac or Cua Cloud here", "unsupported");
+          if (value !== "local") throw new HostError("New Spaces can start on This Mac here", "unsupported");
           await choose("default-location", value);
           break;
         case "launchAtLogin":
@@ -650,6 +653,10 @@ export function createWebkitAdapter(
           "presence.leave": (args: OpArgs<"presence.leave">) => request<null>("presence.leave", { ...args }),
         }
       : unsupportedPresenceOps("webkit")),
+    // Windows' "Install Docker Desktop": a Mac sets up its runtimes itself.
+    ...(electron
+      ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
+      : unsupportedRuntimeFixOps("webkit")),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {

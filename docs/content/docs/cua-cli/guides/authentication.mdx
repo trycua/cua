@@ -1,6 +1,6 @@
 ---
 title: Authenticate
-description: 'Sign in with cua auth login, see which Fleet credential the CLI uses, create API keys, and authenticate in GitHub Actions.'
+description: 'Sign in with cua auth login, see which credential the CLI uses, and create API keys.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -13,7 +13,7 @@ share one credential store. Local sandboxes need no sign-in.
 ```bash test="cli-shape" id="cua-auth-login"
 cua auth login              # browser (PKCE, loopback redirect)
 cua auth login --remote     # device code, for SSH sessions
-cua auth whoami             # the Fleet credential in use, checked against Fleet
+cua auth whoami             # the credential in use
 cua auth status             # session and expiry, no network
 cua auth logout             # revoke and remove the session
 ```
@@ -35,17 +35,16 @@ printed.
 is a new app to the Keychain every time it is rebuilt, so it uses the file and
 never asks for Keychain access.
 
-## Which credential Fleet uses
+## Which credential the CLI uses
 
 The first that is set wins:
 
 | Order | Source | For |
 |-------|--------|-----|
-| 1 | `FLEETS_TOKEN` | A workload token, for example from `cua wif-token github`. |
-| 2 | `CUA_CLIENT_ID` + `CUA_CLIENT_SECRET` | An API key, for scripts and servers (`CUA_TOKEN_URL` overrides the endpoint). |
-| 3 | The `cua auth login` session | Interactive use. |
+| 1 | `CUA_CLIENT_ID` + `CUA_CLIENT_SECRET` | An API key, for scripts and servers (`CUA_TOKEN_URL` overrides the endpoint). |
+| 2 | The `cua auth login` session | Interactive use. |
 
-Legacy `key_...` keys belong to the retired VM API and do not work with Fleet.
+Legacy `key_...` keys belong to the retired VM API and no longer work.
 
 ## API keys
 
@@ -57,28 +56,9 @@ cua auth keys ls
 cua auth keys rm <id>
 ```
 
-## GitHub Actions
-
-`cua wif-token github` exchanges the job's OIDC identity for a Fleet token. It
-needs `id-token: write` and a Fleet trust policy for the repository:
-
-```yaml test="config" id="yaml-config"
-permissions:
-  id-token: write
-  contents: read
-
-steps:
-  - name: Use a cloud sandbox
-    run: |
-      export FLEETS_TOKEN="$(cua wif-token github)"
-      cua sb create linux --on cloud --name "run-$GITHUB_RUN_ID"
-      cua sb exec "run-$GITHUB_RUN_ID" "uname -a"
-      cua sb rm "run-$GITHUB_RUN_ID" --force
-```
-
 <Callout type="warn">
   The stored refresh token mints access tokens until revoked. On shared hosts,
-  run `cua auth logout` when done, or use an API key or workload token.
+  run `cua auth logout` when done, or use an API key.
 </Callout>
 
 ## Targeting staging
@@ -105,10 +85,7 @@ cua auth status             # starts with "Environment: staging (...)"
 
 Each environment has its own session, host enrollment, Spaces registry and
 daemon, so signing in to staging never replaces or sends your production
-session, and the other way round. Fleet has no staging deployment: under
-`CUA_ENV=staging` the CLI does not send the staging session to
-`https://run.cua.ai`, so cloud sandboxes need `CUA_FLEET_BASE_URL` set to a
-non-production Fleet, or an API key.
+session, and the other way round.
 
 Usage telemetry follows the environment too: staging events go to the staging
 PostHog project, never to production's. `CUA_POSTHOG_KEY` overrides the
@@ -125,5 +102,5 @@ For the macOS app, launch it with the variable set:
 first. The host service (`cua host setup`) has one name on each machine, so pair
 a staging host on a separate machine or VM.
 
-Other variables (`CUA_FLEET_BASE_URL`, `CUA_OIDC_ISSUER`, `CUA_AUTH_FLOW`,
+Other variables (`CUA_OIDC_ISSUER`, `CUA_AUTH_FLOW`,
 `CUA_NO_BROWSER`, ...) are listed in the [CLI reference](/cua-cli/reference/cli).

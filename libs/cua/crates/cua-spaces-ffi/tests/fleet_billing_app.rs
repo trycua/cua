@@ -25,6 +25,7 @@ fn cua(fake: &FakeFleet, dirs: &tempfile::TempDir) -> std::sync::Arc<Cua> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn the_status_carries_the_credit_and_the_billing_page() {
     let fake = FakeFleet::new();
     fake.faults.lock().unwrap().billing = Some(json!({
@@ -52,6 +53,7 @@ async fn the_status_carries_the_credit_and_the_billing_page() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_cloud_create_out_of_credit_is_a_typed_error_with_the_billing_page() {
     let fake = FakeFleet::new();
     fake.faults.lock().unwrap().credit_exhausted = Some("https://run.cua.ai/billing".into());

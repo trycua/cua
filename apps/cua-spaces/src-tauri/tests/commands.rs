@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use cua_fleet::testing::FakeFleet;
 use cua_sandbox_core::{
     InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
-    RuntimeError,
+    RuntimeError, CLOUD_ENDED,
 };
 use cua_spaces::Provider;
 use cua_spaces_lib::core::{AppCore, CoreConfig, SpaceCreateConfig, StreamOpts, StreamTargetArg};
@@ -273,6 +273,7 @@ async fn an_unreachable_space_is_listed_within_the_probe_bound() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn cloud_spaces_bind_through_the_gateway_and_delete_removes_the_sandbox() {
     let home = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -345,40 +346,21 @@ async fn runtime_image_pairing_errors_come_from_the_sdk() {
     let mut c = CoreConfig::hermetic(home.path());
     c.fleet_client = Some(fake.client());
     let app = AppCore::new(c);
-    // gVisor cannot run a containerDisk: the SDK's one check, from the
-    // image's manifest (here a fixture), not its tag.
-    cua_fleet::testing::set_image_variant(IMAGE, cua_fleet::ImageVariant::ContainerDisk);
-    let e = app
-        .create_space(SpaceCreateConfig {
-            on: Some("cloud".into()),
-            image: Some(IMAGE.into()),
-            runtime: Some("gvisor".into()),
-            name: None,
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert!(e.contains("containerDisk"), "{e}");
+    // Cua Cloud has ended: a cloud create fails with the one message, before
+    // any pairing check and before any Fleet request, whatever the runtime.
+    for runtime in [Some("gvisor"), Some("firecracker"), Some("qemu"), None] {
+        let e = app
+            .create_space(SpaceCreateConfig {
+                on: Some("cloud".into()),
+                image: Some(IMAGE.into()),
+                runtime: runtime.map(Into::into),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(e, CLOUD_ENDED, "{runtime:?}: {e}");
+    }
     assert!(fake.requests().is_empty(), "refused before any request");
-    let e = app
-        .create_space(SpaceCreateConfig {
-            on: Some("cloud".into()),
-            runtime: Some("firecracker".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert!(e.contains("firecracker"), "{e}");
-    // A runtime the cloud does not offer lists the ones it does.
-    let e = app
-        .create_space(SpaceCreateConfig {
-            on: Some("cloud".into()),
-            runtime: Some("qemu".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert!(e.contains("kubevirt") || e.contains("gvisor"), "{e}");
     // A kind that contradicts the runtime is refused locally too.
     let e = app
         .create_space(SpaceCreateConfig {
@@ -394,11 +376,13 @@ async fn runtime_image_pairing_errors_come_from_the_sdk() {
 }
 
 #[tokio::test]
-async fn without_cloud_auth_creates_say_how_to_sign_in() {
+async fn cloud_creates_fail_because_cua_cloud_has_ended() {
     let home = tempfile::tempdir().unwrap();
     let app = core(home.path());
     let status = app.fleet_status(false).await;
     assert!(!status.configured);
+    // Signed in or not, a cloud create says the same thing: Cua Cloud has
+    // ended, with no "sign in" way out.
     let e = app
         .create_space(SpaceCreateConfig {
             on: Some("cloud".into()),
@@ -406,7 +390,11 @@ async fn without_cloud_auth_creates_say_how_to_sign_in() {
         })
         .await
         .unwrap_err();
-    assert!(e.contains("sign in") || e.contains("CUA_CLIENT_ID"), "{e}");
+    assert_eq!(e, CLOUD_ENDED, "{e}");
+    assert!(
+        !e.contains("sign in") && !e.contains("CUA_CLIENT_ID"),
+        "{e}"
+    );
     assert!(!e.to_lowercase().contains("claim"), "{e}");
 }
 
@@ -429,24 +417,30 @@ async fn default_location_is_stored_in_the_cua_home_config() {
         assert_eq!(before.env, None);
     }
 
-    let after = app.set_default_location("cloud").unwrap();
-    let toml = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
-    assert!(
-        toml.contains("[default]") && toml.contains("on = \"cloud\""),
-        "{toml}"
-    );
+    // Cua Cloud has ended: it cannot be saved as the default location, and
+    // nothing is written.
+    let e = app.set_default_location("cloud").unwrap_err();
+    assert_eq!(e, CLOUD_ENDED, "{e}");
+    assert!(!home.path().join("config.toml").exists());
     if !env_override {
+        assert_eq!(app.default_location().unwrap().value, "local");
+        // A cloud default saved before it ended never creates there: with no
+        // location given, the create fails with the same message.
+        std::fs::write(
+            home.path().join("config.toml"),
+            "[default]\non = \"cloud\"\n",
+        )
+        .unwrap();
+        let after = app.default_location().unwrap();
         assert_eq!(
             (after.value.as_str(), after.source.as_str()),
             ("cloud", "config")
         );
-        // No location given: the create goes to the default (the cloud,
-        // which is not signed in here).
         let e = app
             .create_space(SpaceCreateConfig::default())
             .await
             .unwrap_err();
-        assert!(e.contains("sign in") || e.contains("CUA_CLIENT_ID"), "{e}");
+        assert_eq!(e, CLOUD_ENDED, "{e}");
     }
 
     // An existing machine or an engine word is not a location.

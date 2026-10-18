@@ -90,14 +90,56 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
   }
 }
 
+/**
+ * The signals of a create, power or delete step (the core's
+ * `telemetry.creates`) that this app's host records itself: Electron runs
+ * every create in `AppModel.runCreate`, whose `sendCreate` records them.
+ * The page's store derives the same signals from its own copy of the
+ * creates, so recording both counted every create twice on Windows and
+ * Linux (`cua_space_create`, `cua_space_create_started`,
+ * `space_create_local`, `first_space_created`, `first_space_ready`). The
+ * SwiftUI host records only the page's.
+ */
+export function hostRecorded(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const s = raw as Record<string, unknown>;
+  switch (s.type) {
+    case "space-create":
+    case "space-create-started":
+      return true;
+    case "feature":
+      return s.feature === "space_create_local" || s.feature === "space_create_cloud";
+    case "step":
+      return s.step === "first_space_created" || s.step === "first_space_ready";
+    default:
+      return false;
+  }
+}
+
+/** The page's first run moved past Welcome (its usage notice was on
+ * screen): any page left or shown other than Welcome being shown, or
+ * "Set up later". */
+export function leftWelcome(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const s = raw as Record<string, unknown>;
+  if (s.type === "onboarding-page") return !(s.page === "welcome" && s.action === "shown");
+  return s.type === "step" && s.step === "onboarding_skipped";
+}
+
 export function telemetryMethods({ model }: BridgeContext): Handlers {
   return {
     "telemetry.track": (args) => {
       if (!Array.isArray(args.signals)) throw Failure.badArgs("signals: array");
       const telemetry = model.telemetry;
       if (!telemetry || !telemetry.status().enabled) return null;
-      const signals = args.signals.map((raw) => telemetrySignal(model.native, raw)).filter((s): s is AppTelemetrySignal => s !== null);
-      if (signals.length) telemetry.record(signals);
+      const kept = args.signals.flatMap((raw) => {
+        if (hostRecorded(raw)) return [];
+        const signal = telemetrySignal(model.native, raw);
+        return signal ? [{ raw, signal }] : [];
+      });
+      // Held until the notice was shown; leaving Welcome sends them in order.
+      if (kept.length) telemetry.record(kept.map((k) => k.signal));
+      if (kept.some((k) => leftWelcome(k.raw))) telemetry.acknowledgeNotice();
       return null;
     },
   };

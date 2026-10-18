@@ -191,6 +191,7 @@ async def test_claim_close_orders_driver_release_transport(sandbox):
     assert driver.shutdowns == 1
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_claim_context_closes_driver_before_claim_and_client(native, monkeypatch):
     from cua_sandbox import Pool
 

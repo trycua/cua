@@ -11,6 +11,7 @@ import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from 
 import type { AgentSetupRow, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
 import type { KvItem } from "../contracts/keyvault";
+import type { UpdateState } from "../contracts/settings";
 import type { SpaceOs, SpaceRow } from "../contracts/spaces";
 import {
   DEFAULT_SETTINGS,
@@ -40,6 +41,7 @@ import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, ty
 import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview, type DemoKeyvaultSetupState } from "./demo/keyvault-setup";
 import { unsupportedStreamOps } from "../ops/stream";
 import { unsupportedPresenceOps } from "../ops/presence";
+import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
@@ -48,7 +50,7 @@ import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./dem
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
-import { demoRelayUsageHandlers, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
+import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
 
@@ -72,15 +74,23 @@ export interface DemoOptions {
   macHost?: boolean;
   /** This device is not enrolled on the relay yet (the enroll bar above every page). */
   unenrolled?: boolean;
+  /** The relay allowance: `idle` (free, no live session, so prompts can show),
+   * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
+  usage?: "idle" | "warn" | "limit" | "pro" | "teams";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
    * Electron shell passes its own system and architecture). */
   platform?: DemoPlatform;
+  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`). */
+  update?: Partial<UpdateState>;
 }
+
+const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
 /** `?demo=fresh` (signed out, first run), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
- * SwiftUI host's shape) and `?demo=unenrolled` (this device not enrolled). */
+ * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
+ * `?demo=update-ready` (an update is downloaded) and `?demo=update-downloading`. */
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
@@ -92,6 +102,12 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keychain: flags.has("keychain"),
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
+    usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
+    ...(flags.has("update-ready")
+      ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
+      : flags.has("update-downloading")
+        ? { update: { status: "downloading" as const, version: "0.9.3", percent: 42, notesUrl: DEMO_NOTES } }
+        : {}),
   };
 }
 
@@ -136,7 +152,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     onboarding: { completed: options.onboarded !== false, mode: options.onboarded === false ? null : "client" },
     creates: new Map(),
     agents: demoPersistentAgents(now()),
-    runs: demoRunRecords(now()),
+    // A named allowance is for showing the prompts, which wait for no agent run.
+    runs: options.usage ? [] : demoRunRecords(now()),
     agentSetup: demoAgentSetup(),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
@@ -144,6 +161,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
+    ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
     ...demoSpaceDetailState(),
     ...demoHostSetupState(now(), options.onboarded === false),
     ...demoStartupState(Boolean(options.keychain)),
@@ -467,7 +485,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
     ...demoAgentKeysHandlers({ wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
-    ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
+    ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
     ...demoRelayUsageHandlers(ctx),
     ...demoSpaceDetailHandlers(ctx),
@@ -478,6 +496,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...unsupportedStreamOps("demo"),
     ...unsupportedChecklistOps("demo"),
     ...unsupportedPresenceOps("demo"),
+    ...unsupportedRuntimeFixOps("demo"),
   };
 
   return {

@@ -170,6 +170,7 @@ async def test_request_service_passes_headers():
 # ── Missing Fleet credentials and the `cua auth login` session ─────────────
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_no_credentials_names_every_way_out():
     with pytest.raises(Exception) as info:
         await Sandbox.create(Image.from_registry("python:3.12-slim"), local=False)

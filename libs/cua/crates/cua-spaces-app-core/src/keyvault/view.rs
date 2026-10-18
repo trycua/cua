@@ -915,6 +915,7 @@ mod sharing_tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         };
         crate::spaces::row_to_space(&row, 0)
     }

@@ -8,6 +8,7 @@
 import type { Native } from "../native/load";
 import type { AppCreateSpaceArgs, AppRuntime, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
 import { AppModel } from "../model/app-model";
+import type { RuntimeFix } from "../model/windows-runtime";
 import { kindOf, osOf } from "../model/backend";
 import { isCancelled } from "../model/errors";
 import { bool, string } from "./args";
@@ -34,12 +35,14 @@ export function spacesState(model: AppModel) {
  * `NewSpaceOptions` (plus `macosVmsRunning`; `pending` while the launch is
  * still starting, when every probe would wait).
  */
-export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null, pending: boolean) {
+export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null, pending: boolean, fix: RuntimeFix | null = null) {
   const out: Record<string, unknown> = {
     local: {
       available: env.localAvailable,
       backends: env.localBackends ?? [],
       error: env.localReason ?? null,
+      // Windows without a runtime: what the app can do about it ("Install Docker Desktop").
+      fix: env.localAvailable ? null : fix,
       hostArch: env.hostArch ?? null,
       storage: encode(env.storage),
     },
@@ -114,14 +117,21 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
     "spaces.createOptions": async () => {
       if (!model.servicesIn) return createOptions(model.knownNewSpaceEnv(), null, true);
       const env = await model.newSpaceEnv();
-      return createOptions(env, model.runningMacosVms, false);
+      return createOptions(env, model.runningMacosVms, false, model.runtimeFix);
+    },
+    "spaces.fixRuntime": (args) => {
+      const action = string(args, "action");
+      if (action !== "install-docker" && action !== "start-docker" && action !== "restart-app") throw Failure.badArgs("action: install-docker | start-docker | restart-app");
+      if (!model.windowsRuntime && !model.linuxRuntime) throw Failure.unsupported("no runtime fix on this system");
+      model.fixRuntime(action);
+      return null;
     },
     "spaces.create": async (args) => {
       const pendingId = string(args, "pendingId");
       if (!native.appCreatesIsPending(pendingId)) throw Failure.badArgs("pendingId: pending:<id>");
       const config = args.config;
       if (!config || typeof config !== "object" || Array.isArray(config)) throw Failure.badArgs("config: object");
-      const defaultOn = model.settings.defaultLocation === native.AppLocation.Cloud ? "cloud" : "local";
+      const defaultOn = "local"; // Cua Cloud has ended
       const a = createArgs(native, config as BridgeArgs, defaultOn);
       // The page sends the plan's OS (the pending row's icon).
       const os = (typeof args.os === "string" ? osOf(native, args.os) : undefined) ?? native.AppSpaceOs.Unknown;

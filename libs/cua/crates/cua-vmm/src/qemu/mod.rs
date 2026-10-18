@@ -53,6 +53,10 @@ pub struct QemuConfig {
     pub vnc: bool,
     /// Override the accelerator (`hvf`/`kvm`/`whpx`/`tcg`); auto when `None`.
     pub accel: Option<String>,
+    /// Refuse a new instance before its image is pulled when
+    /// `qemu-system-<arch>` or `qemu-img` is missing (a VM image can be
+    /// gigabytes, and neither tool is optional).
+    pub preflight_tools: bool,
 }
 
 impl Default for QemuConfig {
@@ -64,6 +68,7 @@ impl Default for QemuConfig {
             graceful_stop: Duration::from_secs(30),
             vnc: true,
             accel: None,
+            preflight_tools: true,
         }
     }
 }
@@ -279,6 +284,19 @@ impl QemuRuntime {
         ))
     }
 
+    /// `qemu-system-<arch>` and `qemu-img` are on this host (installed
+    /// first when allowed), checked before a new instance pulls anything.
+    async fn ensure_tools(&self, arch: Arch) -> Result<()> {
+        let os = host::HostOs::current();
+        if missing_tools(arch, os, host::which).is_none() {
+            return Ok(());
+        }
+        if self.cfg.allow_install {
+            install_qemu().await?;
+        }
+        missing_tools(arch, os, host::which).map_or(Ok(()), Err)
+    }
+
     fn accel_for(&self, arch: Arch, kvm: &std::io::Result<()>) -> Result<String> {
         if let Some(accel) = &self.cfg.accel {
             return Ok(accel.clone());
@@ -457,6 +475,32 @@ impl QemuRuntime {
         spec: &StartSpec,
         loadvm: Option<String>,
     ) -> Result<()> {
+        match self.launch_once(st, spec, loadvm.clone(), false).await {
+            Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
+                tracing::warn!(
+                    sandbox = %st.name,
+                    "KVM did not start a vCPU (QEMU stopped answering QMP; see `dmesg` for kvm errors), so retrying under slow TCG emulation"
+                );
+                if let Some(pid) = st.pid {
+                    let _ = host::run("kill", &["-9", &pid.to_string()]).await;
+                    if !Self::wait_exit(pid, Duration::from_secs(5)).await {
+                        return Err(e);
+                    }
+                }
+                st.pid = None;
+                self.launch_once(st, spec, loadvm, true).await
+            }
+            r => r,
+        }
+    }
+
+    async fn launch_once(
+        &self,
+        st: &mut QemuState,
+        spec: &StartSpec,
+        loadvm: Option<String>,
+        force_tcg: bool,
+    ) -> Result<()> {
         let bin = self.binary(st.arch).await?;
         let dir = self.dir(&st.name);
         let mut guest_ports: Vec<u16> = spec.ports.clone();
@@ -472,7 +516,11 @@ impl QemuRuntime {
         } else {
             None
         };
-        st.accel = self.accel_for(st.arch, &host::kvm_usable())?;
+        st.accel = if force_tcg {
+            "tcg".into()
+        } else {
+            self.accel_for(st.arch, &host::kvm_usable())?
+        };
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
         st.restrict_network = spec.restrict_network;
@@ -885,6 +933,10 @@ pub fn usernet_established(table: &str, host_port: u16, guest_port: u16) -> bool
     })
 }
 
+fn kvm_stalled(e: &VmmError) -> bool {
+    matches!(e, VmmError::Qmp(m) if m.contains("timed out"))
+}
+
 fn unique_suffix() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -893,7 +945,83 @@ fn unique_suffix() -> String {
     format!("{nanos:x}")
 }
 
+/// How QEMU gets onto a Windows host: cua does not install it there.
+pub const WINDOWS_QEMU_HINT: &str = "Windows VMs on a Windows PC need QEMU, which Cua does not \
+     install for you. Install QEMU for Windows from https://qemu.weilnetz.de/ and add it to PATH, \
+     or create a Linux Space instead";
+
+/// What a QEMU VM needs that `which` does not find on an `os` host, as the
+/// error a create returns before pulling its image; `None` when both
+/// `qemu-system-<arch>` and `qemu-img` are there.
+fn missing_tools(
+    arch: Arch,
+    os: host::HostOs,
+    which: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<VmmError> {
+    let system = format!("qemu-system-{}", arch.qemu());
+    let missing: Vec<&str> = [system.as_str(), "qemu-img"]
+        .into_iter()
+        .filter(|t| which(t).is_none())
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    let hint = match os {
+        host::HostOs::Windows => WINDOWS_QEMU_HINT.to_string(),
+        _ => format!(
+            "install QEMU (macOS: `brew install qemu`; {})",
+            QemuPackageManager::linux_hint()
+        ),
+    };
+    Some(VmmError::missing(
+        format!("QEMU ({})", missing.join(", ")),
+        hint,
+    ))
+}
+
+pub async fn grant_kvm(
+    probe: impl Fn() -> std::io::Result<()>,
+    user: Option<String>,
+    dry_run: bool,
+    run: impl AsyncFn(&str, &[&str]) -> Result<String>,
+) -> Result<Option<String>> {
+    let e = match probe() {
+        Ok(()) => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => e,
+        Err(e) => return Ok(Some(host::kvm_hint(&e))),
+    };
+    let user = user.filter(|user| !user.is_empty());
+    if dry_run {
+        let user = user.as_deref().unwrap_or("$USER");
+        return Ok(Some(format!(
+            "would: add {user} to the kvm group and grant it /dev/kvm now (setfacl)"
+        )));
+    }
+    let denied = || VmmError::PermissionDenied(host::kvm_hint(&e));
+    let group = run("stat", &["-c", "%G", "/dev/kvm"]).await;
+    if group.map_err(|_| denied())?.trim() != "kvm" {
+        return Err(denied());
+    }
+    let user = match user {
+        Some(user) => user,
+        None => run("id", &["-un"]).await?.trim().to_string(),
+    };
+    run("sudo", &["-n", "usermod", "-aG", "kvm", &user])
+        .await
+        .map_err(|_| denied())?;
+    let acl = format!("u:{user}:rw");
+    let setfacl = run("sudo", &["-n", "setfacl", "-m", &acl, "/dev/kvm"]).await;
+    Ok(Some(match setfacl.is_ok() && probe().is_ok() {
+        true => format!("added {user} to the kvm group and granted /dev/kvm now"),
+        false => {
+            format!("added {user} to the kvm group; log out and back in (or run `newgrp kvm`)")
+        }
+    }))
+}
+
 /// Install QEMU through the host package manager (explicit opt-in).
+const PACKAGE_ATTEMPTS: u32 = 3;
+
 pub async fn install_qemu() -> Result<()> {
     match host::HostOs::current() {
         host::HostOs::Macos => {
@@ -913,14 +1041,32 @@ pub async fn install_qemu() -> Result<()> {
             let program = program.display().to_string();
             tracing::info!("installing QEMU with {manager:?} (sudo -n)");
             for args in manager.commands(&program) {
-                host::run("sudo", &args).await?;
+                let refresh = args.last() == Some(&"update");
+                let mut attempt = 1;
+                loop {
+                    match host::run("sudo", &args).await {
+                        Ok(_) => break,
+                        Err(e) if attempt < PACKAGE_ATTEMPTS => {
+                            tracing::warn!(
+                                "`sudo {}` failed (attempt {attempt}), retrying: {e}",
+                                args.join(" ")
+                            );
+                            attempt += 1;
+                            tokio::time::sleep(Duration::from_secs(3 * attempt as u64)).await;
+                        }
+                        Err(e) if refresh => {
+                            tracing::warn!(
+                                "package index refresh failed, installing from the current lists: {e}"
+                            );
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
             }
         }
         host::HostOs::Windows => {
-            return Err(VmmError::missing(
-                "QEMU",
-                "download QEMU for Windows from https://qemu.weilnetz.de/ and put it on PATH",
-            ));
+            return Err(VmmError::missing("QEMU", WINDOWS_QEMU_HINT));
         }
     }
     Ok(())
@@ -1026,6 +1172,9 @@ impl Runtime for QemuRuntime {
                         crate::disk::GIB,
                         &format!("create VM {}", spec.name),
                     )?;
+                    if self.cfg.preflight_tools {
+                        self.ensure_tools(spec.effective_arch()).await?;
+                    }
                     let (backing, iso) = match &spec.image {
                         ImageSource::Existing => return Err(VmmError::NotFound(spec.name.clone())),
                         ImageSource::Disk { path }
@@ -1466,6 +1615,19 @@ mod tests {
     }
 
     #[test]
+    fn only_a_qmp_timeout_counts_as_a_stalled_kvm_launch() {
+        assert!(kvm_stalled(&VmmError::Qmp(
+            "timed out waiting for QEMU".into()
+        )));
+        assert!(!kvm_stalled(&VmmError::Qmp(
+            "connection closed by QEMU".into()
+        )));
+        assert!(!kvm_stalled(&VmmError::other(
+            "qemu started but VM status is 'paused'"
+        )));
+    }
+
+    #[test]
     fn explicit_tcg_override_is_allowed() {
         let tmp = tempfile::tempdir().unwrap();
         let r = QemuRuntime::new(QemuConfig {
@@ -1506,6 +1668,7 @@ mod tests {
         let r = QemuRuntime::new(QemuConfig {
             root: tmp.path().to_path_buf(),
             resolver: Some(seen.clone()),
+            preflight_tools: false,
             ..Default::default()
         });
         let mut spec = StartSpec::new("p1", ImageSource::oci("ghcr.io/me/private:1"));
@@ -1607,6 +1770,7 @@ mod tests {
         let r = QemuRuntime::new(QemuConfig {
             root: tmp.path().to_path_buf(),
             resolver: Some(resolver.clone()),
+            preflight_tools: false,
             ..Default::default()
         });
         let min_free = crate::disk::CacheConfig::load().min_free;
@@ -1642,6 +1806,239 @@ mod tests {
             matches!(blank, Some(VmmError::InsufficientDisk(_))),
             "{blank:?}"
         );
+    }
+
+    #[test]
+    fn missing_qemu_tools_name_what_is_missing_with_a_host_hint() {
+        use host::HostOs;
+        let none = |_: &str| None;
+        let all = |t: &str| Some(PathBuf::from(t));
+        assert!(missing_tools(Arch::X86_64, HostOs::Windows, all).is_none());
+        // A Windows PC: nothing cua can install; says how, and the way out.
+        let err = missing_tools(Arch::X86_64, HostOs::Windows, none).unwrap();
+        assert!(matches!(err, VmmError::Missing { .. }), "{err}");
+        assert_eq!(
+            err.to_string(),
+            format!("QEMU (qemu-system-x86_64, qemu-img) is not available: {WINDOWS_QEMU_HINT}")
+        );
+        assert!(err.to_string().contains("create a Linux Space"));
+        // Only qemu-img missing (a bare qemu-system on PATH).
+        let no_img = |t: &str| (t != "qemu-img").then(|| PathBuf::from(t));
+        let err = missing_tools(Arch::X86_64, HostOs::Linux, no_img).unwrap();
+        assert!(
+            err.to_string()
+                .starts_with("QEMU (qemu-img) is not available: install QEMU")
+        );
+        assert!(err.to_string().contains("brew install qemu"));
+    }
+
+    #[tokio::test]
+    async fn a_new_vm_without_qemu_fails_before_its_image_is_pulled() {
+        let os = host::HostOs::current();
+        if missing_tools(Arch::host(), os, host::which).is_none() {
+            eprintln!("QEMU is installed here; the refusal is covered by missing_tools");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let resolver = Arc::new(CountingResolver(Default::default()));
+        let r = QemuRuntime::new(QemuConfig {
+            root: tmp.path().to_path_buf(),
+            resolver: Some(resolver.clone()),
+            ..Default::default()
+        });
+        let mut spec = StartSpec::new("win", ImageSource::oci("ghcr.io/trycua/windows:2022"));
+        spec.os = GuestOs::Windows;
+        let err = r.start(&spec).await.unwrap_err();
+        assert!(matches!(err, VmmError::Missing { .. }), "{err}");
+        assert_eq!(
+            resolver.0.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "nothing is pulled"
+        );
+        assert!(matches!(r.load("win"), Err(VmmError::NotFound(_))));
+    }
+
+    fn recording(
+        calls: &std::sync::Mutex<Vec<String>>,
+        group: &'static str,
+        failing: &'static str,
+    ) -> impl AsyncFn(&str, &[&str]) -> Result<String> {
+        async move |program: &str, args: &[&str]| {
+            calls
+                .lock()
+                .unwrap()
+                .push(format!("{program} {}", args.join(" ")));
+            match program {
+                "stat" => Ok(format!("{group}\n")),
+                "id" => Ok("alice\n".to_string()),
+                _ if args.contains(&failing) => {
+                    Err(VmmError::PermissionDenied("a password is required".into()))
+                }
+                _ => Ok(String::new()),
+            }
+        }
+    }
+
+    fn denied() -> std::io::Result<()> {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    }
+
+    fn denied_until_setfacl(
+        calls: &std::sync::Mutex<Vec<String>>,
+    ) -> impl Fn() -> std::io::Result<()> {
+        move || match calls.lock().unwrap().iter().any(|c| c.contains("setfacl")) {
+            true => Ok(()),
+            false => denied(),
+        }
+    }
+
+    #[tokio::test]
+    async fn denied_kvm_adds_the_user_to_the_kvm_group_then_grants_it_now() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied_until_setfacl(&calls),
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            calls.into_inner().unwrap(),
+            [
+                "stat -c %G /dev/kvm",
+                "sudo -n usermod -aG kvm bob",
+                "sudo -n setfacl -m u:bob:rw /dev/kvm",
+            ]
+        );
+        assert_eq!(note, "added bob to the kvm group and granted /dev/kvm now");
+    }
+
+    #[tokio::test]
+    async fn a_failed_setfacl_still_adds_the_group_with_a_relogin_note() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied_until_setfacl(&calls),
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", "setfacl"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let calls = calls.into_inner().unwrap();
+        assert!(calls.contains(&"sudo -n usermod -aG kvm bob".to_string()));
+        assert!(note.starts_with("added bob to the kvm group; "), "{note}");
+        assert!(note.contains("log out and back in"), "{note}");
+        assert!(note.contains("newgrp kvm"), "{note}");
+    }
+
+    #[tokio::test]
+    async fn kvm_still_denied_after_setfacl_keeps_the_relogin_note() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied,
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            calls.into_inner().unwrap().last().unwrap(),
+            "sudo -n setfacl -m u:bob:rw /dev/kvm"
+        );
+        assert!(note.contains("log out and back in"), "{note}");
+    }
+
+    #[tokio::test]
+    async fn an_empty_user_falls_back_to_id_un() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied_until_setfacl(&calls),
+            Some(String::new()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let calls = calls.into_inner().unwrap();
+        assert!(calls.contains(&"id -un".to_string()), "{calls:?}");
+        assert!(calls.contains(&"sudo -n usermod -aG kvm alice".to_string()));
+        assert!(note.starts_with("added alice "), "{note}");
+    }
+
+    #[tokio::test]
+    async fn denied_kvm_without_sudo_is_an_error_naming_the_usermod_fix() {
+        let calls = Default::default();
+        let err = grant_kvm(
+            denied,
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", "usermod"),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.to_string(), host::kvm_hint(&denied().unwrap_err()));
+        assert!(err.to_string().contains("sudo usermod -aG kvm"), "{err}");
+        let calls = calls.into_inner().unwrap();
+        assert!(!calls.iter().any(|c| c.contains("setfacl")), "{calls:?}");
+    }
+
+    #[tokio::test]
+    async fn kvm_owned_by_another_group_is_the_hint_without_sudo() {
+        let calls = Default::default();
+        let err = grant_kvm(
+            denied,
+            Some("bob".into()),
+            false,
+            recording(&calls, "root", ""),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.to_string(), host::kvm_hint(&denied().unwrap_err()));
+        let calls = calls.into_inner().unwrap();
+        assert!(!calls.iter().any(|c| c.starts_with("sudo")), "{calls:?}");
+    }
+
+    #[tokio::test]
+    async fn missing_kvm_runs_nothing_and_is_only_a_note() {
+        let calls = Default::default();
+        let missing = || Err(std::io::ErrorKind::NotFound.into());
+        let note = grant_kvm(
+            missing,
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(note.contains("/dev/kvm is missing"), "{note}");
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dry_run_only_says_it_would_add_the_user_and_grant_kvm() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied,
+            Some("bob".into()),
+            true,
+            recording(&calls, "kvm", ""),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            note.starts_with("would: add bob to the kvm group"),
+            "{note}"
+        );
+        assert!(note.contains("grant it /dev/kvm now (setfacl)"), "{note}");
+        assert!(calls.lock().unwrap().is_empty());
     }
 
     #[test]

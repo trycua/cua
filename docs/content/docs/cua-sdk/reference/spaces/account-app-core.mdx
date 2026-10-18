@@ -60,6 +60,7 @@ Returned by [`app_billing_status`](#app_billing_status).
 | `upgrade_url` / `upgradeUrl` | `Option<String>` |  | What Upgrade opens; none: no Upgrade button. |
 | `dismiss` | `String` |  | `DISMISS`. |
 | `dismiss_key` / `dismissKey` | `String` |  | What a dismissal remembers: the month and the reasons. A new month, or another limit reached, shows the notice again. |
+| `level` | `String` |  | `warn` (80% of the relay hours) or `limit` (the allowance is used). A `warn` is a prompt: the shells hold it back while a live session or an agent run is going (`crate.upsell`). A `limit` is only the status, so it always shows. |
 
 ## `AppRelayUsage` record
 
@@ -96,7 +97,8 @@ Returned by [`app_relay_usage_view`](#app_relay_usage_view).
 | `label` | `String` |  | `ROW_LABEL`. |
 | `line` | `String` |  | "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the team pool when there is one. |
 | `plan` | `String` |  | "Free plan" (empty when the relay names none). |
-| `notice` | [`Option<AppRelayAllowanceNotice>`](#apprelayallowancenotice-record) |  | Past the allowance. |
+| `notice` | [`Option<AppRelayAllowanceNotice>`](#apprelayallowancenotice-record) |  | At 80% of the relay hours, or past the allowance. |
+| `plan_card` / `planCard` | [`AppPlanCard`](/cua-sdk/reference/spaces/app-core#appplancard-record) |  | Settings' plan card. |
 
 ## `AppTeamInput` record
 

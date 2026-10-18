@@ -19,6 +19,7 @@ use std::time::Duration;
 const IMAGE: &str = "ghcr.io/trycua/linux:24.04-disk";
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn create_in_the_cloud_binds_connects_through_the_gateway_and_registers() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -166,6 +167,7 @@ async fn create_in_the_cloud_binds_connects_through_the_gateway_and_registers() 
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_runtime_image_mismatch_is_refused_before_any_request() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -193,6 +195,7 @@ async fn a_runtime_image_mismatch_is_refused_before_any_request() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_tools_without_credentials_name_the_missing_host_capability() {
     let reg = tempfile::tempdir().unwrap();
     let spaces = Spaces::builder().home(reg.path()).build();
@@ -760,6 +763,7 @@ async fn a_stopped_local_space_deletes() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_cloud_space_gets_the_size_asked_for_within_the_absolute_ceiling() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -865,6 +869,7 @@ async fn a_cloud_space_gets_the_size_asked_for_within_the_absolute_ceiling() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_cloud_space_out_of_credit_fails_typed_and_leaves_local_alone() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();

@@ -9,6 +9,7 @@ use cua_sdk::{CloudOptions, Cua, ImageInfo, SandboxCreateOptions};
 use std::{sync::Arc, time::Duration};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_managed_sandboxes_report_the_pinned_image_and_direct_ones_none() {
     let fake = FakeFleet::new();
     // The in-memory registry, not the fixtures' inspector (which sends

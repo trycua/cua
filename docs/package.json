@@ -29,8 +29,6 @@
     "docs:generate:python": "tsx ../scripts/docs-generators/python-sdk.ts",
     "docs:generate:cua-sdk-ts": "tsx ../scripts/docs-generators/typescript-sdk.ts",
     "docs:generate:changelog": "tsx ../scripts/docs-generators/generate-changelog.ts",
-    "docs:check:fleet": "tsx ../scripts/docs-generators/runner.ts --library fleet --check",
-    "docs:generate:fleet": "tsx ../scripts/docs-generators/fleet.ts",
     "docs:check:spaces": "tsx ../scripts/docs-generators/runner.ts --library spaces --check",
     "docs:generate:spaces": "tsx ../scripts/docs-generators/spaces.ts",
     "docs:check-links": "tsx scripts/check-links.ts",

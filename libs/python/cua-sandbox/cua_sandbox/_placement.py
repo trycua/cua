@@ -26,6 +26,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from cua_sandbox._ended import CloudEnded
 from cua_sandbox._sdk import InvalidArgument, InvalidPlacement, Unsupported
 
 logger = logging.getLogger(__name__)
@@ -171,9 +172,7 @@ def _notice() -> None:
     if quiet not in ("1", "true", "yes", "on"):
         # Logged from cua_sandbox.sandbox, where users filter it.
         logging.getLogger("cua_sandbox.sandbox").warning(
-            "defaulting to a local sandbox; pass local=False (or on='cloud') for cloud, "
-            "or make it the default with `cua config set default.on cloud` "
-            "(CUA_QUIET_DEFAULT=1 hides this notice)"
+            "defaulting to a local sandbox (CUA_QUIET_DEFAULT=1 hides this notice)"
         )
 
 
@@ -257,6 +256,9 @@ def resolve(
         if explicit_kind is not None:
             check("local", explicit_kind, None)
         return Placement(where, source, origin, explicit_kind or image_kind, None, legacy)
+
+    if where.partition(":")[0] in ("cloud", "fleet"):
+        raise CloudEnded()
 
     # Validate what was asked for before defaults fill the rest.
     check(where, explicit_kind, engine)

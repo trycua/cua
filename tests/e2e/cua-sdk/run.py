@@ -2,7 +2,7 @@
 """Run the cua SDK e2e suite and print the guide x language x lane matrix.
 
     tests/e2e/cua-sdk/run.py --lanes hermetic,container --langs py,ts,rust
-    tests/e2e/cua-sdk/run.py --lanes fleet --strict        # nightly
+    tests/e2e/cua-sdk/run.py --lanes cua-sandbox,qemu --strict  # nightly
     tests/e2e/cua-sdk/run.py --matrix-only --out DIR       # re-render results
 
 Lanes map to the env gates in scenarios.json (the runner sets them). Every
@@ -60,6 +60,8 @@ ALLOWED_SKIPS = (
     "docs block input",
     # The TypeScript Fleet guide page was removed upstream.
     "no Fleet TypeScript docs block is tagged",
+    # Cua Cloud has ended: there is no live Fleet lane to run.
+    "Cua Cloud has ended (CUA-1854)",
 )
 STATUS_ICON = {
     "pass": "pass",

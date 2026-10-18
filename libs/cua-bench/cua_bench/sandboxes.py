@@ -227,6 +227,11 @@ async def open_sandbox(
             )
         )
 
+    if spec.pool or target.cloud:
+        # Cua Cloud has ended: neither `--on cloud` nor `--image pool:<name>` starts one.
+        from cua_bench.targets import CloudEnded
+
+        raise CloudEnded()
     if spec.pool:
         # `--image pool:<name>`: a claim from an existing Fleet pool.
         kwargs = {"pool": spec.pool, "on": "cloud", "time_to_start": TIME_TO_START_S}

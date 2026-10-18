@@ -15,7 +15,7 @@ def test_sync_sdk_release_docs_updates_standalone_versions(tmp_path: Path):
     )
     paths = [
         tmp_path / f"docs/content/docs/{folder}/nested/page.mdx"
-        for folder in ("cua-cli", "cua-sdk", "fleets")
+        for folder in ("cua-cli", "cua-sdk")
     ]
     paths.append(tmp_path / "scripts/docs-generators/cli-specs/cua.json")
     outside = tmp_path / "docs/content/docs/other/page.mdx"

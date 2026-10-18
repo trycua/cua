@@ -164,6 +164,7 @@ def test_managed_key_matches_sandbox_core_defaults():
 # ── native manager: acquire / reuse ──────────────────────────────────────
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_create_without_pool_claims_from_a_managed_pool(fleet):
     sb = await Sandbox.create(image(), local=False)
 
@@ -202,6 +203,7 @@ async def test_create_without_pool_claims_from_a_managed_pool(fleet):
     assert sandbox_state.load(sb.claim_name) is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_same_spec_reuses_and_different_specs_do_not(fleet):
     first = await Sandbox.create(image(), local=False)
     second = await Sandbox.create(image(), local=False)
@@ -214,6 +216,7 @@ async def test_same_spec_reuses_and_different_specs_do_not(fleet):
         await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_warm_max_pool_size_and_claim_ttl(fleet):
     sb = await Sandbox.create(image(), warm=True, max_pool_size=3, claim_ttl=120, local=False)
     pool = await pool_of(fleet, sb.pool_name)
@@ -225,6 +228,7 @@ async def test_warm_max_pool_size_and_claim_ttl(fleet):
     await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_long_time_to_start_raises_the_bind_deadline(fleet):
     sb = await Sandbox.create(image(), time_to_start=1800, local=False)
     claim = (await claims_in(fleet, sb.pool_name))[sb.claim_name]
@@ -232,6 +236,7 @@ async def test_long_time_to_start_raises_the_bind_deadline(fleet):
     await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_named_create_reattaches_an_existing_claim(fleet):
     first = await Sandbox.create(image(), name="job-1", local=False)
     await first.disconnect()
@@ -241,6 +246,7 @@ async def test_named_create_reattaches_an_existing_claim(fleet):
     await second.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_keep_alive_extends_a_managed_claim(fleet):
     sb = await Sandbox.create(image(), keep_alive_minutes=90, local=False)
     claim = (await claims_in(fleet, sb.pool_name))[sb.claim_name]
@@ -249,6 +255,7 @@ async def test_keep_alive_extends_a_managed_claim(fleet):
     await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_server_port_publishes_and_waits_for_the_server_service(fleet):
     sb = await Sandbox.create(image(), server_port=8000, local=False)
     assert sb._claim_handle.service == "server"
@@ -262,6 +269,7 @@ async def test_server_port_publishes_and_waits_for_the_server_service(fleet):
     await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_osworld_image_claims_the_flask_server_through_the_managed_pool(fleet):
     """Legacy OSWorld adapter on Fleet: an ``agent_type="osworld"`` disk has no
     spacesd, so the managed pool publishes its Flask server as ``server``
@@ -288,6 +296,7 @@ async def test_osworld_image_claims_the_flask_server_through_the_managed_pool(fl
     await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_disconnect_detaches_and_keeps_the_claim(fleet):
     sb = await Sandbox.create(image(), local=False)
     await sb.disconnect()
@@ -298,6 +307,7 @@ async def test_disconnect_detaches_and_keeps_the_claim(fleet):
 # ── ephemeral ────────────────────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_ephemeral_releases_the_claim_and_keeps_the_pool(fleet):
     async with Sandbox.ephemeral(image(), local=False) as sb:
         pool_name, claim_name = sb.pool_name, sb.claim_name
@@ -310,6 +320,7 @@ async def test_ephemeral_releases_the_claim_and_keeps_the_pool(fleet):
     assert not await claims_in(fleet, pool_name)
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_ephemeral_releases_on_body_error(fleet):
     with pytest.raises(RuntimeError, match="body"):
         async with Sandbox.ephemeral(image(), local=False) as sb:
@@ -317,6 +328,7 @@ async def test_ephemeral_releases_on_body_error(fleet):
     assert not await claims_in(fleet, sb.pool_name)
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_keep_pool_is_a_deprecated_no_op(fleet):
     with pytest.warns(DeprecationWarning, match="keep_pool"):
         async with Sandbox.ephemeral(image(), keep_pool=True, local=False) as sb:
@@ -327,6 +339,7 @@ async def test_keep_pool_is_a_deprecated_no_op(fleet):
 # ── list / pools / gc ────────────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_list_pools_and_gc_through_the_native_manager(fleet):
     sb = await Sandbox.create(image(), local=False)
     [info] = await _autopool.list_pools()
@@ -344,6 +357,7 @@ async def test_list_pools_and_gc_through_the_native_manager(fleet):
     assert await managed_pools(fleet) == []
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize("operation", ["suspend", "restart"])
 async def test_lifecycle_ops_are_unsupported_on_managed_pools(fleet, operation):
     sb = await Sandbox.create(image(), local=False)
@@ -352,6 +366,7 @@ async def test_lifecycle_ops_are_unsupported_on_managed_pools(fleet, operation):
     await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_concurrent_first_use_in_one_process_creates_one_pool(fleet):
     import asyncio
 
@@ -365,6 +380,7 @@ async def test_concurrent_first_use_in_one_process_creates_one_pool(fleet):
 # ── sync facade ──────────────────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_sync_facade_create_ephemeral_and_list(fleet):
     sb = cua_sync.Sandbox.create(image(), claim_ttl=60, local=False)
     assert sb._claim_handle.heartbeat_running
@@ -381,6 +397,7 @@ def test_native_runtime_is_shared_per_pool_home(fleet):
     assert _sdk.runtime(fleet=True) is not a
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_resume_of_a_live_cloud_sandbox_reconnects(fleet):
     sb = await Sandbox.create(image(), local=False)
     again = await Sandbox.resume(sb.claim_name)
@@ -392,6 +409,7 @@ async def test_resume_of_a_live_cloud_sandbox_reconnects(fleet):
 # -- the default listing and the session marker (a stand-in keychain) --------
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_default_list_reads_a_keychain_session_only_with_the_marker(
     fleet, monkeypatch, tmp_path
 ):

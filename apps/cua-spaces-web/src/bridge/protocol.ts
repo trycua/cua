@@ -47,6 +47,7 @@ import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
+import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
 import type { TelemetryOps } from "./ops/telemetry";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
 
@@ -186,7 +187,8 @@ export interface HostOperations
     StreamOps,
     RelayUsageOps,
     ChecklistOps,
-    PresenceOps {
+    PresenceOps,
+    RuntimeFixOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
   "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs }; result: SpaceRow };
@@ -290,6 +292,7 @@ export const OPERATIONS = [
   ...RELAY_USAGE_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
+  ...RUNTIME_FIX_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
   "telemetry.track",
@@ -301,6 +304,7 @@ export const OPERATIONS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   ...STARTUP_OPERATIONS,
@@ -315,6 +319,8 @@ export type HostEvent =
   | { type: "spaces.createProgress"; progress: CreateProgress }
   | { type: "machines.changed" }
   | { type: "settings.changed" }
+  /** The host's updater moved on (found, downloading, ready): ask `update.get` again. */
+  | { type: "update.changed" }
   | { type: "keyvault.changed" }
   /** Tauri `auth:signed-in`. */
   | { type: "session.signedIn"; identity?: string }
@@ -339,6 +345,7 @@ export const HOST_EVENTS = [
   "spaces.createProgress",
   "machines.changed",
   "settings.changed",
+  "update.changed",
   "keyvault.changed",
   "session.signedIn",
   "session.signInFailed",

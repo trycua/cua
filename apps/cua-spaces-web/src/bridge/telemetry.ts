@@ -77,9 +77,9 @@ export function telemetryEnroll(core: CoreClient, state: unknown, action: unknow
 /* ---- Sending ---------------------------------------------------------------------- */
 
 /** Hosts that record `app_launched` themselves when they start (Tauri's
- * `telemetry::init`, the SwiftUI app's `appTelemetryStart`); the page
- * records it only where nothing else does. */
-export const HOST_RECORDS_LAUNCH: Record<BridgeMode, boolean> = { tauri: true, webkit: true, electron: false, demo: false };
+ * `telemetry::init`, the SwiftUI and Electron apps' `appTelemetryStart`);
+ * the page records it only where nothing else does. */
+export const HOST_RECORDS_LAUNCH: Record<BridgeMode, boolean> = { tauri: true, webkit: true, electron: true, demo: false };
 
 /** Usage data may be sent: the switch is on and the notice was shown. */
 export function telemetryAllowed(view: TelemetryView | null | undefined): boolean {

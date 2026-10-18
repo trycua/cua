@@ -24,6 +24,20 @@ pub const UPGRADE: &str = "Upgrade";
 /// The notice's close button (accessibility label).
 pub const DISMISS: &str = "Dismiss";
 
+/// The share of the month's relay hours at which the early notice shows
+/// (80%). The hard notice shows when the relay says the allowance is used.
+pub const WARN_AT: f64 = 0.8;
+
+/// What Pro gives (cua.ai/pricing): one person, per month.
+pub const PRO_SESSIONS: u32 = 5;
+/// See [`PRO_SESSIONS`].
+pub const PRO_HOURS: u32 = 200;
+
+/// Where Pro is bought, on the account app.
+pub const BUY_PRO_PATH: &str = "/buy/pro";
+/// Where Teams is bought, on the account app.
+pub const BUY_TEAMS_PATH: &str = "/buy/teams";
+
 /// The team whose allowance is pooled.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -80,6 +94,37 @@ pub struct RelayAllowanceNotice {
     /// What a dismissal remembers: the month and the reasons. A new month,
     /// or another limit reached, shows the notice again.
     pub dismiss_key: String,
+    /// `warn` (80% of the relay hours) or `limit` (the allowance is used).
+    /// A `warn` is a prompt: the shells hold it back while a live session
+    /// or an agent run is going ([`crate::upsell`]). A `limit` is only the
+    /// status, so it always shows.
+    pub level: String,
+}
+
+/// A button that opens a page on the account app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanLink {
+    /// "Get Pro".
+    pub label: String,
+    /// https, on the account app.
+    pub url: String,
+}
+
+/// The plan as Settings draws it: always there, never a prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanCard {
+    /// `free`, `pro` or `teams`.
+    pub plan: String,
+    /// "Free plan".
+    pub label: String,
+    /// What the plan includes, in one sentence.
+    pub detail: String,
+    /// The main button ("Get Pro"); none when there is nothing to buy.
+    pub primary: Option<PlanLink>,
+    /// The other one ("Start a team").
+    pub secondary: Option<PlanLink>,
 }
 
 /// The allowance as drawn.
@@ -93,8 +138,10 @@ pub struct RelayUsageView {
     pub line: String,
     /// "Free plan" (empty when the relay names none).
     pub plan: String,
-    /// Past the allowance.
+    /// At 80% of the relay hours, or past the allowance.
     pub notice: Option<RelayAllowanceNotice>,
+    /// Settings' plan card.
+    pub plan_card: PlanCard,
 }
 
 /// The answer as the apps keep it: an upgrade link that is not https is
@@ -136,15 +183,44 @@ pub fn usage_line(u: &RelayUsage) -> String {
 
 /// "Free plan", "Pro plan"; empty when the relay names none.
 pub fn plan_text(plan: &str) -> String {
-    let mut c = plan.trim().chars();
+    let plan = match plan.trim() {
+        "team" => "teams",
+        p => p,
+    };
+    let mut c = plan.chars();
     match c.next() {
         Some(f) => format!("{}{} plan", f.to_uppercase(), c.as_str()),
         None => String::new(),
     }
 }
 
+/// `free`, `pro` or `teams`; anything else the relay names is its own plan.
+pub(crate) fn plan_kind(plan: &str) -> &str {
+    match plan.trim() {
+        "team" | "teams" => "teams",
+        p => p,
+    }
+}
+
+/// The share of the month's relay hours used (none: no hour limit).
+pub fn hours_share(u: &RelayUsage) -> Option<f64> {
+    u.hours_limit.filter(|l| *l > 0.0).map(|l| u.hours_used / l)
+}
+
+/// The early notice applies: 80% or more of the hours, not yet past the
+/// allowance, on the Free plan (the plan with something to buy that adds
+/// hours: Pro).
+pub fn warns(u: &RelayUsage) -> bool {
+    !u.soft_limit_reached
+        && plan_kind(&u.plan) == "free"
+        && hours_share(u).is_some_and(|s| s >= WARN_AT)
+}
+
 /// See [`RelayAllowanceNotice::dismiss_key`].
 pub fn dismiss_key(u: &RelayUsage) -> String {
+    if !u.soft_limit_reached {
+        return format!("{}:warn", u.period);
+    }
     let mut reasons = u.reasons.clone();
     reasons.sort();
     format!("{}:{}", u.period, reasons.join(","))
@@ -152,20 +228,113 @@ pub fn dismiss_key(u: &RelayUsage) -> String {
 
 /// The notice's sentence.
 pub fn notice_text(u: &RelayUsage) -> String {
-    let free = if u.plan == "free" { "free " } else { "" };
-    format!(
-        "You've used your {free}relay allowance for this month. Your Spaces keep working. Upgrade for more."
-    )
+    if warns(u) {
+        return format!(
+            "You've used {} of {} relay hours this month. Nothing stops at the limit. Pro gives you {PRO_HOURS} hours and {PRO_SESSIONS} live sessions.",
+            hours(u.hours_used),
+            hours(u.hours_limit.unwrap_or_default()),
+        );
+    }
+    match plan_kind(&u.plan) {
+        "free" => "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more.".into(),
+        "pro" => "You've used your relay allowance for this month. Your Spaces keep working. Teams pools hours across seats.".into(),
+        _ => "You've used your relay allowance for this month. Your Spaces keep working. Add seats for more.".into(),
+    }
 }
 
-/// The row and the notice; none when the relay meters nothing (the apps
-/// show nothing about it). Upgrade opens the relay's page, else the account
-/// app's billing page.
+/// A page on the account app. A checkout page carries where the person came
+/// from (`?from=app_meter`, a fixed word, never anything about them), so the
+/// account app's anonymous purchase funnel can tell the in-app surfaces apart.
+pub(crate) fn buy(account_app: &str, path: &str, from: &str) -> String {
+    let base = format!("{}{path}", account_app.trim_end_matches('/'));
+    if path.starts_with("/buy/") {
+        format!("{base}?from={from}")
+    } else {
+        base
+    }
+}
+
+/// What the notice's Upgrade opens: Free goes to Pro, Pro to Teams, a team
+/// to its billing page; a plan the relay names that this app does not know
+/// keeps the relay's own link, else the billing page.
+fn upgrade_target(u: &RelayUsage, account_app: &str) -> String {
+    match plan_kind(&u.plan) {
+        "free" => buy(account_app, BUY_PRO_PATH, "app_meter"),
+        "pro" => buy(account_app, BUY_TEAMS_PATH, "app_meter"),
+        "teams" => buy(account_app, "/billing", "app_meter"),
+        _ => checked(u.clone())
+            .upgrade_url
+            .unwrap_or_else(|| buy(account_app, "/billing", "app_meter")),
+    }
+}
+
+/// Settings' plan card.
+pub fn plan_card(u: &RelayUsage, account_app: &str) -> PlanCard {
+    let kind = plan_kind(&u.plan);
+    let link = |label: &str, path: &str| PlanLink {
+        label: label.into(),
+        url: buy(account_app, path, "app_plan_card"),
+    };
+    let allowance = |s: Option<u32>, h: Option<f64>| match (s, h) {
+        (Some(s), Some(h)) => format!("{s} live sessions and {} relay hours a month", hours(h)),
+        _ => "No relay limit".into(),
+    };
+    let (detail, primary, secondary) = match kind {
+        "free" => (
+            format!(
+                "{} on the hosted relay. Spaces you reach on your own network don't count.",
+                allowance(u.live_sessions_limit, u.hours_limit)
+            ),
+            Some(link("Get Pro", BUY_PRO_PATH)),
+            Some(link("Start a team", BUY_TEAMS_PATH)),
+        ),
+        "pro" => (
+            format!(
+                "{}, for you. Teams adds team-owned machines, roles and device approval.",
+                allowance(u.live_sessions_limit, u.hours_limit)
+            ),
+            Some(link("Manage plan", "/billing")),
+            Some(link("See Teams", BUY_TEAMS_PATH)),
+        ),
+        "teams" => (
+            match &u.team {
+                Some(t) => format!(
+                    "{} across {} {}, shared by the team.",
+                    allowance(u.live_sessions_limit, u.hours_limit),
+                    t.seats,
+                    if t.seats == 1 { "seat" } else { "seats" }
+                ),
+                None => format!(
+                    "{}, shared by the team.",
+                    allowance(u.live_sessions_limit, u.hours_limit)
+                ),
+            },
+            Some(link("Manage seats", "/billing")),
+            None,
+        ),
+        _ => (
+            allowance(u.live_sessions_limit, u.hours_limit),
+            Some(link("Billing and plans", "/billing")),
+            None,
+        ),
+    };
+    PlanCard {
+        plan: kind.into(),
+        label: plan_text(&u.plan),
+        detail,
+        primary,
+        secondary,
+    }
+}
+
+/// The row, the notice and the plan card; none when the relay meters
+/// nothing (the apps show nothing about it). Upgrade opens the plan's page
+/// on the account app ([`upgrade_target`]).
 pub fn view(u: &RelayUsage) -> Option<RelayUsageView> {
     view_for(u, &cua_home::env::account_app_url())
 }
 
-/// [`view`] with Upgrade falling back to `account_app`'s billing page.
+/// [`view`] against `account_app`'s pages.
 pub fn view_for(u: &RelayUsage, account_app: &str) -> Option<RelayUsageView> {
     if !u.metered {
         return None;
@@ -185,15 +354,20 @@ pub fn view_for(u: &RelayUsage, account_app: &str) -> Option<RelayUsageView> {
         label: ROW_LABEL.into(),
         line: format!("{}{team}", usage_line(u)),
         plan: plan_text(&u.plan),
-        notice: u.soft_limit_reached.then(|| RelayAllowanceNotice {
+        notice: (u.soft_limit_reached || warns(u)).then(|| RelayAllowanceNotice {
             text: notice_text(u),
             upgrade: UPGRADE.into(),
-            upgrade_url: checked(u.clone())
-                .upgrade_url
-                .or_else(|| Some(format!("{}/billing", account_app.trim_end_matches('/')))),
+            upgrade_url: Some(upgrade_target(u, account_app)),
             dismiss: DISMISS.into(),
             dismiss_key: dismiss_key(u),
+            level: if u.soft_limit_reached {
+                "limit"
+            } else {
+                "warn"
+            }
+            .into(),
         }),
+        plan_card: plan_card(u, account_app),
     })
 }
 
@@ -242,7 +416,7 @@ mod tests {
             }),
             ..free()
         };
-        let v = view(&u).unwrap();
+        let v = view_for(&u, "https://app.cua.ai").unwrap();
         assert_eq!(
             v.line,
             "Live sessions 1 of 2 \u{b7} Relay hours 20.2 of 20 this month \u{b7} Team pool, 3 seats"
@@ -250,24 +424,147 @@ mod tests {
         let n = v.notice.unwrap();
         assert_eq!(
             n.text,
-            "You've used your free relay allowance for this month. Your Spaces keep working. Upgrade for more."
+            "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more."
         );
         assert_eq!(n.upgrade, "Upgrade");
-        assert_eq!(n.upgrade_url.as_deref(), Some("https://cua.ai/pricing"));
+        assert_eq!(n.level, "limit");
+        assert_eq!(
+            n.upgrade_url.as_deref(),
+            Some("https://app.cua.ai/buy/pro?from=app_meter")
+        );
         assert_eq!(n.dismiss_key, "2026-10:hours,sessions");
 
+        // Pro past the allowance: Teams pools hours across seats.
         let pro = RelayUsage {
             plan: "pro".into(),
-            team: Some(RelayUsageTeam {
-                id: "acme".into(),
-                seats: 1,
-            }),
+            ..u.clone()
+        };
+        let n = view_for(&pro, "https://app.cua.ai")
+            .unwrap()
+            .notice
+            .unwrap();
+        assert!(n.text.starts_with("You've used your relay"), "{}", n.text);
+        assert_eq!(
+            n.upgrade_url.as_deref(),
+            Some("https://app.cua.ai/buy/teams?from=app_meter")
+        );
+
+        // A team: its own billing page.
+        let team = RelayUsage {
+            plan: "team".into(),
             ..u
         };
-        let v = view(&pro).unwrap();
-        assert!(v.line.ends_with("Team pool, 1 seat"), "{}", v.line);
-        assert_eq!(v.plan, "Pro plan");
-        assert!(v.notice.unwrap().text.starts_with("You've used your relay"));
+        let v = view_for(&team, "https://app.cua.ai").unwrap();
+        assert!(v.line.ends_with("Team pool, 3 seats"), "{}", v.line);
+        assert_eq!(v.plan, "Teams plan");
+        assert_eq!(
+            v.notice.unwrap().upgrade_url.as_deref(),
+            Some("https://app.cua.ai/billing")
+        );
+    }
+
+    #[test]
+    fn at_eighty_percent_of_hours_a_free_plan_gets_the_early_notice() {
+        let mut u = free();
+        u.hours_used = 15.9;
+        assert!(view_for(&u, "https://app.cua.ai").unwrap().notice.is_none());
+        u.hours_used = 16.0;
+        let n = view_for(&u, "https://app.cua.ai").unwrap().notice.unwrap();
+        assert_eq!(n.level, "warn");
+        assert_eq!(
+            n.text,
+            "You've used 16 of 20 relay hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions."
+        );
+        assert_eq!(
+            n.upgrade_url.as_deref(),
+            Some("https://app.cua.ai/buy/pro?from=app_meter")
+        );
+        assert_eq!(n.dismiss_key, "2026-10:warn");
+        // The hard notice has its own key: a dismissed warning does not hide it.
+        u.soft_limit_reached = true;
+        u.reasons = vec!["hours".into()];
+        let n = view_for(&u, "https://app.cua.ai").unwrap().notice.unwrap();
+        assert_eq!(n.level, "limit");
+        assert_eq!(n.dismiss_key, "2026-10:hours");
+        // Paid plans have no early notice.
+        let pro = RelayUsage {
+            plan: "pro".into(),
+            hours_used: 190.0,
+            hours_limit: Some(200.0),
+            ..free()
+        };
+        assert!(
+            view_for(&pro, "https://app.cua.ai")
+                .unwrap()
+                .notice
+                .is_none()
+        );
+        // Nor a plan with no hour limit.
+        let open = RelayUsage {
+            hours_limit: None,
+            hours_used: 500.0,
+            ..free()
+        };
+        assert!(
+            view_for(&open, "https://app.cua.ai")
+                .unwrap()
+                .notice
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn the_plan_card_names_the_plan_and_what_to_buy() {
+        let card = |u: RelayUsage| view_for(&u, "https://app.cua.ai/").unwrap().plan_card;
+        let f = card(free());
+        assert_eq!((f.plan.as_str(), f.label.as_str()), ("free", "Free plan"));
+        assert_eq!(
+            f.detail,
+            "2 live sessions and 20 relay hours a month on the hosted relay. Spaces you reach on your own network don't count."
+        );
+        let p = f.primary.unwrap();
+        assert_eq!(
+            (p.label.as_str(), p.url.as_str()),
+            ("Get Pro", "https://app.cua.ai/buy/pro?from=app_plan_card")
+        );
+        let s = f.secondary.unwrap();
+        assert_eq!(
+            (s.label.as_str(), s.url.as_str()),
+            (
+                "Start a team",
+                "https://app.cua.ai/buy/teams?from=app_plan_card"
+            )
+        );
+
+        let pro = card(RelayUsage {
+            plan: "pro".into(),
+            live_sessions_limit: Some(5),
+            hours_limit: Some(200.0),
+            ..free()
+        });
+        assert_eq!(pro.label, "Pro plan");
+        assert_eq!(pro.primary.unwrap().url, "https://app.cua.ai/billing");
+        assert_eq!(
+            pro.secondary.unwrap().url,
+            "https://app.cua.ai/buy/teams?from=app_plan_card"
+        );
+
+        let team = card(RelayUsage {
+            plan: "team".into(),
+            team: Some(RelayUsageTeam {
+                id: "t".into(),
+                seats: 2,
+            }),
+            live_sessions_limit: Some(10),
+            hours_limit: Some(400.0),
+            ..free()
+        });
+        assert_eq!(team.plan, "teams");
+        assert_eq!(
+            team.detail,
+            "10 live sessions and 400 relay hours a month across 2 seats, shared by the team."
+        );
+        assert!(team.secondary.is_none());
     }
 
     #[test]
@@ -292,17 +589,18 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_falls_back_to_the_account_app_billing_page() {
-        let mut u = free();
-        u.soft_limit_reached = true;
-        u.reasons = vec!["hours".into()];
-        // The relay's page wins.
+    fn an_unknown_plan_keeps_the_relays_link_else_the_billing_page() {
+        let mut u = RelayUsage {
+            plan: "enterprise".into(),
+            soft_limit_reached: true,
+            reasons: vec!["hours".into()],
+            ..free()
+        };
         let n = view_for(&u, "https://app.staging.cua.ai")
             .unwrap()
             .notice
             .unwrap();
         assert_eq!(n.upgrade_url.as_deref(), Some("https://cua.ai/pricing"));
-        // None from the relay: the account app's billing page.
         u.upgrade_url = None;
         let n = view_for(&u, "https://app.staging.cua.ai/")
             .unwrap()
@@ -315,16 +613,15 @@ mod tests {
     }
 
     #[test]
-    fn only_https_upgrade_links_are_kept() {
+    fn only_https_links_are_kept() {
         for bad in ["http://cua.ai/pricing", "javascript:alert(1)", ""] {
             let u = RelayUsage {
+                plan: "enterprise".into(),
                 upgrade_url: Some(bad.into()),
                 soft_limit_reached: true,
                 ..free()
             };
             assert_eq!(checked(u.clone()).upgrade_url, None, "{bad}");
-            // A link that is not https is dropped; Upgrade opens the
-            // account app's billing page instead.
             assert_eq!(
                 view_for(&u, "https://app.cua.ai")
                     .unwrap()

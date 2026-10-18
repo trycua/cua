@@ -1,7 +1,8 @@
-"""Live Fleet smoke through the Python binding. Gated: set CUA_E2E_FLEET=1
-and CUA_CLIENT_ID/CUA_CLIENT_SECRET (or FLEETS_TOKEN). Creates an
-ephemeral `cua-e2e-*` pool, claims it, calls the `server` service and
-deletes everything in `finally`."""
+"""Live Fleet smoke through the Python binding. Skipped: Cua Cloud has ended
+(CUA-1854), so `fleet()` fails; removed with the Fleet provider. It was gated
+on CUA_E2E_FLEET=1 and CUA_CLIENT_ID/CUA_CLIENT_SECRET (or FLEETS_TOKEN),
+created an ephemeral `cua-e2e-*` pool, claimed it, called the `server`
+service and deleted everything in `finally`."""
 
 from __future__ import annotations
 
@@ -18,8 +19,8 @@ IMAGE = os.environ.get(
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81",
 )
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("CUA_E2E_FLEET") != "1", reason="set CUA_E2E_FLEET=1 for live Fleet"
+pytestmark = pytest.mark.skip(
+    reason="Cua Cloud has ended (CUA-1854); removed with the Fleet provider"
 )
 
 

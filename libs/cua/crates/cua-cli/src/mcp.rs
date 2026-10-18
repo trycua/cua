@@ -1556,12 +1556,74 @@ fn error_kind(e: &CuaError) -> &'static str {
     }
 }
 
+/// The label an MCP client's agent shows on its Space cursor: a known
+/// client's product name, else its `title`, else its `name`.
+pub(crate) fn agent_label(client_info: &Value) -> String {
+    let field = |k: &str| {
+        client_info
+            .get(k)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    let name = field("name").unwrap_or("");
+    let lower = name.to_ascii_lowercase();
+    let known = if lower.contains("claude-code") || lower.contains("claude code") {
+        Some("Claude Code")
+    } else if lower.starts_with("codex") {
+        Some("Codex")
+    } else if lower.starts_with("cursor") {
+        Some("Cursor")
+    } else if lower.starts_with("gemini") {
+        Some("Gemini CLI")
+    } else if lower.starts_with("claude") {
+        Some("Claude")
+    } else {
+        None
+    };
+    let label = known
+        .or_else(|| field("title"))
+        .or(Some(name).filter(|n| !n.is_empty()))
+        .unwrap_or("Agent");
+    label.chars().filter(|c| !c.is_control()).take(40).collect()
+}
+
+/// The principal `cua mcp` acts as: an agent named after its client, one per
+/// process (`agent:<label>-<pid>`), so every agent gets its own labelled
+/// cursor in the Spaces it acts in. Over the relay the host keeps only the
+/// kind and this id's suffix; the identity is the signed-in account.
+pub(crate) fn agent_principal(client_info: &Value) -> cua_spacesd_client::pb::Principal {
+    let label = agent_label(client_info);
+    let slug: String = label
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let slug = slug.trim_matches('-');
+    cua_spacesd_client::pb::Principal {
+        id: format!(
+            "agent:{}-{}",
+            if slug.is_empty() { "agent" } else { slug },
+            std::process::id()
+        ),
+        display_name: label,
+        color: String::new(),
+        kind: cua_spacesd_client::pb::PrincipalKind::Agent as i32,
+    }
+}
+
 /// The one MCP server `cua mcp` and `cua daemon mcp` serve: the Spaces
 /// contract (through `cua`) plus the sandbox/computer/skills extension.
+/// The process acts as an agent principal: generic until the client
+/// initializes, then named after it.
 pub fn server(cua: Arc<Cua>, permissions: BTreeSet<String>, default_sandbox: String) -> McpServer {
+    cua_spacesd_client::set_process_principal(Some(agent_principal(&Value::Null)));
     let spaces = cua.spaces();
     let allowed = permissions.clone();
     McpServer::remote(Arc::new(SdkTools(spaces)))
+        .with_client_info_hook(Arc::new(|info: &Value| {
+            cua_spacesd_client::set_process_principal(Some(agent_principal(info)));
+        }))
         .with_name("cua")
         .with_filter(Arc::new(move |tool: &str| {
             allowed.contains(&format!("spaces:{tool}"))
@@ -1580,6 +1642,49 @@ pub async fn serve_stdio(server: McpServer) -> Result<i32, CuaError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_principal_is_named_after_the_client() {
+        let p = agent_principal(&json!({"name": "claude-code", "version": "2.1"}));
+        assert_eq!(p.display_name, "Claude Code");
+        assert_eq!(p.kind, cua_spacesd_client::pb::PrincipalKind::Agent as i32);
+        assert_eq!(p.id, format!("agent:claude-code-{}", std::process::id()));
+        assert_eq!(agent_label(&json!({"name": "codex-mcp-client"})), "Codex");
+        assert_eq!(
+            agent_label(&json!({"name": "my-bot", "title": "My Bot"})),
+            "My Bot"
+        );
+        assert_eq!(agent_label(&json!({"name": "my-bot"})), "my-bot");
+        assert_eq!(agent_label(&Value::Null), "Agent");
+        assert_eq!(
+            agent_principal(&Value::Null).id,
+            format!("agent:agent-{}", std::process::id())
+        );
+    }
+
+    struct NoTools;
+    #[async_trait::async_trait]
+    impl cua_spaces::mcp::ToolBackend for NoTools {
+        async fn call(&self, _: &str, _: Value) -> ToolOutcome {
+            ToolOutcome::text("")
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_passes_client_info_to_the_hook() {
+        let seen = Arc::new(Mutex::new(Value::Null));
+        let sink = seen.clone();
+        let server = McpServer::remote(Arc::new(NoTools)).with_client_info_hook(Arc::new(
+            move |info: &Value| *sink.lock().unwrap() = info.clone(),
+        ));
+        let reply = server
+            .handle(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "clientInfo": {"name": "claude-code"}}}))
+            .await
+            .unwrap();
+        assert!(reply.get("result").is_some(), "{reply}");
+        assert_eq!(seen.lock().unwrap()["name"], "claude-code");
+    }
 
     #[test]
     fn every_tool_call_has_a_time_limit() {

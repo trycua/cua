@@ -34,3 +34,20 @@ export function demoRelayUsageHandlers({ state }: DemoContext): DemoHandlers<"re
     "relay.usage": () => (state.identity && state.relayUsage ? { ...state.relayUsage, reasons: [...state.relayUsage.reasons] } : null),
   };
 }
+
+/** The allowance for `?demo=usage-<name>` (see `DemoOptions.usage`). */
+export function demoRelayUsageNamed(name: "idle" | "warn" | "limit" | "pro" | "teams"): RelayUsage {
+  const free = demoRelayUsage();
+  switch (name) {
+    case "idle":
+      return { ...free, liveSessions: 0 };
+    case "warn":
+      return { ...free, liveSessions: 0, hoursUsed: 16.5, myHoursUsed: 16.5 };
+    case "limit":
+      return { ...free, hoursUsed: 20.4, myHoursUsed: 20.4, softLimitReached: true, reasons: ["hours"] };
+    case "pro":
+      return { ...free, plan: "pro", liveSessions: 0, liveSessionsLimit: 5, hoursUsed: 38, myHoursUsed: 38, hoursLimit: 200 };
+    case "teams":
+      return { ...free, plan: "team", team: { id: "acme", seats: 3 }, liveSessions: 0, liveSessionsLimit: 15, hoursUsed: 120, myHoursUsed: 41, hoursLimit: 600 };
+  }
+}

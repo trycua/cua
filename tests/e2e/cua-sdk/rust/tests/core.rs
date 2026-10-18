@@ -183,40 +183,15 @@ async fn agnostic_fake_fleet_and_direct() {
     e2e(
         "daemon-agnostic",
         "hermetic",
-        "fake Fleet pool without env + direct URL without a driver",
+        "cloud create fails (Cua Cloud has ended) + direct URL without a driver",
         MIN,
         None,
         || async {
             let fx = Fixtures::start()?;
             let c = embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token)));
-            let fleet = c.fleet()?;
-            let pool = name("agnostic");
-            let mut spec = pool_spec(&pool, "img:plain");
-            spec.services = HashMap::from([("server".to_string(), 8000)]);
-            fleet.apply_pool(spec).await?;
-            let mut o = opts("cloud");
-            o.pool = Some(pool.clone());
-            o.name = Some(format!("{pool}-c"));
-            let sb = c.sandboxes().create(o).await?;
-            let r = async {
-                assert_eq!(
-                    sb.service("server".into())?
-                        .request("GET".into(), "/status".into(), None, Some(5000), None)
-                        .await?
-                        .status,
-                    200
-                );
-                assert!(matches!(
-                    sb.spacesd(Some(2000)).await,
-                    Err(CuaError::SpacesdNotAvailable(_))
-                ));
-                Res::Ok(())
-            }
-            .await;
-            sb.delete().await?;
-            fleet.delete_pool(pool).await?;
-            r?;
-            let d = c
+            assert_cloud_ended(&c, |o| o.pool = Some(name("agnostic"))).await?;
+            // Direct URL where no spacesd answers (the fake Fleet API's HTTP server).
+            let d = embedded_local()
                 .sandboxes()
                 .connect_url(
                     fx.fleet_base_url.clone(),

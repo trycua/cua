@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Local sandboxes run on this machine with no account. Local is the built-in
 default: omit `on=` (`local=` in cua-sandbox, `--on` in the CLI), or
-[change the default](/cua-sdk/guides/cloud#choose-where-sandboxes-run-by-default).
+[change the default](#change-the-default).
 The SDK picks the kind and runtime from the image and starts it itself.
 
 | Image | Runtime (`auto`) |
@@ -52,13 +52,6 @@ fails with `InvalidPlacement` and lists the valid values:
 invalid placement: runtime qemu runs vm sandboxes, not container ones locally; valid runtime: auto, gvisor, runc
 ```
 
-`pool:<name>` runs a cloud pool's
-template image locally (it needs cloud credentials to read the template):
-
-```bash test="cli-shape" id="cua-sb-create"
-cua sb create pool:my-pool --name copy-of-my-pool
-```
-
 In code, pass `kind=` and `runtime=` (`Sandbox.create(image, kind="vm",
 runtime="qemu")`); cua-sandbox still accepts a `Runtime` object
 ([runtime support](/cua-sdk/reference/runtime-support)).
@@ -71,9 +64,30 @@ runtime="qemu")`); cua-sandbox still accepts a `Runtime` object
 - [Sidecars](/cua-sdk/guides/sidecars) need `runtime="runc"` where gVisor would run.
 - Image layers build into your container engine before boot; VM images apply
   them after boot through cua-spacesd.
-- A sandbox runs until you delete it; `keep_alive` and `cloud=` raise.
+- A sandbox runs until you delete it; `keep_alive` raises.
 - Images without cua-spacesd fall back to the runtime's agentless path (QMP,
   VNC, SSH or ADB) where there is one.
+
+## Change the default
+
+Without `--on` (or `on=` / `local=`) a sandbox runs on this machine. To default
+to [your own cloud](/cua-sdk/guides/your-cloud) instead, set `default.on`:
+
+```bash test="cli-shape" id="cua-config-set-default-on"
+cua config set default.on aws   # written to ~/.cua/config.toml
+cua config list                 # each setting, its value and its source
+```
+
+The first match wins:
+
+1. `--on`, `on=` or `local=`
+2. `CUA_DEFAULT_ON` (one shell or CI job)
+3. `default.on` in `$CUA_HOME/config.toml`
+4. `local`
+
+`default.kind` and `default.runtime` (`CUA_DEFAULT_KIND`,
+`CUA_DEFAULT_RUNTIME`) work the same way, and `cua doctor` shows each default
+with its source. Switch back with `cua config unset default.on`.
 
 ## Disk usage and cleanup
 

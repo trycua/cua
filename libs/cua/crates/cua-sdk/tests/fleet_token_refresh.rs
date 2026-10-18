@@ -75,6 +75,7 @@ fn bearer(headers: &[(String, String)]) -> Option<&str> {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_held_cloud_spacesd_client_opens_media_with_a_fresh_fleet_bearer() {
     let gw = fixtures::start_env(None, Some(fixtures::fake_gateway(POOL, POOL))).await;
     let fake = FakeFleet::new();

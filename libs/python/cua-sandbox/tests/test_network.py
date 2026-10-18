@@ -51,6 +51,7 @@ def test_android_cmd_has_egress_unless_restricted():
     assert net(none).startswith("user,id=net0,restrict=on,hostfwd=")
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_cloud_sandboxes_refuse_network_none():
     with pytest.raises(Unsupported, match="network='none'"):
         asyncio.run(Sandbox.create(Image.linux(), local=False, network="none"))

@@ -9,6 +9,20 @@ use crate::{
 };
 use cua_proto::daemon::v1::{self as pb, space_service_server::SpaceService};
 
+/// A create's progress report as the daemon streams it (`CreateSpaceStream`,
+/// `CreateSandboxStream`).
+pub(crate) fn progress_pb(p: &cua_sandbox_core::progress::Progress) -> pb::CreateSpaceProgress {
+    pb::CreateSpaceProgress {
+        phase: p.phase.as_str().into(),
+        fraction: p.fraction,
+        detail: p.detail.clone(),
+        bytes_done: p.bytes.map(|b| b.done),
+        bytes_total: p.bytes.map(|b| b.total).filter(|t| *t > 0),
+        bytes_per_second: p.bytes.and_then(|b| b.per_second),
+        space: p.target.clone(),
+    }
+}
+
 #[cfg(feature = "spaces")]
 mod imp {
     use super::*;
@@ -18,19 +32,11 @@ mod imp {
     use cua_sandbox_core::placement::{Kind, On, Runtime};
     use prost::Message;
 
-    fn record(spaces: &cua_spaces::Spaces, id: &str) -> Result<pb::Space, Error> {
+    async fn record(spaces: &cua_spaces::Spaces, id: &str) -> Result<pb::Space, Error> {
         if let Some(r) = spaces.registry().get(id).map_err(Error::from)? {
             return Ok(r);
         }
-        // Relay machines are not registered; they come from the account's
-        // directory listing.
-        spaces
-            .list()
-            .map_err(Error::from)?
-            .iter()
-            .find(|i| i.id == id)
-            .map(info_record)
-            .ok_or_else(|| Error::NotFound(format!("Space {id}")))
+        Ok(info_record(&spaces.find(id).await.map_err(Error::from)?))
     }
 
     /// A relay machine (or any listed Space) as a SpaceService record.
@@ -56,6 +62,7 @@ mod imp {
             cloud: info.cloud.clone(),
             cloud_place: info.cloud_place.clone(),
             cloud_delete: info.cloud_delete.clone(),
+            stop_reason: info.stop_reason.clone(),
         }
     }
 
@@ -116,13 +123,13 @@ mod imp {
     }
 
     /// What a create returned, as the wire response.
-    fn create_response(
+    async fn create_response(
         spaces: &cua_spaces::Spaces,
         created: cua_spaces::SpaceCreated,
     ) -> Result<pb::CreateSpaceResponse, tonic::Status> {
         Ok(match created {
             cua_spaces::SpaceCreated::Ready { info, reused } => pb::CreateSpaceResponse {
-                space: Some(record(spaces, &info.id).map_err(st)?),
+                space: Some(record(spaces, &info.id).await.map_err(st)?),
                 phase: "ready".into(),
                 reused,
             },
@@ -181,7 +188,7 @@ mod imp {
                 .await
                 .map_err(|e| st(e.into()))?;
             ok(pb::AddSpaceResponse {
-                space: Some(record(self.spaces(), &info.id).map_err(st)?),
+                space: Some(record(self.spaces(), &info.id).await.map_err(st)?),
             })
         }
 
@@ -192,6 +199,7 @@ mod imp {
             let mut spaces = self.spaces().registry().list().map_err(|e| st(e.into()))?;
             for s in &mut spaces {
                 (s.power, s.power_state) = self.spaces().power_of(&s.id);
+                s.stop_reason = self.spaces().stop_reason_of(&s.id);
             }
             // Plus the signed-in account's relay machines (refreshed).
             for info in self.spaces().list_all().await.map_err(|e| st(e.into()))? {
@@ -224,7 +232,7 @@ mod imp {
                 .resolve(&req.into_inner().space)
                 .map_err(|e| st(e.into()))?;
             ok(pb::ResolveSpaceResponse {
-                space: Some(record(self.spaces(), &id.to_string()).map_err(st)?),
+                space: Some(record(self.spaces(), &id.to_string()).await.map_err(st)?),
             })
         }
 
@@ -262,7 +270,7 @@ mod imp {
             match created {
                 cua_spaces::SpaceCreated::Ready { info, reused } => {
                     ok(pb::ClaimFleetSpaceResponse {
-                        space: Some(record(self.spaces(), &info.id).map_err(st)?),
+                        space: Some(record(self.spaces(), &info.id).await.map_err(st)?),
                         pending_json: String::new(),
                         reused,
                     })
@@ -301,7 +309,7 @@ mod imp {
                 .ready()
                 .map_err(|p| st(Error::Internal(format!("{} is still starting", p.id))))?;
             ok(pb::ProvisionLocalSpaceResponse {
-                space: Some(record(self.spaces(), &info.id).map_err(st)?),
+                space: Some(record(self.spaces(), &info.id).await.map_err(st)?),
             })
         }
 
@@ -327,7 +335,7 @@ mod imp {
                 .create(create)
                 .await
                 .map_err(|e| st(e.into()))?;
-            ok(create_response(self.spaces(), created)?)
+            ok(create_response(self.spaces(), created).await?)
         }
 
         type CreateSpaceStreamStream = std::pin::Pin<
@@ -353,25 +361,17 @@ mod imp {
             let progress = tx.clone();
             create.progress = Some(cua_spaces::ProgressSink::new(move |p| {
                 let _ = progress.try_send(Ok(pb::CreateSpaceStreamResponse {
-                    event: Some(Event::Progress(pb::CreateSpaceProgress {
-                        phase: p.phase.as_str().into(),
-                        fraction: p.fraction,
-                        detail: p.detail.clone(),
-                        bytes_done: p.bytes.map(|b| b.done),
-                        bytes_total: p.bytes.map(|b| b.total).filter(|t| *t > 0),
-                        bytes_per_second: p.bytes.and_then(|b| b.per_second),
-                        space: p.target.clone(),
-                    })),
+                    event: Some(Event::Progress(super::progress_pb(p))),
                 }));
             }));
             let spaces = self.spaces().clone();
             tokio::spawn(async move {
                 let result = match spaces.create(create).await {
-                    Ok(created) => {
-                        create_response(&spaces, created).map(|r| pb::CreateSpaceStreamResponse {
+                    Ok(created) => create_response(&spaces, created).await.map(|r| {
+                        pb::CreateSpaceStreamResponse {
                             event: Some(Event::Result(r)),
-                        })
-                    }
+                        }
+                    }),
                     Err(e) => Err(st(e.into())),
                 };
                 let _ = tx.send(result).await;
@@ -460,7 +460,7 @@ mod imp {
                 })
                 .collect();
             ok(pb::ConnectSpaceResponse {
-                space: Some(record(self.spaces(), &id).map_err(st)?),
+                space: Some(record(self.spaces(), &id).await.map_err(st)?),
                 env_url: if space.has_spacesd() {
                     format!("{base}/v1/spaces/{key}/env")
                 } else {
@@ -487,17 +487,26 @@ mod imp {
             req: tonic::Request<pb::CallSpaceToolRequest>,
         ) -> R<pb::CallSpaceToolResponse> {
             let r = req.into_inner();
-            if cua_spaces::contract::tool(&r.name).is_none() {
+            let app_method = cua_spaces::agents::keys::is_app_method(&r.name);
+            if !app_method && cua_spaces::contract::tool(&r.name).is_none() {
                 return Err(st(Error::NotFound(format!("Spaces tool {}", r.name))));
             }
             let args: serde_json::Value = if r.arguments_json.trim().is_empty() {
                 serde_json::json!({})
             } else {
+                // Never quote the arguments: agent_keys.set carries a key.
                 serde_json::from_str(&r.arguments_json)
-                    .map_err(|e| st(Error::InvalidArgument(format!("arguments_json: {e}"))))?
+                    .map_err(|_| st(Error::InvalidArgument("arguments_json is not JSON".into())))?
             };
-            let server = self.mcp();
-            let out = server.call(&r.name, args).await;
+            // The app's Settings → Agents methods: not contract tools, so no
+            // MCP server lists or forwards them to an agent.
+            let out = if app_method {
+                cua_spaces::agents::keys::app_tool(&r.name, args).unwrap_or_else(|| {
+                    cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
+                })
+            } else {
+                self.mcp().call(&r.name, args).await
+            };
             ok(pb::CallSpaceToolResponse {
                 content_json: serde_json::Value::Array(out.content).to_string(),
                 structured_json: out.structured.map(|s| s.to_string()).unwrap_or_default(),

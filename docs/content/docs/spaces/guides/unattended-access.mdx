@@ -23,6 +23,7 @@ machine is shared with, or enroll devices.
 
 | Option | Effect |
 |--------|--------|
+| `--remote` | When sign-in is needed, print a device code to approve in a browser on another machine (for example over SSH). The account session is not saved. Cannot be combined with `--direct`. |
 | `--direct ip:port` | Serve on your LAN (or a forwarded port) with a local env token instead of the relay. No account needed. |
 | `--relay URL` | Another relay (`CUA_RELAY_URL`, default `https://relay.cua.ai`); any self-hosted `cua-relay` works. |
 | `--name NAME` | Display name (default: host name). |
@@ -41,6 +42,21 @@ allowlist; the env token never leaves the machine.
 | Linux | systemd unit `cua-spacesd-host.service` (user unit; system unit as root). |
 | Windows | Scheduled task `Cua\SpacesdHost` at logon, in your interactive session. |
 
+On Windows the host runs in your signed-in session, so your devices reach the
+desktop only while it is signed in, unlocked and on screen:
+
+- **After a restart**, sign in once (or turn on automatic sign-in). The host
+  starts at sign-in.
+- **Locked:** Windows doesn't let apps see or use its lock screen. For
+  unattended access, turn off automatic locking in **Settings > Accounts >
+  Sign-in options** and the screen saver's "On resume, display logon screen".
+- **Remote Desktop:** closing a Remote Desktop window leaves the session
+  disconnected, and Windows stops drawing it. To leave a remote PC (a cloud VM)
+  reachable, end Remote Desktop from an administrator prompt with
+  `tscon %sessionname% /dest:console` instead.
+
+A viewer or agent that connects in one of these states sees which one it is.
+
 ## Check, pause, remove
 
 ```bash test="cli-shape" id="cua-host-status"
@@ -49,6 +65,11 @@ cua host stop       # disconnect everyone and refuse new connections
 cua host start      # share again
 cua host remove     # unregister, uninstall the service, delete ~/.cua/host
 ```
+
+Uninstalling the app turns this off too. On Linux, `sudo apt remove cua-spaces`
+(and `purge`) removes the machine, and the Spaces it provides, from the relay,
+deletes the `cua-spacesd-host.service` user unit and stops the daemon. Your
+Spaces and data under `~/.cua` stay on the machine (the Spaces are turned off).
 
 `cua host stop` turns sharing off locally first, so it holds even when the
 relay is unreachable. In direct mode `cua host status` prints the URL and the

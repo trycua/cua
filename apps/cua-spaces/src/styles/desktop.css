@@ -176,11 +176,6 @@
   background: var(--dw-hover);
   color: var(--dw-text);
 }
-.dw-btn-lg {
-  height: 34px;
-  padding: 0 18px;
-  font-size: 13px;
-}
 .dw-icon-btn {
   display: inline-grid;
   place-items: center;
@@ -756,6 +751,33 @@
 .dw-empty-art .sf-icon {
   width: 28px;
   height: 28px;
+}
+.dw-empty-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, 288px);
+  gap: 12px;
+  margin: 14px 0 4px;
+}
+.dw-empty-tiles .wz-tile {
+  grid-template-columns: auto 1fr;
+  align-content: center;
+  gap: 2px 12px;
+  height: 80px;
+}
+.dw-empty-tiles .wz-tile-icon {
+  grid-row: span 2;
+  width: 44px;
+  height: 44px;
+}
+.dw-empty-tiles .wz-tile-icon .sf-icon {
+  width: 24px;
+  height: 24px;
+}
+.dw-empty-tiles .wz-tile-title {
+  align-self: end;
+}
+.dw-empty-tiles .wz-tile-desc {
+  align-self: start;
 }
 
 /* ---------- Sheet (the New Space wizard) ---------- */
@@ -2836,49 +2858,44 @@ html.is-teleport-picker .hp-panel {
   white-space: nowrap;
 }
 
-/* Done: the example prompts under both columns, scrolling up slowly (the
-   list twice, so the loop is seamless), paused under the pointer, static
-   with reduced motion. Three rows show, fading at the edges. */
+/* Done: a label and three static example prompts under both columns; each
+   copies on click. */
 .dw .ob-page-below {
   grid-column: 1 / -1;
   min-width: 0;
 }
-.dw .ob-ticker {
-  height: 66px;
-  overflow: hidden;
+.dw .ob-prompts-label {
+  margin: 0 0 6px;
   color: var(--dw-text-2);
-  -webkit-mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent);
-  mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent);
+  font-size: 13px;
 }
-.dw .ob-ticker-track {
-  animation: ob-ticker 28s linear infinite;
+.dw .ob-prompts-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.dw .ob-ticker:hover .ob-ticker-track {
-  animation-play-state: paused;
-}
-.dw .ob-ticker-row {
-  height: 22px;
-  overflow: hidden;
+.dw .ob-prompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: var(--dw-text-2);
+  font: inherit;
   line-height: 22px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
 }
-@keyframes ob-ticker {
-  to {
-    transform: translateY(-50%);
-  }
+.dw .ob-prompt:hover {
+  color: var(--dw-text);
 }
-@media (prefers-reduced-motion: reduce) {
-  .dw .ob-ticker {
-    -webkit-mask-image: none;
-    mask-image: none;
-  }
-  .dw .ob-ticker-track {
-    animation: none;
-  }
-  .dw .ob-ticker-again {
-    display: none;
-  }
+.dw .ob-prompt-copied {
+  color: var(--dw-text);
+  font-size: 12px;
 }
 
 /* The Stream section (the core's `spaces::stream` rows): one line each, an

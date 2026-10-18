@@ -43,6 +43,7 @@ mod driver_input;
 #[cfg(target_os = "linux")]
 mod encoded_capture;
 pub mod grpc;
+mod h264_limits;
 #[cfg(target_os = "linux")]
 mod linux_capture;
 #[cfg(target_os = "linux")]
@@ -328,14 +329,30 @@ fn hyprland_background_admission(native: NativeTarget) -> Result<(), ProviderErr
 /// session ([`human_input_session`]): no agent cursor in the guest, and none
 /// in presence. An agent's runs in the provider's coordinate session and
 /// keeps the agent cursor.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 struct RegistryGestureTools {
     inner: Arc<CuaProviderInner>,
     /// The human-input session, `None` for an agent.
     human_session: Option<String>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn gesture_tool_error(tool: &str, result: &ToolResult) -> ProviderError {
+    let code = match result
+        .structured_content
+        .as_ref()
+        .and_then(|value| value.get("code"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("background_unavailable" | "would_require_activation") => {
+            ProviderErrorCode::WouldRequireActivation
+        }
+        _ => ProviderErrorCode::DeliveryFailed,
+    };
+    ProviderError::new(code, format!("{tool}: {}", tool_result_text(result)))
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl tool_input::GestureTools for RegistryGestureTools {
     fn invoke(
         &self,
@@ -373,10 +390,7 @@ impl tool_input::GestureTools for RegistryGestureTools {
         })
         .map_err(|error| ProviderError::new(ProviderErrorCode::Internal, error))??;
         if result.is_error == Some(true) {
-            return Err(ProviderError::new(
-                ProviderErrorCode::DeliveryFailed,
-                format!("{tool}: {}", tool_result_text(&result)),
-            ));
+            return Err(gesture_tool_error(tool, &result));
         }
         Ok(())
     }
@@ -1223,10 +1237,51 @@ impl InteractiveInputProvider for CuaInteractiveInputProvider {
             Ok(Some(Arc::new(driver_input::MacosLease(session))))
         }
 
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(target_os = "windows")]
         {
-            // cua-driver has no Windows interactive session yet; one-shot
-            // actions go through its tools (desktop scope for a display).
+            // Windows already exposes qualified gesture tools. Adapt media
+            // batches to those tools, as on Hyprland, instead of advertising
+            // interactive input and then returning no input lease.
+            let inner = self.0.clone();
+            let lease = tool_input::open(
+                target,
+                delivery_mode,
+                |target| {
+                    let native = inner.native(target)?;
+                    let geometry = inner.clone();
+                    Ok(tool_input::ToolInputTarget::Window {
+                        pid: native.pid,
+                        window_id: native.window_id,
+                        extent: Box::new(move || {
+                            geometry
+                                .native_pixel_geometry(native)
+                                .map(|pixels| (pixels.width_px, pixels.height_px))
+                        }),
+                    })
+                },
+                |display_id| {
+                    windows_display::displays()
+                        .into_iter()
+                        .find(|display| display.id == display_id)
+                        .ok_or_else(|| {
+                            ProviderError::new(
+                                ProviderErrorCode::TargetUnavailable,
+                                "display is gone",
+                            )
+                        })
+                },
+                // Desktop-scope keys address the current foreground app.
+                Box::new(|| None),
+                Arc::new(RegistryGestureTools {
+                    inner: self.0.clone(),
+                    human_session: (!owner.agent).then(|| human_input_session(&owner.id)),
+                }),
+            )?;
+            Ok(Some(Arc::new(lease.with_desktop_hover())))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
             let _ = delivery_mode;
             if display_key(target).is_none() {
                 self.0.native(target)?;
@@ -2989,6 +3044,26 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn gesture_tools_preserve_activation_required_errors() {
+        let result = ToolResult::error("background keyboard input is unavailable")
+            .with_structured(serde_json::json!({"code":"background_unavailable"}));
+        let error = gesture_tool_error("press_key", &result);
+        assert_eq!(error.code, ProviderErrorCode::WouldRequireActivation);
+        assert_eq!(
+            error.message,
+            "press_key: background keyboard input is unavailable"
+        );
+    }
+
+    #[test]
+    fn gesture_tools_do_not_retry_security_refusals_by_activating() {
+        let result = ToolResult::error("Windows blocked input to an elevated application")
+            .with_structured(serde_json::json!({"code":"background_uipi_blocked"}));
+        let error = gesture_tool_error("click", &result);
+        assert_eq!(error.code, ProviderErrorCode::DeliveryFailed);
     }
 
     #[test]

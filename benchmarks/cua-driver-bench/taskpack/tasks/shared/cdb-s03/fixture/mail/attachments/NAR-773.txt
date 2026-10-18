@@ -1,0 +1,16 @@
+NACRE AUDIO REPAIR
+SERVICE INVOICE
+
+Invoice number: NAR-773
+Invoice date: October 10, 2026
+Bill to: Kestrel Wharf Workshop
+Payment terms: Net 30
+Due date: November 9, 2026
+
+Bench amplifier diagnostic                         $65.00
+Power-stage component replacement                 $150.00
+Calibration and return delivery                     $60.00
+                                                   -------
+TOTAL DUE                                         $275.00
+
+Service ticket: NA-4408

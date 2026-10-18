@@ -3,16 +3,20 @@ import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Cogl from 'gi://Cogl';
 import Cairo from 'cairo';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 Gio._promisify(Shell.Screenshot.prototype, 'screenshot');
+Gio._promisify(Shell.Screenshot, 'composite_to_stream');
 
 const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="GetVersion"><arg type="u" direction="out" name="version"/></method>
 <method name="GetRects"><arg type="s" direction="out" name="json"/></method>
 <method name="Capture"><arg type="s" direction="out" name="png_base64"/></method>
+<method name="CaptureWindow"><arg type="u" direction="in" name="id"/><arg type="u" direction="in" name="pid"/><arg type="s" direction="out" name="png_base64"/></method>
+<method name="CaptureWindowPreview"><arg type="u" direction="in" name="id"/><arg type="u" direction="in" name="pid"/><arg type="u" direction="in" name="max_dimension"/><arg type="s" direction="out" name="png_base64"/><arg type="u" direction="out" name="width"/><arg type="u" direction="out" name="height"/></method>
 <method name="Activate"><arg type="u" direction="in" name="id"/><arg type="b" direction="out" name="activated"/></method>
 <method name="MoveCursor"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
@@ -680,6 +684,7 @@ function drawBadgeChip(cr, glyph, filled, fillColor) {
 
 export default class WinRectsExtension extends Extension {
   enable() {
+    this._captureClones = new Map();
     this._impl = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
     this._impl.export(Gio.DBus.session, '/org/cua/WinRects');
     this._nameId = Gio.bus_own_name(
@@ -822,6 +827,11 @@ export default class WinRectsExtension extends Extension {
     });
   }
   disable() {
+    for (const entry of this._captureClones.values()) {
+      GLib.source_remove(entry.timeout);
+      entry.clone.destroy();
+    }
+    this._captureClones.clear();
     if (this._frameId) {
       GLib.source_remove(this._frameId);
       this._frameId = 0;
@@ -851,7 +861,7 @@ export default class WinRectsExtension extends Extension {
     }
   }
   GetVersion() {
-    return 8;
+    return 10;
   }
   GetRects() {
     const actors = global.get_window_actors();
@@ -890,6 +900,96 @@ export default class WinRectsExtension extends Extension {
       });
     }
     return JSON.stringify(out);
+  }
+  CaptureWindowAsync([id, pid], invocation) {
+    return this._captureWindow(id, pid, 0, invocation);
+  }
+  CaptureWindowPreviewAsync([id, pid, maxDimension], invocation) {
+    if (maxDimension < 1 || maxDimension > 4096) {
+      invocation.return_dbus_error('org.cua.WinRects.InvalidSize', 'Invalid preview size');
+      return;
+    }
+    return this._captureWindow(id, pid, maxDimension, invocation);
+  }
+  async _captureWindow(id, pid, maxDimension, invocation) {
+    let stream;
+    try {
+      if (Main.sessionMode.isLocked || Main.sessionMode.isGreeter)
+        throw new Error('Desktop is unavailable');
+      const actor = global.get_window_actors().find(
+        candidate => candidate.meta_window?.get_stable_sequence() === id);
+      const window = actor?.meta_window;
+      if (!window || (pid !== 0 && window.get_pid() !== pid) || window.minimized)
+        throw new Error('Target window is unavailable');
+      // A mapped clone keeps Mutter from suspending a fully covered source.
+      // It paints no pixels and expires when capture requests stop.
+      let entry = this._captureClones.get(id);
+      if (entry) GLib.source_remove(entry.timeout);
+      else {
+        const clone = new Clutter.Clone({source: actor, opacity: 0, width: 1, height: 1, reactive: false});
+        global.stage.add_child(clone);
+        entry = {clone, timeout: 0};
+        this._captureClones.set(id, entry);
+      }
+      entry.timeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
+        entry.clone.destroy();
+        this._captureClones.delete(id);
+        return GLib.SOURCE_REMOVE;
+      });
+      // Snapshot this actor, never the stage. Covered windows retain their own
+      // content; neither activation nor a desktop crop is needed.
+      const frame = window.get_frame_rect();
+      const buffer = window.get_buffer_rect();
+      const scale = actor.get_resource_scale();
+      const content = actor.paint_to_content(null);
+      const texture = content?.get_texture();
+      if (!texture || !Number.isFinite(scale) || scale <= 0)
+        throw new Error('Window content is unavailable');
+      const x = Math.round((frame.x - buffer.x) * scale);
+      const y = Math.round((frame.y - buffer.y) * scale);
+      const width = Math.round(frame.width * scale);
+      const height = Math.round(frame.height * scale);
+      if (x < 0 || y < 0 || width <= 0 || height <= 0 ||
+          x + width > texture.get_width() || y + height > texture.get_height())
+        throw new Error('Window content does not match its frame');
+      stream = Gio.MemoryOutputStream.new_resizable();
+      let captureTexture = texture;
+      let captureX = x, captureY = y, captureWidth = width, captureHeight = height;
+      if (maxDimension > 0 && Math.max(width, height) > maxDimension) {
+        const ratio = maxDimension / Math.max(width, height);
+        captureWidth = Math.max(1, Math.round(width * ratio));
+        captureHeight = Math.max(1, Math.round(height * ratio));
+        const context = global.stage.get_context().get_backend().get_cogl_context();
+        captureTexture = Cogl.Texture2D.new_with_size(context, captureWidth, captureHeight);
+        const framebuffer = Cogl.Offscreen.new_with_texture(captureTexture);
+        framebuffer.allocate();
+        framebuffer.set_viewport(0, 0, captureWidth, captureHeight);
+        framebuffer.orthographic(0, 0, captureWidth, captureHeight, -1, 1);
+        const pipeline = Cogl.Pipeline.new(context);
+        pipeline.set_layer_texture(0, texture);
+        framebuffer.draw_textured_rectangle(pipeline, 0, 0, captureWidth, captureHeight,
+          x / texture.get_width(), y / texture.get_height(),
+          (x + width) / texture.get_width(), (y + height) / texture.get_height());
+        framebuffer.finish();
+        captureX = 0;
+        captureY = 0;
+      }
+      await Shell.Screenshot.composite_to_stream(
+        captureTexture, captureX, captureY, captureWidth, captureHeight, 1, null, 0, 0, 1, stream);
+      stream.close(null);
+      if (Main.sessionMode.isLocked || Main.sessionMode.isGreeter)
+        throw new Error('Desktop became unavailable');
+      if (stream.get_data_size() > 32 * 1024 * 1024)
+        throw new Error('Window capture is too large');
+      const encoded = GLib.base64_encode(stream.steal_as_bytes().get_data());
+      invocation.return_value(maxDimension > 0
+        ? new GLib.Variant('(suu)', [encoded, width, height])
+        : new GLib.Variant('(s)', [encoded]));
+    } catch (error) {
+      invocation.return_dbus_error('org.cua.WinRects.CaptureFailed', String(error));
+    } finally {
+      if (stream && !stream.is_closed()) stream.close(null);
+    }
   }
   async CaptureAsync(_params, invocation) {
     try {

@@ -1,0 +1,49 @@
+{
+  "task": "cua.shared.cdb-s02.conflicting-change-replan",
+  "target_date": "2026-10-14",
+  "expected_events": {
+    "LHP-BOREAL": {
+      "title": "Boreal review",
+      "date": "2026-10-14",
+      "start": "11:00",
+      "end": "12:00",
+      "room": "Juniper",
+      "attendees": ["Nia Vale", "Oren Pike"],
+      "status": "confirmed",
+      "protected": false
+    },
+    "LHP-CINDER": {
+      "title": "Cinder decision",
+      "date": "2026-10-14",
+      "start": "13:00",
+      "end": "13:30",
+      "room": "Juniper",
+      "attendees": ["Pax Reed", "Ivo March"],
+      "status": "confirmed",
+      "protected": false
+    }
+  },
+  "absent_events": ["LHP-ASTER", "LHP-DUNE"],
+  "protected_events": ["CAL-LUNCH-01", "CAL-HOLD-31", "CAL-DECOY-71"],
+  "expected_blocker": {
+    "conflict_id": "LHP-C17",
+    "affected_session": "LHP-DUNE",
+    "conflicting_event": "CAL-HOLD-31",
+    "escalation": "program-lead"
+  },
+  "schedule": {
+    "LHP-ASTER": ["cancelled", "", "", ""],
+    "LHP-BOREAL": ["scheduled", "11:00", "12:00", "Juniper"],
+    "LHP-CINDER": ["scheduled", "13:00", "13:30", "Juniper"],
+    "LHP-DUNE": ["blocked:LHP-C17", "", "", ""]
+  },
+  "controls": {
+    "Task": "LHP-2026-10-14",
+    "Timezone": "America/Chicago",
+    "Mail revision": "3",
+    "Chat revision": "4",
+    "Status vocabulary": "scheduled | cancelled | blocked:<conflict-id>",
+    "Unscheduled fields": "Leave Start, End, and Room blank",
+    "Evidence notes": "Cite the authoritative revision or conflicting calendar event"
+  }
+}

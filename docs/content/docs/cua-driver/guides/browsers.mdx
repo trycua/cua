@@ -64,7 +64,7 @@ end_session({"session": "research-1"})
 
 | Tool | Notes |
 | --- | --- |
-| `browser_click` | Trusted CDP input by default. Works fully in the background for Chrome and Edge on Windows; macOS and Linux return `browser_input_trust_unavailable` because the browser would activate. Pass `input_route: "dom_event"` for a synthetic DOM click that stays in the background but returns `effect: "unverifiable"`. |
+| `browser_click` | Trusted CDP input by default. Works fully in the background for Chrome and Edge on Windows and Chrome on macOS, including inactive tabs; Linux returns `browser_input_trust_unavailable` because the browser would activate. Pass `input_route: "dom_event"` for a synthetic pointer, mouse and click sequence that stays in the background but returns `effect: "unverifiable"`. |
 | `browser_type` | `insert_text` by default; `mode: "keystrokes"` for per-key events; `replace: true` to overwrite. |
 | `browser_pointer` | `hover`, `right_click`, `double_click`, `scroll`, `drag` (with `destination_ref` in the same frame). |
 | `browser_dialog` | `inspect`, then `accept` or `dismiss` the returned `dialog_id`. Linux needs `delivery_mode: "foreground"`. |
@@ -92,6 +92,18 @@ Bind the window of the returned `prepared_pid`. An `isolated_new` profile is
 deleted when the session ends; use `{"mode": "isolated_named", "name": "research"}`
 to keep it. Do not pass remote-debugging flags through `launch_app`: they are
 refused.
+
+The result's optional `lifecycle` object describes how long the browser
+process lives: `owner` is `session`, `idle_expires_in_seconds` is how long the
+session may stay idle after this call before it and the browser end,
+`process_ends_with_session` is `true`, and
+`profile_persists_after_session` is `true` only for `isolated_named`. The
+value is advisory, not a lease. `get_session` reports the remaining time later
+but does not keep the browser alive, and explicit `end_session`, disconnect,
+revocation, or shutdown ends the browser earlier. A named profile keeps its
+files, not the process or its open pages. Attachments to an existing profile
+or endpoint the driver did not launch, and sessions already ending, have no
+`lifecycle`.
 
 ## Attach to a logged-in profile
 

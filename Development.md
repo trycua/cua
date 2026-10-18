@@ -14,7 +14,7 @@ next to the code you plan to change.
 | cua-driver                   | `libs/cua-driver/rust`, `libs/cua-driver/python`                                     | Rust, platform SDKs, Nix on Linux   | [`libs/cua-driver/README.md`](libs/cua-driver/README.md), [`libs/cua-driver/rust/README.md`](libs/cua-driver/rust/README.md) |
 | Python SDKs and services     | `libs/python` (incl. `cua-sandbox`), `libs/cua-bench`                                | Python 3.12, uv                     | Package `pyproject.toml` and README                                                                                          |
 | TypeScript SDKs              | `libs/typescript`                                                                    | Node.js, pnpm                       | [`libs/typescript/README.md`](libs/typescript/README.md) and its `package.json` scripts                                      |
-| CuaBot                       | `libs/cuabot`                                                                        | Node.js, pnpm                       | [`libs/cuabot/README.md`](libs/cuabot/README.md)                                                                             |
+| CuaBot (deprecated)          | `libs/cuabot`                                                                        | Node.js, pnpm                       | [`libs/cuabot/README.md`](libs/cuabot/README.md)                                                                             |
 | Lume                         | `libs/lume`                                                                          | Swift, Xcode command-line tools     | [`libs/lume/Development.md`](libs/lume/Development.md)                                                                       |
 | Sandbox and container images | `libs/images`, `libs/kasm`, `libs/lumier`, `libs/qemu-docker`, `libs/xfce`, `libs/xfce-cua` | Docker plus the component toolchain | [`libs/images/README.md`](libs/images/README.md) or the README in the component                                        |
 | Cross-language E2E           | `tests/e2e/cua-sdk`, `tests/e2e/local-runtimes`                                      | Rust, uv, Node.js, Go, Docker       | [`TESTING.md`](TESTING.md#cua-sdk-and-cli)                                                                                   |
@@ -138,20 +138,20 @@ instead of entering the public docs navigation.
 
 ## Releases
 
-Release Please manages the components listed in
-[`.github/releases/components.json`](.github/releases/components.json) (Cua
-Driver, Cua Perception, Lume, and the cua SDK) plus cua-sandbox
-(`sandbox-v*` tags). Their pull request titles decide the release; see
-[`CONTRIBUTING.md`](CONTRIBUTING.md#agent-assisted-contributions).
+Release Please manages Cua Driver, Cua Perception, Lume, Cua Spaces, the cua
+SDK, cua-spacesd, cua-sandbox and the Python and npm packages; the table in
+[`.github/releases/README.md`](.github/releases/README.md) lists each one's
+path, tag and publishing workflow. Their pull request titles decide the
+release; see [`CONTRIBUTING.md`](CONTRIBUTING.md#agent-assisted-contributions).
 
-Other packages are released through the
+The Docker images are still released through the
 [Legacy packages: Bump Version](https://github.com/trycua/cua/actions/workflows/release-bump-version.yml)
-workflow. Its `service` input is the current target list. Each package's
-`.bumpversion.cfg`, Cargo manifest, or package manifest owns its version and
-tag format, and tag-triggered CD workflows publish.
+workflow. Its `service` input is the current target list. Each image's
+`.bumpversion.cfg` owns its version and tag format, and tag-triggered CD
+workflows publish.
 
-The root `Makefile` provides local version inspection and dry-run helpers. It
-does not publish production releases.
+The root `Makefile` prints the Release Please versions (`make show-versions`).
+It does not publish releases.
 
 ## Generated and Local Files
 

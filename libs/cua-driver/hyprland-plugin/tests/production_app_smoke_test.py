@@ -373,7 +373,8 @@ class InputTests(unittest.TestCase):
                          ['get_window_state', 'list_windows', 'type_text', 'get_window_state', 'list_windows'])
         self.assertEqual(calls[2].args[1], {**TARGET, 'text': 'abc', 'delivery_mode': 'background'})
         for call in (calls[0], calls[3]):
-            self.assertEqual(call.args[1], {**TARGET, 'timeout_ms': OBSERVATION_TIMEOUT_MS})
+            self.assertEqual(call.args[1], {**TARGET, 'timeout_ms': OBSERVATION_TIMEOUT_MS,
+                                            'full_output': True})
         self.assertEqual(OBSERVATION_TIMEOUT_MS, 15000)
 
     def test_truncated_or_unproven_tree_sends_no_input(self):
@@ -582,7 +583,7 @@ class ObjectsSetupTests(unittest.TestCase):
         mcp.tool.side_effect = observed(INKSCAPE)
         observe(mcp, TARGET, 'cua-smoke-inkscape.svg')
         self.assertEqual(mcp.tool.call_args_list[0].args,
-                         ('get_window_state', {**TARGET, 'timeout_ms': 15000}))
+                         ('get_window_state', {**TARGET, 'timeout_ms': 15000, 'full_output': True}))
 
 
 UNPROVEN = {'degraded': True,

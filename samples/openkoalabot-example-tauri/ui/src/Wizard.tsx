@@ -164,7 +164,7 @@ export function Wizard(props: {
               {!props.cloud && (
                 <div className="note warn">
                   <Alert />
-                  <span>Cua Cloud is not signed in. Run `cua auth login` (or set CUA_CLIENT_ID and CUA_CLIENT_SECRET) and restart the app.</span>
+                  <span>Cua Cloud has ended. Create this Space on This machine instead.</span>
                 </div>
               )}
             </>

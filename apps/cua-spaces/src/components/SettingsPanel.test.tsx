@@ -406,12 +406,12 @@ describe("SettingsPanel Privacy", () => {
     expect(screen.getByTitle("Set by env DO_NOT_TRACK")).toBeInTheDocument();
   });
 
-  it("lists Account, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
+  it("lists Account, Teams, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
     const onShowWelcome = vi.fn();
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
     await screen.findByText("Share anonymous usage data");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles).toEqual(["Account", "General", "Privacy", "AI agents", "Experiments"]);
+    expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments"]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(onShowWelcome).toHaveBeenCalled();
   });
@@ -442,26 +442,28 @@ describe("SettingsPanel Experiments", () => {
     renderPanel({ telemetry });
     await screen.findByText("Share anonymous usage data");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
-    for (const name of ["Cua Volume", "Your cloud", "Sharing"]) {
+    for (const name of ["Cua Volume", "Your cloud"]) {
       expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
     }
+    // Sharing is on by default (cua.ai/pricing lists it).
+    expect(experiments.getByRole("switch", { name: "Sharing" })).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByRole("region", { name: "Storage" })).toBeNull();
     await user.click(experiments.getByRole("switch", { name: "Cua Volume" }));
     expect(await screen.findByRole("region", { name: "Storage" })).toBeInTheDocument();
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles.slice(0, 3)).toEqual(["Account", "General", "Storage"]);
+    expect(titles.slice(0, 4)).toEqual(["Account", "Teams", "General", "Storage"]);
     expect(JSON.parse(window.localStorage.getItem("cua.settings.experiments") ?? "{}")).toMatchObject({
       cuaVolume: true,
     });
     expect(telemetry.recordSignals).toHaveBeenCalledWith([
       { type: "experiment", action: "experiment_on", experiment: "cua_volume" },
-      { type: "experiments-on", experiments: ["cua_volume"] },
+      { type: "experiments-on", experiments: ["cua_volume", "sharing"] },
     ]);
   });
 });
 
 describe("SettingsPanel billing and Teams", () => {
-  it("hides Cua Cloud billing and opens the Teams waitlist", async () => {
+  it("hides Cua Cloud billing and opens the account app for Teams", async () => {
     const auth = {
       beginSignIn: vi.fn(),
       signOut: vi.fn(),
@@ -480,11 +482,11 @@ describe("SettingsPanel billing and Teams", () => {
         billingUrl: "https://run.cua.ai/billing",
       }),
     });
-    expect(await screen.findByText("Coming soon")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Teams" })).toBeInTheDocument();
     expect(screen.queryByText("$7.42 credit left")).toBeNull();
     expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Join the waitlist" }));
-    expect(props.onOpenExternal).toHaveBeenCalledWith("https://cua.ai/teams");
+    await userEvent.click(screen.getByRole("button", { name: "Manage team" }));
+    expect(props.onOpenExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });
 });
 

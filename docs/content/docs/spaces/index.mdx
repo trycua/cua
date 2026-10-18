@@ -7,11 +7,10 @@ landing:
 ---
 
 A Space is a desktop your agents can use and you can watch: a container or VM
-on your own Mac, or one of your team's machines (your own cloud is coming
-soon). Each runs cua-spacesd, which streams the screen, takes input through
+on your own Mac, one of your team's machines, or
+[your own cloud](/cua-sdk/guides/your-cloud) (AWS, Google Cloud or Modal). Each runs cua-spacesd, which streams the screen, takes input through
 Cua Driver, and receives teleported apps and files. Cua Spaces is
-source-available under the FSL-1.1-MIT. For teams, join the
-[waitlist](https://cua.ai/teams).
+source-available under the FSL-1.1-MIT. For teams, see [Teams](/spaces/guides/teams).
 
 The **Cua Spaces app** puts your Spaces in the menu bar and notch, so you can
 watch them, open them and teleport apps in with a drag.
@@ -28,7 +27,7 @@ run agents in them from Python, TypeScript, Swift or Rust.
 | Direct | `direct:<host:port>` | `spaces.add(url, token)`: an existing machine |
 | Relay | `relay:<machine-id>` | Your machines set up with `cua host setup`, listed automatically |
 
-The app, the `cua` CLI, the SDKs and `cua daemon` share one registry (`~/.cua/spaces.json`).
+The app, the `cua` CLI, the SDKs and `cua daemon` share one registry (`~/.cua/spaces.json`). Relay machines come from the account's directory and are never written to `spaces.json`.
 
 ## What you can do with a Space
 

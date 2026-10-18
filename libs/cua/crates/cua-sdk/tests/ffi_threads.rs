@@ -21,8 +21,8 @@ use cua_daemon::{
 };
 use cua_fleet::testing::FakeFleet;
 use cua_sdk::{
-    Cua, CuaConfig, FleetPoolSpec, PresenceCursor, PresenceIdentity, PresencePoint,
-    SandboxCreateOptions, SpacesdCommand, presence_now_ms,
+    Cua, CuaConfig, PresenceCursor, PresenceIdentity, PresencePoint, SandboxCreateOptions,
+    SpacesdCommand, presence_now_ms,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -236,42 +236,10 @@ async fn exercise(cua: Arc<Cua>, env_url: String, with_fleet: bool) {
         .await
         .unwrap();
 
-    // ---- Fleet (client side; embedded holds the fake Fleet client)
+    // ---- Fleet: Cua Cloud has ended, so the client never connects.
     if with_fleet {
-        let fleet = cua.fleet().unwrap();
-        // The runtime defaults from the image's manifest (a fixture here).
-        cua_fleet::testing::set_image_variant(
-            "registry.test/cua-e2e:fake",
-            cua_fleet::ImageVariant::ContainerDisk,
-        );
-        fleet
-            .apply_pool(FleetPoolSpec {
-                name: POOL.into(),
-                image: "registry.test/cua-e2e:fake".into(),
-                runtime: None,
-                replicas: None,
-                cpu: None,
-                memory_mb: None,
-                services: HashMap::from([("env".to_string(), 3211)]),
-                readiness_tcp_port: None,
-                efi: false,
-                command: None,
-                ttl_seconds_after_created: None,
-            })
-            .await
-            .unwrap();
-        fleet.get_pool(POOL.into()).await.unwrap();
-        fleet.list_pools(POOL.into()).await.unwrap();
-        let claim = fleet
-            .acquire(POOL.into(), Some(format!("{POOL}-c")), None)
-            .await
-            .unwrap();
-        fleet.list_claims(POOL.into()).await.unwrap();
-        fleet
-            .keep_alive(POOL.into(), claim.claim.clone(), 600)
-            .await
-            .unwrap();
-        fleet.release(POOL.into(), claim.claim).await.unwrap();
+        let e = cua.fleet().err().expect("Cua.fleet() fails");
+        assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
     }
 
     // ---- sandboxes (direct)

@@ -31,7 +31,7 @@ describe("rowToSpace", () => {
   it("maps a reachable cloud row onto a running tile grouped by namespace", () => {
     const space = rowToSpace(row(), 1_000);
     expect(space.id).toBe("space://cloud/cua-spaces-abc/brave-otter");
-    expect(space.name).toBe("Brave Otter");
+    expect(space.name).toBe("brave-otter");
     expect(space.status).toBe("running");
     expect(space.provider).toBe("cloud");
     expect(space.fleetId).toBe("cua-spaces-abc");
@@ -46,12 +46,12 @@ describe("rowToSpace", () => {
     expect(space.detail).toContain("timed out");
   });
 
-  it("maps direct and local rows, defaulting the OS to linux", () => {
+  it("maps direct and local rows, preserving an unknown OS", () => {
     const direct = rowToSpace(
       row({ id: "space://direct/10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", os: undefined, addedAt: undefined }),
       42,
     );
-    expect(direct.os).toBe("linux");
+    expect(direct.os).toBe("unknown");
     expect(direct.detail).toBe("10.0.0.5:3211");
     expect(direct.name).toBe("10.0.0.5:3211");
     expect(direct.lastUsedAt).toBe(42);
@@ -93,9 +93,9 @@ describe("ids and features", () => {
     expect(hasFeature({ sdk: undefined }, "desktop_stream")).toBe(false);
   });
 
-  it("title-cases Space names", () => {
-    expect(displayName("brave-otter")).toBe("Brave Otter");
-    expect(displayName("space-3f2a")).toBe("Space 3f2a");
+  it("shows Space names as the user typed them, trimmed", () => {
+    expect(displayName("brave-otter")).toBe("brave-otter");
+    expect(displayName(" space-3f2a ")).toBe("space-3f2a");
   });
 });
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from cua_sandbox import (
     CloudOptions,
     Image,
@@ -64,6 +65,7 @@ async def test_an_unreadable_pool_leaves_image_info_unset(monkeypatch):
     assert sb.image_info is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_the_native_fleet_reports_a_named_pool_template_image(fleet):  # noqa: F811
     await Pool.apply(
         "cua-e2e-py-digest",
@@ -79,6 +81,7 @@ async def test_the_native_fleet_reports_a_named_pool_template_image(fleet):  # n
     assert await _sdk.pool_image_info("cua-e2e-py-missing") is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_a_claim_on_a_named_pool_reports_its_image(fleet):  # noqa: F811
     await Pool.apply(
         "cua-e2e-py-claim",

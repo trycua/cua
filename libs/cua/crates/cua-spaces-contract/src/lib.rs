@@ -362,18 +362,18 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
     },
     ErrorKind {
         kind: "fleet",
-        meaning: "The Fleet control plane failed a cloud Space call.",
-        fix: "See the Fleet errors reference for the HTTP status in the message.",
+        meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call.",
+        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "fleet_admission_denied",
-        meaning: "Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit. The message is Fleet's and names the limit.",
-        fix: "Pick a size within the limit the message names (most accounts run 1-8 vCPUs and 1-32 GiB), or contact Cua support to raise the account's limits.",
+        meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit.",
+        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "cloud_credit_exhausted",
-        meaning: "The account is out of Cua Cloud credit (no credit left, and no card or plan): Fleet refused the new cloud Space. Running Spaces keep running; local Spaces are never affected. The message ends with the billing page's URL.",
-        fix: "Add credit on the billing page the message names (a plan, or a card for pay as you go), or create the Space locally.",
+        meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space.",
+        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "invalid_placement",
@@ -609,7 +609,7 @@ const SEND_FILE_INSTRUCTIONS: &str = "The same transfer the Cua Spaces pop-out's
 
 const LIST_TOOLS_INSTRUCTIONS: &str = "Lists the tools of an MCP service INSIDE the Space. `service` is any service the Space declares (an MCP server the image runs, reached over streamable HTTP; no spacesd needed) or `driver`, the spacesd's own cua-driver registry (screenshot, click, type, launch apps, accessibility, ...). The default is `driver`, or the only declared service of a Space without spacesd. With no `name`, returns a scannable overview; pass name=<substring> for full input schemas. Then invoke them with call_tool. The reply names every service the Space exposes.";
 
-const AGENT_START_INSTRUCTIONS: &str = "Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: env_from_host names provider key variables from this server's environment; host credential files are never copied.";
+const AGENT_START_INSTRUCTIONS: &str = "Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: provider keys saved in Cua Spaces (Settings → Agents) reach the runs whose harness reads them; env_from_host names provider key variables from this server's environment; host credential files are never copied.";
 
 const AGENT_EVENTS_INSTRUCTIONS: &str = "Normalized events (install, session, turn_started, message, thought, tool_call, tool_update, plan, usage, permission, turn_ended, error, exited, ...) after `cursor`. Pass the returned cursor back to continue; caught_up=true means nothing more is written yet. The same kinds for every harness.";
 
@@ -679,7 +679,7 @@ pub fn tools() -> Vec<Tool> {
                 "ambiguous_host",
                 "limit_exceeded",
             ],
-            instructions: "Creates a new sandbox where `on` says (local: this machine, free; cloud: Cua cloud, metered; aws, gcp or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name> or cloud:<name>. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own machines: on=\"host:<machine>\" creates the Space on a machine set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The machine is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<machine> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the machine's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on.",
+            instructions: "Creates a new sandbox where `on` says (local: this machine, free; aws, gcp or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own machines: on=\"host:<machine>\" creates the Space on a machine set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The machine is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<machine> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the machine's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on.",
             providers: &CREATE_PROVIDERS,
             metering: Metering::Cloud,
             capabilities: &["space.create"],
@@ -993,8 +993,8 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::SpaceOnly>(),
         Spec {
             category: Category::Agents,
-            result: "JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.",
-            instructions: "Every harness: readiness, what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.",
+            result: "JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready` (supported and not `auth: missing`), `supported`, `auth` (`ok`: a key saved in Cua Spaces (Settings → Agents) or one this server can forward with env_from_host; `missing`: none, so a run needs a sign-in inside its Space; `unknown`: the harness may be set up through its own config), `auth_hint`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.",
+            instructions: "Every harness: readiness (including whether a credential is available, with a hint when not), what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.",
             capabilities: &["agent.capabilities"],
             sdk_symbol: "space.agents.harnessCapabilities()",
             rust_symbol: "agents::capabilities",
@@ -1457,7 +1457,7 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::DriveStorageSet>(),
         Spec {
             category: Category::Volume,
-            result: "JSON: `enabled`, `state` (`off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `method` (`nfs`, `fuse`, `fskit`, `none`), `path`, `volume_name`, `detail`, `settings_url`.",
+            result: "JSON: `enabled`, `state` (`off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `method` (`nfs`, `fuse`, `fskit`, `none`), `path`, `volume_name`, `detail`, `settings_url`; plus the Spaces' own: `volumes` (mounted in a Space: `space`, `mount_path`, `backend`, `principal`) and `volume_errors` (each `space` and `error`: why a Space has no Cua Volume, for example no /dev/fuse in a container on runc).",
             errors: &["forbidden"],
             instructions: "Only for the user. The drive can appear as a volume (Finder on macOS, a FUSE mount on Linux); it is off until the user turns it on with volume_mount.",
             capabilities: &["drive.admin"],

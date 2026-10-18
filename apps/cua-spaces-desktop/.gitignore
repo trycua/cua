@@ -1,0 +1,8 @@
+node_modules/
+dist-electron/
+dist/
+release/
+# `pnpm native` (native/<platform>-<arch>/) and `pnpm notch` (native/notch/).
+/native/
+# Synthetic H.264 streams (scripts/video/encode.sh).
+/scripts/video/.cache/

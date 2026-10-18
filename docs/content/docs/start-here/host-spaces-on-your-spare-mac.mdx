@@ -62,19 +62,16 @@ curl -fsSL https://cua.ai/install.sh | sh -s -- -y --select spaces,host --no-onb
 `-y` accepts the install without the interactive checklist, `--select
 spaces,host` picks the Cua Spaces app and hosting, and `--no-onboarding`
 skips the automatic `cua auth login` (there is no browser or tty to sign in
-with yet). Then sign in with a device code instead of a browser:
-
-```bash skip="no-runner"
-cua auth login --remote
-```
-
-This prints a URL and a short code. Show both to the user and have them
-approve the code on another signed-in device or at the URL. Once signed in,
-set the mini up as a spare host:
+with yet). Then set up the host with a device code:
 
 ```bash test="cli-shape" id="cua-host-setup-spare-ssh"
-cua host setup --profile spare --name "Mac mini (spare)"
+cua host setup --remote --profile spare --name "Mac mini (spare)"
 ```
+
+If the mini has no saved account session, this prints a URL and a short code
+that you can approve in a browser on another device. The sign-in is held only
+for setup: the mini keeps its machine token, without saving an account session
+or enrolling it as a controller. An existing account session is reused.
 
 <Callout type="warn">
   The mini needs an active GUI login session: `cua-spacesd` runs as a

@@ -376,6 +376,28 @@ async fn mcp_over_streamable_http_decodes_through_the_typed_client() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn creating_a_cloud_space_fails_with_the_cloud_ended_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = daemon(dir.path()).await;
+    let status = client(&h)
+        .spaces()
+        .create_space(pb::CreateSpaceRequest {
+            image: "ghcr.io/trycua/linux:24.04-disk".into(),
+            location: "cloud".into(),
+            name: "cua-e2e-ended".into(),
+            ..Default::default()
+        })
+        .await
+        .expect_err("a cloud create fails");
+    assert_eq!(status.code(), tonic::Code::Unimplemented);
+    assert!(
+        status.message().contains("Cua Cloud has ended"),
+        "{status:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn media_bridge_resolves_a_fleet_space_with_its_gateway_headers() {
     use cua_daemon::fixtures;
     use futures_util::StreamExt;
@@ -511,11 +533,24 @@ async fn space_service_lists_the_accounts_relay_machines() {
         .space
         .unwrap();
     assert_eq!(resolved.id, row.id);
-    // Signed out: the listing still works, without relay rows.
+    // A configured account that loses authentication must not look like
+    // successful empty discovery.
     rt.spaces().set_relay(Some(cua_spaces::RelayAccount::new(
         relay.url.clone(),
         Arc::new(cua_spaces::relay::NoAccount),
     )));
+    let error = c
+        .spaces()
+        .list_spaces(pb::ListSpacesRequest {})
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Unauthenticated);
+    assert_eq!(
+        error.message(),
+        "Relay authentication failed. Sign in again to refresh your machines."
+    );
+    // Explicitly disabling relay discovery still permits a local-only list.
+    rt.spaces().set_relay(None);
     let listed = c
         .spaces()
         .list_spaces(pb::ListSpacesRequest {})

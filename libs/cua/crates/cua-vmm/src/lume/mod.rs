@@ -444,6 +444,9 @@ impl LumeRuntime {
             );
             *self.old_lume.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
         }
+        // No `lume serve` answers, so none of its pulls runs: a pull a
+        // killed serve left half-made in its temp dir is only taking space.
+        sweep_stale_pull_dirs(&lume_temp_dir(), STALE_PULL_DIR_IDLE);
         std::fs::create_dir_all(&self.cfg.root)?;
         let log = std::fs::File::create(self.cfg.root.join("serve.log"))?;
         let mut cmd = std::process::Command::new(&bin);
@@ -478,7 +481,8 @@ impl LumeRuntime {
     /// leases and ARP table ([`lease`]); `lume serve` can lag the lease by
     /// many seconds or miss it. Polls back off from 0.5 s to 3 s. A VM that
     /// never reaches `running`, or stops after it did, fails fast with the
-    /// tail of its run log instead of waiting out the timeout.
+    /// tail of its run log instead of waiting out the timeout; one Lume no
+    /// longer knows (deleted outside the SDK) fails within a few seconds.
     async fn wait_for_ip(&self, name: &str) -> Result<VmDetails> {
         let start = tokio::time::Instant::now();
         let deadline = start + self.cfg.ip_timeout;
@@ -488,9 +492,20 @@ impl LumeRuntime {
         let mut last_state = String::new();
         let leases_path = std::path::PathBuf::from(&self.cfg.leases_path);
         let before = lease::read_leases(&leases_path).await;
+        let mut missing_since: Option<tokio::time::Instant> = None;
         // Bounded by the deadline; at most ip_timeout / 0.5 s iterations.
         while tokio::time::Instant::now() < deadline {
             let vm = self.client.get(name).await?;
+            if vm.is_none() {
+                let since = *missing_since.get_or_insert_with(tokio::time::Instant::now);
+                if since.elapsed() >= VM_GONE_GRACE {
+                    return Err(VmmError::other(format!(
+                        "lume VM '{name}' disappeared while booting (it was deleted outside Cua)"
+                    )));
+                }
+            } else {
+                missing_since = None;
+            }
             if let Some(mut vm) = vm {
                 let state = format!(
                     "status={} api_ip={:?} mac={:?}",
@@ -1007,6 +1022,75 @@ pub async fn cli_pull(
 /// Host-side marker: this VM got a workload environment from cua-vmm (so a
 /// later start without one clears it).
 const MACOS_ENV_MARKER: &str = "env-applied";
+/// How long a pull's temp dir must have gone unwritten before
+/// [`sweep_stale_pull_dirs`] removes it: a pull that still runs (a `lume
+/// pull` in another process) writes to it all the time.
+const STALE_PULL_DIR_IDLE: Duration = Duration::from_secs(30);
+
+/// Where Lume pulls an image before moving the VM into place
+/// (`FileManager.temporaryDirectory`: the per-user temp dir on macOS).
+fn lume_temp_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let mut buf = vec![0u8; 1024];
+        // SAFETY: `buf` is writable for its length; confstr writes at most
+        // that many bytes, NUL-terminated.
+        let n = unsafe {
+            libc::confstr(
+                libc::_CS_DARWIN_USER_TEMP_DIR,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            )
+        };
+        if n > 0 && n <= buf.len() {
+            buf.truncate(n - 1);
+            if let Ok(s) = String::from_utf8(buf) {
+                return PathBuf::from(s);
+            }
+        }
+    }
+    std::env::temp_dir()
+}
+
+/// Removes the `lume_vm_*` dirs in `temp` (a pull's half-made VM, left by a
+/// `lume serve` that was killed mid-pull: it cleans up only when it can)
+/// that nothing wrote for `idle`. Returns how many it removed.
+fn sweep_stale_pull_dirs(temp: &std::path::Path, idle: Duration) -> usize {
+    fn newest(path: &std::path::Path, depth: u8) -> Option<std::time::SystemTime> {
+        let mut t = std::fs::symlink_metadata(path).ok()?.modified().ok()?;
+        if depth > 0
+            && let Ok(entries) = std::fs::read_dir(path)
+        {
+            for e in entries.flatten() {
+                if let Some(m) = newest(&e.path(), depth - 1) {
+                    t = t.max(m);
+                }
+            }
+        }
+        Some(t)
+    }
+    let Ok(entries) = std::fs::read_dir(temp) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for e in entries.flatten() {
+        let path = e.path();
+        let ours = e.file_name().to_string_lossy().starts_with("lume_vm_")
+            && e.file_type().is_ok_and(|t| t.is_dir());
+        let stale = newest(&path, 3)
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age >= idle);
+        if ours && stale && std::fs::remove_dir_all(&path).is_ok() {
+            tracing::info!(dir = %path.display(), "removed a pull a stopped lume serve left");
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// How long a booting VM may be unknown to Lume before the wait fails.
+const VM_GONE_GRACE: Duration = Duration::from_secs(3);
+
 /// How long to keep retrying the environment write while the guest's sshd
 /// comes up after boot.
 const MACOS_ENV_BUDGET: Duration = Duration::from_secs(180);
@@ -1096,6 +1180,64 @@ pub async fn apply_macos_env(
     })
 }
 
+/// How long `lume get` may take when no `lume serve` answers.
+const CLI_STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// A VM's status from `lume get <name> --format json`, for when `lume serve`
+/// is not running.
+async fn cli_status(bin: &std::path::Path, name: &str) -> Result<Status> {
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.args(["get", name, "--format", "json"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let out = tokio::time::timeout(CLI_STATUS_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| VmmError::Timeout {
+            name: name.to_string(),
+            secs: CLI_STATUS_TIMEOUT.as_secs(),
+            detail: format!("lume get {name}"),
+        })??;
+    parse_cli_get(
+        name,
+        out.status.success(),
+        out.status.code(),
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+/// The status in `lume get --format json` output (a one-element array, or
+/// an object), or not found when Lume says it has no such VM.
+fn parse_cli_get(
+    name: &str,
+    success: bool,
+    code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<Status> {
+    if !success {
+        if format!("{stdout}\n{stderr}").contains("not found") {
+            return Err(VmmError::NotFound(name.into()));
+        }
+        return Err(VmmError::Command {
+            cmd: format!("lume get {name}"),
+            code,
+            stderr: crate::exec::tail(stderr, 2000),
+        });
+    }
+    let v: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| VmmError::other(format!("lume get {name}: unreadable output: {e}")))?;
+    let vm = match &v {
+        serde_json::Value::Array(a) => a.iter().find(|vm| vm["name"] == name).or(a.first()),
+        o => Some(o),
+    };
+    vm.and_then(|vm| vm["status"].as_str())
+        .map(map_status)
+        .ok_or_else(|| VmmError::other(format!("lume get {name}: no status in its output")))
+}
+
 fn map_status(s: &str) -> Status {
     match s {
         "running" => Status::Running,
@@ -1142,21 +1284,25 @@ pub fn lume_installed_marker() -> PathBuf {
 /// Logs the Lume installer's LaunchAgent writes (`lume serve` as a daemon).
 pub const LUME_DAEMON_LOGS: [&str; 2] = ["/tmp/lume_daemon.log", "/tmp/lume_daemon.error.log"];
 
+/// The GPU options Lume offers `spec`: GPU acceleration for a macOS guest.
+/// An OCI image is one (Lume pulls and clones macOS bases; a Linux guest
+/// boots from a disk image), even when the caller left `os` at its Linux
+/// default, as the Spaces app's create does (CUA-1778).
+fn gpu_offered(spec: &StartSpec) -> &'static [&'static str] {
+    if spec.os == GuestOs::Macos || matches!(spec.image, ImageSource::Oci { .. }) {
+        &[crate::gpu::PARAVIRTUAL]
+    } else {
+        &[]
+    }
+}
+
 impl LumeRuntime {
     /// Starts `spec`; sets `created` once a new VM exists in Lume (a clone
     /// or a Linux VM shell), so a failure after that deletes it.
     async fn start_vm(&self, spec: &StartSpec, created: &mut bool) -> Result<Instance> {
         validate_name(&spec.name)?;
         crate::types::reject_sidecars(BackendKind::Lume, spec)?;
-        crate::types::reject_gpu(
-            BackendKind::Lume,
-            spec,
-            if spec.os == GuestOs::Macos {
-                &[crate::gpu::PARAVIRTUAL]
-            } else {
-                &[]
-            },
-        )?;
+        crate::types::reject_gpu(BackendKind::Lume, spec, gpu_offered(spec))?;
         // Lume answers, so only the host (Apple silicon) can say no.
         if spec.gpu.is_some()
             && let Err(why) = crate::gpu::lume_support(true).pick(crate::gpu::PARAVIRTUAL)
@@ -1539,12 +1685,19 @@ impl Runtime for LumeRuntime {
     }
 
     async fn status(&self, name: &str) -> Result<Status> {
-        let vm = self
-            .client
-            .get(name)
-            .await?
-            .ok_or_else(|| VmmError::NotFound(name.into()))?;
-        Ok(map_status(&vm.status))
+        match self.client.get(name).await {
+            Ok(Some(vm)) => Ok(map_status(&vm.status)),
+            Ok(None) => Err(VmmError::NotFound(name.into())),
+            // No `lume serve` answers (after a reboot it is not running until
+            // something starts it). The `lume` CLI reads the VM's state from
+            // its directory without a server, so a status check does not have
+            // to start one.
+            Err(e @ VmmError::Missing { .. }) => match lume_bin() {
+                Some(bin) => cli_status(&bin, name).await,
+                None => Err(e),
+            },
+            Err(e) => Err(e),
+        }
     }
 
     async fn delete(&self, name: &str) -> Result<()> {
@@ -1575,6 +1728,10 @@ impl Runtime for LumeRuntime {
     }
 
     async fn endpoints(&self, name: &str) -> Result<Endpoints> {
+        // As in `delete`: a `lume serve` that exited (a crash, an update,
+        // `lume stop` on a VM it hosted) is started again rather than leave a
+        // running Space that cannot be opened.
+        self.ensure_serving().await?;
         let vm = self
             .client
             .get(name)
@@ -1588,6 +1745,7 @@ impl Runtime for LumeRuntime {
     /// Linux disk VMs use the SSH endpoint from their spec, so callers should
     /// build an [`crate::SshExec`] from `Instance::endpoints.ssh`.
     async fn guest_exec(&self, name: &str) -> Result<Option<Arc<dyn GuestExec>>> {
+        self.ensure_serving().await?;
         let vm = self
             .client
             .get(name)
@@ -1608,6 +1766,69 @@ impl Runtime for LumeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A killed serve's half-made pull is removed; a pull still being
+    /// written, and anything not Lume's, stays.
+    #[test]
+    fn a_stale_pull_dir_is_swept_and_a_live_one_stays() {
+        let t = tempfile::tempdir().unwrap();
+        for d in ["lume_vm_dead", "lume_vm_live", "other"] {
+            std::fs::create_dir_all(t.path().join(d).join("sub")).unwrap();
+            std::fs::write(t.path().join(d).join("sub/disk.img"), b"x").unwrap();
+        }
+        std::fs::write(t.path().join("lume_vm_file"), b"x").unwrap();
+        assert_eq!(
+            sweep_stale_pull_dirs(t.path(), Duration::from_secs(3600)),
+            0,
+            "written just now: still pulling"
+        );
+        assert_eq!(sweep_stale_pull_dirs(t.path(), Duration::ZERO), 2);
+        assert!(!t.path().join("lume_vm_dead").exists());
+        assert!(t.path().join("other").exists());
+        assert!(t.path().join("lume_vm_file").exists());
+    }
+
+    #[test]
+    fn cli_get_reads_the_status_lume_reports() {
+        let stopped = r#"[{"name":"cua-box","status":"stopped","os":"macOS"}]"#;
+        assert_eq!(
+            parse_cli_get("cua-box", true, Some(0), stopped, "").unwrap(),
+            Status::Stopped
+        );
+        let running = r#"{"name":"cua-box","status":"running"}"#;
+        assert_eq!(
+            parse_cli_get("cua-box", true, Some(0), running, "").unwrap(),
+            Status::Running
+        );
+        let gone = "Error: Virtual machine not found: cua-box";
+        assert!(matches!(
+            parse_cli_get("cua-box", false, Some(1), gone, ""),
+            Err(VmmError::NotFound(_))
+        ));
+        assert!(matches!(
+            parse_cli_get("cua-box", false, Some(1), "", "permission denied"),
+            Err(VmmError::Command { .. })
+        ));
+        assert!(parse_cli_get("cua-box", true, Some(0), "[]", "").is_err());
+    }
+
+    /// A VM stopped by a reboot, asked through the `lume` CLI (a stand-in
+    /// script) because no `lume serve` runs.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cli_status_runs_lume_get() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("lume");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\n[ \"$1 $2 $3 $4\" = 'get cua-box --format json' ] || exit 2\n\
+             echo '[{\"name\":\"cua-box\",\"status\":\"stopped\"}]'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(cli_status(&bin, "cua-box").await.unwrap(), Status::Stopped);
+    }
 
     #[test]
     fn base_names_match_the_python_runtime() {
@@ -2018,6 +2239,31 @@ mod tests {
         .to_string();
         assert!(err.contains("denied for ***"), "{err}");
         assert!(!err.contains("s3cret"));
+    }
+
+    #[test]
+    fn gpu_acceleration_is_offered_for_a_macos_image_whatever_os_says() {
+        let oci = ImageSource::Oci {
+            reference: "ghcr.io/trycua/macos:26".into(),
+        };
+        // The Spaces app's create leaves `os` at its default (Linux).
+        let mut spec = StartSpec::new("gpu-mac", oci.clone());
+        assert_eq!(spec.os, GuestOs::Linux);
+        spec.gpu = Some(crate::gpu::PARAVIRTUAL.into());
+        crate::types::reject_gpu(BackendKind::Lume, &spec, gpu_offered(&spec))
+            .expect("a macOS image on Lume takes GPU acceleration");
+        spec.os = GuestOs::Macos;
+        assert_eq!(gpu_offered(&spec), [crate::gpu::PARAVIRTUAL]);
+        // A Linux disk VM has none, and another GPU kind is still refused.
+        let disk = StartSpec::new(
+            "gpu-linux",
+            ImageSource::Disk {
+                path: "/tmp/linux.qcow2".into(),
+            },
+        );
+        assert!(gpu_offered(&disk).is_empty());
+        spec.gpu = Some(crate::gpu::VIRGL.into());
+        assert!(crate::types::reject_gpu(BackendKind::Lume, &spec, gpu_offered(&spec)).is_err());
     }
 
     #[test]

@@ -8,7 +8,7 @@ use cua_sandbox_core::{
     Error, FleetState, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime,
     LocalStartSpec, LocalState, LocalSummary, PortExposure, PowerControl, PowerState, Provider,
     ProviderCapabilities, ProviderCreate, ProviderInstance, ProviderKind, Result, RunKind,
-    RuntimeError, RuntimeResult, SandboxState, Sandboxes, ServiceEndpoint, Status,
+    RuntimeError, RuntimeResult, SandboxState, Sandboxes, ServiceEndpoint, Status, StopReason,
 };
 use serde_json::json;
 use std::{
@@ -21,11 +21,19 @@ use std::{
 struct Runtime {
     instances: Mutex<HashMap<String, InstanceStatus>>,
     calls: Mutex<Vec<String>>,
+    /// The engine's exit record of each stopped instance.
+    exits: Mutex<HashMap<String, StopReason>>,
 }
 
 impl Runtime {
     fn set(&self, name: &str, status: InstanceStatus) {
         self.instances.lock().unwrap().insert(name.into(), status);
+    }
+
+    /// The instance stopped on its own, the engine recording `reason`.
+    fn exit(&self, name: &str, reason: StopReason) {
+        self.set(name, InstanceStatus::Stopped);
+        self.exits.lock().unwrap().insert(name.into(), reason);
     }
 
     fn calls(&self) -> Vec<String> {
@@ -80,6 +88,17 @@ impl LocalRuntime for Runtime {
 
     async fn list(&self) -> RuntimeResult<Vec<LocalSummary>> {
         Ok(vec![])
+    }
+
+    async fn stop_reason(&self, name: &str, _rt: &str) -> RuntimeResult<Option<StopReason>> {
+        let stopped = self.instances.lock().unwrap().get(name) == Some(&InstanceStatus::Stopped);
+        Ok(self
+            .exits
+            .lock()
+            .unwrap()
+            .get(name)
+            .copied()
+            .filter(|_| stopped))
     }
 
     async fn status(&self, name: &str) -> RuntimeResult<InstanceStatus> {
@@ -203,10 +222,7 @@ async fn sandboxes_without_a_power_control_refuse_by_name() {
     assert_eq!(sbx.power_control("claim"), None);
     assert!(matches!(
         sbx.power_on("claim").await,
-        Err(Error::Unsupported {
-            provider: ProviderKind::Fleet,
-            ..
-        })
+        Err(Error::CloudEnded)
     ));
     // No such sandbox.
     assert_eq!(sbx.power_control("nope"), None);
@@ -308,4 +324,74 @@ async fn a_provider_reports_its_own_power_control() {
         *provider.calls.lock().unwrap(),
         ["stop i-123", "start i-123"]
     );
+}
+
+#[tokio::test]
+async fn a_sandbox_that_stops_on_its_own_says_why_until_it_starts_again() {
+    let (_dir, rt, sbx) = env();
+    sbx.state().save(&local("box", "runc")).unwrap();
+    rt.set("box", InstanceStatus::Running);
+    assert!(sbx.note_unasked_stops().await.is_empty());
+    assert_eq!(sbx.get("box").await.unwrap().stop_reason, None);
+
+    // The guest kernel kills it for memory: nobody asked.
+    let oom = StopReason {
+        exit_code: 137,
+        out_of_memory: true,
+    };
+    rt.exit("box", oom);
+    let info = sbx.get("box").await.unwrap();
+    assert_eq!(info.status, Status::Stopped);
+    assert_eq!(info.stop_reason, Some(oom));
+    assert_eq!(oom.words(), "out of memory");
+    // Recorded once: stopped, and why, for every UI that reads the record.
+    assert_eq!(sbx.power_state("box"), Some(PowerState::Stopped));
+    assert_eq!(sbx.stop_reason("box"), Some(oom));
+    assert!(sbx.note_unasked_stops().await.is_empty());
+    let listed = sbx.list().await.unwrap();
+    let row = listed.iter().find(|i| i.name == "box").unwrap();
+    assert_eq!(row.stop_reason, Some(oom));
+
+    // Started again: the reason belonged to the last stop.
+    sbx.power_on("box").await.unwrap();
+    assert_eq!(sbx.power_state("box"), Some(PowerState::Running));
+    assert_eq!(sbx.stop_reason("box"), None);
+}
+
+#[tokio::test]
+async fn the_watch_finds_a_stop_nobody_listed() {
+    let (_dir, rt, sbx) = env();
+    sbx.state().save(&local("box", "runc")).unwrap();
+    let crash = StopReason {
+        exit_code: 1,
+        out_of_memory: false,
+    };
+    rt.exit("box", crash);
+    assert_eq!(
+        sbx.note_unasked_stops().await,
+        vec![("box".to_string(), crash)]
+    );
+    assert_eq!(
+        sbx.stop_reason("box").map(|r| r.words()).as_deref(),
+        Some("exited with code 1")
+    );
+}
+
+#[tokio::test]
+async fn a_stop_that_was_asked_for_has_no_reason() {
+    let (_dir, rt, sbx) = env();
+    sbx.state().save(&local("mac", "lume")).unwrap();
+    rt.set("mac", InstanceStatus::Running);
+    sbx.power_off("mac").await.unwrap();
+    // Whatever the engine kept about how it ended, it was asked to stop.
+    rt.exit(
+        "mac",
+        StopReason {
+            exit_code: 137,
+            out_of_memory: false,
+        },
+    );
+    assert!(sbx.note_unasked_stops().await.is_empty());
+    assert_eq!(sbx.get("mac").await.unwrap().stop_reason, None);
+    assert_eq!(sbx.stop_reason("mac"), None);
 }

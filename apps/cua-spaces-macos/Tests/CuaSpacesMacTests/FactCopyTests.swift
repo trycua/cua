@@ -16,7 +16,7 @@ struct FactCopyTests {
                               spacesdVersion: "0.4.0", features: [], addedAt: nil, os: .linux,
                               osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
                               kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                              power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                              power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
         let facts = appSpaceDetail(space: appRowsToSpaces(rows: [row], nowMs: 0)[0]).facts
         #expect(facts.filter { $0.copy != nil }.map(\.label) == ["Identifier"])
         return facts.first { $0.copy != nil }!

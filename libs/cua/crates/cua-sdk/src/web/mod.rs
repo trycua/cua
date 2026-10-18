@@ -24,6 +24,10 @@ use cua_proto::env::v1::{
 };
 use std::{collections::HashMap, sync::Arc};
 
+/// `cua_sandbox_core::CLOUD_ENDED` (that crate does not build for wasm32).
+const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own machine. \
+     See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
+
 #[cfg(target_arch = "wasm32")]
 mod fetch;
 
@@ -153,6 +157,9 @@ impl Cua {
 
     /// Fleet control plane.
     pub fn fleet(&self) -> Result<Arc<Fleet>> {
+        // Cua Cloud has ended: fails with the "Cua Cloud has ended" message
+        // and never connects.
+        Err::<(), _>(CuaError::Unsupported(CLOUD_ENDED.into()))?;
         let f = self.config.fleet.clone().unwrap_or_default();
         let token = f.token.filter(|t| !t.is_empty()).ok_or_else(|| {
             CuaError::ProviderNotConfigured("the browser Fleet client needs a token".into())

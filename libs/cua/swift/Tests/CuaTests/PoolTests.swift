@@ -1,5 +1,6 @@
-// The shared sandbox model (SandboxSpec + PoolOptions) and the one pool
-// writer against the fixtures' fake Fleet (loopback only).
+// The shared sandbox model (SandboxSpec + PoolOptions). The one pool writer
+// needed a Fleet; Cua Cloud has ended, so `fleet()` fails and that test is
+// disabled until it is removed with the Fleet provider.
 import Foundation
 import Testing
 
@@ -32,7 +33,19 @@ import Testing
         #expect(CuaError.NotFound(message: "x").ambiguousCandidates.isEmpty)
     }
 
-    @Test(.enabled(if: Fixtures.binary() != nil, "cua-test-fixtures is not built"))
+    @Test func fleetFailsBecauseCuaCloudHasEnded() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cua-swift-pool-\(UUID().uuidString)")
+        let cua = try Cua.embedded(stateDir: dir.path, fleetFromEnv: false)
+        do {
+            _ = try cua.fleet()
+            Issue.record("expected Unsupported (Cua Cloud has ended)")
+        } catch CuaError.Unsupported(let message) {
+            #expect(message.contains("Cua Cloud has ended"))
+        }
+    }
+
+    @Test(.disabled("Cua Cloud has ended (CUA-1854); removed with the Fleet provider"))
     func applyMismatchReconcileExport() async throws {
         let fx = try #require(try Fixtures.start())
         defer { fx.stop() }

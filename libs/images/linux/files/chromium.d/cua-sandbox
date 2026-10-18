@@ -1,0 +1,20 @@
+# Sourced by /usr/bin/chromium (the Debian launcher reads every file in
+# /etc/chromium.d), so the desktop menu, the XFCE web-browser helper and
+# /opt/cua/bin/cua-chromium all start Chromium with the sandbox flags that
+# start-desktop.sh chose for this runtime (common/desktop/browser-sandbox.sh).
+# cua-driver's browser tools read the same two variables.
+cua_env_file="${XDG_RUNTIME_DIR:-/run/cua-desktop}/desktop.env"
+for cua_var in CUA_DRIVER_BROWSER_NO_SANDBOX CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX; do
+  eval "cua_val=\${$cua_var:-}"
+  if [ -z "$cua_val" ] && [ -r "$cua_env_file" ]; then
+    cua_val="$(sed -n "s/^$cua_var=//p" "$cua_env_file" | tail -1)"
+  fi
+  if [ "$cua_val" = 1 ]; then
+    case "$cua_var" in
+      CUA_DRIVER_BROWSER_NO_SANDBOX) CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox" ;;
+      CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX) CHROMIUM_FLAGS="$CHROMIUM_FLAGS --disable-seccomp-filter-sandbox" ;;
+    esac
+  fi
+done
+export CHROMIUM_FLAGS
+unset cua_env_file cua_var cua_val

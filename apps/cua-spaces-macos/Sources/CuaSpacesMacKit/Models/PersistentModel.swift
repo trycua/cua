@@ -58,6 +58,9 @@ public final class PersistentModel {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: full)])
     }
     public private(set) var feed: [AppNotificationInput] = []
+    /// The Space each feed entry is about, by id (the core's input has no
+    /// Space; the web page's Open Space reads it).
+    private var feedSpaces: [String: String] = [:]
     /// Cua Volume's sync status (the menu bar's sync line), when read.
     public private(set) var driveSync: AppDriveSyncInput?
     /// `volume_storage`'s backend (the menu hides sync on this Mac's store
@@ -111,16 +114,45 @@ public final class PersistentModel {
     public var agentCount: Int { (agentsInput["agents"] as? [Any])?.count ?? 0 }
 
     public func loadAgents() async {
-        guard let r = try? await call("persistent_agent_list") else { return }
-        agentsInput["agents"] = r.arr("agents").map { a in
+        _ = try? await listAgents()
+    }
+
+    /// Reads the agents again and answers them (`PersistentAgentInput`
+    /// records); a failed read throws and leaves the list as it was.
+    @discardableResult
+    func listAgents() async throws -> [[String: Any]] {
+        let r = try await call("persistent_agent_list")
+        let agents = r.arr("agents").map { a in
             ["name": a["name"] ?? "", "harness": a["harness"] ?? "", "space": a["space"] ?? "",
              "paused": a["paused"] ?? false, "spaceState": a["space_state"] ?? "running",
              "runId": a["run_id"] ?? NSNull(), "savedMs": a["saved_ms"] ?? 0,
              "lastError": a["last_error"] ?? NSNull()] as [String: Any]
         }
+        agentsInput["agents"] = agents
+        return agents
     }
 
-    private func loadDetail(_ name: String) async throws {
+    /// The daemon's tools answer here (no daemon: the agents can't be read).
+    var canCallTools: Bool { tools != nil }
+
+    /// One of the daemon's tools, its answer as is (the web UI's Volume,
+    /// Storage and Notifications read the same tools this model runs).
+    func daemonTool(_ tool: String, _ args: [String: Any] = [:]) async throws -> Any {
+        guard let tools else { throw AgentsToolError(message: "This needs the cua daemon") }
+        return try await tools.agentsTool(tool, args)
+    }
+
+    /// One run's events after `cursor`: the `agent_events` tool's answer as is.
+    func runEvents(space: String, runId: String, cursor: UInt64, max: UInt32?) async throws -> [String: Any] {
+        var args: [String: Any] = ["space": space, "run_id": runId, "cursor": cursor]
+        if let max { args["max"] = max }
+        return try await call("agent_events", args)
+    }
+
+    /// The selected agent's home (`agents/<name>/`, recursively, files only),
+    /// its routines, every computer grant and the recent audit: the core's
+    /// input records (`AgentsInput`). The web UI's `agents.detail` answers it.
+    func detail(_ name: String) async throws -> [String: Any] {
         var files: [[String: Any]] = []
         var queue = ["agents/\(name)/"]
         var folders = 0
@@ -137,10 +169,47 @@ public final class PersistentModel {
              "enabled": (r["isEnabled"] as? Bool) ?? true] as [String: Any]
         }
         let access = try await call("computer_access_list", ["audit": 20])
-        agentsInput["home"] = files
-        agentsInput["routines"] = routines
-        agentsInput["grants"] = access.arr("grants").map { ["agent": $0["agent"] ?? "", "machine": $0["machine"] ?? "", "revoked": $0["revoked"] ?? false] }
-        agentsInput["audit"] = access.arr("audit").map { ["tsMs": $0["ts_ms"] ?? 0, "action": $0["action"] ?? "", "principal": $0["principal"] ?? "", "path": $0["path"] ?? "", "detail": $0["detail"] ?? ""] }
+        return [
+            "home": files,
+            "routines": routines,
+            "grants": access.arr("grants").map { ["agent": $0["agent"] ?? "", "machine": $0["machine"] ?? "", "revoked": $0["revoked"] ?? false] },
+            "audit": access.arr("audit").map { ["tsMs": $0["ts_ms"] ?? 0, "action": $0["action"] ?? "", "principal": $0["principal"] ?? "", "path": $0["path"] ?? "", "detail": $0["detail"] ?? ""] },
+        ]
+    }
+
+    private func loadDetail(_ name: String) async throws {
+        for (k, v) in try await detail(name) { agentsInput[k] = v }
+    }
+
+    /// A home file's text and versions (`OpenFileInput`).
+    func readFile(_ path: String) async throws -> [String: Any] {
+        async let f = call("volume_read", ["path": path])
+        async let h = call("volume_history", ["path": path])
+        let (file, history) = try await (f, h)
+        let binary = file["encoding"] as? String == "base64"
+        return ["path": path, "text": binary ? "" : (file["content"] ?? ""), "binary": binary,
+                "versions": history.arr("versions").map { ["version": $0["version"] ?? "", "modifiedMs": $0["modified_ms"] ?? 0, "deleted": $0["deleted"] ?? false, "latest": $0["latest"] ?? false] }]
+    }
+
+    /// Runs one of the core's changes (`AgentsRequest`) with the daemon's tools.
+    func perform(_ request: AppAgentsRequest) async throws {
+        switch request {
+        case .load, .readFile: break
+        case let .pause(name): _ = try await call("agent_pause", ["name": name])
+        case let .resume(name): _ = try await call("agent_resume", ["name": name])
+        case let .restore(path, version):
+            _ = try await call("volume_restore", ["path": path, "version": version])
+        case let .addRoutine(agent, title, prompt, everyMinutes, dailyAt, weeklyOn):
+            var args: [String: Any] = ["agent": agent, "title": title, "prompt": prompt]
+            if let m = everyMinutes { args["every_minutes"] = m }
+            if let d = dailyAt { args["daily_at"] = d }
+            if let w = weeklyOn { args["weekly_on"] = w }
+            _ = try await call("routine_add", args)
+        case let .setRoutine(id, enabled): _ = try await call("routine_set_enabled", ["id": id, "enabled": enabled])
+        case let .removeRoutine(id): _ = try await call("routine_remove", ["id": id])
+        case let .allow(agent, machine): _ = try await call("computer_access_grant", ["agent": agent, "machine": machine])
+        case let .revoke(agent, machine): _ = try await call("computer_access_revoke", ["agent": agent, "machine": machine])
+        }
     }
 
     public func send(_ action: AppAgentsAction) async {
@@ -150,33 +219,12 @@ public final class PersistentModel {
         do {
             switch request {
             case let .load(name): try await loadDetail(name)
-            case let .readFile(path):
-                async let f = call("volume_read", ["path": path])
-                async let h = call("volume_history", ["path": path])
-                let (file, history) = try await (f, h)
-                let binary = file["encoding"] as? String == "base64"
-                agentsInput["file"] = ["path": path, "text": binary ? "" : (file["content"] ?? ""), "binary": binary,
-                                       "versions": history.arr("versions").map { ["version": $0["version"] ?? "", "modifiedMs": $0["modified_ms"] ?? 0, "deleted": $0["deleted"] ?? false, "latest": $0["latest"] ?? false] }] as [String: Any]
-            case let .pause(name):
-                _ = try await call("agent_pause", ["name": name]); await loadAgents()
-            case let .resume(name):
-                _ = try await call("agent_resume", ["name": name]); await loadAgents()
-            case let .restore(path, version):
-                _ = try await call("volume_restore", ["path": path, "version": version])
-            case let .addRoutine(agent, title, prompt, everyMinutes, dailyAt, weeklyOn):
-                var args: [String: Any] = ["agent": agent, "title": title, "prompt": prompt]
-                if let m = everyMinutes { args["every_minutes"] = m }
-                if let d = dailyAt { args["daily_at"] = d }
-                if let w = weeklyOn { args["weekly_on"] = w }
-                _ = try await call("routine_add", args)
-            case let .setRoutine(id, enabled): _ = try await call("routine_set_enabled", ["id": id, "enabled": enabled])
-            case let .removeRoutine(id): _ = try await call("routine_remove", ["id": id])
-            case let .allow(agent, machine): _ = try await call("computer_access_grant", ["agent": agent, "machine": machine])
-            case let .revoke(agent, machine): _ = try await call("computer_access_revoke", ["agent": agent, "machine": machine])
-            }
-            switch request {
-            case .load, .readFile, .pause, .resume: break
-            default: if let n = agentsState.selected { try? await loadDetail(n) }
+            case let .readFile(path): agentsInput["file"] = try await readFile(path)
+            case .pause, .resume:
+                try await perform(request); await loadAgents()
+            default:
+                try await perform(request)
+                if let n = agentsState.selected { try? await loadDetail(n) }
             }
             agentsState = appAgentsReduce(input: typedAgents(), state: agentsState, action: .done)
         } catch {
@@ -250,6 +298,10 @@ public final class PersistentModel {
         }
         guard let typed = try? appNotificationsFromJson(json: json(rows)) else { return }
         feed = typed
+        feedSpaces = Dictionary(r.arr("notifications").compactMap { n -> (String, String)? in
+            guard let id = n["id"] as? String, let space = n["space"] as? String, !space.isEmpty else { return nil }
+            return (id, space)
+        }, uniquingKeysWith: { a, _ in a })
         let seen = seenMs()
         let plan = appNotificationsPlan(feed: typed, seenMs: seen)
         plan.post.forEach { post?($0) }
@@ -259,6 +311,24 @@ public final class PersistentModel {
     public func markAllRead() async {
         _ = try? await call("notifications_ack", ["ids": [String]()])
         await pollNotifications()
+    }
+
+    /// Marks these entries read (one was opened); none marks nothing, never
+    /// all (the daemon reads an empty list as every entry).
+    public func markRead(ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        _ = try? await call("notifications_ack", ["ids": ids])
+        await pollNotifications()
+    }
+
+    /// The feed as the web page reads it (`NotificationInput`): the core's
+    /// entries, each with the Space it is about when it has one.
+    func feedRows() -> [[String: Any]] {
+        feed.map { n in
+            var row = (BridgeValue.encode(n) as? [String: Any]) ?? [:]
+            row["space"] = feedSpaces[n.id] ?? NSNull()
+            return row
+        }
     }
 
     /// Polls every `seconds` while the app runs (the daemon owns the feed).
@@ -283,6 +353,8 @@ final class AgentNotifier {
     func post(_ note: AppSystemNote) {
         guard DeviceNotifier.available else { return }
         let center = UNUserNotificationCenter.current()
+        // Its click opens the main UI too.
+        center.delegate = DeviceNotifier.shared
         let content = UNMutableNotificationContent()
         content.title = note.title
         content.body = note.body

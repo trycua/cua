@@ -1,6 +1,7 @@
-// The shared sandbox model (SandboxSpec + PoolOptions) and the one pool
-// writer against the fixtures' fake Fleet: apply, the named-pool mismatch
-// check (a typed error with a diff), template reconcile and Terraform export.
+// The shared sandbox model (SandboxSpec + PoolOptions). The one pool writer
+// (apply, the named-pool mismatch check, template reconcile, Terraform
+// export) needed a Fleet; Cua Cloud has ended, so `fleet()` fails and that
+// test is skipped until it is removed with the Fleet provider.
 import assert from "node:assert/strict"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -8,7 +9,7 @@ import { join } from "node:path"
 import { after, before, test } from "node:test"
 
 import * as cua from "../dist/index.js"
-import { binary, startFixtures } from "./fixtures.mjs"
+import { startFixtures } from "./fixtures.mjs"
 
 let fx
 before(async () => {
@@ -40,7 +41,19 @@ test("sandboxSpec / poolOptions build the native records", () => {
   assert.equal(cua.fleetGenerateClaimToken().length, 64)
 })
 
-test("Pool.apply, checkPoolSpec, applyPoolTemplate and exportPool on the fake Fleet", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") }, async () => {
+test("fleet() fails with the cloud-ended error, so there is no pool writer", () => {
+  const c = cua.embedded({
+    stateDir: join(mkdtempSync(join(tmpdir(), "cua-ts-pool-")), "sandboxes"),
+    fleetFromEnv: false,
+  })
+  assert.throws(() => c.fleet(), (e) => {
+    assert.ok(cua.CuaError.Unsupported.instanceOf(e), String(e))
+    assert.match(e.message, /Cua Cloud has ended/)
+    return true
+  })
+})
+
+test("Pool.apply, checkPoolSpec, applyPoolTemplate and exportPool on the fake Fleet", { skip: "Cua Cloud has ended (CUA-1854); removed with the Fleet provider" }, async () => {
   const c = cua.embedded({
     stateDir: join(mkdtempSync(join(tmpdir(), "cua-ts-pool-")), "sandboxes"),
     fleetFromEnv: false,

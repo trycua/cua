@@ -36,8 +36,8 @@ on:
       - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
       - "apps/cua-spaces-macos/VERSION"
       - "apps/cua-spaces-macos/Support/Info.plist"
+      - "apps/cua-spaces-desktop/package.json"
       - ".github/workflows/ci-test-scripts.yml"
-      - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/workflows/ci-contributor-attribution.yml"
       - ".github/workflows/e2e-rust-macos.yml"
       - ".github/workflows/e2e-rust-linux.yml"
@@ -189,6 +189,8 @@ jobs:
             node .github/scripts/tests/release_please_perception_preview.cjs
           NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
             node .github/scripts/tests/release_please_spaces_preview.cjs
+          NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
+            node .github/scripts/tests/release_please_enrolled_preview.cjs
 
       - name: Validate historical release backfill
         run: python3 .github/scripts/release_backfill.py validate

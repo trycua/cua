@@ -49,9 +49,7 @@ r = await api.request("POST", "/items", json={"a": 1}, headers={"x-trace": "1"})
 print(await api.url())                                  # usable from this machine
 ```
 
-`url()` is a loopback URL locally and a signed URL (1 hour) in the cloud. In
-the cloud the gateway adds its own credentials, so an `authorization` header
-of your own is refused.
+`url()` is a loopback URL usable from this machine.
 
 ```ts test="container" id="typescript" prelude="local-cleanup"
 import { embedded, http, SandboxCreateOptions } from '@trycua/cua';
@@ -131,7 +129,7 @@ cua sb mcp NAME mcp config        # URL and headers for another client
 `sb.tunnel.forward(port)` opens a loopback port for local tools such as a
 browser, `psql` or a debugger.
 
-```python test="docs" id="forward-python" session="forward" prelude="fakefleet,sb-web"
+```python test="container" id="forward-python" session="forward" prelude="sb-web-local,local-cleanup"
 async with sb.tunnel.forward(8000) as t:
     print(t.url)          # http://127.0.0.1:53817
 
@@ -147,15 +145,14 @@ cua sb port-forward web 8000          # until Ctrl-C
 cua sb port-forward web 8000:9000     # pick the local port
 ```
 
-In the cloud, a port without cua-spacesd in the image must be declared in
+On a remote sandbox, a port without cua-spacesd in the image must be declared in
 `services=`.
 
 ## Share with a public URL
 
 `sb.public_url(service, ttl=...)` returns a URL that needs no cua credentials
 and stops working after `ttl` seconds (60 s to 24 h, default 1 h) or when
-revoked. Locally it is served by the cua daemon on loopback; in the cloud it
-is a signed HTTPS URL reachable from anywhere. For an MCP server, append `/mcp`.
+revoked. It is served by the cua daemon on loopback. For an MCP server, append `/mcp`.
 
 ```python test="container" id="public-url" session="share" prelude="sb-web-local,local-cleanup"
 share = await sb.public_url("web", ttl=600, label="demo")
@@ -165,13 +162,6 @@ await sb.revoke_public_url(share)
 
 ```bash test="cli-shape" id="cua-sb-url-web"
 cua sb url web web --public --ttl 10m
-```
-
-Cloud sandboxes also list their signed URLs:
-
-```python test="docs" id="list-signed-urls" session="signed-urls" prelude="fakefleet,sb-web"
-for item in await sb.services.list_signed_urls():
-    print(item.label, item.expires_at, item.revoked_at)
 ```
 
 <Callout type="warn">

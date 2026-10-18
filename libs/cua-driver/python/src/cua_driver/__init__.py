@@ -4,7 +4,7 @@ Agents should configure the bundled ``cua-driver mcp`` executable directly
 through their runtime's MCP client instead of importing a language MCP facade.
 """
 
-__version__ = "0.33.4"  # x-release-please-version
+__version__ = "0.36.0"  # x-release-please-version
 
 from ._native import (
     ActionCompletion,
@@ -64,7 +64,34 @@ from ._native import (
     open_mac_os_screen_recording_settings,
     request_mac_os_permissions,
 )
+# Cua Cursor Motion: plan and play the agent cursor's motions.
+from ._native import (
+    CursorEase,
+    CursorEffectFrame,
+    CursorGlow,
+    CursorHeading,
+    CursorMagnet,
+    CursorMotionDuration,
+    CursorMotionParams,
+    CursorMotionPoint,
+    CursorMotionRect,
+    CursorMotionSample,
+    CursorMotionSpec,
+    CursorMoveRequest,
+    CursorPathShape,
+    CursorRipple,
+    CursorSettle,
+    CursorTrailSegment,
+    CursorTrailSpec,
+    CursorTrajectory,
+    cursor_click_effects,
+    cursor_motion_spec_for_style,
+    default_cursor_motion_params,
+    plan_cursor_move,
+    plan_cursor_spec,
+)
 from ._native_contract import (
+    CursorMotionEffectsOutput,
     AppInfo,
     ClickPosition,
     ElementFrame,
@@ -96,6 +123,10 @@ from ._native_contract import (
     ClickButton,
     ClickInput,
     CursorAction,
+    CursorEffectSetting,
+    CursorMotionEffects,
+    CursorMotionStyle,
+    CursorMotionTiming,
     CursorReducedMotion,
     CursorThemeSelection,
     DesktopScope,
@@ -151,6 +182,7 @@ from ._native_contract import (
     VerifyStateOutput,
     WindowPredicate,
 )
+from . import _daemon
 from .wrapper import get_binary_path, run_cua_driver
 
 
@@ -160,10 +192,23 @@ def _connect_python_sdk(cls, socket_path):
     return cls.connect_with_client_kind(socket_path, SdkClientKind.PYTHON)
 
 
-def _create_python_sdk(cls, options=None):
-    """Create the canonical same-process SDK runtime for Python."""
+def _create_python_sdk(cls, options=None, *, embedded=False):
+    """Create the Python SDK runtime.
 
-    return cls.create_with_client_kind(options, SdkClientKind.PYTHON)
+    On macOS this prefers the CuaDriver.app daemon (starting it when installed)
+    so the agent cursor overlay and the app's permission grants work; pass
+    ``embedded=True`` to force the in-process runtime. Other platforms are
+    always in-process.
+    """
+
+    return _daemon.create_driver(
+        lambda: cls.connect_with_client_kind(None, SdkClientKind.PYTHON),
+        lambda: cls.create_with_client_kind(options, SdkClientKind.PYTHON),
+        embedded=embedded,
+        claude_code_compatibility=bool(
+            getattr(options, "claude_code_compatibility", False)
+        ),
+    )
 
 
 def _create_configured_python_sdk(cls, options):
@@ -252,6 +297,10 @@ __all__ = [
     "CuaDriver",
     "CuaDriverSession",
     "CursorAction",
+    "CursorEffectSetting",
+    "CursorMotionEffects",
+    "CursorMotionStyle",
+    "CursorMotionTiming",
     "CursorReducedMotion",
     "CursorThemeSelection",
     "DesktopScope",
@@ -360,4 +409,28 @@ __all__ = [
     "open_mac_os_screen_recording_settings",
     "request_mac_os_permissions",
     "run_cua_driver",
+    "CursorEase",
+    "CursorEffectFrame",
+    "CursorGlow",
+    "CursorHeading",
+    "CursorMagnet",
+    "CursorMotionDuration",
+    "CursorMotionParams",
+    "CursorMotionPoint",
+    "CursorMotionRect",
+    "CursorMotionSample",
+    "CursorMotionSpec",
+    "CursorMoveRequest",
+    "CursorPathShape",
+    "CursorRipple",
+    "CursorSettle",
+    "CursorTrailSegment",
+    "CursorTrailSpec",
+    "CursorTrajectory",
+    "cursor_click_effects",
+    "cursor_motion_spec_for_style",
+    "default_cursor_motion_params",
+    "plan_cursor_move",
+    "plan_cursor_spec",
+    "CursorMotionEffectsOutput",
 ]

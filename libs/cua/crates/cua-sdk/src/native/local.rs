@@ -118,6 +118,7 @@ pub struct LocalStorage {
     pub container: Option<StorageVolume>,
     /// Catalog image refs already pulled here at their published digest.
     pub pulled: Vec<String>,
+    pub linux_runtime_download_bytes: u64,
 }
 
 impl From<cua_daemon::storage::StorageReport> for LocalStorage {
@@ -136,6 +137,7 @@ impl From<cua_daemon::storage::StorageReport> for LocalStorage {
             qemu: vol(r.qemu),
             container: vol(r.container),
             pulled: r.pulled,
+            linux_runtime_download_bytes: r.linux_runtime_download_bytes,
         }
     }
 }
@@ -154,13 +156,7 @@ impl Local {
         let backend = self.backend.clone();
         run(async move {
             let r = match &backend {
-                Backend::Embedded(_) => {
-                    let report = cua_daemon::local::doctor_report().await;
-                    cua_proto::daemon::v1::DoctorResponse {
-                        checks: cua_daemon::local::doctor_checks(&report),
-                        report_json: serde_json::to_string(&report)?,
-                    }
-                }
+                Backend::Embedded(_) => cua_daemon::local::doctor_response().await,
                 Backend::Daemon(d) => d.doctor().await?,
             };
             Ok(DoctorReport {

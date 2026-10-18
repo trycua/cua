@@ -120,7 +120,7 @@ struct DriveTests {
         let o = OnboardingModel(statePath: nil)
         o.driveTools = tools
         // The Volume page shows with the Cua Volume experiment on.
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
+        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: false)))
         o.send(.start)
         o.send(.signinDone)
         o.send(.agentsDone(configured: []))
@@ -377,7 +377,7 @@ struct DriveTests {
         m.storage = StorageModel(tools: tools)
         await m.loadSettings()
         // Storage shows only with the Cua Volume experiment on.
-        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)
+        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: false)
         try snap.assertSnapshot(SettingsView(model: m), "settings-storage", size: CGSize(width: 520, height: 900))
         // The Drive page, mounted and syncing with a conflict.
         let p = PersistentModel(tools: tools)

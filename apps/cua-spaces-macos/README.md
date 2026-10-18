@@ -346,11 +346,13 @@ unpacked (Sparkle does this whatever the user driver).
 Sparkle shows no window of its own. `SparkleUpdater` runs an `SPUUpdater`
 with a custom user driver (`UpdateUserDriver`, over the plain-value
 `UpdateFlow` state machine in `UpdateDriver.swift`). It checks at launch and
-periodically (`SUEnableAutomaticChecks` is on; an explicit off is kept). An
+periodically (`SUEnableAutomaticChecks` and `SUAutomaticallyUpdate` are on, so
+updates check and download in the background out of the box, as on Windows
+and Linux; an explicit off is kept). An
 update found by a scheduled check downloads and extracts at once; Sparkle's
 ready-to-install reply is then held, and nothing restarts the app until the
-page calls `update.install` ("Restart to update"). With "install updates
-automatically" on, Sparkle's silent path reaches the same state through
+page calls `update.install` ("Restart to update"). With "check for and
+download updates automatically" on (the default), Sparkle's silent path reaches the same state through
 `updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`. The page
 reads the state with `update.get` (`{status, currentVersion, version,
 percent, notesUrl, message}`; status is `idle`, `checking`, `available`,

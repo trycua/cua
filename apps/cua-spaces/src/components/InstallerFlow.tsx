@@ -112,7 +112,7 @@ export function InstallerFlow({
   identity?: string;
   installerMode?: OnboardingMode | null;
   initialStep?: InstallerStep;
-  /** Opens a website page in the browser (the Teams waitlist). */
+  /** Opens a website page in the browser (the Teams page). */
   onOpenExternal?: (url: string) => void;
   /** Usage telemetry (the shell's; nothing outside it). */
   telemetry?: TelemetryBridge;

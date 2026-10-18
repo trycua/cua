@@ -992,7 +992,23 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     );
     assert_eq!(disk.props["error_kind"], "insufficient_disk");
     // The causes the Spaces app reads from a failure's text.
-    for (variant, kind) in [("LocalNetwork", "local_network"), ("VmLimit", "vm_limit")] {
+    for (variant, kind) in [
+        ("LocalNetwork", "local_network"),
+        ("VmLimit", "vm_limit"),
+        // The cause words the app core sends as they are.
+        ("image_pull_not_found", "image_pull_not_found"),
+        ("image_pull_auth", "image_pull_auth"),
+        ("image_pull_network", "image_pull_network"),
+        ("image_pull_rate_limited", "image_pull_rate_limited"),
+        ("vm_boot_timeout", "vm_boot_timeout"),
+        ("services_unreachable", "services_unreachable"),
+        ("virtualization_unavailable", "virtualization_unavailable"),
+        ("quota_exceeded", "quota_exceeded"),
+        ("runtime_not_running", "runtime_not_running"),
+        // A failure never reports `none`.
+        ("none", "other"),
+        ("", "other"),
+    ] {
         let e = events::space_create(
             &events::SpaceCreate {
                 on: "local",
@@ -1422,4 +1438,14 @@ fn agent_run_end_follows_the_published_status() {
     );
     assert_eq!(events::error_kind("AgentFailed"), "agent_failed");
     assert_eq!(events::error_kind("Agent"), "agent");
+}
+
+#[test]
+fn a_failed_host_space_never_reports_no_error_kind() {
+    let e = events::host_space_provided("vm", "macos", Outcome::Error, None);
+    assert_eq!(e.props["error_kind"], "other");
+    let e = events::host_space_provided("vm", "macos", Outcome::Error, Some("image_pull_auth"));
+    assert_eq!(e.props["error_kind"], "image_pull_auth");
+    let ok = events::host_space_provided("vm", "macos", Outcome::Ok, None);
+    assert_eq!(ok.props["error_kind"], "none");
 }

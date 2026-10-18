@@ -710,7 +710,7 @@
    "read_only": false
   },
   {
-   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.\n\nA window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. A drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file, HTML5 draggable content) cannot drop in the background, because macOS tracks those with the real pointer; the driver detects it, releases at once and returns background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:\"drag\" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:\"foreground\", which briefly fronts the window and moves the physical pointer.",
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.\n\nA window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file, HTML5 draggable content) cannot drop in the background, because macOS tracks those with the real pointer; the driver detects it, releases at once and returns background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:\"drag\" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:\"foreground\", which briefly fronts the window and moves the physical pointer.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -938,7 +938,7 @@
    "read_only": false
   },
   {
-   "description": "Press and release one key. `delivery_mode` as in click/type_text.\n- `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n- `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\nConfirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.",
+   "description": "Press and release one key. `delivery_mode` as in click/type_text.\n- `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n- `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\nAn element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key dispatched.\nConfirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -2310,6 +2310,48 @@
     "type": "object"
    },
    "name": "browser_type",
+   "read_only": false
+  },
+  {
+   "description": "Select one option of a native HTML <select> ref on an exactly-bound tab without opening its popup. Pass exactly one of label or value; exactly one option must equal it. Refuses non-native, multiple-selection, and disabled selects, disabled options, and zero or ambiguous matches before changing anything. A change dispatches bubbling input and change events; they are synthetic, so verify the page accepted the selection. Selecting the option that is already selected dispatches no events.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "label": {
+      "description": "Exact visible label of the option to select.",
+      "type": "string"
+     },
+     "ref": {
+      "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "value": {
+      "description": "Exact value attribute of the option to select.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "ref"
+    ],
+    "type": "object"
+   },
+   "name": "browser_select",
    "read_only": false
   },
   {

@@ -1336,6 +1336,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-create-failure"
+version = "0.1.0"
+
+[[package]]
 name = "cua-daemon"
 version = "0.1.0"
 dependencies = [
@@ -1652,6 +1656,7 @@ dependencies = [
  "chrono",
  "cua-agents",
  "cua-auth",
+ "cua-create-failure",
  "cua-fleet",
  "cua-home",
  "cua-host",
@@ -1664,6 +1669,7 @@ dependencies = [
  "cua-spaces-contract",
  "cua-spacesd-client",
  "cua-telemetry",
+ "cua-vmm",
  "futures-util",
  "hex",
  "http",
@@ -1737,6 +1743,7 @@ name = "cua-spaces-app-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cua-create-failure",
  "cua-home",
  "cua-keyvault",
  "cua-telemetry",

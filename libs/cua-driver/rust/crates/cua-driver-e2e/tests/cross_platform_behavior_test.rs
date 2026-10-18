@@ -1658,8 +1658,8 @@ fn shared_case_with_native_hyprland(
             // accessibility (reveal scroll), including inner scrollers.
             // The shared drag cell is a pointer-event drag, which the
             // background window-routed drag delivers (CUA-1207). Electron
-            // loses the release, so the driver refuses there.
-            ("electron", "drag", Targeting::Px) => vec![RefusalCode::BackgroundUnavailable],
+            // takes it from the app's main process, which holds the button
+            // that a window-routed press cannot.
             _ => Vec::new(),
         }
     } else if cfg!(target_os = "linux")

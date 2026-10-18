@@ -13571,7 +13571,7 @@
   },
   {
    "code": 4,
-   "meaning": "Not supported, or not configured (for example no Fleet credentials)"
+   "meaning": "Not supported, or not configured (for example no cloud credentials)"
   },
   {
    "code": 5,
@@ -13579,7 +13579,7 @@
   },
   {
    "code": 6,
-   "meaning": "Unauthenticated or permission denied (by Cua, Fleet or your cloud account)"
+   "meaning": "Unauthenticated or permission denied (by Cua or your cloud account)"
   },
   {
    "code": 7,

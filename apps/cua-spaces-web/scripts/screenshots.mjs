@@ -50,6 +50,7 @@ async function onboardingSteps(theme) {
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await shot("this-machine");
   await page.getByTestId("onboarding-client").click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await shot("done");
   await context.close();
 }

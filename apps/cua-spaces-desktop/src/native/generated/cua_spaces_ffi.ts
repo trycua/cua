@@ -6540,7 +6540,7 @@ const FfiConverterTypeAppSettingsOption = (() => {
 
 export type AppAboutUpdates = {
     /**
-     * "Automatically check for updates".
+     * "Check for and download updates automatically".
      */
     autoCheckLabel: string,
     /**
@@ -6548,7 +6548,7 @@ export type AppAboutUpdates = {
      */
     autoCheck: boolean,
     /**
-     * "Install updates automatically".
+     * "Install a downloaded update when Cua Spaces quits".
      */
     autoInstallLabel: string,
     /**

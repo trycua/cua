@@ -345,4 +345,4 @@ pool = await Pool.apply(
   `Template.reconcile(CreateTemplateRequest(...))` remain for generated-schema
   configuration.
 
-See [dedicated capacity](https://cua.ai/docs/fleets/guides/create-fleet-capacity).
+Cua Cloud (Fleets) ended on 16 October 2026; see [Cua Cloud (Fleets) has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).

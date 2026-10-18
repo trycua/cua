@@ -1651,11 +1651,12 @@ impl Spaces {
                 }
             }
         };
+        let mut unavailable: Option<(String, String)> = None;
         let env = match options {
             None => None,
             Some(options) => match SpacesdClient::connect(options.probe_timeout(probe)).await {
                 Ok(env) => Some(env),
-                Err(cua_spacesd_client::Error::SpacesdNotAvailable { reason, .. }) => {
+                Err(cua_spacesd_client::Error::SpacesdNotAvailable { endpoint, reason }) => {
                     let generic_ok = matches!(id, SpaceId::Local { .. } | SpaceId::Cloud { .. })
                         || !services.is_empty();
                     if let SpaceId::Relay { machine_id } = &id
@@ -1683,6 +1684,7 @@ impl Spaces {
                         });
                     }
                     tracing::debug!(space = %id, %reason, "no cua-spacesd; a Space of declared services");
+                    unavailable = Some((endpoint, reason));
                     None
                 }
                 Err(e) => return Err(e.into()),
@@ -1709,6 +1711,9 @@ impl Spaces {
         }
         if let Some((kind, arch)) = platform {
             space.set_platform(kind, arch);
+        }
+        if let Some((endpoint, reason)) = unavailable {
+            space.set_spacesd_unavailable(endpoint, reason);
         }
         Ok(space)
     }
@@ -2039,6 +2044,7 @@ impl Spaces {
     /// dropping the returned future (a closed request) does the same.
     pub async fn create(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::progress::{Phase, Progress, report};
+        refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
         let sink = opts.progress.take().map(|p| p.0);
         let (key, on) = self.create_key(&mut opts)?;
         // Every report names the Space it is about.
@@ -3216,9 +3222,38 @@ fn thumbnail_failure(f: &crate::thumbnails::CaptureFailure) -> Error {
     }
 }
 
+/// Windows Spaces are not offered from a Mac yet: every create failed at the
+/// image pull. Refuses one up front, in words a person can act on. Windows
+/// and Linux hosts are not affected.
+pub(crate) const WINDOWS_COMING_SOON: &str = "Windows Spaces are coming soon on Mac.";
+
+fn refuse_windows_on_mac(image: Option<&str>, host_is_mac: bool) -> Result<()> {
+    let windows = image.is_some_and(|i| {
+        cua_image::catalog::catalog_os(i).as_deref() == Some("windows")
+            || i.rsplit('/')
+                .next()
+                .is_some_and(|n| n.to_ascii_lowercase().starts_with("windows"))
+    });
+    if host_is_mac && windows {
+        return Err(Error::invalid(WINDOWS_COMING_SOON));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_windows_create_from_a_mac_is_refused_in_plain_words() {
+        for image in ["windows", "windows:2022", "ghcr.io/trycua/windows:2022"] {
+            let e = refuse_windows_on_mac(Some(image), true).unwrap_err();
+            assert!(e.to_string().contains("coming soon on Mac"), "{image}: {e}");
+            assert!(refuse_windows_on_mac(Some(image), false).is_ok());
+        }
+        assert!(refuse_windows_on_mac(Some("ghcr.io/trycua/linux:24.04"), true).is_ok());
+        assert!(refuse_windows_on_mac(None, true).is_ok());
+    }
 
     #[test]
     fn the_default_connect_budget_does_not_depend_on_the_boot() {

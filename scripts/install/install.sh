@@ -865,6 +865,37 @@ EOF
     info "installed $target"
 }
 
+runtime_ready() {
+    [ -n "${DOCKER_HOST:-}" ] || { has docker && docker info >/dev/null 2>&1; } ||
+        { has "qemu-system-$(uname -m)" && has qemu-img; }
+}
+
+qemu_install_command() {
+    if has dnf; then
+        printf 'sudo dnf install -y qemu-kvm qemu-img\n'
+    elif [ "$arch" = arm64 ]; then
+        printf 'sudo apt-get install -y qemu-system-arm qemu-utils\n'
+    else
+        printf 'sudo apt-get install -y qemu-system-x86 qemu-utils\n'
+    fi
+}
+
+linux_runtime() {
+    if runtime_ready; then
+        info "VM runtime ok"
+        return
+    fi
+    if [ "$dry_run" = 1 ]; then
+        say "[dry-run] $cua_bin runtime setup qemu"
+        return
+    fi
+    if confirm "Cua Spaces on Linux needs QEMU; install it now ($cua_bin runtime setup qemu)?" y &&
+        "$cua_bin" runtime setup qemu </dev/null && runtime_ready; then
+        return
+    fi
+    die "Cua Spaces on Linux needs QEMU or Docker; install QEMU with: $(qemu_install_command) (or install Docker), then rerun the installer"
+}
+
 write_mode() {
     [ -n "$mode" ] || return 0
     home="${CUA_HOME:-$HOME/.cua}"
@@ -1053,6 +1084,9 @@ main() {
     app_path=""
     if [ "$want_cli" = 1 ]; then
         install_cli
+    fi
+    if [ "$os" = linux ] && [ "$sel_spaces" = 1 ] && { [ "$dry_run" = 1 ] || has "$cua_bin"; }; then
+        linux_runtime
     fi
     if [ "$sel_spaces" = 1 ]; then
         case "$os" in

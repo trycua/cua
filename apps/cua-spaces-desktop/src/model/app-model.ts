@@ -39,7 +39,7 @@ import type { CloudModel } from "./cloud";
 import type { DevicesModel } from "./devices";
 import { TeamsModel } from "./teams";
 import { NotchActivity } from "./activity";
-import { daemonAnswered, isCancelled, words } from "./errors";
+import { createErrorVariant, daemonAnswered, isCancelled, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
 import type { AccountRunning, TelemetryRunning } from "./services";
@@ -702,7 +702,7 @@ export class AppModel {
       return id;
     } catch (error) {
       if (isCancelled(error)) this.sendCreate(new this.native.AppCreateAction.CancelDone({ id: pendingId }));
-      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: "" }));
+      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error) }));
       throw error;
     }
   }

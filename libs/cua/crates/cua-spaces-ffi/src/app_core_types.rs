@@ -6271,11 +6271,11 @@ pub struct AppAboutLink {
 pub type AppAboutUpdates = core::about::AboutUpdates;
 #[uniffi::remote(Record)]
 pub struct AppAboutUpdates {
-    /// "Automatically check for updates".
+    /// "Check for and download updates automatically".
     pub auto_check_label: String,
     /// Checked.
     pub auto_check: bool,
-    /// "Install updates automatically".
+    /// "Install a downloaded update when Cua Spaces quits".
     pub auto_install_label: String,
     /// Checked.
     pub auto_install: bool,

@@ -920,6 +920,26 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
                 log "no skill symlink at $SKILL_LINK (skipping)"
             fi
         done
+        for SKILL_LINK in \
+            "$HOME/.gemini/config/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity-cli/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/config/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity-cli/skills/$LEGACY_SKILL_PACK_NAME"; do
+            if [[ -L "$SKILL_LINK" ]]; then
+                SKILL_LINK_TARGET="$(readlink "$SKILL_LINK")"
+                case "$SKILL_LINK_TARGET" in
+                    "$HOME_DIR"/*|"$LEGACY_HOME_DIR"/*)
+                        rm -f "$SKILL_LINK"
+                        log "removed skill symlink $SKILL_LINK" ;;
+                    *)
+                        log "$SKILL_LINK points outside the driver home (skipping)" ;;
+                esac
+            else
+                log "no skill symlink at $SKILL_LINK (skipping)"
+            fi
+        done
     else
         log "no Rust install marker; leaving agent skill symlinks untouched"
     fi
@@ -1047,6 +1067,9 @@ for SKILL_LINK in \
     "$HOME/.agents/skills/cua-driver" \
     "$HOME/.openclaw/skills/cua-driver" \
     "$HOME/.config/opencode/skills/cua-driver" \
+    "$HOME/.gemini/config/skills/cua-driver" \
+    "$HOME/.gemini/antigravity/skills/cua-driver" \
+    "$HOME/.gemini/antigravity-cli/skills/cua-driver" \
     "$HOME/.gemini/skills/cua-driver" \
     "$HOME/.hermes/skills/cua-driver"; do
     if [[ -L "$SKILL_LINK" ]] && [[ "$(readlink "$SKILL_LINK")" == "$SKILL_TARGET_EXPECTED" ]]; then

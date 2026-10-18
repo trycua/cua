@@ -199,6 +199,15 @@ $SkillJunctions = @(
     (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver-rs")
 )
 
+$OwnedSkillJunctions = @(
+    (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver-rs")
+)
+
 # ---------- Log helpers ----------------------------------------------------
 
 function Write-Step($message) {
@@ -480,6 +489,31 @@ foreach ($skillLink in $SkillJunctions) {
         }
     } else {
         Write-Step "no skill junction at $skillLink (skipping)"
+    }
+}
+foreach ($skillLink in $OwnedSkillJunctions) {
+    if (-not (Test-Path -LiteralPath $skillLink)) {
+        Write-Step "no skill junction at $skillLink (skipping)"
+        continue
+    }
+    if (-not (Test-IsReparsePoint $skillLink)) {
+        Write-Step "$skillLink is a real directory (not a reparse point) - skipping"
+        continue
+    }
+    $targetProperty = (Get-Item -LiteralPath $skillLink -Force).PSObject.Properties['Target']
+    $owned = $false
+    $targets = if ($targetProperty) { @($targetProperty.Value) } else { @() }
+    foreach ($target in $targets) {
+        foreach ($root in @($HomeDir, $LegacyHomeDir)) {
+            $prefix = $root.TrimEnd('\') + '\'
+            if ($target -and $target.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { $owned = $true }
+        }
+    }
+    if ($owned) {
+        Remove-Item -LiteralPath $skillLink -Force -Recurse -ErrorAction SilentlyContinue
+        Write-Step "removed skill junction $skillLink"
+    } else {
+        Write-Step "$skillLink points outside the driver home - skipping"
     }
 }
 

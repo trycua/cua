@@ -12,6 +12,7 @@ import { useCallback, useState } from "react";
 
 import { isUnsupported } from "./adapter";
 import { useBridge } from "./hooks";
+import { plainJoinError } from "./friendly-errors";
 import { normalizePairingCode, pairingLinkRelay } from "./pairing-code";
 
 export type JoinPhase = "idle" | "joining" | "joined" | "failed";
@@ -28,8 +29,7 @@ export interface JoinHook {
 /** What the page says for a failure: the host's own words, or a plain line. */
 export function joinFailureText(e: unknown): string {
   if (isUnsupported(e)) return "This version of Cua Spaces can't join with a code. Update the app, or run the install command on this computer.";
-  const text = e instanceof Error ? e.message : String(e);
-  return text.trim() || "Couldn't join with that code.";
+  return plainJoinError(e);
 }
 
 export function useJoinWithCode({ onJoined }: { onJoined?: () => void } = {}): JoinHook {

@@ -829,7 +829,13 @@ impl HostSpacesServer {
             } else {
                 cua_telemetry::Outcome::Error
             },
-            r.is_err().then_some("other"),
+            // The cause the error's text names (`image_pull_auth`,
+            // `insufficient_disk`, ...), else the error's tag; only the
+            // word is sent, never the text.
+            r.as_ref().err().map(|e| {
+                let message = e.to_string();
+                cua_create_failure::create_failure_kind(&message, "", e.tag(), true)
+            }),
         ));
         r
     }

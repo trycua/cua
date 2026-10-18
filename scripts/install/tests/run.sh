@@ -60,6 +60,12 @@ if [ "\${1:-} \${2:-} \${3:-}" = "host setup --help" ]; then
     exit 0
 fi
 echo "\$*" >>"\${CUA_FAKE_LOG:-/dev/null}"
+if [ "\$*" = "runtime setup qemu" ]; then
+    [ -z "\${CUA_FAKE_QEMU_DIR:-}" ] || for t in qemu-img qemu-system-\$(uname -m); do
+        printf '#!/bin/sh\n' >"\$CUA_FAKE_QEMU_DIR/\$t" && chmod +x "\$CUA_FAKE_QEMU_DIR/\$t"
+    done
+    exit "\${CUA_FAKE_RUNTIME_STATUS:-0}"
+fi
 EOF
     chmod +x "$1/cua"
 }
@@ -128,6 +134,16 @@ chmod +x "$bin/cua-driver"
 EOF
 driver_url="$base/driver/install.sh"
 
+mkdir -p "$work/qemu" "$work/host-bin"
+for f in $(printf '%s' "$PATH" | tr ':' '\n' | sed 's#$#/*#'); do
+    case "${f##*/}" in qemu* | docker) continue ;; esac
+    [ -x "$f" ] && [ ! -e "$work/host-bin/${f##*/}" ] && ln -s "$f" "$work/host-bin/${f##*/}"
+done
+host_path="$work/host-bin"
+for t in qemu-img "qemu-system-$(uname -m)"; do printf '#!/bin/sh\n' >"$work/qemu/$t"; done
+chmod +x "$work/qemu"/*
+PATH="$work/qemu:$PATH"
+
 # ------------------------------------------------------------ harness
 
 # inst [ENV=VAL ...] -- ARGS: run install.sh with a fresh fake HOME.
@@ -167,6 +183,18 @@ check "linux x64: uses the rolling latest manifest" has_out "cua-install-latest/
 check "non-interactive: prints next steps, no login" sh -c "grep -q 'cua auth login' '$work/out' && [ ! -e '$home/cua.log' ]"
 check "prefix bin not on PATH: prints a hint" has_out "is not on your PATH"
 check "no --modify-path: profile untouched" absent "$home/.profile"
+
+check "VM runtime present: no runtime setup" sh -c "grep -q 'VM runtime ok' '$work/out' && ! grep -q 'runtime setup' '$home/cua.log' 2>/dev/null"
+
+mkdir -p "$work/qemu-r1"
+inst PATH="$work/qemu-r1:$host_path" CUA_FAKE_QEMU_DIR="$work/qemu-r1" -- --yes --no-onboarding --prefix "$work/r1"
+check "VM runtime missing, setup succeeds: installs the app" sh -c "[ $status = 0 ] && grep -qx 'runtime setup qemu' '$home/cua.log' && [ -x '$work/r1/bin/cua-spaces' ]"
+inst PATH="$host_path" CUA_FAKE_RUNTIME_STATUS=1 -- --yes --no-onboarding --prefix "$work/r2"
+check "VM runtime setup fails: exits with the fix before the app download" sh -c "[ $status != 0 ] && grep -q 'needs QEMU or Docker; install QEMU with: sudo .* install -y qemu' '$work/out' && ! grep -q 'cua-spaces-$version' '$work/out' && [ ! -e '$work/r2/bin/cua-spaces' ]"
+inst PATH="$host_path" -- --yes --no-onboarding --prefix "$work/r3"
+check "VM runtime setup leaves QEMU missing: exits with the fix" sh -c "[ $status != 0 ] && grep -q 'needs QEMU or Docker' '$work/out' && [ ! -e '$work/r3/bin/cua-spaces' ]"
+inst PATH="$host_path" -- --dry-run --no-onboarding --prefix "$work/r4"
+check "VM runtime missing, --dry-run: prints the setup only" sh -c "[ $status = 0 ] && grep -q 'dry-run. $work/r4/bin/cua runtime setup qemu' '$work/out' && [ ! -e '$work/r4' ] && [ ! -e '$home/cua.log' ]"
 
 # ------------------------------------------------------------ selection
 

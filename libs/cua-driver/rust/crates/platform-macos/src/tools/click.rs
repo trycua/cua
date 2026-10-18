@@ -435,11 +435,6 @@ impl Tool for ClickTool {
             // x,y arrive in desktop-SCREENSHOT space (what the agent reads off the
             // PNG) and must be divided by the screenshot↔logical ratio, or a
             // center-pixel pick warps to the corner (off by the backing scale).
-            //
-            // Derive the ratio the same way `get_desktop_state` reports it: native
-            // screenshot width / logical screen width. This is robust even when
-            // CGDisplayPixelsWide under-reports the backing scale (it returns the
-            // scaled-mode point width on some Retina configs → a bogus 1.0).
             let (sx, sy) = if let Some(ref capture_id) = capture_id {
                 match self
                     .state
@@ -450,21 +445,7 @@ impl Tool for ClickTool {
                     Err(refusal) => return refusal,
                 }
             } else {
-                let desktop_ratio = tokio::task::spawn_blocking(|| {
-                    let logical_w =
-                        super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
-                    let shot_w = crate::capture::screenshot_display_bytes()
-                        .ok()
-                        .and_then(|png| crate::capture::png_dimensions(&png).ok())
-                        .map(|(w, _)| w as f64);
-                    match (shot_w, logical_w) {
-                        (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
-                        _ => 1.0,
-                    }
-                })
-                .await
-                .unwrap_or(1.0);
-                (sx_shot / desktop_ratio, sy_shot / desktop_ratio)
+                super::desktop_screenshot_point(sx_shot, sy_shot)
             };
             let button = match input.button.unwrap_or(ClickButton::Left) {
                 ClickButton::Left => "left",

@@ -5,6 +5,12 @@ description: Run the same sandbox code in the Cua cloud, make the cloud your def
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
+<Callout type="warn" title="Cua Cloud ended on 16 October 2026">
+  `on="cloud"` and `local=False` no longer reach a service. Run sandboxes
+  locally or in [your own cloud](/cua-sdk/guides/your-cloud). See
+  [Cua Cloud (Fleets) has ended](/cua-sdk/guides/cua-cloud-ended).
+</Callout>
+
 Cloud sandboxes use the same code as local ones with `on="cloud"` (`local=False`
 in cua-sandbox), and `--on cloud` in the CLI. To run in your own AWS, Google
 Cloud or Modal account instead, see [Use your own cloud](/cua-sdk/guides/your-cloud). The SDK manages the capacity:
@@ -64,7 +70,7 @@ In code, pass `local=False` to the [quickstart](/cua-sdk/quickstart) calls, and
 | `warm` | on for the canonical images (`CUA_FLEET_WARM`) | Keep one ready sandbox of this image |
 | `max_pool_size` | `10` (`CUA_FLEET_MAX_POOL_SIZE`) | Autoscaling ceiling |
 | `claim_ttl` | 15 min (`CUA_FLEET_CLAIM_TTL`) | Lifetime after your process stops renewing |
-| `pool` | none | Claim from a pool you manage ([Cua Fleets](/fleets/guides/capacity-and-claims)) |
+| `pool` | none | Claim from a pool you manage (Cua Fleets, [ended 16 Oct 2026](/cua-sdk/guides/cua-cloud-ended)) |
 
 `cpu` and `memory` are part of the shape: a new shape is a new pool. Managed
 pools idle for 30 minutes are deleted (`CUA_FLEET_POOL_IDLE_GC`, `off` disables
@@ -122,7 +128,7 @@ run `cua auth login` or `cua config set default.on local`.
 - A cold image's first start takes a few minutes; canonical images are warm.
 - Services go through the gateway: `url()` is a signed URL and `request` adds
   the gateway's credentials.
-- `command=`, `env=` and [sidecars](/fleets/guides/sidecars) work on container
+- `command=`, `env=` and [sidecars](/cua-sdk/guides/sidecars) work on container
   and VM images; VM `env` values are single-line.
 - The sandbox lapses `claim_ttl` after your process stops renewing it
   ([Lifecycle](/cua-sdk/guides/lifecycle#cloud-lifetime)). No suspend or
@@ -132,9 +138,8 @@ run `cua auth login` or `cua config set default.on local`.
 <Callout type="info">
   Image builds from layers are not in the cloud yet: a cloud sandbox with
   layers fails with a clear error. Build locally, push, and reference the
-  image ([Fleet images](/fleets/guides/images)).
+  image ([Choose and build an image](/cua-sdk/guides/images)).
 </Callout>
 
-For named pools, fixed warm replicas, Terraform or per-claim secrets, use
-[Cua Fleets](/fleets). For errors such as `401` or `403`, see
-[Troubleshoot](/fleets/guides/troubleshoot).
+Named pools, fixed warm replicas, Terraform and per-claim secrets were part of
+Cua Fleets, which [ended on 16 October 2026](/cua-sdk/guides/cua-cloud-ended).

@@ -96,7 +96,7 @@ export function AddMachineDialog({
             <Notice>
               {pairing.error?.unsupported
                 ? "Your Cua relay can't make links yet. Set the computer up by hand instead."
-                : `Couldn't make a link: ${pairing.error?.message ?? "unknown error"}. Set the computer up by hand instead.`}
+                : `${pairing.error?.message ?? "Couldn't make a link."} Set the computer up by hand instead.`}
               <Button variant="outline" size="sm" className="mt-2 flex" onClick={pairing.renew}>
                 Try again
               </Button>

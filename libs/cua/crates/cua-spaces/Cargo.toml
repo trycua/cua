@@ -51,6 +51,7 @@ required-features = ["mcp-client"]
 [dependencies]
 # Host Spaces use counts (fixed words only).
 cua-telemetry.workspace = true
+cua-create-failure.workspace = true
 cua-spaces-contract = { path = "../cua-spaces-contract" }
 cua-proto = { workspace = true, features = ["client", "serde"] }
 cua-spacesd-client.workspace = true
@@ -62,6 +63,7 @@ cua-auth = { workspace = true, optional = true }
 cua-fleet.workspace = true
 cua-image.workspace = true
 cua-sandbox-core.workspace = true
+cua-vmm.workspace = true
 # The cua-relay machine directory (`space://relay/<id>`) and AccountTokens.
 cua-host.workspace = true
 # `relay:` Spaces over the WireGuard®-based mesh.

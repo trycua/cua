@@ -61,7 +61,7 @@ Each builder method returns a new, immutable `Image`. Locally, steps build
 into your container engine before boot (VM images apply them after boot
 through cua-spacesd). In the cloud, `apt_install`, `pip_install`, `uv_install`,
 `run`, `copy` and `env` build remotely; until the cloud builds images, build
-and push it yourself ([Fleet images](/fleets/guides/images)).
+and push it yourself with [`cua image build` and `cua image push`](/cua-cli/reference/cli/image).
 
 ```python test="docs" id="install-packages" session="build"
 from cua_sandbox import Image

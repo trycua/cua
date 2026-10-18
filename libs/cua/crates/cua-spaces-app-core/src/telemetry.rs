@@ -547,13 +547,15 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
                 // The shell's enum case is often `Runtime` or none: the
-                // cause the app reads from the text (Local Network, Apple's
-                // VM limit, disk) says more.
+                // cause the app reads from the text (an image that is not
+                // in the registry, Local Network, a VM that did not boot in
+                // time, disk) says more. Only the word is sent.
                 let variant = crate::spaces::creating::failure_variant(
                     error,
                     Some(&p.phase),
                     p.gpu,
                     error_variant,
+                    Some(p.provider),
                 );
                 vec![create_event(p, "error", stalled(p), variant, now_ms)]
             }
@@ -1301,14 +1303,19 @@ mod tests {
             (
                 "runtime: Local Network access is not available: Cua Spaces cannot reach the VM at 192.168.64.5:3211 (No route to host (os error 65))",
                 "Runtime",
-                "LocalNetwork",
+                "local_network",
             ),
             (
                 "lume: The number of virtual machines exceeds the limit",
                 "",
-                "VmLimit",
+                "vm_limit",
             ),
             ("something else at /Users/alice", "Runtime", "Runtime"),
+            (
+                "container engine: pull ghcr.io/trycua/linux:24.04: manifest unknown",
+                "",
+                "image_pull_not_found",
+            ),
             // A specific case from the shell stays.
             (
                 "cua-spacesd timed out",

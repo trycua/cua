@@ -991,6 +991,17 @@ pub enum Health {
 }
 ```
 
+### `reattach::Note`
+
+Whether to log a failure at `warn`.
+
+```rust
+pub enum Note {
+  Log { repeated: u32 },
+  Quiet,
+}
+```
+
 ### `reattach::Policy`
 
 Timing of `supervise`.
@@ -1000,6 +1011,18 @@ pub struct Policy {
   pub poll: Duration,
   pub initial_backoff: Duration,
   pub max_backoff: Duration,
+}
+```
+
+### `reattach::RepeatLimiter`
+
+Rate-limits identical failure messages across every ...
+
+```rust
+pub struct RepeatLimiter { /* private fields */ }
+impl RepeatLimiter {
+  const fn new() -> Self;
+  fn note(&self, why: &str, now: Instant) -> Note;
 }
 ```
 
@@ -1474,6 +1497,7 @@ impl Space {
   fn provider(&self) -> Provider;
   fn spacesd(&self) -> Result<&SpacesdClient>;
   fn has_spacesd(&self) -> bool;
+  fn spacesd_unreachable_cause(&self) -> Option<String>;
   fn capabilities(&self) -> &GetCapabilitiesResponse;
   fn declared_services(&self) -> &BTreeMap<String, SpaceService>;
   fn env_token(&self) -> Option<&str>;
@@ -2381,6 +2405,10 @@ pub const IDLE_FADE_MS: f64 = 300.0;
 pub const SNAP_DISTANCE: f64 = 0.25;
 /// Render delay on the 20 Hz `Join` stream.
 pub const STREAM_DELAY_MS: f64 = 100.0;
+
+// mod reattach
+/// How often the same re-attach failure is ...
+pub const REPEAT_LOG_EVERY: Duration = _;
 
 // mod registry
 /// File name of the 0600 credential store.

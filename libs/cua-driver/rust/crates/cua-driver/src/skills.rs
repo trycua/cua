@@ -47,9 +47,10 @@
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
 //!   `%APPDATA%\opencode\skills\` (Windows)
-//! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
-//!   (`agy`) and Antigravity IDE; same dir Google Gemini CLI used before the
-//!   May-2026 transition, so existing installs migrate forward unchanged.
+//! - Antigravity IDE: `~/.gemini/config/skills/` (global skills directory),
+//!   plus the legacy `~/.gemini/antigravity/skills/` it still accepts
+//! - Antigravity CLI (`agy`): `~/.gemini/antigravity-cli/skills/`
+//! - Gemini CLI (legacy): `~/.gemini/skills/`
 //! - Hermes: `$HERMES_HOME/skills/` when set, otherwise `~/.hermes/skills/` on
 //!   macOS/Linux or `%LOCALAPPDATA%\hermes\skills\` on Windows. This is the
 //!   user-level skill space Hermes resolves at agent load time (separate from
@@ -247,11 +248,23 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".config/opencode/skills"),
         install_marker: None,
     },
-    // Antigravity CLI + Antigravity IDE share the `.gemini/skills/` dir
-    // (the same path Gemini CLI used pre-May-2026). Registering the
-    // single shared path means both surfaces pick up the same symlink.
     Agent {
-        label: "Antigravity",
+        label: "Antigravity IDE",
+        parent: AgentParent::Home(".gemini/config/skills"),
+        install_marker: None,
+    },
+    Agent {
+        label: "Antigravity IDE (legacy dir)",
+        parent: AgentParent::Home(".gemini/antigravity/skills"),
+        install_marker: None,
+    },
+    Agent {
+        label: "Antigravity CLI",
+        parent: AgentParent::Home(".gemini/antigravity-cli/skills"),
+        install_marker: None,
+    },
+    Agent {
+        label: "Gemini CLI (legacy)",
         parent: AgentParent::Home(".gemini/skills"),
         install_marker: None,
     },
@@ -1095,6 +1108,56 @@ mod tests {
             target.parent,
             AgentParent::Home(".prime/agent/skills")
         ));
+    }
+
+    #[test]
+    fn antigravity_ide_target_matches_its_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity IDE")
+            .expect("Antigravity IDE must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/config/skills")
+        ));
+    }
+
+    #[test]
+    fn antigravity_ide_legacy_skill_directory_is_also_a_target() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity IDE (legacy dir)")
+            .expect("the legacy Antigravity IDE directory must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/antigravity/skills")
+        ));
+    }
+
+    #[test]
+    fn antigravity_cli_target_matches_its_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity CLI")
+            .expect("Antigravity CLI must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/antigravity-cli/skills")
+        ));
+    }
+
+    #[test]
+    fn legacy_gemini_skill_directory_stays_a_separate_target() {
+        let legacy: Vec<_> = AGENTS
+            .iter()
+            .filter(|agent| matches!(agent.parent, AgentParent::Home(".gemini/skills")))
+            .collect();
+
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].label, "Gemini CLI (legacy)");
     }
 
     #[test]

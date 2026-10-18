@@ -4438,6 +4438,114 @@ fn atspi_text_outcome_unknown(
     )
 }
 
+/// Report a cleanup step that failed after the input was sent, without
+/// changing the input's own outcome: a sentence appended to the text and a
+/// `warning` field.
+fn with_cleanup_warning(mut result: ToolResult, warning: Option<String>) -> ToolResult {
+    let Some(warning) = warning else {
+        return result;
+    };
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut()
+    {
+        text.push_str(&format!(" Warning: {warning}."));
+    }
+    if let Some(Value::Object(structured)) = result.structured_content.as_mut() {
+        structured.insert("warning".into(), json!(warning));
+    }
+    result
+}
+
+/// What the Qt5 synthetic-focus workaround did: the AT-SPI write's own
+/// outcome, and the error of the FocusOut sent after it, if any.
+struct SyntheticFocusWrite {
+    write: anyhow::Result<()>,
+    focus_out: Option<anyhow::Error>,
+}
+
+/// Send FocusIn (Qt5 exposes its widget tree only to a focused window),
+/// write, then FocusOut. A failed FocusOut is kept beside the write's
+/// outcome instead of replacing it: the write may already have landed.
+fn write_with_synthetic_focus(
+    focus_in: impl FnOnce() -> anyhow::Result<()>,
+    write: impl FnOnce() -> anyhow::Result<()>,
+    focus_out: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<SyntheticFocusWrite> {
+    focus_in()?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let write = write();
+    let focus_out = focus_out().err();
+    Ok(SyntheticFocusWrite { write, focus_out })
+}
+
+/// The result of a synthetic-focus write, or `None` when nothing was written
+/// and the caller may try its next route. A write that landed or may have
+/// landed ends the call; a failed FocusOut is a warning on that result.
+fn synthetic_focus_write_result(
+    written: SyntheticFocusWrite,
+    delivery: crate::input::delivery::DeliveryMode,
+    delivered: impl FnOnce() -> ToolResult,
+) -> Option<ToolResult> {
+    let result = match &written.write {
+        Ok(()) => delivered(),
+        Err(error) if crate::atspi::input_may_have_landed(error) => {
+            atspi_text_outcome_unknown(delivery, error)
+        }
+        Err(_) => return None,
+    };
+    let warning = written.focus_out.map(|error| {
+        format!("the synthetic FocusOut sent after the write failed ({error:#}), so the window may still act as focused")
+    });
+    Some(with_cleanup_warning(result, warning))
+}
+
+#[cfg(test)]
+#[test]
+fn a_failed_focus_out_never_hides_a_write_that_was_sent() {
+    use crate::input::delivery::DeliveryMode;
+    let failing_focus_out = || Err(anyhow::anyhow!("X11 connection lost"));
+    let attempt = |write: anyhow::Result<()>| {
+        let written = write_with_synthetic_focus(|| Ok(()), || write, failing_focus_out)
+            .expect("the FocusOut error is kept beside the write, not returned");
+        assert!(written.focus_out.is_some());
+        synthetic_focus_write_result(written, DeliveryMode::Background, || {
+            ToolResult::text("Typed 5 character(s) (via AT-SPI with focus workaround).")
+                .with_structured(type_text_structured("ax", 5, false))
+        })
+    };
+    let warned = |wire: &Value| {
+        let text = wire["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Warning: the synthetic FocusOut"), "{text}");
+        assert!(wire["structuredContent"]["warning"]
+            .as_str()
+            .is_some_and(|warning| warning.contains("X11 connection lost")));
+    };
+
+    // Delivered: still a success, so the caller never writes again.
+    let delivered = attempt(Ok(())).expect("a delivered write ends the call");
+    assert_ne!(delivered.is_error, Some(true));
+    let wire = serde_json::to_value(&delivered).unwrap();
+    assert_eq!(wire["structuredContent"]["path"], "ax");
+    warned(&wire);
+
+    // Sent and failed: still the unknown outcome, never a plain X11 error.
+    let sent = anyhow::Error::new(crate::atspi::InputMayHaveLanded(
+        "EditableText.InsertText did not answer in time".into(),
+    ));
+    let unknown = attempt(Err(sent)).expect("input that may have landed ends the call");
+    assert_eq!(unknown.is_error, Some(true));
+    let wire = serde_json::to_value(&unknown).unwrap();
+    assert_eq!(wire["structuredContent"]["effect"], "unverifiable");
+    assert_eq!(
+        wire["structuredContent"]["delivery"],
+        json!({"mode": "unknown"})
+    );
+    assert!(wire["structuredContent"].get("escalation").is_none());
+    warned(&wire);
+
+    // Nothing written: the next route may run.
+    assert!(attempt(Err(anyhow::anyhow!("no editable exposed"))).is_none());
+}
+
 #[cfg(test)]
 #[test]
 fn foreground_ax_click_error_does_not_claim_delivery_or_request_replay() {
@@ -8421,30 +8529,22 @@ impl Tool for TypeTextTool {
             if !is_qt5_process(pid) {
                 anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
             }
-            // Send FocusIn to trigger Qt5's bridge
-            crate::input::send_focus_in(xid)?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
-
-            // Try AT-SPI again now that widgets should be exposed
-            let result = crate::atspi::type_into_editable(pid, &text_clone2);
-
-            // Restore state with FocusOut
-            crate::input::send_focus_out(xid)?;
-
-            result
+            write_with_synthetic_focus(
+                || crate::input::send_focus_in(xid),
+                // Try AT-SPI again now that widgets should be exposed
+                || crate::atspi::type_into_editable(pid, &text_clone2),
+                || crate::input::send_focus_out(xid),
+            )
         })
         .await;
 
-        match qt5_result {
-            Ok(Ok(())) => {
-                return type_text_ax_result(pid, text_len, "via AT-SPI with focus workaround");
+        if let Ok(Ok(written)) = qt5_result {
+            if let Some(result) = synthetic_focus_write_result(written, delivery, || {
+                type_text_ax_result(pid, text_len, "via AT-SPI with focus workaround")
+            }) {
+                return result;
             }
-            Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
-                return atspi_text_outcome_unknown(delivery, &error);
-            }
-            _ => {
-                // AT-SPI still didn't work. Fall back to X11 XSendEvent.
-            }
+            // AT-SPI still didn't work. Fall back to X11 XSendEvent.
         }
 
         // Track which path the final fallback chain took, so the

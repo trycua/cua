@@ -3,13 +3,13 @@
 
 //! `Core::create_space` reaches the SDK with the call the wizard planned:
 //! a recording fake `LocalRuntime` (no container, VM or network) sees the
-//! prefixed image and the resources, and a cloud plan without cloud
-//! credentials names the missing capability instead of creating anything.
+//! prefixed image and the resources, and a cloud plan fails with the one
+//! "Cua Cloud has ended" message instead of creating anything.
 
 use async_trait::async_trait;
 use cua_sandbox_core::{
-    InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
-    RuntimeError,
+    CLOUD_ENDED, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec,
+    LocalSummary, RuntimeError,
 };
 use openkoalabot_example_core::plan::{SpacePlan, Target};
 use openkoalabot_example_core::{Core, CoreConfig};
@@ -107,14 +107,15 @@ async fn a_local_plan_without_a_local_runtime_is_refused() {
 }
 
 #[tokio::test]
-async fn a_cloud_plan_without_credentials_names_the_missing_credentials() {
+async fn a_cloud_plan_fails_because_cua_cloud_has_ended() {
     let dir = tempfile::tempdir().unwrap();
     let core = Core::new(CoreConfig::in_dir(dir.path())).unwrap();
     let err = core
         .create_space(&plan("ghcr.io/trycua/linux:24.04", Target::Cloud))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("CUA_CLIENT_ID"), "{err}");
+    assert_eq!(err.to_string(), CLOUD_ENDED, "{err}");
+    assert!(core.list_spaces().unwrap().is_empty(), "nothing registered");
 }
 
 #[tokio::test]

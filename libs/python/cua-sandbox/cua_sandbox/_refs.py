@@ -9,11 +9,11 @@ unique (else :class:`AmbiguousSandbox`). Parsing is the Rust core's
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from cua_sandbox._ended import CloudEnded
 from cua_sandbox._sdk import InvalidArgument, Unsupported
 
 logger = logging.getLogger(__name__)
@@ -89,18 +89,8 @@ async def _cloud_has(name: str) -> bool:
     """Whether the account has a live cloud sandbox (Fleet claim) ``name``.
     Only asked when cloud credentials can be read without the OS keychain;
     bounded, and a failing cloud answers "no"."""
-    from cua_sandbox._config import has_fleet_auth, may_have_fleet_session
-
-    if not (has_fleet_auth() or may_have_fleet_session()):
-        return False
-    from cua_sandbox import _autopool
-
-    try:
-        claims = await asyncio.wait_for(_autopool.list_claims(), timeout=LOOKUP_CLOUD_TIMEOUT)
-    except Exception as error:  # noqa: BLE001 - the lookup never fails on the cloud
-        logger.debug("cloud sandboxes not searched for %r: %s", name, error)
-        return False
-    return any(getattr(c, "name", None) == name for c in claims)
+    # Cua Cloud has ended (CUA-1854): there is nothing to search.
+    return False
 
 
 async def resolve(
@@ -118,7 +108,7 @@ async def resolve(
     if ref.location == "local":
         return ref.name, True, None
     if ref.location == "cloud":
-        return ref.name, False, None
+        raise CloudEnded()
     if ref.location == "direct":
         return ref.name, None, f"http://{ref.name}"
     if ref.location == "relay":

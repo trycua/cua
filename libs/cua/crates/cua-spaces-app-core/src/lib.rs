@@ -60,6 +60,7 @@ pub mod billing;
 pub mod checklist;
 pub mod cloud_connect;
 pub mod devices;
+pub mod diagnostics;
 pub mod dispatch;
 pub mod drive_mount_preview;
 pub mod drive_page;

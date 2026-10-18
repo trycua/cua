@@ -28,22 +28,18 @@ async fn no_fleet_credentials_list_local_silently() {
     let l = c.sandboxes().list_with_warnings(None).await.unwrap();
     assert!(l.warnings.is_empty(), "{l:?}");
     assert!(l.sandboxes.iter().all(|s| s.location != "cloud"));
-    // Asking for cloud sandboxes only says why there are none.
+    // Cua Cloud has ended: asking for cloud sandboxes lists none, quietly.
     let l = c
         .sandboxes()
         .list_with_warnings(Some("cloud".into()))
         .await
         .unwrap();
     assert!(l.sandboxes.is_empty());
-    assert!(
-        l.warnings
-            .iter()
-            .any(|w| w.starts_with("cloud sandboxes not listed:")),
-        "{l:?}"
-    );
+    assert!(l.warnings.is_empty(), "{l:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn unreachable_fleet_is_a_warning_not_an_error() {
     // A port nothing listens on.
     let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -82,6 +78,7 @@ async fn unreachable_fleet_is_a_warning_not_an_error() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_hanging_fleet_is_cut_off_after_the_listing_timeout() {
     // Accepts connections (the kernel backlog) and never answers.
     let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

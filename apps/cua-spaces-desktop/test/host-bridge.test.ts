@@ -511,7 +511,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await call("settings.choose", { row: "team-current", option: "org-2" });
     expect(model.settings.currentTeamId).toBe("org-2");
     await call("settings.choose", { row: "default-location", option: "cloud" });
-    expect(model.settings.defaultLocation).toBe(native.AppLocation.Cloud);
+    // Cua Cloud has ended: the default stays on this machine.
+    expect(model.settings.defaultLocation).toBe(native.AppLocation.Local);
     await call("settings.choose", { row: "telemetry", option: "off" });
     expect(model.telemetry?.status().enabled).toBe(false);
     await call("settings.choose", { row: "launch-at-login", option: "on" });

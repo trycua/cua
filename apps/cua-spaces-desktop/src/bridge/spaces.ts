@@ -131,7 +131,7 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       if (!native.appCreatesIsPending(pendingId)) throw Failure.badArgs("pendingId: pending:<id>");
       const config = args.config;
       if (!config || typeof config !== "object" || Array.isArray(config)) throw Failure.badArgs("config: object");
-      const defaultOn = model.settings.defaultLocation === native.AppLocation.Cloud ? "cloud" : "local";
+      const defaultOn = "local"; // Cua Cloud has ended
       const a = createArgs(native, config as BridgeArgs, defaultOn);
       // The page sends the plan's OS (the pending row's icon).
       const os = (typeof args.os === "string" ? osOf(native, args.os) : undefined) ?? native.AppSpaceOs.Unknown;

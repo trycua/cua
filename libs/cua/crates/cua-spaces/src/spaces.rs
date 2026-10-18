@@ -734,13 +734,10 @@ impl Spaces {
         &self.inner.namespace
     }
 
+    /// Cua Cloud has ended: every cloud Space call fails with
+    /// [`cua_sandbox_core::CLOUD_ENDED`] instead of reaching Fleet.
     fn fleet_client(&self) -> Result<&FleetClient> {
-        self.inner.fleet.as_ref().ok_or_else(|| {
-            Error::host(
-                cua_spaces_contract::host::FLEET,
-                "set CUA_CLIENT_ID/CUA_CLIENT_SECRET (or CUA_TOKEN) to use cloud Spaces",
-            )
-        })
+        Err(cua_sandbox_core::Error::CloudEnded.into())
     }
 
     // ------------------------------------------------------------ registry
@@ -2117,6 +2114,9 @@ impl Spaces {
                     .0
             }
         };
+        if on == On::Cloud {
+            return Err(cua_sandbox_core::Error::CloudEnded.into());
+        }
         let create_id = opts.create_id.clone().filter(|c| !c.trim().is_empty());
         // A name in the SDK's own form counts as generated: an app that
         // shows the name before creating picks it the same way

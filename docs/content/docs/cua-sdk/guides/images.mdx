@@ -1,11 +1,11 @@
 ---
 title: Choose and build an image
-description: Pick a canonical or registry image, add packages and files, and pull private images, the same way locally and in the cloud.
+description: Pick a canonical or registry image, add packages and files, and pull private images, locally or in your own cloud.
 ---
 
 A sandbox runs one image reference. One resolver picks the variant each
 backend runs (container rootfs or VM disk) and pins its digest, so the same
-reference works locally and in the cloud.
+reference works locally or in your own cloud.
 
 <span id="choose-a-published-fleet-image" />
 
@@ -19,12 +19,12 @@ Image.windows()        # ghcr.io/trycua/windows:2022, Windows Server 2022 VM
 Image.macos()          # ghcr.io/trycua/macos:26 (Tahoe); Image.macos("15") for Sequoia
 ```
 
-| Image | Local | Cloud |
-| --- | --- | --- |
-| `Image.linux()` | Container (gVisor when installed) | gVisor container |
-| `Image.linux(kind="vm")` | QEMU VM from `linux:24.04-disk` | KubeVirt VM from `linux:24.04-disk` |
-| `Image.windows()` | QEMU VM from `windows:2022-disk` | KubeVirt VM from `windows:2022-disk` |
-| `Image.macos()` | Lume VM (Apple silicon) | Not available |
+| Image | Local |
+| --- | --- |
+| `Image.linux()` | Container (gVisor when installed) |
+| `Image.linux(kind="vm")` | QEMU VM from `linux:24.04-disk` |
+| `Image.windows()` | QEMU VM from `windows:2022-disk` |
+| `Image.macos()` | Lume VM (Apple silicon) |
 
 - Only `Image.linux()` ships cua-spacesd, so only it gets the computer
   interfaces. Reach the Windows and macOS images through services you declare.
@@ -47,8 +47,7 @@ windows = Image.from_registry("registry.example/win:1", os_type="windows", kind=
 - `kind` is detected: a container image runs as a container, a containerDisk
   (a disk at `/disk/disk.img`) as a VM.
 - `os_type="windows"` selects EFI firmware; a Windows disk never boots on BIOS.
-- The cloud runs amd64. Pin a digest when every sandbox must boot the same
-  content.
+- Pin a digest when every sandbox must boot the same content.
 
 ```bash test="cli-shape" id="cua-sb-create-linux"
 cua sb create linux --name desk
@@ -57,11 +56,10 @@ cua sb create python:3.12-slim --name app -- python -m http.server 8000
 
 ## Add packages, files and settings
 
-Each builder method returns a new, immutable `Image`. Locally, steps build
-into your container engine before boot (VM images apply them after boot
-through cua-spacesd). In the cloud, `apt_install`, `pip_install`, `uv_install`,
-`run`, `copy` and `env` build remotely; until the cloud builds images, build
-and push it yourself with [`cua image build` and `cua image push`](/cua-cli/reference/cli/image).
+Each builder method returns a new, immutable `Image`. Steps build into your
+container engine before boot (VM images apply them after boot through
+cua-spacesd). To build once and reuse an image, use
+[`cua image build` and `cua image push`](/cua-cli/reference/cli/image).
 
 ```python test="docs" id="install-packages" session="build"
 from cua_sandbox import Image
@@ -117,9 +115,7 @@ Image.from_file('https://example.com/windows.vhdx', os_type='windows')
 
 ## Private registries
 
-Pass a `RegistrySecret`. The SDK uses it for the pull (in the cloud it becomes
-the sandbox's pull secret, which also covers sidecar images on the same
-registry). Credentials are never logged or saved in `~/.cua`.
+Pass a `RegistrySecret`. The SDK uses it for the pull. Credentials are never logged or saved in `~/.cua`.
 
 ```python skip="pseudo"
 from cua_sandbox import Image, RegistrySecret, Sandbox

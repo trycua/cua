@@ -153,6 +153,11 @@ pub fn location(on: &str) -> &'static str {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
+    // Cua Cloud has ended: an attempt there reports `other`. `cloud` stays
+    // in the schema for the events recorded before.
+    if word == "cloud" {
+        return "other";
+    }
     pick(schema::LOCATIONS, &word, "other")
 }
 

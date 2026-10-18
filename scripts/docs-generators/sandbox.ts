@@ -797,7 +797,7 @@ export function generateDocuments(): Map<string, string> {
       RUNTIME_DOC,
       page(
         'Runtime support',
-        'Which images run on which local runtime or in the cloud, what customization each accepts, and how ports reach them.',
+        'Which images run on which local runtime, what customization each accepts, and how ports reach them.',
         runtime
       ),
     ],

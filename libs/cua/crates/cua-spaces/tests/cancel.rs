@@ -306,6 +306,7 @@ async fn a_cancel_after_a_restart_undoes_the_journal() {
 /// A cloud create cancelled while its claim waits to bind releases the
 /// claim it made.
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn a_cancelled_cloud_create_releases_its_claim() {
     let reg = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();

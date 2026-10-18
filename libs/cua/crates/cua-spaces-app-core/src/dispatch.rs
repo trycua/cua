@@ -14,10 +14,10 @@ use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, drive_mount_preview,
-    drive_page, drive_settings, driver_preview, experiments, host, login_item, machines, notch,
-    notifications, onboarding, onboarding_preview, palette, paths, persistent, presence,
-    relay_usage, settings, share, telemetry, upsell, window, wizard,
+    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
+    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
+    machines, notch, notifications, onboarding, onboarding_preview, palette, paths, persistent,
+    presence, relay_usage, settings, share, telemetry, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -178,6 +178,9 @@ pub const METHODS: &[&str] = &[
     "agentKeys.removeConfirm",
     "agentKeys.nameProblem",
     "about.view",
+    "diagnostics.createReport",
+    "diagnostics.reportMailto",
+    "diagnostics.redact",
     "about.afterLaunch",
     "about.restartDaemon",
     "about.refreshNotice",
@@ -756,6 +759,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "agentKeys.nameProblem" => out(agent_keys::name_problem(&a.get::<String>("name")?)),
         "about.view" => out(about::view(&a.get::<about::AboutInput>("input")?)),
+        "diagnostics.createReport" => out(diagnostics::create_report(&a.get("input")?)),
+        "diagnostics.reportMailto" => out(diagnostics::report_mailto(
+            &a.get("send")?,
+            &a.get::<Option<Vec<String>>>("names")?.unwrap_or_default(),
+        )),
+        "diagnostics.redact" => out(diagnostics::redact(&a.get::<String>("text")?)),
         "about.afterLaunch" => out(about::after_launch(&a.get::<about::LaunchInput>("input")?)),
         "about.restartDaemon" => out(about::restart_daemon(
             &a.get::<about::DaemonCheck>("check")?,

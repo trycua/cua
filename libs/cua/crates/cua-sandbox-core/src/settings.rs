@@ -41,7 +41,7 @@ pub const KEYS: [Key; 9] = [
         name: "default.on",
         env: "CUA_DEFAULT_ON",
         default: "local",
-        description: "where sandboxes run when --on / local= is not given (local, cloud, or a provider)",
+        description: "where sandboxes run when --on / local= is not given (local or a provider)",
     },
     Key {
         name: "default.kind",
@@ -387,6 +387,9 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
     Ok(match key.name {
         "default.on" => {
             let on = On::parse(v).map_err(bad)?;
+            if on == On::Cloud {
+                return Err(SettingsError(crate::CLOUD_ENDED.into()));
+            }
             if on.is_existing_machine() {
                 return Err(SettingsError(format!(
                     "default.on: {on} names one machine; use local, cloud or a provider"
@@ -597,7 +600,7 @@ mod tests {
     fn precedence() {
         let d = tempfile::tempdir().unwrap();
         let mut s = settings(d.path(), &[]);
-        s.set(key("default.on").unwrap(), "cloud").unwrap();
+        s.set(key("default.on").unwrap(), "aws").unwrap();
         s.set(key("default.kind").unwrap(), "vm").unwrap();
         s.set(key("cloud.warm").unwrap(), "yes").unwrap();
 
@@ -606,12 +609,12 @@ mod tests {
         let path = d.path().join("config.toml");
         assert_eq!(
             s.default_on().unwrap(),
-            (On::Cloud, Source::Config(path.clone()))
+            (On::Provider("aws".into()), Source::Config(path.clone()))
         );
         assert_eq!(s.entry(key("cloud.warm").unwrap()).value, "true");
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(
-            text.contains("[default]") && text.contains("on = \"cloud\""),
+            text.contains("[default]") && text.contains("on = \"aws\""),
             "{text}"
         );
         assert!(text.contains("warm = true"), "{text}");
@@ -655,10 +658,10 @@ mod tests {
     fn set_validates_and_normalizes() {
         let d = tempfile::tempdir().unwrap();
         let mut s = settings(d.path(), &[]);
-        assert_eq!(
-            s.set(key("default.on").unwrap(), " Cloud ").unwrap(),
-            "cloud"
-        );
+        assert_eq!(s.set(key("default.on").unwrap(), " AWS ").unwrap(), "aws");
+        // Cua Cloud has ended: refused with the one message.
+        let e = s.set(key("default.on").unwrap(), "cloud").unwrap_err();
+        assert_eq!(e.0, crate::CLOUD_ENDED);
         assert_eq!(
             s.set(key("default.runtime").unwrap(), "runsc").unwrap(),
             "gvisor"

@@ -198,6 +198,7 @@ pub const DURATIONS: &[&str] = &[
 ];
 pub const UPTIMES: &[&str] = &["lt_1h", "1_5h", "6_23h", "1_6d", "gte_7d"];
 pub const COUNTS: &[&str] = &["0", "1", "2_4", "5_9", "10_49", "50_99", "gte_100"];
+// `cloud` (Cua Cloud, ended) is only in events recorded before cua 0.4.2.
 pub const LOCATIONS: &[&str] = &[
     "local", "cloud", "direct", "relay", "e2b", "daytona", "modal", "other",
 ];

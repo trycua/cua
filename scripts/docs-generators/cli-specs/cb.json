@@ -15,7 +15,7 @@
    "subcommands": [
     {
      "abstract": "Run one task variant",
-     "after_help": "Examples:\n  # Run variant 0 with the oracle solution\n  cb run task ./tasks/hello_file_env\n\n  # Run variant 2 with an agent in the cloud\n  cb run task ./tasks/hello_file_env --variant-id 2 --agent cua-agent --model anthropic/claude-sonnet-4-20250514 --on cloud\n\n  # Show what would run without starting a sandbox\n  cb run ./tasks/hello_file_env --dry-run",
+     "after_help": "Examples:\n  # Run variant 0 with the oracle solution\n  cb run task ./tasks/hello_file_env\n\n  # Run variant 2 with an agent on this machine\n  cb run task ./tasks/hello_file_env --variant-id 2 --agent cua-agent --model anthropic/claude-sonnet-4-20250514 --on local\n\n  # Show what would run without starting a sandbox\n  cb run ./tasks/hello_file_env --dry-run",
      "arguments": [
       {
        "default_value": null,
@@ -199,7 +199,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+       "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -704,7 +704,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+       "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -1307,7 +1307,7 @@
      "aliases": [],
      "default_value": null,
      "env": null,
-     "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+     "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
      "hidden": false,
      "is_optional": true,
      "multiple_values": false,
@@ -2728,7 +2728,7 @@
    ]
   },
   {
-   "abstract": "Sign in for --on cloud (runs `cua auth login`)",
+   "abstract": "Removed: Cua Cloud has ended",
    "after_help": "Examples:\n  # Sign in with a browser\n  cb login\n\n  # Print the sign-in URL instead of opening a browser\n  cb login --no-browser",
    "arguments": [],
    "flags": [

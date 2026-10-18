@@ -232,7 +232,6 @@ function FallbackSettingsPage() {
   const values = settings?.values;
   const locationOptions = [
     { value: "local", label: thisComputerLabel() },
-    { value: "cloud", label: "Cua Cloud" },
     ...machines.filter((m) => !m.current).map((m) => ({ value: `host:${m.id}`, label: m.name })),
   ];
   const location = values?.defaultLocation ?? "local";

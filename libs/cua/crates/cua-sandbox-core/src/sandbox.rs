@@ -805,7 +805,11 @@ impl Lease {
 }
 
 struct Inner {
+    // Unused since Cua Cloud ended ([`Error::CloudEnded`]); removed with
+    // the Fleet provider.
+    #[allow(dead_code)]
     fleet: Option<FleetClient>,
+    #[allow(dead_code)]
     pools: Option<PoolManager>,
     local: Option<Arc<dyn LocalRuntime>>,
     /// Contrib and cloud providers by location word.
@@ -900,14 +904,9 @@ impl SandboxesBuilder {
 /// Suspend, resume and restart of a cloud sandbox: Fleet has no per-claim
 /// pause, stop or restart, and scaling the pool would touch every sandbox
 /// in it.
-fn fleet_lifecycle_unsupported(op: &str) -> Error {
-    Error::Unsupported {
-        provider: ProviderKind::Fleet,
-        op: format!(
-            "{op} of a cloud sandbox (Fleet cannot suspend a single sandbox; hold it with \
-             keep_alive, or delete it and create a new one)"
-        ),
-    }
+/// Lifecycle calls on a cloud sandbox: Cua Cloud has ended.
+fn fleet_lifecycle_unsupported(_op: &str) -> Error {
+    Error::CloudEnded
 }
 
 impl Sandboxes {
@@ -921,19 +920,16 @@ impl Sandboxes {
         &self.inner.state
     }
 
+    /// Cua Cloud has ended: every Fleet call fails with
+    /// [`Error::CloudEnded`] instead of reaching Fleet.
     fn fleet(&self) -> Result<&FleetClient> {
-        self.inner
-            .fleet
-            .as_ref()
-            .ok_or(Error::ProviderNotConfigured(ProviderKind::Fleet))
+        Err(Error::CloudEnded)
     }
 
-    /// The managed-pool manager (Fleet only).
+    /// The managed-pool manager (Fleet only). Cua Cloud has ended: always
+    /// [`Error::CloudEnded`].
     pub fn pools(&self) -> Result<&PoolManager> {
-        self.inner
-            .pools
-            .as_ref()
-            .ok_or(Error::ProviderNotConfigured(ProviderKind::Fleet))
+        Err(Error::CloudEnded)
     }
 
     /// The registered contrib provider `name`: [`crate::provider::not_built`]
@@ -1036,6 +1032,9 @@ impl Sandboxes {
     pub async fn create(&self, mut options: CreateOptions) -> Result<Sandbox> {
         use crate::progress::{Phase, Progress, report};
         let started = Instant::now();
+        if options.provider == ProviderKind::Fleet {
+            return Err(Error::CloudEnded);
+        }
         report(Progress::phase(Phase::Preparing).detail(&options.image));
         options.apply_placement()?;
         options.validate_sidecars()?;
@@ -1826,13 +1825,14 @@ impl Sandboxes {
             .ok_or_else(|| Error::NotFound(name.into()))?;
         match state {
             SandboxState::Fleet(f) => {
+                // Cua Cloud has ended: fails here, before anything else.
+                let fleet = self.fleet()?;
                 if f.status == "suspended" {
                     return Err(Error::InvalidArgument(format!(
                         "sandbox {} is suspended; resume it first",
                         f.name
                     )));
                 }
-                let fleet = self.fleet()?;
                 let bound = fleet.attach_claim(&f.pool_name, &f.name).await?;
                 // A claim on a managed pool has a TTL: keep it alive while
                 // this handle lives (dropping the handle detaches).
@@ -1942,10 +1942,7 @@ impl Sandboxes {
                 Some(_) => Err(Error::NotFound(r.to_string())),
                 None => self.connect(name).await,
             },
-            SandboxRef::Cloud { name, namespace } => match self.inner.state.load(name) {
-                Some(SandboxState::Fleet(_)) => self.connect(name).await,
-                _ => self.connect_cloud(name, namespace.as_deref()).await,
-            },
+            SandboxRef::Cloud { .. } => Err(Error::CloudEnded),
             SandboxRef::Direct { authority } => {
                 let named = self
                     .inner
@@ -1978,6 +1975,7 @@ impl Sandboxes {
     /// it the claim is found across the account's pools. The handle holds
     /// no lease: dropping it leaves the claim alone, `delete` releases it.
     pub async fn connect_cloud(&self, name: &str, namespace: Option<&str>) -> Result<Sandbox> {
+        // Cua Cloud has ended: fails with [`Error::CloudEnded`].
         let fleet = self.fleet()?;
         let namespace = match namespace {
             Some(ns) => ns.to_string(),
@@ -2099,7 +2097,7 @@ impl Sandboxes {
         }
         let mut known = extra;
         known.extend(self.known_named().await?);
-        if let (SandboxRef::Bare { name }, Some(fleet)) = (wanted, &self.inner.fleet) {
+        if let (SandboxRef::Bare { name }, Ok(fleet)) = (wanted, self.fleet()) {
             match tokio::time::timeout(LOOKUP_CLOUD_TIMEOUT, fleet.find_claims(name)).await {
                 Ok(Ok(claims)) => known.extend(claims.into_iter().map(|c| {
                     (
@@ -2142,6 +2140,10 @@ impl Sandboxes {
         let mut out: BTreeMap<String, SandboxInfo> = BTreeMap::new();
         for s in self.inner.state.list_all() {
             let provider = provider_of(&s);
+            // Cua Cloud has ended: old cloud records are left out.
+            if provider == ProviderKind::Fleet {
+                continue;
+            }
             let id = state_ref(&s).to_string();
             out.insert(
                 id.clone(),
@@ -2220,6 +2222,7 @@ impl Sandboxes {
     pub async fn get(&self, name: &str) -> Result<SandboxInfo> {
         let state = self.inner.state.load(name);
         match &state {
+            Some(SandboxState::Fleet(_)) => Err(Error::CloudEnded),
             Some(s) if contrib::contrib_of(s).is_some() => {
                 let (provider, id) = self.contrib_target(s)?;
                 let status = match provider.get(&id).await {

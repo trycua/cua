@@ -1629,10 +1629,14 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             let state_dir = cli.state_dir.clone();
             return cache::run(cmd.clone(), state_dir.as_deref(), json, out).await;
         }
+        // Cua Cloud has ended: Fleet pools and Fleet image resources fail
+        // before anything else.
         Command::Fleet(FleetCmd::Pool(PoolCmd::Export { name, terraform })) => {
+            Err::<(), _>(auth::cloud_ended())?;
             return pools::export(name, *terraform, out).await;
         }
         Command::Fleet(FleetCmd::Pools(cmd)) => {
+            Err::<(), _>(auth::cloud_ended())?;
             let state_dir = cli.state_dir.as_deref();
             return match cmd {
                 PoolsCmd::Ls => pools::list(state_dir, json, out).await,
@@ -1647,6 +1651,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | ImageCmd::Rm { .. }
             | ImageCmd::Create { .. }),
         ) => {
+            Err::<(), _>(auth::cloud_ended())?;
             return match i {
                 ImageCmd::Ls { namespace } => images::list(namespace.clone(), json, out).await,
                 ImageCmd::Info { name, namespace } => {

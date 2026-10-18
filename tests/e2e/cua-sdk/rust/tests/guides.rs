@@ -11,7 +11,6 @@ use cua_sdk_e2e::cua::{Cua, Fleet, Sandbox};
 use cua_sdk_e2e::*;
 
 const MIN: Duration = Duration::from_secs(60);
-const FAKE_IMAGE: &str = "registry.test/cua-e2e:fake";
 
 /// Fleet "gone": NotFound (404, or a read's 403 in a deleted namespace), or
 /// the 403 live Fleet answers a *delete* in a namespace that is already gone.
@@ -130,38 +129,16 @@ async fn first_cloud_fleet_fake() {
     e2e(
         "your-first-cloud-fleet",
         "hermetic",
-        "pool -> claim -> uname -> screenshot -> delete (fake Fleet)",
+        "pool -> claim fails: Cua Cloud has ended (fake Fleet credentials)",
         MIN,
         None,
         || async {
             let fx = Fixtures::start()?;
             let c = embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token)));
-            let (url, token) = (fx.env_url.clone(), fx.env_token.clone());
-            let c2 = c.clone();
-            first_fleet(
-                &c,
-                FAKE_IMAGE,
-                "kubevirt",
-                &[("server", 8000)],
-                move |sb| async move {
-                    assert_eq!(
-                        sb.service("server".into())?
-                            .request("GET".into(), "/status".into(), None, Some(5000), None)
-                            .await?
-                            .status,
-                        200
-                    );
-                    let d = c2
-                        .sandboxes()
-                        .connect_url(url, Some(token), Some(name("first-env")))
-                        .await?;
-                    let env = d.spacesd(Some(5000)).await?;
-                    let out = env.run(cmd("echo", &["Linux", "mock"])).await?;
-                    let png = env.screenshot(None).await?.image;
-                    d.delete().await?;
-                    Ok((String::from_utf8_lossy(&out.stdout).into_owned(), png))
-                },
-            )
+            assert_cloud_ended(&c, |o| {
+                o.pool = Some(name("first"));
+                o.name = Some(name("first-claim"));
+            })
             .await
         },
     )
@@ -430,14 +407,18 @@ async fn create_pool_fake() {
     e2e(
         "create-pool",
         "hermetic",
-        "warm pool, named claim reattach, scaling, ephemeral cleanup (fake Fleet)",
+        "a managed (warm, autoscaled) cloud create fails: Cua Cloud has ended",
         MIN,
         None,
         || async {
             let fx = Fixtures::start()?;
             let c = embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token)));
-            create_pool(&c, FAKE_IMAGE, false).await?;
-            ephemeral(&c, FAKE_IMAGE).await
+            assert_cloud_ended(&c, |o| {
+                o.runtime = Some("gvisor".into());
+                o.warm = Some(true);
+                o.max_pool_size = Some(2);
+            })
+            .await
         },
     )
     .await;
@@ -531,17 +512,13 @@ async fn expire_fake() {
     e2e(
         "expire-pools-and-claims",
         "hermetic",
-        "pool + claim TTLs reach Fleet (fake)",
+        "a TTL cloud create fails: Cua Cloud has ended",
         MIN,
         None,
         || async {
             let fx = Fixtures::start()?;
-            expire(
-                &embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token))),
-                FAKE_IMAGE,
-                false,
-            )
-            .await
+            let c = embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token)));
+            assert_cloud_ended(&c, |o| o.fleet_ttl_seconds = Some(3600)).await
         },
     )
     .await;

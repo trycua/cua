@@ -6,11 +6,11 @@
 //! Standard crash-report pattern: on a failed create the app builds the
 //! report here ([`create_report`]), redacted ([`redact`]), and shows it in a
 //! review sheet. The person can edit or leave out each part, and nothing
-//! leaves the machine unless they press Send. Send opens a prefilled email
-//! to Cua support ([`report_mailto`], a `mailto:` link) in their mail app with
-//! the kept parts. Reports are private: they go only to support@trycua.com,
-//! and only when the person sends that email themselves. No new service
-//! receives anything.
+//! leaves the machine unless they send it. Open email opens a prefilled
+//! email to Cua support ([`report_mailto`], a `mailto:` link) in their mail
+//! app with the kept parts. Reports are private: they go only to
+//! support@trycua.com, and only when the person sends that email themselves.
+//! No new service receives anything.
 //!
 //! Redaction runs twice: when the sheet is built, and again on the text the
 //! person sends (their edits included).
@@ -68,13 +68,13 @@ pub struct ReportPart {
 pub struct CreateReport {
     /// "Send a diagnostic report".
     pub title: String,
-    /// What Send does, in plain words.
+    /// What Open email does, in plain words.
     pub intro: String,
     /// The email subject.
     pub subject: String,
     /// The parts, in order.
     pub parts: Vec<ReportPart>,
-    /// "Send".
+    /// "Open email".
     pub send_label: String,
     /// The fixed failure word (`image_pull_auth`), as telemetry records it.
     pub error_kind: String,
@@ -186,10 +186,10 @@ pub fn create_report(input: &CreateReportInput) -> CreateReport {
         title: "Send a diagnostic report".into(),
         intro: format!(
             "This is what the report says. We removed tokens, email addresses, \
-             hostnames and your home folder. Edit it or leave parts out. Send opens \
-             an email to Cua support ({SUPPORT_EMAIL}) in your mail app, with the \
-             parts you kept. It goes nowhere else, and nothing is sent until you \
-             press Send in your mail app."
+             hostnames and your home folder. Edit it or leave parts out. Open \
+             email starts an email to Cua support ({SUPPORT_EMAIL}) in your mail \
+             app, with the parts you kept. It goes nowhere else, and nothing is \
+             sent until you press Send there."
         ),
         subject: format!(
             "Spaces: {} {} create failed ({error_kind})",
@@ -213,7 +213,7 @@ pub fn create_report(input: &CreateReportInput) -> CreateReport {
                 text: environment,
             },
         ],
-        send_label: "Send".into(),
+        send_label: "Open email".into(),
         error_kind,
     }
 }
@@ -375,13 +375,7 @@ pub fn redact(text: &str) -> String {
 /// [`redact`], also hiding each of `names` (machine names) wherever it
 /// appears.
 pub fn redact_with(text: &str, names: &[String]) -> String {
-    let mut s = home_paths(text);
-    for n in names {
-        let n = n.trim();
-        if n.chars().count() >= 3 {
-            s = replace_ci(&s, n, "<machine>");
-        }
-    }
+    let s = hide_names(&home_paths(text), names);
     let mut out = String::with_capacity(s.len());
     let mut secret_next = false;
     for (piece, is_space) in split_keep(&s) {
@@ -418,22 +412,73 @@ fn split_keep(s: &str) -> Vec<(&str, bool)> {
     out
 }
 
-/// ASCII case-insensitive replace of every `needle`.
-fn replace_ci(hay: &str, needle: &str, with: &str) -> String {
-    let lower = hay.to_ascii_lowercase();
+/// How the app words the machine it runs on ("This Mac", "This PC",
+/// "This computer", and the This machine page). They identify no one, so
+/// they stay even when a machine's name is the phrase itself.
+const THIS_MACHINE_PHRASES: &[&str] = &["this mac", "this pc", "this computer", "this machine"];
+
+/// Byte ranges of every ASCII case-insensitive `needle` in `hay` (which
+/// `lower` is the ASCII lowercase of, so offsets agree), not overlapping.
+fn find_all_ci(lower: &str, needle: &str) -> Vec<(usize, usize)> {
     let n = needle.to_ascii_lowercase();
-    if n.is_empty() || !lower.contains(&n) {
-        return hay.to_string();
+    let mut out = Vec::new();
+    if n.is_empty() {
+        return out;
     }
-    let mut out = String::with_capacity(hay.len());
     let mut i = 0;
     while let Some(off) = lower[i..].find(&n) {
         let at = i + off;
-        out.push_str(&hay[i..at]);
-        out.push_str(with);
+        out.push((at, at + n.len()));
         i = at + n.len();
     }
-    out.push_str(&hay[i..]);
+    out
+}
+
+/// Whether a phrase at `at..end` of `s` stands alone, not inside a longer
+/// word or name (`This MacBook-Pro`).
+fn is_whole_phrase(s: &str, at: usize, end: usize) -> bool {
+    let joins = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_');
+    !s[..at].chars().next_back().is_some_and(joins) && !s[end..].chars().next().is_some_and(joins)
+}
+
+/// `s` with each of `names` (machine names, ASCII case-insensitive) replaced
+/// by `<machine>`, except where the match sits inside the app's own words
+/// for this machine ([`THIS_MACHINE_PHRASES`]). A name that contains such a
+/// phrase and more (`This Mac (Maya)`) is still hidden whole.
+fn hide_names(s: &str, names: &[String]) -> String {
+    let lower = s.to_ascii_lowercase();
+    let phrases: Vec<(usize, usize)> = THIS_MACHINE_PHRASES
+        .iter()
+        .flat_map(|p| find_all_ci(&lower, p))
+        .filter(|&(at, end)| is_whole_phrase(s, at, end))
+        .collect();
+    let mut hits: Vec<(usize, usize)> = names
+        .iter()
+        .map(|n| n.trim())
+        .filter(|n| n.chars().count() >= 3)
+        .flat_map(|n| find_all_ci(&lower, n))
+        .filter(|&(at, end)| !phrases.iter().any(|&(pa, pe)| pa <= at && end <= pe))
+        .collect();
+    if hits.is_empty() {
+        return s.to_string();
+    }
+    hits.sort_unstable();
+    // Overlapping hits (`Studio` and `Studio Mac`) become one.
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for (at, end) in hits {
+        match spans.last_mut() {
+            Some(last) if at < last.1 => last.1 = last.1.max(end),
+            _ => spans.push((at, end)),
+        }
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    for (at, end) in spans {
+        out.push_str(&s[i..at]);
+        out.push_str("<machine>");
+        i = end;
+    }
+    out.push_str(&s[i..]);
     out
 }
 
@@ -900,6 +945,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn keeps_the_apps_words_for_this_machine() {
+        // The machine row is named "This Mac" ("This PC", "This computer"),
+        // so it is among the names to hide. The phrase stays: it names no one.
+        for phrase in ["This Mac", "This PC", "This computer", "This machine"] {
+            let names = vec![phrase.to_string(), "Studio".to_string()];
+            assert_eq!(
+                redact_with(&format!("{phrase} can't reach Studio."), &names),
+                format!("{phrase} can't reach <machine>."),
+            );
+            assert_eq!(
+                redact_with(&format!("{} can't reach it", phrase.to_uppercase()), &names),
+                format!("{} can't reach it", phrase.to_uppercase()),
+            );
+        }
+        // A real name that is part of the phrase (`Mac`) is still hidden
+        // elsewhere, but not inside "This Mac".
+        let names = vec!["Mac".to_string()];
+        assert_eq!(
+            redact_with("This Mac lost Mac and my mac", &names),
+            "This Mac lost <machine> and my <machine>"
+        );
+        // A name that contains the phrase and more is hidden whole.
+        let names = vec!["This Mac (Maya)".to_string()];
+        assert_eq!(
+            redact_with("on This Mac (Maya) and This Mac", &names),
+            "on <machine> and This Mac"
+        );
+        // Longer words that start like the phrase are not the phrase.
+        let names = vec!["This MacBook-Pro".to_string()];
+        assert_eq!(
+            redact_with("This MacBook-Pro is offline", &names),
+            "<machine> is offline"
+        );
+        // Overlapping names become one marker.
+        let names = vec!["Studio".to_string(), "Studio Mini".to_string()];
+        assert_eq!(redact_with("Studio Mini slept", &names), "<machine> slept");
+    }
+
+    #[test]
+    fn the_report_keeps_this_mac_and_hides_real_names() {
+        let mut i = input();
+        i.error = "This Mac can't reach Studio-7: connection refused".into();
+        i.shown = Some("This Mac can't reach Francescos-Mac-Studio.".into());
+        i.names = vec![
+            "This Mac".into(),
+            "Francescos-Mac-Studio".into(),
+            "Studio-7".into(),
+        ];
+        let r = create_report(&i);
+        assert_eq!(
+            r.parts[1].text,
+            "This Mac can't reach <machine>: connection refused\n\n\
+             The app showed: This Mac can't reach <machine>."
+        );
+        // The second pass, on what the person sends, agrees.
+        let mail = report_mailto(&send_of(&r), &i.names);
+        assert!(mail_field(&mail, "body").contains("This Mac can't reach <machine>"));
+    }
+
     fn input() -> CreateReportInput {
         CreateReportInput {
             error: concat!(
@@ -958,6 +1063,10 @@ mod tests {
             "Cua Spaces for macOS 0.4.0 (0.4.0.200)\nmacOS 26.0 (arm64)"
         );
         assert!(!r.intro.contains('\u{2014}'), "no em dashes in UI copy");
+        // One "Send" in the sheet's copy: the one in the mail app.
+        assert_eq!(r.send_label, "Open email");
+        assert_eq!(r.intro.matches("Send").count(), 1, "{}", r.intro);
+        assert!(r.intro.contains("press Send there"), "{}", r.intro);
         // The sheet says where it goes: an email to Cua support.
         assert!(
             r.intro

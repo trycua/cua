@@ -1,19 +1,42 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 
 import type { CreateReport, ReportPart } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 
+/** The tallest a part grows before it scrolls (matches `max-h-60`). */
+const TEXT_MAX_PX = 240;
+
+/** A textarea that grows to show every wrapped line, up to [`TEXT_MAX_PX`]
+ * (then it scrolls). Rows would count line breaks, not wrapped lines. */
+function FitTextarea({ value, ...props }: Omit<ComponentProps<"textarea">, "rows">) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const fit = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    if (el.scrollHeight === 0) return;
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = `${Math.min(el.scrollHeight + border, TEXT_MAX_PX)}px`;
+  };
+  useLayoutEffect(fit, [value]);
+  useEffect(() => {
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+  return <textarea ref={ref} rows={2} value={value} {...props} />;
+}
+
 /**
  * The review sheet for a failed create's diagnostic report (standard
  * crash-report pattern): the app core's redacted report, each part
  * editable and kept by default, and nothing sent until the person presses
- * Send. Send opens an email to Cua support in their mail app with the
- * parts they kept; they send it there.
+ * Send in their mail app. Open email opens a message to Cua support there
+ * with the parts they kept.
  */
 export function DiagnosticReportDialog({
   open,
@@ -69,10 +92,9 @@ export function DiagnosticReportDialog({
                   <Checkbox checked={p.kept} onCheckedChange={(v) => edit(p.id, { kept: Boolean(v) })} aria-label={`Include ${p.label}`} />
                   {p.label}
                 </label>
-                <textarea
+                <FitTextarea
                   aria-label={p.label}
-                  className="mt-1.5 w-full resize-y rounded-md border bg-background px-2.5 py-2 font-mono text-xs leading-relaxed disabled:opacity-50"
-                  rows={Math.min(8, Math.max(3, p.text.split("\n").length))}
+                  className="mt-1.5 max-h-60 min-h-[4.5rem] w-full resize-y overflow-y-auto rounded-md border bg-background px-2.5 py-2 font-mono text-xs leading-relaxed disabled:opacity-50"
                   value={p.text}
                   disabled={!p.kept || busy}
                   spellCheck={false}
@@ -91,7 +113,7 @@ export function DiagnosticReportDialog({
               Cancel
             </Button>
             <Button data-report-send="" disabled={busy || !report || kept.length === 0} onClick={() => void send()}>
-              {report?.sendLabel ?? "Send"}
+              {report?.sendLabel ?? "Open email"}
             </Button>
           </div>
         </div>

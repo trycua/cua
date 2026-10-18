@@ -435,17 +435,17 @@ function surfaceState(
         <p data-create-error="" className="mt-2 max-w-md text-center text-xs text-destructive">
           {createError(space) || "No reason was reported."}
         </p>
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
           {onRetry ? <Button onClick={onRetry}>Try again</Button> : null}
           <Button variant="outline" onClick={onDismiss}>
             Remove from list
           </Button>
+          {onReport ? (
+            <Button variant="outline" data-send-report="" onClick={onReport}>
+              Send a report…
+            </Button>
+          ) : null}
         </div>
-        {onReport ? (
-          <Button variant="ghost" size="sm" className="mt-2 text-muted-foreground" data-send-report="" onClick={onReport}>
-            Send a report…
-          </Button>
-        ) : null}
       </>
     );
   }

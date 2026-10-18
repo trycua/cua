@@ -3,8 +3,8 @@
 
 // "Send a report…" on a failed create: the review sheet shows the core's
 // redacted report, each part can be edited or left out, and nothing leaves
-// until Send, which opens a prefilled email to Cua support with only the
-// kept parts.
+// until the person presses Send in their mail app. Open email prefills an
+// email to Cua support with only the kept parts.
 
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ afterEach(cleanup);
 stubBrowserApis();
 
 describe.skipIf(!wasmBuilt)("the diagnostic report for a failed create (real routes, wasm core)", () => {
-  it("sends nothing until Send, and then only the kept parts, redacted", async () => {
+  it("sends nothing until Open email, and then only the kept parts, redacted", async () => {
     const opened: string[] = [];
     const { router, hooks } = await mountApp("/spaces", {
       failsCreates: true,
@@ -38,13 +38,17 @@ describe.skipIf(!wasmBuilt)("the diagnostic report for a failed create (real rou
     expect(error.value).toContain("Local Network access is not available");
     expect((screen.getByRole("textbox", { name: "What was created" }) as HTMLTextAreaElement).value).toContain("Failure kind: local_network");
     expect(opened).toEqual([]);
+    // One "Send" in the sheet's copy: the one in the mail app.
+    const sheet = document.querySelector("[data-diagnostic-report]")!;
+    expect(sheet.textContent).toContain("press Send there");
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
 
     // Leave the app and system out, and paste a secret into the error.
     fireEvent.click(screen.getByRole("checkbox", { name: /^Include App and system/ }));
     // A fake token, split so secret scanners don't flag the source.
     const fake = "gh" + "p_abcdefghijklmnopqrstuvwxyz0123456789";
     fireEvent.change(error, { target: { value: `${error.value}\ntoken=${fake} from maya@example.com` } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open email" }));
 
     await waitFor(() => expect(opened).toHaveLength(1));
     const link = opened[0]!;

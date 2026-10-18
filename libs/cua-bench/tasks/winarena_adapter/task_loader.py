@@ -84,14 +84,11 @@ def load_waa_tasks(
                         "related_apps": related_apps,
                         "source": source,
                     },
+                    # The image comes from the adapter (CUA_BENCH_WAA_IMAGE); the
+                    # retired trycua/winarena golden image is not a VM image.
                     computer={
                         "provider": "native",
-                        "setup_config": {
-                            "os_type": "win11",
-                            "width": 1920,
-                            "height": 1080,
-                            "image": "trycua/winarena:latest",
-                        },
+                        "setup_config": {"os_type": "windows", "width": 1920, "height": 1080},
                     },
                 )
             )

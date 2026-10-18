@@ -26,8 +26,7 @@ jobs:
     runs-on: macos-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
-      computer_version: ${{ steps.update-deps.outputs.computer_version }}
-      som_version: ${{ steps.update-deps.outputs.som_version }}
+      sandbox_version: ${{ steps.update-deps.outputs.sandbox_version }}
       core_version: ${{ steps.update-deps.outputs.core_version }}
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +66,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -106,51 +105,43 @@ jobs:
                   return fallback
 
           # Get latest versions
-          print(get_package_version('cua-computer'))
-          print(get_package_version('cua-som'))
+          print(get_package_version('cua-sandbox'))
           print(get_package_version('cua-core'))
           EOF
 
           # Execute the script to get the versions
           VERSIONS=($(python get_latest_versions.py))
-          LATEST_COMPUTER=${VERSIONS[0]}
-          LATEST_SOM=${VERSIONS[1]}
-          LATEST_CORE=${VERSIONS[2]}
+          LATEST_SANDBOX=${VERSIONS[0]}
+          LATEST_CORE=${VERSIONS[1]}
 
-          echo "Latest cua-computer version: $LATEST_COMPUTER"
-          echo "Latest cua-som version: $LATEST_SOM"
+          echo "Latest cua-sandbox version: $LATEST_SANDBOX"
           echo "Latest cua-core version: $LATEST_CORE"
 
           # Output the versions for the next job
-          echo "computer_version=$LATEST_COMPUTER" >> $GITHUB_OUTPUT
-          echo "som_version=$LATEST_SOM" >> $GITHUB_OUTPUT
+          echo "sandbox_version=$LATEST_SANDBOX" >> $GITHUB_OUTPUT
           echo "core_version=$LATEST_CORE" >> $GITHUB_OUTPUT
 
           # Determine major version for version constraint
-          COMPUTER_MAJOR=$(echo $LATEST_COMPUTER | cut -d. -f1)
-          SOM_MAJOR=$(echo $LATEST_SOM | cut -d. -f1)
+          SANDBOX_MAJOR=$(echo $LATEST_SANDBOX | cut -d. -f1)
           CORE_MAJOR=$(echo $LATEST_CORE | cut -d. -f1)
 
-          NEXT_COMPUTER_MAJOR=$((COMPUTER_MAJOR + 1))
-          NEXT_SOM_MAJOR=$((SOM_MAJOR + 1))
+          NEXT_SANDBOX_MAJOR=$((SANDBOX_MAJOR + 1))
           NEXT_CORE_MAJOR=$((CORE_MAJOR + 1))
 
           # Update dependencies in pyproject.toml
           if [[ "$OSTYPE" == "darwin"* ]]; then
             # macOS version of sed needs an empty string for -i
-            sed -i '' "s/\"cua-computer>=.*,<.*\"/\"cua-computer>=$LATEST_COMPUTER,<$NEXT_COMPUTER_MAJOR.0.0\"/" pyproject.toml
-            sed -i '' "s/\"cua-som>=.*,<.*\"/\"cua-som>=$LATEST_SOM,<$NEXT_SOM_MAJOR.0.0\"/" pyproject.toml
+            sed -i '' "s/\"cua-sandbox>=.*,<.*\"/\"cua-sandbox>=$LATEST_SANDBOX,<$NEXT_SANDBOX_MAJOR.0.0\"/" pyproject.toml
             sed -i '' "s/\"cua-core>=.*,<.*\"/\"cua-core>=$LATEST_CORE,<$NEXT_CORE_MAJOR.0.0\"/" pyproject.toml
           else
             # Linux version
-            sed -i "s/\"cua-computer>=.*,<.*\"/\"cua-computer>=$LATEST_COMPUTER,<$NEXT_COMPUTER_MAJOR.0.0\"/" pyproject.toml
-            sed -i "s/\"cua-som>=.*,<.*\"/\"cua-som>=$LATEST_SOM,<$NEXT_SOM_MAJOR.0.0\"/" pyproject.toml
+            sed -i "s/\"cua-sandbox>=.*,<.*\"/\"cua-sandbox>=$LATEST_SANDBOX,<$NEXT_SANDBOX_MAJOR.0.0\"/" pyproject.toml
             sed -i "s/\"cua-core>=.*,<.*\"/\"cua-core>=$LATEST_CORE,<$NEXT_CORE_MAJOR.0.0\"/" pyproject.toml
           fi
 
           # Display the updated dependencies
           echo "Updated dependencies in pyproject.toml:"
-          grep -E "cua-computer|cua-som|cua-core" pyproject.toml
+          grep -E "cua-sandbox|cua-core" pyproject.toml
 
   publish:
     needs: prepare
@@ -169,8 +160,7 @@ jobs:
     steps:
       - name: Set environment variables for use in other jobs
         run: |
-          echo "COMPUTER_VERSION=${{ needs.prepare.outputs.computer_version }}" >> $GITHUB_ENV
-          echo "SOM_VERSION=${{ needs.prepare.outputs.som_version }}" >> $GITHUB_ENV
+          echo "SANDBOX_VERSION=${{ needs.prepare.outputs.sandbox_version }}" >> $GITHUB_ENV
           echo "CORE_VERSION=${{ needs.prepare.outputs.core_version }}" >> $GITHUB_ENV
 
   create-release:
@@ -181,4 +171,4 @@ jobs:
       release_name: "cua-agent v${{ needs.prepare.outputs.version }}"
       module_path: "libs/python/agent"
       body: |
-        **Dependencies:** cua-computer ${{ needs.prepare.outputs.computer_version }}, cua-som ${{ needs.prepare.outputs.som_version }}
+        **Dependencies:** cua-sandbox ${{ needs.prepare.outputs.sandbox_version }}, cua-core ${{ needs.prepare.outputs.core_version }}

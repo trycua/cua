@@ -1,0 +1,41 @@
+{
+  "name": "about",
+  "about": "Settings, About: the name, version, links and copyright; the update controls (automatic checks and installs, Stable or Beta, Check Now, the last check); what a launch after an update refreshes; whose daemon restarts; the one notice when the refresh failed.",
+  "input": {
+    "platform": "macos",
+    "version": "0.2.0",
+    "build": "0.2.0.123",
+    "os": "macOS 26.0 (arm64)",
+    "updater": true,
+    "autoCheck": true,
+    "autoInstall": false,
+    "channel": "stable",
+    "lastCheck": null,
+    "checking": false
+  },
+  "panes": [
+    { "step": "first open" },
+    { "step": "install automatically", "set": { "autoInstall": true } },
+    { "step": "beta, checked before", "set": { "channel": "beta", "version": "0.3.0-beta.1", "build": "0.3.0.130", "lastCheck": "9/30/26, 3:04 PM" } },
+    { "step": "checking", "set": { "checking": true } },
+    { "step": "no automatic checks", "set": { "checking": false, "autoCheck": false } },
+    { "step": "no updater", "set": { "updater": false, "build": "" } }
+  ],
+  "launches": [
+    { "step": "fresh install", "input": { "lastSeen": null, "version": "0.2.0", "build": "0.2.0.1", "onboarded": false } },
+    { "step": "same build again", "input": { "lastSeen": "0.2.0 (0.2.0.1)", "version": "0.2.0", "build": "0.2.0.1", "onboarded": true } },
+    { "step": "updated", "input": { "lastSeen": "0.2.0-staging.5 (0.2.0.105)", "version": "0.2.0-staging.6", "build": "0.2.0.106", "onboarded": true } },
+    { "step": "updated from a build that kept no record", "input": { "lastSeen": null, "version": "0.2.0", "build": "0.2.0.2", "onboarded": true } }
+  ],
+  "daemons": [
+    { "step": "the app's own daemon", "check": { "daemonExe": "/Applications/Cua Spaces.app/Contents/MacOS/cua", "bundle": "/Applications/Cua Spaces.app" } },
+    { "step": "another cua's daemon", "check": { "daemonExe": "/Users/ada/.cargo/bin/cua", "bundle": "/Applications/Cua Spaces.app" } },
+    { "step": "no daemon", "check": { "daemonExe": null, "bundle": "/Applications/Cua Spaces.app" } }
+  ],
+  "reports": [
+    { "step": "refreshed", "report": {} },
+    { "step": "agents failed", "report": { "agentsError": "exit status 1" } },
+    { "step": "daemon failed", "report": { "daemonError": "the daemon did not stop within 10 s" } },
+    { "step": "both failed", "report": { "agentsError": "exit status 1", "daemonError": "timed out" } }
+  ]
+}

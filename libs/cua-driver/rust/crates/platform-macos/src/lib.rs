@@ -6,6 +6,13 @@
 //! - NSRunningApplication / NSWorkspace for app enumeration and lifecycle
 //! - CGWindow / ScreenCaptureKit for window enumeration and screenshots
 
+// Tool helpers return `Result<_, ToolResult>`: the error arm is the finished
+// tool reply (see the note in cua-driver-core), not a propagated error, so
+// clippy's result_large_err does not apply.
+#![allow(clippy::result_large_err)]
+
+#[cfg(target_os = "macos")]
+pub mod apple_events;
 #[cfg(target_os = "macos")]
 pub mod apps;
 #[cfg(target_os = "macos")]
@@ -17,7 +24,11 @@ pub mod browser;
 #[cfg(target_os = "macos")]
 pub mod capture;
 #[cfg(target_os = "macos")]
+pub mod capture_consent;
+#[cfg(target_os = "macos")]
 pub mod cursor;
+#[cfg(target_os = "macos")]
+pub mod document_edit;
 #[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]
@@ -27,11 +38,17 @@ pub mod history;
 #[cfg(target_os = "macos")]
 pub mod input;
 #[cfg(target_os = "macos")]
+pub mod key_focus_guard;
+#[cfg(target_os = "macos")]
 mod permission_observation;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 #[cfg(target_os = "macos")]
 pub mod pip;
+#[cfg(target_os = "macos")]
+pub mod pointer_shape;
+/// AX role -> cursor shape table for the presence hit-test (pure, every host).
+pub mod pointer_shape_map;
 #[cfg(target_os = "macos")]
 pub mod recording_hooks;
 #[cfg(target_os = "macos")]
@@ -48,6 +65,20 @@ pub mod window_change_detector;
 pub mod windows;
 
 use cua_driver_core::tool::ToolRegistry;
+
+/// Install the macOS presence pointer-shape backend (AX hit-test, NSCursor
+/// readout, pointer warp) into `cua_driver_core::pointer_shape`. Returns
+/// false off macOS or when a backend was already installed.
+pub fn install_pointer_shape_backend() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        pointer_shape::install()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
 
 /// Register all macOS tools.  For programs that don't restructure `main`
 /// (e.g. test harnesses), the overlay is skipped.
@@ -125,7 +156,7 @@ pub fn register_tools_with_cursor_and_provider(
         }
         // This adapter drives `push_cursor_event` from the cursor write path in
         // `cursor::state`, so declare cursor tracking as supported. The Windows
-        // and Linux adapters make no such declaration, which is how an embedder
+        // adapter makes no such declaration, which is how an embedder
         // learns it must publish the limitation instead of waiting for events
         // that will never arrive. Unconditional: emission depends on the
         // registry write path, not on the overlay or on graphic access.

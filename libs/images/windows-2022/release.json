@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "repo": "ghcr.io/trycua/windows",
+  "arches": [
+    "amd64"
+  ],
+  "series": "2022",
+  "tag": "2022-{stamp}",
+  "vars": {
+    "base": "ghcr.io/trycua/windows@sha256:a2966dac6c68a60f67addcc2c23db40ca1048a37616b1d6d39abc25dab9ce1f4",
+    "bin": "{work}/bin",
+    "mem": "4G",
+    "smp": "2",
+    "record_ledger": "false"
+  },
+  "steps": [
+    {
+      "id": "bins",
+      "phase": "prepare",
+      "requires": [
+        "windows"
+      ],
+      "description": "cua-spacesd.exe (static CRT) and its build-info; elsewhere pass --var bin=DIR with both",
+      "unless_exists": "{bin}/cua-spacesd.exe",
+      "env": {
+        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS": "-C target-feature=+crt-static",
+        "CMAKE_POLICY_VERSION_MINIMUM": "3.5"
+      },
+      "run": [
+        "bash",
+        "-c",
+        "cd \"$0/libs/cua-spacesd\" && cargo build --locked --release --target x86_64-pc-windows-msvc -p cua-spacesd --bin cua-spacesd && mkdir -p \"$1\" && cp target/x86_64-pc-windows-msvc/release/cua-spacesd.exe \"$1/\" && \"$1/cua-spacesd.exe\" build-info >\"$1/cua-spacesd-build-info.json\"",
+        "{root}",
+        "{bin}"
+      ],
+      "produces": [
+        "{bin}/cua-spacesd.exe",
+        "{bin}/cua-spacesd-build-info.json"
+      ]
+    },
+    {
+      "id": "build/amd64",
+      "phase": "build",
+      "requires": [
+        "kvm"
+      ],
+      "description": "boot the Windows workspace base, install cua-spacesd as a logon task, write disk.img",
+      "run": [
+        "{dir}/build-image.sh",
+        "--base",
+        "{base}",
+        "--bin",
+        "{bin}",
+        "--out",
+        "{out}",
+        "--mem",
+        "{mem}",
+        "--smp",
+        "{smp}",
+        "--stamp",
+        "{stamp}"
+      ],
+      "produces": [
+        "{out}/disk.img",
+        "{out}/manifest.json"
+      ]
+    },
+    {
+      "id": "doctor/amd64/windows",
+      "phase": "gate",
+      "requires": [
+        "kvm"
+      ],
+      "description": "cua-spacesd doctor --strict in the guest's desktop session (QEMU + KVM)",
+      "run": [
+        "{root}/scripts/images/image-doctor-windows.sh",
+        "--disk",
+        "{out}/disk.img",
+        "--strict",
+        "--mem",
+        "{mem}",
+        "--smp",
+        "{smp}",
+        "--out",
+        "{evidence}/doctor/amd64-windows"
+      ]
+    },
+    {
+      "id": "save/amd64",
+      "phase": "stage",
+      "run": [
+        "bash",
+        "-c",
+        "sha256sum \"$0/disk.img\" | tee \"$1/disk.sha256\"",
+        "{out}",
+        "{evidence}"
+      ],
+      "produces": [
+        "{evidence}/disk.sha256"
+      ]
+    },
+    {
+      "id": "push/amd64",
+      "phase": "push",
+      "run": [
+        "{dir}/release-push.sh",
+        "--out",
+        "{out}",
+        "--stamp",
+        "{stamp}",
+        "--evidence",
+        "{evidence}"
+      ],
+      "produces": [
+        "{evidence}/pushed.json"
+      ]
+    },
+    {
+      "id": "verify/amd64",
+      "phase": "verify",
+      "requires": [
+        "kvm"
+      ],
+      "description": "the strict doctor again, against the exact pushed disk",
+      "run": [
+        "bash",
+        "-c",
+        "exec \"$0/scripts/images/image-doctor-windows.sh\" --image \"ghcr.io/trycua/windows@$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[\"disk_digest\"])' \"$1/pushed.json\")\" --strict --mem \"$2\" --smp \"$3\" --out \"$1/doctor/amd64-windows-pushed\"",
+        "{root}",
+        "{evidence}",
+        "{mem}",
+        "{smp}"
+      ]
+    },
+    {
+      "id": "attest",
+      "phase": "promote",
+      "description": "attach every doctor report (the build gate and the pulled verify) to the pushed amd64 disk child, and record it on the image-doctor ledger with record_ledger=true, before the floating tags move",
+      "env": {
+        "ATTEST_DIR": "{evidence}"
+      },
+      "run": [
+        "{root}/scripts/images/attest-doctor-reports.sh",
+        "attest",
+        "{run_url}",
+        "{record_ledger}"
+      ],
+      "produces": [
+        "{evidence}/attested.json"
+      ]
+    },
+    {
+      "id": "promote",
+      "phase": "promote",
+      "run": [
+        "{dir}/release-promote.sh",
+        "--evidence",
+        "{evidence}"
+      ]
+    },
+    {
+      "id": "catalog",
+      "phase": "promote",
+      "description": "move the catalog digests of the promoted tags and record their sizes (commit libs/images/sandbox-images.json)",
+      "run": [
+        "python3",
+        "{root}/scripts/images/record-image-sizes.py",
+        "--refresh-digest",
+        "--ref",
+        "{repo}:{series}",
+        "--ref",
+        "{repo}:{series}-disk"
+      ]
+    }
+  ]
+}

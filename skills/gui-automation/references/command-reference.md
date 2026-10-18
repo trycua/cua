@@ -1,302 +1,401 @@
-# CUA Command Reference
+# cua command reference
 
-Complete argument syntax for all `cua do` and `cua trajectory` commands.
+Argument syntax for `cua do` and `cua trajectory` (from `cua <command> --help`).
+Every command also takes `--json`.
 
-## Global Flags
+## cua do
 
-| Flag          | Effect                                        |
-| ------------- | --------------------------------------------- |
-| `--no-record` | Disable trajectory recording for this command |
+```text
+One-shot computer actions against the selected target
 
-Usage: `cua do --no-record <action> [args]`
+Usage: cua do [OPTIONS] <COMMAND>
 
-## Target Management
+Commands:
+  switch      Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair
+  status      Show the current target and zoom state
+  ls          List targets (optionally of one provider)
+  zoom        Crop screenshots to a window and map coordinates into it
+  unzoom      Return to full-screen screenshots
+  screenshot  Take a screenshot (saved to the temp directory unless --save)
+  snapshot    Screenshot plus an AI summary of the screen and its interactive elements (needs ANTHROPIC_API_KEY)
+  click       Click at image coordinates
+  dclick      Double-click at image coordinates
+  move        Move the cursor (image coordinates)
+  type        Type text
+  key         Press a key (enter, escape, tab, ...)
+  hotkey      Keyboard shortcut (cmd+c, ctrl+shift+s)
+  scroll      Scroll in a direction
+  drag        Drag between two points (image coordinates)
+  shell       Run a shell command, or open an interactive terminal (PTY) when no command is given on a terminal
+  open        Open a file or URL
+  launch      Launch an application
+  window      Window management
+  a11y        Accessibility tree and actions
+  cursor      Print the cursor position (screen points)
+  clipboard   Clipboard text
 
-```
-cua do switch <provider> [name]
-```
-
-Providers: `cloud`, `cloudv2`, `docker`, `lume`, `lumier`, `winsandbox`, `host`
-
-- `name` is required for all providers except `host` and `winsandbox`
-- Target persists in `~/.cua/do_target.json` — set once, then operate
-
-```
-cua do status
-```
-
-Show the current target and zoom state.
-
-```
-cua do ls [provider]
-```
-
-List VMs for a provider. If `provider` is omitted, uses the current target's provider.
-
-## Host Consent
-
-```
-cua do-host-consent
-```
-
-One-time consent to grant AI control of the local machine. Creates
-`~/.cua/host_consented`. Required before `cua do switch host`.
-
-## Screenshot and Snapshot
-
-```
-cua do screenshot [--save PATH]
+Options:
+      --no-record                    Disable trajectory recording for this command
 ```
 
-Take a screenshot. Returns the image path. If `--save` / `-s` is provided,
-saves to that path instead of the default temp directory.
+## cua do switch
 
-```
-cua do snapshot ["extra instructions"]
-```
+```text
+Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair
 
-Screenshot + AI-powered screen summary. Returns a JSON object with:
+Usage: cua do switch [OPTIONS] <TARGET> [NAME]
 
-- `summary`: human-readable description of the screen
-- `elements`: list of interactive elements with `name`, `type`, `x`, `y`
+Arguments:
+  <TARGET>  
+  [NAME]    
 
-Requires `ANTHROPIC_API_KEY`. Optional instructions refine the AI's focus
-(e.g., `cua do snapshot "focus on the form fields"`).
-
-## Window Zoom
-
-```
-cua do zoom "Window Name"
+Options:
+      --token <TOKEN>                spacesd token (`url` and `host`) [env: CUA_ENV_TOKEN]
+      --as <ALIAS>                   Sandbox name to register a `url` target under
 ```
 
-Crop all subsequent screenshots to the named window. Coordinates become
-window-relative. Useful for focusing on a single app.
+## cua do status
 
-```
-cua do unzoom
-```
+```text
+Show the current target and zoom state
 
-Return to full-screen screenshots.
+Usage: cua do status [OPTIONS]
 
-## Input Actions
-
-### Click
-
-```
-cua do click <x> <y> [left|right|middle]
+Options:
 ```
 
-Click at image-space coordinates. Default button: `left`.
+## cua do ls
 
-### Double-Click
+```text
+List targets (optionally of one provider)
 
-```
-cua do dclick <x> <y>
-```
+Usage: cua do ls [OPTIONS] [PROVIDER]
 
-Double-click at image-space coordinates.
+Arguments:
+  [PROVIDER]  
 
-### Move Cursor
-
-```
-cua do move <x> <y>
+Options:
 ```
 
-Move the cursor to image-space coordinates without clicking.
+## cua do zoom
 
-### Type Text
+```text
+Crop screenshots to a window and map coordinates into it
 
-```
-cua do type "text"
-```
+Usage: cua do zoom [OPTIONS] <WINDOW_NAME>
 
-Type a string of text. Supports any Unicode characters.
+Arguments:
+  <WINDOW_NAME>  
 
-### Press Key
-
-```
-cua do key <key>
+Options:
 ```
 
-Press a single key. Common keys: `enter`, `escape`, `tab`, `space`, `backspace`,
-`delete`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`,
-`f1`–`f12`.
+## cua do unzoom
 
-### Hotkey
+```text
+Return to full-screen screenshots
 
-```
-cua do hotkey <combo>
-```
+Usage: cua do unzoom [OPTIONS]
 
-Press a keyboard shortcut. Use `+` to combine modifiers.
-
-Examples: `cmd+c`, `ctrl+shift+s`, `alt+f4`, `cmd+shift+p`
-
-### Scroll
-
-```
-cua do scroll <direction> [amount]
+Options:
 ```
 
-Scroll in a direction. Default amount: `3`.
+## cua do screenshot
 
-Directions: `up`, `down`, `left`, `right`
+```text
+Take a screenshot (saved to the temp directory unless --save)
 
-### Drag
+Usage: cua do screenshot [OPTIONS]
 
-```
-cua do drag <x1> <y1> <x2> <y2>
-```
-
-Drag from `(x1, y1)` to `(x2, y2)` in image-space coordinates.
-
-## Shell and Open
-
-### Shell
-
-```
-cua do shell "command"
+Options:
+  -s, --save <SAVE>                  
 ```
 
-Run a shell command on the target machine. If no command is provided, opens an
-interactive terminal session.
+## cua do snapshot
 
-Optional flags:
+```text
+Screenshot plus an AI summary of the screen and its interactive elements (needs ANTHROPIC_API_KEY)
 
-- `--cols N` — terminal width (default: auto-detect)
-- `--rows N` — terminal height (default: auto-detect)
+Usage: cua do snapshot [OPTIONS] [INSTRUCTIONS]...
 
-### Open
+Arguments:
+  [INSTRUCTIONS]...  
 
-```
-cua do open <url|path>
-```
-
-Open a URL in the default browser or a file in its default application on the
-target machine.
-
-## Window Management
-
-All window commands are under `cua do window`.
-
-### List Windows
-
-```
-cua do window ls [app]
+Options:
+      --model <MODEL>                Model (default `claude-haiku-4-5`, or CUA_SNAPSHOT_MODEL)
 ```
 
-List all windows, optionally filtered by application name. Returns window IDs
-needed for other window commands.
+## cua do click
 
-### Focus / Activate
+```text
+Click at image coordinates
 
-```
-cua do window focus <id>
-cua do window activate <id>
-```
+Usage: cua do click [OPTIONS] <X> <Y> [BUTTON]
 
-Bring a window to the front.
+Arguments:
+  <X>       
+  <Y>       
+  [BUTTON]  [default: left] [possible values: left, right, middle]
 
-### Unfocus
-
-```
-cua do window unfocus
+Options:
 ```
 
-Remove focus from the current window.
+## cua do dclick
 
-### Minimize / Maximize / Close
+```text
+Double-click at image coordinates
 
-```
-cua do window minimize <id>
-cua do window maximize <id>
-cua do window close <id>
-```
+Usage: cua do dclick [OPTIONS] <X> <Y>
 
-### Resize
+Arguments:
+  <X>  
+  <Y>  
 
-```
-cua do window resize <id> <width> <height>
+Options:
 ```
 
-### Move
+## cua do move
 
-```
-cua do window move <id> <x> <y>
-```
+```text
+Move the cursor (image coordinates)
 
-### Info
+Usage: cua do move [OPTIONS] <X> <Y>
 
-```
-cua do window info <id>
-```
+Arguments:
+  <X>  
+  <Y>  
 
-Get details (position, size, title) for a window.
-
-## Trajectory Commands
-
-All trajectory commands are under `cua trajectory` (alias: `cua traj`).
-
-### List Sessions
-
-```
-cua trajectory ls [machine] [--json]
+Options:
 ```
 
-List all recorded sessions, optionally filtered by machine name.
+## cua do type
 
-### View (Local)
+```text
+Type text
 
-```
-cua trajectory view [target] [--port PORT]
-```
+Usage: cua do type [OPTIONS] <TEXT>
 
-Zip the session and open it in the browser via `cua.ai/trajectory-viewer`.
-Starts a local file server (default port: `8089`).
+Arguments:
+  <TEXT>  
 
-`target` can be a machine name, session timestamp, or directory path. Defaults
-to the latest session.
-
-### Share (Upload)
-
-```
-cua trajectory share [target] [--no-open] [--api-url URL]
+Options:
 ```
 
-Upload the trajectory and get a shareable HTTPS link. Opens the link in the
-browser by default.
+## cua do key
 
-- `--no-open` — don't open browser after uploading
-- `--api-url` — custom API URL (default: `CUA_API_URL` env or `https://cua.ai`)
+```text
+Press a key (enter, escape, tab, ...)
 
-### Export (HTML)
+Usage: cua do key [OPTIONS] <KEY>
 
-```
-cua trajectory export [target] [--output PATH] [--quality N] [--no-open]
-```
+Arguments:
+  <KEY>  
 
-Generate a self-contained HTML report.
-
-- `--output` / `-o` — output file path (default: `report.html` in session dir)
-- `--quality` / `-q` — JPEG compression quality 1–100 (default: `75`)
-- `--no-open` — don't open the report in browser
-
-### Clean
-
-```
-cua trajectory clean [--older-than DAYS] [--machine NAME] [-y]
+Options:
 ```
 
-Delete old trajectory sessions.
+## cua do hotkey
 
-- `--older-than DAYS` — only delete sessions older than N days
-- `--machine NAME` — only delete sessions for a specific machine
-- `-y` / `--yes` — skip confirmation prompt
+```text
+Keyboard shortcut (cmd+c, ctrl+shift+s)
 
-### Stop
+Usage: cua do hotkey [OPTIONS] <KEYS>
 
+Arguments:
+  <KEYS>  
+
+Options:
 ```
-cua trajectory stop
+
+## cua do scroll
+
+```text
+Scroll in a direction
+
+Usage: cua do scroll [OPTIONS] <DIRECTION> [AMOUNT]
+
+Arguments:
+  <DIRECTION>  [possible values: up, down, left, right]
+  [AMOUNT]     [default: 3]
+
+Options:
 ```
 
-Stop the local trajectory file server started by `cua trajectory view`.
+## cua do drag
+
+```text
+Drag between two points (image coordinates)
+
+Usage: cua do drag [OPTIONS] <X1> <Y1> <X2> <Y2>
+
+Arguments:
+  <X1>  
+  <Y1>  
+  <X2>  
+  <Y2>  
+
+Options:
+```
+
+## cua do shell
+
+```text
+Run a shell command, or open an interactive terminal (PTY) when no command is given on a terminal
+
+Usage: cua do shell [OPTIONS] [COMMAND]...
+
+Arguments:
+  [COMMAND]...  
+
+Options:
+      --cols <COLS>                  
+      --rows <ROWS>                  
+```
+
+## cua do open
+
+```text
+Open a file or URL
+
+Usage: cua do open [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  
+
+Options:
+```
+
+## cua do launch
+
+```text
+Launch an application
+
+Usage: cua do launch [OPTIONS] <APP> [ARGS]...
+
+Arguments:
+  <APP>      
+  [ARGS]...  
+
+Options:
+```
+
+## cua do window
+
+```text
+Window management
+
+Usage: cua do window [OPTIONS] <COMMAND>
+
+Commands:
+  ls        List windows (optionally filtered by app or title)
+  unfocus   Remove focus from the current window (presses Escape)
+  focus     Focus a window
+  minimize  Minimize a window
+  maximize  Maximize a window
+  restore   Restore a minimized or maximized window
+  close     Close a window
+  resize    Resize a window
+  move      Move a window
+  info      Show a window as JSON
+
+Options:
+```
+
+## cua do a11y
+
+```text
+Accessibility tree and actions
+
+Usage: cua do a11y [OPTIONS] <COMMAND>
+
+Commands:
+  tree  Print the accessibility tree (JSON)
+  find  Find elements by name (and role)
+  act   Act on an element: press, focus, set-value, increment, ...
+
+Options:
+```
+
+## cua do cursor
+
+```text
+Print the cursor position (screen points)
+
+Usage: cua do cursor [OPTIONS]
+
+Options:
+```
+
+## cua do clipboard
+
+```text
+Clipboard text
+
+Usage: cua do clipboard [OPTIONS] <COMMAND>
+
+Commands:
+  get   Print clipboard text
+  set   Set clipboard text
+
+Options:
+```
+
+## cua do-host-consent
+
+```text
+Grant consent for `cua do switch host`
+
+Usage: cua do-host-consent [OPTIONS]
+
+Options:
+```
+
+## cua trajectory ls
+
+```text
+List sessions
+
+Usage: cua trajectory ls [OPTIONS] [MACHINE]
+
+Arguments:
+  [MACHINE]  
+
+Options:
+```
+
+## cua trajectory view
+
+```text
+Zip, serve on loopback and open the hosted viewer
+
+Usage: cua trajectory view [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]  
+
+Options:
+  -p, --port <PORT>                  [default: 8089]
+```
+
+## cua trajectory stop
+
+```text
+Stop the file server started by `view`
+
+Usage: cua trajectory stop [OPTIONS]
+
+Options:
+```
+
+## cua trajectory clean
+
+```text
+Delete sessions
+
+Usage: cua trajectory clean [OPTIONS]
+
+Options:
+      --older-than <DAYS>            
+      --machine <MACHINE>            
+  -y, --yes                          
+```

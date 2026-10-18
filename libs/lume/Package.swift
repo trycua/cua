@@ -48,6 +48,7 @@ let package = Package(
             dependencies: [
                 "lume",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "Testing", package: "swift-testing")
             ],
             path: "tests")

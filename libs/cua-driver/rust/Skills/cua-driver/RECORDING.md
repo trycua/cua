@@ -60,7 +60,7 @@ assuming the convenience command supports every raw-tool argument.
 
 Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 
-- `before_state.json` and `after_state.json` — application accessibility
+- `before_state.json` and `after_state.json`: application accessibility
   state immediately before and after the action. They carry the same
   `tree_markdown` and `element_count` shape as `get_window_state`. Each walk
   is bounded by `start_recording`'s `state_timeout_ms` (default 1000, like
@@ -73,17 +73,17 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   state walk is skipped and the state is recorded as `not_applicable` with
   the classification `action_refused_before_dispatch`. Pass
   `include_accessibility_tree: false` to record without state.
-- `before.png` and `after.png` — target-window images immediately before
+- `before.png` and `after.png`: target-window images immediately before
   and after the action. Window capture remains scoped to the target when
   another window covers it.
-- `evidence.json` — capture status for each phase. Missing expected capture
+- `evidence.json`: capture status for each phase. Missing expected capture
   has an explicit classification instead of disappearing from the turn.
-- `app_state.json` and `screenshot.png` — compatibility aliases for
+- `app_state.json` and `screenshot.png`: compatibility aliases for
   `after_state.json` and `after.png`.
-- `action.json` — the tool name, full input arguments, result
+- `action.json`: the tool name, full input arguments, result
   summary, result-error flag, pid, click point (when applicable), ISO-8601
   timestamp.
-- `click.png` — for click-family actions (`click`, `double_click`,
+- `click.png`: for click-family actions (`click`, `double_click`,
   `right_click`): a copy of the pre-input image with a red marker drawn at
   the click point. Usually that source is `before.png`. When Windows scrolls
   an element into view during an action, it retains an additional
@@ -93,7 +93,7 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   status. The original before/after images and state remain intact.
   **Both addressing modes are covered:** explicit
   `x, y` clicks use the platform's recording-coordinate mapping, and
-  `element_index`-addressed clicks resolve to the element's center
+  `element_token`-addressed clicks resolve to the element's center
   via the live AX/UIA cache, then convert to the retained image's coordinate
   space. Native Hyprland recording retains the output image, so both kinds of
   marker use output coordinates. Pixel markers also account for the target

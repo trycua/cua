@@ -1,0 +1,59 @@
+{
+  "agent_execution": {
+    "finished_at": "str",
+    "started_at": "str"
+  },
+  "agent_info": {
+    "model_info": "NoneType",
+    "name": "str",
+    "version": "str"
+  },
+  "agent_setup": "NoneType",
+  "arch": "NoneType",
+  "attempt": "int",
+  "backend": "str",
+  "duration_s": "float",
+  "environment_setup": {
+    "finished_at": "str",
+    "started_at": "str"
+  },
+  "error": "NoneType",
+  "evaluation": [
+    "float"
+  ],
+  "exception_info": "NoneType",
+  "extra": {},
+  "finished_at": "str",
+  "id": "str",
+  "image": "str",
+  "image_digest": "NoneType",
+  "image_ref": "str",
+  "image_variant": "str",
+  "kind": "str",
+  "on": "str",
+  "output_dir": "str",
+  "pool": "NoneType",
+  "retries": "int",
+  "reward": "float",
+  "runtime": "NoneType",
+  "sandbox": "str",
+  "schema_version": "int",
+  "session_id": "str",
+  "source": "str",
+  "started_at": "str",
+  "status": "str",
+  "task": "str",
+  "task_name": "str",
+  "trial_name": "str",
+  "trial_uri": "str",
+  "variant": "int",
+  "verifier": {
+    "finished_at": "str",
+    "started_at": "str"
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": "float"
+    }
+  }
+}

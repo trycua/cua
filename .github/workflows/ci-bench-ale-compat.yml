@@ -1,0 +1,94 @@
+name: "CI: cua-bench ALE compatibility"
+
+# Agents' Last Exam (rdi-berkeley/agents-last-exam) uses cua-bench as a
+# library. This job runs ALE's own task loader and harness against this
+# branch's cua-bench, offline: no VM, no cloud, no task command on the runner.
+# Bump ALE_SHA deliberately (review ALE's diff first).
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-bench/**"
+      - ".github/workflows/ci-bench-ale-compat.yml"
+  workflow_dispatch:
+    inputs:
+      ale_sha:
+        description: "agents-last-exam commit to check"
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  ALE_SHA: d10fb61a14f9719774c3520c5763068b28ef5546
+
+jobs:
+  ale-compat:
+    name: ALE tasks and harness (${{ matrix.deps }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # root: ALE's root dependencies (plain `uv sync`), cua-computer absent.
+        # pinned: ALE's agent/Docker pin set (cua-computer 0.5.17,
+        # cua-core 0.1.18, cua-agent 0.7.38) co-installed with this cua-bench.
+        deps: [root, pinned]
+    env:
+      CUA_TELEMETRY_ENABLED: "false"
+      CUA_BENCH_NO_BANNER: "1"
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check out agents-last-exam
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: rdi-berkeley/agents-last-exam
+          ref: ${{ github.event.inputs.ale_sha || env.ALE_SHA }}
+          path: ale
+          persist-credentials: false
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+
+      # ALE's dependencies with cua-bench (and the cua SDK packages) from this
+      # branch instead of the PyPI pin, plus the task eval deps except torch
+      # (the torch-only scorers are reported as skipped). --no-sources: resolve
+      # like a user install, not against the monorepo's dev path sources.
+      - name: Install cua-bench and ALE's dependencies
+        run: |
+          uv venv .ale-venv
+          . .ale-venv/bin/activate
+          pins=""
+          if [ "${{ matrix.deps }}" = "pinned" ]; then
+            pins='cua-agent==0.7.38 cua-computer==0.5.17 cua-core==0.1.18 litellm>=1.80 Pillow>=10.0'
+          fi
+          uv pip install --no-sources --index-url https://pypi.org/simple \
+            --extra-index-url https://wheels.cua.ai/simple --index-strategy unsafe-best-match \
+            -e libs/cua-bench -e libs/python/cua-sandbox -e libs/cua/python \
+            "openenv-core==0.3.0" "pydantic>=2.0" "httpx>=0.27" "anyio>=4" \
+            "requests>=2.28" "huggingface-hub>=0.28,<2" $pins
+          uv pip install PyMuPDF numpy openpyxl pandas pillow pretty_midi \
+            python-dotenv safetensors scikit-image scikit-learn scipy sgfmill \
+            opencv-python-headless ltspice || true
+          python -c 'import importlib.util as u; print("cua-computer installed:", u.find_spec("computer") is not None)'
+
+      # Level 3: every task imported by ALE's TaskLoader, then start/evaluate
+      # through ALE's own harness (StaticProvider.open_session,
+      # _init_computer_skip_wait, TaskDriver's resilient command patch,
+      # _force_close_session) against a loopback computer-server replay.
+      - name: Check ALE against this cua-bench
+        run: |
+          . .ale-venv/bin/activate
+          python libs/cua-bench/scripts/ale_compat/check_ale.py --ale ale --level 3 \
+            --strict-import --json ale-compat-${{ matrix.deps }}.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ale-compat-${{ matrix.deps }}
+          path: ale-compat-${{ matrix.deps }}.json

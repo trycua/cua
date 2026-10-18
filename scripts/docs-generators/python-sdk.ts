@@ -1,932 +1,811 @@
 #!/usr/bin/env npx tsx
 
 /**
- * Python SDK Documentation Generator
+ * Python reference generator (griffe, static analysis: nothing is imported).
  *
- * Generates MDX API reference documentation from Python source code docstrings.
- * Uses griffe to extract documentation without importing packages.
+ * Two hand-written Python layers are documented here; the UniFFI binding
+ * (`cua._native`) is documented from UniFFI metadata instead.
+ *
+ * - `cua` (libs/cua/python/src/cua, `_native` excluded) and the package
+ *   facts -> cua-sdk/reference/python/index.mdx
+ * - `cua_sandbox` (libs/python/cua-sandbox) public API ->
+ *   cua-sdk/reference/python/*.mdx (+ an explicit meta.json)
+ *
+ * Curated prose comes from headers/cua-sdk/python/<page>.md; tested examples
+ * from examples/cua-sdk/python/<Owner>.<member>.py, placed under the entry
+ * they show.
  *
  * Usage:
- *   npx tsx scripts/docs-generators/python-sdk.ts                    # Generate all
- *   npx tsx scripts/docs-generators/python-sdk.ts --sdk=computer     # Generate specific SDK
- *   npx tsx scripts/docs-generators/python-sdk.ts --check            # Check for drift (CI mode)
+ *   pnpm --dir docs docs:generate:python            # write the pages
+ *   pnpm --dir docs docs:check:python               # drift check (CI)
+ *   tsx scripts/docs-generators/python-sdk.ts [--check] [--only cua|cua-sandbox]
+ *
+ * griffe is pinned in requirements.txt and run through `uv run --no-project`.
+ * Set PYTHON_DOCS_EXTRACTOR="python3" to use an interpreter that already has
+ * the pinned griffe instead.
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  DOCS_CONTENT,
+  EXAMPLES_DIR,
+  REPO_ROOT,
+  codeCell,
+  codeFence,
+  escapeMdxText,
+  escapeTableCell,
+  finish,
+  isCheckMode,
+  loadExamples,
+  metaJson,
+  readHeader,
+  renderExamples,
+  renderPage,
+  slug,
+  syncFiles,
+  type Example,
+} from './lib/mdx';
 
 // ============================================================================
-// Types
+// Extractor output
 // ============================================================================
 
-interface PythonPackage {
-  name: string;
-  version: string;
-  docstring: string;
-  exports: string[] | null;
-  classes: ClassDoc[];
-  functions: FunctionDoc[];
-  submodules: ModuleDoc[];
-  error?: string;
-}
-
-interface ModuleDoc {
-  name: string;
-  version: string;
-  docstring: string;
-  exports: string[] | null;
-  classes: ClassDoc[];
-  functions: FunctionDoc[];
-}
-
-interface ClassDoc {
-  name: string;
-  description: string;
-  bases: string[];
-  methods: FunctionDoc[];
-  attributes: AttributeDoc[];
-  is_private: boolean;
-}
-
-interface FunctionDoc {
-  name: string;
-  signature: string;
-  is_async: boolean;
-  is_method: boolean;
-  description: string;
-  parameters: ParameterDoc[];
-  returns: ReturnDoc | null;
-  raises: RaiseDoc[];
-  examples: string[];
-  is_private: boolean;
-  is_dunder: boolean;
-}
-
-interface ParameterDoc {
+export interface PyParam {
   name: string;
   type: string;
-  description: string;
-  default: string | null;
-}
-
-interface ReturnDoc {
-  type: string;
+  /** `required`, the literal default, or '' when the signature lacks the parameter. */
+  default?: string;
   description: string;
 }
 
-interface RaiseDoc {
-  type: string;
-  description: string;
-}
-
-interface AttributeDoc {
+export interface PyDoc {
+  kind: 'class' | 'function' | 'attribute' | 'module' | 'external';
   name: string;
-  type: string;
-  description: string;
-  default: string | null;
-  is_private: boolean;
+  path?: string;
+  defined_in?: string;
+  labels?: string[];
+  signature?: string;
+  type?: string;
+  value?: string;
+  bases?: string[];
+  members?: PyDoc[];
+  description?: string;
+  params?: PyParam[];
+  returns?: string;
+  raises?: Array<{ type: string; description: string }>;
+  target?: string;
 }
 
-interface SDKConfig {
-  packageDir: string;
-  packageName: string;
-  outputPath: string;
-  displayName: string;
-  description: string;
-  outputDir: string; // For version discovery (relative to docsBaseDir)
-  tagPrefix: string; // Git tag prefix for version discovery
-  /** Absolute docs dir for this SDK (defaults to docs/content/docs/cua/reference) */
-  docsBaseDir?: string;
-  /** URL base path for hrefs (defaults to /cua/reference) */
-  hrefBase?: string;
-  /** Submodules to include in docs (if set, only these are included; if unset, all are included) */
-  includeSubmodules?: string[];
-  /** Override the page title (defaults to "${displayName} API Reference") */
-  pageTitle?: string;
+export interface PyModuleDoc extends PyDoc {
+  all: string[];
+  lazy: Array<{ name: string; module: string; attribute: string; extra: string }>;
+  aliases: Array<{ name: string; target: string }>;
+  imports: Record<string, string>;
+}
+
+interface Extracted {
+  objects: PyDoc[];
+  modules: PyModuleDoc[];
 }
 
 // ============================================================================
-// Configuration
+// Page specifications
 // ============================================================================
 
-const ROOT_DIR = path.resolve(__dirname, '../..');
-const PYTHON_SCRIPT = path.join(__dirname, 'extract_python_docs.py');
+interface Section {
+  title: string;
+  intro?: string;
+  objects: string[];
+  /** Hide constructors (objects users get from a sandbox, not build). */
+  hideInit?: boolean;
+}
 
-const SDK_CONFIGS: Record<string, SDKConfig> = {
-  computer: {
-    packageDir: 'libs/python/computer/computer',
-    packageName: 'computer',
-    outputPath: 'docs/content/docs/cua/reference/computer-sdk/index.mdx',
-    displayName: 'Computer SDK',
-    description: 'Python API reference for controlling virtual machines and computer interfaces',
-    outputDir: 'computer-sdk',
-    tagPrefix: 'computer-v',
-    includeSubmodules: ['interface', 'models', 'tracing', 'helpers', 'diorama_computer'],
+interface PageSpec {
+  file: string;
+  title: string;
+  description: string;
+  intro: string;
+  sections: Section[];
+}
+
+const SB = 'cua_sandbox';
+const SANDBOX_API_DIR = path.join(DOCS_CONTENT, 'cua-sdk', 'reference', 'python');
+const CUA_PYTHON_PAGE = path.join(SANDBOX_API_DIR, 'index.mdx');
+const SANDBOX_ROUTE = '/cua-sdk/reference/python';
+const GENERATOR = 'pnpm --dir docs docs:generate:python';
+const PY_EXAMPLES = path.join(EXAMPLES_DIR, 'cua-sdk', 'python');
+
+export const SANDBOX_PAGES: PageSpec[] = [
+  {
+    file: 'sandbox',
+    title: 'Sandbox',
+    description:
+      'Sandbox, SandboxInfo, the sandbox() helper and the creation options of cua-sandbox.',
+    intro:
+      'The `Sandbox` class is the entry point of `cua-sandbox`: create, connect to, or reattach a sandbox, then use its interfaces.',
+    sections: [
+      {
+        title: 'Sandboxes',
+        objects: [`${SB}.sandbox.Sandbox`, `${SB}.sandbox.sandbox`, `${SB}.sandbox.SandboxInfo`],
+      },
+      {
+        title: 'Creation options',
+        objects: [
+          `${SB}.options.CloudOptions`,
+          `${SB}.options.Probe`,
+          `${SB}.options.http`,
+          `${SB}.options.tcp`,
+          `${SB}.options.PublicUrl`,
+        ],
+      },
+      { title: 'Sandbox references', objects: [`${SB}._refs.AmbiguousSandbox`] },
+    ],
   },
-  agent: {
-    packageDir: 'libs/python/agent/agent',
-    packageName: 'agent',
-    outputPath: 'docs/content/docs/cua/reference/agent-sdk/index.mdx',
-    displayName: 'Agent SDK',
-    description: 'Python API reference for building computer-use agents',
-    outputDir: 'agent-sdk',
-    tagPrefix: 'agent-v',
-    includeSubmodules: ['callbacks', 'tools', 'types'],
+  {
+    file: 'image',
+    title: 'Image',
+    description: 'The Image builder, sidecar containers and registry credentials of cua-sandbox.',
+    intro:
+      '`Image` is an immutable, chainable description of what a sandbox boots. Builder methods return a new `Image`.',
+    sections: [
+      { title: 'Image builder', objects: [`${SB}.image.Image`, `${SB}.image.ImageInfo`] },
+      {
+        title: 'Containers and registries',
+        objects: [
+          `${SB}.containers.Container`,
+          `${SB}.containers.RegistrySecret`,
+          `${SB}.generated.image_models.ImageFileReference`,
+        ],
+      },
+    ],
   },
-  cli: {
-    packageDir: 'libs/python/cua-cli/cua_cli',
-    packageName: 'cua_cli',
-    outputPath: 'docs/content/docs/cua/reference/cli/index.mdx',
-    displayName: 'Cua CLI',
-    description: 'Python API reference for the Cua command-line interface',
-    outputDir: 'cli',
-    tagPrefix: 'cli-v',
+  {
+    file: 'pool',
+    title: 'Pool',
+    description: 'Pools, templates, sandbox specs and pool errors of cua-sandbox.',
+    intro:
+      '`Pool` keeps warm cloud capacity for a `SandboxSpec`. `Sandbox.create` uses shared capacity; a named pool is for dedicated capacity.',
+    sections: [
+      { title: 'Pools and templates', objects: [`${SB}.pool.Pool`, `${SB}.pool.Template`] },
+      {
+        title: 'Managed pools (cua_sandbox.pools)',
+        objects: [
+          `${SB}.pools`,
+          `${SB}._autopool.list_pools`,
+          `${SB}._autopool.list_claims`,
+          `${SB}._autopool.gc`,
+          `${SB}._autopool.gc_pools`,
+          `${SB}._autopool.is_managed_pool_name`,
+          `${SB}._autopool.ManagedPoolInfo`,
+          `${SB}._autopool.ClaimInfo`,
+          `${SB}._autopool.GcReport`,
+        ],
+      },
+      {
+        title: 'Specs',
+        objects: [
+          `${SB}.spec.SandboxSpec`,
+          `${SB}.spec.PoolOptions`,
+          `${SB}.spec.PoolExport`,
+          `${SB}.spec.generate_claim_token`,
+        ],
+      },
+      {
+        title: 'Errors',
+        objects: [
+          `${SB}.spec.PoolSpecMismatch`,
+          `${SB}.spec.ClaimSecretsNotDelivered`,
+          `${SB}.transport.fleet_cloud.PoolAccessDeniedError`,
+        ],
+      },
+    ],
   },
-  sandbox: {
-    packageDir: 'libs/python/cua-sandbox/cua_sandbox',
-    packageName: 'cua_sandbox',
-    outputPath: 'docs/content/docs/cua/reference/sandbox-sdk/index.mdx',
-    displayName: 'Sandbox SDK',
-    description: 'Python API reference for cua-sandbox — creating and controlling sandboxes',
-    outputDir: 'sandbox-sdk',
-    tagPrefix: 'sandbox-v',
-    includeSubmodules: ['sandbox', 'image', 'localhost', 'interfaces', 'builder'],
+  {
+    file: 'interfaces',
+    title: 'Interfaces',
+    description:
+      'Shell, mouse, keyboard, screen, clipboard, window, terminal, files, apps, mobile and driver interfaces.',
+    intro:
+      'Every sandbox exposes these interfaces as attributes (`sb.shell`, `sb.mouse`, ...). Input goes through cua-driver inside the guest.',
+    sections: [
+      {
+        title: 'Shell commands',
+        hideInit: true,
+        objects: [`${SB}.interfaces.shell.Shell`, `${SB}.interfaces.shell.CommandResult`],
+      },
+      {
+        title: 'Input and display',
+        hideInit: true,
+        objects: [
+          `${SB}.interfaces.mouse.Mouse`,
+          `${SB}.interfaces.keyboard.Keyboard`,
+          `${SB}.interfaces.screen.Screen`,
+          `${SB}.interfaces.clipboard.Clipboard`,
+          `${SB}.interfaces.window.Window`,
+        ],
+      },
+      {
+        title: 'Terminal, files and apps',
+        hideInit: true,
+        objects: [
+          `${SB}.interfaces.terminal.Terminal`,
+          `${SB}.interfaces.files.Files`,
+          `${SB}.interfaces.files.FileEntry`,
+          `${SB}.interfaces.apps.Apps`,
+        ],
+      },
+      { title: 'Mobile gestures', hideInit: true, objects: [`${SB}.interfaces.mobile.Mobile`] },
+      {
+        title: 'Cua Driver',
+        hideInit: true,
+        objects: [
+          `${SB}.interfaces.driver.Driver`,
+          `${SB}.interfaces.driver.DriverConnectionError`,
+        ],
+      },
+    ],
   },
-  bench: {
-    packageDir: 'libs/cua-bench/cua_bench',
-    packageName: 'cua_bench',
-    outputPath: 'docs/content/docs/cuabench/reference/api.mdx',
-    displayName: 'Cua Bench',
-    description: 'Python API reference for the desktop automation benchmarking framework',
-    outputDir: 'reference',
-    tagPrefix: 'bench-v',
-    docsBaseDir: 'docs/content/docs/cuabench',
-    hrefBase: '/cuabench',
-    pageTitle: 'API Reference',
+  {
+    file: 'services',
+    title: 'Services, tunnels and MCP',
+    description:
+      'Named services, signed and public URLs, tunnels and MCP endpoints of a cua-sandbox sandbox.',
+    intro: 'Reach ports inside a sandbox: named services, tunnels, shareable URLs and MCP servers.',
+    sections: [
+      {
+        title: 'Named services',
+        hideInit: true,
+        objects: [
+          `${SB}.interfaces.services.ServiceHandle`,
+          `${SB}.interfaces.services.Services`,
+          `${SB}.interfaces.services.SignedServiceURL`,
+        ],
+      },
+      {
+        title: 'Tunnels',
+        hideInit: true,
+        objects: [`${SB}.interfaces.tunnel.Tunnel`, `${SB}.interfaces.tunnel.TunnelInfo`],
+      },
+      {
+        title: 'MCP',
+        objects: [
+          `${SB}.interfaces.mcp.mcp_config`,
+          `${SB}.interfaces.mcp.connect`,
+          `${SB}.interfaces.mcp.open_mcp`,
+        ],
+      },
+    ],
   },
-};
+  {
+    file: 'runtimes',
+    title: 'Runtimes',
+    description:
+      'Local runtimes (Docker, QEMU, Lume, Hyper-V, Tart, Android emulator) and local support checks.',
+    intro:
+      'Local sandboxes run on a runtime the SDK picks for the image. Pass one explicitly to `Sandbox.create(..., runtime=...)` to override it.',
+    sections: [
+      {
+        title: 'Support checks',
+        objects: [
+          `${SB}.runtime.compat.RuntimeSupport`,
+          `${SB}.runtime.compat.check_local_support`,
+          `${SB}.runtime.compat.skip_if_unsupported`,
+        ],
+      },
+      {
+        title: 'Runtimes',
+        objects: [
+          `${SB}.runtime.base.Runtime`,
+          `${SB}.runtime.base.RuntimeInfo`,
+          `${SB}.runtime.docker.DockerRuntime`,
+          `${SB}.runtime.qemu.QEMURuntime`,
+          `${SB}.runtime.qemu.QEMUDockerRuntime`,
+          `${SB}.runtime.qemu.QEMUBaremetalRuntime`,
+          `${SB}.runtime.qemu.QEMUWSL2Runtime`,
+          `${SB}.runtime.lume.LumeRuntime`,
+          `${SB}.runtime.hyperv.HyperVRuntime`,
+          `${SB}.runtime.tart.TartRuntime`,
+          `${SB}.runtime.android_emulator.AndroidEmulatorRuntime`,
+        ],
+      },
+    ],
+  },
+  {
+    file: 'configuration',
+    title: 'Configuration and errors',
+    description: 'configure, login, whoami, transports and the errors cua-sandbox raises.',
+    intro:
+      'Process-wide settings, sign-in helpers, transports and the typed errors of `cua-sandbox`.',
+    sections: [
+      {
+        title: 'Configuration and sign-in',
+        objects: [
+          `${SB}._config.configure`,
+          `${SB}._config.fleet_auth_source`,
+          `${SB}._auth.login`,
+          `${SB}._auth.whoami`,
+        ],
+      },
+      {
+        title: 'Errors',
+        objects: [
+          `${SB}._sdk.SpacesdNotAvailable`,
+          `${SB}._sdk.InvalidArgument`,
+          `${SB}._sdk.InvalidPlacement`,
+          `${SB}._sdk.Unsupported`,
+        ],
+      },
+      {
+        title: 'Transports',
+        hideInit: true,
+        objects: [`${SB}.transport.cloud.CloudTransport`, `${SB}.transport.env.EnvTransport`],
+      },
+    ],
+  },
+];
+
+const CUA_OBJECTS = ['cua.embedded', 'cua.connect', 'cua.images.Image'];
+const CUA_MODULES = ['cua', 'cua.runtime', 'cua.tools', 'cua.callbacks'];
+
+// ============================================================================
+// Extraction
+// ============================================================================
+
+function extractorCommand(): [string, string[]] {
+  const script = path.join('scripts', 'docs-generators', 'extract_python_docs.py');
+  const explicit = process.env.PYTHON_DOCS_EXTRACTOR;
+  if (explicit) return [explicit, [script]];
+  return [
+    'uv',
+    [
+      'run',
+      '--quiet',
+      '--no-project',
+      '--python',
+      '3.12',
+      '--with-requirements',
+      path.join('scripts', 'docs-generators', 'requirements.txt'),
+      'python',
+      script,
+    ],
+  ];
+}
+
+export function extract(request: object): Extracted {
+  const [cmd, args] = extractorCommand();
+  const out = execFileSync(cmd, args, {
+    cwd: REPO_ROOT,
+    input: JSON.stringify(request),
+    encoding: 'utf-8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return JSON.parse(out) as Extracted;
+}
+
+// ============================================================================
+// Rendering
+// ============================================================================
+
+/**
+ * Docstring code MDX would not render: a four-space-indented block after a
+ * blank line (outside lists), or a run of doctest `>>>` lines, becomes a
+ * fenced `python` block.
+ */
+export function fenceIndentedCode(markdown: string): string {
+  const lines = markdown.split('\n');
+  const out: string[] = [];
+  let fence: string | null = null;
+  let lastText = '';
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const m = line.match(/^\s*(`{3,}|~{3,})/);
+    if (m) {
+      if (fence === null) fence = m[1];
+      else if (m[1].startsWith(fence)) fence = null;
+      out.push(line);
+      continue;
+    }
+    if (fence !== null) {
+      out.push(line);
+      continue;
+    }
+    const prevBlank = i === 0 || lines[i - 1].trim() === '';
+    const inList = /^\s*([-*+]|\d+[.)])\s/.test(lastText);
+    const indented = /^ {4,}\S/.test(line) && prevBlank && !inList;
+    const doctest = /^\s*>>> /.test(line);
+    if (indented || doctest) {
+      const block: string[] = [];
+      const indent = indented ? 4 : line.match(/^\s*/)![0].length;
+      while (i < lines.length) {
+        const l = lines[i];
+        const keep = indented
+          ? l.trim() === '' || l.startsWith(' '.repeat(4))
+          : l.trim() !== '' && l.match(/^\s*/)![0].length >= indent;
+        if (!keep) break;
+        block.push(l.slice(Math.min(indent, l.match(/^\s*/)![0].length)));
+        i += 1;
+      }
+      i -= 1;
+      while (block.length && block[block.length - 1].trim() === '') block.pop();
+      out.push('```python', ...block.map((b) => b.replace(/^>>> |^\.\.\. /, '')), '```');
+      if (lines[i + 1]?.trim()) out.push('');
+      continue;
+    }
+    if (line.trim()) lastText = line;
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+/** Escapes Markdown prose for MDX, leaving fenced code blocks untouched. */
+export function mdxProse(markdown: string): string {
+  markdown = fenceIndentedCode(markdown);
+  const out: string[] = [];
+  let fence: string | null = null;
+  for (const line of markdown.split('\n')) {
+    const m = line.match(/^\s*(`{3,}|~{3,})/);
+    if (m) {
+      if (fence === null) fence = m[1];
+      else if (m[1].startsWith(fence)) fence = null;
+      out.push(line);
+      continue;
+    }
+    out.push(fence === null ? escapeMdxText(line) : line);
+  }
+  if (fence !== null) out.push(fence);
+  return out.join('\n');
+}
+
+function publicName(doc: PyDoc): string {
+  return doc.name;
+}
+
+function displaySignature(doc: PyDoc, owner?: string): string {
+  let sig = doc.signature ?? '';
+  if (doc.name === '__init__' && owner) {
+    sig = sig.replace(/^def /, '').replace(/ -> None$/, '');
+  }
+  return sig;
+}
+
+/** The Default cell: `required`, or the literal default as code. */
+export function defaultCell(value: string | undefined): string {
+  if (!value) return '';
+  return value === 'required' ? 'required' : codeCell(value);
+}
+
+export function paramTable(params: PyParam[]): string[] {
+  if (!params.length) return [];
+  const lines = ['| Parameter | Type | Default | Description |', '| --- | --- | --- | --- |'];
+  for (const p of params) {
+    lines.push(
+      `| ${codeCell(p.name)} | ${p.type ? codeCell(p.type) : ''} | ${defaultCell(p.default)} | ${escapeTableCell(p.description)} |`
+    );
+  }
+  return [...lines, ''];
+}
+
+function docTail(doc: PyDoc): string[] {
+  const lines: string[] = [];
+  if (doc.description) lines.push(mdxProse(doc.description), '');
+  lines.push(...paramTable(doc.params ?? []));
+  if (doc.returns) lines.push(`**Returns:** ${escapeMdxText(doc.returns)}`, '');
+  if (doc.raises?.length) {
+    lines.push('**Raises:**', '');
+    for (const r of doc.raises) {
+      lines.push(
+        `- ${r.type ? codeCell(r.type) : ''}${r.description ? ': ' + escapeMdxText(r.description) : ''}`
+      );
+    }
+    lines.push('');
+  }
+  return lines;
+}
+
+function attributeTable(attrs: PyDoc[]): string[] {
+  if (!attrs.length) return [];
+  const lines = ['| Attribute | Type | Description |', '| --- | --- | --- |'];
+  for (const a of attrs) {
+    const desc = (a.description ?? '').split('\n\n')[0];
+    lines.push(
+      `| ${codeCell(a.name)} | ${a.type ? codeCell(a.type) : ''} | ${escapeTableCell(desc)} |`
+    );
+  }
+  return [...lines, ''];
+}
+
+export interface ExampleSet {
+  examples: Map<string, Example[]>;
+  used: Set<string>;
+}
+
+/** Tested examples for `target` (an object, `Owner.member` or a function), if any. */
+function examplesFor(target: string, set?: ExampleSet): string[] {
+  const list = set?.examples.get(target);
+  if (!list) return [];
+  set!.used.add(target);
+  return ['**Example**', '', renderExamples(list), ''];
+}
+
+export function renderObject(doc: PyDoc, opts: { hideInit?: boolean; examples?: ExampleSet } = {}): string[] {
+  const name = publicName(doc);
+  const lines: string[] = [`### ${name}`, ''];
+  if (doc.kind === 'external') {
+    lines.push(`Re-exported from ${codeCell(doc.target ?? '')}.`, '');
+    return lines;
+  }
+  if (doc.kind === 'class') {
+    const bases = (doc.bases ?? []).filter((b) => b !== 'object');
+    const init = doc.members?.find((m) => m.name === '__init__');
+    const head = [`class ${name}${bases.length ? `(${bases.join(', ')})` : ''}`];
+    if (init && !opts.hideInit) head.push('', displaySignature(init, name));
+    lines.push(codeFence('python', head.join('\n')), '');
+    lines.push(...docTail(doc));
+    if (init && !opts.hideInit && (init.description || init.params?.length))
+      lines.push(...docTail(init));
+    const members = (doc.members ?? []).filter((m) => m.name !== '__init__');
+    lines.push(...attributeTable(members.filter((m) => m.kind === 'attribute')));
+    lines.push(...examplesFor(name, opts.examples));
+    for (const m of members.filter((m) => m.kind === 'function')) {
+      lines.push(`#### ${name}.${m.name}`, '');
+      const decorators = (m.labels ?? []).filter(
+        (l) => l === 'staticmethod' || l === 'classmethod'
+      );
+      const sig = [...decorators.map((d) => `@${d}`), displaySignature(m)].join('\n');
+      lines.push(codeFence('python', sig), '');
+      lines.push(...docTail(m));
+      lines.push(...examplesFor(`${name}.${m.name}`, opts.examples));
+    }
+    return lines;
+  }
+  if (doc.kind === 'function') {
+    lines.push(codeFence('python', displaySignature(doc)), '');
+    lines.push(...docTail(doc));
+    lines.push(...examplesFor(name, opts.examples));
+    return lines;
+  }
+  // attribute or module
+  if (doc.type || doc.value) {
+    lines.push(
+      codeFence(
+        'python',
+        `${name}${doc.type ? `: ${doc.type}` : ''}${doc.value ? ` = ${doc.value}` : ''}`
+      ),
+      ''
+    );
+  }
+  lines.push(...docTail(doc));
+  return lines;
+}
+
+/** `name` -> `/cua-sdk/reference/python/<page>#<anchor>` for every documented object. */
+export function sandboxAnchors(pages: PageSpec[] = SANDBOX_PAGES): Map<string, string> {
+  const anchors = new Map<string, string>();
+  for (const page of pages) {
+    for (const section of page.sections) {
+      for (const obj of section.objects) {
+        const name = obj.split('.').at(-1)!;
+        anchors.set(name, `${SANDBOX_ROUTE}/${page.file}#${slug(name)}`);
+      }
+    }
+  }
+  return anchors;
+}
+
+export function renderSandboxPage(
+  page: PageSpec,
+  docs: Map<string, PyDoc>,
+  version: string,
+  examples?: ExampleSet
+): string {
+  const body: string[] = [escapeMdxText(page.intro), ''];
+  const header = readHeader(`cua-sdk/python/${page.file}.md`, { version });
+  if (header) body.push(header, '');
+  for (const section of page.sections) {
+    body.push(`## ${section.title}`, '');
+    if (section.intro) body.push(escapeMdxText(section.intro), '');
+    for (const obj of section.objects) {
+      const doc = docs.get(obj);
+      if (!doc) throw new Error(`griffe returned no documentation for ${obj}`);
+      body.push(...renderObject(doc, { hideInit: section.hideInit, examples }));
+    }
+  }
+  return renderPage({
+    title: page.title,
+    description: page.description,
+    generator: GENERATOR,
+    source: `griffe over libs/python/cua-sandbox/cua_sandbox (${SB}.${page.file === 'sandbox' ? 'sandbox' : page.file})`,
+    version: `cua-sandbox ${version}`,
+    components: body.some((l) => l.startsWith('<Tabs')) ? ['Tabs'] : [],
+    body: body.join('\n'),
+  });
+}
+
+export function renderReexports(module: PyModuleDoc, documented: Set<string>): string {
+  const rows = module.all
+    .filter((name) => !documented.has(name))
+    .map((name) => [name, module.imports[name] ?? module.path ?? '']);
+  if (!rows.length) return '';
+  const byModule = new Map<string, string[]>();
+  for (const [name, mod] of rows) byModule.set(mod, [...(byModule.get(mod) ?? []), name]);
+  const lines = [
+    '## Re-exported names',
+    '',
+    '`cua_sandbox` also re-exports these names from other packages; see their own documentation.',
+    '',
+    '| Module | Names |',
+    '| --- | --- |',
+  ];
+  for (const [mod, names] of [...byModule].sort(([a], [b]) => a.localeCompare(b))) {
+    lines.push(`| ${codeCell(mod)} | ${names.sort().map(codeCell).join(', ')} |`);
+  }
+  return lines.join('\n');
+}
+
+export function renderCuaPython(
+  docs: Map<string, PyDoc>,
+  modules: Map<string, PyModuleDoc>,
+  anchors: Map<string, string>,
+  version: string,
+  sandboxVersion: string,
+  examples?: ExampleSet
+): string {
+  const root = modules.get('cua')!;
+  const body: string[] = [];
+  body.push(
+    'The high-level Python API: `cua_sandbox` (`Sandbox`, `Image`, the computer interfaces, `Pool`) and the helpers the `cua` package adds. It is a thin layer over the [Cua SDK objects](/cua-sdk/reference): the cloud, the local runtimes and cua-spacesd all go through `cua`, whose generated binding (`cua._native`) those pages document.',
+    ''
+  );
+  const header = readHeader('cua-sdk/python/index.md', { version, sandboxVersion });
+  if (header) body.push(header, '');
+  body.push('## Pages', '', '| Page | Covers |', '| --- | --- |');
+  for (const page of SANDBOX_PAGES) {
+    body.push(`| [${escapeTableCell(page.title)}](${SANDBOX_ROUTE}/${page.file}) | ${escapeTableCell(page.description)} |`);
+  }
+  body.push('');
+  body.push('## The cua package', '');
+  body.push(
+    'The hand-written layer of `cua`: two module-level constructors, a canonical-image helper and lazy re-exports of the extras.',
+    ''
+  );
+  for (const name of ['cua.embedded', 'cua.connect']) body.push(...renderObject(docs.get(name)!, { examples }));
+  const image = renderObject(docs.get('cua.images.Image')!, { examples });
+  image.splice(
+    2,
+    0,
+    'Without `cua[sandbox]`, `cua.Image` is this helper. With it installed, `cua.Image` is the richer [cua_sandbox Image](' +
+      `${SANDBOX_ROUTE}/image#image).`,
+    ''
+  );
+  body.push(...image);
+  body.push('### Names from the extras', '');
+  body.push(
+    '`cua` resolves these names lazily from the optional extras. Install the extra to use them.',
+    ''
+  );
+  body.push('| Name | Resolves to | Extra |', '| --- | --- | --- |');
+  const lazy = [
+    { name: 'Image', module: 'cua_sandbox', attribute: 'Image', extra: 'sandbox' },
+    ...root.lazy,
+  ].sort((a, b) => a.name.localeCompare(b.name));
+  for (const row of lazy) {
+    const target = codeCell(`${row.module}.${row.attribute}`);
+    const link = row.extra === 'sandbox' ? anchors.get(row.attribute) : undefined;
+    body.push(
+      `| ${codeCell(`cua.${row.name}`)} | ${link ? `[${target}](${link})` : target} | ${codeCell(`cua[${row.extra}]`)} |`
+    );
+  }
+  body.push('');
+  for (const name of ['cua.runtime', 'cua.tools', 'cua.callbacks']) {
+    const mod = modules.get(name)!;
+    body.push(`### ${name}`, '');
+    body.push(mdxProse(firstParagraph(mod.description ?? '')), '');
+    const names = mod.all.map((n) => {
+      const link = name === 'cua.runtime' ? anchors.get(n) : undefined;
+      return link ? `[${codeCell(n)}](${link})` : codeCell(n);
+    });
+    body.push(`Exports: ${names.join(', ')}.`, '');
+  }
+  if (root.aliases.length) {
+    body.push('### Deprecated aliases', '');
+    body.push('Kept for one release after a rename. Use the new names.', '');
+    body.push('| Deprecated | Use |', '| --- | --- |');
+    for (const a of root.aliases)
+      body.push(`| ${codeCell(`cua.${a.name}`)} | ${codeCell(`cua.${a.target}`)} |`);
+    body.push('');
+  }
+  return renderPage({
+    title: 'Python high-level API',
+    description:
+      'cua_sandbox and the cua package helpers: packages, configuration, and the page for each class.',
+    generator: GENERATOR,
+    source: 'griffe over libs/cua/python/src/cua (cua._native excluded) and libs/python/cua-sandbox',
+    version: `cua ${version}, cua-sandbox ${sandboxVersion}`,
+    components: body.some((l) => l.startsWith('<Tabs')) ? ['Tabs'] : [],
+    body: body.join('\n'),
+  });
+}
+
+function firstParagraph(markdown: string): string {
+  return markdown.split('\n\n')[0] ?? '';
+}
+
+function readVersion(file: string): string {
+  const text = fs.readFileSync(path.join(REPO_ROOT, file), 'utf-8');
+  const m = text.match(/^__version__\s*=\s*"([^"]+)"/m);
+  if (!m) throw new Error(`no __version__ in ${file}`);
+  return m[1];
+}
 
 // ============================================================================
 // Main
 // ============================================================================
 
-async function main() {
-  const args = process.argv.slice(2);
-  const checkOnly = args.includes('--check') || args.includes('--check-only');
-  const sdkArg = args.find((a) => a.startsWith('--sdk='));
-  const targetSdk = sdkArg?.split('=')[1];
+export function buildFiles(
+  extracted: Extracted,
+  examples: Map<string, Example[]> = loadExamples(PY_EXAMPLES)
+): Map<string, string> {
+  const docs = new Map(extracted.objects.map((d) => [d.path!, d]));
+  const modules = new Map(extracted.modules.map((m) => [m.path!, m]));
+  const files = new Map<string, string>();
+  const anchors = sandboxAnchors();
+  const set: ExampleSet = { examples, used: new Set() };
 
-  console.log('🐍 Python SDK Documentation Generator');
-  console.log('=====================================\n');
-
-  // Check if Python script exists
-  if (!fs.existsSync(PYTHON_SCRIPT)) {
-    console.error(`❌ Python extraction script not found: ${PYTHON_SCRIPT}`);
-    process.exit(1);
+  const sandboxVersion = readVersion('libs/python/cua-sandbox/cua_sandbox/__init__.py');
+  for (const page of SANDBOX_PAGES) {
+    let content = renderSandboxPage(page, docs, sandboxVersion, set);
+    if (page.file === 'pool') {
+      const reexports = renderReexports(modules.get(SB)!, new Set(anchors.keys()));
+      if (reexports) content = content.replace(/\n$/, `\n\n${reexports}\n`);
+    }
+    files.set(path.join(SANDBOX_API_DIR, `${page.file}.mdx`), content);
   }
-
-  let hasErrors = false;
-
-  for (const [sdkName, config] of Object.entries(SDK_CONFIGS)) {
-    // Skip if targeting specific SDK
-    if (targetSdk && targetSdk !== sdkName) {
-      continue;
-    }
-
-    console.log(`📖 Processing ${config.displayName}...`);
-
-    // Check if package exists
-    const packagePath = path.join(ROOT_DIR, config.packageDir);
-    if (!fs.existsSync(packagePath)) {
-      console.error(`   ❌ Package not found: ${config.packageDir}`);
-      hasErrors = true;
-      continue;
-    }
-
-    // Extract documentation using Python script
-    console.log(`   Extracting documentation from ${config.packageDir}...`);
-    let docs: PythonPackage;
-    try {
-      // Prefer uv run --with griffe python (works cross-platform), fall back to python3
-      const pythonCmd = process.platform === 'win32' ? `uv run --with griffe python` : `python3`;
-      const output = execSync(
-        `${pythonCmd} "${PYTHON_SCRIPT}" "${packagePath}" "${config.packageName}"`,
-        {
-          encoding: 'utf-8',
-          cwd: ROOT_DIR,
-          timeout: 60000,
-        }
-      );
-      docs = JSON.parse(output);
-    } catch (error) {
-      console.error(`   ❌ Failed to extract documentation: ${error}`);
-      hasErrors = true;
-      continue;
-    }
-
-    if (docs.error) {
-      console.error(`   ❌ Extraction error: ${docs.error}`);
-      hasErrors = true;
-      continue;
-    }
-
-    console.log(`   Found ${docs.classes.length} classes, ${docs.functions.length} functions`);
-
-    // Generate MDX
-    console.log(`   Generating MDX...`);
-    const mdx = generateMDX(docs, config);
-
-    // Ensure output directory exists
-    const outputPath = path.join(ROOT_DIR, config.outputPath);
-    const outputDir = path.dirname(outputPath);
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    if (checkOnly) {
-      // Check mode: compare with existing file
-      if (fs.existsSync(outputPath)) {
-        const existing = fs.readFileSync(outputPath, 'utf-8');
-        if (existing !== mdx) {
-          console.error(`   ❌ ${path.basename(outputPath)} is out of sync with source code`);
-          hasErrors = true;
-        } else {
-          console.log(`   ✅ ${path.basename(outputPath)} is up to date`);
-        }
-      } else {
-        console.error(`   ❌ ${path.basename(outputPath)} does not exist`);
-        hasErrors = true;
-      }
-    } else {
-      // Generate mode: write file
-      fs.writeFileSync(outputPath, mdx);
-      console.log(`   ✅ Generated ${path.relative(ROOT_DIR, outputPath)}`);
-    }
-  }
-
-  if (hasErrors) {
-    if (checkOnly) {
-      console.error(
-        "\n💡 Run 'npx tsx scripts/docs-generators/python-sdk.ts' to update documentation"
-      );
-    }
-    process.exit(1);
-  }
-
-  console.log('\n✅ Python SDK documentation generation complete!');
-}
-
-// ============================================================================
-// Version Discovery
-// ============================================================================
-
-interface VersionInfo {
-  version: string;
-  href: string;
-  isCurrent: boolean;
-}
-
-/**
- * Get the latest released version from git tags.
- * Falls back to the version from source if no tags found.
- */
-function getLatestReleasedVersion(config: SDKConfig, fallbackVersion: string): string {
-  try {
-    const output = execSync(`git tag | grep "^${config.tagPrefix}" | sort -V | tail -1`, {
-      encoding: 'utf-8',
-      cwd: ROOT_DIR,
-    }).trim();
-    if (output) {
-      return output.replace(config.tagPrefix, '');
-    }
-  } catch {
-    // Fall through to fallback
-  }
-  return fallbackVersion;
-}
-
-function discoverVersions(config: SDKConfig, currentVersion: string): VersionInfo[] {
-  const baseDir = config.docsBaseDir
-    ? path.join(ROOT_DIR, config.docsBaseDir)
-    : path.join(ROOT_DIR, 'docs/content/docs/cua/reference');
-  const docsDir = path.join(baseDir, config.outputDir);
-  const hrefBase = config.hrefBase ?? '/cua/reference';
-  const versions: VersionInfo[] = [];
-
-  // Add current version (latest) — points to the index page (folder root)
-  const currentMajorMinor = currentVersion.split('.').slice(0, 2).join('.');
-  versions.push({
-    version: currentMajorMinor,
-    href: `${hrefBase}/${config.outputDir}`,
-    isCurrent: true,
-  });
-
-  // Discover versioned folders (v0.5, v0.4, etc.)
-  if (fs.existsSync(docsDir)) {
-    const entries = fs.readdirSync(docsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.startsWith('v')) {
-        const version = entry.name.substring(1); // Remove 'v' prefix
-        // Skip if this is the current version
-        if (version === currentMajorMinor) continue;
-
-        versions.push({
-          version,
-          href: `${hrefBase}/${config.outputDir}/${entry.name}/api`,
-          isCurrent: false,
-        });
-      }
-    }
-  }
-
-  // Sort versions descending
-  versions.sort((a, b) => {
-    const partsA = a.version.split('.').map((x) => parseInt(x, 10) || 0);
-    const partsB = b.version.split('.').map((x) => parseInt(x, 10) || 0);
-    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-      const partA = partsA[i] || 0;
-      const partB = partsB[i] || 0;
-      if (partA !== partB) return partB - partA;
-    }
-    return 0;
-  });
-
-  return versions;
-}
-
-// ============================================================================
-// MDX Generation
-// ============================================================================
-
-function generateMDX(docs: PythonPackage, config: SDKConfig): string {
-  const lines: string[] = [];
-
-  // Get the actual latest released version from git tags
-  const releasedVersion = getLatestReleasedVersion(config, docs.version);
-
-  // Frontmatter
-  const pageTitle = config.pageTitle ?? `${config.displayName} API Reference`;
-  lines.push('---');
-  lines.push(`title: ${pageTitle}`);
-  lines.push(`description: ${config.description}`);
-  lines.push('---');
-  lines.push('');
-
-  // Auto-generated notice
-  lines.push(`{/*`);
-  lines.push(`  AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY`);
-  lines.push(`  Generated by: npx tsx scripts/docs-generators/python-sdk.ts`);
-  lines.push(`  Source: ${config.packageDir}`);
-  lines.push(`  Version: ${releasedVersion}`);
-  lines.push(`*/}`);
-  lines.push('');
-
-  // Imports
-  lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
-  lines.push("import { Tabs, Tab } from 'fumadocs-ui/components/tabs';");
-  lines.push("import { VersionHeader } from '@/components/version-selector';");
-  lines.push('');
-
-  // Discover available versions using the released version
-  const versions = discoverVersions(config, releasedVersion);
-  const currentMajorMinor = releasedVersion.split('.').slice(0, 2).join('.');
-
-  // Version selector and badge
-  lines.push('<VersionHeader');
-  lines.push(`  versions={${JSON.stringify(versions)}}`);
-  lines.push(`  currentVersion="${currentMajorMinor}"`);
-  lines.push(`  fullVersion="${releasedVersion}"`);
-  // Use pip-style package name (underscores → hyphens)
-  // If it already starts with 'cua', don't add prefix
-  const pipName = config.packageName.replace(/_/g, '-');
-  const fullPipName = pipName.startsWith('cua') ? pipName : `cua-${pipName}`;
-  lines.push(`  packageName="${fullPipName}"`);
-  lines.push('/>');
-  lines.push('');
-
-  // Package description
-  if (docs.docstring) {
-    lines.push(docs.docstring);
-    lines.push('');
-  }
-
-  // Table of contents for classes
-  if (docs.classes.length > 0) {
-    lines.push('## Classes');
-    lines.push('');
-    lines.push('| Class | Description |');
-    lines.push('|-------|-------------|');
-    for (const cls of docs.classes) {
-      if (!cls.is_private) {
-        const desc = escapeMDX(cls.description.split('\n')[0]) || 'No description';
-        lines.push(`| [\`${cls.name}\`](#${cls.name.toLowerCase()}) | ${desc} |`);
-      }
-    }
-    lines.push('');
-  }
-
-  // Table of contents for functions
-  if (docs.functions.length > 0) {
-    lines.push('## Functions');
-    lines.push('');
-    lines.push('| Function | Description |');
-    lines.push('|----------|-------------|');
-    for (const fn of docs.functions) {
-      if (!fn.is_private) {
-        const desc = escapeMDX(fn.description.split('\n')[0]) || 'No description';
-        lines.push(`| [\`${fn.name}\`](#${fn.name.toLowerCase()}) | ${desc} |`);
-      }
-    }
-    lines.push('');
-  }
-
-  // Detailed class documentation
-  for (const cls of docs.classes) {
-    if (!cls.is_private) {
-      lines.push(...generateClassDoc(cls));
-    }
-  }
-
-  // Detailed function documentation
-  for (const fn of docs.functions) {
-    if (!fn.is_private) {
-      lines.push(...generateFunctionDoc(fn, '##'));
-    }
-  }
-
-  // Submodules (for packages that expose API through submodules)
-  if (docs.submodules && docs.submodules.length > 0) {
-    let publicSubmodules = docs.submodules.filter(
-      (m) => !m.name.startsWith('_') && (m.classes.length > 0 || m.functions.length > 0)
-    );
-
-    // Filter to only included submodules if configured
-    if (config.includeSubmodules) {
-      publicSubmodules = publicSubmodules.filter((m) => config.includeSubmodules!.includes(m.name));
-    }
-
-    for (const mod of publicSubmodules) {
-      const publicClasses = mod.classes.filter((c) => !c.is_private);
-      const publicFunctions = mod.functions.filter((f) => !f.is_private && !f.is_dunder);
-
-      if (publicClasses.length === 0 && publicFunctions.length === 0) continue;
-
-      lines.push('---');
-      lines.push('');
-      lines.push(`## ${mod.name}`);
-      lines.push('');
-      if (mod.docstring) {
-        lines.push(escapeMDX(mod.docstring));
-        lines.push('');
-      }
-
-      for (const cls of publicClasses) {
-        lines.push(...generateClassDoc(cls));
-      }
-
-      for (const fn of publicFunctions) {
-        lines.push(...generateFunctionDoc(fn, '###'));
-      }
-    }
-  }
-
-  return lines.join('\n');
-}
-
-function generateClassDoc(cls: ClassDoc): string[] {
-  const lines: string[] = [];
-
-  lines.push('---');
-  lines.push('');
-  lines.push(`## ${cls.name}`);
-  lines.push('');
-
-  // Base classes
-  if (cls.bases.length > 0) {
-    const bases = cls.bases.filter((b) => b !== 'object').join(', ');
-    if (bases) {
-      lines.push(`*Inherits from: ${bases}*`);
-      lines.push('');
-    }
-  }
-
-  // Description
-  if (cls.description) {
-    lines.push(escapeMDX(cls.description));
-    lines.push('');
-  }
-
-  // Constructor (__init__)
-  const initMethod = cls.methods.find((m) => m.name === '__init__');
-  if (initMethod) {
-    lines.push('### Constructor');
-    lines.push('');
-    lines.push('```python');
-    lines.push(formatSignature(initMethod.signature, cls.name));
-    lines.push('```');
-    lines.push('');
-
-    if (initMethod.parameters.length > 0) {
-      lines.push(...generateParametersTable(initMethod.parameters));
-    }
-  }
-
-  // Attributes
-  if (cls.attributes.length > 0) {
-    lines.push('### Attributes');
-    lines.push('');
-    lines.push('| Name | Type | Description |');
-    lines.push('|------|------|-------------|');
-    for (const attr of cls.attributes) {
-      const type = attr.type || 'Any';
-      // Strip docstring sections and collapse to single line for table cells
-      const desc = escapeMDX(stripDocstringSections(attr.description)) || '';
-      lines.push(`| \`${attr.name}\` | \`${type}\` | ${desc} |`);
-    }
-    lines.push('');
-  }
-
-  // Methods (excluding __init__ and private)
-  const publicMethods = cls.methods.filter(
-    (m) => !m.is_private && !m.is_dunder && m.name !== '__init__'
+  files.set(
+    path.join(SANDBOX_API_DIR, 'meta.json'),
+    metaJson('Python high-level API', SANDBOX_PAGES.map((p) => p.file))
   );
-
-  if (publicMethods.length > 0) {
-    lines.push('### Methods');
-    lines.push('');
-
-    for (const method of publicMethods) {
-      lines.push(...generateMethodDoc(method, cls.name));
-    }
-  }
-
-  return lines;
-}
-
-function generateMethodDoc(method: FunctionDoc, className: string): string[] {
-  const lines: string[] = [];
-
-  lines.push(`#### ${className}.${method.name}`);
-  lines.push('');
-  lines.push('```python');
-  lines.push(formatSignature(method.signature));
-  lines.push('```');
-  lines.push('');
-
-  // Use structured data flags to avoid duplicating info from docstring
-  const hasStructuredParams = method.parameters.filter((p) => p.name !== 'self').length > 0;
-  const hasStructuredReturns = !!method.returns;
-  const hasStructuredRaises = method.raises.length > 0;
-
-  if (method.description) {
-    lines.push(
-      ...formatDocstringLines(
-        method.description,
-        hasStructuredParams,
-        hasStructuredReturns,
-        hasStructuredRaises
-      )
-    );
-  }
-
-  // Structured parameters (from parsed signature)
-  if (hasStructuredParams) {
-    const params = method.parameters.filter((p) => p.name !== 'self');
-    lines.push(...generateParametersTable(params));
-  }
-
-  // Structured returns
-  if (method.returns) {
-    lines.push('**Returns:**');
-    lines.push('');
-    const returnType = method.returns.type || 'None';
-    const returnDesc = escapeMDX(method.returns.description) || '';
-    lines.push(`- \`${returnType}\` - ${returnDesc}`);
-    lines.push('');
-  }
-
-  // Structured raises
-  if (method.raises.length > 0) {
-    lines.push('**Raises:**');
-    lines.push('');
-    for (const exc of method.raises) {
-      lines.push(`- \`${exc.type}\` - ${escapeMDX(exc.description)}`);
-    }
-    lines.push('');
-  }
-
-  return lines;
-}
-
-function generateFunctionDoc(fn: FunctionDoc, heading: string): string[] {
-  const lines: string[] = [];
-
-  lines.push(`${heading} ${fn.name}`);
-  lines.push('');
-  lines.push('```python');
-  lines.push(formatSignature(fn.signature));
-  lines.push('```');
-  lines.push('');
-
-  const hasStructuredParams = fn.parameters.length > 0;
-  const hasStructuredReturns = !!fn.returns;
-  const hasStructuredRaises = fn.raises.length > 0;
-
-  if (fn.description) {
-    lines.push(
-      ...formatDocstringLines(
-        fn.description,
-        hasStructuredParams,
-        hasStructuredReturns,
-        hasStructuredRaises
-      )
-    );
-  }
-
-  // Structured parameters
-  if (hasStructuredParams) {
-    lines.push(...generateParametersTable(fn.parameters));
-  }
-
-  // Structured returns
-  if (fn.returns) {
-    lines.push('**Returns:**');
-    lines.push('');
-    const returnType = fn.returns.type || 'None';
-    const returnDesc = escapeMDX(fn.returns.description) || '';
-    lines.push(`- \`${returnType}\` - ${returnDesc}`);
-    lines.push('');
-  }
-
-  // Structured raises
-  if (fn.raises.length > 0) {
-    lines.push('**Raises:**');
-    lines.push('');
-    for (const exc of fn.raises) {
-      lines.push(`- \`${exc.type}\` - ${escapeMDX(exc.description)}`);
-    }
-    lines.push('');
-  }
-
-  // Structured examples (from parsed data)
-  if (fn.examples.length > 0) {
-    lines.push('**Example:**');
-    lines.push('');
-    lines.push('```python');
-    for (const example of fn.examples) {
-      lines.push(example);
-    }
-    lines.push('```');
-    lines.push('');
-  }
-
-  return lines;
-}
-
-function generateParametersTable(params: ParameterDoc[]): string[] {
-  const lines: string[] = [];
-
-  lines.push('**Parameters:**');
-  lines.push('');
-  lines.push('| Name | Type | Description |');
-  lines.push('|------|------|-------------|');
-
-  for (const param of params) {
-    const type = param.type || 'Any';
-    const desc = escapeMDX(param.description) || '';
-    const defaultVal = param.default ? ` (default: \`${param.default}\`)` : '';
-    lines.push(`| \`${param.name}\` | \`${type}\` | ${desc}${defaultVal} |`);
-  }
-
-  lines.push('');
-  return lines;
-}
-
-function formatSignature(signature: string, className?: string): string {
-  // Replace __init__ with class name for constructors
-  if (className && signature.includes('__init__')) {
-    return signature.replace('def __init__', className);
-  }
-  return signature;
-}
-
-/**
- * Escape special MDX characters in text content.
- * Curly braces and HTML-like tags must be escaped outside of code blocks.
- */
-function escapeMDX(text: string): string {
-  if (!text) return text;
-  return (
-    text
-      .replace(/\{/g, '\\{')
-      .replace(/\}/g, '\\}')
-      // Escape HTML-like tags that would be interpreted as JSX components
-      // but preserve markdown links []() and code backticks
-      .replace(/<(?!\/?(?:Callout|Tab|Tabs|VersionHeader|div|span|a|code|pre|br|hr)\b)/g, '&lt;')
+  files.set(
+    CUA_PYTHON_PAGE,
+    renderCuaPython(docs, modules, anchors, readVersion('libs/cua/python/src/cua/__init__.py'), sandboxVersion, set)
   );
+  const unused = [...examples.keys()].filter((k) => !set.used.has(k));
+  if (unused.length) {
+    throw new Error(`Python examples with no matching entry: ${unused.join(', ')} (scripts/docs-generators/examples/cua-sdk/python)`);
+  }
+  return files;
 }
 
-/**
- * Parse Google-style docstring sections (Args, Returns, Raises, Examples)
- * and return the description text with those sections stripped,
- * plus the parsed sections as structured data.
- */
-interface ParsedDocstring {
-  description: string;
-  args: { name: string; type: string; description: string }[];
-  returns: string;
-  raises: { type: string; description: string }[];
-  examples: string[];
+/** Every public `cua_sandbox` name is documented or listed as a re-export. */
+export function assertCoverage(extracted: Extracted): void {
+  const root = extracted.modules.find((m) => m.path === SB);
+  if (!root) throw new Error('cua_sandbox module was not extracted');
+  const documented = new Set(sandboxAnchors().keys());
+  const missing = root.all.filter(
+    (n) => !documented.has(n) && !root.imports[n]?.startsWith('fleet_sdk')
+  );
+  if (missing.length) {
+    throw new Error(
+      `cua_sandbox.__all__ names without a reference entry: ${missing.join(', ')}. Add them to SANDBOX_PAGES in python-sdk.ts.`
+    );
+  }
 }
 
-function parseDocstring(text: string): ParsedDocstring {
-  if (!text) return { description: '', args: [], returns: '', raises: [], examples: [] };
-
-  const lines = text.split('\n');
-  const result: ParsedDocstring = {
-    description: '',
-    args: [],
-    returns: '',
-    raises: [],
-    examples: [],
-  };
-
-  type Section = 'description' | 'args' | 'returns' | 'raises' | 'examples';
-  let currentSection: Section = 'description';
-  const descLines: string[] = [];
-  const returnsLines: string[] = [];
-  const exampleLines: string[] = [];
-  let currentArg: { name: string; type: string; description: string } | null = null;
-  let currentRaise: { type: string; description: string } | null = null;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Detect section headers
-    if (/^Args?\s*:/.test(trimmed) || /^Parameters?\s*:/.test(trimmed)) {
-      currentSection = 'args';
-      continue;
-    }
-    if (/^Returns?\s*:/.test(trimmed)) {
-      // Check if it's a one-liner like "Returns: something"
-      const inlineReturn = trimmed.replace(/^Returns?\s*:\s*/, '');
-      if (inlineReturn) {
-        returnsLines.push(inlineReturn);
-      }
-      currentSection = 'returns';
-      continue;
-    }
-    if (/^Raises?\s*:/.test(trimmed)) {
-      currentSection = 'raises';
-      continue;
-    }
-    if (/^Examples?\s*:/.test(trimmed)) {
-      currentSection = 'examples';
-      continue;
-    }
-
-    switch (currentSection) {
-      case 'description':
-        descLines.push(line);
-        break;
-
-      case 'args': {
-        // Match "param_name (type): description" or "param_name: description"
-        const argMatch = trimmed.match(/^(\w+)\s*(?:\(([^)]+)\))?\s*:\s*(.*)$/);
-        if (argMatch && !line.startsWith('        ')) {
-          if (currentArg) result.args.push(currentArg);
-          currentArg = {
-            name: argMatch[1],
-            type: argMatch[2] || '',
-            description: argMatch[3],
-          };
-        } else if (currentArg && trimmed) {
-          // Continuation line for current arg
-          currentArg.description += ' ' + trimmed;
-        }
-        break;
-      }
-
-      case 'returns':
-        if (trimmed) returnsLines.push(trimmed);
-        break;
-
-      case 'raises': {
-        const raiseMatch = trimmed.match(/^(\w+)\s*:\s*(.*)$/);
-        if (raiseMatch && !line.startsWith('        ')) {
-          if (currentRaise) result.raises.push(currentRaise);
-          currentRaise = { type: raiseMatch[1], description: raiseMatch[2] };
-        } else if (currentRaise && trimmed) {
-          currentRaise.description += ' ' + trimmed;
-        }
-        break;
-      }
-
-      case 'examples':
-        exampleLines.push(line);
-        break;
-    }
-  }
-
-  // Flush remaining items
-  if (currentArg) result.args.push(currentArg);
-  if (currentRaise) result.raises.push(currentRaise);
-
-  result.description = descLines.join('\n').trim();
-  result.returns = returnsLines.join(' ').trim();
-  result.examples = exampleLines;
-
-  return result;
+function main(): void {
+  const checkOnly = isCheckMode();
+  const objects = [
+    ...SANDBOX_PAGES.flatMap((p) => p.sections.flatMap((s) => s.objects)),
+    ...CUA_OBJECTS,
+  ];
+  const extracted = extract({
+    search_paths: ['libs/python/cua-sandbox', 'libs/cua/python/src'],
+    objects,
+    modules: [SB, ...CUA_MODULES],
+  });
+  assertCoverage(extracted);
+  const drift = syncFiles(buildFiles(extracted), checkOnly, [SANDBOX_API_DIR], GENERATOR);
+  finish('Python', drift, checkOnly, GENERATOR);
 }
 
-/**
- * Format a parsed docstring into markdown lines.
- * Only outputs sections not already covered by structured data.
- */
-function formatDocstringLines(
-  text: string,
-  hasStructuredParams: boolean,
-  hasStructuredReturns: boolean,
-  hasStructuredRaises: boolean
-): string[] {
-  const parsed = parseDocstring(text);
-  const lines: string[] = [];
-
-  // Description (always output)
-  if (parsed.description) {
-    lines.push(escapeMDX(parsed.description));
-    lines.push('');
-  }
-
-  // Args (only if no structured params)
-  if (!hasStructuredParams && parsed.args.length > 0) {
-    lines.push('**Parameters:**');
-    lines.push('');
-    lines.push('| Name | Type | Description |');
-    lines.push('|------|------|-------------|');
-    for (const arg of parsed.args) {
-      const type = arg.type || 'Any';
-      lines.push(`| \`${arg.name}\` | \`${escapeMDX(type)}\` | ${escapeMDX(arg.description)} |`);
-    }
-    lines.push('');
-  }
-
-  // Returns (only if no structured returns)
-  if (!hasStructuredReturns && parsed.returns) {
-    lines.push(`**Returns:** ${escapeMDX(parsed.returns)}`);
-    lines.push('');
-  }
-
-  // Raises (only if no structured raises)
-  if (!hasStructuredRaises && parsed.raises.length > 0) {
-    lines.push('**Raises:**');
-    lines.push('');
-    for (const r of parsed.raises) {
-      lines.push(`- \`${r.type}\` - ${escapeMDX(r.description)}`);
-    }
-    lines.push('');
-  }
-
-  // Examples
-  if (parsed.examples.length > 0) {
-    // Dedent example lines by removing common leading whitespace
-    const nonEmptyLines = parsed.examples.filter((l) => l.trim().length > 0);
-    if (nonEmptyLines.length > 0) {
-      const minIndent = Math.min(...nonEmptyLines.map((l) => l.match(/^(\s*)/)?.[1].length ?? 0));
-      const dedented = parsed.examples
-        .map((l) => (l.trim().length > 0 ? l.substring(minIndent) : ''))
-        .join('\n')
-        .trim();
-      if (dedented) {
-        lines.push('**Example:**');
-        lines.push('');
-        lines.push('```python');
-        lines.push(dedented);
-        lines.push('```');
-        lines.push('');
-      }
-    }
-  }
-
-  return lines;
-}
-
-/**
- * Strip docstring sections from text for use in single-line contexts (e.g. table cells).
- */
-function stripDocstringSections(text: string): string {
-  if (!text) return text;
-  const parsed = parseDocstring(text);
-  // Return only the first line of the description
-  return parsed.description.split('\n')[0].trim();
-}
-
-// ============================================================================
-// Run
-// ============================================================================
-
-main().catch((error) => {
-  console.error('Error:', error);
-  process.exit(1);
-});
+if (require.main === module) main();

@@ -26,7 +26,9 @@ use std::sync::{
 const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
 const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
 #[cfg(test)]
-pub(crate) static TEST_RUNTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// A tokio mutex: the async tests hold it across awaits to serialize runtime
+// ownership, and it does not poison the remaining tests when one fails.
+pub(crate) static TEST_RUNTIME_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum RuntimeCreateError {
@@ -234,7 +236,7 @@ impl DriverRuntime {
         cua_driver_core::session::forget_suspended_runtime_scope(
             &self.compatibility_context.runtime_scope_key(),
         );
-        cua_driver_core::element_cache::retire_runtime_scope(
+        cua_driver_core::snapshot_store::retire_runtime_scope(
             &self.compatibility_context.runtime_scope_key(),
         );
         let recording = self.registry.recording.clone();
@@ -456,7 +458,7 @@ impl Drop for DriverRuntime {
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_suspended_runtime_scope(&runtime_scope);
-        cua_driver_core::element_cache::retire_runtime_scope(&runtime_scope);
+        cua_driver_core::snapshot_store::retire_runtime_scope(&runtime_scope);
         // Explicit `shutdown()` drains work and finalizes recordings. Drop is
         // runtime-scoped and non-blocking so a retained binding cannot affect
         // another generation.
@@ -742,6 +744,31 @@ mod tests {
     }
 
     #[test]
+    fn every_registered_tool_schema_matches_the_dispatch_argument_check() {
+        let registry = build_registry(&RuntimeOptions::embedded(false));
+        // These schemas declare `additionalProperties: true`.
+        let open = [
+            "get_browser_state",
+            "browser_prepare",
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_dialog",
+            "browser_set_input_files",
+            "browser_download",
+            "browser_pointer",
+            "start_session",
+            "escalate_session",
+            "get_session",
+            "list_sessions",
+            "get_session_state",
+            "end_session",
+        ];
+        let violations = registry.input_conformance_violations(&open);
+        assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    #[test]
     fn canonical_inventory_advertises_unavailable_perception_tool() {
         let inventory = tool_inventory(RuntimeOptions::embedded(false));
         let tools = inventory["tools"].as_array().unwrap();
@@ -777,7 +804,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorized_dispatch_refreshes_only_the_runtime_private_activity_key() {
-        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
         let runtime = DriverRuntime::create(standard_options()).unwrap();
         let public = "runtime-activity-refresh";
         let internal = runtime.compatibility_context.runtime_session_key(public);
@@ -822,7 +849,7 @@ mod tests {
 
     #[tokio::test]
     async fn idle_eviction_finalizes_the_owning_runtime_recording() {
-        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
         let runtime = DriverRuntime::create(standard_options()).unwrap();
         let public = "runtime-recording-idle";
         let internal = runtime.compatibility_context.runtime_session_key(public);
@@ -870,7 +897,7 @@ mod tests {
 
     #[tokio::test]
     async fn incomplete_end_keeps_trusted_authorization_live_for_cleanup_retry() {
-        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
         let runtime = DriverRuntime::create(standard_options()).unwrap();
         let public_session = "runtime-end-cleanup-retry";
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -948,7 +975,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_stops_lifecycle_maintenance() {
-        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
         let runtime = DriverRuntime::create(standard_options()).unwrap();
         // The maintenance thread owns the only receiver, so sends fail once it
         // exits. This proves the thread stopped; it cannot distinguish the join

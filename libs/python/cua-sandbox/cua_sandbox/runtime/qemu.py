@@ -1,8 +1,20 @@
-"""QEMU runtime — bare-metal or Docker-wrapped QEMU VMs.
+"""QEMU runtimes — VMs through the cua SDK's QEMU backend (cua-vmm).
 
-Two modes:
-  QEMURuntime(mode="docker")     — default, uses trycua/cua-qemu-* Docker images
-  QEMURuntime(mode="bare-metal") — launches qemu-system-* directly on the host
+Every mode boots Linux and Windows guests through the SDK: it finds or
+provisions QEMU and UEFI firmware, picks the accelerator (KVM, HVF, WHPX,
+TCG), forwards cua-spacesd (3211) plus ``Image.expose()`` ports, and keeps
+a QMP socket for agentless control. Disks come from the pinned containerDisk
+(``vm:<ref>``, pulled by the SDK) or from the local builder (``disk:<path>``:
+``Image.from_file``, user layers, locally built Windows bases).
+
+  QEMURuntime(mode="bare-metal") — QEMU on the host
+  QEMURuntime(mode="docker")     — same SDK backend (the trycua/cua-qemu-*
+                                   wrapper images ran computer-server and are gone)
+  QEMURuntime(mode="wsl2")       — same SDK backend on Windows hosts
+
+Kept on the legacy Python launcher (they need no spacesd): Android-x86
+guests, OSWorld images, ISO installs, QMP-only transports and custom
+``extra_args``. ``CUA_SANDBOX_LEGACY_QEMU=1`` forces the legacy launcher.
 """
 
 from __future__ import annotations
@@ -18,23 +30,24 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from cua_sandbox._paths import cua_home
+
 if TYPE_CHECKING:
     from cua_sandbox.image import Image
 
 import httpx
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.base import Runtime, RuntimeInfo
-from cua_sandbox.runtime.docker import DockerRuntime, _has_kvm
-from cua_sandbox.runtime.images import (
-    DEFAULT_API_PORT,
-    QEMU_VNC_PORT,
-)
+from cua_sandbox.runtime.images import DEFAULT_API_PORT, SPACESD_PORT
+from cua_sandbox.runtime.native import NativeRuntime, is_native_state
+
+QEMU_VNC_PORT = 8006
 
 logger = logging.getLogger(__name__)
 
 # ── Storage directory for QEMU disk images ──────────────────────────────────
 
-QEMU_STORAGE_ROOT = Path.home() / ".cua" / "cua-sandbox" / "qemu-storage"
+QEMU_STORAGE_ROOT = cua_home() / "cua-sandbox" / "qemu-storage"
 
 
 async def _qmp_command(
@@ -65,13 +78,71 @@ async def _qmp_command(
             pass
 
 
-class QEMUDockerRuntime(DockerRuntime):
-    """QEMU inside Docker — delegates to DockerRuntime with QEMU image tags.
+def _legacy_forced() -> bool:
+    import os
 
-    For Windows QEMU images, automatically:
-    - Creates a /storage volume mount for the QEMU disk
-    - Sets KVM=N if /dev/kvm is not available
-    - Mounts an existing cached disk image if available
+    return os.environ.get("CUA_SANDBOX_LEGACY_QEMU", "").lower() in ("1", "true", "yes")
+
+
+class NativeQEMURuntime(NativeRuntime):
+    """Linux/Windows VMs on the SDK's QEMU backend."""
+
+    runtime_type = "qemu"
+    env_ready_timeout = 600.0
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._session_disks: dict[str, Path] = {}
+
+    async def _image_ref(self, image: Image, name: str, **opts) -> str:
+        from cua_sandbox.builder.build import create_session_disk, has_build_work
+        from cua_sandbox.image import cloud_registry_image
+
+        disk = opts.get("disk_path") or image._disk_path
+        ref = cloud_registry_image(image)
+        if disk and not has_build_work(image):
+            return f"disk:{disk}"
+        if ref is not None and not disk and not has_build_work(image):
+            # The SDK pulls the pinned containerDisk (the disk Fleet boots).
+            return f"vm:{ref}"
+        session = await create_session_disk(image, name, base_disk=Path(disk) if disk else None)
+        if "sessions" in str(session):
+            self._session_disks[name] = Path(session)
+        return f"disk:{session}"
+
+    async def delete(self, name: str) -> None:
+        try:
+            await super().delete(name)
+        finally:
+            session = self._session_disks.pop(name, None)
+            if session is not None and session.exists():
+                try:
+                    session.unlink()
+                except OSError:
+                    pass
+
+
+def _native_eligible(
+    image: Image, opts: dict, *, use_qmp: bool = False, extra: bool = False
+) -> bool:
+    disk = opts.get("disk_path") or image._disk_path
+    return (
+        not _legacy_forced()
+        and image.os_type in ("linux", "windows")
+        and image._agent_type != "osworld"
+        and not use_qmp
+        and not extra
+        and not (disk and Path(disk).suffix.lower() == ".iso")
+    )
+
+
+class QEMUDockerRuntime(NativeQEMURuntime):
+    """``QEMURuntime(mode="docker")``: kept for compatibility.
+
+    The trycua/cua-qemu-* wrapper images drove their guest through
+    computer-server, which is gone; Linux and Windows guests now boot on the
+    SDK's QEMU backend (the SDK provisions QEMU itself). Android guests use
+    :class:`~cua_sandbox.runtime.AndroidEmulatorRuntime` or bare-metal QEMU.
     """
 
     def __init__(
@@ -84,74 +155,20 @@ class QEMUDockerRuntime(DockerRuntime):
         memory_mb: int = 8192,
         cpu_count: int = 4,
     ):
+        super().__init__(ephemeral=ephemeral, cpus=cpu_count, memory_mb=memory_mb)
+        self.api_port = api_port
+        self.vnc_port = vnc_port
         self._storage_dir = Path(storage_dir) if storage_dir else None
-        self._memory_mb = memory_mb
-        self._cpu_count = cpu_count
-        super().__init__(api_port=api_port, vnc_port=vnc_port, ephemeral=ephemeral)
 
     async def start(self, image: Image, name: str, **opts) -> RuntimeInfo:
-        # Resolve storage directory
-        storage = self._storage_dir or QEMU_STORAGE_ROOT / name
-        storage.mkdir(parents=True, exist_ok=True)
-
-        # Volume: host storage dir → /storage in container
-        self.volumes = [f"{storage}:/storage"]
-
-        # Environment
-        self.environment = {
-            "RAM_SIZE": f"{self._memory_mb // 1024}G",
-            "CPU_CORES": str(self._cpu_count),
-        }
-
-        # KVM handling
-        if _has_kvm():
-            self.devices = ["/dev/kvm"]
-        else:
-            self.environment["KVM"] = "N"
-
-        # Platform — QEMU Windows/Android images are linux/amd64
-        if image.os_type in ("windows", "android"):
-            self.platform = "linux/amd64"
-
-        # Android: forward ADB port (5555) in addition to API
         if image.os_type == "android":
-            self.environment["ADB_PORT"] = "5555"
-
-        # Longer boot timeout for Windows/Android VMs
+            raise NotImplementedError(
+                "Docker-wrapped QEMU Android images ran computer-server and were removed; "
+                "use AndroidEmulatorRuntime() or QEMURuntime(mode='bare-metal') with an "
+                "Android-x86 disk"
+            )
         opts.pop("boot_timeout", None)
-
-        info = await super().start(image, name, **opts)
-        return info
-
-    async def is_ready(self, info: RuntimeInfo, timeout: float = 300) -> bool:
-        """Wait for the QEMU VM's computer-server to come up.
-
-        Windows VMs take longer to boot (3-5 min), so default timeout is 300s.
-        """
-        return await super().is_ready(info, timeout=timeout)
-
-    async def suspend(self, name: str) -> None:
-        """Pause the Docker container running this QEMU VM."""
-        subprocess.run(["docker", "pause", name], capture_output=True)
-
-    async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
-        """Unpause the Docker container and return RuntimeInfo."""
-        subprocess.run(["docker", "unpause", name], capture_output=True)
-        result = subprocess.run(
-            [
-                "docker",
-                "inspect",
-                "--format",
-                '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}',
-                name,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        api_port = int(result.stdout.strip()) if result.stdout.strip().isdigit() else self.api_port
-        info = RuntimeInfo(host="localhost", api_port=api_port, vnc_port=self.vnc_port, name=name)
-        await self.is_ready(info)
-        return info
+        return await super().start(image, name, **opts)
 
 
 # UEFI firmware for Windows guests, as (code, vars-template) pairs. The two halves
@@ -164,6 +181,16 @@ _UEFI_FIRMWARE_CANDIDATES: list[tuple[str, str]] = [
     ("/usr/share/OVMF/OVMF_CODE.fd", "/usr/share/OVMF/OVMF_VARS.fd"),
     ("/usr/share/qemu/edk2-x86_64-code.fd", "/usr/share/qemu/edk2-i386-vars.fd"),
 ]
+
+
+def _netdev(forwards: str, *, restrict: bool = False) -> str:
+    """The ``-netdev`` value: user-mode NAT with ``forwards`` (``hostfwd=...``).
+
+    The guest has outbound network unless ``restrict`` (``network="none"``),
+    which adds ``restrict=on``: slirp then drops guest-initiated traffic but
+    still serves the host forwards the SDK talks to the guest through.
+    """
+    return f"user,id=net0,{'restrict=on,' if restrict else ''}{forwards}"
 
 
 def _find_free_vnc_display(start: int = 0, span: int = 64) -> int:
@@ -230,7 +257,11 @@ class QEMUBaremetalRuntime(Runtime):
         qmp_port: int = 4444,
         use_qmp_transport: bool = False,
         extra_args: Optional[list[str]] = None,
+        use_sdk: Optional[bool] = None,
     ):
+        """``use_sdk=False`` keeps the legacy in-process launcher, which boots
+        the given disk in place (the image builder needs that: the SDK always
+        puts an instance overlay on top of the disk)."""
         self.api_port = api_port
         self.vnc_display = vnc_display
         self.memory_mb = memory_mb
@@ -239,6 +270,7 @@ class QEMUBaremetalRuntime(Runtime):
         self.qmp_port = qmp_port
         self.use_qmp_transport = use_qmp_transport
         self.extra_args = extra_args or []
+        self.use_sdk = use_sdk
         self._processes: dict[str, subprocess.Popen] = {}
 
     def _qemu_bin(self) -> str:
@@ -265,8 +297,39 @@ class QEMUBaremetalRuntime(Runtime):
                 raise RuntimeError(f"qemu-img create failed: {result.stderr}")
         return disk_path
 
+    def _native_runtime(self) -> NativeQEMURuntime:
+        native = getattr(self, "_native", None)
+        if native is None:
+            native = NativeQEMURuntime(
+                cpus=self.cpu_count,
+                memory_mb=self.memory_mb,
+                server_port=getattr(self, "server_port", None),
+            )
+            self._native = native
+        return native
+
+    def _is_native(self, name: str) -> bool:
+        from cua_sandbox import sandbox_state
+
+        if name in getattr(self, "_native_names", set()):
+            return True
+        return is_native_state(sandbox_state.load(name))
+
     async def start(self, image: Image, name: str, **opts) -> RuntimeInfo:
         ephemeral = opts.pop("ephemeral", True)
+
+        if self.use_sdk is not False and _native_eligible(
+            image, opts, use_qmp=self.use_qmp_transport, extra=bool(self.extra_args)
+        ):
+            native = self._native_runtime()
+            native.ephemeral = ephemeral
+            info = await native.start(image, name, ephemeral=ephemeral, **opts)
+            self._native_names = getattr(self, "_native_names", set()) | {name}
+            return info
+
+        # Guest egress is on by default (slirp NAT, like a Docker container);
+        # network="none" adds restrict=on, which keeps the loopback forwards.
+        restrict = opts.pop("network", None) == "none"
 
         from cua_sandbox.builder.build import create_session_disk, has_build_work
 
@@ -307,8 +370,8 @@ class QEMUBaremetalRuntime(Runtime):
         qmp_port = opts.get("qmp_port") or _find_free_port(self.qmp_port)
         enable_kvm = opts.get("enable_kvm", True)
 
-        # Detect guest server port from transport hint
-        guest_port = 5000 if image._agent_type == "osworld" else 8000
+        # Guest agent port: the OSWorld Flask server, else cua-spacesd.
+        guest_port = 5000 if image._agent_type == "osworld" else SPACESD_PORT
 
         # Image.expose() ports. Without these the port is silently unreachable
         # from the host: the guest listens, nothing forwards, and nothing errors.
@@ -316,7 +379,7 @@ class QEMUBaremetalRuntime(Runtime):
         extra_hostfwd = ""
         for exposed in dict.fromkeys(image._ports):
             if exposed == guest_port:
-                # already forwarded as the computer-server port
+                # already forwarded as the guest agent port
                 exposed_ports[exposed] = hostfwd_port
                 continue
             host_port = _find_free_port(exposed)
@@ -365,6 +428,7 @@ class QEMUBaremetalRuntime(Runtime):
                 vnc_display,
                 enable_kvm,
                 qmp_port,
+                restrict=restrict,
             )
         else:
             cmd = [
@@ -394,8 +458,10 @@ class QEMUBaremetalRuntime(Runtime):
                 "-drive",
                 f"file={disk_path},format={disk_fmt},if=virtio",
                 "-netdev",
-                f"user,id=net0,restrict=on,"
-                f"hostfwd=tcp:127.0.0.1:{hostfwd_port}-:{guest_port}{extra_hostfwd}",
+                _netdev(
+                    f"hostfwd=tcp:127.0.0.1:{hostfwd_port}-:{guest_port}{extra_hostfwd}",
+                    restrict=restrict,
+                ),
                 "-device",
                 "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
                 "-vnc",
@@ -488,6 +554,7 @@ class QEMUBaremetalRuntime(Runtime):
                 memory_mb=memory,
                 cpu_count=cpus,
                 arch=self.arch,
+                network="none" if restrict else "default",
                 status="running",
             )
 
@@ -534,6 +601,8 @@ class QEMUBaremetalRuntime(Runtime):
         vnc_display: int,
         enable_kvm: bool,
         qmp_port: Optional[int] = None,
+        *,
+        restrict: bool = False,
     ) -> list[str]:
         """Build QEMU command for Android x86_64 VM.
 
@@ -576,10 +645,10 @@ class QEMUBaremetalRuntime(Runtime):
         adb_port = hostfwd_port + 1
         cmd += [
             "-netdev",
-            (
-                f"user,id=net0,"
+            _netdev(
                 f"hostfwd=tcp:127.0.0.1:{hostfwd_port}-:8000,"
-                f"hostfwd=tcp:127.0.0.1:{adb_port}-:5555"
+                f"hostfwd=tcp:127.0.0.1:{adb_port}-:5555",
+                restrict=restrict,
             ),
             "-device",
             "virtio-net-pci,netdev=net0",
@@ -608,6 +677,9 @@ class QEMUBaremetalRuntime(Runtime):
         return cmd
 
     async def stop(self, name: str) -> None:
+        if self._is_native(name):
+            await self._native_runtime().delete(name)
+            return
         # Try to kill tracked process first
         proc = self._processes.pop(name, None)
         if proc and proc.poll() is None:
@@ -645,11 +717,16 @@ class QEMUBaremetalRuntime(Runtime):
         sandbox_state.delete(name)
 
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
+        if info.native is not None:
+            return await self._native_runtime().is_ready(info, timeout)
         if info.qmp_port and not info.agent_type:
             return await self._is_ready_qmp(info, timeout)
-        # For OSWorld, check the Flask server; for computer-server, check /status
-        endpoint = "/screenshot" if info.agent_type == "osworld" else "/status"
-        url = f"http://{info.host}:{info.api_port}{endpoint}"
+        if info.agent_type != "osworld":
+            # Daemon-agnostic: the QEMU process is up; the interfaces wait for
+            # cua-spacesd themselves (and fall back to QMP/VNC without it).
+            return True
+        # OSWorld images serve their Flask agent; wait for its screenshot route.
+        url = f"http://{info.host}:{info.api_port}/screenshot"
         deadline = asyncio.get_event_loop().time() + timeout
         async with httpx.AsyncClient(timeout=10) as client:
             while asyncio.get_event_loop().time() < deadline:
@@ -673,6 +750,9 @@ class QEMUBaremetalRuntime(Runtime):
         """Save VM state via QMP savevm then quit QEMU."""
         from cua_sandbox import sandbox_state
 
+        if self._is_native(name):
+            await self._native_runtime().suspend(name)
+            return
         state = sandbox_state.load(name)
         qmp_port = state["qmp_port"] if state else self.qmp_port
         try:
@@ -688,6 +768,8 @@ class QEMUBaremetalRuntime(Runtime):
         """Relaunch QEMU with -loadvm to restore saved state."""
         from cua_sandbox import sandbox_state
 
+        if self._is_native(name):
+            return await self._native_runtime().resume(image, name, **opts)
         state = sandbox_state.load(name)
         if state is None:
             raise ValueError(f"No state file found for sandbox '{name}'. Cannot resume.")
@@ -726,13 +808,16 @@ class QEMUBaremetalRuntime(Runtime):
         disk_fmt = {".qcow2": "qcow2", ".vhdx": "vhdx", ".raw": "raw", ".img": "raw"}.get(
             disk_ext, "raw"
         )
-        guest_port = 8000
+        guest_port = SPACESD_PORT
 
         cmd += [
             "-drive",
             f"file={disk_path},format={disk_fmt},if=virtio",
             "-netdev",
-            f"user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{api_port}-:{guest_port}",
+            _netdev(
+                f"hostfwd=tcp:127.0.0.1:{api_port}-:{guest_port}",
+                restrict=state.get("network") == "none",
+            ),
             "-device",
             "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
             "-vnc",
@@ -951,6 +1036,17 @@ class QEMUWSL2Runtime(Runtime):
     async def start(self, image: Image, name: str, **opts) -> RuntimeInfo:
         ephemeral = opts.pop("ephemeral", True)
 
+        if _native_eligible(image, opts, extra=bool(self.extra_args)):
+            # The SDK's QEMU backend runs natively on Windows (WHPX).
+            native = NativeQEMURuntime(
+                ephemeral=ephemeral,
+                cpus=self.cpu_count,
+                memory_mb=self.memory_mb,
+                server_port=getattr(self, "server_port", None),
+            )
+            self._native = native
+            return await native.start(image, name, ephemeral=ephemeral, **opts)
+
         from cua_sandbox.builder.build import create_session_disk, has_build_work
 
         # Resolve disk path
@@ -1022,7 +1118,11 @@ class QEMUWSL2Runtime(Runtime):
 
         parts += [
             f"-drive file={wsl_disk},format={disk_fmt},if=virtio",
-            f"-netdev user,id=net0,hostfwd=tcp:0.0.0.0:{hostfwd_port}-:8000",
+            "-netdev "
+            + _netdev(
+                f"hostfwd=tcp:0.0.0.0:{hostfwd_port}-:{SPACESD_PORT}",
+                restrict=opts.pop("network", None) == "none",
+            ),
             "-device virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
             f"-vnc :{vnc_display}",
             "-daemonize",
@@ -1054,6 +1154,10 @@ class QEMUWSL2Runtime(Runtime):
         return info
 
     async def stop(self, name: str) -> None:
+        native = getattr(self, "_native", None)
+        if native is not None:
+            await native.delete(name)
+            return
         try:
             subprocess.run(
                 ["wsl", "-e", "bash", "-c", f"pkill -f 'qemu.*-name {name}'"],
@@ -1072,24 +1176,9 @@ class QEMUWSL2Runtime(Runtime):
                 pass
 
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
-        url = f"http://{info.host}:{info.api_port}/status"
-        deadline = asyncio.get_event_loop().time() + timeout
-        async with httpx.AsyncClient(timeout=5) as client:
-            while asyncio.get_event_loop().time() < deadline:
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        logger.info(f"WSL2 QEMU VM {info.name} is ready")
-                        return True
-                except (
-                    httpx.ConnectError,
-                    httpx.ReadTimeout,
-                    httpx.RemoteProtocolError,
-                    httpx.ConnectTimeout,
-                ):
-                    pass
-                await asyncio.sleep(2)
-        raise TimeoutError(f"WSL2 QEMU VM {info.name} not ready after {timeout}s")
+        # Daemon-agnostic: the VM process is up; the interfaces wait for
+        # cua-spacesd themselves.
+        return True
 
 
 def QEMURuntime(mode: str = "docker", **kwargs) -> Runtime:

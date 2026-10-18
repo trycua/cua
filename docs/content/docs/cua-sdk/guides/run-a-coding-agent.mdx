@@ -1,0 +1,167 @@
+---
+title: Run a coding agent in a sandbox
+description: Start Claude Code, Codex, Gemini CLI and other harnesses inside a sandbox, stream their events, follow up, interrupt, and collect results and files.
+---
+
+`sandbox.agents()` runs a coding-agent harness (Claude Code, Codex, Gemini CLI,
+OpenCode, Goose, ...) inside the sandbox. The SDK installs the harness from
+pinned, checksum-verified sources, drives it over the
+[Agent Client Protocol](https://agentclientprotocol.com), and normalizes its
+output into events. A run lives in the sandbox (state under
+`~/.cua/agents/<run>`), so it keeps working after your process exits; any
+client can reattach later.
+
+The examples below are regions of
+[`examples/agents-in-sandboxes/tour.py`](https://github.com/trycua/cua/blob/main/examples/agents-in-sandboxes/tour.py),
+which runs them end to end.
+
+## Create a sandbox
+
+Any image with cua-spacesd works: the canonical `ghcr.io/trycua/linux:24.04`,
+your own registry image, or a benchmark image.
+
+```python test="excerpt" id="create" source="examples/agents-in-sandboxes/tour.py#create"
+c = cua.embedded()
+sb = await c.sandboxes().create(cua.SandboxCreateOptions(
+    on="local",                               # or "cloud"
+    image=image,                              # any image with cua-spacesd
+    name=name,
+    memory_mb=4096,
+    wait_for=[cua.ReadinessProbe(service="env")],
+))
+```
+
+## Run a harness
+
+Pass the provider key explicitly. `env_from_host` copies the named variables
+from this process's environment (known provider key names only); `env` takes
+values directly.
+
+```python test="excerpt" id="run" source="examples/agents-in-sandboxes/tour.py#run"
+agents = await sb.agents()
+run = await agents.run(
+    "claude-code",
+    "Write primes.py that prints the first 10 primes, then run it.",
+    cua.AgentRunOptions(env_from_host=["ANTHROPIC_API_KEY"]),
+)
+print(run.run_id())
+```
+
+`agents.run` returns once the run has started. The first run of a harness in a
+sandbox also installs it (`install` events); `await agents.ensure(["claude-code"])`
+installs ahead of time.
+
+## Stream events
+
+`run.events(cursor, max)` returns a page of events and the cursor to continue
+from. This helper prints them until the turn ends:
+
+```python test="excerpt" id="follow" source="examples/agents-in-sandboxes/tour.py#follow"
+async def follow(run, cursor=0, timeout=600):
+    """Prints events until the turn ends; returns the cursor to continue from."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        page = await run.events(cursor, None)
+        cursor = page.cursor
+        for e in page.events:
+            if e.line:
+                print(f"{e.kind:12} {e.line.splitlines()[0][:100]}")
+            if e.kind in ("turn_ended", "exited"):
+                return cursor
+        if page.caught_up:
+            await asyncio.sleep(0.5)
+    raise TimeoutError(f"{run.run_id()} is still working")
+```
+
+```python test="excerpt" id="stream" source="examples/agents-in-sandboxes/tour.py#stream"
+cursor = await follow(run)
+```
+
+For a single turn, Python also has `async for e in run.stream(): ...`.
+
+Output of `tour.py` run against the scripted mock provider (`cua-mock-llm`),
+so the model reply is scripted, not generated; install lines are trimmed:
+
+```text output
+install      [install] claude-code verify sha512 integrity
+install      [install] claude-code done /home/cua/.cua/tools/claude-code/2.1.281
+turn_started > Write primes.py that prints the first 10 primes, then run it.
+message      mock reply (scripted): ...
+turn_ended   [turn 1 ended: end_turn]
+```
+
+## Follow up and interrupt
+
+A follow-up continues the same session. It is queued while a turn runs.
+
+```python test="excerpt" id="followup" source="examples/agents-in-sandboxes/tour.py#followup"
+await run.send("Now add a unit test for it and run the test.", None)
+cursor = await follow(run, cursor)
+```
+
+```python test="excerpt" id="interrupt" source="examples/agents-in-sandboxes/tour.py#interrupt"
+await run.send("Rewrite it to use a sieve and benchmark both versions.", None)
+await asyncio.sleep(5)
+await run.interrupt()      # cancels the turn in flight; the session stays open
+cursor = await follow(run, cursor)
+```
+
+## Collect the result and files
+
+`result()` describes the last turn: status, stop reason, the agent's text,
+tool call count and token usage. `artifacts()` lists files the run created or
+changed in its working directory. `run.wait(timeout_ms)` waits for the turn to
+end, then returns the same result.
+
+```python test="excerpt" id="result" source="examples/agents-in-sandboxes/tour.py#result"
+result = await run.result()
+print(result.status, result.stop_reason, result.tool_calls, result.usage_json)
+print(result.text)
+for a in await run.artifacts():
+    print(a.path, a.size)
+await run.stop()
+```
+
+`stop()` ends the run and verifies its process is gone. `remove()` also
+deletes the run's directory, secrets included.
+
+## Fire and forget, reattach later
+
+`exit_when_idle=True` (`--exit-when-idle`) stops the run by itself once the
+prompt is answered. From the CLI:
+
+```bash test="cli-shape" id="cli-run"
+cua agent run local:dev claude-code "Fix the failing test in tests/" \
+  --env-from-host ANTHROPIC_API_KEY --repo https://github.com/<org>/<repo> --exit-when-idle
+cua agent ls local:dev
+cua agent logs local:dev <run-id> --follow
+cua agent send local:dev <run-id> "Now add a regression test"
+cua agent interrupt local:dev <run-id>
+cua agent status local:dev <run-id>
+cua agent stop local:dev <run-id>
+```
+
+Any process can pick up the runs of a sandbox:
+
+```python test="excerpt" id="reattach" source="examples/agents-in-sandboxes/tour.py#reattach"
+agents = await sb.agents()            # any process, later
+runs = await agents.list()            # newest first
+for info in runs:
+    print(info.run_id, info.harness, info.status, info.label)
+run = await agents.get(runs[0].run_id)
+print((await run.result()).text)
+```
+
+## Options
+
+[Configure coding agents](/cua-sdk/guides/coding-agent-options) covers MCP
+servers for the agent, custom endpoints and proxies, the supported harnesses,
+credentials, and every event kind.
+
+## Related
+
+- [`examples/agents-in-sandboxes`](https://github.com/trycua/cua/tree/main/examples/agents-in-sandboxes):
+  run a harness over a task file in any image and collect a JSON report.
+- [cua-bench](/cua-bench/quickstart): `--agent harness` uses a
+  harness as a benchmark agent.
+- [Connect to an MCP server](/cua-sdk/guides/services) in a sandbox.

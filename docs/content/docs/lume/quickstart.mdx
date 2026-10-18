@@ -1,0 +1,58 @@
+---
+title: Quickstart
+description: 'Install Lume, create a vanilla macOS Tahoe VM from an Apple restore image, and connect over SSH.'
+---
+
+Install Lume, create a macOS Tahoe VM straight from Apple's restore image, and
+SSH into it.
+
+## Prerequisites
+
+- An Apple silicon Mac on macOS 13 or later.
+- 8 GB free memory and about 50 GB free disk.
+
+## Run
+
+```bash test="cli-shape,lume" id="install"
+/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
+lume --version
+```
+
+```bash test="cli-shape" id="lume-create-macos-tahoe"
+lume create macos-tahoe --ipsw latest --unattended tahoe
+```
+
+`--ipsw latest` downloads the newest supported restore image (or pass a local
+`.ipsw`; `lume ipsw` prints the URL). The `tahoe` preset prepares the guest
+offline: user `lume` with password `lume`, SSH, autologin, no sleep or screen
+lock. Creation boots once, checks SSH and leaves the VM stopped.
+
+```bash test="cli-shape" id="lume-run-macos-tahoe"
+lume run macos-tahoe
+```
+
+## Result
+
+The VM's desktop opens in Lume's viewer. From another terminal:
+
+```bash test="cli-shape" id="lume-ssh-macos-tahoe"
+lume ssh macos-tahoe 'sw_vers; id -un'
+```
+
+prints the guest's macOS version and `lume`. Change the password before using
+the VM for anything sensitive.
+
+![lume ls listing local macOS VMs](/img/lume/lume-ls.png)
+
+## Clean up
+
+```bash test="cli-shape" id="lume-delete-macos-tahoe"
+lume stop macos-tahoe
+lume delete macos-tahoe
+```
+
+## Next
+
+- [Manage VMs](/lume/guides/manage-vms)
+- [Drive Lume from scripts and agents](/lume/guides/api-and-mcp)
+- [CLI reference](/lume/reference/cli)

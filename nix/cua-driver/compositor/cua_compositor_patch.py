@@ -22,7 +22,8 @@
 # command line is answered by exactly one `ok` / `err <reason>` acknowledgement.
 #
 # Usage: cua_compositor_patch.py <tinywl.c in> <cua-compositor.c out>
-import sys, io
+import sys
+import io
 
 inp = sys.argv[1] if len(sys.argv) > 1 else "tinywl.c"
 out = sys.argv[2] if len(sys.argv) > 2 else "cua-compositor.c"

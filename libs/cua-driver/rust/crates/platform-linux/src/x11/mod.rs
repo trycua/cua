@@ -52,10 +52,7 @@ pub fn active_window() -> Option<u64> {
 
 /// List top-level windows, optionally filtered by pid.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    match list_windows_inner(filter_pid) {
-        Ok(w) => w,
-        Err(_) => Vec::new(),
-    }
+    list_windows_inner(filter_pid).unwrap_or_default()
 }
 
 /// Whether the X server still knows a window by this id.
@@ -97,7 +94,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     let root = screen.root;
 
     // Get _NET_CLIENT_LIST_STACKING (or fallback to _NET_CLIENT_LIST).
-    let windows = get_window_list(&conn, root)?;
+    let (windows, source) = get_window_list(&conn, root)?;
 
     let owners = OwnerResolver::new(&conn);
     let mut result = Vec::new();
@@ -110,7 +107,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
         }
 
         let title = get_window_title(&conn, xid).unwrap_or_default();
-        if title.trim().is_empty() {
+        if !window_is_listable(source, &title) {
             continue;
         }
         let app_name = get_window_class(&conn, xid)
@@ -153,7 +150,25 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     Ok(result)
 }
 
-fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowSource {
+    ClientList,
+    RootChildren,
+}
+
+/// A window the window manager manages is listed even without a title: GTK
+/// message dialogs (a LibreOffice or GIMP confirmation) are untitled, and one
+/// is often the modal window holding the focus. Without a window manager the
+/// title is the only hint that a mapped root child is an application window
+/// rather than a popup or tooltip.
+fn window_is_listable(source: WindowSource, title: &str) -> bool {
+    source == WindowSource::ClientList || !title.trim().is_empty()
+}
+
+pub(crate) fn get_window_list(
+    conn: &RustConnection,
+    root: Window,
+) -> Result<(Vec<Window>, WindowSource)> {
     let atom_names = ["_NET_CLIENT_LIST_STACKING", "_NET_CLIENT_LIST"];
     for name in &atom_names {
         if let Ok(atom) = get_atom(conn, name) {
@@ -166,7 +181,7 @@ fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
                     .map(|iter| iter.collect())
                     .unwrap_or_default();
                 if client_list_property(reply.type_, windows.as_slice()).is_some() {
-                    return Ok(windows);
+                    return Ok((windows, WindowSource::ClientList));
                 }
             }
         }
@@ -176,7 +191,7 @@ fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
     // that case only expose mapped root children; unmapped Electron children
     // can otherwise be reported before a late-starting WM reparents them.
     let tree = conn.query_tree(root)?.reply()?;
-    Ok(tree
+    let windows = tree
         .children
         .into_iter()
         .filter(|window| {
@@ -186,7 +201,8 @@ fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
                 .map(|attributes| fallback_window_is_listable(attributes.map_state))
                 .unwrap_or(false)
         })
-        .collect())
+        .collect();
+    Ok((windows, WindowSource::RootChildren))
 }
 
 fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Window]> {
@@ -197,7 +213,7 @@ fn fallback_window_is_listable(map_state: MapState) -> bool {
     map_state == MapState::VIEWABLE
 }
 
-fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
+pub(crate) fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
     Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
 }
 
@@ -507,6 +523,28 @@ pub fn window_is_modal(xid: u64) -> bool {
         .is_some_and(|atoms| atoms.contains(&modal_atom))
 }
 
+/// `_NET_WM_WINDOW_TYPE` carries `_NET_WM_WINDOW_TYPE_SPLASH`: a startup
+/// screen, often drawn by a launcher process that never owns the app window.
+pub fn window_is_splash(xid: u64) -> bool {
+    let Ok(xid) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    let (Ok(type_atom), Ok(splash_atom)) = (
+        get_atom(&conn, "_NET_WM_WINDOW_TYPE"),
+        get_atom(&conn, "_NET_WM_WINDOW_TYPE_SPLASH"),
+    ) else {
+        return false;
+    };
+    conn.get_property(false, xid, type_atom, AtomEnum::ATOM, 0, 64)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().map(|atoms| atoms.collect::<Vec<_>>()))
+        .is_some_and(|atoms| atoms.contains(&splash_atom))
+}
+
 /// True while `xid` exists on the server and is viewable.
 pub fn window_is_viewable(xid: u64) -> bool {
     window_info(xid).is_some_and(|w| w.is_on_screen)
@@ -523,7 +561,7 @@ pub fn window_pid(xid: u64) -> Option<u32> {
     get_window_pid(&conn, xid).ok().flatten()
 }
 
-fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
+pub(crate) fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
     let atom = get_atom(conn, "_NET_WM_PID")?;
     let reply = conn
         .get_property(false, window, atom, AtomEnum::CARDINAL, 0, 1)?
@@ -643,7 +681,7 @@ fn get_client_machine(conn: &RustConnection, window: Window) -> Result<Option<St
     Ok(Some(value.trim_end_matches('\0').to_owned()))
 }
 
-fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
+pub(crate) fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
     // Try _NET_WM_NAME (UTF-8) first.
     if let Ok(atom) = get_atom(conn, "_NET_WM_NAME") {
         if let Ok(utf8_atom) = get_atom(conn, "UTF8_STRING") {
@@ -681,14 +719,7 @@ pub fn wm_class_for_window(xid: u64) -> Option<(String, String)> {
 
 pub(crate) fn get_window_class(conn: &RustConnection, xid: Window) -> Option<(String, String)> {
     let reply = conn
-        .get_property(
-            false,
-            xid as u32,
-            AtomEnum::WM_CLASS,
-            AtomEnum::STRING,
-            0,
-            512,
-        )
+        .get_property(false, xid, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512)
         .ok()?
         .reply()
         .ok()?;
@@ -729,6 +760,17 @@ mod tests {
         assert!(window_owner_matches(Some(42), 42));
         assert!(!window_owner_matches(Some(43), 42));
         assert!(!window_owner_matches(None, 42));
+    }
+
+    #[test]
+    fn untitled_windows_are_listed_only_when_the_window_manager_manages_them() {
+        assert!(window_is_listable(WindowSource::ClientList, ""));
+        assert!(window_is_listable(WindowSource::ClientList, "Save Changes"));
+        assert!(window_is_listable(
+            WindowSource::RootChildren,
+            "Save Changes"
+        ));
+        assert!(!window_is_listable(WindowSource::RootChildren, " "));
     }
 
     #[test]

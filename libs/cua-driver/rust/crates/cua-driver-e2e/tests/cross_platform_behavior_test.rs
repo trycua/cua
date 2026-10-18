@@ -749,25 +749,22 @@ fn scroll_oracle_rejects_missing_or_invalid_geometry() {
     }
 }
 
-/// AX rows address elements as a client that shows the model only text
-/// content must: the snapshot handle comes from the text header. macOS puts
-/// the screenshot before the text, so read the first text block, not
-/// `content[0]`.
+// Exercise text-only MCP clients even though the testkit requests full_output.
 fn text_snapshot_id(state: &ToolResponse) -> String {
-    let header = state.raw["result"]["content"]
+    let text = state.raw["result"]["content"]
         .as_array()
-        .and_then(|blocks| blocks.iter().find_map(|block| block["text"].as_str()))
-        .and_then(|text| text.lines().next())
-        .unwrap_or_default();
-    let handle = header
+        .expect("MCP content blocks")
+        .iter()
+        .find_map(|block| block.get("text")?.as_str())
+        .unwrap();
+    let handle = text
+        .lines()
+        .next()
+        .unwrap()
         .split_whitespace()
         .find_map(|field| field.strip_prefix("snapshot_id="))
-        .unwrap_or_else(|| panic!("get_window_state text header lacks snapshot_id: {header:?}"));
-    assert_eq!(
-        handle,
-        state.snapshot_id(),
-        "get_window_state text and structuredContent disagree on snapshot_id"
-    );
+        .expect("snapshot_id in text header");
+    assert_eq!(handle, state.snapshot_id());
     handle.to_owned()
 }
 
@@ -786,10 +783,9 @@ fn action_target_args(
     });
     let object = args.as_object_mut().expect("action arguments object");
     if addressing == "ax" {
-        object.insert("element_index".to_owned(), serde_json::json!(index));
         object.insert(
-            "snapshot_id".to_owned(),
-            serde_json::json!(text_snapshot_id(state)),
+            "element_token".to_owned(),
+            serde_json::json!(format!("{}:{index}", text_snapshot_id(state))),
         );
     } else {
         let origin = window_origin(fixture, state);
@@ -884,6 +880,10 @@ fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
         max_depth: None,
         max_dimension: None,
         max_image_dimension: None,
+        tree_format: None,
+        since: None,
+        verbose: None,
+        full_output: None,
     }
 }
 
@@ -1673,9 +1673,12 @@ fn shared_case_with_native_hyprland(
             ("electron", "type_text" | "type_submit" | "editor_save", Targeting::Ax) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
-            ("electron", "scroll", _) | (_, "drag", Targeting::Px) => {
-                vec![RefusalCode::BackgroundUnavailable]
-            }
+            // Electron scroll is delivered in the background through
+            // accessibility (reveal scroll), including inner scrollers.
+            // The shared drag cell is a pointer-event drag, which the
+            // background window-routed drag delivers (CUA-1207). Electron
+            // takes it from the app's main process, which holds the button
+            // that a window-routed press cannot.
             _ => Vec::new(),
         }
     } else if cfg!(target_os = "linux")

@@ -21,6 +21,18 @@ struct Set: AsyncParsableCommand {
     @Option(help: "New display resolution in format WIDTHxHEIGHT.")
     var display: VMDisplayResolution?
 
+    @Option(
+        help:
+            "New machine identifier: 'random' for a freshly generated one, or a base64 identifier (from `lume get --format json`) to pin this VM to an existing machine identity. macOS VMs only; the VM must be stopped. Software that licenses per-machine (e.g. Unity) treats a changed identifier as a new machine, so pinning several throwaway clones to one identifier keeps them all on a single activation."
+    )
+    var machineIdentifier: String?
+
+    @Option(
+        help:
+            "New MAC address: 'random' for a freshly generated locally-administered address, or an explicit aa:bb:cc:dd:ee:ff. The VM must be stopped. Note the guest's DHCP lease follows the MAC, so reusing one machine's MAC on a second VM makes both claim the same IP — keep them from running at the same time."
+    )
+    var macAddress: String?
+
     @Option(name: .customLong("storage"), help: "VM storage location to use or direct path to VM location")
     var storage: String?
 
@@ -51,6 +63,8 @@ struct Set: AsyncParsableCommand {
             memory: memory,
             diskSize: diskSize,
             display: display?.string,
+            machineIdentifier: machineIdentifier,
+            macAddress: macAddress,
             storage: storage,
             noBackup: noBackup,
             keepBackup: keepBackup,

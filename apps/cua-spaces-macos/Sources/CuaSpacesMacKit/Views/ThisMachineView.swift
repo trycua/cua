@@ -1,0 +1,503 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+import AppKit
+import CuaSDK
+import CuaSpacesFFI
+import SwiftUI
+
+/// "This machine": how it is shared, who is connected, the permissions
+/// left to grant and its buttons; or the host setup form. Everything shown
+/// is the core's `appHostPanel` / `appHostFormView`.
+struct ThisMachineView: View {
+    @Bindable var host: HostModel
+    /// A button waiting for the user's confirmation (the core's `confirm`).
+    @State private var confirming: AppHostAction?
+    /// The log open in full ("Show All…").
+    @State private var fullLog: HostLog?
+
+    var body: some View {
+        let panel = host.panel
+        Group {
+            if host.form != nil {
+                HostFormView(host: host, buttons: true)
+            } else {
+                Form {
+                    if let intro = panel.intro {
+                        // Before setup: what this machine is and why set it
+                        // up, then the form's choices inline.
+                        Section {
+                            Text(intro)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("host-summary")
+                        }
+                        Section {
+                            ForEach(panel.setupChoices, id: \.id) { choice in
+                                LabeledContent(choice.label) {
+                                    Button(choice.buttonLabel) {
+                                        host.openForm()
+                                        host.send(.setProfile(profile: choice.id))
+                                    }
+                                    .disabled(host.busy)
+                                }
+                                .accessibilityIdentifier("host-choice-\(choice.id)")
+                            }
+                        }
+                    } else if let notice = panel.notice {
+                        // Relay sharing paused (signed out, or another
+                        // account): one line in place of the summary, and
+                        // its button.
+                        Section {
+                            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                Text(notice)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("host-notice")
+                                Spacer(minLength: 8)
+                                if let action = panel.noticeAction {
+                                    Button(action.label) { Task { await host.run(action.id) } }
+                                        .buttonStyle(.borderedProminent)
+                                        .disabled(host.busy || !action.enabled)
+                                        .accessibilityIdentifier("host-notice-action")
+                                }
+                            }
+                            if let progress = host.progress {
+                                HostSetupProgressView(text: progress)
+                            }
+                        }
+                    } else {
+                        Section {
+                            Text(panel.summary)
+                                .lineLimit(1)
+                                .accessibilityIdentifier("host-summary")
+                        }
+                    }
+                    if !panel.facts.isEmpty {
+                        Section {
+                            ForEach(panel.facts, id: \.label) { fact in
+                                LabeledContent(fact.label) {
+                                    Text(fact.value).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                    if !panel.toggles.isEmpty {
+                        Section {
+                            ForEach(panel.toggles, id: \.id) { toggle in
+                                Toggle(isOn: Binding(
+                                    get: { toggle.on },
+                                    set: { _ in Task { await host.run(toggle.action) } })) {
+                                    Text(toggle.label)
+                                    Text(toggle.help).foregroundStyle(.secondary)
+                                }
+                                .disabled(host.busy || !toggle.enabled)
+                                .accessibilityIdentifier("host-toggle-\(toggle.id)")
+                            }
+                            if let limits = panel.limits {
+                                Text(limits).foregroundStyle(.secondary).lineLimit(2)
+                                    .accessibilityIdentifier("host-limits")
+                            }
+                        }
+                    }
+                    if let title = panel.providedTitle {
+                        Section(title) {
+                            if let empty = panel.providedEmpty {
+                                Text(empty).foregroundStyle(.secondary)
+                            }
+                            TimedRows(rows: panel.provided)
+                        }
+                        .accessibilityIdentifier("host-provided")
+                    }
+                    if let warning = panel.accessWarning {
+                        Text(warning).foregroundStyle(.red).lineLimit(2)
+                            .accessibilityIdentifier("host-access-warning")
+                    }
+                    if let title = panel.clientsTitle {
+                        Section(title) {
+                            if let empty = panel.clientsEmpty {
+                                Text(empty).foregroundStyle(.secondary)
+                            }
+                            ForEach(panel.clients, id: \.self) { Text($0).lineLimit(1) }
+                        }
+                    }
+                    if let title = panel.recentTitle, !panel.recent.isEmpty {
+                        Section(title) {
+                            // The newest few (repeats collapsed); the rest
+                            // in a sheet, so the page never grows with it.
+                            TimedRows(rows: panel.recent)
+                            if let more = panel.recentMore {
+                                ShowAllButton(label: more) { fullLog = .access }
+                                    .accessibilityIdentifier("host-recent-access-more")
+                            }
+                        }
+                        .accessibilityIdentifier("host-recent-access")
+                    }
+                    if let warning = panel.activityWarning {
+                        Text(warning).foregroundStyle(.red).lineLimit(2)
+                            .accessibilityIdentifier("host-activity-warning")
+                    }
+                    if let title = panel.activityTitle, !panel.activity.isEmpty {
+                        Section(title) {
+                            TimedRows(rows: panel.activity)
+                            if let more = panel.activityMore {
+                                ShowAllButton(label: more) { fullLog = .activity }
+                                    .accessibilityIdentifier("host-activity-more")
+                            }
+                        }
+                        .accessibilityIdentifier("host-activity")
+                    }
+                    if let title = panel.permissionsTitle {
+                        Section(title) {
+                            PermissionRows(rows: panel.permissions, openLabel: panel.openSettingsLabel)
+                        }
+                    }
+                    if let failure = host.actionFailure {
+                        // A button that failed: what happened in plain
+                        // words, Retry, and the raw error under Details.
+                        HostSetupFailureView(failure: failure, retrying: host.busy) {
+                            Task { await host.retryFailedAction() }
+                        }
+                    } else if let error = host.error {
+                        Text(error).foregroundStyle(.red).lineLimit(1).help(error)
+                    }
+                }
+                .formStyle(.grouped)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    // Pinned under the page: Stop sharing and Remove stay
+                    // in view however long the logs get.
+                    if panel.setupChoices.isEmpty, !panel.actions.isEmpty {
+                        actionBar(panel.actions)
+                    }
+                }
+            }
+        }
+        .sheet(item: $fullLog) { log in
+            switch log {
+            case .access:
+                HostLogSheet(title: panel.recentTitle ?? "", rows: panel.recentAll,
+                             backgroundRows: panel.recentWithBackground) { fullLog = nil }
+            case .activity:
+                HostLogSheet(title: panel.activityTitle ?? "", rows: panel.activityAll,
+                             backgroundRows: nil) { fullLog = nil }
+            }
+        }
+        .navigationTitle(host.form == nil ? panel.title : (host.formView?.title ?? panel.title))
+        .task {
+            // Followed while it shows: who is connected now, and a
+            // permission granted in System Settings (no restart needed).
+            while !Task.isCancelled {
+                if host.form == nil { await host.refresh() }
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+        .alert(confirming?.confirm?.title ?? "", isPresented: Binding(
+            get: { confirming?.confirm != nil },
+            set: { if !$0 { confirming = nil } })) {
+            if let action = confirming, let confirm = action.confirm {
+                Button(confirm.confirmLabel, role: .destructive) {
+                    confirming = nil
+                    Task { await host.run(action.id) }
+                }
+                Button(confirm.cancelLabel, role: .cancel) { confirming = nil }
+            }
+        } message: {
+            Text(confirming?.confirm?.message ?? "")
+        }
+    }
+
+    /// The page's buttons, primary first, in a bar pinned to the bottom.
+    private func actionBar(_ actions: [AppHostAction]) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack {
+                ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                    let button = Button(action.label, role: action.destructive ? .destructive : nil) {
+                        if action.confirm != nil {
+                            confirming = action
+                        } else {
+                            Task { await host.run(action.id) }
+                        }
+                    }
+                    .disabled(host.busy || !action.enabled)
+                    .help(action.help ?? "")
+                    .accessibilityIdentifier("host-action-\(index)")
+                    if index == 0 {
+                        button.buttonStyle(.borderedProminent).tint(action.destructive ? .red : .accentColor)
+                    } else {
+                        button
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+        .background(.bar)
+        .accessibilityIdentifier("host-actions")
+    }
+}
+
+/// A "This machine" log shown in full.
+enum HostLog: String, Identifiable {
+    case access, activity
+    var id: String { rawValue }
+}
+
+/// "Show All…" under a log section.
+struct ShowAllButton: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack {
+            Spacer()
+            Button(label, action: action)
+                .buttonStyle(.link)
+                .controlSize(.small)
+        }
+    }
+}
+
+/// A log in full: every row (repeats collapsed), newest first, and for the
+/// access log a switch that adds the background probes.
+struct HostLogSheet: View {
+    let title: String
+    let rows: [AppHostAccessRow]
+    /// Every row with background activity too (`nil`: no switch).
+    let backgroundRows: [AppHostAccessRow]?
+    let done: () -> Void
+    @State private var withBackground = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(title).font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            Divider()
+            List {
+                TimedRows(rows: withBackground ? (backgroundRows ?? rows) : rows)
+            }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
+            .accessibilityIdentifier("host-log-rows")
+            Divider()
+            HStack {
+                if backgroundRows != nil {
+                    Toggle("Include background activity", isOn: $withBackground)
+                        .toggleStyle(.checkbox)
+                        .accessibilityIdentifier("host-log-background")
+                }
+                Spacer()
+                Button("Done", action: done)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("host-log-done")
+            }
+            .padding(12)
+        }
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 360, idealHeight: 460)
+        .navigationTitle(title)
+        .accessibilityIdentifier("host-log-sheet")
+    }
+}
+
+/// Rows with a relative time after them (provided Spaces, activity).
+struct TimedRows: View {
+    let rows: [AppHostAccessRow]
+
+    var body: some View {
+        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            LabeledContent {
+                Text(Date(timeIntervalSince1970: Double(row.atMs) / 1000),
+                     format: .relative(presentation: .named))
+                    .foregroundStyle(.secondary)
+            } label: {
+                Text(row.text).lineLimit(1).truncationMode(.middle).help(row.text)
+            }
+        }
+    }
+}
+
+/// Permission panes to grant: the title, "Open Settings", the
+/// instructions as the tooltip. Only System Settings privacy panes open.
+struct PermissionRows: View {
+    let rows: [AppPermissionRow]
+    let openLabel: String
+
+    var body: some View {
+        ForEach(rows, id: \.id) { row in
+            LabeledContent(row.title) {
+                if let url = row.settingsUrl {
+                    Button(openLabel) { Self.open(url) }
+                }
+            }
+            .help(row.help)
+        }
+    }
+
+    static func open(_ url: String) {
+        guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else { return }
+        NSWorkspace.shared.open(u)
+    }
+}
+
+/// The host setup form (relay by default; a direct `ip:port` under
+/// Advanced): the core's fields in order.
+struct HostFormView: View {
+    @Bindable var host: HostModel
+    /// Draws Back and the submit button (onboarding draws its own).
+    var buttons: Bool
+    /// Shows a failed setup (and Retry) inside the form; onboarding draws
+    /// it under the form instead.
+    var showsFailure = true
+
+    var body: some View {
+        if let v = host.formView {
+            Form {
+                Section {
+                    Text(v.lede).foregroundStyle(.secondary).lineLimit(1).help(v.lede)
+                    ForEach(v.fields.filter { !$0.advanced }, id: \.id) { field($0) }
+                    Button {
+                        host.send(.toggleAdvanced)
+                    } label: {
+                        Label(v.advancedLabel, systemImage: v.advancedOpen ? "chevron.down" : "chevron.right")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("host-advanced")
+                    ForEach(v.fields.filter(\.advanced), id: \.id) { field($0) }
+                    if showsFailure, let failure = host.setupFailure {
+                        HostSetupFailureView(failure: failure, retrying: v.busy) {
+                            Task { await host.submit() }
+                        }
+                    }
+                    if showsFailure, let progress = host.progress {
+                        HostSetupProgressView(text: progress)
+                    }
+                }
+                if buttons {
+                    Section {
+                        HStack {
+                            Spacer()
+                            Button(v.backLabel) { host.closeForm() }
+                            Button(v.submitLabel) { Task { await host.submit() } }
+                                .buttonStyle(.borderedProminent)
+                                .keyboardShortcut(.defaultAction)
+                                .disabled(!v.canSubmit)
+                                .accessibilityIdentifier("host-setup")
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+        }
+    }
+
+    @ViewBuilder private func field(_ f: AppHostFormField) -> some View {
+        if !f.choices.isEmpty {
+            Picker(f.label, selection: Binding(get: { f.value }, set: { host.send(.setProfile(profile: $0)) })) {
+                ForEach(f.choices, id: \.id) { Text($0.label).tag($0.id) }
+            }
+            .pickerStyle(.radioGroup)
+            .accessibilityIdentifier("host-\(f.id)")
+        } else if f.toggle {
+            Toggle(f.label, isOn: Binding(get: { f.on }, set: { host.send(.setDirect(on: $0)) }))
+                .accessibilityIdentifier("host-\(f.id)")
+        } else {
+            TextField(f.label, text: Binding(get: { f.value }, set: { host.send(Self.action(f.id, $0)) }),
+                      prompt: f.placeholder.map { Text($0) })
+                .foregroundStyle(f.invalid ? Color.red : Color.primary)
+                .accessibilityIdentifier("host-\(f.id)")
+        }
+    }
+
+    static func action(_ id: String, _ text: String) -> AppHostFormAction {
+        switch id {
+        case "allow": return .setAllow(allow: text)
+        case "listen": return .setListen(listen: text)
+        case "relay": return .setRelayUrl(url: text)
+        default: return .setName(name: text)
+        }
+    }
+}
+
+/// A failed "Set up for access": a small warning symbol and a short title,
+/// one secondary line saying what to do, Retry, and the raw error under a
+/// collapsed Details (selectable, with Copy).
+/// What a running "Set up for access" waits for (the inline sign-in).
+struct HostSetupProgressView: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("host-setup-progress")
+    }
+}
+
+struct HostSetupFailureView: View {
+    let failure: HostSetupFailure
+    /// The retry is running: Retry shows progress and is disabled.
+    let retrying: Bool
+    let retry: () -> Void
+    @State private var showDetails = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor)
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+                Text(failure.title).fontWeight(.medium)
+                Spacer(minLength: 8)
+                Button(action: retry) {
+                    HStack(spacing: 6) {
+                        if retrying { ProgressView().controlSize(.small) }
+                        Text(retrying ? HostSetupFailure.retryingLabel : failure.actionLabel)
+                    }
+                }
+                .controlSize(.small)
+                .disabled(retrying)
+                .accessibilityIdentifier("host-setup-retry")
+            }
+            Text(failure.message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup(HostSetupFailure.detailsLabel, isExpanded: $showDetails) {
+                HStack(alignment: .top, spacing: 8) {
+                    // A long error scrolls instead of pushing the page.
+                    ScrollView {
+                        Text(failure.details)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 80)
+                    Button(HostSetupFailure.copyLabel) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(failure.details, forType: .string)
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("host-setup-copy-details")
+                }
+                .padding(.top, 2)
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("host-setup-details")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("host-setup-failure")
+    }
+}

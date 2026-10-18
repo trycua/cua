@@ -64,6 +64,11 @@ pub enum BrowserRefusalCode {
     /// The live top-level document left the origin set approved in the
     /// capability manifest. Further browser input is paused.
     BrowserOriginOutsideScope,
+    /// The request cannot be completed without bringing the browser in
+    /// front of the user's work, and the caller did not pass
+    /// `delivery_mode:"foreground"`. Uses the driver-wide wire code shared by
+    /// every background refusal.
+    BackgroundUnavailable,
 }
 
 impl BrowserRefusalCode {
@@ -86,6 +91,7 @@ impl BrowserRefusalCode {
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
             Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
+            Self::BackgroundUnavailable => "background_unavailable",
         }
     }
 }
@@ -146,6 +152,8 @@ pub fn is_descriptor_exhaustion(error: &std::io::Error) -> bool {
 /// `(soft, hard)`. Returns `None` when the limit cannot be read; callers
 /// must treat a missing snapshot as unknown rather than as healthy.
 #[cfg(unix)]
+// `rlim_t` is not u64 on every target.
+#[allow(clippy::unnecessary_cast)]
 pub fn descriptor_limit_snapshot() -> Option<(u64, u64)> {
     let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
     if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limits.as_mut_ptr()) } != 0 {
@@ -303,6 +311,10 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserOriginOutsideScope,
                 "browser_origin_outside_scope",
+            ),
+            (
+                BrowserRefusalCode::BackgroundUnavailable,
+                "background_unavailable",
             ),
         ];
         for (code, wire) in all {

@@ -421,17 +421,37 @@ final class MacOSOfflineSetupPatcher {
 
     private func kcpasswordData(for password: String) -> Data {
         let key: [UInt8] = [0x7d, 0x89, 0x52, 0x23, 0xd2, 0xbc, 0xdd, 0xea, 0xa3, 0xb9, 0x1f]
-        var bytes = [UInt8]()
-        for (index, byte) in password.utf8.enumerated() {
-            bytes.append(byte ^ key[index % key.count])
-        }
 
-        let remainder = bytes.count % 12
-        if remainder != 0 {
-            bytes.append(contentsOf: Array(repeating: 0, count: 12 - remainder))
-        }
+        // Pad the PLAINTEXT to a multiple of 12 with NULs and XOR the whole
+        // padded buffer. Padding AFTER the XOR — which this did until it was
+        // measured — writes raw 0x00 bytes to the file, and loginwindow's
+        // decoder XORs those back into KEY bytes rather than terminating, so it
+        // reads the password as `<password>` plus a tail of key material.
+        //
+        // For "lume" the file held 11 fc 3f 46 00 00 00 00 00 00 00 00, which
+        // decodes to "lume\xd2\xbc\xdd\xea\xa3\xb9\x1f\x7d"; the correct file is
+        // 11 fc 3f 46 d2 bc dd ea a3 b9 1f 7d, which decodes to "lume".
+        //
+        // The autologin still SUCCEEDS with the wrong value (loginwindow logs
+        // the user in by another path), so nothing about the VM looks broken —
+        // but `loginwindow` cannot unlock the login keychain with it:
+        //   SecKeychainLogin failed: -2147413984, password was supplied
+        //   loginResetLoginKeychainIfPossible | ERROR: Unable to get ALPW
+        //   Keychain could not be unlocked, local account, moving login
+        //   keychain to the side and creating a replacement
+        //   SecKeychainResetLogin: reset AKS passphrase
+        // On EVERY boot. The replacement is keyed to an AKS passphrase, so its
+        // password is known to nobody — not the tooling, not the user — and any
+        // secret written into it raises an "<App> wants to access key …" prompt
+        // that cannot be answered. That, and the pile of login_renamed_N files
+        // these VMs accumulate (one image had 22), is this one padding bug.
+        //
+        // Always append at least one NUL: when the password length is already a
+        // multiple of 12 the decoder needs a terminator, so pad by a full 12.
+        var plaintext = Array(password.utf8)
+        plaintext.append(contentsOf: Array(repeating: 0, count: 12 - (plaintext.count % 12)))
 
-        return Data(bytes)
+        return Data(plaintext.enumerated().map { $0.element ^ key[$0.offset % key.count] })
     }
 
     // MARK: - Plist and File Helpers

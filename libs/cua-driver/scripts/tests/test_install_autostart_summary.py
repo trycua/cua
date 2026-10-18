@@ -51,7 +51,8 @@ def test_registered_summary_is_gated_on_the_registration_outcome(
     assert len(matches) == 1, f"expected exactly one summary line, found {len(matches)}"
 
     guard = _guard_for(lines, matches[0])
-    assert guard == "if ($AutoStartRegistered) {", (
+    # An isolated install's own summary may come first (#4090).
+    assert guard in ("if ($AutoStartRegistered) {", "elseif ($AutoStartRegistered) {"), (
         f"{installer.name} prints {summary!r} under {guard!r}; it must be gated on "
         "the registration outcome, not on the -AutoStart request"
     )

@@ -97,21 +97,10 @@ pub fn element_window_local_xy(
     args: &serde_json::Value,
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
-    use cua_driver_core::tool_args::ArgsExt;
-    let cache = cua_driver_core::element_cache::current_runtime_cache::<
-        crate::atspi::cache::CachedSnapshot,
+    let cache = cua_driver_core::snapshot_store::current_runtime_store::<
+        crate::atspi::snapshot::AtspiSnapshot,
     >()?;
-    let resolved = cache
-        .resolve_element_args(
-            i32::try_from(pid).ok()?,
-            args.opt_u64("element_index").map(|index| index as usize),
-            args.get("element_token")
-                .and_then(serde_json::Value::as_str),
-            args.get("snapshot_id").and_then(serde_json::Value::as_str),
-            args.opt_u64("window_id"),
-            "recording",
-        )
-        .ok()?;
+    let resolved = cache.resolve(i32::try_from(pid).ok()?, args).ok()?;
     let (index, window, _) = resolved.into_parts(None);
     let window_id = window?;
     let element_index = u32::try_from(index?).ok()?;
@@ -190,7 +179,10 @@ pub fn hyprland_pixel_recording_point(
     x: f64,
     y: f64,
 ) -> Option<(f64, f64)> {
-    let (width, height, _) = crate::wayland::hyprland::screen_size().ok()?;
+    // The recorded image is the desktop frame. Window geometry is in layout
+    // coordinates, so move a window point into the frame before placing it.
+    let frame = crate::wayland::hyprland::desktop_frame().ok()?;
+    let (width, height) = (frame.width, frame.height);
     match (window_id, pid) {
         (Some(window_id), Some(pid)) => {
             let pid = u32::try_from(pid).ok()?;
@@ -198,9 +190,10 @@ pub fn hyprland_pixel_recording_point(
             if window.pid != Some(pid) {
                 return None;
             }
+            let (frame_x, frame_y) = frame.from_layout(window.x, window.y);
             hyprland_output_point(
-                (f64::from(window.x) + x, f64::from(window.y) + y),
-                (window.x, window.y, window.width, window.height),
+                (f64::from(frame_x) + x, f64::from(frame_y) + y),
+                (frame_x, frame_y, window.width, window.height),
                 (width, height),
             )
         }

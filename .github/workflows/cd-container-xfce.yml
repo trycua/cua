@@ -6,6 +6,9 @@ on:
       - "docker-xfce-v*.*.*"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     uses: ./.github/workflows/docker-reusable-publish.yml

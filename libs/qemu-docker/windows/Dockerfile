@@ -1,6 +1,6 @@
 # Cua Windows Container
 #
-# A Windows 11 VM with cua-computer-server for Computer-Use Agents.
+# A Windows 11 VM running cua-spacesd for Computer-Use Agents.
 #
 # Build:
 #   docker build -t trycua/cua-qemu-windows:latest .
@@ -33,8 +33,8 @@ ENV ARGUMENTS="-qmp tcp:0.0.0.0:7200,server,nowait"
 ENV INSTALL_WINARENA_APPS=${INSTALL_WINARENA_APPS}
 
 # Expose ports:
-#   5000 - cua-computer-server API
+#   3211 - cua-spacesd (gRPC + gRPC-Web)
 #   8006 - noVNC web interface
-EXPOSE 5000 8006
+EXPOSE 3211 8006
 
 ENTRYPOINT ["/entry.sh"]

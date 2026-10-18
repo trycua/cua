@@ -1,0 +1,53 @@
+name: "CI: Release cua-spacesd pin"
+
+# A Cua Spaces or cua SDK Release Please PR stays red while the cua-spacesd
+# its `cua` CLI bakes (libs/cua-spacesd/VERSION) has no published release:
+# merging it would cut a release whose "Set up for access" downloads a
+# missing cua-spacesd (Cua Spaces 0.3.0 pinned an empty 0.2.0 draft). Publish
+# cua-spacesd first, then re-run this check. cd-cua-spaces.yml and
+# cd-cua-sdk.yml run the same check before building, so a tag pushed anyway
+# still fails closed.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - .release-please-manifest.json
+      - libs/cua-spacesd/VERSION
+
+permissions:
+  contents: read
+
+jobs:
+  spacesd-published:
+    name: cua-spacesd pin is published
+    if: startsWith(github.head_ref, 'release-please--branches--')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Does this PR release Cua Spaces or the cua SDK?
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          bakes=false
+          for key in apps/cua-spaces-macos libs/cua; do
+            before="$(git show "$BASE_SHA:.release-please-manifest.json" | jq -r --arg k "$key" '.[$k] // ""')"
+            after="$(git show "$HEAD_SHA:.release-please-manifest.json" | jq -r --arg k "$key" '.[$k] // ""')"
+            if [ "$before" != "$after" ]; then
+              echo "$key: $before -> $after"
+              bakes=true
+            fi
+          done
+          echo "bakes=$bakes" >> "$GITHUB_OUTPUT"
+      - name: Check the baked cua-spacesd release
+        if: steps.scope.outputs.bakes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/check_spacesd_published.sh "$GITHUB_REPOSITORY"

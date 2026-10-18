@@ -32,7 +32,7 @@ classifiers = [
 ]
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "pillow>=10,<12",
+    "pillow>=12.3.0,<13",
 ]
 
 [project.optional-dependencies]

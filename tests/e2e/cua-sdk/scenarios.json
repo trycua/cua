@@ -1,0 +1,349 @@
+{
+  "$comment": "Registry of the cua SDK e2e scenarios (plan \u00a73.5). run.py reads it to build the guide x language x lane matrix; every test records {scenario, lang, lane, status, secs, reason} into $CUA_E2E_RESULTS/<lang>.jsonl. `lanes` lists where a scenario is expected to run; a cell absent from the results is reported as `missing` and fails --strict. `only` narrows the languages expected in a lane.",
+  "lanes": {
+    "hermetic": {
+      "gate": null,
+      "what": "loopback fixtures: MockServer spacesd + fake Fleet API (cua-test-fixtures), cua daemon from the CLI",
+      "trigger": "pull_request"
+    },
+    "container": {
+      "gate": "CUA_E2E_CONTAINER=1",
+      "what": "Docker engine, gVisor (runsc) when present; reference images linux and plain/*",
+      "trigger": "pull_request"
+    },
+    "qemu": {
+      "gate": "CUA_E2E_QEMU=1",
+      "what": "local QEMU (hvf/kvm) booting the reference containerDisk disk; <=1 VM, <=4 GiB",
+      "trigger": "nightly"
+    },
+    "lume": {
+      "gate": "CUA_E2E_LUME=1",
+      "what": "lume serve (macOS hosts) booting the arm64 reference disk; <=1 VM, <=4 GiB",
+      "trigger": "nightly"
+    },
+    "fleet": {
+      "gate": "CUA_E2E_FLEET=1",
+      "what": "live Fleet (run.cua.ai) with the public legacy image; pools cua-e2e-<run>-*",
+      "trigger": "nightly"
+    },
+    "fleet-env": {
+      "gate": "CUA_E2E_FLEET=1 + CUA_E2E_FLEET_ENV_IMAGE=<amd64 linux ref Fleet can pull>",
+      "what": "live Fleet with the spacesd reference image",
+      "trigger": "nightly"
+    },
+    "cua-sandbox": {
+      "gate": "CUA_E2E_CUA_SANDBOX=1",
+      "what": "cua-sandbox public API (the wrapper over the cua SDK); runs after the wrapper merge",
+      "trigger": "nightly"
+    },
+    "docs": {
+      "gate": null,
+      "what": "hermetic docs code blocks (test=\"docs\"), extracted by docs/extract.py; runs with the hermetic lane",
+      "trigger": "pull_request"
+    },
+    "contrib": {
+      "gate": "CUA_CONTRIB_FIXTURES=<cua-contrib-fixtures binary> + a cua binding built with --features contrib",
+      "what": "contrib providers against schema mocks of their APIs (cua-contrib-fixtures): the contrib docs blocks and a cua-bench task on --on daytona",
+      "trigger": "pull_request"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "your-first-cloud-fleet",
+      "guide": "fleets/quickstart.mdx",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "hermetic",
+        "fleet",
+        "fleet-env"
+      ],
+      "checks": "apply pool -> claim -> uname -a -> screenshot PNG -> delete (fleet lane: legacy /cmd through the `server` service)"
+    },
+    {
+      "id": "create-pool",
+      "guide": "fleets/guides/capacity-and-claims.mdx",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "hermetic",
+        "fleet",
+        "cua-sandbox"
+      ],
+      "checks": "warm pool (replicas=1), wait ready, named claim reattaches, scale replicas, ephemeral sandbox claims from a managed cua-auto-* pool, which the test GCs; name collision (CUA_E2E_FLEET_TAKEN_POOL) is a typed error",
+      "only": {
+        "cua-sandbox": [
+          "py"
+        ]
+      }
+    },
+    {
+      "id": "create-pool-browser",
+      "guide": "cua-sdk/reference/typescript/index.mdx (browser)",
+      "langs": [
+        "ts"
+      ],
+      "lanes": [
+        "hermetic"
+      ],
+      "checks": "@trycua/cua/browser (wasm): env over gRPC-Web in Node; in headless Chromium (Playwright) also Fleet claim/list/release through a same-origin proxy (the wasm Fleet transport needs a window)"
+    },
+    {
+      "id": "expire-pools-and-claims",
+      "guide": "fleets/guides/capacity-and-claims.mdx#expiry",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "hermetic",
+        "fleet",
+        "cua-sandbox"
+      ],
+      "checks": "pool TTL lands in the pool spec, claim TTL lands in the claim lifecycle; cua-sandbox: spec + ttl -> ValueError",
+      "only": {
+        "cua-sandbox": [
+          "py"
+        ]
+      }
+    },
+    {
+      "id": "configure-pool-with-terraform",
+      "guide": "fleets/guides/terraform.mdx",
+      "langs": [
+        "go"
+      ],
+      "lanes": [
+        "hermetic"
+      ],
+      "checks": "smoke: build the mirror's native Fleet SDK, run the provider's unit tests; TF_ACC=1 adds its envtest acceptance test"
+    },
+    {
+      "id": "run-omarchy",
+      "guide": "cua-sdk/guides/agent-frameworks.mdx#omarchy-desktop",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "container",
+        "fleet-env"
+      ],
+      "checks": "spacesd desktop: dimensions, screenshot, clipboard round trip, click + keypress land in the grid/form fixtures, /mcp initialize on the env port",
+      "only": {
+        "fleet-env": [
+          "py",
+          "ts"
+        ]
+      }
+    },
+    {
+      "id": "connect-with-viewer",
+      "guide": "cua-sdk/guides/desktop.mdx#browser-view",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "container",
+        "fleet-env"
+      ],
+      "checks": "cua-spacesd viewer on the `env` service (3211): GET /viewer/ through service + forward, viewer_url mints a ticketed link",
+      "only": {
+        "fleet-env": [
+          "py"
+        ]
+      }
+    },
+    {
+      "id": "image-build-push-run",
+      "guide": "cua-sdk/guides/agent-frameworks.mdx#minecraft (replaced flow)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "container",
+        "qemu",
+        "fleet-env"
+      ],
+      "checks": "`cua image build` (layers) -> push to a registry -> boot the pushed ref locally -> layer effects visible; Fleet: Image.from_registry (ts/rust exercise the same builder through the SDK in `images`)",
+      "only": {
+        "container": [
+          "py"
+        ],
+        "qemu": [
+          "py"
+        ],
+        "fleet-env": [
+          "py"
+        ]
+      }
+    },
+    {
+      "id": "images",
+      "guide": "cua-sdk/guides/images.mdx",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "container",
+        "fleet"
+      ],
+      "checks": "local layers (run/env/copy) apply; Fleet: remote build via create_image or a clear typed error"
+    },
+    {
+      "id": "direct-connect",
+      "guide": "(new)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "hermetic",
+        "container"
+      ],
+      "checks": "spacesd in Docker, connect_url(url, token), conformance smoke; rust also runs the spacesd conformance suite (CUA_E2E_CONFORMANCE=1)"
+    },
+    {
+      "id": "daemon-vs-embedded",
+      "guide": "(new)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "hermetic",
+        "container"
+      ],
+      "checks": "same script embedded and through `cua daemon` gives identical results; two processes share one daemon-held sandbox"
+    },
+    {
+      "id": "local-container",
+      "guide": "(new)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "container"
+      ],
+      "checks": "reference image as a local container sandbox (gVisor) -> env smoke; rust: fork + checkpoint through cua-vmm"
+    },
+    {
+      "id": "local-qemu",
+      "guide": "(new)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "qemu"
+      ],
+      "checks": "reference disk under QEMU -> readiness probes + forward (py/ts); rust: env smoke with a cloud-init token, checkpoint, fork, boot the fork"
+    },
+    {
+      "id": "local-lume",
+      "guide": "(new)",
+      "langs": [
+        "rust"
+      ],
+      "lanes": [
+        "lume"
+      ],
+      "checks": "reference arm64 disk under Lume -> env smoke -> checkpoint -> fork"
+    },
+    {
+      "id": "daemon-agnostic",
+      "guide": "(new, plan \u00a71.1)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "hermetic",
+        "container",
+        "qemu",
+        "fleet"
+      ],
+      "checks": "plain images with no cua daemon: lifecycle, ports/forward, tcp/http readiness probes; env() raises SpacesdNotAvailable"
+    },
+    {
+      "id": "docs-blocks",
+      "guide": "all guides above",
+      "langs": [
+        "py"
+      ],
+      "lanes": [
+        "docs",
+        "container",
+        "fleet",
+        "contrib"
+      ],
+      "checks": "every docs block tagged test=docs|container|fleet|terraform runs in that lane (Python in a venv, TypeScript through tsx; hidden preludes such as fakefleet); docs/coverage.py fails a tagged block without a result"
+    },
+    {
+      "id": "unified-sandbox-api",
+      "guide": "reference/sandbox-sdk (command, env, services, wait_for, url, public_url, forward)",
+      "langs": [
+        "py",
+        "ts",
+        "rust"
+      ],
+      "lanes": [
+        "hermetic",
+        "container",
+        "fleet"
+      ],
+      "only": {
+        "fleet": [
+          "py"
+        ]
+      },
+      "checks": "plain image + command + services + wait_for on a named service: service(name).request with caller headers (the server 400s without them), service(name).url() and public_url(name, ttl) from a plain HTTP client (local: daemon token URL; cloud: signed URL), forward(port) as a loopback URL (cloud without spacesd: gateway proxy), portable info (id, phase, location, provider_details). hermetic: fake Fleet + MockServer through a private daemon; container: python:3.12-slim on gVisor; fleet: one live gVisor sandbox, managed pool GC'd"
+    },
+    {
+      "id": "sandbox-parity",
+      "guide": "reference/sandbox-sdk (sidecars, Image.from_registry(secret=), image layers with local=False, warm canonical images)",
+      "langs": [
+        "py"
+      ],
+      "lanes": [
+        "hermetic",
+        "container",
+        "fleet"
+      ],
+      "checks": "hermetic: the fake Fleet admits sidecars on KubeVirt, the reserved service names main/sidecars/sc and a sidecar named main are refused, cloud layer builds fail with the typed 'not deployed yet' error before anything is created, the local core refuses layers on a VM image; container: python:3.12-slim + redis sidecar 'db' + busybox sidecar 'relay' on runc through a private daemon, the sandbox reaches db:6379 by name and the relay reaches the sandbox at main; fleet: the same group on gVisor and KubeVirt, and a processMode Run command with env serving HTTP on both runtimes"
+    },
+    {
+      "id": "browse-the-web",
+      "guide": "cua-sdk/guides/browse-the-web.mdx",
+      "langs": [
+        "py"
+      ],
+      "lanes": [
+        "hermetic",
+        "container",
+        "fleet-env"
+      ],
+      "checks": "a fresh-agent session through the host `cua mcp` server only (official MCP Python SDK, no LLM): hermetic: images_list returns the published catalog with browser_tools, sandbox_create takes browser, teleport_browser_session exists; container: images_list -> sandbox_create {browser: true} on linux -> read, fill (browser_type), check and submit (browser_click) a form served in the sandbox -> tab screenshot -> sandbox_delete; fleet-env: the same on a Fleet gVisor sandbox"
+    }
+  ]
+}

@@ -1,27 +1,29 @@
 ---
 name: gui-automation
 description: >-
-  Use when you need to visually interact with a GUI — test buttons, fill forms,
+  Use when you need to visually interact with a GUI: test buttons, fill forms,
   verify visual layouts, fuzz web pages, automate user flows, take screenshots,
   or perform end-to-end QA on any application. Works on cloud VMs, Docker
-  containers, local machines, and sandboxes. Install: pip install cua.
+  containers, local machines, and sandboxes. Needs the `cua` CLI
+  (curl -fsSL https://cua.ai/install.sh | sh).
 ---
 
 # GUI Automation
 
 CUA gives you **eyes and hands on a real computer**: see the screen, move the
-mouse, click, type, drag, and manage windows — like a human at the keyboard.
+mouse, click, type, drag, and manage windows, like a human at the keyboard.
 
 Use this skill for **visual interaction** that can't be done via shell or API.
 
 ## Setup
 
 ```bash
-cua --version          # check install; if missing: pip install cua
+cua --version          # check install; if missing: curl -fsSL https://cua.ai/install.sh | sh
 
 # Connect to target (pick one)
-cua do switch cloud my-vm
-cua do switch docker my-container
+cua do switch my-sandbox                    # any sandbox from `cua sb ls`
+cua do switch relay:<machine-id>            # a relay Space from `cua spaces ls`
+cua do switch url http://127.0.0.1:3211 --as dev   # a cua-spacesd by URL
 cua do-host-consent && cua do switch host   # local machine (one-time consent)
 ```
 
@@ -31,16 +33,16 @@ cua do-host-consent && cua do switch host   # local machine (one-time consent)
 
 ## Workflow
 
-**Look → Act → Verify** — repeat until done, then share:
+**Look → Act → Verify**: repeat until done, then share:
 
 ```bash
 cua do screenshot          # look
 cua do click 450 280       # act
 cua do screenshot          # verify
-cua trajectory share       # share replay link with user
+cua trajectory view        # open the replay for the user
 ```
 
-> Re-screenshot after every UI change — coordinates go stale when the screen changes.
+> Re-screenshot after every UI change: coordinates go stale when the screen changes.
 
 ## Scenarios
 
@@ -74,13 +76,13 @@ cua do screenshot
 
 ### Zoom in for precision clicks (host or small targets)
 
-When clicking small or dense UI elements — especially on the host machine —
+When clicking small or dense UI elements, especially on the host machine,
 zoom into the target window first. Coordinates become **window-relative** and
 screenshots show only that window, giving you higher effective resolution.
 
 ```bash
 cua do zoom "Google Chrome"   # crop to Chrome window; coords are now window-relative
-cua do screenshot              # zoomed view — easier to locate small elements
+cua do screenshot              # zoomed view, easier to locate small elements
 cua do click 112 44            # precise click on a small tab or button
 cua do screenshot              # verify
 cua do unzoom                  # restore full-screen coords when done
@@ -115,19 +117,19 @@ cua do screenshot              # check for errors, crashes, unexpected behavior
 Every action is auto-recorded to `~/.cua/trajectories/{machine}/{session}/`.
 
 ```bash
-cua trajectory share           # upload and get shareable HTTPS link (always do this at end)
+cua trajectory view            # open the replay viewer (do this at the end)
 cua trajectory ls              # list sessions
-cua trajectory export          # generate HTML report
+cua trajectory clean           # delete sessions
 cua do --no-record click 100 200   # disable recording for a single action
 ```
 
-Tell the user: `"Here is the trajectory of my session: {url}"`
+Tell the user where the trajectory is (`cua trajectory ls` prints the path).
 
 ## Quick Reference
 
 | Action              | Command                                      |
 | ------------------- | -------------------------------------------- |
-| Connect to target   | `cua do switch <provider> [name]`            |
+| Connect to target   | `cua do switch <sandbox>`                    |
 | Screenshot          | `cua do screenshot`                          |
 | AI-annotated screen | `cua do snapshot ["instructions"]`           |
 | Click               | `cua do click <x> <y> [left\|right\|middle]` |
@@ -144,18 +146,17 @@ Tell the user: `"Here is the trajectory of my session: {url}"`
 | Focus window        | `cua do window focus <id>`                   |
 | Zoom to window      | `cua do zoom "App Name"`                     |
 | Unzoom              | `cua do unzoom`                              |
-| Share trajectory    | `cua trajectory share`                       |
+| View trajectory     | `cua trajectory view`                        |
 
 ## Providers
 
-| Provider     | Example                             |
-| ------------ | ----------------------------------- |
-| `cloud`      | `cua do switch cloud my-vm`         |
-| `cloudv2`    | `cua do switch cloudv2 my-vm`       |
-| `docker`     | `cua do switch docker my-container` |
-| `lume`       | `cua do switch lume my-vm`          |
-| `lumier`     | `cua do switch lumier my-vm`        |
-| `winsandbox` | `cua do switch winsandbox`          |
-| `host`       | `cua do switch host`                |
+| Target            | Example                                      |
+| ----------------- | -------------------------------------------- |
+| a sandbox         | `cua do switch my-sandbox` (see `cua sb ls`) |
+| a relay Space     | `cua do switch relay:<machine-id>` (`cua spaces ls`) |
+| a spacesd URL | `cua do switch url http://host:3211 --as x`  |
+| this machine      | `cua do switch host`                         |
+
+Legacy `<provider> <name>` pairs (`cloud`, `docker`, `lume`, ...) still work.
 
 See [references/command-reference.md](references/command-reference.md) for full argument syntax.

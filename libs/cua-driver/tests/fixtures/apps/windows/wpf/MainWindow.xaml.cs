@@ -23,6 +23,10 @@ public partial class MainWindow : Window
     private bool _targetPointerSeen;
     private readonly ScenariosManifest _manifest;
     private readonly string? _fixtureStatePath;
+    private readonly System.Windows.Threading.DispatcherTimer _fixtureStateTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(50)
+    };
 
     public MainWindow()
     {
@@ -32,6 +36,11 @@ public partial class MainWindow : Window
 
         Title = _manifest.Wpf.MainWindow.Title;
         AutomationProperties.SetAutomationId(this, _manifest.Wpf.MainWindow.AutomationId);
+        _fixtureStateTimer.Tick += (_, _) =>
+        {
+            _fixtureStateTimer.Stop();
+            PublishFixtureState();
+        };
 
         CommandBindings.Add(new CommandBinding(AccelCmd, (s, e) =>
         {
@@ -155,11 +164,25 @@ public partial class MainWindow : Window
     private void OnInputChanged(object sender, TextChangedEventArgs e)
     {
         LblInputMirror.Text = $"mirror={TxtInput.Text}";
+        ScheduleFixtureStatePublish();
+    }
+
+    private void OnMultilineInputChanged(object sender, TextChangedEventArgs e)
+    {
+        ScheduleFixtureStatePublish();
+    }
+
+    private void ScheduleFixtureStatePublish()
+    {
+        if (string.IsNullOrWhiteSpace(_fixtureStatePath)) return;
+        _fixtureStateTimer.Stop();
+        _fixtureStateTimer.Start();
     }
 
     private void OnDeferredInputChanged(object sender, TextChangedEventArgs e)
     {
         LblDeferredInputMirror.Text = $"deferred_mirror={TxtDeferredInput.Text}";
+        ScheduleFixtureStatePublish();
     }
 
     private void OnTargetLeftDown(object sender, MouseButtonEventArgs e)
@@ -224,6 +247,9 @@ public partial class MainWindow : Window
             ["lbl-counter"] = new { text = LblCounter?.Text ?? "counter=0" },
             ["lbl-last-action"] = new { text = LblLastAction?.Text ?? "last_action=none" },
             ["lbl-click-count"] = new { text = LblClickCount?.Text ?? "clicks=0" },
+            ["txt-input"] = new { text = TxtInput?.Text ?? "" },
+            ["txt-deferred-input"] = new { text = TxtDeferredInput?.Text ?? "" },
+            ["txt-multiline-input"] = new { text = TxtMultilineInput?.Text ?? "" },
         };
         try
         {

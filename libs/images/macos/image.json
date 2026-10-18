@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "name": "macos",
+  "os": "macos",
+  "description": "Canonical macOS image in three tiers: slim (the Lume base, autologin user lume, SIP off, ssh, plus cua-spacesd at login with its TCC grants and Google Chrome), full (slim plus the Command Line Tools, pinned Homebrew and common dev tools; the default) and xcode (full plus one pinned Xcode and its iOS simulator runtime). Versions: versions.env.",
+  "repository": "ghcr.io/trycua/macos",
+  "platforms": [
+    "darwin/arm64"
+  ],
+  "outputs": {
+    "lume": {
+      "tag_prefix": "",
+      "runtimes": [
+        "lume"
+      ],
+      "init": "launchd"
+    }
+  },
+  "desktop": {
+    "display": "",
+    "resolution": "1024x768",
+    "user": "lume",
+    "uid": 501
+  },
+  "services": [
+    {
+      "name": "env",
+      "port": 3211,
+      "protocol": "grpc",
+      "component": "cua-spacesd",
+      "auth": "bearer token: the Lume setup share (setup/env-token), /etc/cua/env-token, or ~/.cua/spacesd/token; bootstrap Init without one",
+      "readiness": "tcp"
+    },
+    {
+      "name": "env-media",
+      "port": 3212,
+      "protocol": "udp",
+      "component": "cua-spacesd"
+    },
+    {
+      "name": "ssh",
+      "port": 22,
+      "protocol": "tcp"
+    }
+  ],
+  "claims": {
+    "_doc": "What the image promises; cua-image-manifest turns this into /etc/cua-image/manifest.json and cua-spacesd doctor checks it (claimed = required).",
+    "features_required": [
+      "pty",
+      "fs_watch",
+      "tunnel.forward",
+      "driver",
+      "a11y",
+      "background_input",
+      "desktop_stream",
+      "window_stream",
+      "h264_sw",
+      "quic_media",
+      "windows",
+      "launch_app",
+      "presence",
+      "presence.cursor_shape",
+      "volume.mount"
+    ],
+    "features_optional": [
+      "hotspot",
+      "relay_attach",
+      "h264_hw",
+      "audio.desktop",
+      "audio.opus",
+      "teleport.*"
+    ],
+    "feature_attributes": {
+      "volume.mount": {
+        "backend": "nfs"
+      },
+      "presence.cursor_shape": {
+        "hit_test": "ax",
+        "system": "nscursor",
+        "probe": "cgwarp"
+      }
+    },
+    "codecs_required": [
+      "openh264"
+    ],
+    "auth_modes": [
+      "local"
+    ],
+    "units": {
+      "launchd": [
+        "com.trycua.spacesd"
+      ]
+    },
+    "unit_processes": {
+      "com.trycua.spacesd": "cua-spacesd"
+    },
+    "compat_links": [],
+    "apps": {
+      "safari": [
+        "/usr/bin/defaults",
+        "read",
+        "/Applications/Safari.app/Contents/Info",
+        "CFBundleShortVersionString"
+      ],
+      "chrome": {
+        "argv": [
+          "/usr/bin/defaults",
+          "read",
+          "/Applications/Google Chrome.app/Contents/Info",
+          "CFBundleShortVersionString"
+        ],
+        "expect": "^154\\.0\\.8037\\.58$"
+      }
+    },
+    "resources": {
+      "min_disk_gib": 5,
+      "min_shm_mib": 0,
+      "min_memory_mib": 4096
+    },
+    "tz": "",
+    "locale": ""
+  },
+  "default_tier": "full",
+  "tiers": {
+    "slim": {
+      "description": "The Lume base plus cua-spacesd and Google Chrome: the minimum for every doctor feature.",
+      "claims": {}
+    },
+    "full": {
+      "from": "slim",
+      "description": "Slim plus the Xcode Command Line Tools, Homebrew and common dev tools (gh, jq, ripgrep, Node LTS with pnpm, uv, Rust, Go).",
+      "claims": {
+        "tools": {
+          "git": {
+            "argv": [
+              "/usr/bin/git",
+              "--version"
+            ],
+            "expect": "^git version 2\\."
+          },
+          "clang": {
+            "argv": [
+              "/usr/bin/clang",
+              "--version"
+            ],
+            "expect": "^Apple clang version 21\\."
+          },
+          "swift": {
+            "argv": [
+              "/usr/bin/swift",
+              "--version"
+            ],
+            "expect": "Apple Swift version 6\\."
+          },
+          "python3": {
+            "argv": [
+              "/usr/bin/python3",
+              "--version"
+            ],
+            "expect": "^Python 3\\."
+          },
+          "brew": {
+            "argv": [
+              "/opt/homebrew/bin/brew",
+              "--version"
+            ],
+            "expect": "^Homebrew 7\\.0\\.6\\b"
+          },
+          "gh": {
+            "argv": [
+              "/usr/local/bin/gh",
+              "--version"
+            ],
+            "expect": "^gh version 2\\.101\\.0 "
+          },
+          "jq": {
+            "argv": [
+              "/usr/local/bin/jq",
+              "--version"
+            ],
+            "expect": "^jq-1\\.8\\.2$"
+          },
+          "rg": {
+            "argv": [
+              "/usr/local/bin/rg",
+              "--version"
+            ],
+            "expect": "^ripgrep 15\\.2\\.0\\b"
+          },
+          "uv": {
+            "argv": [
+              "/usr/local/bin/uv",
+              "--version"
+            ],
+            "expect": "^uv 0\\.12\\.19\\b"
+          },
+          "node": {
+            "argv": [
+              "/usr/local/bin/node",
+              "--version"
+            ],
+            "expect": "^v24\\.21\\.0$"
+          },
+          "pnpm": {
+            "argv": [
+              "/usr/local/bin/pnpm",
+              "--version"
+            ],
+            "expect": "^12\\.6\\.0$"
+          },
+          "go": {
+            "argv": [
+              "/usr/local/bin/go",
+              "version"
+            ],
+            "expect": "^go version go1\\.27\\.1 darwin/arm64$"
+          },
+          "rustc": {
+            "argv": [
+              "/Users/lume/.cargo/bin/rustc",
+              "--version"
+            ],
+            "expect": "^rustc 1\\.98\\.1 "
+          },
+          "cargo": {
+            "argv": [
+              "/Users/lume/.cargo/bin/cargo",
+              "--version"
+            ],
+            "expect": "^cargo 1\\.98\\.1 "
+          }
+        }
+      }
+    },
+    "xcode": {
+      "from": "full",
+      "description": "Full plus Xcode 26.6 (selected), its iOS 26.5 simulator runtime and the Metal toolchain.",
+      "claims": {
+        "tools": {
+          "xcodebuild": {
+            "argv": [
+              "/usr/bin/xcodebuild",
+              "-version"
+            ],
+            "expect": "^Xcode 26\\.6$"
+          }
+        },
+        "simulator_runtimes": [
+          "iOS 26.5"
+        ],
+        "resources": {
+          "min_disk_gib": 20,
+          "min_shm_mib": 0,
+          "min_memory_mib": 8192
+        }
+      }
+    }
+  }
+}

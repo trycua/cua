@@ -38,5 +38,7 @@ task meaning.
 
 The `get_window_state` text header repeats the published `snapshot_id`
 (`window_id=… pid=… snapshot_id=s…`), so a model whose client shows it only
-text content can pair it with an `element_index` from the tree. Programs should
+text content can form `element_token: "<snapshot_id>:N"` from a row `[N]` in
+the tree. This includes `full_output:true` and empty trees when a snapshot was
+published; observation-only reads without a snapshot omit the field. Programs should
 still read `snapshot_id` and `element_token` from `structuredContent`.

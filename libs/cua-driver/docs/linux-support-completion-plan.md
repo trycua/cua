@@ -2,7 +2,7 @@
 
 **Status:** Historical implementation plan. Current outcomes live in
 `action-support.md`; remaining work lives in the
-[public platform roadmap](https://cua.ai/docs/reference/cua-driver/platform-roadmap).
+[public platform roadmap](https://cua.ai/docs/cua-driver/concepts/platform-support).
 
 **Scope:** Linux driver behavior, canonical Rust E2E evidence, and release validation
 

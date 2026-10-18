@@ -21,14 +21,49 @@ Curated MDX pages use the content checks and production build:
 ```bash
 pnpm docs:check-hygiene
 pnpm docs:check-links
+pnpm docs:check-blocks
 pnpm build
 ```
+
+Every fenced code block declares what it is, and `pnpm docs:check-blocks`
+enforces it. Put exactly one disposition in the fence's meta string:
+
+| Disposition | Meaning |
+| --- | --- |
+| `test="<lane>" id="<id>"` | CI runs the block in that lane; `id` is stable and unique per page |
+| `skip="<reason>"` | not run; the reason comes from `docs/code-block-policy.json` |
+| `output` | program output, a listing or other text that is not code |
+
+Lanes and skip reasons live in `docs/code-block-policy.json`. Generated pages
+are exempt because their generator's check owns them. The lanes:
+
+| Lane | Runs | When |
+| --- | --- | --- |
+| `cli-shape` | every `cua`, `cua-driver` and `lume` command parses against the CLI's generated definition | every PR (`docs:check-blocks`) |
+| `config` | JSON, YAML and TOML parse, and match `schema="<name>"` | every PR (`docs:check-blocks`, needs `uv`) |
+| `docs` | Python and TypeScript blocks, hermetically; `prelude="fakefleet"` runs cloud code against a fake Fleet | PR (`tests/e2e/cua-sdk`) |
+| `container` | blocks that start local sandboxes (Docker, gVisor) | PR (`tests/e2e/cua-sdk`) |
+| `fleet` | whole scripts against live Fleet | nightly |
+| `windows`, `lume` | shell blocks on a disposable Windows or macOS machine | nightly |
+| `terraform` | `terraform init` and `validate` | PR |
+| `swift`, `kotlin` | the block compiles against `libs/cua/swift` or `libs/cua/kotlin` (statements wrapped in a function; nothing runs) | PR (`docs-compile-lanes.yml`) |
+| `excerpt` | the block is byte-identical to `source="<path>#<region>"` in a sample CI builds | every PR (`docs:check-blocks`) |
+
+Run the Python and container lanes with
+`python3 tests/e2e/cua-sdk/run.py --lanes docs --langs py --strict` (add
+`container` with Docker running). `session="..."` scopes blocks that build on
+each other; `prelude="..."` adds hidden setup (see
+`tests/e2e/cua-sdk/docs/preludes/README.md`). Blocks that predate the
+rule are listed in `docs/code-block-baseline.json`, which may only shrink: after
+deciding a baselined block, run `python3 ../tests/e2e/cua-sdk/docs/extract.py --update-baseline`.
+A new or edited block must be decided before it merges.
 
 For generated reference changes, also run the owning component check:
 
 ```bash
 pnpm docs:check:cua-driver
 pnpm docs:check:lume
+pnpm docs:check:cua-cli
 ```
 
 `pnpm docs:generate:cua-driver` regenerates the shared CLI reference and only the

@@ -1,0 +1,75 @@
+---
+title: Your cloud resources and costs
+description: What Cua creates in your AWS, Google Cloud or Modal account, what it costs per hour, and the notes for each cloud.
+---
+
+Details for [Use your own cloud](/cua-sdk/guides/your-cloud).
+
+## What Cua creates
+
+| Cloud | Per sandbox | Shared |
+|---|---|---|
+| AWS | One EC2 instance and its disk. Docker runs the image on it. | One security group with no inbound rules, in the region's default VPC. |
+| Google Cloud | One Compute Engine instance and its disk. Docker runs the image on it. | A network with no inbound rules, so the project's default firewall rules never apply to it. |
+| Modal | One Modal sandbox running the image. | Nothing. |
+
+- Nothing else is created: no IAM users or keys, no change to existing
+  networks, security groups or firewall rules.
+- The VM installs only Docker. The image carries its own cua-spacesd.
+- Every resource carries these tags (labels on Google Cloud):
+
+  | Tag | Value |
+  |---|---|
+  | `cua-managed` | `true` |
+  | `cua-owner` | This cua home's owner id |
+  | `cua-space` | The sandbox's name |
+  | `cua-machine` | Its relay machine |
+  | `cua-created-by` | The cua version |
+  | `cua-expires` | When it expires (Unix seconds) |
+
+- Every resource is recorded in `~/.cua/cloud/state.json` before the cloud call,
+  with its cloud id once it has one.
+
+## Costs
+
+`cua cloud status` shows the estimated on-demand price of each image family
+per hour while it runs (compute and disk, not network). A stopped VM bills only
+its disk.
+
+| Cloud | `linux` | `linux-slim` |
+|---|---|---|
+| AWS | `t4g.medium` (arm64), about $0.04/hour | `t4g.small`, about $0.03/hour |
+| Google Cloud | `e2-medium`, about $0.04/hour | `e2-small`, about $0.03/hour |
+| Modal | 1 core (2 vCPU) and 4 GiB, about $0.24/hour | the same |
+
+- Windows and Omarchy are not offered yet. They run as VMs inside the cloud's
+  VM, which needs a nested-virtualization machine type; `cua cloud status`
+  says so next to them.
+- macOS is not offered. On AWS it would need an EC2 Mac dedicated host, which
+  has a 24-hour minimum.
+
+## Per-cloud notes
+
+- **AWS**:
+  - One region per connection (`--region`, else the profile's). Profiles, SSO
+    and assume-role profiles from `~/.aws` work as the AWS CLI's do.
+  - The instance allows only IMDSv2 with a hop limit of 1, so the sandbox's
+    containers cannot read the instance's metadata (or its user data). It has
+    no key pair and no instance profile.
+  - A new account's vCPU quota may be low. `cua cloud test aws` does not read
+    it yet; a create past it fails with AWS's own message.
+- **Google Cloud**:
+  - One project and zone per connection (`--project`, `--region`, `--zone`).
+  - The instance has no service account, so nothing on it can call Google
+    APIs. Its containers reach the metadata server only for DNS.
+  - `cua cloud test gcp` says when the Compute Engine API is disabled.
+- **Modal**:
+  - One environment per connection (`--environment`) and a `~/.modal.toml`
+    profile (`--profile`).
+  - Sandboxes run under gVisor by default; `--runtime microvm` uses Modal's VM
+    runtime. Neither has `/dev/kvm`, so only Linux images run.
+  - A sandbox cannot be stopped and started, and lives at most 24 hours.
+  - Cua talks to Modal through `cua-modal-helper`, which uses Modal's official
+    Go SDK. Build it with `go build` in
+    `libs/cua/crates/cua-contrib/modal-helper` and put it next to `cua`, on
+    `PATH`, or in `CUA_MODAL_HELPER`.

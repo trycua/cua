@@ -28,16 +28,35 @@ def test_driver_stable_publish_gate_and_workflow_name_are_frozen():
     assert 'workflows: ["CD: Cua Driver (cross-platform)"]' in sdk
 
 
-def test_driver_nightly_grants_reusable_e2e_gate_permissions_without_running_it():
+def test_driver_nightly_publishes_only_after_the_desktop_e2e_gate():
     nightly = source("nightly-cua-driver.yml")
     driver = source("cd-rust-cua-driver.yml")
-    # The builder declares stable-tag E2E gate jobs with actions: read; the
-    # nightly caller must grant it even though those jobs are skipped.
+    # The builder's E2E gate jobs need actions: read from the nightly caller.
     assert "permissions:\n  # actions: read" in nightly
     assert "\n  actions: read\n" in nightly
-    for job in ("e2e-linux", "e2e-windows", "e2e-macos", "e2e-standalone-browsers"):
+    # Nightly builds run the same suites as the stable tag push, against the
+    # exact nightly source rather than the caller's workflow revision.
+    build = nightly.split("\n  build:\n", 1)[1].split("\n\n", 1)[0]
+    assert "      channel: nightly\n" in build
+    assert "      source_ref: ${{ inputs.source_sha || github.sha }}\n" in build
+    gate_sha = "${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}"
+    for job, sha_input in (
+        ("e2e-linux", "ref"),
+        ("e2e-windows", "ref"),
+        ("e2e-macos", "source_sha"),
+        ("e2e-standalone-browsers", "ref"),
+    ):
         block = driver.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
-        assert f"    if: {TAG_PUSH}" in block
+        assert f"    if: ({TAG_PUSH}) || inputs.channel == 'nightly'\n" in block
+        assert f"\n      {sha_input}: {gate_sha}" in block
+    # A failed suite fails the reusable build, and publish requires a
+    # successful build with no status-function bypass.
+    publish = nightly.split("\n  publish:\n", 1)[1].split("    steps:\n", 1)[0]
+    assert "    needs: [plan, build]\n" in publish
+    assert "needs.build.result == 'success'" in publish
+    for override in ("always()", "failure()", "cancelled()", "continue-on-error"):
+        assert override not in publish
+        assert override not in build
 
 
 def test_lume_stable_publish_gate_remains_tag_only():

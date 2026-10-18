@@ -1,0 +1,28 @@
+[Unit]
+Description=cua-spacesd (gRPC + gRPC-Web on :3211) in the Omarchy session
+# The Hyprland session (sddm autologin -> uwsm) publishes its environment to
+# /run/cua-desktop/desktop.env; cua-desktop-env.path restarts this unit when a
+# new session writes it. Token handling is libs/images/linux's (see
+# start-spacesd.sh); the Fleet claim token arrives through run-cua.mount and
+# cua-env-token-sync.service.
+# cloud-init-network.service is the unit name of newer cloud-init (Arch); cloud-init.service the older one.
+After=sddm.service network-online.target cloud-init.service cloud-init-network.service run-cua.mount cua-env-token-sync.service
+Wants=network-online.target cua-env-token-sync.service
+
+[Service]
+Type=simple
+User=cua
+Environment=HOME=/home/cua XDG_RUNTIME_DIR=/run/user/1000 CUA_DESKTOP_RUNTIME_DIR=/run/cua-desktop
+Environment=CUA_DRIVER_RS_ENABLE_WAYLAND=1
+EnvironmentFile=-/etc/cua/spacesd.env
+ExecStartPre=+/opt/cua/bin/ensure-env-token.sh
+# Hyprland under software rendering (and TCG) can take minutes to come up.
+ExecStartPre=/opt/cua/bin/cua-omarchy-wait-session 900
+ExecStart=/opt/cua/bin/start-spacesd.sh
+Restart=always
+RestartSec=2
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

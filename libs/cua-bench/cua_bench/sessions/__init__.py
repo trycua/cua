@@ -1,6 +1,6 @@
-"""Sessions module for async container management."""
+"""Run bookkeeping for ``cb run`` (list, info, watch, logs, stop)."""
 
-from .manager import list_sessions, make
-from .providers.base import SessionProvider
+from .manager import get_session, list_sessions
+from .status import session_logs, session_status
 
-__all__ = ["make", "list_sessions", "SessionProvider"]
+__all__ = ["get_session", "list_sessions", "session_logs", "session_status"]

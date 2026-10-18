@@ -1,0 +1,83 @@
+---
+title: How Lume works
+description: 'Offline unattended setup, SIP through paired Recovery, macOS disk growth with rollback, and what Lume telemetry collects.'
+---
+
+## Unattended setup
+
+`lume create --unattended tahoe` (or `sequoia`) never clicks through Setup
+Assistant. Lume:
+
+1. installs macOS from the IPSW into a new disk;
+2. boots once so macOS writes its first-boot state, then stops;
+3. mounts the Data volume on the host and writes the `lume` account, SSH,
+   autologin and no-sleep settings as plain files;
+4. boots again and finishes only when SSH answers.
+
+Writing files avoids depending on display timing or a release's Setup
+Assistant layout. Tahoe is the verified preset; Sequoia can still show an
+Accessibility step on first display boot
+([#2155](https://github.com/trycua/cua/issues/2155)).
+
+## SIP
+
+On Apple silicon, SIP lives in a LocalPolicy signed by the Secure Enclave
+(Virtualization.framework provides it for VMs). It belongs to a paired state:
+`disk.img` (macOS, personalized boot files, Recovery), `nvram.bin` (security and
+anti-replay state) and the VM configuration. Editing files cannot sign a
+policy, so `lume sip` uses three boots:
+
+1. normal: check the admin account over SSH;
+2. Recovery: run `csrutil enable|disable` in Terminal over a temporary VNC
+   session, reading the prompt and result with OCR (Lume stops the run if
+   Tahoe Recovery does not halt);
+3. normal: `csrutil status` over SSH.
+
+Only the canonical `System Integrity Protection status: enabled.` or
+`disabled.` is accepted; a customized policy is rejected. `lume clone` copies
+disk and NVRAM together, which is why cloning a prepared seed works and copying
+one file does not.
+
+## Disk growth
+
+A macOS disk is laid out as ISC, main APFS, then RecoveryOS. Growing the image
+appends space after RecoveryOS, where APFS cannot reach it:
+
+```text output
+[ ISC ][ main APFS ][ RecoveryOS ][ free ]  ->  [ ISC ][ expanded main APFS ][ RecoveryOS ]
+```
+
+`lume set --disk-size` on a stopped VM copies RecoveryOS to the new end with
+its type, id, attributes and contents intact, rewrites both GPT copies, and
+grows APFS with `diskutil`. It is a transaction: a copy-on-write backup first,
+a marker that blocks run, clone and push meanwhile, verification of the moved
+bytes and the new capacity, and restore on failure (also on the next attempt
+after a crash). Unfamiliar layouts and FileVault guests are refused. Linux
+images have no RecoveryOS: Lume grows the image and the guest grows its
+filesystem.
+
+## Telemetry
+
+Lume sends content-free, pseudonymous events to PostHog EU, on by default,
+after a first-run notice.
+
+```bash test="cli-shape" id="lume-config-telemetry-status"
+lume config telemetry status
+lume config telemetry disable
+lume config telemetry enable
+lume config telemetry reset-id
+```
+
+`LUME_TELEMETRY_ENABLED` overrides the setting per process. Events carry a
+fixed name and bounded fields (Lume version, host OS major version and arch,
+CI flag, transport, allowlisted operation, success, error class, duration
+bucket), capped at 1,000 per process per hour. They never include VM or image
+names, paths, URLs, arguments, MCP payloads, SSH commands or output, VNC
+credentials, screenshots or raw errors. GeoIP is disabled.
+
+The update check (`lume check-update`, `lume update`) is a separate request to
+GitHub Releases, cached for 20 hours, without the telemetry id:
+
+```bash test="cli-shape,lume" id="lume-check-update"
+LUME_UPDATE_CHECK=false lume check-update
+```

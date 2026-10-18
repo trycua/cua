@@ -80,8 +80,7 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
 
 fn app_sort_key(a: &InstalledApp, b: &InstalledApp) -> std::cmp::Ordering {
     // Keep recently-used apps near the top when we can infer usage recency.
-    // Interface-Agent's Windows adapter sorts by LastAccessTime; mirror that
-    // behavior here, with deterministic name-based fallback.
+    // Sort by LastAccessTime, with deterministic name-based fallback.
     match (a.last_used.as_deref(), b.last_used.as_deref()) {
         (Some(ax), Some(bx)) => bx
             .cmp(ax)

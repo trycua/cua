@@ -352,6 +352,7 @@ const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
     "browser_navigate",
     "browser_click",
     "browser_type",
+    "browser_select",
     "browser_pointer",
 ];
 const BROWSER_BOUND_INPUT_SCOPE_KEYS: &[&str] = &[
@@ -892,6 +893,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "press_key"
         | "hotkey"
         | "set_value"
+        | "run_steps"
+        | "run_script"
         | "invoke_menu"
         | "launch_app"
         | "bring_to_front"
@@ -923,6 +926,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_navigate"
         | "browser_click"
         | "browser_type"
+        | "browser_select"
         | "browser_pointer"
         | "history_status"
         | "history_query"
@@ -1128,6 +1132,7 @@ pub fn authorize_tool_call_with_context(
     args: &Value,
     context: &crate::session_authorization::EffectiveAuthorizationContext,
 ) -> Result<RiskAssessment, crate::policy::AuthorizationError> {
+    let tool = crate::tool::renamed_tool(tool).unwrap_or(tool);
     enforce_hard_invariants(tool, args)?;
     if context.is_expired() {
         return Err(crate::policy::AuthorizationError::Denied(
@@ -1939,6 +1944,10 @@ mod tests {
         );
         assert_eq!(
             ids("browser_click", serde_json::json!({})),
+            vec!["browser_bound_input"]
+        );
+        assert_eq!(
+            ids("browser_select", serde_json::json!({})),
             vec!["browser_bound_input"]
         );
         assert_eq!(

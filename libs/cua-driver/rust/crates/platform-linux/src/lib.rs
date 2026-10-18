@@ -10,6 +10,14 @@
 //! Wayland: falls back to xdg-output and virtual-keyboard protocols when
 //! running under a Wayland compositor with XWayland support.
 
+// Off Linux the crate still builds (so workspace-wide checks compile on every
+// host) but its native backends are cfg'd out, which strands the shared
+// helpers they call. They are live on Linux, where dead_code stays enforced.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// Tool helpers return `Result<_, ToolResult>`: the error arm is the finished
+// tool reply (see the note in cua-driver-core), not a propagated error.
+#![allow(clippy::result_large_err)]
+
 use cua_driver_core::tool::ToolRegistry;
 
 pub mod health_report;
@@ -71,6 +79,27 @@ pub mod video_wayland;
 
 #[cfg(target_os = "linux")]
 pub mod wayland;
+
+// Pure AT-SPI role / X cursor name tables for presence cursor shapes; tested
+// on every host.
+pub mod pointer_shape_map;
+
+#[cfg(target_os = "linux")]
+pub mod pointer_shape;
+
+/// Install the Linux [`cua_driver_core::pointer_shape::PointerShapeBackend`]
+/// (and the X11 real-cursor probe for `cursor_shape`). False off Linux, when
+/// no display is reachable, or when a backend is already installed.
+pub fn install_pointer_shape_backend() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        pointer_shape::install()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
 
 // `terminal` is OS-independent (pure string matching + a thin x11 hook).
 // Keeping it un-gated lets the unit tests run on any host.

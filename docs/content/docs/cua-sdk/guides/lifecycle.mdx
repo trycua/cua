@@ -1,0 +1,79 @@
+---
+title: Manage sandbox lifecycle
+description: Create, keep, reconnect to, list, suspend and delete sandboxes, and run many at once.
+---
+
+Sandboxes run on this machine by default, so the examples pass no location.
+To use [your own cloud](/cua-sdk/guides/your-cloud) pass `on=` as in `Sandbox.create`.
+
+## Ephemeral or kept
+
+```python test="container" id="ephemeral-or-persistent" session="local" prelude="local-cleanup"
+from cua_sandbox import Image, Sandbox
+
+# Deleted when the block exits.
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    ...
+
+# Kept until you delete it.
+sb = await Sandbox.create(Image.linux(), name="dev")
+await sb.disconnect()          # the sandbox keeps running
+```
+
+Disconnecting never stops a sandbox. A connection and a sandbox have separate
+lifetimes.
+
+## Inspect
+
+```python test="container" id="inspect" session="local" prelude="local-cleanup"
+print(sb.id)                   # its ref, like local:dev: what connect() and delete() take
+info = await sb.info()
+info.status                    # provisioning, starting, ready or stopped
+info.location                  # local, direct or the cloud you chose
+info.services                  # {"web": 8000, ...}
+info.provider_details          # backend internals (for example the local runtime)
+```
+
+| Status | Meaning |
+| --- | --- |
+| `provisioning` | Capacity is being found or created (image pull) |
+| `starting` | Booting, or `wait_for` probes have not passed yet |
+| `ready` | Running and every probe passed |
+| `stopped` | Exited, suspended or released |
+
+Refs are `local:<name>`, `aws:<name>` (also `gcp:` and `modal:`) or `direct:<host:port>`. A bare name
+works when it is unique; otherwise the call raises `AmbiguousSandbox`.
+
+## Reconnect, list, delete
+
+```python test="container" id="reconnect-list-delete" session="local" prelude="local-cleanup"
+sb = await Sandbox.connect("dev")
+for s in await Sandbox.list():
+    print(s.name, s.status, s.location)
+await Sandbox.suspend("dev")
+sb = await Sandbox.resume("dev")
+await Sandbox.delete("dev")
+```
+
+`await sb.destroy()` deletes the sandbox you hold. Suspend, resume and restart
+are local only: elsewhere `suspend` and `restart` raise `Unsupported`, and
+`resume` of a running sandbox reconnects. The CLI and the SDK share local state
+in `~/.cua/sandboxes`, so either can reconnect to the other's sandboxes.
+
+```bash test="cli-shape" id="cua-sb-create-linux"
+cua sb create linux --name dev
+cua sb ls                               # every location; --local filters
+cua sb info dev
+cua sb suspend dev && cua sb resume dev
+cua sb rm dev -f
+```
+
+Local sandboxes run until you delete them. In your own cloud, a sandbox
+deletes itself at its [time limit](/cua-sdk/guides/your-cloud#time-limits-and-cleanup).
+
+## Run many at once
+
+`Sandbox.ephemeral` is async, so `asyncio.gather` runs sandboxes in parallel.
+Cap concurrency with an `asyncio.Semaphore` (every local sandbox uses host CPU,
+memory and disk) and pass `return_exceptions=True` so one failure does not
+cancel the rest.

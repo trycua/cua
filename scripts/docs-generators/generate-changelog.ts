@@ -10,7 +10,7 @@
  * Usage:
  *   npx tsx scripts/docs-generators/generate-changelog.ts           # Generate all
  *   npx tsx scripts/docs-generators/generate-changelog.ts --check   # Check for drift
- *   npx tsx scripts/docs-generators/generate-changelog.ts --sdk=computer  # Specific SDK
+ *   npx tsx scripts/docs-generators/generate-changelog.ts --sdk=agent     # Specific SDK
  */
 
 import { execSync } from 'child_process';
@@ -47,28 +47,16 @@ const GITHUB_REPO = 'trycua/cua';
 
 const SDK_CONFIGS: SDKConfig[] = [
   {
-    name: 'computer',
-    displayName: 'Computer SDK',
-    tagPrefix: 'computer-v',
-    outputPath: 'cua/reference/computer-sdk/changelog.mdx',
-  },
-  {
     name: 'agent',
     displayName: 'Agent SDK',
     tagPrefix: 'agent-v',
     outputPath: 'cua/reference/agent-sdk/changelog.mdx',
   },
   {
-    name: 'computer-server',
-    displayName: 'Desktop Sandbox',
-    tagPrefix: 'computer-server-v',
-    outputPath: 'cua/reference/desktop-sandbox/changelog.mdx',
-  },
-  {
     name: 'lume',
     displayName: 'Lume',
     tagPrefix: 'lume-v',
-    outputPath: 'reference/lume/changelog.mdx',
+    outputPath: 'lume/reference/changelog.mdx',
   },
   {
     name: 'cuabot',

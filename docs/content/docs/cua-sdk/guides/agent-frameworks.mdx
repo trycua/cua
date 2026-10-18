@@ -1,0 +1,172 @@
+---
+title: Run agent frameworks in a sandbox
+description: Run OpenAI Agents, Codex, Cursor, OpenClaw, an Omarchy desktop and a Minecraft agent in Cua sandboxes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Each recipe gives a third-party agent its own desktop instead of yours.
+Sandboxes run on this machine by default; to run them in your own AWS, Google
+Cloud or Modal account, see [Use your own cloud](/cua-sdk/guides/your-cloud).
+The Python script needs Python `>=3.11,<3.14` with
+[`uv`](https://docs.astral.sh/uv/) and pins `cua-sandbox==0.9.0`. Your
+controller owns the sandbox and must delete it.
+
+## OpenAI Agents API
+
+A controller creates an `Image.linux()` sandbox, starts `codex exec-server` in
+it as an OpenAI `self_hosted` environment, and gives the agent Cua Driver as a stdio
+MCP server. It needs an OpenAI application key (`OPENAI_API_KEY`) and a
+separate environment key with only `api.agents.environments.connect`
+(`CODEX_API_KEY`), which is written to a mode-`600` file and deleted after the
+executor reads it.
+
+```bash skip="third-party-cli"
+curl -fsSLO https://cua.ai/docs-assets/scripts/openai-agents/run_openai_agents.py
+uv run run_openai_agents.py
+```
+
+The sandbox runs on this machine. To run it in your own cloud, connect the
+account with `cua cloud connect` and set `CUA_ON=aws` (or `gcp`, `modal`)
+before `uv run`.
+
+The run drives an XFCE terminal through Cua Driver, reconnects the same
+environment ID, downloads an artifact, and deletes the session and the
+sandbox. Deleting an OpenAI session alone does not release the sandbox.
+
+## Codex native Computer Use (Windows)
+
+Codex-in-ChatGPT's Computer Use plugin runs only on macOS and Windows, with an
+eligible, signed-in ChatGPT account. To let it take over a VM instead of your
+desktop, create a Windows sandbox (`Image.from_registry(WINDOWS_IMAGE,
+os_type="windows", kind="vm")`) from a disk that runs cua-spacesd,
+open it with `cua sb view`, install the ChatGPT desktop app and Codex CLI, and
+run `codex plugin add computer-use@openai-bundled`. Sign-in and approvals stay
+interactive.
+
+## Cursor Cloud Agents
+
+Cursor's self-hosted Team Pool worker can run in a Linux Space on your Mac or
+on a machine you set up with
+[`cua host setup --provide-spaces`](/start-here/host-spaces-on-your-spare-mac)
+(add `--on "<machine>"` and use the id `create` prints). It needs Cursor
+Enterprise with [Self-Hosted Machines](https://cursor.com/docs/cloud-agent/self-hosted)
+allowed and a service-account API key. Create the Space, install the Cursor
+CLI, clone the repository the pool serves, and copy the key in as a file so it
+never appears on a command line:
+
+```bash test="cli-shape" id="cursor-worker-setup"
+cua spaces create linux --name cursor-worker --cpus 4 --memory-mb 8192
+cua sb exec cursor-worker 'curl https://cursor.com/install -fsS | bash'
+cua sb exec cursor-worker 'git clone https://github.com/<owner>/<repo>.git ~/repo'
+(umask 077; printf '%s' "$CURSOR_API_KEY" > cursor-api-key)
+cua sb cp cursor-api-key cursor-worker:/home/cua/.cursor-api-key
+rm cursor-api-key
+```
+
+The worker exits after an idle hour (`--idle-release-timeout`), so
+`cursor-worker.sh` restarts it:
+
+```sh title="cursor-worker.sh" skip="placeholder"
+#!/bin/sh
+chmod 600 ~/.cursor-api-key; cd ~/repo || exit 1
+while true; do
+  CURSOR_API_KEY="$(cat ~/.cursor-api-key)" ~/.local/bin/agent worker --pool <pool> start
+  sleep 5
+done
+```
+
+Start it in the background:
+
+```bash test="cli-shape" id="cursor-worker-start"
+cua sb cp cursor-worker.sh cursor-worker:/home/cua/cursor-worker.sh
+cua sb exec cursor-worker 'nohup sh ~/cursor-worker.sh > ~/cursor-worker.log 2>&1 &'
+```
+
+The worker connects out to Cursor; the Space accepts no incoming connections.
+After a Space restart, run the `nohup` line again. One worker serves one agent
+at a time. `cua spaces delete cursor-worker` removes it.
+
+## OpenClaw
+
+OpenClaw's bundled `cua-computer` provider runs Cua Driver in-process, so its
+`computer` tool drives the sandbox's X11 desktop. Create the desktop, then in
+`cua sb shell openclaw` install Node.js and `openclaw`, run
+`openclaw plugins enable cua-computer`, and start the Gateway and node with
+`DISPLAY=:1`:
+
+```bash test="cli-shape" id="cua-sb-create-openclaw"
+cua sb create linux --name openclaw --cpu 4 --memory 8GB
+cua sb rm openclaw -f
+```
+
+OpenClaw needs X11 (not Wayland) and a vision-capable model.
+
+## Omarchy desktop
+
+`ghcr.io/trycua/omarchy:edge` is an amd64 Omarchy (Hyprland) VM image that
+ships Cua Driver and cua-spacesd. Run it as a local VM and drive it with the
+cua CLI:
+
+```bash skip="local-vm"
+cua sb create ghcr.io/trycua/omarchy:edge --kind vm --name omarchy --cpu 4 --memory 4GB
+cua sb view omarchy
+cua do switch omarchy
+cua do screenshot --save omarchy.png
+cua sb rm omarchy -f
+```
+
+It boots under QEMU: KVM on Linux, TCG (slow) on Apple silicon. A black
+screenshot means Hyprland did not start. The full walkthrough, including
+Omarchy's own Cua Driver, is in [Omarchy with Cua Driver](/cua-sdk/guides/omarchy).
+For Omarchy on Apple silicon, see [Lume](/lume).
+
+## Minecraft
+
+Build the Prism launcher into an image once, then run it in the cloud or
+locally. Describe it as `minecraft.json`:
+
+```json title="minecraft.json" test="config" id="json-config" schema="cua-image"
+{
+  "apiVersion": "images.cua.ai/v1alpha1",
+  "kind": "Image",
+  "metadata": { "name": "minecraft-workspace", "namespace": "minecraft-workspace" },
+  "spec": {
+    "recipe": {
+      "osType": "linux",
+      "distro": "ubuntu",
+      "version": "24.04",
+      "kind": "vm",
+      "layers": [
+        { "type": "apt_install", "packages": ["flatpak"] },
+        {
+          "type": "run",
+          "command": "flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo && flatpak install -y --noninteractive flathub org.prismlauncher.PrismLauncher"
+        }
+      ]
+    }
+  }
+}
+```
+
+Build on an x86_64 host with KVM (the cloud runs amd64), push, and run it:
+
+```bash test="cli-shape" id="cua-image-build"
+cua image build minecraft.json \
+  --base vm:ghcr.io/trycua/linux:24.04-disk \
+  --push ghcr.io/<you>/minecraft-workspace:1
+cua sb create ghcr.io/<you>/minecraft-workspace@sha256:<digest> --name mc --cpu 4 --memory 8GB
+cua sb view mc
+cua sb rm mc -f
+```
+
+<Callout type="error">
+  Never sign in before building or publishing: a published disk carries every
+  token it ever held. Sign in to Prism on the running sandbox (`cua sb view mc`).
+</Callout>
+
+Then drive the game with any tool-calling model: give it `click`, `type_text`
+and `press` tools backed by `sb.mouse.click`, `sb.keyboard.type` and
+`sb.keyboard.keypress` on `Sandbox.connect("mc")`, and return a fresh
+`sb.screenshot()` after each action. For typed desktop tools, use
+[Cua Driver](/cua-sdk/guides/desktop#typed-cua-driver).

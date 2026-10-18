@@ -46,6 +46,26 @@ When asked what to work on, follow
 [`MAINTAINERS.md`](MAINTAINERS.md#pull-model) and the
 [polling skill](.agents/skills/poll-github-work/SKILL.md).
 
+## Repository layout
+
+[`Development.md`](Development.md) maps components to paths and toolchains;
+[`TESTING.md`](TESTING.md) maps them to test commands and CI workflows. Rules
+that are easy to miss:
+
+- `libs/cua` (cua SDK, `cua` CLI, `cua daemon`) is the only client library.
+  `cua-sdk` is its only UniFFI export crate. Bindings, the Spaces manifest,
+  and bundled skills are generated or synced and have `--check` drift gates.
+- `libs/cua-spacesd` is server-only and runs inside the sandbox. Client
+  code goes in `libs/cua`; the driver depends on `libs/cua`, never the reverse.
+  The driver never injects input itself: all input goes through cua-driver.
+- The `.proto` files in `libs/cua/proto` are the contract. Changes are
+  additive and pass `buf breaking`.
+- Sandboxes are daemon-agnostic: lifecycle and readiness must not assume
+  cua-spacesd or any other in-guest service.
+- `libs/fleet` is a read-only mirror. Never edit it.
+- Tests that start VMs, containers, Fleet claims, or host input are opt-in
+  (off by default) and clean up what they create.
+
 ## Cross-platform Cua Driver behavior
 
 Treat user-visible Cua Driver behavior as a cross-platform contract. Implement

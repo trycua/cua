@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // CuaTestHarness.WKWebView — macOS analogue of the Windows WebView2 harness.
 //
 // A minimal AppKit NSWindow hosting a WKWebView (Apple WebKit, NOT Chromium)

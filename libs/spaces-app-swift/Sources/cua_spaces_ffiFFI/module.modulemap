@@ -1,0 +1,7 @@
+module cua_spaces_ffiFFI {
+    header "include/cua_spaces_ffiFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}

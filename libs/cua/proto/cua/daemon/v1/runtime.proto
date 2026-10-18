@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+// Local runtime provisioning (`cua runtime doctor|setup`).
+service RuntimeService {
+  // Inspects local runtimes (Lume, QEMU, container engine, runsc) without
+  // changing anything.
+  rpc Doctor(DoctorRequest) returns (DoctorResponse);
+  // Installs or starts missing local runtime components. Every step is
+  // explicit and logged in the response.
+  rpc Setup(SetupRequest) returns (SetupResponse);
+  // Pulls an image into the local cache or container engine.
+  rpc PullImage(PullImageRequest) returns (PullImageResponse);
+  // Builds an image from an `images.cua.ai/v1alpha1` Image resource.
+  rpc BuildImage(BuildImageRequest) returns (BuildImageResponse);
+  // Copies an image (host architecture) to another registry reference.
+  rpc PushImage(PushImageRequest) returns (PushImageResponse);
+}
+
+// Status of one local runtime component.
+enum CheckStatus {
+  // Not reported.
+  CHECK_STATUS_UNSPECIFIED = 0;
+  // Present and usable.
+  CHECK_STATUS_OK = 1;
+  // Missing, but `cua runtime setup` can install it.
+  CHECK_STATUS_INSTALLABLE = 2;
+  // Missing or broken and needs user action.
+  CHECK_STATUS_ERROR = 3;
+  // Not applicable on this host.
+  CHECK_STATUS_NOT_APPLICABLE = 4;
+}
+
+// One doctor check.
+message RuntimeCheck {
+  // Component, for example "lume", "qemu", "docker", "runsc".
+  string name = 1;
+  // Status.
+  CheckStatus status = 2;
+  // Detected version, when present.
+  string version = 3;
+  // Explanation or remediation.
+  string detail = 4;
+}
+
+// Request for `RuntimeService.Doctor`.
+message DoctorRequest {}
+
+// Response for `RuntimeService.Doctor`.
+message DoctorResponse {
+  // Checks, in a stable order.
+  repeated RuntimeCheck checks = 1;
+  // The full host report (cua-vmm `DoctorReport`) as JSON.
+  string report_json = 2;
+}
+
+// Request for `RuntimeService.Setup`.
+message SetupRequest {
+  // Components to set up. Empty means every installable component.
+  repeated string components = 1;
+  // Report the plan without changing anything.
+  bool dry_run = 2;
+}
+
+// One setup step.
+message SetupStep {
+  // Component.
+  string name = 1;
+  // Status after the step.
+  CheckStatus status = 2;
+  // What was done, or would be done on a dry run.
+  string detail = 3;
+}
+
+// Response for `RuntimeService.Setup`.
+message SetupResponse {
+  // Steps, in execution order.
+  repeated SetupStep steps = 1;
+}
+
+// A local image.
+message LocalImage {
+  // Reference.
+  string reference = 1;
+  // `container` or `vm`.
+  string kind = 2;
+  // Local disk path (VM images) or engine image reference (containers).
+  string location = 3;
+  // Size in bytes, when known.
+  uint64 size_bytes = 4;
+}
+
+// Request for `RuntimeService.PullImage`.
+message PullImageRequest {
+  // Reference, with an optional backend prefix (`container:`, `vm:`).
+  string reference = 1;
+}
+
+// Response for `RuntimeService.PullImage`.
+message PullImageResponse {
+  // The pulled image.
+  LocalImage image = 1;
+}
+
+// Request for `RuntimeService.BuildImage`.
+message BuildImageRequest {
+  // `images.cua.ai/v1alpha1` Image resource as JSON.
+  string spec_json = 1;
+  // Base image, with an optional backend prefix (`container:`, `vm:`,
+  // `disk:`).
+  string base = 2;
+  // Push the result to this reference. Empty keeps it local.
+  string push = 3;
+}
+
+// Response for `RuntimeService.BuildImage`.
+message BuildImageResponse {
+  // `reference@digest` when pushed, else the local output directory.
+  string result = 1;
+}
+
+// Request for `RuntimeService.PushImage`.
+message PushImageRequest {
+  // Source reference.
+  string reference = 1;
+  // Destination reference.
+  string destination = 2;
+}
+
+// Response for `RuntimeService.PushImage`.
+message PushImageResponse {
+  // Pushed manifest digest.
+  string digest = 1;
+}

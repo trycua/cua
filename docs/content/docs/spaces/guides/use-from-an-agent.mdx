@@ -1,0 +1,142 @@
+---
+title: Use Spaces from an agent
+description: 'Give an AI coding agent the Spaces tools through cua daemon mcp, and run agents inside a Space as long-lived threads.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+The cua MCP server gives an agent 33 Spaces tools plus sandbox and computer
+tools. For the machine the agent runs on, use
+[Cua Driver](/cua-driver/quickstart) instead.
+
+## Connect the agent
+
+`cua agents setup` adds the cua skills and MCP server to detected agents
+([supported agents](/cua-cli/guides/mcp-server#supported-agents); the
+installer offers it after sign-in):
+
+```bash test="cli-shape" id="cua-agents-detect"
+cua agents detect          # read-only
+cua agents setup --agents claude,codex --yes
+cua agents status
+cua agents remove          # removes only what cua added
+```
+
+By hand:
+
+```bash skip="third-party-cli"
+claude mcp add cua -- cua daemon mcp
+codex mcp add cua -- cua daemon mcp
+```
+
+`cua daemon mcp` starts `cua daemon` if needed, so every agent on the machine
+shares the same Spaces, sandboxes and streams. Narrow the grant with
+`--permissions spaces:readonly` ([permissions](/cua-cli/guides/mcp-server#permissions)).
+
+```text output
+list_spaces / create_space {reuse}  -> pick, reuse or create a Space
+space_bash    {space, command}      -> run commands inside it
+send_file     {space, path}         -> drop a host file into ~/Downloads (sha256-verified)
+stream_endpoint                     -> a ticketed media URL
+list_tools / call_tool              -> cua-driver tools in the Space, or any declared service
+delete_space {space}                -> delete it and stop metering
+```
+
+`space` is an id or a name. A tool whose feature the Space lacks returns
+`capability_missing`.
+
+## Run an agent inside a Space
+
+| Tool | Does |
+|------|------|
+| `agent_capabilities` | Ready harnesses (`claude-code`, `openai-codex`). |
+| `agent_start {space, agent, prompt, show}` | Start a detached run; `show` tails it in a terminal on the Space desktop. |
+| `agent_message {space, run_id, text, force}` | Next turn; refused mid-turn unless `force`. |
+| `agent_status`, `agent_list`, `agent_stop` | State, output tail, stop. |
+
+Runs live in the guest (`~/.spaces-agents/<run_id>/`) and survive the client
+going away. The daemon copies your agent's credential file (for example
+`~/.claude/.credentials.json`) into the Space at start;
+`CUA_SPACES_AGENT_CREDENTIALS_HOME=none` copies nothing.
+
+In TypeScript a run is a thread:
+
+```ts skip="third-party-cli"
+import { embedded } from "@trycua/cua"
+import { startThread } from "@trycua/cua/spaces"
+
+const bot = await startThread(embedded().spaces(), {
+  agent: "claude-code",
+  prompt: "Open the repo in the Space and run the tests",
+  placement: { type: "dedicated", on: "local", deleteOnClose: true },
+})
+await bot.send("Now fix the failing test")
+console.log(await bot.status())
+await bot.close()                 // stops the run and deletes the Space
+```
+
+`placement` `shared` (`{ type: "shared", space, acknowledgeNoIsolation: true }`)
+reuses a Space you name; `adoptThread(spaces, spaceId, runId)` reattaches.
+
+The lower-level calls, one run per thread and one message per turn. The
+TypeScript and Rust tabs are from [the examples in other languages](/spaces/examples/other-languages), the Swift tab from
+[Cua Bots](/spaces/examples/cua-bots). A message sent mid-turn is
+refused (or queued) unless forced; show the reason.
+
+<Tabs items={['TypeScript', 'Rust', 'Swift']}>
+  <Tab value="TypeScript">
+    ```ts test="excerpt" id="ts-agent-start" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-agent-start"
+    const report = await space.agentStart(bot.agent, prompt, false, options)
+    const t = new BotThread(bot, report.runId, space)
+    ```
+
+    ```ts test="excerpt" id="ts-agent-message" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-agent-message"
+    const r = await this.space.agentMessage(this.runId, message, false)
+    if (!r.ok) {
+      this.fold.note(this.turns.length, `Refused: ${r.reason}`)
+      return { accepted: false, reason: r.reason }
+    }
+    ```
+  </Tab>
+  <Tab value="Rust">
+    ```rust test="excerpt" id="rs-agent" source="samples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent"
+    let r = self
+        .agents
+        .start(&self.agent, text, self.options.clone())
+        .await
+        .map_err(agents_err)?;
+    ```
+
+    ```rust test="excerpt" id="rs-agent-message" source="samples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent-message"
+    let r = self
+        .agents
+        .send(run, text, vec![])
+        .await
+        .map_err(agents_err)?;
+    if !r.accepts_message {
+        self.system(format!("queued while {}: {}", r.phase, r.reason));
+    }
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="excerpt" id="sw-agent-start" source="samples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-start"
+    let options = SpaceAgentOptions(
+        envFromHost: endpoint?.keyVariables ?? Self.defaultKeyVariables(bot.harness),
+        repo: nil, branch: nil, cwd: home, model: endpoint?.model, baseUrl: endpoint?.baseURL,
+        exitWhenIdle: false)
+    let report = try await space.agentStart(agent: bot.harness.rawValue, prompt: prompt, show: false,
+                                            options: options)
+    ```
+
+    ```swift test="excerpt" id="sw-agent-message" source="samples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-message"
+    let report = try await space(bot).agentMessage(runId: run, text: text, force: false)
+    if !report.ok { throw EngineError.refused(report.reason) }
+    ```
+  </Tab>
+</Tabs>
+
+<Callout type="warn">
+  `space_bash`, `send_file`, `teleport_app` and `hotspot_start` act with your
+  authority. Grant `spaces:readonly` to agents that only need to look.
+</Callout>

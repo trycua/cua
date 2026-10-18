@@ -6,12 +6,12 @@
 import nativeModule from "./cua_driver_sdk-ffi.js";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaDriverSdkDriverActivityObserver, type UniffiForeignFutureResultRustBuffer, type UniffiForeignFutureCompleterustBuffer, type UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost, type UniffiVTableCallbackInterfaceCuaDriverSdkDriverServiceTransport, type UniffiForeignFutureResultVoid, type UniffiForeignFutureCompletevoid, type UniffiVTableCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannel,
 } from "./cua_driver_sdk-ffi.js";
-import { type ActionResult, type ClickInput, type ClipboardReadInput, type ClipboardWriteInput, type DragInput, type EndSessionInput, type EndSessionOutput, type EscalateSessionInput, type GetAgentCursorStateInput, type GetCursorPositionInput, type GetDesktopStateInput, type GetScreenSizeInput, type GetSessionInput, type GetSessionStateInput, type GetWindowStateInput, type HotkeyInput, type InvokeMenuInput, type ListAppsInput, type ListAppsOutput, type ListSessionsInput, type ListSessionsOutput, type ListWindowsInput, type ListWindowsOutput, type MoveCursorInput, type ParseVisualRegionsInput, type PressKeyInput, type ScrollInput, type SessionOutput, type SessionStateOutput, type SetAgentCursorEnabledInput, type SetAgentCursorMotionInput, type SetAgentCursorThemeInput, type SetWindowFrameInput, type StartSessionInput, type StartSessionOutput, type TypeTextInput, type VerifyStateInput, type VerifyStateOutput, type WindowStateOutput,
+import { type ActionResult, type ClickInput, type ClipboardReadInput, type ClipboardWriteInput, type CursorMotionEffects, type CursorMotionEffectsOutput, type DragInput, type EndSessionInput, type EndSessionOutput, type EscalateSessionInput, type GetAgentCursorStateInput, type GetCursorPositionInput, type GetDesktopStateInput, type GetScreenSizeInput, type GetSessionInput, type GetSessionStateInput, type GetWindowStateInput, type HotkeyInput, type InvokeMenuInput, type ListAppsInput, type ListAppsOutput, type ListSessionsInput, type ListSessionsOutput, type ListWindowsInput, type ListWindowsOutput, type MoveCursorInput, type ParseVisualRegionsInput, type PressKeyInput, type ScrollInput, type SessionOutput, type SessionStateOutput, type SetAgentCursorEnabledInput, type SetAgentCursorMotionInput, type SetAgentCursorThemeInput, type SetWindowFrameInput, type StartSessionInput, type StartSessionOutput, type TypeTextInput, type VerifyStateInput, type VerifyStateOutput, type WindowStateOutput, CursorMotionStyle, CursorMotionTiming,
 } from "./cua_driver_contract.js";
-import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterInt32, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTraitInterfaceCallAsyncWithError, uniffiTraitInterfaceCallWithError, uniffiTypeNameSymbol, variantOrdinalSymbol,
+import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterFloat64, FfiConverterInt32, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTraitInterfaceCallAsyncWithError, uniffiTraitInterfaceCallWithError, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
 import uniffiCuaDriverContractModule from "./cua_driver_contract.js";
-const { FfiConverterTypeActionResult, FfiConverterTypeClickInput, FfiConverterTypeClipboardReadInput, FfiConverterTypeClipboardWriteInput, FfiConverterTypeDragInput, FfiConverterTypeEndSessionInput, FfiConverterTypeEndSessionOutput, FfiConverterTypeEscalateSessionInput, FfiConverterTypeGetAgentCursorStateInput, FfiConverterTypeGetCursorPositionInput, FfiConverterTypeGetDesktopStateInput, FfiConverterTypeGetScreenSizeInput, FfiConverterTypeGetSessionInput, FfiConverterTypeGetSessionStateInput, FfiConverterTypeGetWindowStateInput, FfiConverterTypeHotkeyInput, FfiConverterTypeInvokeMenuInput, FfiConverterTypeListAppsInput, FfiConverterTypeListAppsOutput, FfiConverterTypeListSessionsInput, FfiConverterTypeListSessionsOutput, FfiConverterTypeListWindowsInput, FfiConverterTypeListWindowsOutput, FfiConverterTypeMoveCursorInput, FfiConverterTypeParseVisualRegionsInput, FfiConverterTypePressKeyInput, FfiConverterTypeScrollInput, FfiConverterTypeSessionOutput, FfiConverterTypeSessionStateOutput, FfiConverterTypeSetAgentCursorEnabledInput, FfiConverterTypeSetAgentCursorMotionInput, FfiConverterTypeSetAgentCursorThemeInput, FfiConverterTypeSetWindowFrameInput, FfiConverterTypeStartSessionInput, FfiConverterTypeStartSessionOutput, FfiConverterTypeTypeTextInput, FfiConverterTypeVerifyStateInput, FfiConverterTypeVerifyStateOutput, FfiConverterTypeWindowStateOutput } = uniffiCuaDriverContractModule.converters;
+const { FfiConverterTypeActionResult, FfiConverterTypeClickInput, FfiConverterTypeClipboardReadInput, FfiConverterTypeClipboardWriteInput, FfiConverterTypeCursorMotionEffects, FfiConverterTypeCursorMotionEffectsOutput, FfiConverterTypeCursorMotionStyle, FfiConverterTypeCursorMotionTiming, FfiConverterTypeDragInput, FfiConverterTypeEndSessionInput, FfiConverterTypeEndSessionOutput, FfiConverterTypeEscalateSessionInput, FfiConverterTypeGetAgentCursorStateInput, FfiConverterTypeGetCursorPositionInput, FfiConverterTypeGetDesktopStateInput, FfiConverterTypeGetScreenSizeInput, FfiConverterTypeGetSessionInput, FfiConverterTypeGetSessionStateInput, FfiConverterTypeGetWindowStateInput, FfiConverterTypeHotkeyInput, FfiConverterTypeInvokeMenuInput, FfiConverterTypeListAppsInput, FfiConverterTypeListAppsOutput, FfiConverterTypeListSessionsInput, FfiConverterTypeListSessionsOutput, FfiConverterTypeListWindowsInput, FfiConverterTypeListWindowsOutput, FfiConverterTypeMoveCursorInput, FfiConverterTypeParseVisualRegionsInput, FfiConverterTypePressKeyInput, FfiConverterTypeScrollInput, FfiConverterTypeSessionOutput, FfiConverterTypeSessionStateOutput, FfiConverterTypeSetAgentCursorEnabledInput, FfiConverterTypeSetAgentCursorMotionInput, FfiConverterTypeSetAgentCursorThemeInput, FfiConverterTypeSetWindowFrameInput, FfiConverterTypeStartSessionInput, FfiConverterTypeStartSessionOutput, FfiConverterTypeTypeTextInput, FfiConverterTypeVerifyStateInput, FfiConverterTypeVerifyStateOutput, FfiConverterTypeWindowStateOutput } = uniffiCuaDriverContractModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -108,6 +108,70 @@ export function currentMacOsPermissionStatus(): MacOsPermissionStatus {
     ));
     }
 
+/**
+ * Click effects (ripple, squish) `age` seconds after a click at `(x, y)`.
+ */
+export function cursorClickEffects(effects: CursorMotionEffectsOutput, age: number, x: number, y: number): CursorEffectFrame {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCursorEffectFrame.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_func_cursor_click_effects(
+        FfiConverterTypeCursorMotionEffectsOutput.lower(effects, nativeModule().rustbuffer_alloc),
+        FfiConverterFloat64.lower(age, nativeModule().rustbuffer_alloc),
+        FfiConverterFloat64.lower(x, nativeModule().rustbuffer_alloc),
+        FfiConverterFloat64.lower(y, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The spec behind a built-in style (`signature_arc`, `spring_settle` and
+ * `comet_swoop`); `None` for the simulated styles.
+ */
+export function cursorMotionSpecForStyle(style: CursorMotionStyle, params: CursorMotionParams): CursorMotionSpec | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeCursorMotionSpec.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_func_cursor_motion_spec_for_style(
+        FfiConverterTypeCursorMotionStyle.lower(style, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeCursorMotionParams.lower(params, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Cua Driver's default motion knobs.
+ */
+export function defaultCursorMotionParams(): CursorMotionParams {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCursorMotionParams.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_func_default_cursor_motion_params(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
 export function openMacOsScreenRecordingSettings(): void /*throws*/ {uniffiCaller.rustCallWithError(
             /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
             /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(
@@ -127,6 +191,36 @@ export function openMcpDriverChannel(transport: DriverServiceTransport, authenti
                 return nativeModule().uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel(
         FfiConverterTypeDriverServiceTransport.lower(transport, nativeModule().rustbuffer_alloc),
         FfiConverterString.lower(authenticatedPrincipal, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Plan one move for a built-in style.
+ */
+export function planCursorMove(params: CursorMotionParams, request: CursorMoveRequest): CursorTrajectoryLike {
+    return FfiConverterTypeCursorTrajectory.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_func_plan_cursor_move(
+        FfiConverterTypeCursorMotionParams.lower(params, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeCursorMoveRequest.lower(request, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Plan one move for a custom spec.
+ */
+export function planCursorSpec(spec: CursorMotionSpec, request: CursorMoveRequest): CursorTrajectoryLike {
+    return FfiConverterTypeCursorTrajectory.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_func_plan_cursor_spec(
+        FfiConverterTypeCursorMotionSpec.lower(spec, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeCursorMoveRequest.lower(request, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -323,6 +417,1673 @@ const FfiConverterTypeConfiguredDriverOptions = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.claudeCodeCompatibility) +
              FfiConverterTypeRuntimeAuthorizationOptions.allocationSize(value.authorization);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Speed glow.
+ */
+export type CursorGlow = {
+    x: number,
+    y: number,
+    r: number,
+    alpha: number
+}
+
+/**
+ * Generated factory for {@link CursorGlow} record objects.
+ */
+export const CursorGlow = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorGlow, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorGlow>,
+    });
+})();
+
+const FfiConverterTypeCursorGlow = (() => {
+    type TypeName = CursorGlow;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from),
+                r: FfiConverterFloat64.read(from),
+                alpha: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+            FfiConverterFloat64.write(value.r, into);
+            FfiConverterFloat64.write(value.alpha, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y) +
+             FfiConverterFloat64.allocationSize(value.r) +
+             FfiConverterFloat64.allocationSize(value.alpha);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * One round-capped stroke of the comet trail.
+ */
+export type CursorTrailSegment = {
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    width: number,
+    alpha: number
+}
+
+/**
+ * Generated factory for {@link CursorTrailSegment} record objects.
+ */
+export const CursorTrailSegment = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorTrailSegment, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorTrailSegment>,
+    });
+})();
+
+const FfiConverterTypeCursorTrailSegment = (() => {
+    type TypeName = CursorTrailSegment;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                ax: FfiConverterFloat64.read(from),
+                ay: FfiConverterFloat64.read(from),
+                bx: FfiConverterFloat64.read(from),
+                by: FfiConverterFloat64.read(from),
+                width: FfiConverterFloat64.read(from),
+                alpha: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.ax, into);
+            FfiConverterFloat64.write(value.ay, into);
+            FfiConverterFloat64.write(value.bx, into);
+            FfiConverterFloat64.write(value.by, into);
+            FfiConverterFloat64.write(value.width, into);
+            FfiConverterFloat64.write(value.alpha, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.ax) +
+             FfiConverterFloat64.allocationSize(value.ay) +
+             FfiConverterFloat64.allocationSize(value.bx) +
+             FfiConverterFloat64.allocationSize(value.by) +
+             FfiConverterFloat64.allocationSize(value.width) +
+             FfiConverterFloat64.allocationSize(value.alpha);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A target rect in screen points.
+ */
+export type CursorMotionRect = {
+    x: number,
+    y: number,
+    width: number,
+    height: number
+}
+
+/**
+ * Generated factory for {@link CursorMotionRect} record objects.
+ */
+export const CursorMotionRect = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionRect, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionRect>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionRect = (() => {
+    type TypeName = CursorMotionRect;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from),
+                width: FfiConverterFloat64.read(from),
+                height: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+            FfiConverterFloat64.write(value.width, into);
+            FfiConverterFloat64.write(value.height, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y) +
+             FfiConverterFloat64.allocationSize(value.width) +
+             FfiConverterFloat64.allocationSize(value.height);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Glow around the target after a magnetic lock-on.
+ */
+export type CursorMagnet = {
+    rect: CursorMotionRect,
+    glow: number
+}
+
+/**
+ * Generated factory for {@link CursorMagnet} record objects.
+ */
+export const CursorMagnet = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMagnet, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMagnet>,
+    });
+})();
+
+const FfiConverterTypeCursorMagnet = (() => {
+    type TypeName = CursorMagnet;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                rect: FfiConverterTypeCursorMotionRect.read(from),
+                glow: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeCursorMotionRect.write(value.rect, into);
+            FfiConverterFloat64.write(value.glow, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeCursorMotionRect.allocationSize(value.rect) +
+             FfiConverterFloat64.allocationSize(value.glow);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Expanding click ring.
+ */
+export type CursorRipple = {
+    x: number,
+    y: number,
+    r: number,
+    width: number,
+    alpha: number
+}
+
+/**
+ * Generated factory for {@link CursorRipple} record objects.
+ */
+export const CursorRipple = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorRipple, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorRipple>,
+    });
+})();
+
+const FfiConverterTypeCursorRipple = (() => {
+    type TypeName = CursorRipple;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from),
+                r: FfiConverterFloat64.read(from),
+                width: FfiConverterFloat64.read(from),
+                alpha: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+            FfiConverterFloat64.write(value.r, into);
+            FfiConverterFloat64.write(value.width, into);
+            FfiConverterFloat64.write(value.alpha, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y) +
+             FfiConverterFloat64.allocationSize(value.r) +
+             FfiConverterFloat64.allocationSize(value.width) +
+             FfiConverterFloat64.allocationSize(value.alpha);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * The effects to paint at one moment.
+ */
+export type CursorEffectFrame = {
+    glow?: CursorGlow,
+    trail: Array<CursorTrailSegment>,
+    magnet?: CursorMagnet,
+    ripple?: CursorRipple,
+    /**
+     * Scale-down of the cursor, 0 = none.
+     */
+    squish: number
+}
+
+/**
+ * Generated factory for {@link CursorEffectFrame} record objects.
+ */
+export const CursorEffectFrame = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorEffectFrame, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorEffectFrame>,
+    });
+})();
+
+const FfiConverterTypeCursorEffectFrame = (() => {
+    type TypeName = CursorEffectFrame;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                glow: FfiConverterOptionalTypeCursorGlow.read(from),
+                trail: FfiConverterSequenceTypeCursorTrailSegment.read(from),
+                magnet: FfiConverterOptionalTypeCursorMagnet.read(from),
+                ripple: FfiConverterOptionalTypeCursorRipple.read(from),
+                squish: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalTypeCursorGlow.write(value.glow, into);
+            FfiConverterSequenceTypeCursorTrailSegment.write(value.trail, into);
+            FfiConverterOptionalTypeCursorMagnet.write(value.magnet, into);
+            FfiConverterOptionalTypeCursorRipple.write(value.ripple, into);
+            FfiConverterFloat64.write(value.squish, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalTypeCursorGlow.allocationSize(value.glow) +
+             FfiConverterSequenceTypeCursorTrailSegment.allocationSize(value.trail) +
+             FfiConverterOptionalTypeCursorMagnet.allocationSize(value.magnet) +
+             FfiConverterOptionalTypeCursorRipple.allocationSize(value.ripple) +
+             FfiConverterFloat64.allocationSize(value.squish);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Knobs of the built-in styles. Defaults match Cua Driver
+ * (`default_cursor_motion_params`).
+ */
+export type CursorMotionParams = {
+    style: CursorMotionStyle,
+    timing: CursorMotionTiming,
+    effects: CursorMotionEffects,
+    startHandle: number,
+    endHandle: number,
+    arcSize: number,
+    arcFlow: number,
+    spring: number,
+    glideDurationMs: number,
+    peakSpeed: number,
+    minStartSpeed: number,
+    minEndSpeed: number,
+    turnRadius: number
+}
+
+/**
+ * Generated factory for {@link CursorMotionParams} record objects.
+ */
+export const CursorMotionParams = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionParams, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionParams>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionParams = (() => {
+    type TypeName = CursorMotionParams;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                style: FfiConverterTypeCursorMotionStyle.read(from),
+                timing: FfiConverterTypeCursorMotionTiming.read(from),
+                effects: FfiConverterTypeCursorMotionEffects.read(from),
+                startHandle: FfiConverterFloat64.read(from),
+                endHandle: FfiConverterFloat64.read(from),
+                arcSize: FfiConverterFloat64.read(from),
+                arcFlow: FfiConverterFloat64.read(from),
+                spring: FfiConverterFloat64.read(from),
+                glideDurationMs: FfiConverterFloat64.read(from),
+                peakSpeed: FfiConverterFloat64.read(from),
+                minStartSpeed: FfiConverterFloat64.read(from),
+                minEndSpeed: FfiConverterFloat64.read(from),
+                turnRadius: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeCursorMotionStyle.write(value.style, into);
+            FfiConverterTypeCursorMotionTiming.write(value.timing, into);
+            FfiConverterTypeCursorMotionEffects.write(value.effects, into);
+            FfiConverterFloat64.write(value.startHandle, into);
+            FfiConverterFloat64.write(value.endHandle, into);
+            FfiConverterFloat64.write(value.arcSize, into);
+            FfiConverterFloat64.write(value.arcFlow, into);
+            FfiConverterFloat64.write(value.spring, into);
+            FfiConverterFloat64.write(value.glideDurationMs, into);
+            FfiConverterFloat64.write(value.peakSpeed, into);
+            FfiConverterFloat64.write(value.minStartSpeed, into);
+            FfiConverterFloat64.write(value.minEndSpeed, into);
+            FfiConverterFloat64.write(value.turnRadius, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeCursorMotionStyle.allocationSize(value.style) +
+             FfiConverterTypeCursorMotionTiming.allocationSize(value.timing) +
+             FfiConverterTypeCursorMotionEffects.allocationSize(value.effects) +
+             FfiConverterFloat64.allocationSize(value.startHandle) +
+             FfiConverterFloat64.allocationSize(value.endHandle) +
+             FfiConverterFloat64.allocationSize(value.arcSize) +
+             FfiConverterFloat64.allocationSize(value.arcFlow) +
+             FfiConverterFloat64.allocationSize(value.spring) +
+             FfiConverterFloat64.allocationSize(value.glideDurationMs) +
+             FfiConverterFloat64.allocationSize(value.peakSpeed) +
+             FfiConverterFloat64.allocationSize(value.minStartSpeed) +
+             FfiConverterFloat64.allocationSize(value.minEndSpeed) +
+             FfiConverterFloat64.allocationSize(value.turnRadius);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A point in screen points (y down).
+ */
+export type CursorMotionPoint = {
+    x: number,
+    y: number
+}
+
+/**
+ * Generated factory for {@link CursorMotionPoint} record objects.
+ */
+export const CursorMotionPoint = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionPoint, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionPoint>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionPoint = (() => {
+    type TypeName = CursorMotionPoint;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * One sample: seconds from the start, the hotspot, and the arrow's heading.
+ */
+export type CursorMotionSample = {
+    t: number,
+    x: number,
+    y: number,
+    heading: number
+}
+
+/**
+ * Generated factory for {@link CursorMotionSample} record objects.
+ */
+export const CursorMotionSample = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionSample, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionSample>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionSample = (() => {
+    type TypeName = CursorMotionSample;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                t: FfiConverterFloat64.read(from),
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from),
+                heading: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.t, into);
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+            FfiConverterFloat64.write(value.heading, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.t) +
+             FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y) +
+             FfiConverterFloat64.allocationSize(value.heading);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+
+// Enum: CursorPathShape
+export enum CursorPathShape_Tags {
+    Straight = "Straight",
+    Arc = "Arc",
+    Bow = "Bow"
+}
+/**
+ * Path shape of a custom motion.
+ */
+export const CursorPathShape = (() => {
+
+    type Straight__interface = {
+        tag: CursorPathShape_Tags.Straight
+    };
+    class Straight_ extends UniffiEnum implements Straight__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorPathShape";
+        readonly tag = CursorPathShape_Tags.Straight;
+        constructor() {
+            super("CursorPathShape", "Straight");
+        }
+
+        static new(): Straight_ {
+            return new Straight_();
+        }
+
+        static instanceOf(obj: any): obj is Straight_ {
+            return obj.tag === CursorPathShape_Tags.Straight;
+        }
+
+    }
+
+    type Arc__interface = {
+        tag: CursorPathShape_Tags.Arc;
+        inner:
+Readonly<{startHandle: number; endHandle: number; arcSize: number; arcFlow: number}>
+    };
+    /**
+     * The Cua cubic bezier; a positive `arc_size` bends to the natural side.
+     */
+    class Arc_ extends UniffiEnum implements Arc__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorPathShape";
+        readonly tag = CursorPathShape_Tags.Arc;
+        readonly inner:
+Readonly<{startHandle: number; endHandle: number; arcSize: number; arcFlow: number}>;
+        constructor(
+inner: {startHandle: number; endHandle: number; arcSize: number; arcFlow: number }) {
+            super("CursorPathShape", "Arc");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {startHandle: number; endHandle: number; arcSize: number; arcFlow: number }): Arc_ {
+            return new Arc_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Arc_ {
+            return obj.tag === CursorPathShape_Tags.Arc;
+        }
+
+    }
+
+    type Bow__interface = {
+        tag: CursorPathShape_Tags.Bow;
+        inner:
+Readonly<{amount: number}>
+    };
+    /**
+     * A gentle quadratic bow.
+     */
+    class Bow_ extends UniffiEnum implements Bow__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorPathShape";
+        readonly tag = CursorPathShape_Tags.Bow;
+        readonly inner:
+Readonly<{amount: number}>;
+        constructor(
+inner: {amount: number }) {
+            super("CursorPathShape", "Bow");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {amount: number }): Bow_ {
+            return new Bow_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Bow_ {
+            return obj.tag === CursorPathShape_Tags.Bow;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is CursorPathShape {
+        return obj[uniffiTypeNameSymbol] === "CursorPathShape";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Straight: Straight_,
+  Arc: Arc_,
+  Bow: Bow_
+    });
+
+})();
+/**
+ * Path shape of a custom motion.
+ */
+export type CursorPathShape = InstanceType<
+    typeof CursorPathShape['Straight' | 'Arc' | 'Bow']
+>;
+
+// FfiConverter for enum CursorPathShape
+const FfiConverterTypeCursorPathShape = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorPathShape;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new CursorPathShape.Straight();
+                case 2: return new CursorPathShape.Arc({startHandle: FfiConverterFloat64.read(from), endHandle: FfiConverterFloat64.read(from), arcSize: FfiConverterFloat64.read(from), arcFlow: FfiConverterFloat64.read(from) });
+                case 3: return new CursorPathShape.Bow({amount: FfiConverterFloat64.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case CursorPathShape_Tags.Straight: {
+                    ordinalConverter.write(1, into);
+                    return;
+                }
+                case CursorPathShape_Tags.Arc: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.startHandle, into);
+                    FfiConverterFloat64.write(inner.endHandle, into);
+                    FfiConverterFloat64.write(inner.arcSize, into);
+                    FfiConverterFloat64.write(inner.arcFlow, into);
+                    return;
+                }
+                case CursorPathShape_Tags.Bow: {
+                    ordinalConverter.write(3, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.amount, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that CursorPathShape_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case CursorPathShape_Tags.Straight: {
+                    return ordinalConverter.allocationSize(1);
+                }
+                case CursorPathShape_Tags.Arc: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterFloat64.allocationSize(inner.startHandle);
+                    size += FfiConverterFloat64.allocationSize(inner.endHandle);
+                    size += FfiConverterFloat64.allocationSize(inner.arcSize);
+                    size += FfiConverterFloat64.allocationSize(inner.arcFlow);
+                    return size;
+                }
+                case CursorPathShape_Tags.Bow: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
+                    size += FfiConverterFloat64.allocationSize(inner.amount);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: CursorEase
+export enum CursorEase_Tags {
+    Linear = "Linear",
+    MinJerk = "MinJerk",
+    Smootherstep = "Smootherstep",
+    InOutCubic = "InOutCubic",
+    InOutSine = "InOutSine",
+    OutCubic = "OutCubic",
+    CubicBezier = "CubicBezier"
+}
+/**
+ * Speed curve along the path.
+ */
+export const CursorEase = (() => {
+
+    type Linear__interface = {
+        tag: CursorEase_Tags.Linear
+    };
+    class Linear_ extends UniffiEnum implements Linear__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorEase";
+        readonly tag = CursorEase_Tags.Linear;
+        constructor() {
+            super("CursorEase", "Linear");
+        }
+
+        static new(): Linear_ {
+            return new Linear_();
+        }
+
+        static instanceOf(obj: any): obj is Linear_ {
+            return obj.tag === CursorEase_Tags.Linear;
+        }
+
+    }
+
+    type MinJerk__interface = {
+        tag: CursorEase_Tags.MinJerk
+    };
+    class MinJerk_ extends UniffiEnum implements MinJerk__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorEase";
+        readonly tag = CursorEase_Tags.MinJerk;
+        constructor() {
+            super("CursorEase", "MinJerk");
+        }
+
+        static new(): MinJerk_ {
+            return new MinJerk_();
+        }
+
+        static instanceOf(obj: any): obj is MinJerk_ {
+            return obj.tag === CursorEase_Tags.MinJerk;
+        }
+
+    }
+
+    type Smootherstep__interface = {
+        tag: CursorEase_Tags.Smootherstep
+    };
+    class Smootherstep_ extends UniffiEnum implements Smootherstep__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorEase";
+        readonly tag = CursorEase_Tags.Smootherstep;
+        constructor() {
+            super("CursorEase", "Smootherstep");
+        }
+
+        static new(): Smootherstep_ {
+            return new Smootherstep_();
+        }
+
+        static instanceOf(obj: any): obj is Smootherstep_ {
+            return obj.tag === CursorEase_Tags.Smootherstep;
+        }
+
+    }
+
+    type InOutCubic__interface = {
+        tag: CursorEase_Tags.InOutCubic
+    };
+    class InOutCubic_ extends UniffiEnum implements InOutCubic__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorEase";
+        readonly tag = CursorEase_Tags.InOutCubic;
+        constructor() {
+            super("CursorEase", "InOutCubic");
+        }
+
+        static new(): InOutCubic_ {
+            return new InOutCubic_();
+        }
+
+        static instanceOf(obj: any): obj is InOutCubic_ {
+            return obj.tag === CursorEase_Tags.InOutCubic;
+        }
+
+    }
+
+    type InOutSine__interface = {
+        tag: CursorEase_Tags.InOutSine
+    };
+    class InOutSine_ extends UniffiEnum implements InOutSine__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorEase";
+        readonly tag = CursorEase_Tags.InOutSine;
+        constructor() {
+            super("CursorEase", "InOutSine");
+        }
+
+        static new(): InOutSine_ {
+            return new InOutSine_();
+        }
+
+        static instanceOf(obj: any): obj is InOutSine_ {
+            return obj.tag === CursorEase_Tags.InOutSine;
+        }
+
+    }
+
+    type OutCubic__interface = {
+        tag: CursorEase_Tags.OutCubic
+    };
+    class OutCubic_ extends UniffiEnum implements OutCubic__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorEase";
+        readonly tag = CursorEase_Tags.OutCubic;
+        constructor() {
+            super("CursorEase", "OutCubic");
+        }
+
+        static new(): OutCubic_ {
+            return new OutCubic_();
+        }
+
+        static instanceOf(obj: any): obj is OutCubic_ {
+            return obj.tag === CursorEase_Tags.OutCubic;
+        }
+
+    }
+
+    type CubicBezier__interface = {
+        tag: CursorEase_Tags.CubicBezier;
+        inner:
+Readonly<{x1: number; y1: number; x2: number; y2: number}>
+    };
+    class CubicBezier_ extends UniffiEnum implements CubicBezier__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorEase";
+        readonly tag = CursorEase_Tags.CubicBezier;
+        readonly inner:
+Readonly<{x1: number; y1: number; x2: number; y2: number}>;
+        constructor(
+inner: {x1: number; y1: number; x2: number; y2: number }) {
+            super("CursorEase", "CubicBezier");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {x1: number; y1: number; x2: number; y2: number }): CubicBezier_ {
+            return new CubicBezier_(inner);
+        }
+
+        static instanceOf(obj: any): obj is CubicBezier_ {
+            return obj.tag === CursorEase_Tags.CubicBezier;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is CursorEase {
+        return obj[uniffiTypeNameSymbol] === "CursorEase";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Linear: Linear_,
+  MinJerk: MinJerk_,
+  Smootherstep: Smootherstep_,
+  InOutCubic: InOutCubic_,
+  InOutSine: InOutSine_,
+  OutCubic: OutCubic_,
+  CubicBezier: CubicBezier_
+    });
+
+})();
+/**
+ * Speed curve along the path.
+ */
+export type CursorEase = InstanceType<
+    typeof CursorEase['Linear' | 'MinJerk' | 'Smootherstep' | 'InOutCubic' | 'InOutSine' | 'OutCubic' | 'CubicBezier']
+>;
+
+// FfiConverter for enum CursorEase
+const FfiConverterTypeCursorEase = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorEase;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new CursorEase.Linear();
+                case 2: return new CursorEase.MinJerk();
+                case 3: return new CursorEase.Smootherstep();
+                case 4: return new CursorEase.InOutCubic();
+                case 5: return new CursorEase.InOutSine();
+                case 6: return new CursorEase.OutCubic();
+                case 7: return new CursorEase.CubicBezier({x1: FfiConverterFloat64.read(from), y1: FfiConverterFloat64.read(from), x2: FfiConverterFloat64.read(from), y2: FfiConverterFloat64.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case CursorEase_Tags.Linear: {
+                    ordinalConverter.write(1, into);
+                    return;
+                }
+                case CursorEase_Tags.MinJerk: {
+                    ordinalConverter.write(2, into);
+                    return;
+                }
+                case CursorEase_Tags.Smootherstep: {
+                    ordinalConverter.write(3, into);
+                    return;
+                }
+                case CursorEase_Tags.InOutCubic: {
+                    ordinalConverter.write(4, into);
+                    return;
+                }
+                case CursorEase_Tags.InOutSine: {
+                    ordinalConverter.write(5, into);
+                    return;
+                }
+                case CursorEase_Tags.OutCubic: {
+                    ordinalConverter.write(6, into);
+                    return;
+                }
+                case CursorEase_Tags.CubicBezier: {
+                    ordinalConverter.write(7, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.x1, into);
+                    FfiConverterFloat64.write(inner.y1, into);
+                    FfiConverterFloat64.write(inner.x2, into);
+                    FfiConverterFloat64.write(inner.y2, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that CursorEase_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case CursorEase_Tags.Linear: {
+                    return ordinalConverter.allocationSize(1);
+                }
+                case CursorEase_Tags.MinJerk: {
+                    return ordinalConverter.allocationSize(2);
+                }
+                case CursorEase_Tags.Smootherstep: {
+                    return ordinalConverter.allocationSize(3);
+                }
+                case CursorEase_Tags.InOutCubic: {
+                    return ordinalConverter.allocationSize(4);
+                }
+                case CursorEase_Tags.InOutSine: {
+                    return ordinalConverter.allocationSize(5);
+                }
+                case CursorEase_Tags.OutCubic: {
+                    return ordinalConverter.allocationSize(6);
+                }
+                case CursorEase_Tags.CubicBezier: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(7);
+                    size += FfiConverterFloat64.allocationSize(inner.x1);
+                    size += FfiConverterFloat64.allocationSize(inner.y1);
+                    size += FfiConverterFloat64.allocationSize(inner.x2);
+                    size += FfiConverterFloat64.allocationSize(inner.y2);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: CursorSettle
+export enum CursorSettle_Tags {
+    None = "None",
+    FollowThrough = "FollowThrough",
+    Spring = "Spring"
+}
+/**
+ * Overshoot or settle at the end of the glide.
+ */
+export const CursorSettle = (() => {
+
+    type None__interface = {
+        tag: CursorSettle_Tags.None
+    };
+    class None_ extends UniffiEnum implements None__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorSettle";
+        readonly tag = CursorSettle_Tags.None;
+        constructor() {
+            super("CursorSettle", "None");
+        }
+
+        static new(): None_ {
+            return new None_();
+        }
+
+        static instanceOf(obj: any): obj is None_ {
+            return obj.tag === CursorSettle_Tags.None;
+        }
+
+    }
+
+    type FollowThrough__interface = {
+        tag: CursorSettle_Tags.FollowThrough;
+        inner:
+Readonly<{amount: number; maxPt: number; at: number}>
+    };
+    class FollowThrough_ extends UniffiEnum implements FollowThrough__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorSettle";
+        readonly tag = CursorSettle_Tags.FollowThrough;
+        readonly inner:
+Readonly<{amount: number; maxPt: number; at: number}>;
+        constructor(
+inner: {amount: number; maxPt: number; at: number }) {
+            super("CursorSettle", "FollowThrough");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {amount: number; maxPt: number; at: number }): FollowThrough_ {
+            return new FollowThrough_(inner);
+        }
+
+        static instanceOf(obj: any): obj is FollowThrough_ {
+            return obj.tag === CursorSettle_Tags.FollowThrough;
+        }
+
+    }
+
+    type Spring__interface = {
+        tag: CursorSettle_Tags.Spring;
+        inner:
+Readonly<{amount: number; maxPt: number; cycles: number; decay: number; start: number; glideEnd: number}>
+    };
+    class Spring_ extends UniffiEnum implements Spring__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorSettle";
+        readonly tag = CursorSettle_Tags.Spring;
+        readonly inner:
+Readonly<{amount: number; maxPt: number; cycles: number; decay: number; start: number; glideEnd: number}>;
+        constructor(
+inner: {amount: number; maxPt: number; cycles: number; decay: number; start: number; glideEnd: number }) {
+            super("CursorSettle", "Spring");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {amount: number; maxPt: number; cycles: number; decay: number; start: number; glideEnd: number }): Spring_ {
+            return new Spring_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Spring_ {
+            return obj.tag === CursorSettle_Tags.Spring;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is CursorSettle {
+        return obj[uniffiTypeNameSymbol] === "CursorSettle";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  None: None_,
+  FollowThrough: FollowThrough_,
+  Spring: Spring_
+    });
+
+})();
+/**
+ * Overshoot or settle at the end of the glide.
+ */
+export type CursorSettle = InstanceType<
+    typeof CursorSettle['None' | 'FollowThrough' | 'Spring']
+>;
+
+// FfiConverter for enum CursorSettle
+const FfiConverterTypeCursorSettle = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorSettle;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new CursorSettle.None();
+                case 2: return new CursorSettle.FollowThrough({amount: FfiConverterFloat64.read(from), maxPt: FfiConverterFloat64.read(from), at: FfiConverterFloat64.read(from) });
+                case 3: return new CursorSettle.Spring({amount: FfiConverterFloat64.read(from), maxPt: FfiConverterFloat64.read(from), cycles: FfiConverterFloat64.read(from), decay: FfiConverterFloat64.read(from), start: FfiConverterFloat64.read(from), glideEnd: FfiConverterFloat64.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case CursorSettle_Tags.None: {
+                    ordinalConverter.write(1, into);
+                    return;
+                }
+                case CursorSettle_Tags.FollowThrough: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.amount, into);
+                    FfiConverterFloat64.write(inner.maxPt, into);
+                    FfiConverterFloat64.write(inner.at, into);
+                    return;
+                }
+                case CursorSettle_Tags.Spring: {
+                    ordinalConverter.write(3, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.amount, into);
+                    FfiConverterFloat64.write(inner.maxPt, into);
+                    FfiConverterFloat64.write(inner.cycles, into);
+                    FfiConverterFloat64.write(inner.decay, into);
+                    FfiConverterFloat64.write(inner.start, into);
+                    FfiConverterFloat64.write(inner.glideEnd, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that CursorSettle_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case CursorSettle_Tags.None: {
+                    return ordinalConverter.allocationSize(1);
+                }
+                case CursorSettle_Tags.FollowThrough: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterFloat64.allocationSize(inner.amount);
+                    size += FfiConverterFloat64.allocationSize(inner.maxPt);
+                    size += FfiConverterFloat64.allocationSize(inner.at);
+                    return size;
+                }
+                case CursorSettle_Tags.Spring: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
+                    size += FfiConverterFloat64.allocationSize(inner.amount);
+                    size += FfiConverterFloat64.allocationSize(inner.maxPt);
+                    size += FfiConverterFloat64.allocationSize(inner.cycles);
+                    size += FfiConverterFloat64.allocationSize(inner.decay);
+                    size += FfiConverterFloat64.allocationSize(inner.start);
+                    size += FfiConverterFloat64.allocationSize(inner.glideEnd);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: CursorMotionDuration
+export enum CursorMotionDuration_Tags {
+    Fixed = "Fixed",
+    Fitts = "Fitts",
+    Distance = "Distance"
+}
+/**
+ * Duration model of a custom motion.
+ */
+export const CursorMotionDuration = (() => {
+
+    type Fixed__interface = {
+        tag: CursorMotionDuration_Tags.Fixed;
+        inner:
+Readonly<{ms: number}>
+    };
+    class Fixed_ extends UniffiEnum implements Fixed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorMotionDuration";
+        readonly tag = CursorMotionDuration_Tags.Fixed;
+        readonly inner:
+Readonly<{ms: number}>;
+        constructor(
+inner: {ms: number }) {
+            super("CursorMotionDuration", "Fixed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {ms: number }): Fixed_ {
+            return new Fixed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Fixed_ {
+            return obj.tag === CursorMotionDuration_Tags.Fixed;
+        }
+
+    }
+
+    type Fitts__interface = {
+        tag: CursorMotionDuration_Tags.Fitts;
+        inner:
+Readonly<{a: number; b: number; minMs: number; maxMs: number; scale: number}>
+    };
+    class Fitts_ extends UniffiEnum implements Fitts__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorMotionDuration";
+        readonly tag = CursorMotionDuration_Tags.Fitts;
+        readonly inner:
+Readonly<{a: number; b: number; minMs: number; maxMs: number; scale: number}>;
+        constructor(
+inner: {a: number; b: number; minMs: number; maxMs: number; scale: number }) {
+            super("CursorMotionDuration", "Fitts");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {a: number; b: number; minMs: number; maxMs: number; scale: number }): Fitts_ {
+            return new Fitts_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Fitts_ {
+            return obj.tag === CursorMotionDuration_Tags.Fitts;
+        }
+
+    }
+
+    type Distance__interface = {
+        tag: CursorMotionDuration_Tags.Distance;
+        inner:
+Readonly<{baseMs: number; msPerPt: number; minMs: number; maxMs: number}>
+    };
+    class Distance_ extends UniffiEnum implements Distance__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "CursorMotionDuration";
+        readonly tag = CursorMotionDuration_Tags.Distance;
+        readonly inner:
+Readonly<{baseMs: number; msPerPt: number; minMs: number; maxMs: number}>;
+        constructor(
+inner: {baseMs: number; msPerPt: number; minMs: number; maxMs: number }) {
+            super("CursorMotionDuration", "Distance");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {baseMs: number; msPerPt: number; minMs: number; maxMs: number }): Distance_ {
+            return new Distance_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Distance_ {
+            return obj.tag === CursorMotionDuration_Tags.Distance;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is CursorMotionDuration {
+        return obj[uniffiTypeNameSymbol] === "CursorMotionDuration";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Fixed: Fixed_,
+  Fitts: Fitts_,
+  Distance: Distance_
+    });
+
+})();
+/**
+ * Duration model of a custom motion.
+ */
+export type CursorMotionDuration = InstanceType<
+    typeof CursorMotionDuration['Fixed' | 'Fitts' | 'Distance']
+>;
+
+// FfiConverter for enum CursorMotionDuration
+const FfiConverterTypeCursorMotionDuration = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorMotionDuration;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new CursorMotionDuration.Fixed({ms: FfiConverterFloat64.read(from) });
+                case 2: return new CursorMotionDuration.Fitts({a: FfiConverterFloat64.read(from), b: FfiConverterFloat64.read(from), minMs: FfiConverterFloat64.read(from), maxMs: FfiConverterFloat64.read(from), scale: FfiConverterFloat64.read(from) });
+                case 3: return new CursorMotionDuration.Distance({baseMs: FfiConverterFloat64.read(from), msPerPt: FfiConverterFloat64.read(from), minMs: FfiConverterFloat64.read(from), maxMs: FfiConverterFloat64.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case CursorMotionDuration_Tags.Fixed: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.ms, into);
+                    return;
+                }
+                case CursorMotionDuration_Tags.Fitts: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.a, into);
+                    FfiConverterFloat64.write(inner.b, into);
+                    FfiConverterFloat64.write(inner.minMs, into);
+                    FfiConverterFloat64.write(inner.maxMs, into);
+                    FfiConverterFloat64.write(inner.scale, into);
+                    return;
+                }
+                case CursorMotionDuration_Tags.Distance: {
+                    ordinalConverter.write(3, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.baseMs, into);
+                    FfiConverterFloat64.write(inner.msPerPt, into);
+                    FfiConverterFloat64.write(inner.minMs, into);
+                    FfiConverterFloat64.write(inner.maxMs, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that CursorMotionDuration_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case CursorMotionDuration_Tags.Fixed: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterFloat64.allocationSize(inner.ms);
+                    return size;
+                }
+                case CursorMotionDuration_Tags.Fitts: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterFloat64.allocationSize(inner.a);
+                    size += FfiConverterFloat64.allocationSize(inner.b);
+                    size += FfiConverterFloat64.allocationSize(inner.minMs);
+                    size += FfiConverterFloat64.allocationSize(inner.maxMs);
+                    size += FfiConverterFloat64.allocationSize(inner.scale);
+                    return size;
+                }
+                case CursorMotionDuration_Tags.Distance: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
+                    size += FfiConverterFloat64.allocationSize(inner.baseMs);
+                    size += FfiConverterFloat64.allocationSize(inner.msPerPt);
+                    size += FfiConverterFloat64.allocationSize(inner.minMs);
+                    size += FfiConverterFloat64.allocationSize(inner.maxMs);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * `Tangent`: the tip leads the motion. `Fixed`: the rest pose.
+ */
+export enum CursorHeading {
+    Tangent,
+    Fixed
+}
+
+const FfiConverterTypeCursorHeading = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorHeading;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CursorHeading.Tangent;
+                case 2: return CursorHeading.Fixed;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case CursorHeading.Tangent: return ordinalConverter.write(1, into);
+                case CursorHeading.Fixed: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * The comet trail.
+ */
+export type CursorTrailSpec = {
+    secs: number,
+    fadeLen: number,
+    steps: number,
+    tailWidth: number,
+    headWidth: number,
+    alpha: number,
+    anchorOffset: number
+}
+
+/**
+ * Generated factory for {@link CursorTrailSpec} record objects.
+ */
+export const CursorTrailSpec = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorTrailSpec, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorTrailSpec>,
+    });
+})();
+
+const FfiConverterTypeCursorTrailSpec = (() => {
+    type TypeName = CursorTrailSpec;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                secs: FfiConverterFloat64.read(from),
+                fadeLen: FfiConverterFloat64.read(from),
+                steps: FfiConverterUInt32.read(from),
+                tailWidth: FfiConverterFloat64.read(from),
+                headWidth: FfiConverterFloat64.read(from),
+                alpha: FfiConverterFloat64.read(from),
+                anchorOffset: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.secs, into);
+            FfiConverterFloat64.write(value.fadeLen, into);
+            FfiConverterUInt32.write(value.steps, into);
+            FfiConverterFloat64.write(value.tailWidth, into);
+            FfiConverterFloat64.write(value.headWidth, into);
+            FfiConverterFloat64.write(value.alpha, into);
+            FfiConverterFloat64.write(value.anchorOffset, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.secs) +
+             FfiConverterFloat64.allocationSize(value.fadeLen) +
+             FfiConverterUInt32.allocationSize(value.steps) +
+             FfiConverterFloat64.allocationSize(value.tailWidth) +
+             FfiConverterFloat64.allocationSize(value.headWidth) +
+             FfiConverterFloat64.allocationSize(value.alpha) +
+             FfiConverterFloat64.allocationSize(value.anchorOffset);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A complete custom motion.
+ */
+export type CursorMotionSpec = {
+    path: CursorPathShape,
+    ease: CursorEase,
+    settle: CursorSettle,
+    duration: CursorMotionDuration,
+    heading: CursorHeading,
+    effects: CursorMotionEffectsOutput,
+    trail: CursorTrailSpec
+}
+
+/**
+ * Generated factory for {@link CursorMotionSpec} record objects.
+ */
+export const CursorMotionSpec = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionSpec, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionSpec>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionSpec = (() => {
+    type TypeName = CursorMotionSpec;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                path: FfiConverterTypeCursorPathShape.read(from),
+                ease: FfiConverterTypeCursorEase.read(from),
+                settle: FfiConverterTypeCursorSettle.read(from),
+                duration: FfiConverterTypeCursorMotionDuration.read(from),
+                heading: FfiConverterTypeCursorHeading.read(from),
+                effects: FfiConverterTypeCursorMotionEffectsOutput.read(from),
+                trail: FfiConverterTypeCursorTrailSpec.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeCursorPathShape.write(value.path, into);
+            FfiConverterTypeCursorEase.write(value.ease, into);
+            FfiConverterTypeCursorSettle.write(value.settle, into);
+            FfiConverterTypeCursorMotionDuration.write(value.duration, into);
+            FfiConverterTypeCursorHeading.write(value.heading, into);
+            FfiConverterTypeCursorMotionEffectsOutput.write(value.effects, into);
+            FfiConverterTypeCursorTrailSpec.write(value.trail, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeCursorPathShape.allocationSize(value.path) +
+             FfiConverterTypeCursorEase.allocationSize(value.ease) +
+             FfiConverterTypeCursorSettle.allocationSize(value.settle) +
+             FfiConverterTypeCursorMotionDuration.allocationSize(value.duration) +
+             FfiConverterTypeCursorHeading.allocationSize(value.heading) +
+             FfiConverterTypeCursorMotionEffectsOutput.allocationSize(value.effects) +
+             FfiConverterTypeCursorTrailSpec.allocationSize(value.trail);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * One move to plan.
+ */
+export type CursorMoveRequest = {
+    /**
+     * Current hotspot.
+     */
+    fromPoint: CursorMotionPoint,
+    /**
+     * Requested hotspot.
+     */
+    toPoint: CursorMotionPoint,
+    /**
+     * Current heading; the rest heading (pi/4) when unset.
+     */
+    fromHeading?: number,
+    /**
+     * Heading on arrival; the rest heading when unset.
+     */
+    endHeading?: number,
+    /**
+     * The target element's rect; it sets the Fitts width.
+     */
+    target?: CursorMotionRect,
+    /**
+     * Same seed, same motion.
+     */
+    seed: string,
+    /**
+     * A short straight glide without effects.
+     */
+    reducedMotion: boolean
+}
+
+/**
+ * Generated factory for {@link CursorMoveRequest} record objects.
+ */
+export const CursorMoveRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMoveRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMoveRequest>,
+    });
+})();
+
+const FfiConverterTypeCursorMoveRequest = (() => {
+    type TypeName = CursorMoveRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                fromPoint: FfiConverterTypeCursorMotionPoint.read(from),
+                toPoint: FfiConverterTypeCursorMotionPoint.read(from),
+                fromHeading: FfiConverterOptionalFloat64.read(from),
+                endHeading: FfiConverterOptionalFloat64.read(from),
+                target: FfiConverterOptionalTypeCursorMotionRect.read(from),
+                seed: FfiConverterString.read(from),
+                reducedMotion: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeCursorMotionPoint.write(value.fromPoint, into);
+            FfiConverterTypeCursorMotionPoint.write(value.toPoint, into);
+            FfiConverterOptionalFloat64.write(value.fromHeading, into);
+            FfiConverterOptionalFloat64.write(value.endHeading, into);
+            FfiConverterOptionalTypeCursorMotionRect.write(value.target, into);
+            FfiConverterString.write(value.seed, into);
+            FfiConverterBool.write(value.reducedMotion, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeCursorMotionPoint.allocationSize(value.fromPoint) +
+             FfiConverterTypeCursorMotionPoint.allocationSize(value.toPoint) +
+             FfiConverterOptionalFloat64.allocationSize(value.fromHeading) +
+             FfiConverterOptionalFloat64.allocationSize(value.endHeading) +
+             FfiConverterOptionalTypeCursorMotionRect.allocationSize(value.target) +
+             FfiConverterString.allocationSize(value.seed) +
+             FfiConverterBool.allocationSize(value.reducedMotion);
 
         }
     };
@@ -6462,6 +8223,325 @@ const uniffiTypeCuaDriverSessionObjectFactory: UniffiObjectFactory<CuaDriverSess
 const FfiConverterTypeCuaDriverSession = new FfiConverterObject(uniffiTypeCuaDriverSessionObjectFactory);
 
 /**
+ * A planned move, played back by time.
+ */
+export interface CursorTrajectoryLike {
+
+/**
+ * When the tip first reaches the target, seconds.
+ */
+    arrivalT(): number;
+/**
+ * Seconds until the last sample (any settle included).
+ */
+    duration(): number;
+/**
+ * The move's effects (glow, trail, magnet) at `t`, around the arrow's
+ * body. `blend` is whether the surface can draw translucency.
+ */
+    effectFrame(t: number, blend: boolean): CursorEffectFrame;
+    effects(): CursorMotionEffectsOutput;
+/**
+ * When the move and its trail or magnet glow have finished, seconds.
+ */
+    linger(): number;
+/**
+ * Interpolated sample at `t` seconds, clamped to the ends.
+ */
+    sampleAt(t: number): CursorMotionSample;
+/**
+ * Every sample at 120 Hz. Read once; interpolate locally per frame.
+ */
+    samples(): Array<CursorMotionSample>;
+/**
+ * Magnetic lock-on time, seconds.
+ */
+    snapT(): number | undefined;
+/**
+ * The target used for timing (the request's, or a 24 pt box).
+ */
+    target(): CursorMotionRect;
+    targetKnown(): boolean;
+}
+/**
+ * @deprecated Use `CursorTrajectoryLike` instead.
+ */
+export type CursorTrajectoryInterface = CursorTrajectoryLike;
+
+
+/**
+ * A planned move, played back by time.
+ */
+export class CursorTrajectory extends UniffiAbstractObject implements CursorTrajectoryLike {
+
+    readonly [uniffiTypeNameSymbol] = "CursorTrajectory";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeCursorTrajectoryObjectFactory.bless(pointer);
+}
+
+
+
+
+/**
+ * When the tip first reaches the target, seconds.
+ */
+    arrivalT(): number {
+    return FfiConverterFloat64.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_arrival_t(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Seconds until the last sample (any settle included).
+ */
+    duration(): number {
+    return FfiConverterFloat64.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_duration(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The move's effects (glow, trail, magnet) at `t`, around the arrow's
+ * body. `blend` is whether the surface can draw translucency.
+ */
+    effectFrame(t: number, blend: boolean): CursorEffectFrame {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCursorEffectFrame.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_effect_frame(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+        FfiConverterFloat64.lower(t, nativeModule().rustbuffer_alloc),
+        FfiConverterBool.lower(blend, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    effects(): CursorMotionEffectsOutput {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCursorMotionEffectsOutput.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_effects(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * When the move and its trail or magnet glow have finished, seconds.
+ */
+    linger(): number {
+    return FfiConverterFloat64.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_linger(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Interpolated sample at `t` seconds, clamped to the ends.
+ */
+    sampleAt(t: number): CursorMotionSample {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCursorMotionSample.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_sample_at(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+        FfiConverterFloat64.lower(t, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Every sample at 120 Hz. Read once; interpolate locally per frame.
+ */
+    samples(): Array<CursorMotionSample> {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterSequenceTypeCursorMotionSample.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_samples(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Magnetic lock-on time, seconds.
+ */
+    snapT(): number | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalFloat64.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_snap_t(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The target used for timing (the request's, or a 24 pt box).
+ */
+    target(): CursorMotionRect {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCursorMotionRect.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_target(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    targetKnown(): boolean {
+    return FfiConverterBool.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_cursortrajectory_target_known(
+                uniffiTypeCursorTrajectoryObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCursorTrajectoryObjectFactory.pointer(this);
+            uniffiTypeCursorTrajectoryObjectFactory.freePointer(pointer);
+            uniffiTypeCursorTrajectoryObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CursorTrajectory {
+        return uniffiTypeCursorTrajectoryObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeCursorTrajectoryObjectFactory: UniffiObjectFactory<CursorTrajectoryLike> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCursorTrajectoryObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): CursorTrajectoryLike {
+        const instance = Object.create(CursorTrajectory.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "CursorTrajectory";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: CursorTrajectoryLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: CursorTrajectoryLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_driver_sdk_fn_clone_cursortrajectory(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_driver_sdk_fn_free_cursortrajectory(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is CursorTrajectoryLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CursorTrajectory";
+    },
+}})();
+const FfiConverterTypeCursorTrajectory = new FfiConverterObject(uniffiTypeCursorTrajectoryObjectFactory);
+
+/**
  * Optional observer implemented by trusted embedding-host code.
  *
  * Observations are informational and cannot grant authority or change a tool
@@ -7541,6 +9621,24 @@ const FfiConverterSequenceTypeSessionPermissionMode = new FfiConverterArray(FfiC
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
+// FfiConverter for CursorGlow | undefined
+const FfiConverterOptionalTypeCursorGlow = new FfiConverterOptional(FfiConverterTypeCursorGlow);
+
+// FfiConverter for Array<CursorTrailSegment>
+const FfiConverterSequenceTypeCursorTrailSegment = new FfiConverterArray(FfiConverterTypeCursorTrailSegment);
+
+// FfiConverter for CursorMagnet | undefined
+const FfiConverterOptionalTypeCursorMagnet = new FfiConverterOptional(FfiConverterTypeCursorMagnet);
+
+// FfiConverter for CursorRipple | undefined
+const FfiConverterOptionalTypeCursorRipple = new FfiConverterOptional(FfiConverterTypeCursorRipple);
+
+// FfiConverter for number | undefined
+const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
+
+// FfiConverter for CursorMotionRect | undefined
+const FfiConverterOptionalTypeCursorMotionRect = new FfiConverterOptional(FfiConverterTypeCursorMotionRect);
+
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
@@ -7568,8 +9666,14 @@ const FfiConverterOptionalTypeActionResult = new FfiConverterOptional(FfiConvert
 // FfiConverter for VerifyStateOutput | undefined
 const FfiConverterOptionalTypeVerifyStateOutput = new FfiConverterOptional(FfiConverterTypeVerifyStateOutput);
 
+// FfiConverter for Array<CursorMotionSample>
+const FfiConverterSequenceTypeCursorMotionSample = new FfiConverterArray(FfiConverterTypeCursorMotionSample);
+
 // FfiConverter for EmbeddedDriverConnection | undefined
 const FfiConverterOptionalTypeEmbeddedDriverConnection = new FfiConverterOptional(FfiConverterTypeEmbeddedDriverConnection);
+
+// FfiConverter for CursorMotionSpec | undefined
+const FfiConverterOptionalTypeCursorMotionSpec = new FfiConverterOptional(FfiConverterTypeCursorMotionSpec);
 
 // FfiConverter for DriverOptions | undefined
 const FfiConverterOptionalTypeDriverOptions = new FfiConverterOptional(FfiConverterTypeDriverOptions);
@@ -7605,11 +9709,26 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status() !== 22890) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_func_cursor_click_effects() !== 47083) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_cursor_click_effects");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_func_cursor_motion_spec_for_style() !== 60220) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_cursor_motion_spec_for_style");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_func_default_cursor_motion_params() !== 63994) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_default_cursor_motion_params");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings() !== 6663) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel() !== 952) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_func_plan_cursor_move() !== 47047) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_plan_cursor_move");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_func_plan_cursor_spec() !== 61096) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_plan_cursor_spec");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions() !== 61823) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions");
@@ -7863,6 +9982,36 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state() !== 36472) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_arrival_t() !== 18003) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_arrival_t");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_duration() !== 45567) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_duration");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effect_frame() !== 63284) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effect_frame");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effects() !== 30979) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effects");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_linger() !== 61008) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_linger");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_sample_at() !== 63579) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_sample_at");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_samples() !== 43656) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_samples");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_snap_t() !== 61947) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_snap_t");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target() !== 1238) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target");
+    }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target_known() !== 24778) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target_known");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity() !== 9786) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity");
     }
@@ -7940,6 +10089,24 @@ export default Object.freeze({
     FfiConverterTypeConfiguredDriverOptions,
     FfiConverterTypeCuaDriver,
     FfiConverterTypeCuaDriverSession,
+    FfiConverterTypeCursorEase,
+    FfiConverterTypeCursorEffectFrame,
+    FfiConverterTypeCursorGlow,
+    FfiConverterTypeCursorHeading,
+    FfiConverterTypeCursorMagnet,
+    FfiConverterTypeCursorMotionDuration,
+    FfiConverterTypeCursorMotionParams,
+    FfiConverterTypeCursorMotionPoint,
+    FfiConverterTypeCursorMotionRect,
+    FfiConverterTypeCursorMotionSample,
+    FfiConverterTypeCursorMotionSpec,
+    FfiConverterTypeCursorMoveRequest,
+    FfiConverterTypeCursorPathShape,
+    FfiConverterTypeCursorRipple,
+    FfiConverterTypeCursorSettle,
+    FfiConverterTypeCursorTrailSegment,
+    FfiConverterTypeCursorTrailSpec,
+    FfiConverterTypeCursorTrajectory,
     FfiConverterTypeDriverActivityEvent,
     FfiConverterTypeDriverActivityKind,
     FfiConverterTypeDriverActivityObserver,

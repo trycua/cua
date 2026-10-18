@@ -7,30 +7,95 @@ truth.
 
 ## Test Map
 
-| Area                 | Deterministic tests                                   | Integration or E2E owner                                                         |
-| -------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Python SDKs          | Package `tests/` directories with pytest              | Package-specific integration tests and `tests/integration`                       |
-| TypeScript SDKs      | Package Vitest/typecheck scripts                      | Package-owned integration tests                                                  |
-| cua-driver           | Rust unit, schema, protocol, and compile tests        | Canonical Rust desktop harnesses on Windows, macOS, Linux X11, and Linux Wayland |
-| Lume                 | Swift package tests                                   | VM and unattended-setup checks documented by Lume                                |
-| Public docs          | Generator drift, hygiene, links, and production build | Rendered Fumadocs site                                                           |
-| Images and sandboxes | Component build and schema tests                      | Image-specific smoke or VM tests                                                 |
+| Area                         | Deterministic tests                                        | Integration or E2E owner                                                          |
+| ---------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| cua SDK and CLI (`libs/cua`) | Cargo tests, proto lint/breaking, binding drift, per-language smoke tests | `tests/e2e/cua-sdk` (**E2E: cua SDK**)                               |
+| cua-spacesd               | Cargo tests and the in-process conformance suite           | Linux core tests and relay E2E in Docker                                          |
+| Python SDKs                  | Package `tests/` directories with pytest                   | Package-specific integration tests and `tests/integration`                        |
+| cua-sandbox                  | Hermetic pytest suite on the cua SDK                       | **Periodic: Cua Sandbox Live Fleet E2E**                                          |
+| TypeScript SDKs              | Package Vitest/typecheck scripts                           | Package-owned integration tests                                                   |
+| cua-driver                   | Rust unit, schema, protocol, and compile tests             | Canonical Rust desktop harnesses on Windows, macOS, Linux X11, and Linux Wayland  |
+| Lume                         | Swift package tests                                        | VM and unattended-setup checks documented by Lume                                 |
+| Cua Spaces app               | Vitest, Tauri Rust tests                                   | **CI: Cua Spaces**                                                                |
+| Installers                   | `scripts/install/tests`                                    | **CI: Installers** smoke jobs on Linux, macOS, and Windows                        |
+| Public docs                  | Generator drift, hygiene, links, and production build      | Rendered Fumadocs site                                                            |
+| Images and sandboxes         | Component build and schema tests; **CI: Check Image Refs** (`python3 scripts/images/check-image-refs.py`: every image ref comes from `libs/images/sandbox-images.json`, a bench lock or the allowlist; frozen legacy names only in their listed paths) | **CD: Image linux**, **E2E: Fleet images, local**, image smoke tests  |
 
 Path-filtered CI avoids running unrelated operating systems, so a green job for
 one component does not validate another component.
 
 ## Python
 
-For a member of the root uv workspace:
+For a member of the root uv workspace (`libs/python/{agent,core,som,bench-ui}`):
 
 ```bash
 uv sync --group test
 CUA_TELEMETRY_ENABLED=false uv run pytest libs/python/<package>/tests -v
 ```
 
-Packages outside the root uv workspace should be installed from their own
-`pyproject.toml`. The current package matrix and installation sequence live in
+Packages outside the root uv workspace (`cua-sandbox`, `cua-train`,
+`libs/cua-bench`, `libs/cua/python`) are installed from their own
+`pyproject.toml`. cua-sandbox runs on the cua SDK, so build the native library
+first and pass explicit ignores: several legacy files start real VMs.
+
+```bash
+cd libs/cua
+cargo build --locked --release -p cua-sdk
+scripts/build-test-fixtures.sh
+node scripts/stage-uniffi-library.mjs --only=python
+cd ../python/cua-sandbox
+uv sync --frozen --python 3.12
+CUA_TELEMETRY_ENABLED=false uv run --frozen pytest tests --timeout=120 \
+  --ignore=tests/live --ignore=tests/test_runtime.py --ignore=tests/test_snapshots.py \
+  --ignore=tests/test_windows_cloud.py --ignore=tests/test_windows_timing.py \
+  --deselect tests/test_oci.py::TestLiveRegistry
+```
+
+The package matrix and exact commands live in
 [`.github/workflows/ci-test-python.yml`](.github/workflows/ci-test-python.yml).
+
+## cua SDK and CLI
+
+Run from `libs/cua` (needs `protoc`):
+
+```bash
+cargo test --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-teleport -p cua-teleport-bundle -- --test-threads=4
+cargo test --locked -p cua-proto --all-features
+scripts/check-proto.sh                            # buf lint, format, breaking
+node scripts/generate-uniffi-bindings.mjs --check # binding drift
+scripts/sync-skills.sh --check                    # bundled skills drift
+```
+
+Test other crates with `cargo test --locked -p <crate>`; their READMEs name
+any opt-in live gates.
+
+Per-language smoke tests (Python, Node, Swift, Kotlin, browser) are in each
+package README under `libs/cua/{python,typescript,swift,kotlin}` and in
+[`.github/workflows/ci-cua-sdk.yml`](.github/workflows/ci-cua-sdk.yml).
+
+The cross-language E2E suite runs each guide scenario in Python, TypeScript,
+Rust, and Go, per lane (`hermetic`, `container`, `qemu`, `lume`, `fleet`,
+`fleet-env`, `cua-sandbox`, `conformance`). Lanes other than `hermetic` start
+containers, VMs, or Fleet claims and are opt-in:
+
+```bash
+tests/e2e/cua-sdk/ci-setup.sh --images
+python3 tests/e2e/cua-sdk/run.py --lanes hermetic,container --langs py,ts,rust
+```
+
+## cua-spacesd
+
+Run from `libs/cua-spacesd`:
+
+```bash
+cargo test --workspace --locked
+scripts/ci/linux-core-tests.sh   # Linux container: large transfers, long streams
+scripts/ci/relay-e2e.sh          # driver with no published ports behind cua-relay
+```
+
+Point the conformance suite at any running driver with
+`CUA_ENV_TEST_TARGET=http://host:3211 CUA_ENV_TEST_TOKEN=... cargo test -p cua-spacesd-server --test conformance`.
+See [`crates/cua-spacesd-server/README.md`](libs/cua-spacesd/crates/cua-spacesd-server/README.md#tests).
 
 ## TypeScript
 
@@ -93,7 +158,7 @@ See:
 
 - [`libs/cua-driver/docs/test-harnesses-guide.md`](libs/cua-driver/docs/test-harnesses-guide.md)
 - [`libs/cua-driver/docs/test-matrix.md`](libs/cua-driver/docs/test-matrix.md)
-- [Platform support and validation](https://cua.ai/docs/reference/cua-driver/platform-support)
+- [Platform support and validation](https://cua.ai/docs/cua-driver/concepts/platform-support)
 
 ## Lume
 
@@ -114,13 +179,17 @@ Run from `docs`:
 pnpm install --frozen-lockfile
 pnpm docs:check-hygiene
 pnpm docs:check-links
+pnpm docs:check-blocks
 pnpm build
 ```
 
 The production build validates MDX compilation and static route generation.
-Curated MDX changes do not need a product build. Generated reference changes
-also run `pnpm docs:check:cua-driver` or `pnpm docs:check:lume` for their owning
-component; `pnpm docs:check` is the explicit full audit. See
+Curated MDX changes do not need a product build. `docs:check-blocks` checks that
+every code block declares how it is tested (and runs the static cli-shape and
+config lanes); the runnable blocks run with
+`python3 tests/e2e/cua-sdk/run.py --lanes docs --langs py --strict`. Generated
+reference changes also run the owning generator's check (`pnpm docs:check:<name>`,
+listed by `pnpm docs:list`); `pnpm docs:check` is the explicit full audit. See
 [`docs/README.md`](docs/README.md) for details.
 
 ## Before Opening a Pull Request

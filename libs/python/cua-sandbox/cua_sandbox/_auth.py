@@ -11,10 +11,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
-from cua_sandbox._config import get_api_key, get_base_url
+from cua_sandbox._config import FLEET_CREDENTIALS_MISSING, get_api_key, get_base_url
+from cua_sandbox._paths import cua_home, patched_or
 
-_CUA_DIR = Path.home() / ".cua"
-_CREDENTIALS_FILE = _CUA_DIR / "credentials"
+_CUA_DIR = cua_home()
+_CUA_DIR_DEFAULT = _CUA_DIR
+
+
+def _cua_dir() -> Path:
+    return patched_or(_CUA_DIR, _CUA_DIR_DEFAULT)
 
 
 def login(*, base_url: Optional[str] = None) -> None:
@@ -46,7 +51,7 @@ def whoami(*, api_key: Optional[str] = None) -> Dict[str, Any]:
     """
     key = get_api_key(api_key)
     if not key:
-        raise RuntimeError("Not authenticated. Run cua_sandbox.login() or set CUA_API_KEY.")
+        raise RuntimeError(FLEET_CREDENTIALS_MISSING)
     resp = httpx.get(
         f"{get_base_url()}/v1/whoami",
         headers={"Authorization": f"Bearer {key}"},
@@ -58,10 +63,12 @@ def whoami(*, api_key: Optional[str] = None) -> Dict[str, Any]:
 
 def _save_credentials(*, api_key: str) -> None:
     """Write credentials to ~/.cua/credentials."""
-    _CUA_DIR.mkdir(parents=True, exist_ok=True)
-    _CREDENTIALS_FILE.write_text(f"api_key={api_key}\n")
+    cua_dir = _cua_dir()
+    cua_dir.mkdir(parents=True, exist_ok=True)
+    credentials = cua_dir / "credentials"
+    credentials.write_text(f"api_key={api_key}\n")
     # Restrict permissions on Unix
     try:
-        _CREDENTIALS_FILE.chmod(0o600)
+        credentials.chmod(0o600)
     except OSError:
         pass

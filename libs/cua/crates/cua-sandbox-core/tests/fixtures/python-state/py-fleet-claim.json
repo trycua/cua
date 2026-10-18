@@ -1,0 +1,7 @@
+{
+  "name": "py-fleet-claim",
+  "runtime_type": "fleet",
+  "pool_name": "cua-e2e-pool",
+  "status": "running",
+  "created_at": "2026-09-22T23:19:06.056535+00:00"
+}

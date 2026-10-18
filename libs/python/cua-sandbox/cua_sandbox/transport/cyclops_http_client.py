@@ -14,8 +14,9 @@ class CyclopsHttpClient(HttpClient):
         self._owns_client = client is None
 
     async def execute(self, request: HttpRequest) -> HttpResponse:
+        headers = {header.name: header.value for header in request.headers}
         request_kwargs = {
-            "headers": {header.name: header.value for header in request.headers},
+            "headers": headers,
             "content": request.body,
         }
         if request.timeout_secs is not None:
@@ -39,4 +40,11 @@ class CyclopsHttpClient(HttpClient):
 
     async def aclose(self) -> None:
         if self._owns_client:
-            await self._client.aclose()
+            try:
+                await self._client.aclose()
+            except RuntimeError as error:
+                # The sync facade runs each call on a fresh event loop; a
+                # client opened on an earlier (now closed) loop cannot close
+                # its sockets there, and they die with that loop anyway.
+                if "Event loop is closed" not in str(error):
+                    raise

@@ -1,0 +1,245 @@
+{
+  "name": "main-window",
+  "about": "The main window and every screen around the Spaces: the sidebar with This machine (loading, not set up, sharing by relay, direct and stopped), the This machine page, the host setup form, each Space's detail (toolbar, Delete question, sections and their words; a Space in your cloud shows where it runs and offers Delete Permanently, disabled with why when another device created it, and Remove from List), the chrome signed out and in, the menu bar menu, Settings, the coding agents' rows, the first run and the drop well's lines.",
+  "now": 1800000000000,
+  "os": "macos",
+  "rows": [
+    {
+      "id": "local:aurora",
+      "name": "0123456789ab",
+      "provider": "local",
+      "spacesdVersion": "0.4.0",
+      "features": ["desktop_stream", "window_stream"],
+      "addedAt": "2026-09-25T08:00:00Z",
+      "os": "linux",
+      "reachable": true,
+      "error": null
+    },
+    {
+      "id": "cloud:builder",
+      "name": "builder",
+      "provider": "cloud",
+      "spacesdVersion": "0.4.0",
+      "features": ["desktop_stream"],
+      "addedAt": "2026-09-24T08:00:00Z",
+      "os": "linux",
+      "reachable": false,
+      "error": "timed out"
+    },
+    {
+      "id": "direct:10.0.0.5:3211",
+      "name": "10.0.0.5:3211",
+      "provider": "direct",
+      "spacesdVersion": "0.4.0",
+      "features": [],
+      "addedAt": null,
+      "os": "windows",
+      "reachable": true,
+      "error": null
+    },
+    {
+      "id": "relay:cloud-0000000000000a01",
+      "name": "research-box",
+      "provider": "relay",
+      "spacesdVersion": "0.4.0",
+      "features": ["desktop_stream"],
+      "addedAt": "2027-01-15T06:00:00Z",
+      "os": "linux",
+      "reachable": true,
+      "cloud": "aws",
+      "cloudPlace": "AWS \u00b7 us-west-2",
+      "cloudDelete": "here"
+    },
+    {
+      "id": "relay:cloud-0000000000000e01",
+      "name": "their-box",
+      "provider": "relay",
+      "spacesdVersion": "",
+      "features": [],
+      "addedAt": "2027-01-15T05:00:00Z",
+      "os": "linux",
+      "reachable": false,
+      "error": "offline",
+      "cloud": "gcp",
+      "cloudPlace": "Google Cloud \u00b7 us-central1",
+      "cloudDelete": "elsewhere"
+    }
+  ],
+  "query": "aur",
+  "hostStates": [
+    null,
+    {
+      "configured": false,
+      "sharing": false,
+      "serviceInstalled": false,
+      "serviceRunning": false,
+      "serviceKind": "process",
+      "clients": [],
+      "permissions": []
+    },
+    {
+      "configured": true,
+      "mode": "relay",
+      "relayUrl": "https://relay.cua.ai",
+      "name": "Studio",
+      "sharing": true,
+      "serviceInstalled": true,
+      "serviceRunning": true,
+      "serviceKind": "launchd",
+      "online": true,
+      "clients": [
+        { "id": "u1", "email": "ada@example.com", "name": "Ada", "streams": 2 },
+        { "id": "u2", "email": "grace@example.com" }
+      ],
+      "permissions": [
+        {
+          "id": "screen-recording",
+          "title": "Screen Recording",
+          "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+          "instructions": "Turn on Cua Spaces"
+        },
+        {
+          "id": "accessibility",
+          "title": "Accessibility",
+          "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "granted": true
+        }
+      ]
+    },
+    {
+      "configured": true,
+      "mode": "direct",
+      "directUrl": "http://10.0.0.9:3211",
+      "sharing": false,
+      "serviceInstalled": true,
+      "serviceRunning": false,
+      "serviceKind": "launchd",
+      "clients": [],
+      "permissions": []
+    }
+  ],
+  "hostForm": [
+    { "type": "set-name", "name": " Studio " },
+    { "type": "set-allow", "allow": "grace@example.com, bob@example.com" },
+    { "type": "toggle-advanced" },
+    { "type": "set-relay-url", "url": "ftp://relay" },
+    { "type": "set-relay-url", "url": "https://relay.example/" },
+    { "type": "set-direct", "on": true },
+    { "type": "set-listen", "listen": "somewhere" },
+    { "type": "set-listen", "listen": "0.0.0.0:3300" },
+    { "type": "submit" },
+    { "type": "failed", "error": "launchctl bootstrap failed\nmore detail" },
+    { "type": "set-direct", "on": false },
+    { "type": "toggle-advanced" },
+    { "type": "submit" }
+  ],
+  "formIdentity": "ada@example.com",
+  "chrome": [
+    { "identity": null, "cloudConfigured": false, "canSignIn": true },
+    { "identity": null, "cloudConfigured": true, "canSignIn": false },
+    { "identity": "ada@example.com", "cloudConfigured": true, "canSignIn": true }
+  ],
+  "deleteFailed": { "name": "Aurora", "error": "connection refused" },
+  "menuBar": [0, 1, 3],
+  "agents": {
+    "total": 3,
+    "statuses": [
+      { "id": "claude-code", "name": "Claude Code", "installed": false },
+      {
+        "id": "codex",
+        "name": "Codex",
+        "installed": true,
+        "skillsDir": "/h/.agents/skills",
+        "mcpConfig": "/h/.codex/config.toml",
+        "cuaConfigured": true,
+        "skillsInstalled": ["a", "b", "c"]
+      },
+      {
+        "id": "cursor",
+        "name": "Cursor",
+        "installed": true,
+        "skillsDir": "/h/.cursor/skills",
+        "mcpConfig": "/h/.cursor/mcp.json",
+        "skillsInstalled": ["a"]
+      },
+      { "id": "pi", "name": "Pi", "installed": true, "skillsDir": "/h/.pi/skills", "skillsInstalled": ["a", "b", "c"] },
+      { "id": "kiro", "name": "Kiro", "installed": true, "mcpConfig": "/h/.kiro/settings/mcp.json", "error": "malformed mcp.json, left unchanged" }
+    ],
+    "outcomes": [
+      { "agents": ["codex", "cursor"], "target": "skill", "item": "cua-spaces", "change": "created", "detail": "" },
+      { "agents": ["codex", "cursor"], "target": "skill", "item": "cua-sandbox", "change": "unchanged", "detail": "" },
+      { "agents": ["codex"], "target": "mcp", "item": "cua", "change": "updated", "detail": "" },
+      { "agents": ["cursor"], "target": "mcp", "item": "cua", "change": "failed", "detail": "malformed mcp.json" },
+      { "agents": ["pi"], "target": "mcp", "item": "cua", "change": "skipped", "detail": "no MCP support" }
+    ]
+  },
+  "settings": [
+    {
+      "signIn": { "kind": "idle" },
+      "menuBar": false,
+      "defaultLocation": "local",
+      "telemetry": null,
+      "agents": null
+    },
+    {
+      "apiKeyClient": "client-123",
+      "signIn": { "kind": "failed", "message": "The code expired" },
+      "menuBar": true,
+      "defaultLocation": "cloud",
+      "locationLockedBy": "CUA_DEFAULT_ON",
+      "telemetry": { "enabled": false, "lockedBy": "DO_NOT_TRACK" },
+      "agents": [],
+      "agentsBusy": false
+    },
+    {
+      "signIn": { "kind": "waiting", "userCode": "WXYZ-1234" },
+      "defaultLocation": "local",
+      "telemetry": { "enabled": true },
+      "agentsBusy": false,
+      "agentsPending": ["cursor"]
+    },
+    {
+      "identity": "ada@example.com",
+      "canSignOut": true,
+      "defaultLocation": "local",
+      "telemetry": { "enabled": true },
+      "agentsBusy": true
+    }
+  ],
+  "onboarding": {
+    "installerMode": "host",
+    "actions": [
+      { "type": "cli-installed", "target": "/Users/me/.local/bin/cua" },
+      { "type": "start" },
+      { "type": "signed-in", "identity": "ada@example.com" },
+      { "type": "signin-done" },
+      { "type": "agents-done", "configured": ["Codex", "Pi"] },
+      { "type": "back" },
+      { "type": "agents-done", "configured": ["Codex"] },
+      { "type": "presentation-picked", "menuBar": true },
+      { "type": "presentation-picked", "menuBar": false },
+      { "type": "presentation-picked", "menuBar": true },
+      { "type": "presentation-done" },
+      { "type": "back" },
+      { "type": "presentation-done" },
+      { "type": "drive-continue" },
+      { "type": "mode-chosen", "mode": "host" }
+    ],
+    "texts": {
+      "identities": [null, "ada@example.com"],
+      "codes": [null, "WXYZ-1234"],
+      "versions": [null, "0.4.1"],
+      "target": "/Users/me/.local/bin/cua"
+    }
+  },
+  "drops": {
+    "sending": [["/Users/me/notes.txt"], ["/a/one.txt", "/a/two.txt", "/a/dir/"]],
+    "sent": [
+      [{ "name": "notes.txt", "dest": "/home/cua/Downloads/notes.txt", "bytes": 1536 }],
+      [
+        { "name": "one.txt", "dest": "/home/cua/Downloads/one.txt", "bytes": 100 },
+        { "name": "two.bin", "dest": "/home/cua/Downloads/two.bin", "bytes": 3145728 }
+      ]
+    ]
+  }
+}

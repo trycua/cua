@@ -1,0 +1,10 @@
+{
+  "id": "stale-calendar",
+  "description": "A tentative event was moved before reset verification.",
+  "write": {
+    "path": "calendar/events.json",
+    "replace": "\"start\": \"10:00\"",
+    "with": "\"start\": \"10:15\""
+  },
+  "expected_failure": "changed"
+}

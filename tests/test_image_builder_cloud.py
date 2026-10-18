@@ -28,7 +28,7 @@ def _has_cua_api_key() -> bool:
 
 async def _run_cloud(image: Image, cmd: str, timeout: int = 120) -> str:
     """Ephemeral cloud sandbox: run cmd and return stdout."""
-    async with Sandbox.ephemeral(image) as sb:
+    async with Sandbox.ephemeral(image, local=False) as sb:
         r = await sb.shell.run(cmd, timeout=timeout)
         assert r.success, f"Command failed (rc={r.returncode}): {r.stderr}"
         return r.stdout.strip()

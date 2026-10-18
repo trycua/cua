@@ -160,7 +160,7 @@ async fn run_async(
     )?;
 
     let mut sessions: HashMap<String, Arc<CuaDriverSession>> = HashMap::new();
-    while let Some(line) = lines.next() {
+    for line in lines {
         let line = match line {
             Ok(line) => line,
             Err(_) => break,

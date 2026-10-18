@@ -1,0 +1,13 @@
+{
+  "title": "CLI",
+  "pages": [
+    "index",
+    "run",
+    "task",
+    "dataset",
+    "trace",
+    "env",
+    "agent",
+    "images"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "_note": "Drag payload cases shared by the Rust parser (cua_teleport::ux::drop) and the TypeScript one (@trycua/cua/teleport), so both clients read a drop the same way.",
+  "cases": [
+    {
+      "items": ["file:///Applications/Visual%20Studio%20Code.app/", "/Applications/Blender.app", "/Users/me/project", "file:///Users/me/notes.txt"],
+      "kind": "app",
+      "apps": ["/Applications/Visual Studio Code.app", "/Applications/Blender.app"],
+      "files": ["/Users/me/project", "/Users/me/notes.txt"],
+      "urls": [],
+      "ignored": []
+    },
+    {
+      "items": ["/tmp/a.txt", "/tmp/dir/"],
+      "kind": "files",
+      "apps": [],
+      "files": ["/tmp/a.txt", "/tmp/dir"],
+      "urls": [],
+      "ignored": []
+    },
+    {
+      "items": ["# comment\r\nhttps://example.com/x\r\nfile://localhost/usr/share/applications/code.desktop\r\n", "file://otherhost/share/x", "relative/path", "https://example.com/x"],
+      "kind": "app",
+      "apps": ["/usr/share/applications/code.desktop"],
+      "files": [],
+      "urls": ["https://example.com/x"],
+      "ignored": ["file://otherhost/share/x", "relative/path"]
+    },
+    {
+      "items": ["C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Blender.lnk", "file:///C:/Users/me/doc.blend"],
+      "kind": "app",
+      "apps": ["C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Blender.lnk"],
+      "files": ["C:/Users/me/doc.blend"],
+      "urls": [],
+      "ignored": []
+    },
+    {
+      "items": ["https://a.b"],
+      "kind": "url",
+      "apps": [],
+      "files": [],
+      "urls": ["https://a.b"],
+      "ignored": []
+    },
+    {
+      "items": ["file:///a%zz"],
+      "kind": "empty",
+      "apps": [],
+      "files": [],
+      "urls": [],
+      "ignored": ["file:///a%zz"]
+    }
+  ]
+}

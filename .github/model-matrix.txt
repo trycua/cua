@@ -1,0 +1,64 @@
+# Models exercised by .github/workflows/ci-test-models.yml.
+#
+# One model per line. Blank lines and `#` comments are ignored. This file is
+# the single source of truth for that workflow: the `resolve-models` job reads
+# it to build both the `test-all-models` matrix and the `test-summary` job's
+# EXPECTED_MODELS filter, so the two can no longer drift apart. Uncomment a
+# line to start testing a model.
+
+# Claude Sonnet/Haiku
+anthropic/claude-sonnet-4-6
+anthropic/claude-sonnet-4-5-20250929
+anthropic/claude-haiku-4-5-20251001
+anthropic/claude-opus-4-6
+anthropic/claude-opus-4-5-20251101
+anthropic/claude-opus-4-1-20250805
+
+# OpenAI CU Preview
+openai/computer-use-preview
+
+# GLM-V
+openrouter/z-ai/glm-4.5v
+# huggingface-local/zai-org/GLM-4.5V  # Requires local model setup
+
+# Gemini CU Preview
+gemini-2.5-computer-use-preview-10-2025
+
+# Cua VLM Router Models (via inference.cua.ai)
+cua/anthropic/claude-haiku-4.5
+cua/anthropic/claude-sonnet-4.5
+cua/anthropic/claude-opus-4.5
+cua/microsoft/fara-7b
+cua/google/gemini-3-flash-preview
+cua/google/gemini-3-pro-preview
+
+# InternVL
+# huggingface-local/OpenGVLab/InternVL3_5-1B
+# huggingface-local/OpenGVLab/InternVL3_5-2B
+# huggingface-local/OpenGVLab/InternVL3_5-4B
+# huggingface-local/OpenGVLab/InternVL3_5-8B
+
+# UI-TARS (supports full computer-use, can run standalone)
+# huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+
+# Note: OpenCUA, GTA, and Holo are grounding-only models.
+# They only support predict_click(), not agent.run().
+# See the composed agents section below for testing them.
+
+# Moondream (typically used in composed agents)
+# Format: moondream3+{any-llm-with-tools}
+# moondream3+anthropic/claude-sonnet-4-5-20250929  # Claude has VLM + Tools
+# moondream3+openai/gpt-4o  # GPT-4o has VLM + Tools
+
+# OmniParser (typically used in composed agents)
+# Format: omniparser+{any-vlm-with-tools}
+omniparser+anthropic/claude-sonnet-4-5-20250929  # Claude has VLM + Tools
+# omniparser+openai/gpt-4o  # GPT-4o has VLM + Tools
+
+# Other grounding models + VLM with tools
+# Format: {grounding-model}+{any-vlm-with-tools}
+# These grounding-only models (OpenCUA, GTA, Holo) must be used in composed
+# form since they only support predict_click(), not full agent.run().
+# huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
+# huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
+# huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929

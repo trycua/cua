@@ -91,34 +91,16 @@ pub fn scope_schema() -> Value {
     })
 }
 
-/// `element_index` — the integer handle from the last get_window_state.
-pub fn element_index_schema() -> Value {
-    json!({
-        "type": "integer",
-        "description": "Element index from get_window_state. Requires the \
-            matching `snapshot_id` alongside it. Prefer `element_token`, \
-            which carries both values."
-    })
-}
-
-/// `snapshot_id` — the snapshot handle paired with a numeric element index.
-pub fn snapshot_id_schema() -> Value {
-    json!({
-        "type": "string",
-        "pattern": "^s[0-9a-f]{8}$",
-        "description": "Snapshot handle from get_window_state. Required when \
-            targeting by element_index; stale snapshots fail closed."
-    })
-}
-
 /// `element_token` — the opaque, validity-checked handle from get_window_state.
 pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
-        "description": "Opaque per-snapshot element handle from \
-            `structuredContent.elements[].element_token`. If element_index, \
-            snapshot_id, or window_id are also supplied they must agree. Returns \
-            an explicit stale error once a newer snapshot supersedes it."
+        "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+        "description": "Element handle `<snapshot_id>:<row>` from get_window_state: \
+            row `[11]` of a read whose snapshot_id is s0000002a is \
+            \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). \
+            Returns an explicit stale error naming the current snapshots once a \
+            newer read supersedes it."
     })
 }
 
@@ -172,6 +154,21 @@ pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {
         .unwrap_or(TIMEOUT_MS_DEFAULT)
 }
 
+/// Resolve a walk timeout while allowing a platform to grant an omitted
+/// timeout a larger budget until that window has produced its first snapshot.
+/// Explicit caller values always retain the shared clamp semantics.
+pub fn resolve_timeout_ms_with_first_snapshot_grace(
+    value: Option<&Value>,
+    has_prior_snapshot: bool,
+    first_snapshot_default: u64,
+) -> u64 {
+    if value.is_none() && !has_prior_snapshot {
+        first_snapshot_default.clamp(TIMEOUT_MS_MIN, TIMEOUT_MS_MAX)
+    } else {
+        resolve_timeout_ms(value)
+    }
+}
+
 // ── The gate ─────────────────────────────────────────────────────────────────
 
 /// The canonical *shape* of each shared param (description stripped). `None` for
@@ -185,9 +182,7 @@ fn shared_param_canonical(name: &str) -> Option<Value> {
         "modifier" => modifier_schema(),
         "button" => button_schema(),
         "scope" => scope_schema(),
-        "element_index" => element_index_schema(),
         "element_token" => element_token_schema(),
-        "snapshot_id" => snapshot_id_schema(),
         "capture_mode" => crate::capture_mode::capture_mode_schema(),
         "timeout_ms" => timeout_ms_schema(),
         _ => return None,
@@ -205,17 +200,19 @@ fn required_canonical(tool: &str) -> Option<&'static [&'static str]> {
         // `pid` is conditionally required (validated in code: needed unless a
         // windowless desktop-scope call), so it is intentionally NOT pinned here.
         "click" => &[],
+        // An element_token carries its own pid, so element-addressed tools
+        // never require `pid` in the schema (validated in code for x/y).
+        "double_click" | "right_click" => &[],
+        "set_value" => &["value"],
         "scroll" => &["direction"],
         "zoom" => &["window_id", "x1", "y1", "x2", "y2"],
-        // double_click / right_click are already consistent across platforms —
-        // not pinned, so we don't force a behavior change on them.
         _ => return None,
     })
 }
 
 /// Reduce a param schema to the parts that govern client compatibility —
-/// `type`, `enum`, and (recursively) `items` — dropping `description` and any
-/// other prose so per-tool wording differences don't trip the gate.
+/// `type`, `enum`, `pattern`, and (recursively) `items` — dropping
+/// `description` and other prose so per-tool wording differences don't trip the gate.
 fn structural(schema: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(t) = schema.get("type") {
@@ -223,6 +220,9 @@ fn structural(schema: &Value) -> Value {
     }
     if let Some(e) = schema.get("enum") {
         out.insert("enum".into(), e.clone());
+    }
+    if let Some(pattern) = schema.get("pattern") {
+        out.insert("pattern".into(), pattern.clone());
     }
     if let Some(items) = schema.get("items") {
         out.insert("items".into(), structural(items));
@@ -332,6 +332,22 @@ mod tests {
     }
 
     #[test]
+    fn first_snapshot_grace_never_overrides_an_explicit_timeout() {
+        assert_eq!(
+            resolve_timeout_ms_with_first_snapshot_grace(None, false, 2_000),
+            2_000
+        );
+        assert_eq!(
+            resolve_timeout_ms_with_first_snapshot_grace(None, true, 2_000),
+            TIMEOUT_MS_DEFAULT
+        );
+        assert_eq!(
+            resolve_timeout_ms_with_first_snapshot_grace(Some(&json!(750)), false, 2_000),
+            750
+        );
+    }
+
+    #[test]
     fn structural_strips_description_keeps_type_and_enum() {
         let with_prose = json!({ "type": "string", "enum": ["a", "b"], "description": "x" });
         let s = structural(&with_prose);
@@ -405,5 +421,68 @@ mod tests {
     fn canonical_click_required_passes() {
         let tool = json!({ "type": "object", "required": [], "properties": {} });
         assert!(shared_schema_violations("click", &tool).is_empty());
+    }
+
+    #[test]
+    fn element_token_tools_must_not_require_pid() {
+        for (tool_name, required) in [
+            ("double_click", json!(["pid"])),
+            ("right_click", json!(["pid"])),
+            ("set_value", json!(["pid", "value"])),
+        ] {
+            let tool = json!({ "type": "object", "required": required, "properties": {} });
+            let v = shared_schema_violations(tool_name, &tool);
+            assert!(
+                v.iter().any(|s| s.contains("required")),
+                "{tool_name}: {v:?}"
+            );
+        }
+        let set_value = json!({ "type": "object", "required": ["value"], "properties": {} });
+        assert!(shared_schema_violations("set_value", &set_value).is_empty());
+    }
+    #[test]
+    fn element_token_pattern_matches_the_minted_wire_shape() {
+        let schema = element_token_schema();
+        assert_eq!(schema["pattern"], "^s[0-9a-f]{8}:[0-9]+$");
+        let validator = jsonschema::validator_for(&schema).expect("element token schema compiles");
+        for (snapshot_id, element_index) in
+            [(0_u32, 0_usize), (1_u32, 42_usize), (u32::MAX, usize::MAX)]
+        {
+            let token = crate::element_token::token_for(snapshot_id, element_index);
+            assert!(
+                validator.is_valid(&json!(token)),
+                "advertised element_token schema rejected minted token {token}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_shared_element_token_pattern_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "element_token": { "type": "string" }
+            }
+        });
+        let violations = shared_schema_violations("click", &tool);
+        assert!(
+            violations.iter().any(|item| item.contains("element_token")),
+            "missing element_token pattern must be flagged: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn element_token_pattern_drift_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "element_token": { "type": "string", "pattern": "^wrong$" }
+            }
+        });
+        let violations = shared_schema_violations("click", &tool);
+        assert!(
+            violations.iter().any(|item| item.contains("element_token")),
+            "element_token pattern drift must be flagged: {violations:?}"
+        );
     }
 }

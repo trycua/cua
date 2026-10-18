@@ -313,9 +313,8 @@ impl Inner {
                 initializing,
             )
             .await?;
-        decode_rpc(&response, &id).map_err(|error| {
+        decode_rpc(&response, &id).inspect_err(|_| {
             self.state.lock().unwrap().broken = true;
-            error
         })
     }
 

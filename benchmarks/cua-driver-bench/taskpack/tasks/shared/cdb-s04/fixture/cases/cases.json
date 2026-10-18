@@ -1,0 +1,64 @@
+{
+  "cases": [
+    {
+      "id": "RWC-184",
+      "title": "Overlay inspector opens without an active panel",
+      "status": "open",
+      "component": "Morrowglass Archive",
+      "reported_at": "2026-07-18T09:14:00Z",
+      "body": "Root investigation for archive records whose overlay inspector reports that no panel is selected. Keep this case open while linked reports are reviewed.",
+      "duplicate_of": null,
+      "evidence": { "wiki_ref": "", "repro_url": "", "log_ref": "" }
+    },
+    {
+      "id": "RWC-193",
+      "title": "Vesper 17 overlay has no selectable panel",
+      "status": "open",
+      "component": "Morrowglass Archive",
+      "reported_at": "2026-07-21T13:42:00Z",
+      "body": "Opening the overlay view for Vesper 17 produces the message “No panel selected” before any controls become available. Reproduce exactly at http://127.0.0.1:4184/inspect?record=vesper-17&view=overlay",
+      "duplicate_of": null,
+      "evidence": { "wiki_ref": "", "repro_url": "", "log_ref": "" }
+    },
+    {
+      "id": "RWC-201",
+      "title": "Vesper 21 cannot enter overlay panel",
+      "status": "open",
+      "component": "Morrowglass Archive",
+      "reported_at": "2026-07-23T16:08:00Z",
+      "body": "The Vesper 21 record reaches the overlay route but displays “No panel selected” instead of the panel. Reproduce exactly at http://127.0.0.1:4184/inspect?record=vesper-21&view=overlay",
+      "duplicate_of": null,
+      "evidence": { "wiki_ref": "", "repro_url": "", "log_ref": "" }
+    },
+    {
+      "id": "RWC-206",
+      "title": "Tide 08 overlay initially looks sparse",
+      "status": "open",
+      "component": "Morrowglass Archive",
+      "reported_at": "2026-07-24T10:26:00Z",
+      "body": "The Tide 08 overlay has little visible content on first load; the shoreline annotation remains available in the panel. Reproduce exactly at http://127.0.0.1:4184/inspect?record=tide-08&view=overlay",
+      "duplicate_of": null,
+      "evidence": { "wiki_ref": "", "repro_url": "", "log_ref": "" }
+    },
+    {
+      "id": "RWC-212",
+      "title": "Tide 11 summary shows an empty-state notice",
+      "status": "open",
+      "component": "Morrowglass Archive",
+      "reported_at": "2026-07-25T08:51:00Z",
+      "body": "The Tide 11 summary view shows a notice where optional curator notes would normally appear. Reproduce exactly at http://127.0.0.1:4184/inspect?record=tide-11&view=summary",
+      "duplicate_of": null,
+      "evidence": { "wiki_ref": "", "repro_url": "", "log_ref": "" }
+    },
+    {
+      "id": "RWC-177",
+      "title": "Archive export preserves retired watermark",
+      "status": "closed",
+      "component": "Morrowglass Export",
+      "reported_at": "2026-07-10T14:03:00Z",
+      "body": "A retired watermark was included in a PDF export. This unrelated report is retained for case-history context.",
+      "duplicate_of": null,
+      "evidence": { "wiki_ref": "", "repro_url": "", "log_ref": "" }
+    }
+  ]
+}

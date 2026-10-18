@@ -64,7 +64,11 @@ def test_image_crd_restricts_the_initial_recipe_contract() -> None:
     schema = _version()["schema"]["openAPIV3Schema"]
     recipe = schema["properties"]["spec"]["properties"]["recipe"]
     assert recipe["properties"]["osType"]["enum"] == ["linux"]
-    assert recipe["properties"]["kind"]["enum"] == ["vm"]
+    # `container` builds an OCI rootfs on a registry base (recipe.from).
+    assert recipe["properties"]["kind"]["enum"] == ["vm", "container"]
+    assert recipe["properties"]["from"]["maxLength"] == 1024
+    assert recipe["properties"]["fromPullSecret"]["pattern"].startswith("^cua-registry-")
+    assert "from" not in recipe["required"] and "fromPullSecret" not in recipe["required"]
     assert recipe["properties"]["layers"]["maxItems"] == 128
     assert recipe["properties"]["files"]["maxItems"] == 128
     assert "registry" not in recipe["properties"]

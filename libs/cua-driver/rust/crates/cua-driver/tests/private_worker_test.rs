@@ -49,6 +49,10 @@ fn worker_options(state: &IsolatedStateRoot) -> PrivateWorkerOptions {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "host desktop: the macOS worker hosts the agent-cursor overlay window; selected by scripts/ci/macos/run-rust-e2e.sh"
+)]
 async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
     let state = IsolatedStateRoot::new().unwrap();
     let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
@@ -96,6 +100,7 @@ async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
+#[ignore = "host desktop: hosts the agent-cursor overlay window; selected by scripts/ci/macos/run-rust-e2e.sh"]
 async fn private_worker_owns_the_macos_cursor_overlay_facility() {
     let state = IsolatedStateRoot::new().unwrap();
     let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
@@ -238,6 +243,10 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "host desktop: the macOS worker hosts the agent-cursor overlay window; selected by scripts/ci/macos/run-rust-e2e.sh"
+)]
 async fn dropping_the_host_closes_and_terminates_the_private_worker() {
     let state = IsolatedStateRoot::new().unwrap();
     let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
@@ -275,7 +284,8 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
         dangerously_bypass_approvals: false,
         environment: isolated_environment(&state),
         inherit_stderr: true,
-        no_overlay: false,
+        // No overlay window on the developer's display.
+        no_overlay: true,
     })
     .unwrap();
     let connection = host.clone().start().await.unwrap();

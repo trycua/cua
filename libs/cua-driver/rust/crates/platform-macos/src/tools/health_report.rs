@@ -14,6 +14,7 @@ use cua_driver_core::health_report::{
     CheckData, CheckEntry, HealthCheckProvider, NAME_AX_CAPABILITY, NAME_BINARY_VERSION,
     NAME_BUNDLE_IDENTITY, NAME_PLATFORM_SUPPORTED, NAME_SCREEN_CAPTURE_CAPABILITY,
     NAME_SESSION_ACTIVE, NAME_TCC_ACCESSIBILITY, NAME_TCC_SCREEN_RECORDING,
+    NAME_WINDOWSERVER_CONNECTION,
 };
 
 use crate::permissions::status::{accessibility_granted, current_status, screen_recording_granted};
@@ -29,6 +30,7 @@ pub const MACOS_CHECK_NAMES: &[&str] = &[
     NAME_TCC_SCREEN_RECORDING,
     NAME_AX_CAPABILITY,
     NAME_SCREEN_CAPTURE_CAPABILITY,
+    NAME_WINDOWSERVER_CONNECTION,
 ];
 
 /// The canonical bundle identifier whose TCC grants matter for the
@@ -58,6 +60,7 @@ impl HealthCheckProvider for MacosHealthProvider {
             NAME_TCC_SCREEN_RECORDING => check_tcc_screen_recording(),
             NAME_AX_CAPABILITY => check_ax_capability(),
             NAME_SCREEN_CAPTURE_CAPABILITY => check_screen_capture_capability(),
+            NAME_WINDOWSERVER_CONNECTION => check_windowserver_connection(),
             // Defensive: the dispatcher only forwards names in
             // `check_names()`, so this branch should be unreachable.
             other => CheckEntry::skip(
@@ -69,6 +72,49 @@ impl HealthCheckProvider for MacosHealthProvider {
 }
 
 // ── Individual checks ────────────────────────────────────────────────────────
+
+/// True when this daemon is neither embedded in a host app nor inside
+/// CuaDriver.app: it relaunched itself disclaimed, as its own responsible
+/// process (CUA-1777).
+pub fn is_unbundled(embedded: bool, exe_path: &str) -> bool {
+    !embedded
+        && !(exe_path.contains("/CuaDriver.app/Contents/MacOS/")
+            || exe_path.contains("/CuaDriverLocal.app/Contents/MacOS/"))
+}
+
+fn check_windowserver_connection() -> CheckEntry {
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .and_then(|p| p.to_str().map(str::to_owned))
+        .unwrap_or_default();
+    windowserver_connection_entry(
+        is_unbundled(cua_driver_core::embedded_mode(), &exe),
+        crate::input::skylight::windowserver_connection_invalid(),
+    )
+}
+
+fn windowserver_connection_entry(unbundled: bool, invalid_seen: bool) -> CheckEntry {
+    let hint = super::WINDOWSERVER_INVALID_HINT;
+    if invalid_seen {
+        return CheckEntry::fail(
+            NAME_WINDOWSERVER_CONNECTION,
+            "SLPSPostEventRecordTo returned 1002 (invalid connection): background focus steps are failing.",
+            hint,
+        );
+    }
+    if unbundled {
+        return CheckEntry::fail(
+            NAME_WINDOWSERVER_CONNECTION,
+            "Running unbundled (outside CuaDriver.app): the daemon is its own responsible process and its no-raise focus steps are expected to fail with 1002.",
+            hint,
+        );
+    }
+    CheckEntry::pass(
+        NAME_WINDOWSERVER_CONNECTION,
+        "No invalid WindowServer connection observed.",
+    )
+}
 
 pub(crate) fn check_platform_supported() -> CheckEntry {
     // Reaching this code path on macOS implies a supported platform —
@@ -108,6 +154,10 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
         );
     }
 
+    standalone_bundle_identity(bid, exe)
+}
+
+fn standalone_bundle_identity(bid: Option<String>, exe: String) -> CheckEntry {
     let data = CheckData {
         bundle_identifier: bid.clone(),
         executable_path: if exe.is_empty() { None } else { Some(exe) },
@@ -121,23 +171,15 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
         )
         .with_data(data);
     }
-    let (message, hint) = match bid.as_deref() {
-        None | Some("") => (
-            "Process has no CFBundleIdentifier.".to_owned(),
-            "Run the binary inside CuaDriver.app so TCC grants attribute correctly. \
-             Start the daemon with `open -n -g -a CuaDriver --args serve` and \
-             connect via `cua-driver mcp`."
-                .to_owned(),
-        ),
-        Some(other) => (
-            format!("Bundle is {other}, not {CANONICAL_BUNDLE_ID}."),
-            format!(
-                "TCC grants will be attributed to {other}, not the cua-driver daemon. \
-                 Run via `cua-driver mcp` (auto-relaunches inside CuaDriver.app) or \
-                 start the daemon manually: `open -n -g -a CuaDriver --args serve`."
-            ),
-        ),
+    let message = match bid.as_deref() {
+        None | Some("") => "Process has no CFBundleIdentifier.".to_owned(),
+        Some(other) => format!("Bundle is {other}, not {CANONICAL_BUNDLE_ID}."),
     };
+    let hint = "This bundle check does not identify the app or executable macOS attributes \
+                this process's permission request to. For standalone CuaDriver, start the \
+                daemon inside CuaDriver.app with `open -n -g -a CuaDriver --args serve` and \
+                connect via `cua-driver mcp`. For an embedded or linked driver, use the \
+                host's launch and permission setup instead.";
 
     CheckEntry::fail(NAME_BUNDLE_IDENTITY, message, hint).with_data(data)
 }
@@ -192,29 +234,37 @@ fn check_embedded_bundle_identity(
 fn check_tcc_accessibility() -> CheckEntry {
     // Reuse the shared probe — do not duplicate AXIsProcessTrusted.
     let status = current_status();
+    accessibility_check(status.accessibility, current_bundle_identifier())
+}
+
+fn accessibility_check(granted: bool, bundle_identifier: Option<String>) -> CheckEntry {
     let data = CheckData {
-        bundle_identifier: current_bundle_identifier(),
+        bundle_identifier,
         ..Default::default()
     };
-    if status.accessibility {
+    if granted {
         return CheckEntry::pass(NAME_TCC_ACCESSIBILITY, "Accessibility is granted.")
             .with_data(data);
     }
     CheckEntry::fail(
         NAME_TCC_ACCESSIBILITY,
         "Accessibility is NOT granted for this process.",
-        "Grant Accessibility to CuaDriver.app in System Settings → Privacy & Security → \
-         Accessibility. If the process bundle is not com.trycua.driver (see bundle_identity), \
-         the grant must target the responsible app — restart via `cua-driver mcp` to relaunch \
-         inside CuaDriver.app.",
+        "Grant Accessibility to the app or executable macOS attributes this process's \
+         permission request to in System Settings → Privacy & Security → Accessibility. \
+         For standalone CuaDriver, use CuaDriver.app. For an embedded or linked driver, \
+         follow the host's permission setup; a grant to a separate CuaDriver.app does not \
+         verify this process's access.",
     )
     .with_data(data)
 }
 
 fn check_tcc_screen_recording() -> CheckEntry {
-    let granted = screen_recording_granted();
+    screen_recording_check(screen_recording_granted(), current_bundle_identifier())
+}
+
+fn screen_recording_check(granted: bool, bundle_identifier: Option<String>) -> CheckEntry {
     let data = CheckData {
-        bundle_identifier: current_bundle_identifier(),
+        bundle_identifier,
         ..Default::default()
     };
     if granted {
@@ -224,9 +274,11 @@ fn check_tcc_screen_recording() -> CheckEntry {
     CheckEntry::fail(
         NAME_TCC_SCREEN_RECORDING,
         "Screen Recording is NOT granted for this process.",
-        "Grant Screen Recording to CuaDriver.app in System Settings → Privacy & Security → \
-         Screen Recording. The grant is attributed to the responsible process — see \
-         bundle_identity to confirm the right binary is being prompted.",
+        "Grant Screen Recording to the app or executable macOS attributes this process's \
+         permission request to in System Settings → Privacy & Security → Screen Recording. \
+         For standalone CuaDriver, use CuaDriver.app. For an embedded or linked driver, \
+         follow the host's permission setup; a grant to a separate CuaDriver.app does not \
+         verify this process's access.",
     )
     .with_data(data)
 }
@@ -252,11 +304,11 @@ fn check_screen_capture_capability() -> CheckEntry {
     // SCShareableContent::get() is not a read-only probe on recent macOS:
     // Tahoe may display the separate private-window-picker bypass consent.
     // `health_report` is declared read-only, so fail closed to an explicit
-    // unknown/skip state. `permissions grant` is the sole flow allowed to
-    // explain, request, and verify direct capture.
+    // unknown/skip state. Explicit verification must use the permission
+    // flow for the app or executable macOS attributes the request to.
     CheckEntry::skip(
         NAME_SCREEN_CAPTURE_CAPABILITY,
-        "Direct ScreenCaptureKit readiness was not probed because health_report is read-only; run `cua-driver permissions grant` to request and verify it explicitly.",
+        "Direct ScreenCaptureKit readiness was not probed because health_report is read-only. For standalone CuaDriver, use `cua-driver permissions grant` to request and verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness.",
     )
 }
 
@@ -296,7 +348,7 @@ fn bundle_identifier(bundle: &core_foundation::bundle::CFBundle) -> Option<Strin
 /// Read the running process's `CFBundleIdentifier` via CoreFoundation.
 /// Returns `None` when the process has no associated bundle (e.g.
 /// running the bare binary outside `CuaDriver.app`).
-fn current_bundle_identifier() -> Option<String> {
+pub(crate) fn current_bundle_identifier() -> Option<String> {
     use core_foundation::base::TCFType;
     use core_foundation::bundle::{CFBundle, CFBundleGetMainBundle};
 
@@ -319,7 +371,7 @@ fn current_bundle_identifier() -> Option<String> {
 /// Read in-process from the `kern.osproductversion` sysctl. The previous
 /// implementation spawned `/usr/bin/sw_vers` — a full fork/exec (several
 /// ms) on every health_report call — to read the same value.
-fn sw_vers_product_version() -> Option<String> {
+pub(crate) fn sw_vers_product_version() -> Option<String> {
     let name = std::ffi::CString::new("kern.osproductversion").ok()?;
     let mut buf = [0u8; 64];
     let mut len = buf.len();
@@ -361,6 +413,32 @@ fn arch_label() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unbundled_detection_follows_embedding_and_bundle_path() {
+        assert!(is_unbundled(false, "/usr/local/bin/cua-driver"));
+        assert!(!is_unbundled(true, "/usr/local/bin/cua-driver"));
+        assert!(!is_unbundled(
+            false,
+            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
+        ));
+    }
+
+    #[test]
+    fn windowserver_check_fails_loudly_when_invalid_or_unbundled() {
+        let seen = windowserver_connection_entry(false, true);
+        assert_eq!(seen.status, CheckStatus::Fail);
+        assert!(seen.message.contains("1002"));
+        assert!(seen.hint.unwrap().contains("open -n -g -a CuaDriver"));
+        assert_eq!(
+            windowserver_connection_entry(true, false).status,
+            CheckStatus::Fail
+        );
+        assert_eq!(
+            windowserver_connection_entry(false, false).status,
+            CheckStatus::Pass
+        );
+    }
     use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
@@ -392,6 +470,86 @@ mod tests {
         let data = entry.data.expect("data block expected");
         assert!(data.os_version.is_some(), "os_version must be set");
         assert!(data.architecture.is_some(), "architecture must be set");
+    }
+
+    #[test]
+    fn permission_remediation_preserves_attribution_uncertainty() {
+        let mut wrong_hints = Vec::new();
+        for check in [accessibility_check, screen_recording_check] {
+            for bid in [
+                None,
+                Some(CANONICAL_BUNDLE_ID.to_owned()),
+                Some("com.example.host".to_owned()),
+            ] {
+                let denied = check(false, bid.clone());
+                assert_eq!(denied.status, CheckStatus::Fail);
+                assert_eq!(
+                    denied
+                        .data
+                        .as_ref()
+                        .and_then(|d| d.bundle_identifier.clone()),
+                    bid
+                );
+                let hint = denied.hint.unwrap();
+                if !hint.contains("app or executable macOS attributes")
+                    || !hint.contains("For standalone CuaDriver")
+                {
+                    wrong_hints.push(format!("{} {bid:?}: {hint}", denied.name));
+                }
+                let granted = check(true, bid.clone());
+                assert_eq!(granted.status, CheckStatus::Pass);
+                assert!(granted.hint.is_none());
+                assert_eq!(granted.data.and_then(|d| d.bundle_identifier), bid);
+            }
+        }
+        assert!(wrong_hints.is_empty(), "{}", wrong_hints.join("\n"));
+    }
+
+    #[test]
+    fn bundle_remediation_qualifies_standalone_launch_in_both_failure_branches() {
+        let mut wrong_hints = Vec::new();
+        for bid in [
+            None,
+            Some(String::new()),
+            Some("com.example.host".to_owned()),
+        ] {
+            let entry = standalone_bundle_identity(bid.clone(), "/tmp/host".to_owned());
+            assert_eq!(entry.status, CheckStatus::Fail);
+            let hint = entry.hint.unwrap();
+            if !hint.contains("For standalone CuaDriver")
+                || !hint.contains("does not identify")
+                || hint.contains("TCC grants will be attributed to")
+            {
+                wrong_hints.push(format!("{bid:?}: {hint}"));
+            }
+            let data = entry.data.unwrap();
+            assert_eq!(data.bundle_identifier, bid);
+            assert_eq!(data.executable_path.as_deref(), Some("/tmp/host"));
+            assert_eq!(data.identity_source.as_deref(), Some("current_process"));
+        }
+        let entry = standalone_bundle_identity(Some(CANONICAL_BUNDLE_ID.to_owned()), String::new());
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(entry.hint.is_none());
+        assert!(wrong_hints.is_empty(), "{}", wrong_hints.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn capture_remediation_through_actual_provider_dispatcher_is_owner_scoped() {
+        let tool = HealthReportTool::new(Arc::new(MacosHealthProvider));
+        let result = tool
+            .invoke(serde_json::json!({"include": [NAME_SCREEN_CAPTURE_CAPABILITY]}))
+            .await;
+        let report = result.structured_content.unwrap();
+        let check = report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == NAME_SCREEN_CAPTURE_CAPABILITY)
+            .unwrap();
+        assert_eq!(check["status"], "skip");
+        let message = check["message"].as_str().unwrap();
+        assert!(message.contains("For standalone CuaDriver"), "{message}");
+        assert!(message.contains("does not verify"), "{message}");
     }
 
     #[test]

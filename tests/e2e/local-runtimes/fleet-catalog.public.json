@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "source": "trycua/cloud scripts/fleet-images/catalog.json @ 3ae9543b4 (public entries only; refresh deliberately)",
+  "images": [
+    {
+      "id": "ubuntu-24.04-duo",
+      "artifact_kind": "containerdisk",
+      "repository": "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04",
+      "references": [
+        "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34",
+        "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
+      ],
+      "digest": "sha256:eb68411ed8b4d7c39829cdfe854b9d0485b78ee064c3171fd8e3f7450f7ccee7",
+      "digest_reference": "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34",
+      "guest_os": "Ubuntu 24.04 / XFCE / X11 display :1",
+      "architectures": [
+        "amd64"
+      ],
+      "eligibility": "KubeVirt containerDisk; actual account admission, region and capacity not tested. Recipe supports amd64/arm64; inspected SDK index advertises amd64 only.",
+      "status": "candidate",
+      "services": [
+        {
+          "name": "server",
+          "port": 8000,
+          "protocol": "HTTP/WebSocket/MCP",
+          "readiness": "GET /status; default SDK also probes TCP 8000"
+        },
+        {
+          "name": "mcp",
+          "port": 3000,
+          "protocol": "MCP Streamable HTTP via supergateway 3.4.3",
+          "readiness": "GET /healthz then MCP initialize and a guest action"
+        }
+      ]
+    },
+    {
+      "id": "windows-server-2022",
+      "artifact_kind": "containerdisk",
+      "repository": "public.ecr.aws/k5j5w0x5/cua-windows-2022",
+      "references": [
+        "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
+      ],
+      "digest": null,
+      "digest_reference": null,
+      "guest_os": "Windows Server 2022; not Windows 11",
+      "architectures": [
+        "amd64"
+      ],
+      "eligibility": "KubeVirt VM with EFI firmware. Actual account admission, region and capacity not tested.",
+      "status": "candidate",
+      "services": [
+        {
+          "name": "server",
+          "port": 8000,
+          "protocol": "HTTP/WebSocket/MCP",
+          "readiness": "GET /status and an interactive guest action"
+        },
+        {
+          "name": "mcp",
+          "port": 3000,
+          "protocol": "MCP Streamable HTTP via supergateway",
+          "readiness": "MCP initialize and an interactive guest action"
+        }
+      ]
+    },
+    {
+      "id": "omarchy-4.0.2",
+      "artifact_kind": "containerdisk",
+      "repository": "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace",
+      "references": [
+        "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace:git-c8ac54753a7f5f00a815fd8095a4055789a8f622",
+        "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace:latest"
+      ],
+      "digest": "sha256:dd09f70f8cd35eca7871dff000538302baad63688a3008803f2238492802d743",
+      "digest_reference": "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace:git-c8ac54753a7f5f00a815fd8095a4055789a8f622",
+      "guest_os": "Arch Linux / Omarchy 4.0.2 / Hyprland",
+      "architectures": [
+        "amd64"
+      ],
+      "eligibility": "Hosted-verified KubeVirt containerDisk in the linked main run; no SDK built-in mapping. Other accounts, regions and capacity conditions were not tested.",
+      "status": "hosted-verified",
+      "services": [
+        {
+          "name": "server",
+          "port": 8000,
+          "protocol": "HTTP/WebSocket/MCP",
+          "readiness": "GET /status and native guest postcondition"
+        },
+        {
+          "name": "mcp",
+          "port": 3000,
+          "protocol": "MCP Streamable HTTP via supergateway 3.4.3",
+          "readiness": "MCP initialize, typed desktop action and native guest postcondition"
+        }
+      ]
+    }
+  ]
+}

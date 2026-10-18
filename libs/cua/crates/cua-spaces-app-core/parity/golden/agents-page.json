@@ -1,0 +1,1207 @@
+{
+  "flow": "agents-page",
+  "frames": [
+    {
+      "step": "two agents",
+      "view": {
+        "busy": false,
+        "detail": null,
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "select ada (load)",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory*, Routines, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "load ada",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "ada's home",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory*, Routines, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "open MEMORY.md",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory*, Routines, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "read agents/ada/hermes/memories/MEMORY.md",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "its text and history",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": {
+            "close": "Close",
+            "path": "hermes/memories/MEMORY.md",
+            "text": "The user likes tea.",
+            "versions": [
+              "Current |  | - | - | -",
+              "2h ago |  | Restore | - | -"
+            ]
+          },
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory*, Routines, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "restore v1",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": {
+            "close": "Close",
+            "path": "hermes/memories/MEMORY.md",
+            "text": "The user likes tea.",
+            "versions": [
+              "Current |  | - | - | -",
+              "2h ago |  | Restore | - | -"
+            ]
+          },
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory*, Routines, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "restore agents/ada/hermes/memories/MEMORY.md v1",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "restored",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory*, Routines, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "routines tab",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "title",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [Inbox sweep] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "prompt",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": true,
+          "error": null,
+          "file": null,
+          "form": "Add routine [Inbox sweep] [Triage new issues] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "a bad time",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [Inbox sweep] [Triage new issues] daily 60 25:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "add is ignored",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [Inbox sweep] [Triage new issues] daily 60 25:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "every 30 minutes",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": true,
+          "error": null,
+          "file": null,
+          "form": "Add routine [Inbox sweep] [Triage new issues] every 60 25:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | on",
+            "Every day |  | - | - | off",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "minutes",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": true,
+          "error": null,
+          "file": null,
+          "form": "Add routine [Inbox sweep] [Triage new issues] every 30 25:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | on",
+            "Every day |  | - | - | off",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "add",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [Inbox sweep] [Triage new issues] every 30 25:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | on",
+            "Every day |  | - | - | off",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "add routine ada \"Inbox sweep\" every 30",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "added",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "turn Morning off",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | on",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "routine R1 off",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "Morning is off",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines*, Access to this computer"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "access tab",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "allow on this computer",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "allow ada on relay:0123456789abcdef",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "presence declined",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": "not confirmed: you declined",
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "allow again",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "allow ada on relay:0123456789abcdef",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "allowed",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [
+            "This computer |  | Revoke | - | -"
+          ],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": null,
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "revoke",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [
+            "This computer |  | Revoke | - | -"
+          ],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": null,
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "revoke ada on relay:0123456789abcdef",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "revoked",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "pause ada",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved 5m ago",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "pause ada",
+        "rows": [
+          "ada | Hermes in local:dev | Running | Pause (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "ada paused",
+      "view": {
+        "busy": false,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved just now",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": null,
+        "rows": [
+          "ada | Hermes in local:dev | Paused | Resume (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    },
+    {
+      "step": "resume bob",
+      "view": {
+        "busy": true,
+        "detail": {
+          "access": [],
+          "accessEmpty": "This agent cannot use your computers.",
+          "allowThisMachine": "Allow on this computer",
+          "audit": [
+            "Refused relay:0123456789abcdef | 16m ago | - | - | -"
+          ],
+          "canAdd": false,
+          "error": null,
+          "file": null,
+          "form": "Add routine [] [] daily 60 08:00 mon",
+          "memory": [
+            "hermes/memories/MEMORY.md | 1.8 KB | - | - | -",
+            "hermes/memories/USER.md | 210 B | - | - | -"
+          ],
+          "memoryEmpty": "Nothing saved yet.",
+          "name": "ada",
+          "routines": [
+            "Morning | Every day at 8:00 AM | Remove | - | off",
+            "Inbox sweep | Every 30 minutes | Remove | - | on"
+          ],
+          "routinesEmpty": "No routines.",
+          "schedules": [
+            "Every N minutes |  | - | - | off",
+            "Every day |  | - | - | on",
+            "Every week |  | - | - | off"
+          ],
+          "subtitle": "Home agents/ada/, saved just now",
+          "tabs": "Memory, Routines, Access to this computer*"
+        },
+        "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
+        "error": null,
+        "request": "resume bob",
+        "rows": [
+          "ada | Hermes in local:dev | Paused | Resume (selected)",
+          "bob | Claude Code in cloud:bob | Paused | Resume"
+        ],
+        "title": "Agents"
+      }
+    }
+  ]
+}

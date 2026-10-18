@@ -457,7 +457,7 @@ impl Tool for GetBrowserStateTool {
                                     "not_rendered": outcome.omissions.not_rendered,
                                 },
                                 "continuation": outcome.continuation,
-                                "hint": (outcome.omissions.not_rendered > 0).then_some("Chrome has not rendered this background tab, so this tree is partial. Bring the tab to the front in the browser, then re-run get_browser_state; observation never activates tabs."),
+                                "hint": (outcome.omissions.not_rendered > 0).then_some("Chrome has not rendered this background tab, so this tree is partial. Selecting the tab renders it but changes the tab the user sees: do that only if the user agreed (click the tab with delivery_mode:\"foreground\"), then re-run get_browser_state. Observation never activates tabs."),
                             },
                             "page": {
                                 "url": outcome.url,
@@ -830,7 +830,7 @@ impl Tool for BrowserPrepareTool {
 
 /// `browser_prepare` is optional: the page's accessibility tree is a working
 /// background route, so the refusal leads with it.
-const BROWSER_PREPARE_BACKGROUND_SUGGESTION: &str = "Not blocked: use get_window_state on this window and act through the accessibility tree (set_value, click by element token). If the first read shows only browser chrome and no AXWebArea, read the window again after a moment. Use delivery_mode:\"foreground\" only if that fails and nobody is using the screen.";
+const BROWSER_PREPARE_BACKGROUND_SUGGESTION: &str = "Not blocked: use get_window_state on this window and act through the accessibility tree (set_value, click by element token). If the first read shows only browser chrome and no AXWebArea, read the window again after a moment. That tree shows only the selected tab: do not click another tab in the tab strip or open URLs with launch_app, since both change the tab the user sees. Use delivery_mode:\"foreground\" only if that fails and nobody is using the screen.";
 
 fn isolated_session_lifecycle(
     session: &str,

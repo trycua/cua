@@ -644,6 +644,34 @@ impl Tool for ClickTool {
                 }
             }
 
+            // A press on an unselected tab in the browser's own tab strip
+            // switches the tab the user sees (#5397). Background presses
+            // refuse and point to the typed browser tools; foreground presses
+            // go ahead and report it.
+            let selects_browser_tab = if effective_action == "press" {
+                let tab_guard = element_guard.clone();
+                tokio::task::spawn_blocking(move || unsafe {
+                    super::browser_tab_strip::press_selects_another_tab(
+                        pid,
+                        tab_guard.as_ptr() as AXUIElementRef,
+                    )
+                })
+                .await
+                .unwrap_or(false)
+            } else {
+                false
+            };
+            if selects_browser_tab && !delivery_mode.is_foreground() {
+                return unsafe {
+                    super::browser_tab_strip::tab_switch_refusal(
+                        pid,
+                        wid,
+                        Some(idx),
+                        element_ptr as AXUIElementRef,
+                    )
+                };
+            }
+
             // Animate cursor to element center BEFORE firing AX action,
             // mirroring Swift's `performElementClick` → `animateAndWait(to:)`.
             let center_guard = element_guard.clone();
@@ -937,7 +965,12 @@ impl Tool for ClickTool {
                                        screenshot from get_window_state."
                         });
                     }
-                    ToolResult::text(msg).with_structured(structured)
+                    let result = ToolResult::text(msg).with_structured(structured);
+                    if selects_browser_tab {
+                        super::browser_tab_strip::report_selected_tab(result)
+                    } else {
+                        result
+                    }
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -1143,6 +1176,37 @@ impl Tool for ClickTool {
                     return refusal;
                 }
             }
+            // A left click on an unselected tab in the browser's own tab strip
+            // switches the tab the user sees (#5397): refuse in the background,
+            // report it in the foreground.
+            let selects_browser_tab = match window_id.filter(|_| button_str == "left") {
+                Some(tab_wid) => {
+                    let background = !delivery_mode.is_foreground();
+                    let (selects, refusal) = tokio::task::spawn_blocking(move || unsafe {
+                        let Some(element) = element_at_screen_position(pid, screen_x, screen_y)
+                        else {
+                            return (false, None);
+                        };
+                        let selects = crate::ax::exact_target::element_window_id(element)
+                            == Some(tab_wid)
+                            && super::browser_tab_strip::press_selects_another_tab(pid, element);
+                        let refusal = (selects && background).then(|| {
+                            super::browser_tab_strip::tab_switch_refusal(
+                                pid, tab_wid, None, element,
+                            )
+                        });
+                        CFRelease(element as _);
+                        (selects, refusal)
+                    })
+                    .await
+                    .unwrap_or((false, None));
+                    if let Some(refusal) = refusal {
+                        return refusal;
+                    }
+                    selects
+                }
+                None => false,
+            };
             crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
             // Keep the registry in sync with the overlay (see AX path above).
             self.state
@@ -1452,7 +1516,7 @@ impl Tool for ClickTool {
                     } else {
                         format!("to pid {pid}")
                     };
-                    ToolResult::text(format!(
+                    let result = ToolResult::text(format!(
                         "✅ Posted {button_label} {target} ({}).{}",
                         super::pixel_route::delivery_note(route),
                         changes.result_suffix()
@@ -1462,7 +1526,12 @@ impl Tool for ClickTool {
                         "verified": false,
                         "effect": "unverifiable",
                         "focus_without_raise": focus_without_raise
-                    }))
+                    }));
+                    if selects_browser_tab {
+                        super::browser_tab_strip::report_selected_tab(result)
+                    } else {
+                        result
+                    }
                 }
                 Ok(Err(e)) if route == PixelClickRoute::ForegroundHid => {
                     super::pixel_route::foreground_unavailable(

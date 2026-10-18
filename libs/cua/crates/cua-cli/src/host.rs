@@ -980,7 +980,8 @@ impl AccountTokens for SetupTokens {
 /// Signs in for `cua host setup` without storing the session.
 async fn sign_in_for_setup(flow: cua_auth::Flow) -> cua_host::Result<String> {
     let unauth = |e: cua_auth::Error| cua_host::Error::Unauthenticated(e.to_string());
-    let pending = auth::session().begin_login(flow).await.map_err(unauth)?;
+    let mut pending = auth::session().begin_login(flow).await.map_err(unauth)?;
+    pending.return_to = Some(cua_auth::ReturnTo::Terminal);
     eprintln!("Sign in to cua.ai to register this machine (the session is not stored here):");
     eprintln!("  {}", pending.url);
     if let Some(code) = &pending.user_code {

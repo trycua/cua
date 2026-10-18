@@ -90,10 +90,14 @@ pub enum Error {
 /// Result alias.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+mod callback_page;
 #[allow(dead_code)]
 mod chunked;
 #[cfg(target_os = "macos")]
 mod macos_keychain;
+
+use callback_page::Outcome;
+pub use callback_page::ReturnTo;
 
 /// What to do when the login keychain cannot be used without a prompt this
 /// session cannot show (an SSH session).
@@ -1664,6 +1668,9 @@ pub struct PendingLogin {
     pub user_code: Option<String>,
     /// Why the flow differs from the one asked for (fallback), if it does.
     pub note: Option<String>,
+    /// Browser flow: where the callback page tells the person to go back to.
+    /// Starts from [`ReturnTo::from_env`].
+    pub return_to: Option<ReturnTo>,
     oidc: Oidc,
     token_endpoint: String,
     pending: Pending,
@@ -1759,6 +1766,7 @@ async fn begin_pkce(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin, String> 
         url,
         user_code: None,
         note: None,
+        return_to: ReturnTo::from_env(),
         oidc: oidc.clone(),
         token_endpoint: d.token_endpoint.clone(),
         pending: Pending::Pkce {
@@ -1803,6 +1811,7 @@ async fn begin_device(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin> {
         url: verify,
         user_code: (!user_code.is_empty()).then_some(user_code),
         note: None,
+        return_to: ReturnTo::from_env(),
         oidc: oidc.clone(),
         token_endpoint: d.token_endpoint.clone(),
         pending: Pending::Device {
@@ -1827,9 +1836,10 @@ impl PendingLogin {
                     .ok()
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(300);
-                let code = tokio::time::timeout(
+                let to = self.return_to.as_ref();
+                let (code, mut browser) = tokio::time::timeout(
                     Duration::from_secs(secs),
-                    await_callback(&listener, &state),
+                    await_callback(&listener, &state, to),
                 )
                 .await
                 .map_err(|_| {
@@ -1838,7 +1848,7 @@ impl PendingLogin {
                             .into(),
                     )
                 })??;
-                let (status, v) = self
+                let exchanged = self
                     .oidc
                     .form(
                         &self.token_endpoint,
@@ -1850,14 +1860,25 @@ impl PendingLogin {
                             ("code_verifier", &verifier),
                         ],
                     )
-                    .await?;
-                if status != 200 {
-                    return Err(Error::Unauthenticated(describe(
+                    .await;
+                // Keycloak: the code expired or was already redeemed.
+                let invalid_grant =
+                    matches!(&exchanged, Ok((_, v)) if v["error"] == "invalid_grant");
+                let creds = match exchanged {
+                    Ok((200, v)) => Credentials::from_token_response(&v),
+                    Ok((status, v)) => Err(Error::Unauthenticated(describe(
                         &v,
                         &format!("token request failed (HTTP {status})"),
-                    )));
-                }
-                Credentials::from_token_response(&v)
+                    ))),
+                    Err(e) => Err(e),
+                };
+                let (status, outcome) = match &creds {
+                    Ok(c) => ("200 OK", Outcome::SignedIn(c.identity().email)),
+                    Err(_) if invalid_grant => ("400 Bad Request", Outcome::Expired),
+                    Err(_) => ("502 Bad Gateway", Outcome::Failed),
+                };
+                respond_page(&mut browser, status, &outcome, to).await;
+                creds
             }
             Pending::Device {
                 device_code,
@@ -1909,28 +1930,30 @@ impl PendingLogin {
     }
 }
 
-const CALLBACK_OK: &str = "<!doctype html><meta charset=utf-8><title>Cua</title><body style=\"font-family:system-ui;margin:4em\"><h1>Signed in to Cua</h1><p>You can close this tab and return to the app.</p></body>";
-
-/// Escapes text for an HTML body (the callback page echoes the provider's
-/// error description, which arrives in the redirect's query string).
-fn html_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            c => out.push(c),
-        }
-    }
-    out
+async fn respond_page(
+    sock: &mut tokio::net::TcpStream,
+    status: &str,
+    outcome: &Outcome,
+    to: Option<&ReturnTo>,
+) {
+    use tokio::io::AsyncWriteExt;
+    let body = callback_page::render(outcome, to);
+    let resp = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = sock.write_all(resp.as_bytes()).await;
+    let _ = sock.shutdown().await;
 }
 
 /// Serves the loopback redirect until a request carries our `state` and a
-/// code (or an error). Bounded in connections and bytes.
-async fn await_callback(listener: &tokio::net::TcpListener, state: &str) -> Result<String> {
+/// code (or an error). Bounded in connections and bytes. Returns the code
+/// and the browser's connection, answered once the code is exchanged.
+async fn await_callback(
+    listener: &tokio::net::TcpListener,
+    state: &str,
+    to: Option<&ReturnTo>,
+) -> Result<(String, tokio::net::TcpStream)> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     for _ in 0..64 {
         let (mut sock, _) = listener.accept().await.map_err(http_err)?;
@@ -1951,29 +1974,16 @@ async fn await_callback(listener: &tokio::net::TcpListener, state: &str) -> Resu
             .unwrap_or("/")
             .to_string();
         let parsed = url::Url::parse(&format!("http://127.0.0.1{target}")).ok();
-        let respond = |status: &str, body: &str| {
-            format!(
-                "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            )
-        };
         let Some(u) = parsed.filter(|u| u.path() == "/callback") else {
             let _ = sock
-                .write_all(respond("404 Not Found", "not found").as_bytes())
+                .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\nnot found")
                 .await;
             continue;
         };
         let q: std::collections::HashMap<String, String> = u.query_pairs().into_owned().collect();
         if q.get("state").map(String::as_str) != Some(state) {
-            let _ = sock
-                .write_all(
-                    respond(
-                        "400 Bad Request",
-                        "Sign-in state mismatch; start again with cua auth login.",
-                    )
-                    .as_bytes(),
-                )
-                .await;
+            // An earlier attempt's tab: keep waiting for this one.
+            respond_page(&mut sock, "400 Bad Request", &Outcome::Stale, to).await;
             continue;
         }
         if let Some(e) = q.get("error") {
@@ -1981,28 +1991,19 @@ async fn await_callback(listener: &tokio::net::TcpListener, state: &str) -> Resu
                 .get("error_description")
                 .cloned()
                 .unwrap_or_else(|| e.clone());
-            let _ = sock
-                .write_all(
-                    respond(
-                        "400 Bad Request",
-                        &format!("Sign-in failed: {}", html_escape(&msg)),
-                    )
-                    .as_bytes(),
-                )
-                .await;
+            let outcome = if e == "access_denied" {
+                Outcome::Cancelled
+            } else {
+                Outcome::Failed
+            };
+            respond_page(&mut sock, "400 Bad Request", &outcome, to).await;
             return Err(Error::Unauthenticated(format!("sign-in failed: {msg}")));
         }
         let Some(code) = q.get("code").filter(|c| !c.is_empty()).cloned() else {
-            let _ = sock
-                .write_all(respond("400 Bad Request", "missing code").as_bytes())
-                .await;
+            respond_page(&mut sock, "400 Bad Request", &Outcome::Failed, to).await;
             continue;
         };
-        let _ = sock
-            .write_all(respond("200 OK", CALLBACK_OK).as_bytes())
-            .await;
-        let _ = sock.shutdown().await;
-        return Ok(code);
+        return Ok((code, sock));
     }
     Err(Error::Unauthenticated(
         "too many unexpected requests on the sign-in callback".into(),
@@ -2518,14 +2519,6 @@ mod tests {
         for off in ["", "0", "false", "no", "off", "2"] {
             assert!(!truthy(off), "{off}");
         }
-    }
-
-    #[test]
-    fn callback_error_text_is_html_escaped() {
-        assert_eq!(
-            html_escape("<script>x('a\"b')</script>&"),
-            "&lt;script&gt;x(&#39;a&quot;b&#39;)&lt;/script&gt;&amp;"
-        );
     }
 
     #[test]

@@ -234,6 +234,8 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
     }
 
     public func beginSignIn() async throws -> SignInAttempt {
+        // The browser's sign-in page says where to go back to (the SDK reads it).
+        setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
         let attempt = try await auth.beginLogin(flow: nil)
         let url = URL(string: attempt.url())
         if let url {

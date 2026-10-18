@@ -127,6 +127,8 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
   // start (Edge's first run) must not find the port closed while the app
   // still offers its link.
   process.env.CUA_OIDC_LOGIN_TIMEOUT_SECS ??= "600";
+  // The browser's sign-in page says where to go back to.
+  process.env.CUA_AUTH_RETURN_TO ??= "Cua Spaces";
   const native = await loadNative(dir);
   // False without a browser here: the sign-in then uses the device flow.
   const openUrl = async (url: string) => {

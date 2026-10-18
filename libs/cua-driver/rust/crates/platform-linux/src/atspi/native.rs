@@ -4694,10 +4694,11 @@ async fn sample_page_probes(
 
 /// Invoke the original target's semantic actions, pacing multi-page requests
 /// with descendant motion. `Err` means no mutation was attempted; an incomplete
-/// `ScrollProgress` preserves uncertainty after an attempted mutation.
+/// `ScrollProgress` preserves uncertainty after an attempted mutation. An
+/// identity the fresh walk no longer has is [`CachedElementGone`].
 pub fn scroll_element(
     pid: u32,
-    idx: usize,
+    element: &WindowElement,
     direction: &str,
     amount: usize,
     by: cua_driver_contract::ScrollBy,
@@ -4710,11 +4711,16 @@ pub fn scroll_element(
             let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            let target = visited
-                .iter()
-                .filter(|v| is_indexable(v))
-                .nth(idx)
-                .ok_or_else(|| anyhow!("element {idx} not found (total: {})", visited.len()))?;
+            let target = element.find(&visited).ok_or_else(|| match element {
+                WindowElement::Index(idx) => {
+                    anyhow!("element {idx} not found (total: {})", visited.len())
+                }
+                WindowElement::Identity(_) => CachedElementGone(
+                    "the observed element is no longer in the application's accessibility tree"
+                        .into(),
+                )
+                .into(),
+            })?;
             let proxies = target
                 .acc
                 .proxies()
@@ -4863,7 +4869,7 @@ pub fn scroll_element(
             }
 
             Err(anyhow!(
-                "element {idx} exposes neither directional scroll actions nor Value"
+                "the element exposes neither directional scroll actions nor Value"
             ))
         },
         || Err(anyhow!("scroll_element timed out for pid {pid}")),
@@ -6488,11 +6494,33 @@ pub fn snapshot_binds_window_for(pid: u32, xid: u64, window_scoped: bool, truste
     )
 }
 
-/// The element a window-bound action names: an index into a walk of that
-/// window, or the AT-SPI identity a snapshot observed.
+/// The element a window-bound action names: an index into the walk the
+/// action makes, or the AT-SPI identity a snapshot observed.
 pub enum WindowElement {
     Index(usize),
     Identity(super::AtspiIdentity),
+}
+
+impl WindowElement {
+    fn find<'v, 'a>(&self, visited: &'v [Visited<'a>]) -> Option<&'v Visited<'a>> {
+        match self {
+            Self::Index(idx) => visited.iter().filter(|v| is_indexable(v)).nth(*idx),
+            Self::Identity(identity) => visited
+                .iter()
+                .find(|v| v.identity.as_ref() == Some(identity)),
+        }
+    }
+}
+
+/// What [`require_window_element`] established for an element.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowProof {
+    /// A fresh walk scoped to the window found the element there. The action
+    /// must act on that element and never re-resolve an index.
+    Proven,
+    /// The session keeps its own route (X11, Hyprland, compositors without a
+    /// GNOME Shell); no proof was needed.
+    NotRequired,
 }
 
 /// Membership of an element found at `element_frame` (`None` when the fresh
@@ -6511,14 +6539,14 @@ pub(crate) fn window_element_membership(
 /// Fresh-walk proof that `element` still belongs to window `xid`, for an
 /// action on behalf of that window. The walk is scoped to `xid` and judged by
 /// the rule window-bound bounds use. X11, Hyprland and compositors without a
-/// GNOME Shell keep their own routes.
-pub fn require_window_element(pid: u32, xid: u64, element: WindowElement) -> Result<()> {
+/// GNOME Shell keep their own routes ([`WindowProof::NotRequired`]).
+pub fn require_window_element(pid: u32, xid: u64, element: WindowElement) -> Result<WindowProof> {
     if xid == 0 || !crate::wayland::is_wayland() || crate::wayland::hyprland::is_session() {
-        return Ok(());
+        return Ok(WindowProof::NotRequired);
     }
     let shell_windows = crate::wayland::shell_helper::trusted_window_ids_for_pid(pid);
     if shell_windows.is_none() && !crate::wayland::shell_helper::gnome_shell_session() {
-        return Ok(());
+        return Ok(WindowProof::NotRequired);
     }
     bounded_for(
         INDEX_RESOLVE_BUDGET,
@@ -6531,20 +6559,11 @@ pub fn require_window_element(pid: u32, xid: u64, element: WindowElement) -> Res
             } = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            let element_frame = match &element {
-                WindowElement::Index(idx) => visited
-                    .iter()
-                    .filter(|v| is_indexable(v))
-                    .nth(*idx)
-                    .map(|v| v.frame_ordinal),
-                WindowElement::Identity(identity) => visited
-                    .iter()
-                    .find(|v| v.identity.as_ref() == Some(identity))
-                    .map(|v| v.frame_ordinal),
-            };
+            let element_frame = element.find(&visited).map(|v| v.frame_ordinal);
             window_element_membership(element_frame, scoped_frame, || {
                 gnome_window_scope_proven(xid, scoped_frame, false, || true, || shell_windows)
             })
+            .map(|()| WindowProof::Proven)
         },
         || {
             Err(WindowMembershipUnproven(

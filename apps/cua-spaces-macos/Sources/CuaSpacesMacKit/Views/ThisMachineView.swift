@@ -356,7 +356,8 @@ struct HostFormView: View {
         if let v = host.formView {
             Form {
                 Section {
-                    Text(v.lede).foregroundStyle(.secondary).lineLimit(1).help(v.lede)
+                    // Wraps: the lede says what the chosen option does.
+                    Text(v.lede).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     ForEach(v.fields.filter { !$0.advanced }, id: \.id) { field($0) }
                     Button {
                         host.send(.toggleAdvanced)

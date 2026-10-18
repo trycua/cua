@@ -92,12 +92,12 @@ describe("host model", () => {
 });
 
 describe("ThisMachinePanel", () => {
-  it("unconfigured: offers Set up for access and runs the host flow", async () => {
+  it("unconfigured: offers Turn on remote access and runs the host flow", async () => {
     const host = createFakeHostBridge({ platform: "linux" });
     const onStatus = vi.fn();
     render(<ThisMachinePanel host={host} onStatus={onStatus} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Set up for access" }));
-    fireEvent.click(screen.getByRole("button", { name: "Set up for access" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeInTheDocument();
     expect(host.calls).toEqual(["setup:relay:https://relay.cua.ai"]);
     expect(onStatus).toHaveBeenLastCalledWith(expect.objectContaining({ configured: true, sharing: true }));
@@ -127,7 +127,7 @@ describe("ThisMachinePanel", () => {
         name: "Remove",
       }),
     );
-    expect(await screen.findByRole("button", { name: "Set up for access" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Turn on remote access" })).toBeInTheDocument();
     expect(host.calls).toEqual(["stop", "start", "remove"]);
   });
 
@@ -156,10 +156,10 @@ describe("ThisMachinePanel: a spare machine", () => {
   it("sets up a spare machine: desktop private, Spaces on, limits shown", async () => {
     const host = createFakeHostBridge({ platform: "macos" });
     render(<ThisMachinePanel host={host} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Set up for access" }));
-    fireEvent.click(screen.getByRole("radio", { name: "A spare machine for Spaces" }));
-    expect(screen.getByText(/its desktop stays private/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Set up for access" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Run Spaces here and keep its screen private" }));
+    expect(screen.getByText(/Its own screen stays private/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start running Spaces" }));
     const desktop = await screen.findByRole("switch", { name: /Share this desktop/ });
     expect(desktop).not.toBeChecked();
     expect(screen.getByRole("switch", { name: /Provide Spaces/ })).toBeChecked();

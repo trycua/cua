@@ -232,12 +232,17 @@ function fallbackReduce(s: OnboardingFlowState, a: OnboardingAction): Onboarding
   }
 }
 
+/** How the copy names the computer the app runs on (the core's `this_computer`). */
+function thisComputer(os: HostOs): string {
+  return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this computer";
+}
+
 function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
   const pages: Partial<Record<OnboardingStep, [string, string, string]>> = {
     welcome: ["Welcome to Cua Spaces", "Computers for you and your agents.", "Get started"],
-    signin: ["Sign in", "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.", "Continue"],
+    signin: ["Sign in", "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.", "Continue"],
     presentation: ["Where should Cua Spaces show up?", "You can change this in Settings.", "Continue"],
-    mode: ["How will you use this machine?", "You can change this later.", "Continue"],
+    mode: [`How do you want to use ${thisComputer(os)}?`, "Use it only to open your other computers, or let your other devices reach it too. You can change this later.", "Continue"],
     done: ["You're all set", os === "macos" ? "Cua Spaces is in your menu bar." : "Cua Spaces is in your system tray.", "Start using Cua Spaces"],
   };
   const [title, lede, primaryLabel] = pages[s.step] ?? ["", "", "Continue"];
@@ -259,14 +264,14 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
             { label: "Account", value: s.identity ?? "not signed in" },
             { label: "AI agents", value: Array.isArray(s.agents) && s.agents.length ? s.agents.join(", ") : "none" },
             { label: "Shows in", value: s.menuBar ? "Menu bar only" : "Notch and menu bar" },
-            { label: "This machine", value: s.mode === "host" ? "Set up for unattended access" : "Access other machines" },
+            { label: "This machine", value: s.mode === "host" ? "Reachable from your other devices" : "Only used to open other computers" },
           ]
         : [],
     choices:
       s.step === "mode"
         ? [
-            { mode: "client", label: "Access other machines", preselected: pre === "client" },
-            { mode: "host", label: "Set up this machine for unattended access", preselected: pre === "host" },
+            { mode: "client", label: `Just use ${thisComputer(os)} to open my other computers`, preselected: pre === "client" },
+            { mode: "host", label: `Let my other devices reach ${thisComputer(os)}`, preselected: pre === "host" },
           ]
         : [],
     presentations:

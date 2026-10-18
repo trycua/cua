@@ -275,18 +275,19 @@ async function checkHostPanel(page: Page, cp: Of<"host-panel">): Promise<void> {
 const readForm = (page: Page) =>
   page.locator("[data-host-field]").evaluateAll((els) =>
     els.map((el) => {
-      const input = el.querySelector("input:not([type=hidden])") as HTMLInputElement | null;
+      const input = el.querySelector("input:not([type=hidden]):not([type=radio])") as HTMLInputElement | null;
       const sw = el.querySelector('[role="switch"]');
+      const radios = el.querySelector('[role="radiogroup"]');
       return {
         id: el.getAttribute("data-host-field"),
-        // A switch's state, a text field's text, or the pressed choice's label.
+        // A switch's state, a text field's text, or the checked choice's label.
         value: sw
           ? sw.getAttribute("aria-checked") === "true"
             ? "on"
             : "off"
-          : input
-            ? input.value
-            : (el.querySelector('[aria-pressed="true"]')?.textContent ?? ""),
+          : radios
+            ? (radios.querySelector("input:checked")?.closest("label")?.textContent ?? "")
+            : (input?.value ?? ""),
         invalid: input?.getAttribute("aria-invalid") === "true",
       };
     }),

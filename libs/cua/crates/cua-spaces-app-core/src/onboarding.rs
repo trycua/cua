@@ -1135,6 +1135,15 @@ fn cli_lede(plan: &CliInstallPlan) -> String {
     }
 }
 
+/// How the copy names the computer the app runs on.
+fn this_computer(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Macos => "this Mac",
+        SpaceOs::Windows => "this PC",
+        _ => "this computer",
+    }
+}
+
 /// The flow as drawn, in a Mac's words.
 pub fn view(s: &OnboardingState) -> OnboardingView {
     view_on(s, SpaceOs::Macos)
@@ -1154,6 +1163,8 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
     use crate::spaces::sidebar::Fact;
     use OnboardingStep::*;
     let cli = s.cli_plan.as_ref().map(cli_lede).unwrap_or_default();
+    let here = this_computer(os);
+    let mode_title = format!("How do you want to use {here}?");
     let (title, lede, primary) = match s.step {
         Welcome => (
             "Welcome to Cua Spaces",
@@ -1180,7 +1191,7 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         ),
         Signin => (
             "Sign in",
-            "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
+            "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
             "Continue",
         ),
         Agents => (
@@ -1200,8 +1211,8 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
             },
         ),
         Mode => (
-            "How will you use this machine?",
-            "You can change this later.",
+            mode_title.as_str(),
+            "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
             "Continue",
         ),
         Done => ("You're all set", done_lede(os), "Start using Cua Spaces"),
@@ -1251,9 +1262,9 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
             Fact {
                 label: "This machine".into(),
                 value: if s.mode == Some(OnboardingMode::Host) {
-                    "Set up for unattended access"
+                    "Reachable from your other devices"
                 } else {
-                    "Access other machines"
+                    "Only used to open other computers"
                 }
                 .into(),
                 copy: None,
@@ -1300,16 +1311,19 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         choices: if s.step == Mode {
             let pre = s.installer_mode.unwrap_or(OnboardingMode::Client);
             [
-                (OnboardingMode::Client, "Access other machines"),
+                (
+                    OnboardingMode::Client,
+                    format!("Just use {here} to open my other computers"),
+                ),
                 (
                     OnboardingMode::Host,
-                    "Set up this machine for unattended access",
+                    format!("Let my other devices reach {here}"),
                 ),
             ]
             .into_iter()
             .map(|(mode, label)| ModeChoice {
                 mode,
-                label: label.into(),
+                label,
                 preselected: mode == pre,
             })
             .collect()
@@ -1390,6 +1404,30 @@ mod tests {
     }
 
     #[test]
+    fn the_mode_step_names_the_computer_in_everyday_words() {
+        let mut s = reduce(&initial(None, None), &OnboardingAction::Start);
+        s.step = OnboardingStep::Mode;
+        let mac = view_on(&s, SpaceOs::Macos);
+        assert_eq!(mac.title, "How do you want to use this Mac?");
+        let labels: Vec<_> = mac.choices.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Just use this Mac to open my other computers",
+                "Let my other devices reach this Mac"
+            ]
+        );
+        assert_eq!(
+            view_on(&s, SpaceOs::Windows).title,
+            "How do you want to use this PC?"
+        );
+        assert_eq!(
+            view_on(&s, SpaceOs::Linux).title,
+            "How do you want to use this computer?"
+        );
+    }
+
+    #[test]
     fn signin_explains_account_access_and_allows_skipping() {
         let s = reduce(&initial(None, None), &OnboardingAction::Start);
         for os in [SpaceOs::Macos, SpaceOs::Windows, SpaceOs::Linux] {
@@ -1397,7 +1435,7 @@ mod tests {
             assert_eq!(v.title, "Sign in");
             assert_eq!(
                 v.lede,
-                "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it."
+                "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later."
             );
             assert!(v.can_skip);
         }

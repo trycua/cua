@@ -755,6 +755,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let state = model.host.state, var out = BridgeValue.encode(state) as? [String: Any] else { return NSNull() }
         out["machineId"] = model.host.machineId ?? NSNull()
         out["progress"] = model.host.progress ?? NSNull()
+        // Before setup the host has no name yet: the web UI's setup form
+        // starts with what the system calls this Mac, as the native one does.
+        if !state.configured, (out["name"] as? String)?.isEmpty ?? true, let name = model.host.computerName() {
+            out["name"] = name
+        }
         return out
     }
 

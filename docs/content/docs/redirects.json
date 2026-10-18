@@ -439,6 +439,7 @@
     "use-cua-with/iflytek": "cua-driver/guides/connect-your-agent",
     "spaces/teams": "spaces/guides/teams",
     "spaces/teams/machines": "spaces/guides/teams/machines",
-    "spaces/teams/faq": "spaces/guides/teams/faq"
+    "spaces/teams/faq": "spaces/guides/teams/faq",
+    "cua-cli/reference/cli/fleet": "cua-sdk/guides/cua-cloud-ended"
   }
 }

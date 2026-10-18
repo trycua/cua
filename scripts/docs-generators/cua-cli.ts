@@ -111,7 +111,6 @@ export const CLI_GROUPS: CliGroup[] = [
   { slug: 'viewer', title: 'cua viewer', summary: 'One local browser page that lists every sandbox and opens its viewer', commands: ['viewer'] },
   { slug: 'do', title: 'cua do', summary: 'One-shot computer actions (screenshot, click, type, windows) against a selected target', commands: ['do', 'do-host-consent'] },
   { slug: 'image', title: 'cua image', summary: 'Pull, build and push OCI images, and manage Fleet image resources; list the image catalog', commands: ['image', 'images'] },
-  { slug: 'fleet', title: 'cua fleet', summary: 'Managed Fleet pools behind `cua sandbox create`', commands: ['fleet'] },
   { slug: 'mcp', title: 'cua mcp', summary: 'The stdio MCP server for AI assistants', commands: ['mcp'] },
   { slug: 'agent', title: 'cua agent', summary: 'Run coding agents (Claude Code, Codex, Gemini CLI, ...) inside a sandbox and follow, continue or stop them', commands: ['agent'] },
   { slug: 'agents', title: 'cua agents', summary: 'Install cua skills and the cua MCP server into AI coding agents', commands: ['agents'] },
@@ -139,6 +138,8 @@ export function cliReference(cli: CLIDocumentation): CliReference {
     product: 'cua-cli',
     cli,
     groups: CLI_GROUPS,
+    // `cua fleet` manages the retired Cua Cloud (Fleets) pools; the command stays until cua 0.5.0.
+    omit: ['fleet'],
     generator: REGENERATE,
     source: 'cua dump-docs --type cli',
     intro: readHeader('cua-cli', 'cli'),

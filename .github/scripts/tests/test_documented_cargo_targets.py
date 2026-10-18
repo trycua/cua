@@ -22,7 +22,7 @@ def test_documented_integration_targets_exist(document):
     }
     commands = [
         shlex.split(line) for line in (ROOT / document).read_text().splitlines()
-        if line.startswith("cargo test ") and "--test" in line
+        if line.startswith("cargo test ") and "--test" in shlex.split(line)
     ]
     assert commands, f"no integration test examples found in {document}"
     for command in commands:

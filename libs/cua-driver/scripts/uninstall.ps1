@@ -37,9 +37,10 @@
 #     (each only when it's a reparse point — never clobber a real dir).
 #
 # Conservative on Claude MCP cleanup: we DON'T auto-edit %USERPROFILE%\
-# .claude.json on Windows (mirrors the macOS uninstall.sh's stance for
-# environments without python3). The closing message prints the
-# `claude mcp remove cua-driver-rs` command for the user to run.
+# .claude.json on Windows. The closing message tells the user to verify the
+# exact registration's command path belongs to this release before removing
+# the shared `cua-computer-use` name. The legacy `cua-driver-rs` name remains
+# release-specific guidance for older installs.
 #
 # Env overrides (mirror install.ps1's variable names):
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   visible bin dir to remove
@@ -196,6 +197,15 @@ $SkillJunctions = @(
     (Join-Path $env:APPDATA      "opencode\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver-rs")
+)
+
+$OwnedSkillJunctions = @(
+    (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver-rs")
 )
 
 # ---------- Log helpers ----------------------------------------------------
@@ -481,6 +491,31 @@ foreach ($skillLink in $SkillJunctions) {
         Write-Step "no skill junction at $skillLink (skipping)"
     }
 }
+foreach ($skillLink in $OwnedSkillJunctions) {
+    if (-not (Test-Path -LiteralPath $skillLink)) {
+        Write-Step "no skill junction at $skillLink (skipping)"
+        continue
+    }
+    if (-not (Test-IsReparsePoint $skillLink)) {
+        Write-Step "$skillLink is a real directory (not a reparse point) - skipping"
+        continue
+    }
+    $targetProperty = (Get-Item -LiteralPath $skillLink -Force).PSObject.Properties['Target']
+    $owned = $false
+    $targets = if ($targetProperty) { @($targetProperty.Value) } else { @() }
+    foreach ($target in $targets) {
+        foreach ($root in @($HomeDir, $LegacyHomeDir)) {
+            $prefix = $root.TrimEnd('\') + '\'
+            if ($target -and $target.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { $owned = $true }
+        }
+    }
+    if ($owned) {
+        Remove-Item -LiteralPath $skillLink -Force -Recurse -ErrorAction SilentlyContinue
+        Write-Step "removed skill junction $skillLink"
+    } else {
+        Write-Step "$skillLink points outside the driver home - skipping"
+    }
+}
 
 # ---------- Closing message -----------------------------------------------
 
@@ -496,14 +531,26 @@ if (-not $Purge) {
     Write-Host ""
 }
 Write-Host "Claude Code MCP registrations:" -ForegroundColor Yellow
-Write-Host "  We don't auto-edit ~/.claude.json on Windows. If you registered cua-driver-rs"
-Write-Host "  with Claude Code, remove it manually:"
+Write-Host "  We don't auto-edit ~/.claude.json on Windows. Do NOT remove the shared"
+Write-Host "  cua-computer-use registration by name alone. First open ~/.claude.json"
+Write-Host "  and verify that the exact user-scope entry's 'command' belongs to this"
+Write-Host "  release install, for example cua-driver.exe under one of these paths:"
 Write-Host ""
-Write-Host "    claude mcp remove cua-driver-rs"
+Write-Host "    $VisibleBinDir"
+Write-Host "    $HomeDir\packages\"
+Write-Host "    $LegacyVisibleBinDir"
+Write-Host "    $LegacyHomeDir\packages\"
 Write-Host ""
-Write-Host "  Or edit ~/.claude.json directly and delete entries whose 'command' points at"
-Write-Host "  cua-driver.exe under %LOCALAPPDATA%\Programs\Cua\cua-driver\bin\"
-Write-Host "  (or the legacy %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\ from v0.2.13 and earlier)."
+Write-Host "  Only if that command path is release-owned, remove the current registration:"
+Write-Host ""
+Write-Host "    claude mcp remove cua-computer-use -s user"
+Write-Host ""
+Write-Host "  If it points somewhere else (for example cua-driver-local or another"
+Write-Host "  side-by-side install), preserve it and use that installation's uninstaller."
+Write-Host ""
+Write-Host "  For the older cua-driver-rs name, verify the exact command ownership too:"
+Write-Host ""
+Write-Host "    claude mcp remove cua-driver-rs -s user"
 Write-Host ""
 Write-Host "PATH:"
 Write-Host "  If you added $VisibleBinDir to your User PATH after the install, remove it:"

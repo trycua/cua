@@ -1,0 +1,29 @@
+# End-to-end teleport test: the SDK sender (cua-teleport) against an
+# in-process cua-spacesd-server with the driver's receiver (cua-spacesd-teleport).
+#
+# A standalone workspace on purpose: the driver workspace must never depend on
+# the sender (cua-spacesd is server-only), and the SDK workspace must never
+# link the server. Only this test links both. Run it in the Linux docker lane
+# (scripts/ci/linux-core-tests.sh); every host effect goes through fakes and
+# temporary homes.
+[package]
+name = "cua-teleport-e2e"
+version = "0.0.0"
+edition = "2021"
+license = "FSL-1.1-MIT"
+publish = false
+
+[workspace]
+
+[dependencies]
+
+[dev-dependencies]
+cua-teleport = { path = "../../../cua/crates/cua-teleport" }
+cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
+cua-spacesd-server = { path = "../../crates/cua-spacesd-server" }
+cua-spacesd-teleport = { path = "../../crates/cua-spacesd-teleport" }
+cua-teleport-bundle = { path = "../../../cua/crates/cua-teleport-bundle" }
+cua-chromium-storage = { path = "../../../cua/crates/cua-chromium-storage" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tempfile = "3"
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }

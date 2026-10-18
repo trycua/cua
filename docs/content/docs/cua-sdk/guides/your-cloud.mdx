@@ -1,0 +1,154 @@
+---
+title: Use your own cloud
+description: Run sandboxes and Spaces in your own AWS, Google Cloud or Modal account with --on aws, --on gcp or --on modal, with Cua's tags, time limits and cleanup on everything it creates.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),
+`--on gcp` (Compute Engine) or `--on modal` (Modal Sandboxes). The same images,
+the same SDK calls and the same `cua-bench` runs work there; you pay the cloud
+directly.
+
+Each sandbox dials out to the cua.ai relay as a machine of your account, so
+nothing in your cloud listens on the internet, and your laptop, your agents and
+the Cua Spaces app reach it wherever they are.
+
+<Callout type="warn">
+  Everything here creates resources that your cloud account bills for. Cua
+  gives each one a time limit (8 hours by default) and cleans up after itself,
+  but set a budget in your cloud first.
+</Callout>
+
+## What you need
+
+- The cloud's own CLI, signed in. Cua uses its credentials where they are and
+  stores only the names:
+  - **AWS**: a profile in `~/.aws` (access keys, SSO or an assumed role).
+  - **Google Cloud**: `gcloud auth login` and a project with the Compute Engine
+    API enabled.
+  - **Modal**: a profile in `~/.modal.toml` (`modal token new`).
+- A cua.ai sign-in (`cua auth login`). Each cloud sandbox joins the relay as a
+  machine of your account.
+
+## Connect a cloud
+
+`cua cloud status` shows each cloud, whether its credentials were found on this
+machine, and what it can run at what hourly cost:
+
+```bash test="cli-shape" id="cua-cloud-status"
+cua cloud status
+```
+
+`cua cloud test` checks an account without creating anything. It checks the
+credentials, runs a dry run of a create, and reads the quota, the region and the
+machine types:
+
+```bash test="cli-shape" id="cua-cloud-test"
+cua cloud test aws --profile default --region us-west-2
+```
+
+`cua cloud connect` runs the same checks and connects only when they pass.
+`--default` also makes it the default location, so `cua sb create` and
+`create_space` go there when no location is given:
+
+```bash test="cli-shape" id="cua-cloud-connect"
+cua cloud connect aws --region us-west-2 --default
+cua cloud connect gcp --project my-project --region us-central1
+cua cloud connect modal --environment sandboxes
+```
+
+`--ttl-hours` sets how long each sandbox there lives before it deletes itself
+(default 8; `0` keeps it until you delete it; Modal caps a sandbox at 24):
+
+```bash test="cli-shape" id="cua-cloud-connect-ttl"
+cua cloud connect aws --ttl-hours 2
+```
+
+The Cua Spaces app does the same from **New Space**, **Your cloud**,
+**Connect a cloud**.
+
+## Create sandboxes and Spaces
+
+A sandbox:
+
+```bash test="cli-shape" id="cua-sb-create-aws"
+cua sb create linux --on aws --name research
+cua sb exec aws:research -- uname -a
+cua sb delete aws:research
+```
+
+From Python, including `cua-bench`'s runs:
+
+```python skip="your-cloud" id="your-cloud-python"
+from cua_sandbox import Image, Sandbox
+
+async with Sandbox.ephemeral(Image.linux(), on="aws") as sb:
+    print(await sb.shell.run("uname -a"))
+    await sb.screenshot()
+```
+
+```bash test="cli-shape" id="cb-run-aws"
+cb run cua-bench-basic --on aws
+```
+
+A Space is a cloud sandbox shown as the relay machine it joined as,
+`relay:<machine>`. Stop and start keep its disk (on AWS and Google Cloud):
+
+```bash test="cli-shape" id="cua-spaces-create-aws"
+cua spaces create linux --on aws --name research
+cua spaces stop relay:cloud-0123456789abcdef
+cua spaces start relay:cloud-0123456789abcdef
+cua spaces delete relay:cloud-0123456789abcdef --force
+```
+
+Agents use the same `create_space` tool with `on="aws"`, and `cloud_status`,
+`cloud_test`, `cloud_connect` and `cloud_sweep` from the
+[Spaces contract](/spaces/reference/cloud).
+
+## What Cua creates
+
+One VM (or Modal sandbox) per sandbox, tagged `cua-managed=true` with your
+owner id and an expiry, and recorded in `~/.cua/cloud/state.json`. Nothing
+else: no IAM users or keys, no change to existing networks. What each cloud
+creates, the prices and the per-cloud notes:
+[Your cloud resources and costs](/cua-sdk/guides/your-cloud-resources).
+
+## Time limits and cleanup
+
+Three things end a sandbox that nobody deleted:
+
+- **It shuts itself down.** A VM runs `shutdown` at its time limit and checks
+  it again after every reboot or start. Shutting down deletes it (AWS
+  terminates on shutdown; Google Cloud's run limit deletes it). Modal ends a
+  sandbox at its timeout.
+- **A failed create cleans up.** Whatever it made is deleted, and its relay
+  machine is removed.
+- **`cua cloud sweep`** lists expired sandboxes and anything Cua created whose
+  sandbox is gone. With `--delete` it deletes them; `--all` includes every Cua
+  resource in that cloud:
+
+  ```bash test="cli-shape" id="cua-cloud-sweep"
+  cua cloud sweep
+  cua cloud sweep aws --delete
+  cua cloud sweep --all --delete
+  ```
+
+The sweeper touches only a resource that the cloud shows with
+`cua-managed=true` and this home's `cua-owner`, and that this home recorded or
+that carries its owner id. It never matches by name. Untagged resources and
+other owners' resources are never deleted, whatever they are called.
+
+`cua cloud disconnect` forgets a cloud and deletes nothing. It lists what Cua
+still records there.
+
+## The relay
+
+Each sandbox is one machine of your cua.ai account on the relay:
+
+- Streams, files and presence pass through relay.cua.ai. There is no direct
+  path from your cloud to your laptop.
+- An account holds at most 32 machines. Each cloud sandbox uses one, and its
+  delete removes it.
+- Only your devices and the accounts you share a Space with can reach it. The
+  guest holds only its own machine token, never your account credentials.

@@ -1,0 +1,291 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Self-test of an image, served by `SystemService.Diagnose` and printed by
+// `cua-spacesd doctor`.
+//
+// The report checks what the image claims (`/etc/cua-image/manifest.json`)
+// against what the running guest does. A check's `severity` comes from the
+// claims: a claimed feature is `REQUIRED`, an optional one `RECOMMENDED`,
+// anything unclaimed `INFO`. The JSON form of `DiagnoseReport` (schema
+// version 1) uses these field names, with enum values as lowercase short
+// names ("pass", "required", "virtual_only"); see
+// `libs/cua/proto/diagnose-report.schema.json`.
+
+// Options shared by `Diagnose` and `DiagnoseOnce`.
+message DiagnoseOptions {
+  // Treat warnings (and skips not allowed by the manifest) as failures.
+  bool strict = 1;
+  // Run only checks whose id equals, or starts with `<entry>.`, one of
+  // these (for example "stream" or "auth.token_file"). Empty runs all.
+  repeated string only = 2;
+  // Skip checks matched the same way as `only`.
+  repeated string skip = 3;
+  // Which checks may change guest state. Unspecified means `NONE`.
+  DiagnoseEffects effects = 4;
+  // A manifest (JSON, same schema as `/etc/cua-image/manifest.json`) to
+  // check against instead of the one baked into the image. Empty uses the
+  // image's own.
+  bytes expect_manifest = 5;
+  // Overall budget. Unset means 120 seconds. Checks still running when it
+  // expires fail with a timeout.
+  google.protobuf.Duration timeout = 6;
+  // The caller's wall clock, for the clock-skew check. Unset skips the
+  // comparison.
+  google.protobuf.Timestamp host_time = 7;
+}
+
+// Which checks may act on the guest.
+enum DiagnoseEffects {
+  // Not set. Same as `DIAGNOSE_EFFECTS_NONE`.
+  DIAGNOSE_EFFECTS_UNSPECIFIED = 0;
+  // Read-only checks. Input, window and fixture checks are skipped.
+  DIAGNOSE_EFFECTS_NONE = 1;
+  // Effectful checks run, but only against fixture windows the doctor
+  // itself launched on the guest's virtual display. Refused on bare hosts.
+  DIAGNOSE_EFFECTS_VIRTUAL_ONLY = 2;
+}
+
+// Request for `SystemService.Diagnose`.
+message DiagnoseRequest {
+  // What to run.
+  DiagnoseOptions options = 1;
+}
+
+// One event of `SystemService.Diagnose`: `started`, then `check`, for each
+// check, and a final `report`.
+message DiagnoseResponse {
+  // The event.
+  oneof event {
+    // A check began.
+    DiagnoseCheckStarted started = 1;
+    // A check finished.
+    DiagnoseCheck check = 2;
+    // The run finished. Always the last message.
+    DiagnoseReport report = 3;
+  }
+}
+
+// A check began.
+message DiagnoseCheckStarted {
+  // Check id, for example "stream.encode.openh264".
+  string id = 1;
+  // Check group, the id's first segment.
+  string group = 2;
+}
+
+// Request for `SystemService.DiagnoseOnce`.
+message DiagnoseOnceRequest {
+  // What to run.
+  DiagnoseOptions options = 1;
+}
+
+// Response for `SystemService.DiagnoseOnce`.
+message DiagnoseOnceResponse {
+  // The final report.
+  DiagnoseReport report = 1;
+}
+
+// Outcome of one check.
+enum CheckStatus {
+  // Not reported.
+  CHECK_STATUS_UNSPECIFIED = 0;
+  // Works as claimed.
+  CHECK_STATUS_PASS = 1;
+  // Works with a caveat, or something unclaimed is off.
+  CHECK_STATUS_WARN = 2;
+  // Broken.
+  CHECK_STATUS_FAIL = 3;
+  // Not run; `message` says why.
+  CHECK_STATUS_SKIP = 4;
+}
+
+// How much a check matters for this image, derived from the manifest.
+enum CheckSeverity {
+  // Not reported.
+  CHECK_SEVERITY_UNSPECIFIED = 0;
+  // The image claims it: a failure fails the report.
+  CHECK_SEVERITY_REQUIRED = 1;
+  // Optional in the manifest: a failure is reported as a warning.
+  CHECK_SEVERITY_RECOMMENDED = 2;
+  // Not claimed: a failure is reported as a warning.
+  CHECK_SEVERITY_INFO = 3;
+}
+
+// The result of one check.
+message DiagnoseCheck {
+  // Stable id, `<group>.<name>[.<detail>]`.
+  string id = 1;
+  // Group, the id's first segment (for example "auth").
+  string group = 2;
+  // Outcome after severity is applied.
+  CheckStatus status = 3;
+  // Severity from the manifest.
+  CheckSeverity severity = 4;
+  // Manifest claims that make this check matter, for example
+  // "feature:desktop_stream" or "auth_mode:local".
+  repeated string claimed_by = 5;
+  // What happened, in one line.
+  string message = 6;
+  // What to do about a warning or failure. Empty on pass.
+  string remediation = 7;
+  // Wall time of the check in milliseconds.
+  uint32 duration_ms = 8;
+  // Measured values (for example {"backend": "openh264", "psnr_db": "41.2"}).
+  map<string, string> facts = 9;
+  // Evidence files.
+  repeated DiagnoseArtifact artifacts = 10;
+}
+
+// Evidence produced by a check.
+message DiagnoseArtifact {
+  // File name, unique within the report (for example
+  // "screenshot.display0.png").
+  string name = 1;
+  // Media type, for example "image/png".
+  string media_type = 2;
+  // Contents, when small enough to inline (at most 1 MiB). Empty otherwise.
+  bytes data = 3;
+  // Where the full file was written in the guest. Empty when not written.
+  string path = 4;
+}
+
+// The whole report.
+message DiagnoseReport {
+  // Report schema version. Always 1 for this message.
+  uint32 schema_version = 1;
+  // The daemon that ran the checks. Unset when a shim produced the report
+  // for an image without cua-spacesd.
+  DiagnoseSpacesd spacesd = 2;
+  // The image under test.
+  DiagnoseImage image = 3;
+  // Where the guest runs.
+  DiagnoseEnvironment environment = 4;
+  // Totals.
+  DiagnoseSummary summary = 5;
+  // Every check, in run order.
+  repeated DiagnoseCheck checks = 6;
+  // Facts that make a task behave differently between variants of one
+  // image. Compared key by key by the eval-parity lane.
+  DiagnoseFidelity fidelity = 7;
+  // What produced the report: "cua-spacesd", or "cua-doctor-shim/<target>".
+  string producer = 8;
+  // When the run started.
+  google.protobuf.Timestamp started_at = 9;
+}
+
+// The daemon that ran the checks.
+message DiagnoseSpacesd {
+  // cua-spacesd version.
+  string version = 1;
+  // `cua.env.v1` protocol revision it serves.
+  uint32 protocol_revision = 2;
+  // Source revision of the build, when known.
+  string git_sha = 3;
+  // Version of the linked cua-driver core.
+  string cua_driver_version = 4;
+}
+
+// The image under test.
+message DiagnoseImage {
+  // Image name from the manifest, for example "linux".
+  string name = 1;
+  // Reference the image was built as, when the manifest records it.
+  string ref = 2;
+  // "rootfs" (container) or "containerdisk" (VM).
+  string variant = 3;
+  // "linux", "windows" or "macos".
+  string os = 4;
+  // SHA-256 of the manifest the checks ran against. Empty without one.
+  string manifest_sha256 = 5;
+  // Where the manifest came from: a guest path, "request", or empty when
+  // there is none.
+  string manifest_source = 6;
+}
+
+// Where the guest runs.
+message DiagnoseEnvironment {
+  // Runtime: "container", "gvisor", "qemu", "kubevirt", "lume", "hyperv",
+  // "bare" or "unknown".
+  string runtime = 1;
+  // Free-form runtime detail, for example "runsc".
+  string runtime_detail = 2;
+  // "x86_64" or "arm64".
+  string arch = 3;
+  // Init system: "systemd", "supervisord", "launchd", "scm" or "unknown".
+  string init = 4;
+  // "x11", "wayland", "quartz", "win32" or "none".
+  string display_server = 5;
+  // OS name and version, for example "Ubuntu 24.04".
+  string os = 6;
+}
+
+// Totals of a report.
+message DiagnoseSummary {
+  // Worst outcome: fail if any check failed, warn if any warned (fail under
+  // `strict`), else pass.
+  CheckStatus status = 1;
+  // Passed checks.
+  uint32 pass = 2;
+  // Warnings.
+  uint32 warn = 3;
+  // Failures.
+  uint32 fail = 4;
+  // Skipped checks.
+  uint32 skip = 5;
+  // Wall time of the whole run in milliseconds.
+  uint32 duration_ms = 6;
+  // True when the run used `strict`.
+  bool strict = 7;
+}
+
+// Facts that change how a task behaves. Every key is always present; an
+// unknown value is the empty string.
+message DiagnoseFidelity {
+  // Primary display, "<width>x<height>@<scale>".
+  string display = 1;
+  // SHA-256 over the sorted list of installed font files.
+  string fonts_sha256 = 2;
+  // Time zone name.
+  string tz = 3;
+  // Locale, for example "C.UTF-8".
+  string locale = 4;
+  // Guest clock minus the caller's clock, in milliseconds. 0 when the
+  // caller sent no `host_time`.
+  int64 clock_skew_ms = 5;
+  // Video encoder the stream would use, for example "openh264".
+  string encoder = 6;
+  // Accessibility backend, for example "atspi".
+  string a11y_backend = 7;
+  // Audio backend, for example "pipewire".
+  string audio_backend = 8;
+  // CPU model string.
+  string cpu_model = 9;
+  // Logical CPUs.
+  uint32 cpu_count = 10;
+  // Total memory in MiB.
+  uint64 memory_mib = 11;
+  // GPU description, or "none".
+  string gpu = 12;
+  // Kernel release.
+  string kernel = 13;
+  // Runtime, as in `DiagnoseEnvironment.runtime`.
+  string runtime = 14;
+  // Init system, as in `DiagnoseEnvironment.init`.
+  string init = 15;
+  // SHA-256 over the installed package list (name and version).
+  string packages_sha256 = 16;
+  // Versions of the apps the manifest lists (for example {"firefox":
+  // "130.0"}).
+  map<string, string> app_versions = 17;
+  // Versions of the tools the manifest lists (dev tiers, for example
+  // {"node": "v22.20.0"}).
+  map<string, string> tool_versions = 18;
+  // Available simulator runtimes, sorted (for example "iOS 26.0"). Empty
+  // unless the manifest claims some.
+  repeated string simulator_runtimes = 19;
+}

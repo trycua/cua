@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 6cb23037-01ec-48f7-9d6b-7d92da21b66d."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Give me a KiCad schematic for a 12V push-to-on LED timer circuit using a BC547 NPN and a BC557 PNP transistor. Use a 1000µF capacitor and a 2.2M resistor for the timing network, and use 1k resistors for the pull-up and base drive, with a 470Ω resistor for the LED.''',
-            metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
+            description="""Give me a KiCad schematic for a 12V push-to-on LED timer circuit using a BC547 NPN and a BC557 PNP transistor. Use a 1000µF capacitor and a 2.2M resistor for the timing network, and use 1k resistors for the pull-up and base drive, with a 470Ω resistor for the LED.""",
+            metadata={"difficulty": "easy", "submission_id": _SUBMISSION_ID},
         )
     ]
 

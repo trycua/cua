@@ -1,0 +1,256 @@
+name: "Cua sandbox"
+description: >-
+  Create a Cua sandbox from any image (local on the runner, or in the cloud),
+  inject the binaries under test, check that they are what runs, run a
+  command or test suite against it, upload logs, the doctor report and a
+  screenshot, and always delete it, even on cancel.
+author: "Cua"
+branding:
+  icon: box
+  color: gray-dark
+
+# A thin layer over the `cua` CLI: every step is a phase of cua-sandbox.sh,
+# which runs the same way outside GitHub Actions (see its header).
+#
+# Cleanup: the collect, upload and delete steps are `if: always()`, so they
+# run after a failed or cancelled step too. The sandbox name is fixed before
+# creation starts, so a creation cancelled half way is still deleted. Cloud
+# sandboxes also carry a claim TTL (claim-ttl) as a backstop.
+
+inputs:
+  image:
+    description: >-
+      Image: a canonical alias or ref (linux, ghcr.io/trycua/linux:24.04), a
+      bench image, or any registry reference.
+    required: true
+  on:
+    description: >-
+      Where to run it: local (the runner: Docker, or QEMU with KVM for VM
+      images), docker, qemu, cloud (Fleet auto pools; needs CUA_CLIENT_ID
+      and CUA_CLIENT_SECRET in the step env), or a contrib provider: e2b,
+      daytona or modal (needs a cua built with --features contrib, see
+      build-cua-under-test's cua-features, and the provider's key in the
+      step env: E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID and
+      MODAL_TOKEN_SECRET; modal also needs cua-modal-helper on PATH).
+    default: local
+  name:
+    description: "Sandbox name (default cua-ci-<run id>-<attempt>-<job>)."
+    default: ""
+  overlay:
+    description: >-
+      Binaries to inject, one per line: NAME=PATH (cua-driver, cua-spacesd) or
+      NAME=PATH:GUEST_PATH. Each replaces the guest file atomically, is
+      recorded with its sha256, and what runs it is restarted. The doctor
+      then fails unless exactly these builds run.
+    default: ""
+  wait:
+    description: >-
+      Readiness targets, one per line (desktop, tcp:SERVICE, http:SERVICE/path);
+      "none" to skip.
+    default: desktop
+  ready-timeout:
+    description: "Readiness budget in seconds."
+    default: "600"
+  runtime:
+    description: "Local containers: runc or gvisor (installs runsc). Default: the CLI's choice."
+    default: ""
+  create-args:
+    description: "Extra `cua sb create` flags (for example --cpu 4 --memory 8GB)."
+    default: ""
+  claim-ttl:
+    description: "Cloud and contrib providers: lifetime without keep-alives, a backstop if cleanup never runs."
+    default: 60m
+  doctor:
+    description: >-
+      expect: build identities and expectations only (fast; the default),
+      full: every guest check, strict: full with --strict, false: skip.
+    default: expect
+  doctor-skip:
+    description: >-
+      Guest check ids or groups the doctor skips, comma separated (for
+      example image metadata a published image predates).
+    default: ""
+  expect:
+    description: >-
+      Extra expectations, one per line: COMPONENT=WANT with WANT sha256:<hex>,
+      git:<sha> or a version (for example cua-spacesd=git:<commit sha>).
+      Overlays add theirs automatically.
+    default: ""
+  guest-setup:
+    description: >-
+      Shell script run as root inside the sandbox right after creation,
+      before the doctor (for example installing test dependencies).
+    default: ""
+  run:
+    description: >-
+      Bash script run on the runner once the sandbox is ready. It gets
+      CUA_SANDBOX (the ref), CUA_SANDBOX_NAME, CUA_BIN, CUA_SANDBOX_ARTIFACTS
+      (a directory uploaded with the artifacts) and a PATH where cua-driver
+      and cua-spacesd resolve only to the injected builds.
+    default: ""
+  guest-run:
+    description: "Shell script run inside the sandbox after `run`."
+    default: ""
+  keep:
+    description: "true: leave the sandbox running (you delete it)."
+    default: "false"
+  cua-bin:
+    description: "A cua CLI to use, for example one built from the checkout."
+    default: ""
+  cua-version:
+    description: >-
+      When cua-bin is empty: `source` builds the cua CLI from this action's
+      checkout (the ref in `uses: ...@ref`; needs a Rust toolchain), or a
+      cua release version to install (checksum-verified).
+    default: source
+  upload-artifacts:
+    description: "Upload logs, the doctor report and a screenshot."
+    default: "true"
+  artifact-name:
+    description: "Artifact name (default cua-sandbox-<name>)."
+    default: ""
+
+outputs:
+  ref:
+    description: "The sandbox ref (local:<name> or cloud:<name>) for `cua sb ...` and `cua doctor`."
+    value: ${{ steps.setup.outputs.ref }}
+  name:
+    description: "The sandbox name."
+    value: ${{ steps.setup.outputs.name }}
+  env-url:
+    description: "The cua-spacesd URL (empty when the image has none)."
+    value: ${{ steps.create.outputs.env-url }}
+  viewer-url:
+    description: "The browser desktop viewer URL (the viewer service, else the image's web display), when the image serves one."
+    value: ${{ steps.create.outputs.viewer-url }}
+  urls:
+    description: "Every service URL, as JSON."
+    value: ${{ steps.create.outputs.urls }}
+  overlays:
+    description: "What was injected, as JSON (name, target, sha256, previous_sha256, restarted, expect)."
+    value: ${{ steps.create.outputs.overlays }}
+  doctor-status:
+    description: "pass, fail or skipped."
+    value: ${{ steps.doctor.outputs.doctor-status }}
+  artifacts-dir:
+    description: "Directory with logs, doctor.json, doctor.xml and screenshot.png."
+    value: ${{ steps.setup.outputs.artifacts-dir }}
+
+runs:
+  using: composite
+  steps:
+    # A local sandbox pulls a multi-GB image and cua keeps 5 GiB free; after
+    # a release build the hosted Ubuntu runner has less than that left.
+    - name: Free runner disk for a local sandbox
+      if: runner.os == 'Linux' && contains(fromJSON('["local","docker","qemu"]'), inputs.on)
+      shell: bash
+      run: |
+        df -h / | tail -1
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+          /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+          /usr/share/swift /usr/local/julia* /opt/az /usr/local/share/powershell
+        df -h / | tail -1
+
+    - id: setup
+      name: Set up cua
+      shell: bash
+      env:
+        CUA_SB_IMAGE: ${{ inputs.image }}
+        CUA_SB_ON: ${{ inputs.on }}
+        CUA_SB_NAME: ${{ inputs.name }}
+        CUA_SB_OVERLAY: ${{ inputs.overlay }}
+        CUA_SB_RUNTIME: ${{ inputs.runtime }}
+        CUA_BIN: ${{ inputs.cua-bin }}
+        CUA_SB_CUA_VERSION: ${{ inputs.cua-version }}
+      run: '"$GITHUB_ACTION_PATH/cua-sandbox.sh" setup'
+
+    - id: create
+      name: Create the sandbox
+      shell: bash
+      env:
+        CUA_SB_IMAGE: ${{ inputs.image }}
+        CUA_SB_ON: ${{ inputs.on }}
+        CUA_SB_NAME: ${{ steps.setup.outputs.name }}
+        CUA_SB_STATE: ${{ steps.setup.outputs.state }}
+        CUA_SB_OVERLAY: ${{ inputs.overlay }}
+        CUA_SB_WAIT: ${{ inputs.wait }}
+        CUA_SB_READY_TIMEOUT: ${{ inputs.ready-timeout }}
+        CUA_SB_RUNTIME: ${{ inputs.runtime }}
+        CUA_SB_CREATE_ARGS: ${{ inputs.create-args }}
+        CUA_SB_CLAIM_TTL: ${{ inputs.claim-ttl }}
+      run: '"$GITHUB_ACTION_PATH/cua-sandbox.sh" create'
+
+    - id: guest-setup
+      name: Prepare the sandbox
+      if: inputs.guest-setup != ''
+      shell: bash
+      env:
+        CUA_SB_ON: ${{ inputs.on }}
+        CUA_SB_NAME: ${{ steps.setup.outputs.name }}
+        CUA_SB_STATE: ${{ steps.setup.outputs.state }}
+        CUA_SB_GUEST_SETUP: ${{ inputs.guest-setup }}
+      run: '"$GITHUB_ACTION_PATH/cua-sandbox.sh" guest-setup'
+
+    - id: doctor
+      name: Check the builds that run (cua doctor)
+      shell: bash
+      env:
+        CUA_SB_ON: ${{ inputs.on }}
+        CUA_SB_NAME: ${{ steps.setup.outputs.name }}
+        CUA_SB_STATE: ${{ steps.setup.outputs.state }}
+        CUA_SB_DOCTOR: ${{ inputs.doctor }}
+        CUA_SB_DOCTOR_SKIP: ${{ inputs.doctor-skip }}
+        CUA_SB_EXPECT: ${{ inputs.expect }}
+      run: '"$GITHUB_ACTION_PATH/cua-sandbox.sh" doctor'
+
+    - id: run
+      name: Run against the sandbox
+      if: inputs.run != ''
+      shell: bash
+      env:
+        CUA_SB_ON: ${{ inputs.on }}
+        CUA_SB_NAME: ${{ steps.setup.outputs.name }}
+        CUA_SB_STATE: ${{ steps.setup.outputs.state }}
+        CUA_SB_RUN: ${{ inputs.run }}
+      run: '"$GITHUB_ACTION_PATH/cua-sandbox.sh" run'
+
+    - id: guest-run
+      name: Run inside the sandbox
+      if: inputs.guest-run != ''
+      shell: bash
+      env:
+        CUA_SB_ON: ${{ inputs.on }}
+        CUA_SB_NAME: ${{ steps.setup.outputs.name }}
+        CUA_SB_STATE: ${{ steps.setup.outputs.state }}
+        CUA_SB_GUEST_RUN: ${{ inputs.guest-run }}
+      run: '"$GITHUB_ACTION_PATH/cua-sandbox.sh" guest-run'
+
+    - id: collect
+      name: Collect logs and a screenshot
+      if: always() && steps.setup.outputs.state != ''
+      shell: bash
+      env:
+        CUA_SB_ON: ${{ inputs.on }}
+        CUA_SB_NAME: ${{ steps.setup.outputs.name }}
+        CUA_SB_STATE: ${{ steps.setup.outputs.state }}
+      run: '"$GITHUB_ACTION_PATH/cua-sandbox.sh" collect'
+
+    - name: Upload artifacts
+      if: always() && inputs.upload-artifacts == 'true' && steps.setup.outputs.state != ''
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ${{ inputs.artifact-name != '' && inputs.artifact-name || format('cua-sandbox-{0}', steps.setup.outputs.name) }}
+        path: ${{ steps.setup.outputs.artifacts-dir }}
+        if-no-files-found: warn
+        retention-days: 14
+
+    - id: cleanup
+      name: Delete the sandbox
+      if: always() && steps.setup.outputs.state != ''
+      shell: bash
+      env:
+        CUA_SB_ON: ${{ inputs.on }}
+        CUA_SB_NAME: ${{ steps.setup.outputs.name }}
+        CUA_SB_STATE: ${{ steps.setup.outputs.state }}
+        CUA_SB_KEEP: ${{ inputs.keep }}
+      run: '"$GITHUB_ACTION_PATH/cua-sandbox.sh" cleanup'

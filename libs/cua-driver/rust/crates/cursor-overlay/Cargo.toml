@@ -10,6 +10,10 @@ theme-authoring = []
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }
+# Motion math (paths, timing, effects geometry), shared with @trycua/cursor-motion.
+cua-cursor-motion = { path = "../cua-cursor-motion", features = ["serde"] }
+# Shared agent cursor lifecycle (idle timeout, fade, session end).
+cua-driver-core = { path = "../cua-driver-core", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

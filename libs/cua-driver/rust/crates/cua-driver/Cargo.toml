@@ -31,6 +31,10 @@ zeroize = { workspace = true }
 # PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
 # rustls (default) so Linux/Windows builds don't require system OpenSSL.
 ureq = { version = "3", features = ["json"] }
+# The switches shared by every Cua program (DO_NOT_TRACK, CUA_TELEMETRY,
+# `[telemetry] enabled` in $CUA_HOME/config.toml). Only its config reader
+# is used; no sender.
+cua-telemetry = { path = "../../../../cua/crates/cua-telemetry", default-features = false }
 # Strict semver comparison for the startup update-available banner so that
 # pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
 # and we never recommend a pre-release as an "update".
@@ -99,6 +103,12 @@ base64 = { workspace = true }
 # Isolated HOME / cache directories for `version_check` unit tests so they
 # never touch the developer's real `~/.cua-driver/version_check.json`.
 tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Private session and accessibility buses for the AT-SPI listener tests: the
+# test owns `org.a11y.Bus` and `org.a11y.atspi.Registry` itself and reads
+# the bus daemon's per-connection statistics.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 platform-windows = { path = "../platform-windows" }

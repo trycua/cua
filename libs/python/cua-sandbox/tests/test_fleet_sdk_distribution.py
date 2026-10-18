@@ -10,6 +10,19 @@ def test_fleet_sdk_is_provided_by_published_fleet_distribution():
     distribution_root = Path(cua_fleet_distribution.locate_file(".")).resolve()
     binding_path = Path(fleet_sdk.__file__).resolve()
 
-    assert cua_fleet_distribution.version == "0.1.16"
+    assert cua_fleet_distribution.version == "0.1.17"
     assert "fleet_sdk/__init__.py" in installed_files
     assert binding_path.is_relative_to(distribution_root)
+
+
+def test_cua_sdk_is_the_native_binding_distribution():
+    """cua-sandbox's data plane is the cua SDK (``cua`` >= 0.2, UniFFI over
+    cua-sdk), not the old ``cua`` meta-package (0.1.x, pure re-exports)."""
+    import cua
+
+    cua_distribution = distribution("cua")
+    major, minor = (int(part) for part in cua_distribution.version.split(".")[:2])
+
+    assert (major, minor) >= (0, 2)
+    assert hasattr(cua, "_native") and hasattr(cua._native, "Cua")
+    assert hasattr(cua._native, "SpacesdClient")

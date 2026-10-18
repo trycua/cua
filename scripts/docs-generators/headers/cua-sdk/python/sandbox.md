@@ -1,0 +1,1 @@
+Local is the default: `Sandbox.create(image)` runs on this machine, `on="aws"`, `"gcp"` or `"modal"` in your own cloud. `local=False` and `cloud=CloudOptions(...)` meant Cua Cloud, which has ended: they fail with a clear error and are removed in `cua-sandbox` 0.10.0. `Sandbox.connect(name)` and the class methods take `local=None`: the local sandbox of that name when one exists.

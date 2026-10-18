@@ -1,9 +1,0 @@
-# Core MCP dependencies
-mcp>=1.6.0,<2.0.0
-
-# Cua Agent dependencies
-cua-agent[all]>=0.4.0,<0.5.0
-cua-computer>=0.4.0,<0.5.0
-
-# Additional dependencies for async operations
-anyio>=4.0.0

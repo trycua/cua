@@ -1,0 +1,20 @@
+{
+  "name": "claude-subagent-and-mode",
+  "description": "Cycles the permission mode with shift+tab, then asks for work that delegates to a subagent. Exercises the mode footer's states and the subagent/Task row.",
+  "cmd": ["claude", "--permission-mode", "acceptEdits"],
+  "steps": [
+    {"wait": 6},
+    {"key": "shift-tab"},
+    {"wait": 2},
+    {"key": "shift-tab"},
+    {"wait": 2},
+    {"key": "shift-tab"},
+    {"wait": 2},
+    {"send": "Use the Explore subagent to find every function defined in calc.py, then tell me the list."},
+    {"wait": 1.5},
+    {"key": "enter"},
+    {"expect": "Explore", "timeout": 60},
+    {"wait": 30},
+    {"wait": 20}
+  ]
+}

@@ -23,7 +23,16 @@ const PROTOCOL_VERSION: &str = "cua-perception/1";
 // A default-registry capture expands to four base64 bytes per three PNG bytes.
 // Leave a fixed envelope for the bounded request metadata and capture ID.
 const DEFAULT_MAX_FRAME_BYTES: usize =
-    ((crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES + 2) / 3) * 4 + 64 * 1024;
+    crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES.div_ceil(3) * 4 + 64 * 1024;
+
+/// The capture a warm worker parses, passed as one value.
+#[derive(Clone, Copy)]
+struct WarmFrame<'a> {
+    capture_id: &'a str,
+    width: u32,
+    height: u32,
+    png_bytes: &'a [u8],
+}
 
 /// Signed extension identity the launched worker must echo in every result.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -312,10 +321,12 @@ impl PerceptionClient {
                 .parse_warm(
                     config,
                     policy,
-                    capture_id,
-                    width,
-                    height,
-                    png_bytes,
+                    WarmFrame {
+                        capture_id,
+                        width,
+                        height,
+                        png_bytes,
+                    },
                     cancellation,
                 )
                 .await;
@@ -363,12 +374,15 @@ impl PerceptionClient {
         &self,
         config: &Arc<PerceptionWorkerConfig>,
         policy: WarmWorkerPolicy,
-        capture_id: &str,
-        width: u32,
-        height: u32,
-        png_bytes: &[u8],
+        frame: WarmFrame<'_>,
         cancellation: &PerceptionCancellation,
     ) -> Result<Value, VisualParseError> {
+        let WarmFrame {
+            capture_id,
+            width,
+            height,
+            png_bytes,
+        } = frame;
         let epoch = self.state.cancellation_epoch.load(Ordering::Acquire);
         let mut slot = tokio::select! {
             _ = cancellation.cancelled() => return Err(cancelled_error()),
@@ -1143,6 +1157,10 @@ fn fixture_python_config_from(
     #[cfg(target_os = "macos")]
     let candidates = [
         "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        // A Mac with only the Command Line Tools: run their interpreter
+        // directly, since the `/usr/bin/python3` shim needs `xcrun`, which
+        // the sandbox denies.
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
         "/usr/bin/python3",
         "/usr/local/bin/python3",
     ];
@@ -1186,6 +1204,10 @@ fn macos_fixture_executable_candidates(interpreter: &std::path::Path) -> Vec<Pat
         PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"),
         PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3"),
         PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"),
+        PathBuf::from("/Library/Developer/CommandLineTools/usr/bin/python3"),
+        PathBuf::from("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"),
+        PathBuf::from("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Python3"),
+        PathBuf::from("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"),
     ]
 }
 
@@ -1925,7 +1947,7 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
     #[test]
     fn default_frame_limit_covers_the_default_capture_registry_limit() {
         let encoded_capture_bytes =
-            ((crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES + 2) / 3) * 4;
+            crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES.div_ceil(3) * 4;
         assert!(DEFAULT_MAX_FRAME_BYTES >= encoded_capture_bytes + 64 * 1024);
     }
 

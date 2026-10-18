@@ -1,0 +1,351 @@
+---
+title: Drive your first app with Cua Driver
+description: Install Cua Driver, connect your agent, and verify a result in a desktop app on macOS, Windows, or Linux.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+By the end of this walkthrough, your agent will open Calculator, compute 6 × 7,
+and report 42 through **Cua Driver**. You will install the driver, connect
+your agent, and run a prompt that matches its integration on macOS, Windows, or
+Linux. Have an agent installed and a desktop calculator available before you
+begin. On Linux, use your distribution's calculator, such as GNOME Calculator.
+
+New to agents that operate applications? [How Cua Driver works](/cua-driver/concepts/how-cua-driver-works)
+explains the model behind the workflow.
+
+This walkthrough connects an existing agent to Cua Driver. To embed Cua Driver
+in your own program instead, see [Use the SDK](/cua-driver/guides/use-the-sdk).
+To try it without touching your own desktop, run it
+[in a sandbox](/cua-driver/guides/test-in-a-sandbox).
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/11b248e5-d505-4349-aaae-ad9f95a1162f"
+  poster="https://github.com/user-attachments/assets/0fb62243-56ec-4d51-8771-35640a5e6031"
+  title="Drive a legacy postal app with Cua Driver"
+  sourceUrl="https://x.com/trycua/status/2059693301276565841"
+  className="my-8"
+>
+  Cua Driver fills shipment details and prints receipts in a Windows desktop app with no API. You
+  will start with a smaller Calculator task below.
+</VideoDemo>
+
+## 1. Install Cua Driver
+
+Use the same one-line installer on every platform; it picks the right path for the host and needs no administrator access.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+    Requires macOS 14 (Sonoma) or later.
+
+    ```bash skip="host-install"
+    /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+    ```
+
+    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app. This is what makes the TCC grant stick to the driver:
+
+    ```bash skip="host-macos-permissions"
+    open -n -g -a CuaDriver --args serve
+    ```
+
+    Then grant Accessibility and Screen Recording:
+
+    ```bash test="cli-shape" id="cua-driver-permissions-grant"
+    cua-driver permissions grant
+    ```
+
+    macOS prompts once for each permission. Neither prompt grants anything on its own: both offer **Open System Settings**, not **Allow**:
+
+    ![The macOS Accessibility Access prompt for CuaDriver, offering Open System Settings or Deny](https://github.com/user-attachments/assets/b7a5a0c0-f297-4249-81f9-ca42c6b6f8ba)
+
+    ![The macOS Screen Recording prompt for CuaDriver, offering Open System Settings or Deny](https://github.com/user-attachments/assets/69efc964-a375-495e-8a27-400c9dd08e17)
+
+    Clicking **Open System Settings** adds CuaDriver to that permission's list for you, switched off. Toggling it on is what actually grants access:
+
+    ![CuaDriver listed under Accessibility in System Settings with its toggle switched off](https://github.com/user-attachments/assets/d149fe5a-28cb-460c-8868-4eda80d540a4)
+
+    ![CuaDriver listed under Screen & System Audio Recording in System Settings with its toggle switched off](https://github.com/user-attachments/assets/469308b5-84d7-4fd6-a580-e62925120337)
+
+    <Callout type="warn">
+      Do this for both **Accessibility** and **Screen & System Audio Recording**; choosing **Deny** leaves the driver unable to see or drive your desktop. macOS may offer to quit and reopen CuaDriver when you flip a toggle. Accept, because the driver only picks up a changed grant after a full relaunch. If the daemon does not come back, start it again with `open -n -g -a CuaDriver --args serve`.
+    </Callout>
+
+    macOS does not always raise both prompts in one pass. Check what actually landed:
+
+    ```bash test="cli-shape" id="cua-driver-permissions-status"
+    cua-driver permissions status
+    ```
+
+    If one is still missing, run the pair again to prompt for it:
+
+    ```bash test="cli-shape" id="cua-driver-permissions-grant-2"
+    open -n -g -a CuaDriver --args serve
+    cua-driver permissions grant
+    ```
+  </Tab>
+  <Tab value="Windows">
+    Requires Windows 10/11 with an interactive desktop session and PowerShell.
+
+    ```powershell test="cli-shape" id="cua-driver-autostart-kick"
+    irm https://cua.ai/driver/install.ps1 | iex
+    cua-driver autostart kick
+    ```
+
+    The installer attempts to register Cua Driver to start automatically at sign-in. `kick` starts that task immediately. If registration was skipped or failed, run `cua-driver serve` in a terminal in the interactive desktop session and leave it open. Use a second terminal for the checks below. Over SSH, see [Windows over SSH](/cua-driver/guides/vms-and-remote#windows-over-ssh).
+
+  </Tab>
+  <Tab value="Linux">
+    Requires an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2.
+    On a minimal Debian or Ubuntu image, first run
+    `sudo apt install libxi6 at-spi2-core`. Run this walkthrough inside the
+    desktop session, where the driver can reach its display and accessibility
+    bus.
+
+    ```bash skip="host-install"
+    /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+    ```
+
+    Start the daemon from a terminal in the same desktop session:
+
+    ```bash test="cli-shape" id="cua-driver-serve"
+    cua-driver serve
+    ```
+
+    Leave that terminal open. Run the verification commands below in a second
+    terminal in the same desktop session.
+
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+  The daemon you just started runs in the default `standard` permission mode, which is the right choice for this walkthrough. Once you move past Calculator, read [Permissions](/cua-driver/guides/permissions) to decide whether a real workload should be `bounded` instead. Stale macOS grants? See [Troubleshoot](/cua-driver/guides/troubleshoot#reset-stale-macos-permissions).
+</Callout>
+
+## 2. Verify it is working
+
+First confirm that the daemon is reachable:
+
+```bash test="cli-shape" id="cua-driver-status"
+cua-driver status
+```
+
+Expect `Cua Driver daemon is running`. If it is not running, repeat your
+platform's startup step above. Then check the environment:
+
+```bash test="cli-shape" id="cua-driver-doctor"
+cua-driver doctor
+```
+
+Then list the running GUI apps the driver can reach:
+
+```bash test="cli-shape" id="cua-driver-call"
+cua-driver call list_apps
+```
+
+Read the `doctor` report, including warnings: a zero exit code does not prove
+desktop readiness. On macOS, also confirm both grants with
+`cua-driver permissions status`. Continue when the required permissions and
+desktop services are available, and `list_apps` includes a GUI app you recognize. An
+empty list is not a successful desktop check: open Calculator in that session
+and retry. Resolve permission or display errors before connecting the agent.
+
+## 3. Connect your agent
+
+Choose one integration for your agent. A skill teaches the agent to use the
+Cua Driver CLI; MCP registration exposes Cua Driver as a tool server.
+`mcp-config` only prints setup instructions: you must run the registration
+command it prints. Use the output from your machine, not the illustrative
+paths below.
+
+<Tabs items={['Claude Code', 'Codex', 'Prime Agent', 'OpenClaw', 'Hermes']}>
+  <Tab value="Claude Code">
+    Install the Cua Driver skill for Claude Code:
+
+    ```bash test="cli-shape" id="cua-driver-skills-install"
+    cua-driver skills install
+    cua-driver skills status
+    ```
+
+    Confirm that the status includes a Claude Code skill link, then start a
+    fresh Claude Code session. If the link is missing, follow
+    [Install the agent skill](/cua-driver/guides/connect-your-agent#install-the-agent-skill).
+
+    Prefer plain MCP instead of the skill? Print the Claude Code registration command:
+
+    ```bash test="cli-shape" id="cua-driver-mcp-config-claude"
+    cua-driver mcp-config --client claude
+    ```
+
+    It prints a command you run to register the server (paths will be specific to your install):
+
+    ```bash output
+    claude mcp add-json --scope user cua-computer-use '{"args":["mcp"],"command":"/Users/you/.local/bin/cua-driver"}'
+    ```
+  </Tab>
+  <Tab value="Codex">
+    Print the Codex registration command:
+
+    ```bash test="cli-shape" id="cua-driver-mcp-config-codex"
+    cua-driver mcp-config --client codex
+    ```
+
+    It prints a command you run to register the server. The emitted command uses the absolute installed binary path:
+
+    ```bash output
+    codex mcp add cua-driver -- /Users/you/.local/bin/cua-driver mcp
+    ```
+
+    Run `codex mcp list` to confirm the `cua-driver` registration. Start a fresh
+    Codex session and use `/mcp` to check that the server is active. See the
+    [official Codex MCP instructions](https://learn.chatgpt.com/docs/extend/mcp).
+  </Tab>
+  <Tab value="Prime Agent">
+    Install the Cua Driver skill pack. Prime Agent discovers it from its native
+    skill directory and calls Cua Driver from the persistent IPython environment;
+    no MCP registration is required.
+
+    ```bash test="cli-shape" id="cua-driver-skills-install-2"
+    cua-driver skills install
+    cua-driver skills status
+    ```
+
+    Run `/reload` in Prime Agent or start a new session after installation so
+    the skill appears. Use `/skill:cua-driver` to load it explicitly.
+  </Tab>
+  <Tab value="OpenClaw">
+    Print the OpenClaw registration command:
+
+    ```bash test="cli-shape" id="cua-driver-mcp-config-openclaw"
+    cua-driver mcp-config --client openclaw
+    ```
+
+    It prints a command you run to register the server, using the absolute installed binary path:
+
+    ```bash output
+    openclaw mcp set cua-driver '{"command":"/Users/you/.local/bin/cua-driver","args":["mcp"]}'
+    ```
+
+    <Callout type="warn">
+      On macOS, a server spawned this way by the gateway does not inherit OpenClaw.app's own Accessibility and Screen Recording grants. To embed Cua Driver in the host app instead, so the host owns the grants, see [Expose MCP from a desktop app](/cua-driver/guides/use-the-sdk#expose-mcp-from-a-desktop-app).
+    </Callout>
+  </Tab>
+  <Tab value="Hermes">
+    Hermes includes a built-in `computer_use` toolset. Enable it for the CLI
+    instead of adding a second raw MCP server, then start a chat with it:
+
+    ```bash skip="third-party-cli"
+    hermes tools enable computer_use --platform cli
+    hermes -t computer_use chat
+    ```
+
+    If it cannot reach Cua Driver, repair it with `hermes computer-use install`
+    and check with `hermes computer-use doctor`.
+  </Tab>
+</Tabs>
+
+Using Cursor, Antigravity, OpenCode, Pi, a local model or another harness? See [Connect your agent](/cua-driver/guides/connect-your-agent).
+
+## 4. Ask your agent
+
+Use the prompt that matches the setup you chose. Ask the agent to read the
+calculator's displayed result after acting, so it verifies the GUI instead of
+answering the arithmetic from memory.
+
+<Tabs items={['Claude Code', 'Codex', 'Prime Agent', 'OpenClaw', 'Hermes']}>
+  <Tab value="Claude Code">
+    ```text output
+    Using the Cua Driver skill, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
+    ```
+
+    If you chose MCP registration instead, replace “Cua Driver skill” with
+    “cua-computer-use MCP server.”
+  </Tab>
+  <Tab value="Codex">
+    ```text output
+    Using the cua-driver MCP server, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
+    ```
+  </Tab>
+  <Tab value="Prime Agent">
+    ```text output
+    Using the Cua Driver skill, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
+    ```
+  </Tab>
+  <Tab value="OpenClaw">
+    ```text output
+    Using the cua-driver MCP server, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
+    ```
+  </Tab>
+  <Tab value="Hermes">
+    ```text output
+    Using the computer_use toolset, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
+    ```
+  </Tab>
+</Tabs>
+
+The app name, controls, and action sequence vary by platform and calculator.
+The agent must discover them from fresh state; element indices from another
+run are not reusable. If no calculator is installed, install one through your
+platform's normal app or package manager, then repeat the prompt.
+
+To understand how the driver observes and acts, see [How Cua Driver works](/cua-driver/concepts/how-cua-driver-works).
+
+## 5. Confirm what happened
+
+Confirm that the calculator displays **42** and that the agent's final
+observation reports that value. A correct answer alone does not prove that the
+agent operated the app.
+
+Cua Driver uses best-effort background delivery. Observe whether your active
+app, keyboard focus, and real pointer stay unchanged during the interaction;
+do not infer this from the answer. The visible agent cursor is a separate
+overlay. macOS and Windows accessibility actions can operate supported
+controls in the background, but some apps require explicit foreground
+delivery. Linux AT-SPI actions and X11 routes can also work in the background;
+native Wayland depends on compositor support and has raw-keyboard limits.
+Launching an app can itself raise a window. See
+[Platform mechanisms](/cua-driver/concepts/how-cua-driver-works#platform-mechanisms)
+for these differences and [Known limits](/cua-driver/guides/troubleshoot#known-limits)
+for apps that need the foreground.
+
+## Clean up
+
+Stop the daemon when you are done:
+
+```bash test="cli-shape" id="cua-driver-stop"
+cua-driver stop
+```
+
+## What you did
+
+You installed Cua Driver, checked its daemon and desktop access, connected your
+agent, and verified a result computed inside a desktop app.
+
+## Try a real workflow
+
+Use a bounded task to connect app actions with a saved result. These macOS
+examples include edited recordings, fictional starter files, and output checks:
+
+- [Build and inspect a map](/cua-driver/guides/recipes#build-and-inspect-a-map):
+  load spatial data, prepare a print layout, and inspect the exported PDF.
+- [Redact and annotate a PDF](/cua-driver/guides/recipes#redact-and-annotate-a-pdf):
+  prepare a review copy in Preview and check the saved redactions.
+- [Prepare an exhibition panel](/cua-driver/guides/recipes#prepare-an-exhibition-panel):
+  crop an archive image and edit a panel across GIMP and Inkscape.
+
+These runs include foreground desktop input. Use a separate desktop, a
+[sandbox](/cua-driver/guides/test-in-a-sandbox) or a
+[VM](/cua-driver/guides/vms-and-remote) when you need to keep working during
+the task.
+
+## Next steps
+
+- [Connect your agent](/cua-driver/guides/connect-your-agent): every supported harness, agent SDKs and local models.
+- [Use the SDK](/cua-driver/guides/use-the-sdk): drive apps from Python or TypeScript and verify each action.
+- [Keep Cua Driver running and updated](/cua-driver/guides/operate): autostart, permission modes and updates.
+- [How Cua Driver works](/cua-driver/concepts/how-cua-driver-works): how it avoids focus and cursor disruption when the target app supports it.

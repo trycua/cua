@@ -6,7 +6,31 @@ This is not a new Jev or provider benchmark. No issue-closing claim is made.
 Refs [#4336](https://github.com/trycua/cua/issues/4336) as complementary
 timing work.
 
-## Identities
+## 2026-10-18 maintenance verification
+
+Refreshed onto upstream `b286bea824eef1a3a1c154ab140223a7b97e0048` with an
+additive merge. The snapshot compatibility reads from #4913 remain intact;
+the intermediate-effect policy stays in the example runners above Driver.
+
+Offline verification with locked dependencies:
+
+- Python 3.12: 255 tests, one skipped; no failures.
+- TypeScript: 123 tests, no failures; typecheck passed.
+- Both chooser CLIs: mock default and native/v2 fixtures passed.
+- `verify_native_waits.py --baseline-sha b286bea824eef1a3a1c154ab140223a7b97e0048`:
+  nine cells and 18 verified terminals; virtual waits 25.5s baseline / 9.3s candidate.
+- The current-main and original-baseline poller AST hashes both equal
+  `bf6c63164a59d3c3b5cbf72fe859e9a23381ec0007fae51f2a70068074e933d9`.
+
+The suites exercise delayed/missing effects, exact increment validation,
+terminal success/refutation priority, oracle errors, conservative unsupported
+and exhausted-budget waits, and the runner stopping before a dependent
+mutation after timeout. No new GUI run or provider request was made. The live
+measurements below are historical September evidence and do not certify the
+refreshed head or the current released Driver. Exact-head CI and maintainer
+review are separate gates recorded on PR #4368.
+
+## Historical September identities
 
 | Item | Value |
 | --- | --- |

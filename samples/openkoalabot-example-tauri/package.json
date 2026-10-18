@@ -1,0 +1,32 @@
+{
+  "name": "openkoalabot-example-tauri",
+  "private": true,
+  "license": "FSL-1.1-MIT",
+  "version": "0.1.0",
+  "description": "OpenKoalaBots on the cua SDK Rust crates, with a Tauri 2 shell",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "test": "vitest run",
+    "test:rust": "cd src-tauri && cargo test -p openkoalabot-example-core -- --test-threads=4",
+    "scenario": "cd src-tauri && cargo build -p openkoalabot-example-core --bins && ../../openkoalabot-example-scenario/run.sh --impl tauri --lane fixture",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.5.0",
+    "@trycua/cua": "link:../../libs/cua/typescript",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.5.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "happy-dom": "^20.14.5",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.3"
+  }
+}

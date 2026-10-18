@@ -1,0 +1,411 @@
+{
+  "schema_version": 1,
+  "repo": "ghcr.io/trycua/linux",
+  "arches": [
+    "amd64",
+    "arm64"
+  ],
+  "tiers": {
+    "slim": {
+      "series": "24.04-slim",
+      "tag": "build-slim-{stamp}"
+    },
+    "full": {
+      "series": "24.04",
+      "tag": "build-{stamp}"
+    }
+  },
+  "vars": {
+    "spacesd_source": "local",
+    "spacesd_version": "latest",
+    "record_ledger": "false"
+  },
+  "steps": [
+    {
+      "id": "spacesd/{arch}",
+      "phase": "prepare",
+      "per_arch": true,
+      "description": "cua-spacesd for the image (cached in dist/; CI downloads it)",
+      "unless_exists": "{root}/libs/images/linux/dist/{arch}/cua-spacesd",
+      "run": [
+        "{root}/libs/images/linux/build-spacesd-linux.sh",
+        "{arch}"
+      ],
+      "produces": [
+        "{root}/libs/images/linux/dist/{arch}/cua-spacesd"
+      ]
+    },
+    {
+      "id": "build/{arch}",
+      "phase": "build",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "run": [
+        "{cua}",
+        "images",
+        "build",
+        "{dir}",
+        "--target",
+        "{tier}",
+        "--platform",
+        "linux/{arch}",
+        "--tag",
+        "{tag}",
+        "--outputs",
+        "rootfs,disk",
+        "--out",
+        "{out}",
+        "--label",
+        "ai.cua.image.tier={tier}",
+        "--build-arg",
+        "CUA_SPACESD_SOURCE={spacesd_source}",
+        "--build-arg",
+        "CUA_SPACESD_VERSION={spacesd_version}"
+      ],
+      "produces": [
+        "{out}/{name}-{tier}/{arch}/disk.img"
+      ]
+    },
+    {
+      "id": "doctor/{arch}/runc",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "run": [
+        "{root}/scripts/images/image-doctor-lane.sh",
+        "--lane",
+        "runc",
+        "--image",
+        "{repo}:docker-{tag}-{arch}",
+        "--out",
+        "{evidence}/doctor/{arch}-runc"
+      ]
+    },
+    {
+      "id": "doctor/{arch}/runsc",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "runsc",
+        "native-{arch}"
+      ],
+      "run": [
+        "{root}/scripts/images/image-doctor-lane.sh",
+        "--lane",
+        "runsc",
+        "--image",
+        "{repo}:docker-{tag}-{arch}",
+        "--out",
+        "{evidence}/doctor/{arch}-runsc"
+      ]
+    },
+    {
+      "id": "doctor/{arch}/qemu",
+      "phase": "gate",
+      "per_arch": true,
+      "run": [
+        "{root}/scripts/images/image-doctor-lane.sh",
+        "--lane",
+        "qemu",
+        "--disk",
+        "{out}/{name}-{tier}/{arch}/disk.img",
+        "--arch",
+        "{arch}",
+        "--out",
+        "{evidence}/doctor/{arch}-qemu"
+      ],
+      "description": "the strict VM doctor on every arch: KVM/HVF when the host has it, else QEMU TCG with stretched budgets (image-doctor-lane.sh; hosted arm64 runners)"
+    },
+    {
+      "id": "doctor/{arch}/qemu-claim-secrets",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "accel-{arch}"
+      ],
+      "run": [
+        "{root}/scripts/images/image-doctor-lane.sh",
+        "--lane",
+        "qemu",
+        "--disk",
+        "{out}/{name}-{tier}/{arch}/disk.img",
+        "--arch",
+        "{arch}",
+        "--claim-secrets",
+        "--out",
+        "{evidence}/doctor/{arch}-qemu-claim-secrets"
+      ],
+      "required": [
+        "amd64"
+      ]
+    },
+    {
+      "id": "conformance/{arch}/runc",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "run": [
+        "bash",
+        "-c",
+        "docker build -q -t cua-envdesktop-test \"$0/libs/cua-spacesd/crates/cua-spacesd-desktop/tests/docker\" >/dev/null && \"$0/libs/cua-spacesd/crates/cua-spacesd-desktop/tests/docker/run-against-image.sh\" runc \"$1\"",
+        "{root}",
+        "{repo}:docker-{tag}-{arch}"
+      ]
+    },
+    {
+      "id": "conformance/{arch}/runsc",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "runsc",
+        "native-{arch}"
+      ],
+      "run": [
+        "bash",
+        "-c",
+        "docker build -q -t cua-envdesktop-test \"$0/libs/cua-spacesd/crates/cua-spacesd-desktop/tests/docker\" >/dev/null && \"$0/libs/cua-spacesd/crates/cua-spacesd-desktop/tests/docker/run-against-image.sh\" runsc \"$1\"",
+        "{root}",
+        "{repo}:docker-{tag}-{arch}"
+      ]
+    },
+    {
+      "id": "claim-token/{arch}/runc",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "run": [
+        "{root}/libs/images/linux/smoke-claim-token.sh",
+        "--image",
+        "{repo}:docker-{tag}-{arch}",
+        "--runtime",
+        "runc",
+        "--evidence",
+        "{evidence}/claim-token/{arch}-runc"
+      ]
+    },
+    {
+      "id": "claim-token/{arch}/runsc",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "runsc",
+        "native-{arch}"
+      ],
+      "run": [
+        "{root}/libs/images/linux/smoke-claim-token.sh",
+        "--image",
+        "{repo}:docker-{tag}-{arch}",
+        "--runtime",
+        "runsc",
+        "--evidence",
+        "{evidence}/claim-token/{arch}-runsc"
+      ]
+    },
+    {
+      "id": "parity/{arch}",
+      "phase": "gate",
+      "per_arch": true,
+      "arches": [
+        "amd64"
+      ],
+      "requires": [
+        "runsc",
+        "native-{arch}",
+        "accel-{arch}"
+      ],
+      "run": [
+        "{root}/scripts/images/image-parity-lane.sh",
+        "--rootfs",
+        "{repo}:docker-{tag}-{arch}",
+        "--disk",
+        "{out}/{name}-{tier}/{arch}/disk.img",
+        "--arch",
+        "{arch}",
+        "--runtime",
+        "runsc",
+        "--cua",
+        "{cua}",
+        "--out",
+        "{evidence}/parity-{arch}"
+      ]
+    },
+    {
+      "id": "content/{arch}",
+      "phase": "stage",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "description": "what a scheduled run compares with the promoted tag",
+      "run": [
+        "{root}/scripts/images/content-digest.sh",
+        "--rootfs",
+        "{repo}:docker-{tag}-{arch}",
+        "--tree",
+        "libs/images/linux",
+        "--tree",
+        "libs/images/common",
+        "--tree",
+        "libs/cua-spacesd",
+        "--tree",
+        "libs/cua-driver/rust",
+        "--out",
+        "{evidence}/content-{arch}.txt"
+      ],
+      "stdout": "{evidence}/content-digest-{arch}",
+      "produces": [
+        "{evidence}/content-digest-{arch}"
+      ]
+    },
+    {
+      "id": "save/{arch}",
+      "phase": "stage",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "run": [
+        "{root}/scripts/images/release-save.sh",
+        "--arch",
+        "{arch}",
+        "--rootfs",
+        "{repo}:docker-{tag}-{arch}",
+        "--disk",
+        "{out}/{name}-{tier}/{arch}/disk.img",
+        "--artifacts",
+        "{artifacts}",
+        "--evidence",
+        "{evidence}"
+      ],
+      "produces": [
+        "{artifacts}/{arch}/disk/disk.img",
+        "{artifacts}/{arch}/rootfs/rootfs.tar.zst",
+        "{evidence}/artifacts-{arch}.sha256"
+      ]
+    },
+    {
+      "id": "push/{arch}",
+      "phase": "push",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "run": [
+        "{root}/scripts/images/release-push.sh",
+        "--image-dir",
+        "{dir}",
+        "--repo",
+        "{repo}",
+        "--tag",
+        "{tag}",
+        "--arch",
+        "{arch}",
+        "--target",
+        "{tier}",
+        "--artifacts",
+        "{artifacts}",
+        "--evidence",
+        "{evidence}",
+        "--out",
+        "{out}",
+        "--cua",
+        "{cua}"
+      ],
+      "produces": [
+        "{evidence}/pushed-{arch}/pushed.json"
+      ]
+    },
+    {
+      "id": "attest",
+      "phase": "push",
+      "description": "attach every doctor report to the child it checked (and the ledger with record_ledger=true)",
+      "env": {
+        "ATTEST_DIR": "{evidence}"
+      },
+      "run": [
+        "{root}/scripts/images/attest-doctor-reports.sh",
+        "attest",
+        "{run_url}",
+        "{record_ledger}"
+      ],
+      "produces": [
+        "{evidence}/attested.json"
+      ]
+    },
+    {
+      "id": "publish",
+      "phase": "publish",
+      "run": [
+        "{root}/scripts/images/release-publish.sh",
+        "--image-dir",
+        "{dir}",
+        "--repo",
+        "{repo}",
+        "--tag",
+        "{tag}",
+        "--series",
+        "{series}",
+        "--stamp",
+        "{stamp}",
+        "--arches",
+        "{arches}",
+        "--evidence",
+        "{evidence}",
+        "--cua",
+        "{cua}",
+        "--run-url",
+        "{run_url}",
+        "--tier",
+        "{tier}"
+      ],
+      "produces": [
+        "{evidence}/pins.json"
+      ]
+    },
+    {
+      "id": "verify",
+      "phase": "verify",
+      "run": [
+        "{root}/scripts/images/verify-pins.sh",
+        "--pins",
+        "{evidence}/pins.json",
+        "--evidence",
+        "{evidence}",
+        "--arches",
+        "{arches}"
+      ]
+    },
+    {
+      "id": "promote",
+      "phase": "promote",
+      "run": [
+        "{cua}",
+        "images",
+        "promote",
+        "{evidence}/pins.json"
+      ]
+    },
+    {
+      "id": "catalog",
+      "phase": "promote",
+      "description": "move the catalog digests of the promoted tags and record their sizes (commit libs/images/sandbox-images.json)",
+      "run": [
+        "python3",
+        "{root}/scripts/images/record-image-sizes.py",
+        "--refresh-digest",
+        "--ref",
+        "{repo}:{series}",
+        "--ref",
+        "{repo}:{series}-disk"
+      ]
+    }
+  ]
+}

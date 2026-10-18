@@ -65,7 +65,7 @@ The plan fields are:
 - For a separately reviewed coordinate plan, each agent's `drag` contains
   exactly `from_x`, `from_y`, `to_x`, `to_y`, and integer
   `duration_ms`. Choose distinct endpoints inside that app's fresh screenshot
-  and a safe gesture on disposable content. Duration must be 1000–2000 ms. The harness
+  and a safe gesture on disposable content. Duration must be 1000-2000 ms. The harness
   supplies the target, session, and background delivery mode.
 
 The runner checks Driver's PID/window listing and a fresh image for each drag,

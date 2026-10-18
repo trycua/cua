@@ -686,6 +686,97 @@ def test_pr_3266_squash_coauthor_resolves_through_verified_identity_override():
     ]
 
 
+class SquashTrailerGitHub:
+    """PR #4500's shape: a maintainer pushed onto a contributor PR and merged it."""
+
+    def __init__(self, merger: str, commits: list[tuple[str, str]]) -> None:
+        self.merger = merger
+        self.commits = commits
+
+    def pull(self, repository: str, number: int):
+        assert (repository, number) == ("trycua/cua", 4500)
+        return {"number": 4500, "merged_by": {"login": self.merger}}
+
+    def pull_commits(self, repository: str, number: int):
+        assert (repository, number) == ("trycua/cua", 4500)
+        return [
+            {"author": {"login": login}, "commit": {"author": {"name": name}}}
+            for login, name in self.commits
+        ]
+
+
+SQUASH_4500 = CommitRecord(
+    "c8edda06",
+    "fix(cua-driver): batch Windows foreground multiline input (#4500)",
+    "Co-authored-by: Dillon DuPont <dillondupont808@gmail.com>",
+)
+PULL_4500 = {
+    "number": 4500,
+    "user": {"login": "wszkxlllll"},
+    "author_association": "CONTRIBUTOR",
+    "body": "",
+    "labels": [],
+}
+SQUASH_CONFIG = {
+    "bots": [],
+    "coauthorOverrides": {},
+    "ignoredCoauthorEmails": [],
+    "identityOverrides": {},
+    "internalHandles": ["ddupont808"],
+    "optOutHandles": [],
+}
+
+
+def test_merging_maintainer_squash_trailer_resolves_to_that_maintainer():
+    github = SquashTrailerGitHub(
+        "ddupont808",
+        [("wszkxlllll", "wszkxlllll"), ("ddupont808", "Dillon DuPont")],
+    )
+    contributors, _, _ = _change_contributors(
+        PULL_4500, SQUASH_4500, github, "trycua/cua", SQUASH_CONFIG
+    )
+    assert contributors == [
+        {"login": "wszkxlllll", "role": "author", "external": True},
+        {"login": "ddupont808", "role": "coauthor", "external": False},
+    ]
+
+
+def test_pr_4500_squash_trailer_resolves_with_the_checked_in_config():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    github = SquashTrailerGitHub(
+        "ddupont808",
+        [("wszkxlllll", "wszkxlllll"), ("ddupont808", "Dillon DuPont")],
+    )
+    contributors, _, _ = _change_contributors(
+        PULL_4500, SQUASH_4500, github, "trycua/cua", config
+    )
+    assert {"login": "ddupont808", "role": "coauthor", "external": False} in contributors
+
+
+@pytest.mark.parametrize(
+    ("merger", "commits"),
+    [
+        # An external merger cannot claim a trailer this way.
+        ("outsider", [("outsider", "Dillon DuPont")]),
+        # The internal merger never authored a commit under that name.
+        ("ddupont808", [("ddupont808", "Someone Else")]),
+        # The name belongs to a commit GitHub links to a different account.
+        ("ddupont808", [("wszkxlllll", "Dillon DuPont")]),
+        # An unlinked commit carrying the name proves nothing.
+        ("ddupont808", [("", "Dillon DuPont")]),
+    ],
+)
+def test_squash_trailer_without_maintainer_provenance_fails_closed(merger, commits):
+    with pytest.raises(ReleaseError, match="unresolved human coauthor"):
+        _change_contributors(
+            PULL_4500,
+            SQUASH_4500,
+            SquashTrailerGitHub(merger, commits),
+            "trycua/cua",
+            SQUASH_CONFIG,
+        )
+
+
 def _commit(root: Path, path: str, content: str, subject: str) -> str:
     target = root / path
     target.parent.mkdir(parents=True, exist_ok=True)

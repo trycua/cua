@@ -40,7 +40,7 @@ fn posted_press_message(down: u32, double: u32, click_index: usize, wants_double
 }
 
 /// Walk from `root` down to the deepest visible child that contains
-/// `screen_pt`, mirroring trope-cua's DeepestChildFromScreenPoint.
+/// `screen_pt`.
 ///
 /// Posting to the deepest child avoids the top-level window responding to
 /// WM_LBUTTONDOWN by activating itself (focus-steal).

@@ -1,0 +1,74 @@
+{
+  "annotations": {
+    "org.trycua.lume.cpu-count": "4",
+    "org.trycua.lume.disk-size": "85899345920",
+    "org.trycua.lume.display": "1024x768",
+    "org.trycua.lume.memory-size": "8589934592",
+    "org.trycua.lume.network-mode": "nat",
+    "org.trycua.lume.os": "macOS",
+    "org.trycua.lume.total-uncompressed-size": "85899345920",
+    "org.trycua.lume.upload-time": "2026-08-11T09:36:52Z"
+  },
+  "config": {
+    "annotations": {
+      "org.opencontainers.image.title": "config.json"
+    },
+    "digest": "sha256:478d66287d7ddf03e097cf93df617fc2bb72e0d912047ec70f39ece8b1d6feab",
+    "mediaType": "application/vnd.trycua.lume.config.v1+json",
+    "size": 611
+  },
+  "layers": [
+    {
+      "annotations": {
+        "org.opencontainers.image.title": "nvram.bin"
+      },
+      "digest": "sha256:921d54e19c664b3fc65318138fb862a8a658c3f63af7ffa36547a2e7c75fe75c",
+      "mediaType": "application/vnd.trycua.lume.nvram.v1",
+      "size": 33579164
+    },
+    {
+      "annotations": {
+        "org.opencontainers.image.title": "disk.img.part.0",
+        "org.trycua.lume.chunk.size": "536870912",
+        "org.trycua.lume.content.uncompressed-digest": "sha256:2ff69a89d8f78a22ae88844b966408856da865c1fd009fa8a40e020deed864f6",
+        "org.trycua.lume.content.uncompressed-size": "536870912",
+        "org.trycua.lume.part.number": "0",
+        "org.trycua.lume.part.offset": "0",
+        "org.trycua.lume.part.total": "160"
+      },
+      "digest": "sha256:14d748767f8b1e6a9e799281e3b46ded28676953b4a63b02e4803c9e013b1556",
+      "mediaType": "application/vnd.trycua.lume.disk.v1",
+      "size": 1123260
+    },
+    {
+      "annotations": {
+        "org.opencontainers.image.title": "disk.img.part.1",
+        "org.trycua.lume.chunk.size": "536870912",
+        "org.trycua.lume.content.uncompressed-digest": "sha256:d721dcd152dc50c53521a5380ad28d25defece642fdb23c7cae274f3379b7509",
+        "org.trycua.lume.content.uncompressed-size": "536870912",
+        "org.trycua.lume.part.number": "1",
+        "org.trycua.lume.part.offset": "536870912",
+        "org.trycua.lume.part.total": "160"
+      },
+      "digest": "sha256:603f15859e43d6d8bbd1e83aa72afdc824ba7ee6b806126cf15c5ff6e5370c94",
+      "mediaType": "application/vnd.trycua.lume.disk.v1",
+      "size": 5728169
+    },
+    {
+      "annotations": {
+        "org.opencontainers.image.title": "disk.img.part.159",
+        "org.trycua.lume.chunk.size": "536870912",
+        "org.trycua.lume.content.uncompressed-digest": "sha256:04658ef045760c7352abd78eb8b89581cb3219b4662f49f7dc1dfabaa395cfc5",
+        "org.trycua.lume.content.uncompressed-size": "536870912",
+        "org.trycua.lume.part.number": "159",
+        "org.trycua.lume.part.offset": "85362475008",
+        "org.trycua.lume.part.total": "160"
+      },
+      "digest": "sha256:0806f53585d9437fe238e3483709e7dfe825de23e85e4c0c2122f49662f21724",
+      "mediaType": "application/vnd.trycua.lume.disk.v1",
+      "size": 521336
+    }
+  ],
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "schemaVersion": 2
+}

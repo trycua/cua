@@ -1,0 +1,45 @@
+---
+title: Sandbox images
+description: The desktop and benchmark images Cua publishes.
+---
+
+Cua publishes these images on `ghcr.io/trycua`. The Linux, Windows, benchmark and macOS 26 images include [cua-spacesd](/spaces) and [cua-driver](/cua-driver), making them ready for agentic workloads; macOS 15 runs the legacy guest agent for now. Windows, macOS and tags ending in `-disk` are VMs; the rest are containers. [Image catalog details](/cua-sdk/reference/os-image-catalog).
+
+{/* GENERATED:catalog-image-list:start */}
+### Linux
+
+- `ghcr.io/trycua/linux:24.04`
+- `ghcr.io/trycua/linux:24.04-disk` (VM)
+- `ghcr.io/trycua/linux:24.04-slim`
+- `ghcr.io/trycua/linux:24.04-slim-disk` (VM)
+- `ghcr.io/trycua/omarchy:edge`
+- `ghcr.io/trycua/omarchy:edge-disk` (VM)
+
+### Windows
+
+- `ghcr.io/trycua/windows:2022`
+
+### macOS
+
+- `ghcr.io/trycua/macos:26` (Tahoe)
+- `ghcr.io/trycua/macos:26-slim` (Tahoe 26 slim)
+- `ghcr.io/trycua/macos:15` (Sequoia)
+
+### Adapter benchmark images
+
+- `ghcr.io/trycua/bench-web:1.0` (run [MiniWoB++](/cua-bench/guides/adapter-benchmarks#miniwob), [WebVoyager](/cua-bench/guides/adapter-benchmarks#webvoyager), [Online-Mind2Web](/cua-bench/guides/adapter-benchmarks#online-mind2web), [WebGym](/cua-bench/guides/adapter-benchmarks#webgym))
+- `ghcr.io/trycua/bench-web:1.0-disk` (VM)
+- `ghcr.io/trycua/bench-osworld:verified` (run [OSWorld-Verified](/cua-bench/guides/adapter-benchmarks#osworld-verified))
+- `ghcr.io/trycua/bench-osworld:verified-disk` (VM)
+{/* GENERATED:catalog-image-list:end */}
+
+## Run one
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/install.sh | sh
+```
+
+```bash test="cli-shape" id="cua-sb-create-desk"
+cua sb create linux --name desk
+cua sb view desk
+```

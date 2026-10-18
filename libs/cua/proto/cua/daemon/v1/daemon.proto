@@ -1,0 +1,160 @@
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// The daemon itself: identity, the loopback bridge for webviews, shutdown.
+service DaemonService {
+  // Returns the daemon identity and its loopback endpoint.
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  // Opens a media session in a sandbox and returns a loopback WebSocket URL
+  // that relays it. The URL carries a short-lived bridge ticket; the
+  // browser never sees the Fleet bearer or the spacesd token.
+  rpc OpenMediaBridge(OpenMediaBridgeRequest) returns (OpenMediaBridgeResponse);
+  // Stops the daemon after the response is sent.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+// Why a daemon call failed. Packed as `DaemonErrorInfo` in the
+// `google.rpc.Status` details of every daemon error.
+enum DaemonErrorReason {
+  // Unknown.
+  DAEMON_ERROR_REASON_UNSPECIFIED = 0;
+  // Bad input.
+  DAEMON_ERROR_REASON_INVALID_ARGUMENT = 1;
+  // No such sandbox, forward or bridge.
+  DAEMON_ERROR_REASON_NOT_FOUND = 2;
+  // The provider is not configured in the daemon (for example no Fleet
+  // credentials).
+  DAEMON_ERROR_REASON_PROVIDER_NOT_CONFIGURED = 3;
+  // The provider or build cannot do this.
+  DAEMON_ERROR_REASON_UNSUPPORTED = 4;
+  // No cua-spacesd answered in the sandbox.
+  DAEMON_ERROR_REASON_SPACESD_NOT_AVAILABLE = 5;
+  // A deadline elapsed.
+  DAEMON_ERROR_REASON_TIMEOUT = 6;
+  // Fleet API failure.
+  DAEMON_ERROR_REASON_FLEET = 7;
+  // Local runtime failure.
+  DAEMON_ERROR_REASON_RUNTIME = 8;
+  // spacesd call failure.
+  DAEMON_ERROR_REASON_ENV = 9;
+  // HTTP failure talking to a sandbox service.
+  DAEMON_ERROR_REASON_HTTP = 10;
+  // Daemon bug or I/O failure.
+  DAEMON_ERROR_REASON_INTERNAL = 11;
+  // Missing or wrong daemon token.
+  DAEMON_ERROR_REASON_UNAUTHENTICATED = 12;
+  // The Space's spacesd reports a feature the call needs as unsupported.
+  DAEMON_ERROR_REASON_CAPABILITY_MISSING = 13;
+  // A host-side prerequisite (app-session providers, an operator display,
+  // a local runtime) is not available.
+  DAEMON_ERROR_REASON_HOST_CAPABILITY_MISSING = 14;
+  // The teleport consent gate refused.
+  DAEMON_ERROR_REASON_TELEPORT_REFUSED = 15;
+  // A named cloud pool's template differs from the requested sandbox fields
+  // (pass apply to update it).
+  DAEMON_ERROR_REASON_POOL_SPEC_MISMATCH = 16;
+  // A claim bound but its per-claim secrets never reached the sandbox; the
+  // claim was released.
+  DAEMON_ERROR_REASON_CLAIM_SECRETS_NOT_DELIVERED = 17;
+  // A bare sandbox name matches sandboxes in more than one location. The
+  // qualified candidates are in `DaemonErrorInfo.metadata["candidates"]`
+  // (comma-separated, for example "local:box,cloud:box").
+  DAEMON_ERROR_REASON_AMBIGUOUS_SANDBOX = 18;
+  // A pull, build or VM create would leave less than the configured minimum
+  // free disk space; nothing was written (`cua cache prune` frees space).
+  DAEMON_ERROR_REASON_INSUFFICIENT_DISK = 19;
+  // A location, kind or runtime that does not exist, or a combination of
+  // them (or with the image) that does not. The accepted values are in
+  // `DaemonErrorInfo.metadata["valid"]` (comma-separated, for example
+  // "auto,gvisor,runc") and the axis in `metadata["axis"]` ("on", "kind",
+  // "runtime" or "image").
+  DAEMON_ERROR_REASON_INVALID_PLACEMENT = 20;
+  // Fleet's admission refused a write, for example a sandbox size over the
+  // account's limits. The message is Fleet's and names the limit.
+  DAEMON_ERROR_REASON_FLEET_ADMISSION_DENIED = 21;
+  // The account is out of Cua Cloud credit (no credit left, and no card or
+  // plan): new cloud sandboxes are refused, running ones keep running. The
+  // message ends with the website billing page's URL.
+  DAEMON_ERROR_REASON_CLOUD_CREDIT_EXHAUSTED = 22;
+  // The create was cancelled (`CancelCreateSpace`, or its caller went
+  // away); what it made is gone. The message says what was removed and
+  // what stays (finished image downloads stay cached).
+  DAEMON_ERROR_REASON_CANCELLED = 23;
+  // Your own cloud account (AWS, Google Cloud, Modal) refused or failed a
+  // call Cua made there: a missing permission, a quota, a region without
+  // the machine type. The message names the cloud's own error.
+  DAEMON_ERROR_REASON_CLOUD = 24;
+}
+
+// Structured error detail of daemon RPCs.
+message DaemonErrorInfo {
+  // Reason.
+  DaemonErrorReason reason = 1;
+  // Human-readable message.
+  string message = 2;
+  // Extra context.
+  map<string, string> metadata = 3;
+}
+
+// Request for `DaemonService.GetInfo`.
+message GetInfoRequest {}
+
+// Response for `DaemonService.GetInfo`.
+message GetInfoResponse {
+  // cua-daemon version.
+  string version = 1;
+  // Process id.
+  uint32 pid = 2;
+  // Unix socket path, when listening on one.
+  string socket_path = 3;
+  // Loopback base URL (`http://127.0.0.1:<port>`) serving the same services,
+  // the env passthrough and the media bridge.
+  string loopback_url = 4;
+  // Bearer token of the loopback listener.
+  string loopback_token = 5;
+  // Compiled-in SDK features, for example "env", "fleet", "local".
+  repeated string features = 6;
+  // When the daemon started.
+  google.protobuf.Timestamp started_at = 7;
+  // The daemon's executable (symlinks resolved), so a client bound to an
+  // app bundle can tell its own daemon from another app's. Empty from
+  // daemons that predate it.
+  string executable = 8;
+  // The executable's build as it was when the daemon started (version, size
+  // and modification time), so a client can tell a daemon whose executable
+  // was rebuilt or updated since. Empty from daemons that predate it.
+  string build_id = 9;
+}
+
+// Request for `DaemonService.OpenMediaBridge`.
+message OpenMediaBridgeRequest {
+  // Sandbox name.
+  string name = 1;
+  // `cua.env.v1.OpenMediaRequest` in canonical proto3 JSON. Empty opens the
+  // primary display with defaults.
+  string open_media_json = 2;
+}
+
+// Response for `DaemonService.OpenMediaBridge`.
+message OpenMediaBridgeResponse {
+  // Loopback WebSocket URL, for example
+  // "ws://127.0.0.1:52011/v1/bridge/media?ticket=...". Speaks rcdp wire v2
+  // unchanged.
+  string ws_url = 1;
+  // Bridge ticket (also in `ws_url`).
+  string ticket = 2;
+  // When the bridge ticket stops accepting new attaches.
+  google.protobuf.Timestamp expires_at = 3;
+  // `cua.env.v1.OpenMediaResponse` in canonical proto3 JSON, with the
+  // upstream ticket removed.
+  string open_media_response_json = 4;
+}
+
+// Request for `DaemonService.Shutdown`.
+message ShutdownRequest {}
+
+// Response for `DaemonService.Shutdown`.
+message ShutdownResponse {}

@@ -33,7 +33,7 @@ Actions: `fill`, `check`, `click`, `select`, `scroll`, `skip`.
 Task-level accuracy (every element in a task must be scored correctly). `jev`
 is a hosted external API baseline; `djev` and `semif` are zero-shot/untrained
 baselines for the two architectures `cua-s1-nano-0.1`, `cua-s1-4b-0.1` and
-`cua-s1-4b-0.2` descend from. `—` = not measured for that model; `n/a` = not
+`cua-s1-4b-0.2` descend from. `-` = not measured for that model; `n/a` = not
 applicable (no modality or task shape for that model). **Bold** marks the
 best score in each row; where `cua-s1-nano-0.1` is (or ties for) the best
 score, the bold instead marks the next-best score. `p_chance` is the real,
@@ -72,8 +72,8 @@ below).
 | `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 0.500 | 0.667 | 0.623 | 0.563 | n/a | 0.632 | **0.887** |
 | `osworld_next_action` (external OSWorld) | multimodal, task accuracy, out-of-domain | 0.066 | n/a | 0.000 | **0.083** | 0.000 | 0.000 | 0.013 |
 | `osworld_next_action` (external OSWorld) | multimodal, element accuracy, out-of-domain | 0.500 | n/a | 0.252 | **0.531** | 0.252 | 0.271 | 0.435 |
-| `cua_bench_basic` (real live envs, agentic) | text, held-out task variants, N=18 | — | n/a | **0.889** | 0.333 | n/a | 0.000 | **0.944** |
-| `cua_bench_basic` (real live envs, agentic) | multimodal, held-out task variants, N=18 | — | n/a | 0.667 | 0.389 | n/a | 0.333 | **0.722** |
+| `cua_bench_basic` (real live envs, agentic) | text, held-out task variants, N=18 | - | n/a | **0.889** | 0.333 | n/a | 0.000 | **0.944** |
+| `cua_bench_basic` (real live envs, agentic) | multimodal, held-out task variants, N=18 | - | n/a | 0.667 | 0.389 | n/a | 0.333 | **0.722** |
 
 Notes on reading the table above:
 
@@ -219,19 +219,25 @@ from it in either modality.
 Both rollouts are backed by
 `eval_results/agentic-cua_s1_4b_0_2-{text,multimodal}-cua_bench_basic-heldout`.
 
+These numbers were measured on cua-bench's `simulated` (Playwright) provider,
+which cua-bench 0.3 removed. Reruns use the envs' own `native` provider (a
+local Linux container by default, with bench-ui in the image), where the six
+excluded environments are expected to become rewardable; the table is not
+rerun yet.
+
 ### Latency
 
 Mean per-task inference latency (seconds), from the same eval runs as the
 results table above. Hardware/batch-size setup is not standardized across
 runs (`jev` is a hosted API round-trip; `djev`/`semif` ran locally on GPU;
-`cua-s1-nano-0.1` is CPU-fast). `—` = not measured.
+`cua-s1-nano-0.1` is CPU-fast). `-` = not measured.
 
 | Split / modality | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` | `cua-s1-4b-0.2` |
 | --- | --- | --- | --- | --- | --- | --- |
 | 6 core families, text, hard cross-dataset | 0.556 | 0.809 | 0.121 | 0.003 | 0.121-0.128 | 0.141 |
 | 6 core families, multimodal, same-distribution | n/a | 1.195 | 0.293 | 0.222 | 0.345 | 0.401 |
 | 6 core families, multimodal, hard cross-dataset | n/a | 1.017 | 0.283 | 0.667 | 0.301 | 0.282 |
-| `safety_gate`, text | 0.553 | 3.061 | 1.078 | — | — | 1.613 |
+| `safety_gate`, text | 0.553 | 3.061 | 1.078 | - | - | 1.613 |
 | `safety_gate`, multimodal | n/a | 3.389 | 1.557 | 0.967 | 1.745 | 1.671 |
 | `chess`, text (fair N=15, all models capped equally) | 0.534 | 3.168 | 1.117 | 0.015 | 1.274 | 1.515 |
 | `chess`, multimodal (fair N=15) | n/a | 3.450 | 1.151 | 0.739 | 1.355 | 1.512 |

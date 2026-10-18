@@ -42,13 +42,15 @@
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
+//! - Pi:          `~/.agents/skills/` (shared global location; Pi also reads `~/.pi/agent/skills/`)
 //! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
 //!   `%APPDATA%\opencode\skills\` (Windows)
-//! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
-//!   (`agy`) and Antigravity IDE; same dir Google Gemini CLI used before the
-//!   May-2026 transition, so existing installs migrate forward unchanged.
+//! - Antigravity IDE: `~/.gemini/config/skills/` (global skills directory),
+//!   plus the legacy `~/.gemini/antigravity/skills/` it still accepts
+//! - Antigravity CLI (`agy`): `~/.gemini/antigravity-cli/skills/`
+//! - Gemini CLI (legacy): `~/.gemini/skills/`
 //! - Hermes: `$HERMES_HOME/skills/` when set, otherwise `~/.hermes/skills/` on
 //!   macOS/Linux or `%LOCALAPPDATA%\hermes\skills\` on Windows. This is the
 //!   user-level skill space Hermes resolves at agent load time (separate from
@@ -57,7 +59,7 @@
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Acts on a given agent when its parent skills dir already exists. For
-//! Claude Code and Codex, whose fresh installs may not create that directory,
+//! Claude Code, Codex, and Pi, whose fresh installs may not create that directory,
 //! the explicit `skills install` verb also creates it when the client's own
 //! home directory proves that client is installed. Never clobbers an existing
 //! `<agent_skills>/cua-driver` link — preserves dev users' hand-rolled symlinks.
@@ -217,6 +219,14 @@ const AGENTS: &[Agent] = &[
         install_marker: Some(".codex"),
     },
     Agent {
+        label: "Pi",
+        // Pi discovers both ~/.pi/agent/skills and ~/.agents/skills. Reuse the
+        // latter so Pi + Codex converge on one managed cua-driver link instead
+        // of making Pi report a duplicate skill-name collision.
+        parent: AgentParent::Home(".agents/skills"),
+        install_marker: Some(".pi/agent"),
+    },
+    Agent {
         label: "Prime Agent",
         parent: AgentParent::Home(".prime/agent/skills"),
         install_marker: None,
@@ -238,11 +248,23 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".config/opencode/skills"),
         install_marker: None,
     },
-    // Antigravity CLI + Antigravity IDE share the `.gemini/skills/` dir
-    // (the same path Gemini CLI used pre-May-2026). Registering the
-    // single shared path means both surfaces pick up the same symlink.
     Agent {
-        label: "Antigravity",
+        label: "Antigravity IDE",
+        parent: AgentParent::Home(".gemini/config/skills"),
+        install_marker: None,
+    },
+    Agent {
+        label: "Antigravity IDE (legacy dir)",
+        parent: AgentParent::Home(".gemini/antigravity/skills"),
+        install_marker: None,
+    },
+    Agent {
+        label: "Antigravity CLI",
+        parent: AgentParent::Home(".gemini/antigravity-cli/skills"),
+        install_marker: None,
+    },
+    Agent {
+        label: "Gemini CLI (legacy)",
         parent: AgentParent::Home(".gemini/skills"),
         install_marker: None,
     },
@@ -618,6 +640,8 @@ fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
     // unlike `std::os::windows::fs::symlink_dir`. Shell out to cmd's
     // `mklink /J` — the canonical way to create a junction from a
     // standard user token.
+    let target: PathBuf = target.components().collect();
+    let link: PathBuf = link.components().collect();
     let status = std::process::Command::new("cmd")
         .args(["/c", "mklink", "/J"])
         .arg(link)
@@ -975,22 +999,29 @@ mod tests {
 
     #[test]
     fn detected_client_links_once_and_rerun_reports_existing_link() {
-        let home = tempdir().unwrap();
-        let parent = home.path().join(".claude/skills");
-        let marker = home.path().join(".claude");
-        let local_skill = home.path().join(".cua-driver/skills/cua-driver");
-        std::fs::create_dir_all(&marker).unwrap();
-        std::fs::create_dir_all(&local_skill).unwrap();
+        let root = tempdir().unwrap();
+        for home_name in ["plain", "skills 用户"] {
+            let home = root.path().join(home_name);
+            let parent = home.join(".claude/skills");
+            let marker = home.join(".claude");
+            let local_skill = home.join(".cua-driver/skills/cua-driver");
+            std::fs::create_dir_all(&marker).unwrap();
+            std::fs::create_dir_all(&local_skill).unwrap();
+            std::fs::write(local_skill.join("SKILL.md"), "test skill").unwrap();
 
-        assert_eq!(
-            link_agent_paths("Claude Code", &parent, Some(&marker), &local_skill).unwrap(),
-            LinkStatus::Created
-        );
-        assert_eq!(
-            link_agent_paths("Claude Code", &parent, Some(&marker), &local_skill).unwrap(),
-            LinkStatus::Existing
-        );
-        assert!(parent.join("cua-driver").exists());
+            assert_eq!(
+                link_agent_paths("Claude Code", &parent, Some(&marker), &local_skill).unwrap(),
+                LinkStatus::Created
+            );
+            assert_eq!(
+                std::fs::read_to_string(parent.join("cua-driver/SKILL.md")).unwrap(),
+                "test skill"
+            );
+            assert_eq!(
+                link_agent_paths("Claude Code", &parent, Some(&marker), &local_skill).unwrap(),
+                LinkStatus::Existing
+            );
+        }
     }
 
     #[test]
@@ -1019,6 +1050,54 @@ mod tests {
     }
 
     #[test]
+    fn pi_target_matches_its_native_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Pi")
+            .expect("Pi must remain a supported skill target");
+
+        assert!(matches!(target.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(target.install_marker, Some(".pi/agent")));
+    }
+
+    #[test]
+    fn codex_and_pi_share_one_managed_global_skill_directory() {
+        let codex = AGENTS.iter().find(|agent| agent.label == "Codex").unwrap();
+        let pi = AGENTS.iter().find(|agent| agent.label == "Pi").unwrap();
+
+        assert!(matches!(codex.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(pi.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(codex.install_marker, Some(".codex")));
+        assert!(matches!(pi.install_marker, Some(".pi/agent")));
+    }
+
+    #[test]
+    fn pi_marker_creates_shared_link_and_codex_reuses_it() {
+        let home = tempdir().unwrap();
+        let parent = home.path().join(".agents/skills");
+        let pi_marker = home.path().join(".pi/agent");
+        let local_skill = home.path().join(".cua-driver/skills/cua-driver");
+
+        std::fs::create_dir_all(&pi_marker).unwrap();
+        std::fs::create_dir_all(&local_skill).unwrap();
+
+        assert_eq!(
+            link_agent_paths("Pi", &parent, Some(&pi_marker), &local_skill).unwrap(),
+            LinkStatus::Created
+        );
+        assert!(parent.join("cua-driver").exists());
+
+        // Codex and Pi intentionally share ~/.agents/skills. Once Pi has
+        // created the managed link, the Codex path must converge on that same
+        // link rather than creating or replacing another skill entry.
+        assert_eq!(
+            link_agent_paths("Codex", &parent, None, &local_skill).unwrap(),
+            LinkStatus::Existing
+        );
+        assert!(parent.join("cua-driver").exists());
+    }
+
+    #[test]
     fn prime_agent_target_matches_its_native_global_skill_directory() {
         let target = AGENTS
             .iter()
@@ -1029,6 +1108,56 @@ mod tests {
             target.parent,
             AgentParent::Home(".prime/agent/skills")
         ));
+    }
+
+    #[test]
+    fn antigravity_ide_target_matches_its_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity IDE")
+            .expect("Antigravity IDE must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/config/skills")
+        ));
+    }
+
+    #[test]
+    fn antigravity_ide_legacy_skill_directory_is_also_a_target() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity IDE (legacy dir)")
+            .expect("the legacy Antigravity IDE directory must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/antigravity/skills")
+        ));
+    }
+
+    #[test]
+    fn antigravity_cli_target_matches_its_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity CLI")
+            .expect("Antigravity CLI must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/antigravity-cli/skills")
+        ));
+    }
+
+    #[test]
+    fn legacy_gemini_skill_directory_stays_a_separate_target() {
+        let legacy: Vec<_> = AGENTS
+            .iter()
+            .filter(|agent| matches!(agent.parent, AgentParent::Home(".gemini/skills")))
+            .collect();
+
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].label, "Gemini CLI (legacy)");
     }
 
     #[test]

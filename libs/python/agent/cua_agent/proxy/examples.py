@@ -53,8 +53,9 @@ async def test_http_endpoint():
     }
 
     # Test requests
-    base_url = "https://m-linux-96lcxd2c2k.containers.cloud.trycua.com:8443"
-    # base_url = "http://localhost:8000"
+    # The legacy computer-server /responses endpoint was removed; host
+    # ResponsesHandler in your own server and point this at it.
+    base_url = os.getenv("CUA_AGENT_PROXY_URL", "http://localhost:8080")
     api_key = os.getenv("CUA_API_KEY")
     assert isinstance(api_key, str), "CUA_API_KEY environment variable must be set"
 
@@ -91,7 +92,7 @@ def curl_examples():
     print("=== CURL Examples ===\n")
 
     print("1. Simple text request:")
-    print("""curl http://localhost:8000/responses \\
+    print("""curl http://localhost:8080/responses \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "anthropic/claude-sonnet-4-5-20250929",
@@ -99,7 +100,7 @@ def curl_examples():
   }'""")
 
     print("\n2. Multi-modal request with image:")
-    print("""curl http://localhost:8000/responses \\
+    print("""curl http://localhost:8080/responses \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "anthropic/claude-sonnet-4-5-20250929",
@@ -118,7 +119,7 @@ def curl_examples():
   }'""")
 
     print("\n3. Request with custom configuration:")
-    print("""curl http://localhost:8000/responses \\
+    print("""curl http://localhost:8080/responses \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "anthropic/claude-sonnet-4-5-20250929",
@@ -128,8 +129,7 @@ def curl_examples():
       "verbosity": 20
     },
     "computer_kwargs": {
-      "os_type": "linux",
-      "provider_type": "cloud"
+      "name": "my-sandbox"
     }
   }'""")
 

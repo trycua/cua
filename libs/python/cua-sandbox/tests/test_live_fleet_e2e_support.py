@@ -339,6 +339,11 @@ async def test_owned_ephemeral_namespace_is_empty_after_cleanup(monkeypatch, tmp
             async def run(command: str):
                 return SimpleNamespace(success=True, stdout="Linux\n", stderr="")
 
+        class services:
+            @staticmethod
+            async def request(name: str, *, method: str, path: str, **_):
+                return SimpleNamespace(status_code=200)
+
     class FakeEphemeral:
         async def __aenter__(self):
             return FakeSandbox()
@@ -537,6 +542,11 @@ async def test_claim_leak_records_persistent_inventory_without_deletion(
             @staticmethod
             async def run(command: str):
                 return SimpleNamespace(success=True, stdout="Linux\n", stderr="")
+
+        class services:
+            @staticmethod
+            async def request(name: str, *, method: str, path: str, **_):
+                return SimpleNamespace(status_code=200)
 
     class FakeEphemeral:
         async def __aenter__(self):
@@ -747,6 +757,7 @@ async def test_live_runner_uses_pinned_ephemeral_configuration(monkeypatch) -> N
         "server_port": 8000,
         "time_to_start": 900,
         "telemetry_enabled": False,
+        "local": False,
     }
 
 
@@ -846,6 +857,11 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
             async def run(command: str):
                 return SimpleNamespace(success=True, stdout="Linux\n", stderr="")
 
+        class services:
+            @staticmethod
+            async def request(name: str, *, method: str, path: str, **_):
+                return SimpleNamespace(status_code=200)
+
     class FakeEphemeral:
         async def __aenter__(self):
             return FakeSandbox()
@@ -890,3 +906,87 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
         assert summaries[-1]["close_error"] == {"type": "CloseFailure"}
     if summary_fails:
         assert summaries[-1]["summary_error"] == {"type": "SummaryFailure"}
+
+
+@pytest.mark.asyncio
+async def test_live_runner_env_lane_uses_the_env_image_and_default_services(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    class StopProvisioning(Exception):
+        pass
+
+    captured = {}
+
+    class FailingEphemeral:
+        async def __aenter__(self):
+            raise StopProvisioning("stop after capturing arguments")
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+    def ephemeral(image, **kwargs):
+        captured["image"] = image
+        captured["kwargs"] = kwargs
+        return FailingEphemeral()
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-e2e-env-lane")
+    monkeypatch.setenv("CUA_LIVE_E2E_ENV_IMAGE", "registry.example/linux:pr-1")
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
+    monkeypatch.setattr(live_test.Sandbox, "ephemeral", ephemeral)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: None)
+
+    with pytest.raises(StopProvisioning):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert captured["image"] == Image.from_registry("registry.example/linux:pr-1")
+    assert "server_port" not in captured["kwargs"], "the env lane is daemon-agnostic"
+    assert captured["kwargs"]["name"] == "cua-e2e-env-lane"
+
+
+def test_assert_env_template_contract() -> None:
+    from tests.live.fleet_e2e_support import assert_env_template_contract
+
+    def template(services, probes=None):
+        return SimpleNamespace(
+            spec=SimpleNamespace(
+                vm_template=SimpleNamespace(
+                    services=[SimpleNamespace(name=n, target_port=p) for n, p in services],
+                    probes=probes,
+                )
+            )
+        )
+
+    assert_env_template_contract(template([("env", 3211), ("port-3000", 3000)]))
+    with pytest.raises(AssertionError, match="3211"):
+        assert_env_template_contract(template([("server", 8000)]))
+    with pytest.raises(AssertionError, match="probe"):
+        assert_env_template_contract(template([("env", 3211)], probes=object()))
+
+
+@pytest.mark.asyncio
+async def test_check_service_reachable_is_daemon_agnostic() -> None:
+    from tests.live.fleet_e2e_support import check_service_reachable
+
+    def sandbox(status):
+        async def request(name, *, method, path, **_):
+            assert (name, method, path) == ("server", "GET", "/")
+            return SimpleNamespace(status_code=status)
+
+        return SimpleNamespace(services=SimpleNamespace(request=request))
+
+    summary: dict = {}
+    await check_service_reachable(sandbox(404), "server", summary)
+    assert summary["service"] == {"name": "server", "status": 404}
+    with pytest.raises(AssertionError, match="502"):
+        await check_service_reachable(sandbox(502), "server", {})
+
+
+def test_selected_namespace_accepts_ad_hoc_cua_e2e_names(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-e2e-live-abc123")
+    assert live_test.selected_namespace() == "cua-e2e-live-abc123"

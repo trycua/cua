@@ -1,0 +1,102 @@
+---
+title: Log in to a site
+description: 'Let an agent sign in to a website in a Space with a password you saved in the Cua Keyvault. You approve each sign-in; the agent never sees the password.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Ask an agent "log me into github.com on a new Space" and it can sign in
+without you typing the password and without the agent ever reading it. The
+password stays in the [Keyvault](/spaces/guides/keyvault): the agent asks,
+you approve in Cua, and the Keyvault types the login into the page through
+the Space's Cua Driver.
+
+## Before you start
+
+1. Set up the Keyvault (**Keyvault** in the Cua sidebar, or
+   `cua keyvault init`).
+2. Import your saved passwords from Chrome. The daemon asks for Touch ID or
+   your login password, and the passwords are stored sealed, one item per
+   site:
+
+   ```bash test="cli-shape" id="import-passwords"
+   cua keyvault import-passwords --browser chrome
+   cua keyvault import-passwords --browser chrome --site github.com
+   ```
+
+3. Give your agent the Cua tools: `cua agents` installs them into Claude
+   Code, Codex, Hermes and OpenClaw.
+
+## What happens
+
+1. The agent creates a Space and opens the site's sign-in page in its
+   browser.
+2. It calls `request_site_login` with the Space and the page URL. The
+   Keyvault files a request and the tool answers `pending` with a
+   `request_id`.
+3. Cua shows the request: which agent, which site, which Space. Approving it
+   asks for Touch ID or your login password. One approval covers one
+   sign-in.
+4. The agent calls `request_site_login` again with the `request_id`. The
+   Keyvault checks the page is on the saved login's exact origin, types the
+   username and password with Cua Driver, submits the form and answers
+   `filled` with a masked username (`a***@example.com`).
+
+If you decline, the tool answers with a `login_refused` error and nothing is
+typed. If the page is on another origin (a look-alike domain, a redirect),
+the Keyvault refuses before typing anything.
+
+## The tool
+
+| Argument | Meaning |
+|----------|---------|
+| `space` | The Space to sign in. |
+| `url` | The site's sign-in page (`http` or `https`). |
+| `agent` | The agent asking; shown to you in the approval. |
+| `session`, `target_id`, `tab_id` | The browser tab to sign in, from the agent's own `get_browser_state` on the same Space. Without them the Keyvault opens its own browser in the Space on `url` and returns its tab. |
+| `username` | Which saved account, when the site has several. |
+| `request_id` | From the first call; present on the retry. |
+| `wait_secs` | How long the retry waits for your answer (default 20, at most 120). |
+
+From the SDK the same call is `space.request_site_login(url, options)`
+(`requestSiteLogin` in Swift, TypeScript and Kotlin). See the
+[Keyvault tool reference](/spaces/reference/keyvault) for the full result shape.
+
+## Approve from a terminal
+
+Requests also show up in the CLI, for a machine without the app open:
+
+```bash test="cli-shape" id="approve-login"
+cua keyvault requests
+cua keyvault approve 5f2c9a0e
+cua keyvault deny 5f2c9a0e
+```
+
+## What the agent sees
+
+Only what happened: `pending`, `filled` with the site, the origin, a masked
+username and the tab it signed in, or `login_refused`. The password is never
+in a tool result, an error, an event, a log line or the audit log.
+
+<Callout type="warn">
+Once a page is signed in, its session lives in the Space's browser. An agent
+working in that Space can use the session like you could. Delete the Space
+when the work is done.
+</Callout>
+
+## Unattended sign-in
+
+By default every sign-in asks. To let one agent sign in to one site on its
+own (for a routine), turn on **Unattended** for that site's saved password in
+the Keyvault page and add an unattended rule for the agent and the Space.
+Both steps ask for Touch ID, and the rule expires.
+
+## Limits
+
+- Saved passwords import from Chrome on macOS and Linux. Windows (DPAPI) is
+  not supported yet.
+- The Keyvault fills a standard form: a password field, the username field
+  before it and a submit button after it. Multi-step sign-ins (username page,
+  then password page) need one `request_site_login` per page.
+- Two-factor prompts are yours to answer: open the Space's viewer and take
+  over.

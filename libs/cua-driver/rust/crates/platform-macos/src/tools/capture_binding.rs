@@ -294,8 +294,7 @@ mod tests {
         bindings: &MacCaptureBindings,
         capture_id: &str,
         args: &serde_json::Value,
-        pid: u32,
-        window_id: u64,
+        (pid, window_id): (u32, u64),
         x: f64,
         y: f64,
         native: (u32, u32),
@@ -359,7 +358,7 @@ mod tests {
             .publish_desktop(&args, png(4, 4), (4, 4), (2, 2))
             .unwrap();
         let mut dispatched = false;
-        let mismatch = admit_window(&bindings, &capture_id, &args, 1, 1, 1.0, 1.0, (2, 2));
+        let mismatch = admit_window(&bindings, &capture_id, &args, (1, 1), 1.0, 1.0, (2, 2));
         if mismatch.is_ok() {
             dispatched = true;
         }
@@ -436,7 +435,7 @@ mod tests {
             .publish_window(&args, 8, 13, png(4, 3), (4, 3), (8, 6))
             .unwrap();
         let mut dispatches = 0;
-        let refusal = admit_window(&bindings, &capture_id, &args, 8, 13, 1.25, 1.5, (9, 6));
+        let refusal = admit_window(&bindings, &capture_id, &args, (8, 13), 1.25, 1.5, (9, 6));
         if refusal.is_ok() {
             dispatches += 1;
         }
@@ -446,7 +445,7 @@ mod tests {
             "capture_frame_mismatch"
         );
         assert_eq!(
-            admit_window(&bindings, &capture_id, &args, 8, 13, 1.25, 1.5, (8, 6)).unwrap(),
+            admit_window(&bindings, &capture_id, &args, (8, 13), 1.25, 1.5, (8, 6)).unwrap(),
             (2.5, 3.0)
         );
         assert!(service

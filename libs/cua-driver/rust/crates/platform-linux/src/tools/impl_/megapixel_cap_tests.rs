@@ -9,7 +9,7 @@ fn a_window_shot_above_the_api_threshold_is_capped_below_it() {
         (861.0 * scale).round() as u64,
     );
     assert!(w * h <= WINDOW_SCREENSHOT_MAX_PIXELS, "{w}x{h}");
-    assert!(edge >= 1440 && edge < 1568, "{edge}");
+    assert!((1440..1568).contains(&edge), "{edge}");
 }
 
 #[test]

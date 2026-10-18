@@ -51,7 +51,7 @@ repo-local matrix. For browser-facing changes or browser-use release
 certification on Windows and Linux, also run
 `.github/workflows/e2e-rust-standalone-browsers.yml`.
 
-Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
+Historical `*-plan.md` and release evidence documents record
 what was run at that time. They are not current execution instructions and do
 not override this guide or `scripts/ci/README.md`.
 

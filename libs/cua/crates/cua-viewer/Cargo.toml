@@ -1,0 +1,54 @@
+[package]
+name = "cua-viewer"
+description = "Native proxy-window client for RCDP app shares"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "cua-viewer"
+path = "src/main.rs"
+
+[dependencies]
+cua-logging = { path = "../cua-logging" }
+# Anonymous `cua_stream_stats` on window close (every opt-out applies).
+cua-telemetry = { path = "../cua-telemetry" }
+cua-media-protocol = { path = "../cua-media-protocol" }
+cua-media-transport = { path = "../cua-media-transport", features = ["quic"] }
+cua-media-codec = { path = "../cua-media-codec", default-features = false, features = ["opus"] }
+cua-proto = { path = "../cua-proto", default-features = false, features = ["client"] }
+tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-webpki-roots"] }
+futures-util = { workspace = true, features = ["sink"] }
+bytes.workspace = true
+pixels = "0.17.2"
+quinn.workspace = true
+serde_json.workspace = true
+rustls.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+tracing.workspace = true
+url.workspace = true
+winit = "0.29"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+cpal = "0.16"
+
+[dev-dependencies]
+axum = { version = "0.8", features = ["ws", "http2"] }
+cua-proto = { path = "../cua-proto", default-features = false, features = ["client", "server"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-cf = { version = "0.9", features = ["cm"] }
+block2 = "0.5.1"
+objc2-app-kit = { version = "0.2.2", default-features = false, features = ["block2", "NSApplication", "NSControl", "NSEvent", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSText", "NSTextField", "NSView", "NSVisualEffectView", "NSWindow"] }
+objc2-foundation = { version = "0.2.2", features = ["NSArray", "NSString", "NSThread", "NSURL"] }
+objc2-v5 = { package = "objc2", version = "0.5.2" }
+objc2-v6 = { package = "objc2", version = "0.6.4" }
+objc2-metal-v3 = { package = "objc2-metal", version = "0.3.2", features = ["MTLDevice", "MTLTexture"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+openh264 = "0.9.7"

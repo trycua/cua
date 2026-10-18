@@ -8,8 +8,8 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Mapping, Optional
-from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from cua_sandbox._config import (
@@ -19,6 +19,7 @@ from cua_sandbox._config import (
     get_fleet_token,
     get_token_url,
 )
+from cua_sandbox._sdk import ENV_SERVICE, SPACESD_PORT
 from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport, build_http_request
@@ -40,6 +41,7 @@ from fleet_sdk import (
     OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpecBuilder,
     PreservedJson,
+    RuntimeKind,
     SandboxServiceBuilder,
     SandboxTemplateRefBuilder,
     SdkError,
@@ -55,10 +57,45 @@ logger = logging.getLogger(__name__)
 
 _DNS_LABEL_MAX_LENGTH = 63
 _CLAIM_HASH_LENGTH = 16
-# Bounds each readiness probe so one stalled /status round-trip cannot eat the
-# whole wait_service_ready deadline. Ignored by cua-fleet <= 0.1.8, whose
-# native client applies the same 30-second default.
+# Bounds each readiness probe so one stalled round-trip cannot eat the whole
+# wait_service_ready deadline. Ignored by cua-fleet <= 0.1.8, whose native
+# client applies the same 30-second default.
 _READINESS_PROBE_TIMEOUT_SECS = 30
+# The name a caller-declared ``server_port`` is published under.
+_SERVER_SERVICE = "server"
+
+
+def default_services(server_port: Optional[int], extra_ports: "tuple[int, ...] | list[int]" = ()):
+    """Services a Fleet pool publishes when the caller names none.
+
+    Sandboxes are daemon-agnostic: by default a pool publishes cua-spacesd
+    as ``env`` (3211) plus each ``Image.expose()`` port as ``port-<n>``. A
+    caller-supplied ``server_port`` (an image with its own daemon) is published
+    as ``server`` instead.
+    """
+    if server_port is None:
+        primary = {ENV_SERVICE: SPACESD_PORT}
+        primary_port = SPACESD_PORT
+    else:
+        primary = {_SERVER_SERVICE: server_port}
+        primary_port = server_port
+    return {
+        **primary,
+        **{f"port-{port}": port for port in extra_ports if port != primary_port},
+    }
+
+
+def validate_server_port(server_port: Any) -> None:
+    """``None`` (daemon-agnostic default) or a TCP port."""
+    if server_port is None:
+        return
+    if (
+        isinstance(server_port, bool)
+        or not isinstance(server_port, int)
+        or server_port < 1
+        or server_port > 65535
+    ):
+        raise ValueError("server_port must be an integer between 1 and 65535")
 
 
 # Newer Fleet SDKs raise SdkError.PoolAccessDenied from the Rust core for 403s
@@ -214,22 +251,54 @@ class _StaticAccessTokenProvider(AccessTokenProvider):
         return self._token
 
 
+class _SessionAccessTokenProvider(AccessTokenProvider):
+    """The ``cua auth login`` session's (refreshing) bearer, via the cua SDK."""
+
+    def __init__(self) -> None:
+        from cua_sandbox._sdk import sdk
+
+        self._auth = sdk().embedded(fleet_from_env=False).auth()
+
+    async def get_access_token(self, force_refresh: bool) -> str:
+        try:
+            return await self._auth.access_token(force_refresh)
+        except Exception as error:  # noqa: BLE001 - surfaced as a provider failure
+            raise AccessTokenProviderError.Failed(str(error)) from error
+
+
 class _FleetClient:
     """Thin async facade over the generated Cyclops SDK."""
 
     def __init__(self) -> None:
         self._closed = False
         fleet_token = get_fleet_token()
+        session = False
         if not fleet_token:
             client_id = get_client_id()
             client_secret = get_client_secret()
             if not client_id or not client_secret:
-                raise ValueError(
-                    "Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, "
-                    "or cua.configure(client_id=..., client_secret=...)."
+                from cua_sandbox._config import (
+                    FLEET_CREDENTIALS_MISSING,
+                    has_fleet_session,
                 )
+
+                if not has_fleet_session():
+                    raise ValueError(FLEET_CREDENTIALS_MISSING)
+                session = True
         self._base_url = get_fleet_base_url().rstrip("/")
         self._http_client = CyclopsHttpClient()
+        if session:
+            configuration = CyclopsTokenProviderConfiguration(
+                base_url=self._base_url,
+                pool_poll_interval_ms=2000,
+                pool_poll_limit=300,
+                claim_poll_interval_ms=2000,
+                claim_poll_limit=300,
+            )
+            self._client = CyclopsClient.connect_with_access_token_provider(
+                configuration, _SessionAccessTokenProvider(), self._http_client
+            )
+            return
         if fleet_token:
             configuration = CyclopsTokenProviderConfiguration(
                 base_url=self._base_url,
@@ -392,8 +461,8 @@ class _FleetClient:
         await method(
             SignedServiceUrl(
                 id=signed_service_url.id,
-                namespace=signed_service_url.namespace,
-                claim=signed_service_url.claim,
+                namespace=_detail(signed_service_url, "namespace"),
+                claim=_detail(signed_service_url, "claim"),
                 sandbox=signed_service_url.sandbox,
                 service=signed_service_url.service,
                 label=signed_service_url.label,
@@ -417,6 +486,13 @@ class _FleetClient:
                 return claim
         raise LookupError(f"Fleet claim {expected!r} was not found")
 
+    async def list_namespaces(self) -> list[Any]:
+        """The caller's namespaces (tenant-scoped by the Fleet gateway)."""
+        return await self._client.list_namespaces()
+
+    async def list_pools_in(self, namespace: str) -> list[Any]:
+        return await self._client.list_pools(namespace)
+
     async def list_pools(self) -> list[Any]:
         raise NotImplementedError(
             "Fleet sandbox listing requires namespace discovery; use an exact sandbox name instead"
@@ -429,16 +505,25 @@ class _FleetClient:
     async def wait_service_ready(
         self, sandbox: Any, service: str, time_to_start: Optional[float] = None
     ) -> None:
+        """Wait until the gateway routes to *service* (any HTTP answer < 500).
+
+        Daemon-agnostic: nothing guest-specific is assumed (no ``/status``,
+        no port 8000). The ``env`` service is not probed here at all; the
+        claim being bound is readiness, and the first interface call waits
+        for cua-spacesd itself.
+        """
+        if service == ENV_SERVICE:
+            return
         timeout = time_to_start if time_to_start is not None else 600.0
         deadline = asyncio.get_running_loop().time() + timeout
         while True:
             response = await self.service_request(
                 sandbox,
                 service,
-                "/status",
+                "/",
                 build_http_request(
                     method="GET",
-                    url="https://service.invalid/status",
+                    url="https://service.invalid/",
                     timeout_secs=_READINESS_PROBE_TIMEOUT_SECS,
                 ),
             )
@@ -454,6 +539,15 @@ class _FleetClient:
         if service not in sandbox.services:
             raise ValueError(f"Fleet sandbox does not expose service {service!r}")
         return f"{self._base_url}/api/svc/{sandbox.namespace}/{sandbox.name}-{service}/"
+
+
+def _detail(resource: Any, key: str) -> Any:
+    """``key`` of a signed URL: from ``details`` (``SignedServiceURL``) or
+    the raw resource attribute."""
+    details = resource.__dict__.get("details") if hasattr(resource, "__dict__") else None
+    if isinstance(details, dict) and key in details:
+        return details[key]
+    return getattr(resource, key)
 
 
 _ECR_HOST_SUFFIX = ".amazonaws.com"
@@ -485,6 +579,61 @@ def validate_ttl_seconds_after_created(value: "int | None") -> None:
         )
 
 
+#: The Fleet runtimes an image-backed pool can use: ``kubevirt`` boots a VM
+#: from the containerDisk, ``gvisor`` runs the container variant as a runsc
+#: pod.
+FleetRuntime = Literal["kubevirt", "gvisor"]
+
+_RUNTIME_KINDS = {"kubevirt": RuntimeKind.KUBEVIRT, "gvisor": RuntimeKind.GVISOR}
+
+
+def resolve_fleet_runtime(runtime: Optional[str], image: Image) -> Any:
+    """The ``fleet_sdk.RuntimeKind`` for a pool of *image*.
+
+    ``runtime`` wins; otherwise it defaults from the image: ``kind="container"``
+    runs on gVisor, ``kind="vm"`` boots on KubeVirt, and an unresolved kind
+    follows the image's registry manifest (a ``/disk/disk.img`` layer or
+    trycua containerDisk media types = KubeVirt, anything else = gVisor). When
+    the manifest cannot be read, the reference decides with a warning (a
+    ``docker-`` tag = gVisor, else KubeVirt). The pairing is validated by the
+    cua SDK's single rule (``cua.fleet_resolve_runtime``, shared with the Rust
+    SDK, CLI and Spaces), which raises ``CuaError.InvalidArgument`` for a
+    crossed pairing.
+    """
+    if runtime is not None and runtime not in _RUNTIME_KINDS:
+        raise ValueError(f"runtime must be 'kubevirt' or 'gvisor', not {runtime!r}")
+    if runtime is None:
+        runtime = {"container": "gvisor", "vm": "kubevirt"}.get(image.kind or "")
+    reference = cloud_registry_image(image) or ""
+    from cua_sandbox._sdk import native
+
+    name = native().fleet_resolve_runtime(runtime, reference)
+    return _RUNTIME_KINDS[name]
+
+
+def fleet_image_ref(image: Image, runtime: Any = None) -> Optional[str]:
+    """The reference a Fleet template runs: the one native resolver's pinned
+    variant for the runtime (a canonical image's ``-disk`` sibling on
+    KubeVirt, its rootfs on gVisor), amd64. When the registry cannot be read
+    (offline, or ``CUA_IMAGE_RESOLVE=0``) the reference is sent as given and
+    Fleet reports what it cannot pull."""
+    reference = cloud_registry_image(image)
+    if not reference:
+        return reference
+    name = str(getattr(runtime, "name", runtime) or "").lower()
+    backend = {"kubevirt": "vm", "gvisor": "container"}.get(name, "fleet")
+    from cua_sandbox._sdk import native
+
+    n = native()
+    try:
+        return n.resolve_image(reference, backend, "amd64").pinned_ref
+    except n.CuaError.Unsupported:
+        raise
+    except n.CuaError as error:
+        logger.debug("could not resolve %s for Fleet (%s); sending it as given", reference, error)
+        return reference
+
+
 class FleetCloudTransport(FleetTransport):
     """Provision image-backed pools or claim pre-created pools through Fleet."""
 
@@ -499,21 +648,16 @@ class FleetCloudTransport(FleetTransport):
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
-        server_port: int = 8000,
+        server_port: Optional[int] = None,
         pool_name: str | None = None,
         create_claim: bool = False,
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
         autoscaling: Optional[WarmPoolAutoscaling] = None,
         ttl_seconds_after_created: Optional[int] = None,
+        fleet_runtime: Optional[FleetRuntime] = None,
     ) -> None:
-        if (
-            isinstance(server_port, bool)
-            or not isinstance(server_port, int)
-            or server_port < 1
-            or server_port > 65535
-        ):
-            raise ValueError("server_port must be an integer between 1 and 65535")
+        validate_server_port(server_port)
         if disk_gb is not None:
             raise ValueError("disk_gb is not supported by the Fleet cloud transport")
         if region != "us-east-1":
@@ -556,6 +700,14 @@ class FleetCloudTransport(FleetTransport):
                 )
         validate_ttl_seconds_after_created(ttl_seconds_after_created)
         self._image = image
+        # Resolved (and validated) up front, before any Fleet resource exists.
+        self._runtime = (
+            resolve_fleet_runtime(fleet_runtime, image)
+            if image is not None and cloud_registry_image(image)
+            else None
+        )
+        if fleet_runtime is not None and self._runtime is None:
+            raise ValueError("a Fleet runtime applies only to Fleet registry images")
         self._name = name
         self._explicit_pool = pool_name is not None
         self._pool_name = pool_name or name
@@ -566,6 +718,8 @@ class FleetCloudTransport(FleetTransport):
         self._time_to_start = time_to_start if time_to_start is not None else 600.0
         self._request_timeout = request_timeout or 30.0
         self._server_port = server_port
+        self._primary_service = ENV_SERVICE if server_port is None else _SERVER_SERVICE
+        self._primary_port = SPACESD_PORT if server_port is None else server_port
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
         self._autoscaling = autoscaling
@@ -622,7 +776,9 @@ class FleetCloudTransport(FleetTransport):
                             except Exception as lookup_error:
                                 raise create_error from lookup_error
                 bound = await self._sdk.wait_claim(self._claim)
-                await self._sdk.wait_service_ready(bound, "server", self._time_to_start)
+                await self._sdk.wait_service_ready(
+                    bound, self._primary_service, self._time_to_start
+                )
             except BaseException as provisioning_error:
                 cleanup_error: BaseException | None = None
                 try:
@@ -644,11 +800,16 @@ class FleetCloudTransport(FleetTransport):
                 self,
                 sdk=self._sdk,
                 bound=bound,
-                service_name="server",
+                service_name=self._primary_service,
                 timeout=self._request_timeout,
             )
             self._provisioned = True
         await FleetTransport.connect(self)
+
+    async def disconnect(self) -> None:
+        if not self._provisioned:
+            return
+        await FleetTransport.disconnect(self)
 
     async def create_snapshot(self, **_: Any) -> dict[str, Any]:
         raise NotImplementedError("Snapshots are not supported by the Fleet cloud transport")
@@ -658,17 +819,9 @@ class FleetCloudTransport(FleetTransport):
             raise ValueError("Fleet services can only expose numeric TCP ports")
         if not self._provisioned:
             raise ValueError("Transport not connected")
-        service = "server" if sandbox_port == self._server_port else f"port-{sandbox_port}"
-        from cua_sandbox.interfaces.tunnel import TunnelInfo
-
-        endpoint = self._sdk.service_url(self._bound, service)
-        parsed = urlparse(endpoint)
-        return TunnelInfo(
-            parsed.hostname or "",
-            parsed.port or (443 if parsed.scheme == "https" else 80),
-            sandbox_port,
-            url=endpoint,
-        )
+        # A loopback forward either way: over the spacesd's /tunnel when
+        # the image has it, else a proxy through the gateway.
+        return await FleetTransport.forward_tunnel(self, sandbox_port)
 
     async def delete_vm(self) -> None:
         await self._cleanup_resources()
@@ -696,28 +849,6 @@ class FleetCloudTransport(FleetTransport):
             await sdk.close()
 
     @classmethod
-    async def suspend_sandbox(cls, name: str) -> None:
-        sdk = _FleetClient()
-        try:
-            await sdk.set_pool_replicas(await sdk.get_pool(name), 0)
-        finally:
-            await sdk.close()
-
-    @classmethod
-    async def resume_sandbox(cls, name: str, time_to_start: Optional[float] = None) -> None:
-        del time_to_start
-        sdk = _FleetClient()
-        try:
-            await sdk.set_pool_replicas(await sdk.get_pool(name), 1)
-        finally:
-            await sdk.close()
-
-    @classmethod
-    async def restart_sandbox(cls, name: str, time_to_start: Optional[float] = None) -> None:
-        await cls.suspend_sandbox(name)
-        await cls.resume_sandbox(name, time_to_start)
-
-    @classmethod
     async def delete_sandbox(cls, name: str, *, pool_name: str | None = None) -> None:
         sdk = _FleetClient()
         try:
@@ -737,18 +868,16 @@ class FleetCloudTransport(FleetTransport):
 
     def _template_request(self) -> CreateTemplateRequest:
         assert self._image is not None
-        if self._services is not None:
+        if self._services is not None and self._server_port is None:
+            # Caller-declared services are published exactly as given.
+            service_ports = dict(self._services)
+        elif self._services is not None:
             service_ports = {
-                "server": self._server_port,
-                **{name: port for name, port in self._services.items() if name != "server"},
+                _SERVER_SERVICE: self._server_port,
+                **{name: port for name, port in self._services.items() if name != _SERVER_SERVICE},
             }
         else:
-            service_ports = {
-                "server": self._server_port,
-                **{
-                    f"port-{port}": port for port in self._image._ports if port != self._server_port
-                },
-            }
+            service_ports = default_services(self._server_port, self._image._ports)
         services = [
             SandboxServiceBuilder()
             .name(name)
@@ -757,17 +886,27 @@ class FleetCloudTransport(FleetTransport):
             .build()
             for name, port in service_ports.items()
         ]
-        container_disk_image = cloud_registry_image(self._image)
+        container_disk_image = fleet_image_ref(self._image, self._runtime)
         vm_template_builder = (
-            VmTemplateBuilder()
-            .container_disk_image(container_disk_image)
-            .probes(
+            VmTemplateBuilder().container_disk_image(container_disk_image).services(services)
+        )
+        if self._runtime is not None:
+            vm_template_builder = vm_template_builder.runtime(self._runtime)
+        # Daemon-agnostic readiness: a claim binds once the VM runs. Only a
+        # port the caller declared (server_port, or a "server" service)
+        # becomes a readiness probe; the default env service is waited for by
+        # the first interface call.
+        probe_port = (
+            self._server_port
+            if self._server_port is not None
+            else service_ports.get(_SERVER_SERVICE)
+        )
+        if probe_port is not None:
+            vm_template_builder = vm_template_builder.probes(
                 PreservedJson.from_json(
-                    json.dumps({"readinessProbe": {"tcpSocket": {"port": self._server_port}}})
+                    json.dumps({"readinessProbe": {"tcpSocket": {"port": probe_port}}})
                 )
             )
-            .services(services)
-        )
         # The pull secret authenticates the account's private ECR and nothing else.
         # Attaching it to a public image is not merely redundant: the gateway's
         # admission policy reads its presence as "enforce the ECR allowlist", so a
@@ -819,7 +958,9 @@ class FleetCloudTransport(FleetTransport):
 
     @staticmethod
     def _service_names(template: Any) -> list[str]:
-        return [service.name for service in template.spec.vm_template.services or []] or ["server"]
+        return [service.name for service in template.spec.vm_template.services or []] or [
+            ENV_SERVICE
+        ]
 
     @staticmethod
     def _validate_image(image: Image) -> None:
@@ -827,15 +968,10 @@ class FleetCloudTransport(FleetTransport):
             raise NotImplementedError(
                 "Fleet cloud sandboxes require a supported built-in image or Image.from_registry(...)"
             )
-        if (
-            image._layers
-            or image._env
-            or image._files
-            or image._snapshot_source
-            or image._disk_path
-        ):
+        if image._snapshot_source or image._disk_path:
             raise NotImplementedError(
-                "Fleet cloud supports registry images with optional exposed services only"
+                "Fleet cloud runs registry images (layers build remotely on them); local disk "
+                "files and snapshots stay local"
             )
 
 
@@ -850,12 +986,14 @@ def fleet_cloud_transport_for(image: Optional[Image]) -> type[FleetCloudTranspor
     return FleetCloudTransport
 
 
-def default_server_port(image: Optional[Image], server_port: int = 8000) -> int:
+def default_server_port(image: Optional[Image], server_port: Optional[int] = None) -> Optional[int]:
     """Resolve the guest control-server port for an image.
 
-    ``server_port`` wins when the caller changed it from the default; otherwise an
-    OSWorld image (``agent_type="osworld"``) selects the OSWorld server on 5000.
+    ``None`` is the daemon-agnostic default (cua-spacesd on ``env``). A
+    caller-supplied ``server_port`` wins; otherwise an OSWorld image
+    (``agent_type="osworld"``, the legacy adapter) selects the OSWorld Flask
+    server on 5000, published as ``server``.
     """
-    if server_port == 8000 and image is not None and image._agent_type == "osworld":
+    if server_port is None and image is not None and image._agent_type == "osworld":
         return OSWORLD_SERVER_PORT
     return server_port

@@ -1,0 +1,128 @@
+---
+title: Configure coding agents
+description: Give a sandboxed coding agent MCP servers, a custom endpoint, and credentials; the supported harnesses and the event kinds they emit.
+---
+
+These options extend [Run a coding agent in a sandbox](/cua-sdk/guides/run-a-coding-agent).
+The examples are regions of
+[`examples/agents-in-sandboxes/tour.py`](https://github.com/trycua/cua/blob/main/examples/agents-in-sandboxes/tour.py).
+
+## Give the agent MCP servers
+
+Every run gets the sandbox's own MCP tools (cua-driver: screen, input,
+windows) unless `sandbox_mcp=False` or the harness cannot take them (Pi has no MCP client, Hermes and OpenClaw read MCP only from their own config;
+Antigravity is off by default, see the table). Add more with `mcp_servers`: a URL
+(streamable HTTP, as reachable from inside the sandbox) or a command (stdio,
+run in the sandbox). Header values may be secrets; they are handled like keys.
+
+```python test="excerpt" id="mcp" source="examples/agents-in-sandboxes/tour.py#mcp"
+run = await agents.run(
+    "openai-codex",
+    "Use the docs server to look up our API style guide, then review api.py.",
+    cua.AgentRunOptions(
+        env_from_host=["OPENAI_API_KEY"],
+        mcp_servers=[
+            cua.AgentRunMcpServer(name="docs", url="https://mcp.example.com/mcp",
+                                  headers={"Authorization": "Bearer <token>"}),
+            cua.AgentRunMcpServer(name="fs", command="npx",
+                                  args=["-y", "@modelcontextprotocol/server-filesystem", "/srv"]),
+        ],
+        exit_when_idle=True,
+    ),
+)
+```
+
+```bash test="cli-shape" id="cli-mcp"
+cua agent run local:dev openai-codex "Review api.py" --env-from-host OPENAI_API_KEY \
+  --mcp docs=https://mcp.example.com/mcp --no-sandbox-mcp
+```
+
+## Use a custom endpoint or proxy
+
+`base_url` points the harness at a gateway, proxy or compatible server;
+`wire` picks its format (`anthropic`, `openai-responses`, `openai-chat`,
+`gemini`) when it differs from the harness's own.
+
+```python test="excerpt" id="endpoint" source="examples/agents-in-sandboxes/tour.py#endpoint"
+run = await agents.run(
+    "claude-code",
+    "Summarize the repository in five bullet points.",
+    cua.AgentRunOptions(
+        env={"ANTHROPIC_API_KEY": "<gateway key>"},
+        base_url="https://llm-gateway.internal.example.com",
+        model="claude-sonnet-4-5",
+        exit_when_idle=True,
+    ),
+)
+```
+
+```bash test="cli-shape" id="cli-endpoint"
+cua agent run local:dev claude-code "Summarize the repository" \
+  --env-from-host ANTHROPIC_API_KEY --base-url https://llm-gateway.internal.example.com \
+  --model <model-id>
+```
+
+## Harnesses
+
+```bash test="cli-shape" id="cli-harnesses"
+cua agent harnesses
+```
+
+```python test="docs" id="harness-ids"
+import json
+
+import cua
+
+print([h["id"] for h in json.loads(cua.agent_harnesses())])
+# ['claude-code', 'openai-codex', 'gemini-cli', 'google-antigravity', 'opencode', 'goose', 'pi', 'hermes', 'openclaw']
+```
+
+| Harness | Key variables (any one) | Endpoint wire | Notes |
+| --- | --- | --- | --- |
+| `claude-code` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` | `anthropic` | |
+| `openai-codex` | `OPENAI_API_KEY`, `CODEX_API_KEY` | `openai-responses` | |
+| `gemini-cli` | `GEMINI_API_KEY`, `GOOGLE_API_KEY` | `gemini` | Needs a paid API key |
+| `google-antigravity` | `GEMINI_API_KEY` | `gemini` | Headless ACP server, no terminal CLI; sandbox MCP off by default |
+| `opencode` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | `openai-chat` | |
+| `goose` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY` | `openai-chat` | |
+| `pi` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | `openai-chat` | Community ACP adapter; no MCP client |
+| `hermes` | `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | `openai-chat` | Needs git; ignores run MCP servers |
+| `openclaw` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | `openai-chat` | Starts its own loopback Gateway; no per-run MCP servers |
+
+`cua agent harnesses` (or `cua.agent_harnesses()`) prints the full record:
+what each installs, its interactive CLI, and known limits.
+
+## Credentials
+
+- Keys reach a run only as explicit per-run env (`env`, `env_from_host`,
+  `--env-from-host`). They are written with mode 0600 in the run's directory,
+  redacted from its event log, and never passed in argv.
+- Nothing is copied from your machine's agent config (`~/.claude`, `~/.codex`,
+  and so on).
+- To use a signed-in session instead of a key, move it with
+  [teleport](/spaces/guides/teleport-an-app) (`claude-code` is a
+  built-in app), which shows what will move and asks for approval first.
+- See also [Pass secrets safely](/cua-sdk/guides/secrets).
+
+## Event kinds
+
+Each event has `seq`, `turn`, `kind`, optional `text` and tool fields, a
+one-line `line` rendering, and `json` (the raw record, ACP payload included).
+
+| Kind | Meaning |
+| --- | --- |
+| `install` | Installing the harness or its dependencies |
+| `initialized`, `authenticated`, `session`, `mode` | ACP setup |
+| `turn_started` | A prompt or follow-up began (`text` is the prompt) |
+| `message`, `thought` | Agent text and reasoning |
+| `user_message` | A user message the agent echoed |
+| `tool_call`, `tool_update` | A tool call and its progress (`tool_title`, `tool_kind`, `tool_status`) |
+| `plan` | The agent's plan entries |
+| `usage` | Token usage update |
+| `permission` | A permission request, auto-approved (the sandbox is the boundary) |
+| `commands`, `info`, `notice` | Available commands and informational updates |
+| `cancel_requested` | `interrupt()` was received |
+| `turn_ended` | The turn finished (`stop_reason`, usage) |
+| `error` | A harness or provider error |
+| `exited` | The run's process ended |
+| `other` | Anything else the harness sent |

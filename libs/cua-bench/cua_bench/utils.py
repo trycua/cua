@@ -15,12 +15,12 @@ async def render_snapshot_async(
     setup_config: Dict[str, Any],
     snapshot: Dict[str, Any],
     screenshot_delay: float = 0,
-    provider: Literal["webtop", "computer"] = "webtop",
+    provider: Literal["computer", "native"] = "computer",
 ) -> bytes:
     """Render a snapshot and return screenshot bytes (async).
 
     Args:
-        provider: Provider name ("webtop" or "computer")
+        provider: Provider name ("computer"; "webtop" was removed in 0.3)
         setup_config: Configuration dict for create_sandbox setup_config parameter
         snapshot: Snapshot dict containing windows and other state
         screenshot_delay: Delay in seconds before taking screenshot
@@ -91,14 +91,14 @@ async def render_windows_async(
     setup_config: Dict[str, Any],
     windows: List[Dict[str, Any]],
     screenshot_delay: float = 0,
-    provider: Literal["webtop", "computer"] = "webtop",
+    provider: Literal["computer", "native"] = "computer",
     return_snapshot: bool = False,
     scroll_into_view: Optional[str] = None,
 ) -> bytes | Tuple[bytes, Snapshot]:
     """Render windows and return screenshot bytes (async).
 
     Args:
-        provider: Provider name ("webtop" or "computer")
+        provider: Provider name ("computer"; "webtop" was removed in 0.3)
         setup_config: Configuration dict for create_sandbox setup_config parameter
         windows: List of window dicts to pass directly to launch_window
         screenshot_delay: Delay in seconds before taking screenshot
@@ -181,12 +181,12 @@ def render_snapshot(
     setup_config: Dict[str, Any],
     snapshot: Dict[str, Any],
     screenshot_delay: float = 0,
-    provider: Literal["webtop", "computer"] = "webtop",
+    provider: Literal["computer", "native"] = "computer",
 ) -> bytes:
     """Render a snapshot and return screenshot bytes (sync wrapper).
 
     Args:
-        provider: Provider name ("webtop" or "computer")
+        provider: Provider name ("computer"; "webtop" was removed in 0.3)
         setup_config: Configuration dict for create_sandbox setup_config parameter
         snapshot: Snapshot dict containing windows and other state
         screenshot_delay: Delay in seconds before taking screenshot
@@ -201,14 +201,14 @@ def render_windows(
     setup_config: Dict[str, Any],
     windows: List[Dict[str, Any]],
     screenshot_delay: float = 0,
-    provider: Literal["webtop", "computer"] = "webtop",
+    provider: Literal["computer", "native"] = "computer",
     return_snapshot: bool = False,
     scroll_into_view: Optional[str] = None,
 ) -> bytes | Tuple[bytes, Snapshot]:
     """Render windows and return screenshot bytes (sync wrapper).
 
     Args:
-        provider: Provider name ("webtop" or "computer")
+        provider: Provider name ("computer"; "webtop" was removed in 0.3)
         setup_config: Configuration dict for create_sandbox setup_config parameter
         windows: List of window dicts to pass directly to launch_window
         screenshot_delay: Delay in seconds before taking screenshot

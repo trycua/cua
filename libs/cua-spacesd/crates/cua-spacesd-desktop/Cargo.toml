@@ -1,0 +1,117 @@
+[package]
+name = "cua-spacesd-desktop"
+description = "Private adapter from cua-driver primitives to RCDP providers"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-media-protocol = { path = "../../../cua/crates/cua-media-protocol" }
+cua-spacesd-provider-api = { path = "../cua-spacesd-provider-api" }
+cua-spacesd-session = { path = "../cua-spacesd-session" }
+cua-media-transport = { path = "../../../cua/crates/cua-media-transport", features = ["quic"] }
+quinn.workspace = true
+bytes.workspace = true
+cua-media-codec = { path = "../../../cua/crates/cua-media-codec", features = ["server"] }
+cua-driver-core = { path = "../../../cua-driver/rust/crates/cua-driver-core" }
+cua-driver-contract = { path = "../../../cua-driver/rust/crates/cua-driver-contract" }
+# Platform-agnostic: types, geometry and the session->color identity mapping,
+# with no windowing code (each platform crate owns its own overlay window). It
+# is a shared dependency, not a Windows one, because presence identity and
+# cursor color are cross-platform protocol semantics: the color a client paints
+# for an agent must match the color that agent's cursor has on the origin
+# desktop on every platform.
+cursor-overlay = { path = "../../../cua-driver/rust/crates/cursor-overlay" }
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+# Desktop gRPC services (cua.env.v1) and the /media WebSocket.
+cua-proto = { path = "../../../cua/crates/cua-proto" }
+cua-spacesd-server = { path = "../cua-spacesd-server" }
+tonic = { version = "0.14", default-features = false, features = ["router", "codegen"] }
+prost = "0.14"
+axum = { version = "0.8", features = ["ws", "http2"] }
+http = "1"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util.workspace = true
+getrandom = "0.3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+# Display enumeration (src/macos_display.rs); the version platform-macos uses.
+core-graphics = { version = "0.24", features = ["highsierra"] }
+# System cursor shape probe (src/macos_cursor_shape.rs). Same majors as
+# platform-macos so no second objc2 stack is pulled in.
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSCursor", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
+objc2-foundation = { version = "0.2", features = ["NSData", "NSDictionary", "NSGeometry"] }
+platform-macos = { path = "../../../cua-driver/rust/crates/platform-macos" }
+# MUST stay in lockstep with the `screencapturekit` version used by
+# `platform-macos` (libs/cua-driver/rust/crates/platform-macos). The crate's Swift bridge exports unmangled
+# `@_cdecl` C symbols (`sc_stream_create`, ...) from a static archive that is
+# always named `libScreenCaptureKitBridge.a`, so two versions in one binary
+# collapse to a single surviving definition at link time. 6.x declares
+# `sc_stream_create` with 5 parameters and 8.x defines it with 7 (the extra two
+# being `contextRetain`/`contextRelease` function pointers it calls
+# unconditionally), so a mismatched pair makes `SCStream::new_with_delegate`
+# branch through an uninitialised argument register and segfault at 0x0.
+# `scripts/ci/check-screencapturekit-unified.sh` enforces this.
+screencapturekit = { version = "8.0.1", features = ["macos_15_0"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Pure-Rust XCB bindings for X11 window enumeration, per-window capture and
+# window management. `composite` backs occluded windows so they still stream a
+# full frame. No input extensions: every input injection is delegated to
+# cua-driver (`platform-linux`), enforced by `tests/no_native_input.rs`. No C
+# X11 dev headers are required, which keeps the linux/amd64 cross-build minimal.
+x11rb = { version = "0.13", features = ["composite", "shm", "damage", "randr", "xfixes"] }
+# The cua-driver Linux platform: all input (targeted one-shot delivery and
+# interactive sessions), AT-SPI accessibility, launch_app, clipboard and the
+# agent-cursor overlay.
+platform-linux = { path = "../../../cua-driver/rust/crates/platform-linux" }
+# Map MIT-SHM segments returned by the X server (XShm capture) and the
+# Wayland screencopy buffers.
+memmap2 = "0.9"
+# Wayland screencopy (src/linux_screencopy.rs): the same pure-Rust client
+# crates platform-linux uses, so no libwayland is linked.
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# memfd_create and poll for the screencopy buffers and event wait.
+libc = "0.2"
+# X11 CLIPBOARD selection ownership (text and file lists).
+clipboard-rs = "0.3.5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+openh264 = "0.9.7"
+platform-windows = { path = "../../../cua-driver/rust/crates/platform-windows" }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+] }
+
+[dev-dependencies]
+async-trait = "0.1"
+tonic = { version = "0.14", features = ["transport"] }
+tokio-tungstenite.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Independent decoder for the conformance tests' pixel oracle.
+openh264 = "0.9.8"
+libc = "0.2"

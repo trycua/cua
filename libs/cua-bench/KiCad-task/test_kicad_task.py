@@ -17,6 +17,7 @@ spec.loader.exec_module(kicad_task)
 # Task loading
 # ---------------------------------------------------------------------------
 
+
 def test_load_returns_correct_count():
     tasks = kicad_task.load()
     assert len(tasks) == len(kicad_task.TASK_VARIANTS)
@@ -39,6 +40,7 @@ def test_load_empty_netlist_variant():
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_session(netlist_content: str, components=None, compare_score: float = 1.0):
     session = MagicMock()
     session.apps.kicad.read_netlist = AsyncMock(return_value=netlist_content)
@@ -50,6 +52,7 @@ def _mock_session(netlist_content: str, components=None, compare_score: float = 
 # ---------------------------------------------------------------------------
 # Evaluate: missing / empty netlist
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_evaluate_returns_zero_when_netlist_missing():
@@ -69,6 +72,7 @@ async def test_evaluate_returns_zero_when_netlist_whitespace_only():
 # ---------------------------------------------------------------------------
 # Evaluate: Path 1 — structural comparison via compare_netlist()
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_evaluate_structural_perfect_match():
@@ -105,10 +109,12 @@ async def test_evaluate_structural_passes_correct_paths():
 # Evaluate: Path 2 — expected_components fallback
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_evaluate_component_count_correct():
     """Correct component counts → score 1.0."""
     from cua_bench import Task
+
     task = Task(
         description="test",
         metadata={"expected_components": {"R": 1, "D": 2}},
@@ -124,6 +130,7 @@ async def test_evaluate_component_count_correct():
 async def test_evaluate_component_count_wrong():
     """Wrong component counts → score < 1.0."""
     from cua_bench import Task
+
     task = Task(
         description="test",
         metadata={"expected_components": {"R": 2, "D": 2}},
@@ -137,6 +144,7 @@ async def test_evaluate_component_count_wrong():
 # ---------------------------------------------------------------------------
 # Evaluate: Path 3 — netlist_export_only (any valid .net passes)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_evaluate_export_only_passes_with_valid_netlist():

@@ -1,0 +1,60 @@
+[package]
+name = "cua-byoc"
+description = "Your own cloud account as a sandbox location (`--on aws|gcp|modal`): the AWS EC2, Google Compute Engine and Modal providers of the sandbox layer, `cua cloud` connect/test/sweep, ownership tags and records, and the relay join every cloud sandbox dials out with."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+# AWS EC2 through the official AWS SDK for Rust (the default credential
+# chain: profiles, SSO, assume-role, environment).
+aws = ["dep:aws-config", "dep:aws-sdk-ec2", "dep:aws-sdk-sts", "dep:aws-types"]
+# Google Compute Engine over its REST API with the gcloud CLI's sign-in.
+gcp = ["dep:reqwest"]
+# Modal Sandboxes through the cua-modal-helper (Modal's official Go SDK).
+modal = ["dep:cua-contrib"]
+# Every provider.
+all = ["aws", "gcp", "modal"]
+# Test doubles (a scripted cloud) for this crate's and the daemon's tests.
+testing = []
+
+[dependencies]
+cua-sandbox-core.workspace = true
+cua-spacesd-client.workspace = true
+cua-host.workspace = true
+cua-auth.workspace = true
+cua-home.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+humantime.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process", "fs", "time", "sync", "macros"] }
+tracing.workspace = true
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client", "sso", "credentials-process", "credentials-login"], optional = true }
+aws-sdk-ec2 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"], optional = true }
+aws-sdk-sts = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"], optional = true }
+aws-types = { version = "1", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"], optional = true }
+# Image configs (the start command) from the registry, shared with the
+# contrib providers.
+cua-contrib = { workspace = true, optional = true }
+
+[dev-dependencies]
+axum.workspace = true
+url.workspace = true
+# The NoCloud seed writer of the opt-in QEMU boot test (tests/boot_qemu.rs).
+cua-vmm.workspace = true
+ring = "0.17"
+cua-spaces = { path = "../cua-spaces" }
+cua-byoc = { path = ".", features = ["testing", "all"] }
+cua-host = { workspace = true, features = ["testing"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }

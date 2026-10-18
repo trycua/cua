@@ -4,12 +4,13 @@
 The script discovers the packages in this monorepo (Cargo crates, npm packages,
 and Python projects), reads each package's declared licence, and follows every
 internal dependency edge: a Cargo path or workspace dependency, a pnpm
-``workspace:`` (or ``file:``/``link:``) dependency, or a uv path or workspace
-source. When an MIT package depends on an internal package whose licence is not
+``workspace:`` (or ``file:``/``link:``) dependency, a uv path or workspace
+source, or a SwiftPM ``.package(path:)`` dependency. When an MIT package depends on an internal package whose licence is not
 in the allow-list, the edge is reported as a violation.
 
 A package's licence comes from its metadata (Cargo ``license``/``license-file``,
-npm ``license``, pyproject ``project.license``). When no field is set, the
+npm ``license``, pyproject ``project.license``; SwiftPM has no licence field, so
+a Swift package always uses its nearest LICENSE file). When no field is set, the
 nearest LICENSE file up the tree is used and the package is reported as having
 no declared licence.
 
@@ -38,7 +39,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 ALLOWED = {"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "Unlicense"}
 
-MANIFESTS = ("Cargo.toml", "package.json", "pyproject.toml")
+MANIFESTS = ("Cargo.toml", "package.json", "pyproject.toml", "Package.swift")
 SKIP_DIRS = {"node_modules", ".git", "target", ".venv", "venv", "__pycache__", "dist", "build"}
 LICENSE_FILE_RE = re.compile(r"^(LICEN[CS]E|COPYING)([.-].*)?$", re.IGNORECASE)
 
@@ -55,6 +56,8 @@ KNOWN_SPDX = [
     "BSL-1.0",
     "BUSL-1.1",
     "CC0-1.0",
+    "FSL-1.1-ALv2",
+    "FSL-1.1-MIT",
     "GPL-2.0-only",
     "GPL-2.0-or-later",
     "GPL-3.0-only",
@@ -313,6 +316,9 @@ def detect_license_text(path: str) -> Optional[str]:
         return "MPL-2.0"
     if "business source license" in low:
         return "BUSL-1.1"
+    # Before MIT and Apache: the FSL embeds its future licence's text.
+    if "functional source license, version 1.1" in low:
+        return "FSL-1.1-MIT" if "mit future license" in low else "FSL-1.1-ALv2"
     if "apache license" in low and "version 2.0" in low:
         return "Apache-2.0"
     if "permission is hereby granted, free of charge, to any person obtaining a copy" in low:
@@ -508,6 +514,8 @@ class Repo:
                 self._add_cargo(rel, directory)
             elif base == "package.json":
                 self._add_npm(rel, directory)
+            elif base == "Package.swift":
+                self._add_swift(rel, directory)
             else:
                 self._add_python(rel, directory)
         for pkg in self.packages:
@@ -659,6 +667,26 @@ class Repo:
             pkg.raw_deps.append(("dev", req, None))
         self.packages.append(pkg)
 
+    def _add_swift(self, rel: str, directory: str) -> None:
+        try:
+            with open(self.abs(rel), encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as exc:
+            self.warnings.append("could not read %s: %s" % (rel, exc))
+            return
+        m = re.search(r'Package\(\s*name:\s*"([^"]+)"', text)
+        if not m:
+            return
+        pkg = Package("swift", m.group(1), directory, {})
+        # SwiftPM has no dev or optional dependencies: every package edge ships.
+        for dep in re.finditer(r'\.package\(\s*(?:name:\s*"[^"]*"\s*,\s*)?path:\s*"([^"]+)"', text):
+            pkg.raw_deps.append(("runtime", dep.group(1), dep.group(1)))
+        self.packages.append(pkg)
+
+    def _swift_target(self, pkg, spec, by_dir):
+        target_dir = self.rel(self.abs(self._join(pkg.directory, spec)))
+        return by_dir.get(("swift", target_dir)), "path %s" % spec
+
     @staticmethod
     def _join(directory: str, rel: str) -> str:
         return rel if directory == "." else directory + "/" + rel
@@ -679,6 +707,8 @@ class Repo:
                     target, where = self._cargo_target(pkg, name, spec, by_dir)
                 elif pkg.ecosystem == "npm":
                     target, where = self._npm_target(pkg, name, spec, by_dir, by_name)
+                elif pkg.ecosystem == "swift":
+                    target, where = self._swift_target(pkg, spec, by_dir)
                 else:
                     target, where = self._python_target(pkg, name, by_dir, by_name)
                 if where and target is None:

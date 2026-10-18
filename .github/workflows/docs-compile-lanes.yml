@@ -1,0 +1,58 @@
+name: "Docs: Swift and Kotlin blocks compile"
+
+# Docs code blocks tagged test="swift" or test="kotlin" compile against the
+# cua SDK's Swift package and Kotlin binding in this repository
+# (tests/e2e/cua-sdk/docs/compile_lane.py). Compile-only: the blocks are
+# wrapped in a function in a library target, so no Rust library is built or
+# linked and nothing runs.
+
+on:
+  pull_request:
+    paths:
+      - "docs/content/docs/**"
+      - "libs/cua/swift/**"
+      - "libs/cua/kotlin/**"
+      - "tests/e2e/cua-sdk/docs/compile_lane.py"
+      - "tests/e2e/cua-sdk/docs/extract.py"
+      - "tests/e2e/cua-sdk/docs/preludes/**"
+      - ".github/workflows/docs-compile-lanes.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-compile-lanes-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  swift:
+    name: swift blocks
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Compile the Swift blocks
+        env:
+          CUA_E2E_RESULTS: ${{ runner.temp }}/docs-swift
+        run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane swift
+
+  kotlin:
+    name: kotlin blocks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The same image ci-cua-sdk.yml compiles the Kotlin binding with.
+    container: gradle:8.10.2-jdk17
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Compile the Kotlin blocks
+        run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin

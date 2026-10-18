@@ -1,0 +1,6 @@
+[toolchain]
+# rustdoc JSON is nightly-only and its format changes between nightlies.
+# Keep in lockstep with NIGHTLY in src/main.rs and rustdoc-types in Cargo.toml
+# (nightly-2026-09-20 emits FORMAT_VERSION 61 = rustdoc-types 0.61.0).
+channel = "nightly-2026-09-20"
+profile = "minimal"

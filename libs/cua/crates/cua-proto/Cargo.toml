@@ -1,0 +1,44 @@
+[package]
+name = "cua-proto"
+description = "Protobuf contract (cua.env.v1, cua.daemon.v1) and tonic codegen for cua-spacesd and the cua SDK."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+# The .proto sources live outside the crate (libs/cua/proto); packaging for
+# crates.io would need them vendored. Not published until then.
+publish = false
+
+[features]
+default = ["client", "server"]
+# Generated tonic clients (`*_service_client` modules). Transport-agnostic:
+# bring a `tonic::client::GrpcService` (tonic Channel, tonic-web client,
+# a browser fetch transport on wasm32).
+client = []
+# Generated tonic servers (`*_service_server` modules). Serve them with
+# tonic's `server` feature (and tonic-web) in the binary that hosts them.
+server = []
+# Canonical proto3-JSON serde impls for every message (pbjson).
+serde = ["dep:serde", "dep:pbjson"]
+
+[dependencies]
+prost.workspace = true
+# Well-known types. pbjson-types is prost-compatible (same wire format) and
+# additionally implements serde, which keeps the generated types identical
+# whether or not the `serde` feature is enabled.
+pbjson-types.workspace = true
+tonic = { workspace = true, default-features = false, features = ["codegen"] }
+tonic-prost.workspace = true
+serde = { workspace = true, optional = true }
+pbjson = { workspace = true, optional = true }
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+prost-build.workspace = true
+pbjson-build.workspace = true
+
+[dev-dependencies]
+prost-types.workspace = true
+serde_json.workspace = true

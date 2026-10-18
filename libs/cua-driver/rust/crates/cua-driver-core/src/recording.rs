@@ -690,9 +690,10 @@ impl RecordingSession {
         // Write initial session.json — final video metadata is rewritten on
         // stop. We mark `present` based on whether ffmpeg actually started,
         // not just whether the caller asked for video.
+        let started_at_ms = now_ms();
         let session_payload = serde_json::json!({
             "schema_version": 1,
-            "started_at_monotonic_ms": now_ms(),
+            "started_at_monotonic_ms": started_at_ms,
             "video": video_session_payload(video_present, video_error.as_deref(), None),
             "cursor": { "present": inner.cursor.is_some(), "sample_count": 0 }
         });
@@ -709,7 +710,7 @@ impl RecordingSession {
         inner.output_dir = Some(dir);
         inner.state_budget = state_budget;
         inner.next_turn = 1;
-        inner.session_start_ms = now_ms();
+        inner.session_start_ms = started_at_ms;
         inner.session_monotonic_start = Some(monotonic_start);
         inner.last_error = video_error;
         inner.last_video = None;
@@ -751,6 +752,7 @@ impl RecordingSession {
         }
         inner.owner = None;
         let dir = inner.output_dir.clone();
+        let started_at_ms = inner.session_start_ms;
         let (video_meta, stop_error) = match inner.video.take().map(|rec| rec.stop()) {
             Some(Ok(meta)) => match validate_video_metadata(meta) {
                 Ok(meta) => (Some(meta), None),
@@ -786,7 +788,7 @@ impl RecordingSession {
             };
             let session_payload = serde_json::json!({
                 "schema_version": 1,
-                "started_at_monotonic_ms": now_ms(),
+                "started_at_monotonic_ms": started_at_ms,
                 "video": video_block,
                 "cursor": { "present": cursor_samples > 0, "sample_count": cursor_samples }
             });
@@ -1204,15 +1206,21 @@ fn state_status(state: &StateCapture, expected: bool) -> Value {
     status
 }
 
+/// How a turn's click marker is expected and whether it was captured.
+struct ClickEvidence {
+    expected: bool,
+    captured: bool,
+    /// Recorded when no click marker applies to the turn.
+    not_applicable_classification: &'static str,
+}
+
 fn write_evidence_manifest(
     turn_dir: &Path,
     before: &TurnCapture,
     after: &TurnCapture,
     state_expected: bool,
-    click_expected: bool,
-    click_captured: bool,
+    click: ClickEvidence,
     supplemental: &DispatchClickCapture,
-    click_not_applicable_classification: &'static str,
 ) -> anyhow::Result<()> {
     let mut manifest = serde_json::json!({
         "schema": "cua-turn-evidence/v1",
@@ -1232,12 +1240,12 @@ fn write_evidence_manifest(
                 after.screenshot_classification,
             ),
         },
-        "click": if click_expected {
-            capture_status(click_captured, true, None)
+        "click": if click.expected {
+            capture_status(click.captured, true, None)
         } else {
             serde_json::json!({
                 "status": "not_applicable",
-                "classification": click_not_applicable_classification,
+                "classification": click.not_applicable_classification,
             })
         },
     });
@@ -1430,7 +1438,7 @@ fn write_turn_with_after(
         "arguments": args,
         "result_summary": result_text,
         "result_error": result_is_error,
-        "timestamp": iso_now(),
+        "timestamp": iso8601_utc_from_unix_ms(now),
         "t_ms_from_session_start": now.saturating_sub(session_start_ms),
         "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
     });
@@ -1482,18 +1490,20 @@ fn write_turn_with_after(
         &before,
         &after,
         pid.is_some() && capture_visual_state,
-        click_expected,
-        click_captured,
-        &supplemental,
-        if refused_before_target_resolution {
-            "action_refused_before_target_resolution"
-        } else if refused_before_dispatch {
-            "action_refused_before_dispatch"
-        } else if semantic_without_point {
-            "semantic_action_without_point"
-        } else {
-            "not_a_click_action"
+        ClickEvidence {
+            expected: click_expected,
+            captured: click_captured,
+            not_applicable_classification: if refused_before_target_resolution {
+                "action_refused_before_target_resolution"
+            } else if refused_before_dispatch {
+                "action_refused_before_dispatch"
+            } else if semantic_without_point {
+                "semantic_action_without_point"
+            } else {
+                "not_a_click_action"
+            },
         },
+        &supplemental,
     )?;
 
     Ok(())
@@ -1514,12 +1524,21 @@ pub fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn iso_now() -> String {
-    let d = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    // Format as fractional Unix seconds (simple, unambiguous, machine-readable).
-    format!("{:.3}", d.as_secs_f64())
+/// Format milliseconds since Unix epoch as an ISO-8601 UTC date-time with
+/// millisecond precision, e.g. `2026-01-01T00:00:00.000Z`.
+fn iso8601_utc_from_unix_ms(ms: u64) -> String {
+    let t = time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        t.year(),
+        u8::from(t.month()),
+        t.day(),
+        t.hour(),
+        t.minute(),
+        t.second(),
+        t.millisecond()
+    )
 }
 
 /// Build the `session.json` `video` field. Three shapes:
@@ -2322,13 +2341,24 @@ mod tests {
                 RecordingCaller::default(),
             )
             .expect("resolved refusal should reserve an evidence turn");
-        let refusal_record = crate::action_record::ActionExecutionRecord::builder(
-            crate::action_record::ActionEffect::Refused,
-            crate::action_record::ActionTransport::WindowsTargetedInjection,
-            crate::action_record::RequestedDelivery::Background,
+        // Derive the record from the real shared stale-zoom refusal so the
+        // recorder is proven to treat it as refused-before-dispatch (no
+        // click marker), not as an unverifiable delivered click.
+        let zoom_refusal = cache
+            .zoom(1, Some(2), None)
+            .expect_err("no zoom context was published")
+            .structured_content
+            .expect("zoom refusal is structured");
+        let refusal_record = crate::action_record::ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4, "from_zoom": true}),
+            &zoom_refusal,
         )
-        .build()
-        .expect("valid refusal record");
+        .expect("click refusal normalizes to an action record");
+        assert_eq!(
+            refusal_record.effect,
+            crate::action_record::ActionEffect::Refused
+        );
         session.finish_turn_with_outcome(
             pending,
             "refused before dispatch",
@@ -2807,6 +2837,35 @@ mod tests {
         assert!(
             !output_dir.join("turn-00002").exists(),
             "foreign calls must not leave turn folders"
+        );
+    }
+
+    #[test]
+    fn stop_preserves_recording_start_timestamp_in_session_manifest() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let output_dir = root.path().join("recording");
+        let session = RecordingSession::new();
+        session
+            .start(output_dir.to_str().expect("utf-8 output dir"), false, None)
+            .expect("start recording");
+
+        let read_manifest = || -> Value {
+            serde_json::from_slice(
+                &std::fs::read(output_dir.join("session.json")).expect("read session manifest"),
+            )
+            .expect("parse session manifest")
+        };
+        let started_at_ms = read_manifest()["started_at_monotonic_ms"]
+            .as_u64()
+            .expect("start timestamp is an integer");
+
+        std::thread::sleep(Duration::from_millis(100));
+        session.stop_owner(None).expect("stop recording");
+
+        assert_eq!(
+            read_manifest()["started_at_monotonic_ms"],
+            started_at_ms,
+            "finalizing the manifest must not replace the recording start time"
         );
     }
 

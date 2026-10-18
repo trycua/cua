@@ -1,0 +1,404 @@
+{
+  "_note": "Pinned, verified installables for sandboxes. Every archive (a release tarball, zip, or an app's own .deb payload) carries the sha256 its publisher lists (source); npm packages carry the registry's sha512 integrity for the pinned tarball; hermes is pinned to a commit and installed with its own frozen uv.lock. Checked 2026-09-24.",
+  "items": {
+    "node": {
+      "name": "Node.js",
+      "kind": "archive",
+      "version": "24.21.0",
+      "license": "MIT",
+      "source": "https://nodejs.org/dist/v24.21.0/SHASUMS256.txt",
+      "format": "tar.xz",
+      "strip": 1,
+      "archives": {
+        "aarch64": {
+          "urls": [
+            "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.xz"
+          ],
+          "sha256": "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2"
+        },
+        "x86_64": {
+          "urls": [
+            "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
+          ],
+          "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+        },
+        "macos-aarch64": {
+          "urls": [
+            "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.xz"
+          ],
+          "sha256": "6239d4cf92d864487ec8cd3615038f7b67e7f58b77b21cd2f09ea9fbd68065fe"
+        },
+        "macos-x86_64": {
+          "urls": [
+            "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.xz"
+          ],
+          "sha256": "0ae5a24c24bb7d015cd816c5036b3f90f2945aa872fcf54e58da054753b3a299"
+        }
+      },
+      "bins": {
+        "node": "bin/node",
+        "npm": "bin/npm",
+        "npx": "bin/npx"
+      }
+    },
+    "uv": {
+      "name": "uv",
+      "kind": "archive",
+      "version": "0.12.18",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/astral-sh/uv/releases/tag/0.12.18 (asset digests)",
+      "format": "tar.gz",
+      "strip": 1,
+      "archives": {
+        "aarch64": {
+          "urls": [
+            "https://github.com/astral-sh/uv/releases/download/0.12.18/uv-aarch64-unknown-linux-musl.tar.gz"
+          ],
+          "sha256": "0796973fb3eea8095078c3d0659bd17a5f6789a71b8dd85caff2483178f78ac3"
+        },
+        "x86_64": {
+          "urls": [
+            "https://github.com/astral-sh/uv/releases/download/0.12.18/uv-x86_64-unknown-linux-musl.tar.gz"
+          ],
+          "sha256": "e38d97460b98ebfd31b197de0fe9fa578add4bc8ba0179b203dd3f87b99f98e6"
+        }
+      },
+      "bins": {
+        "uv": "uv"
+      }
+    },
+    "acp-sdk": {
+      "name": "Agent Client Protocol TypeScript SDK (for the cua runner)",
+      "kind": "npm",
+      "version": "1.5.0",
+      "license": "Apache-2.0",
+      "source": "https://registry.npmjs.org/@agentclientprotocol/sdk/1.5.0",
+      "packages": [
+        {
+          "name": "@agentclientprotocol/sdk",
+          "version": "1.5.0",
+          "tarball": "https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.5.0.tgz",
+          "integrity": "sha512-524jwbB2iYWA+kWWyv9fhKbhU89dH/lu9u5EXwVNmfYzopV8BujCDxByBDZhxRUkB7RWIJzISCnwivdDk+bdVg=="
+        }
+      ],
+      "bins": {}
+    },
+    "mcp-remote": {
+      "name": "mcp-remote (stdio to streamable HTTP MCP bridge, for agents without HTTP MCP)",
+      "kind": "npm",
+      "version": "0.14.3",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/mcp-remote/0.14.3",
+      "packages": [
+        {
+          "name": "mcp-remote",
+          "version": "0.14.3",
+          "tarball": "https://registry.npmjs.org/mcp-remote/-/mcp-remote-0.14.3.tgz",
+          "integrity": "sha512-M8eMA+LQIYbVNpntDhbCzFYNxwF9O9KozOuDxOrGTtRXbHRq/m4NuFZ6892hmJcU4Zhv4qPfpxrXyG2FPWNMKg=="
+        }
+      ],
+      "bins": {
+        "mcp-remote": "node_modules/.bin/mcp-remote"
+      }
+    },
+    "claude-agent-acp": {
+      "name": "Claude Agent ACP adapter (Claude Code over ACP)",
+      "kind": "npm",
+      "version": "0.81.1",
+      "license": "Apache-2.0 (adapter); Claude Agent SDK under Anthropic's terms",
+      "source": "https://registry.npmjs.org/@agentclientprotocol/claude-agent-acp/0.81.1",
+      "packages": [
+        {
+          "name": "@agentclientprotocol/claude-agent-acp",
+          "version": "0.81.1",
+          "tarball": "https://registry.npmjs.org/@agentclientprotocol/claude-agent-acp/-/claude-agent-acp-0.81.1.tgz",
+          "integrity": "sha512-I+7tUPsrYnI0nBmdUonoRmdCi7ohyzZ0SeCpeIUFuVZ7a8ZxDyUNO6zBJpaeAIwuPXCk8aw+7t+QiwXS6FwskQ=="
+        }
+      ],
+      "bins": {
+        "claude-agent-acp": "node_modules/.bin/claude-agent-acp"
+      }
+    },
+    "claude-code": {
+      "name": "Claude Code CLI (interactive terminal)",
+      "kind": "npm",
+      "version": "2.1.281",
+      "license": "Anthropic Commercial Terms",
+      "source": "https://registry.npmjs.org/@anthropic-ai/claude-code/2.1.281",
+      "packages": [
+        {
+          "name": "@anthropic-ai/claude-code",
+          "version": "2.1.281",
+          "tarball": "https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.281.tgz",
+          "integrity": "sha512-sldhFsGqOnGA8pfOMLjyc+Sc331VkZ1TsP1sdpvMeVFYBikC5x53miTCsnTiE6Bio74IYPn7BIzTNbHcRp5fXQ=="
+        }
+      ],
+      "bins": {
+        "claude": "node_modules/.bin/claude"
+      }
+    },
+    "codex-acp": {
+      "name": "Codex ACP adapter (bundles the Codex CLI)",
+      "kind": "npm",
+      "version": "1.13.1",
+      "license": "Apache-2.0",
+      "source": "https://registry.npmjs.org/@agentclientprotocol/codex-acp/1.13.1",
+      "packages": [
+        {
+          "name": "@agentclientprotocol/codex-acp",
+          "version": "1.13.1",
+          "tarball": "https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-1.13.1.tgz",
+          "integrity": "sha512-NAbXTb6GRReox7B+8RN9VRB+sKUqFJh5Vg7Ex7RskYCO8EsYPJKN1WJvN7mOqjCKKK9lVDrNxtP7Bp/OUKPyAg=="
+        }
+      ],
+      "bins": {
+        "codex-acp": "node_modules/.bin/codex-acp",
+        "codex": "node_modules/.bin/codex"
+      }
+    },
+    "gemini-cli": {
+      "name": "Gemini CLI",
+      "kind": "npm",
+      "version": "0.61.0",
+      "license": "Apache-2.0",
+      "source": "https://registry.npmjs.org/@google/gemini-cli/0.61.0",
+      "packages": [
+        {
+          "name": "@google/gemini-cli",
+          "version": "0.61.0",
+          "tarball": "https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-0.61.0.tgz",
+          "integrity": "sha512-dbQ9A0qBtFJNi6XBkHvfZ6Azpn6PNgH/P8h2MZ67RLlX8hSAVjup39CRWqdRxZv7YXIuhrFaytr8y0jKnkoxnQ=="
+        }
+      ],
+      "bins": {
+        "gemini": "node_modules/.bin/gemini"
+      }
+    },
+    "opencode": {
+      "name": "OpenCode",
+      "kind": "npm",
+      "version": "1.18.32",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/opencode-ai/1.18.32",
+      "packages": [
+        {
+          "name": "opencode-ai",
+          "version": "1.18.32",
+          "tarball": "https://registry.npmjs.org/opencode-ai/-/opencode-ai-1.18.32.tgz",
+          "integrity": "sha512-SCrZWdq44y/EoH2+fE4HLcXS+DzpVqHPzmXk3p2RrufYy8LWvpfhRhKtijb5ktvx8r94ScqToqwHxR0BwS65OQ=="
+        }
+      ],
+      "bins": {
+        "opencode": "node_modules/.bin/opencode"
+      }
+    },
+    "pi": {
+      "name": "Pi coding agent and its ACP adapter (pi-acp)",
+      "kind": "npm",
+      "version": "0.87.1",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/0.87.1, https://registry.npmjs.org/pi-acp/0.0.33",
+      "packages": [
+        {
+          "name": "@earendil-works/pi-coding-agent",
+          "version": "0.87.1",
+          "tarball": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-0.87.1.tgz",
+          "integrity": "sha512-m8ArJUtVcQMSe1lLE/Ei7vX/JV7O39sWmWBsXV2NOU70F0qCp8GubA24pT3LnwTmM6LL2xV80/h6sQg85n69ew=="
+        },
+        {
+          "name": "pi-acp",
+          "version": "0.0.33",
+          "tarball": "https://registry.npmjs.org/pi-acp/-/pi-acp-0.0.33.tgz",
+          "integrity": "sha512-vX9kY1tK14E72G4dBAx+RGCk/k7XPjTHls6dLUxA8WSkBav6B6JHuSBv3eusp50LCR/GTRsR2kIKsG0Z5jANzw=="
+        }
+      ],
+      "bins": {
+        "pi": "node_modules/.bin/pi",
+        "pi-acp": "node_modules/.bin/pi-acp"
+      }
+    },
+    "openclaw": {
+      "name": "OpenClaw",
+      "kind": "npm",
+      "version": "2026.9.6",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/openclaw/2026.9.6",
+      "packages": [
+        {
+          "name": "openclaw",
+          "version": "2026.9.6",
+          "tarball": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.6.tgz",
+          "integrity": "sha512-Ie0kyQSCVfFqixsgVg39vevUDq01Ch5u3+7Yu5Y3qARczmdAe+lzp8bVnO9925rHiW/+CFp70zfORCyPmCH31g=="
+        }
+      ],
+      "bins": {
+        "openclaw": "node_modules/.bin/openclaw"
+      }
+    },
+    "goose": {
+      "name": "Goose",
+      "kind": "archive",
+      "version": "1.52.0",
+      "license": "Apache-2.0",
+      "source": "https://github.com/aaif-goose/goose/releases/tag/v1.52.0 (asset digests; also the ACP registry)",
+      "format": "tar.gz",
+      "strip": 0,
+      "archives": {
+        "aarch64": {
+          "urls": [
+            "https://github.com/aaif-goose/goose/releases/download/v1.52.0/goose-aarch64-unknown-linux-musl.tar.gz"
+          ],
+          "sha256": "4584ba8840fc77c2f3e48758f45543c18f1c1293d704941a8eeb5220852ce653"
+        },
+        "x86_64": {
+          "urls": [
+            "https://github.com/aaif-goose/goose/releases/download/v1.52.0/goose-x86_64-unknown-linux-musl.tar.gz"
+          ],
+          "sha256": "fdc86653285a89f7dcad6e76736af1688ab2cde44661b089328b2fc40bb79f9f"
+        }
+      },
+      "bins": {
+        "goose": "goose"
+      }
+    },
+    "hermes": {
+      "name": "Hermes Agent (Nous Research)",
+      "kind": "git-uv",
+      "version": "2026.9.21",
+      "license": "MIT",
+      "source": "https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.21",
+      "repo": "https://github.com/NousResearch/hermes-agent",
+      "commit": "d337b736aa1e8ebecfab043842d13e4a2d2f48a3",
+      "extras": [
+        "acp"
+      ],
+      "python": "3.12",
+      "needs": [
+        "uv"
+      ],
+      "bins": {
+        "hermes": ".venv/bin/hermes",
+        "hermes-acp": ".venv/bin/hermes-acp"
+      }
+    },
+    "antigravity-acp": {
+      "name": "Google Antigravity ACP server",
+      "kind": "archive",
+      "version": "1.2.1",
+      "license": "proprietary (https://antigravity.google/terms)",
+      "source": "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json (no checksum published; sha256 pinned by cua on 2026-09-24)",
+      "format": "zip",
+      "strip": 0,
+      "archives": {
+        "aarch64": {
+          "urls": [
+            "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.2.1-linux-arm64.zip"
+          ],
+          "sha256": "7e7ef4088bc185e1af4204029e0f4ec4210af20724f3ff262186ac0bcea6aa0e"
+        },
+        "x86_64": {
+          "urls": [
+            "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.2.1-linux-x86_64.zip"
+          ],
+          "sha256": "9fbf0bd584a26478161f637cabd75113f72541c842d148f578ef1a6a9edcb843"
+        }
+      },
+      "bins": {
+        "agy-acp-server": "agy_acp_server.par"
+      }
+    },
+    "vscode": {
+      "name": "Visual Studio Code",
+      "kind": "archive",
+      "version": "1.139.0",
+      "license": "Microsoft Software License",
+      "source": "https://update.code.visualstudio.com/api/versions/1.139.0/linux-deb-{arm64,x64}/stable (sha256hash); apt: the package's Depends (Ubuntu 24.04 names first) plus libsecret-1-0 for its secret storage",
+      "format": "deb",
+      "strip": 0,
+      "archives": {
+        "aarch64": {
+          "urls": [
+            "https://vscode.download.prss.microsoft.com/dbazure/download/stable/2242ebbb54efeeb0129e08e919e7e8d43033cd83/code_1.139.0-1790091463_arm64.deb"
+          ],
+          "sha256": "0cfabe5641de0ec70b2d9cdb4a14bbee029f70ffa2c9b63119fe93957dae20ce"
+        },
+        "x86_64": {
+          "urls": [
+            "https://vscode.download.prss.microsoft.com/dbazure/download/stable/2242ebbb54efeeb0129e08e919e7e8d43033cd83/code_1.139.0-1790100840_amd64.deb"
+          ],
+          "sha256": "5031849ea13d2297ec7c8f1af70c0bc7d585250cae306b53d668cb6a7a900623"
+        }
+      },
+      "bins": {
+        "code": "usr/share/code/bin/code"
+      },
+      "apt": [
+        "ca-certificates",
+        "libasound2t64|libasound2",
+        "libatk-bridge2.0-0t64|libatk-bridge2.0-0",
+        "libatk1.0-0t64|libatk1.0-0",
+        "libatspi2.0-0t64|libatspi2.0-0",
+        "libcairo2",
+        "libcups2t64|libcups2",
+        "libcurl3t64-gnutls|libcurl4t64|libcurl3-gnutls|libcurl4",
+        "libdbus-1-3",
+        "libexpat1",
+        "libgbm1",
+        "libglib2.0-0t64|libglib2.0-0",
+        "libgtk-3-0t64|libgtk-3-0",
+        "libnspr4",
+        "libnss3",
+        "libpango-1.0-0",
+        "libsecret-1-0",
+        "libstdc++6",
+        "libudev1",
+        "libx11-6",
+        "libxcb1",
+        "libxcomposite1",
+        "libxdamage1",
+        "libxext6",
+        "libxfixes3",
+        "libxkbcommon0",
+        "libxkbfile1",
+        "libxrandr2",
+        "xdg-utils"
+      ],
+      "ldd": [
+        "usr/share/code/code"
+      ]
+    },
+    "blender": {
+      "name": "Blender",
+      "kind": "archive",
+      "version": "5.2.2",
+      "license": "GPL-3.0-or-later (installed in the sandbox at run time; not linked or redistributed by cua)",
+      "source": "https://download.blender.org/release/Blender5.2/blender-5.2.2.sha256; apt: the system libraries its ELF NEEDs (libX11, libXrender, libXfixes, libXi, libxkbcommon; the rest ship in lib/) plus the GL/EGL it loads at run time",
+      "format": "tar.xz",
+      "strip": 1,
+      "archives": {
+        "x86_64": {
+          "urls": [
+            "https://download.blender.org/release/Blender5.2/blender-5.2.2-linux-x64.tar.xz",
+            "https://mirrors.ocf.berkeley.edu/blender/release/Blender5.2/blender-5.2.2-linux-x64.tar.xz"
+          ],
+          "sha256": "84098912789dc450e95697c4184fb8a90acbe5111c2ba4aede3fecb57806a168"
+        }
+      },
+      "bins": {
+        "blender": "blender"
+      },
+      "apt": [
+        "libx11-6",
+        "libxrender1",
+        "libxfixes3",
+        "libxi6",
+        "libxkbcommon0",
+        "libgl1",
+        "libegl1"
+      ],
+      "ldd": [
+        "blender"
+      ]
+    }
+  }
+}

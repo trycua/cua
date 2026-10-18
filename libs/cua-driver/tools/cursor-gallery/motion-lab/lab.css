@@ -1,0 +1,511 @@
+@font-face {
+  font-family: 'Instrument Serif';
+  src: url('https://fonts.gstatic.com/s/instrumentserif/v5/jizHRFtNs2ka5fXjeivQ4LroWlx-6zAjjH7Motmp5g.woff2')
+    format('woff2');
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Urbanist';
+  src: url('https://fonts.gstatic.com/s/urbanist/v18/L0xjDF02iFML4hGCyOCpRdycFsGxSrqD-R4fFg.ttf')
+    format('truetype');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Urbanist';
+  src: url('https://fonts.gstatic.com/s/urbanist/v18/L0xjDF02iFML4hGCyOCpRdycFsGxSrqDFRkfFg.ttf')
+    format('truetype');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2')
+    format('woff2');
+  font-weight: 400 600;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --bg: #000;
+  --card: #121417;
+  --card-hi: #1a1d22;
+  --ink: #f6f8fb;
+  --body: rgba(224, 230, 238, 0.84);
+  --muted: rgba(164, 173, 187, 0.8);
+  --brand: #9fd7ff;
+  --line: rgba(255, 255, 255, 0.1);
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-body: Urbanist, Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--body);
+  font-family: var(--font-body);
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+button,
+select,
+input {
+  font: inherit;
+  color: var(--ink);
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  align-items: center;
+  padding: 14px 22px;
+  background: rgba(0, 0, 0, 0.86);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.brand-wordmark {
+  font-weight: 600;
+  font-size: 24px;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+.brand-surface {
+  color: var(--muted);
+  font-size: 15px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+.tabs a {
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.tabs a.active {
+  background: var(--card-hi);
+  color: var(--ink);
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+  margin-left: auto;
+  font-size: 14px;
+  color: var(--muted);
+}
+.controls label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.controls select,
+.controls button {
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.controls button:hover {
+  border-color: rgba(159, 215, 255, 0.5);
+}
+.speed output {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  width: 44px;
+}
+
+#view {
+  padding: 18px 22px 40px;
+}
+
+.intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 24px;
+  margin: 6px 0 18px;
+}
+.intro h1 {
+  margin: 0;
+  font-weight: 600;
+  font-size: 34px;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+.intro h1 em {
+  font-family: var(--font-display);
+  font-weight: 400;
+  color: var(--brand);
+}
+.intro p {
+  margin: 6px 0 0;
+  max-width: 760px;
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile, 250px), 1fr));
+}
+.tile {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+.tile:hover {
+  border-color: rgba(159, 215, 255, 0.35);
+}
+.tile canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+}
+.tile .meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px 9px;
+}
+.tile .name {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.2;
+}
+.tile .sub {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.tile .pick {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.tile .pick.on {
+  color: var(--brand);
+}
+.tile .num {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.section-title {
+  margin: 22px 0 10px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+}
+.section-title span {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 14px;
+  margin-left: 8px;
+}
+
+.single {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
+}
+.single .stage {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.single .stage canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+}
+.plots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+.plot {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.plot h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.plot canvas {
+  width: 100%;
+  height: 150px;
+  display: block;
+}
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  align-self: start;
+}
+.panel h2 {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 24px;
+}
+.panel .cat {
+  color: var(--brand);
+  font-size: 13px;
+}
+.panel p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.panel .tech {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 13px;
+  margin: 10px 0;
+}
+.kv span:nth-child(odd) {
+  color: var(--muted);
+}
+.kv span:nth-child(even) {
+  font-family: var(--font-mono);
+  color: var(--ink);
+  text-align: right;
+}
+.param {
+  display: grid;
+  grid-template-columns: 1fr 110px;
+  gap: 4px 8px;
+  align-items: center;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.param .doc {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+}
+.param input {
+  width: 100%;
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.row-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.row-actions button,
+.row-actions a {
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+textarea.export {
+  width: 100%;
+  height: 160px;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 10px;
+  margin-top: 12px;
+}
+
+.sheet {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+.empty {
+  color: var(--muted);
+  padding: 40px 0;
+}
+
+/* Capture mode: no chrome, fixed layout. */
+body.capture .bar {
+  display: none;
+}
+body.capture #view {
+  padding: 28px 36px;
+}
+body.capture .tile .pick {
+  display: none;
+}
+
+body.capture .tile .sub {
+  display: none;
+}
+body.capture .tile .meta {
+  padding: 6px 10px 8px;
+}
+body.capture.compact .tile .name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.capture.compact .tile .num {
+  display: none;
+}
+body.capture.compact .intro {
+  margin: 0 0 14px;
+}
+body.capture.compact .intro h1 {
+  font-size: 30px;
+}
+body.capture.compact .intro p {
+  font-size: 15px;
+}
+body.capture.compact .grid {
+  gap: 8px;
+}
+body.capture.big .tile .name {
+  font-size: 20px;
+}
+body.capture.big .tile .sub {
+  display: block;
+  font-size: 13px;
+}
+body.capture.big .tile .meta {
+  padding: 10px 14px 12px;
+}
+body.capture.big .grid {
+  gap: 16px;
+}
+
+/* Capture: labels sit on the canvas so a full grid fits a 1080p frame. */
+body.capture .tile .meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.72));
+  pointer-events: none;
+}
+body.capture.big .tile .meta {
+  padding: 22px 16px 12px;
+}
+body.capture.big .intro h1 {
+  font-size: 34px;
+}
+body.capture.big .intro {
+  margin: 0 0 16px;
+}
+body.capture.compact .tile .meta {
+  padding: 14px 8px 5px;
+}
+body.capture .tile .num {
+  display: none;
+}
+
+.clip {
+  position: relative;
+}
+.clip canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: 18px;
+  background: #0b0d10;
+}
+.clip .caption {
+  position: absolute;
+  left: 34px;
+  bottom: 30px;
+  max-width: 46%;
+  padding: 18px 22px;
+  border-radius: 16px;
+  background: rgba(8, 10, 13, 0.78);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+}
+.clip-cat {
+  color: var(--brand);
+  font-size: 15px;
+}
+.clip-name {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 34px;
+  letter-spacing: -0.02em;
+  margin: 2px 0 6px;
+}
+.clip-look {
+  color: var(--body);
+  font-size: 17px;
+  line-height: 1.45;
+}
+.clip-brand {
+  position: absolute;
+  right: 30px;
+  top: 22px;
+  color: var(--muted);
+  font-size: 15px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+body.capture.clipmode #view {
+  padding: 0;
+}
+body.capture.clipmode .clip canvas {
+  border-radius: 0;
+  height: 100vh;
+  width: 100vw;
+  aspect-ratio: auto;
+}

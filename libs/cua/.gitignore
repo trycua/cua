@@ -1,0 +1,7 @@
+target/
+# The root .gitignore's Python `ENV/` rule matches `env/` on case-insensitive
+# filesystems (macOS, Windows); the contract package directory must be tracked.
+!/proto/cua/env/
+
+# Core dumps from crash tests (for example `kill -SEGV` in cua-media-codec).
+/crates/*/core

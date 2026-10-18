@@ -1,0 +1,162 @@
+{
+  "schema": "cua.transcript.jsonui/2",
+  "cast": "claude-basic-turn",
+  "instant": "complete",
+  "source": {
+    "cli": "claude",
+    "cliVersion": "2.1.278 (Claude Code)",
+    "layoutProfile": "claude-code/2.x",
+    "frameTimeMs": 13173,
+    "alternateScreen": true,
+    "unsupportedSequences": 0
+  },
+  "elements": [
+    {
+      "type": "rawText",
+      "provenance": "unrecognised",
+      "region": {
+        "firstRow": 0,
+        "lastRow": 5
+      },
+      "lines": [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        ""
+      ]
+    },
+    {
+      "type": "userMessage",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 6,
+        "lastRow": 6
+      },
+      "text": "Read calc.py and add a multiply function to it. Keep it short."
+    },
+    {
+      "type": "toolCall",
+      "provenance": "inferred",
+      "region": {
+        "firstRow": 8,
+        "lastRow": 8
+      },
+      "name": "Read",
+      "argumentSummary": "1 file",
+      "status": "unknown",
+      "statusProvenance": "inferred",
+      "resultLines": [],
+      "collapsed": false
+    },
+    {
+      "type": "toolCall",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 10,
+        "lastRow": 18
+      },
+      "name": "Update",
+      "argumentSummary": "calc.py",
+      "status": "succeeded",
+      "statusProvenance": "observed",
+      "resultLines": [
+        "Added 4 lines",
+        "4",
+        "5  def subtract(a, b):",
+        "6      return a - b",
+        "7 +",
+        "8 +",
+        "9 +def multiply(a, b):",
+        "10 +    return a * b"
+      ],
+      "collapsed": false
+    },
+    {
+      "type": "diff",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 11,
+        "lastRow": 18
+      },
+      "path": "calc.py",
+      "addedCount": 4,
+      "removedCount": 0,
+      "lines": [
+        {
+          "kind": "context",
+          "number": 5,
+          "text": "def subtract(a, b):"
+        },
+        {
+          "kind": "context",
+          "number": 6,
+          "text": "    return a - b"
+        },
+        {
+          "kind": "added",
+          "number": 7,
+          "text": ""
+        },
+        {
+          "kind": "added",
+          "number": 8,
+          "text": ""
+        },
+        {
+          "kind": "added",
+          "number": 9,
+          "text": "def multiply(a, b):"
+        },
+        {
+          "kind": "added",
+          "number": 10,
+          "text": "    return a * b"
+        }
+      ]
+    },
+    {
+      "type": "agentMessage",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 20,
+        "lastRow": 20
+      },
+      "markdown": "Added multiply to calc.py:8.",
+      "text": "Added multiply to calc.py:8."
+    },
+    {
+      "type": "turnBoundary",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 22,
+        "lastRow": 22
+      },
+      "kind": "completed",
+      "text": "✻ Cogitated for 5s · done 5:58 PM"
+    },
+    {
+      "type": "composer",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 30,
+        "lastRow": 32
+      },
+      "content": "",
+      "placeholder": null,
+      "cursorIsInside": true
+    },
+    {
+      "type": "modeIndicator",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 33,
+        "lastRow": 33
+      },
+      "mode": "accept_edits",
+      "rawText": "⏵⏵ accept edits on (shift+tab to cycle) · ← for agents",
+      "hint": "shift+tab to cycle"
+    }
+  ]
+}

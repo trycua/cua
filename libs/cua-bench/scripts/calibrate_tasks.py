@@ -61,6 +61,7 @@ def _tier(claude_rate: float, openai_rate: float) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_env() -> dict[str, str]:
     env_file = SCRIPT_DIR.parent / ".env"
     if env_file.exists():
@@ -77,11 +78,19 @@ def _cb() -> str:
     return str(SCRIPT_DIR.parent / ".venv" / "bin" / "cb")
 
 
-def _run_dataset(model_name: str, model_id: str, parallel: int,
-                 max_steps: int, tasks_dir: Path,
-                 task_ids: list[str], attempts: int) -> str:
+def _run_dataset(
+    model_name: str,
+    model_id: str,
+    parallel: int,
+    max_steps: int,
+    tasks_dir: Path,
+    task_ids: list[str],
+    attempts: int,
+) -> str:
     """Build a temp dir with `attempts` copies of each task, run as one dataset."""
-    import tempfile, shutil
+    import shutil
+    import tempfile
+
     tmp = Path(tempfile.mkdtemp(prefix="cb_calib_"))
     try:
         for task_id in task_ids:
@@ -89,14 +98,23 @@ def _run_dataset(model_name: str, model_id: str, parallel: int,
                 dst = tmp / f"{task_id}_{i}"
                 shutil.copytree(tasks_dir / task_id, dst)
         cmd = [
-            _cb(), "run", "dataset", str(tmp),
-            "--agent", "cua-agent",
-            "--model", model_id,
-            "--max-parallel", str(parallel),
-            "--max-steps", str(max_steps),
+            _cb(),
+            "run",
+            "dataset",
+            str(tmp),
+            "--agent",
+            "cua-agent",
+            "--model",
+            model_id,
+            "--max-parallel",
+            str(parallel),
+            "--max-steps",
+            str(max_steps),
         ]
-        print(f"  [{model_name}] Starting {len(task_ids)} tasks × {attempts} attempts "
-              f"(parallel={parallel}): {' '.join(cmd)}")
+        print(
+            f"  [{model_name}] Starting {len(task_ids)} tasks × {attempts} attempts "
+            f"(parallel={parallel}): {' '.join(cmd)}"
+        )
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR.parent))
         for line in result.stdout.splitlines():
             if "Run ID:" in line:
@@ -113,14 +131,17 @@ def _wait_for_run(run_id: str, poll_interval: int = 30) -> None:
     while True:
         result = subprocess.run(
             [cb, "run", "list"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
             cwd=str(SCRIPT_DIR.parent),
         )
         lines = [l for l in result.stdout.splitlines() if run_id[:8] in l]
         if lines:
-            terminal = [l for l in lines if any(
-                s in l for s in ("completed", "failed", "error", "done", "0.", "1.")
-            )]
+            terminal = [
+                l
+                for l in lines
+                if any(s in l for s in ("completed", "failed", "error", "done", "0.", "1."))
+            ]
             if len(terminal) == len(lines):
                 print(" done.")
                 return
@@ -133,7 +154,8 @@ def _get_run_output_dir(run_id: str) -> Path | None:
     cb = _cb()
     result = subprocess.run(
         [cb, "run", "info", run_id],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         cwd=str(SCRIPT_DIR.parent),
     )
     for line in result.stdout.splitlines():
@@ -200,18 +222,35 @@ def _extract_scores(run_output_dir: Path) -> dict[str, float]:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Calibrate KiCad task difficulty")
-    parser.add_argument("--attempts", type=int, default=DEFAULT_ATTEMPTS,
-                        help=f"Number of attempts per model (default: {DEFAULT_ATTEMPTS})")
-    parser.add_argument("--parallel", type=int, default=DEFAULT_PARALLEL,
-                        help=f"Max parallel tasks per run (default: {DEFAULT_PARALLEL})")
-    parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS,
-                        help=f"Max steps per task (default: {DEFAULT_MAX_STEPS})")
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=DEFAULT_ATTEMPTS,
+        help=f"Number of attempts per model (default: {DEFAULT_ATTEMPTS})",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=DEFAULT_PARALLEL,
+        help=f"Max parallel tasks per run (default: {DEFAULT_PARALLEL})",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=DEFAULT_MAX_STEPS,
+        help=f"Max steps per task (default: {DEFAULT_MAX_STEPS})",
+    )
     parser.add_argument("--tasks-dir", type=Path, default=TASKS_DIR)
     parser.add_argument("--output", type=Path, default=OUTPUT_FILE)
-    parser.add_argument("--task-filter", type=str, default=None,
-                        help="Comma-separated task IDs to run (e.g. '55f2eefb,d1c655da')")
+    parser.add_argument(
+        "--task-filter",
+        type=str,
+        default=None,
+        help="Comma-separated task IDs to run (e.g. '55f2eefb,d1c655da')",
+    )
     args = parser.parse_args()
 
     # Load .env into os.environ so cb and any subprocesses pick it up
@@ -219,8 +258,7 @@ def main() -> None:
 
     # Discover task IDs (optionally filtered)
     all_task_ids = sorted(
-        p.name for p in args.tasks_dir.iterdir()
-        if p.is_dir() and (p / "main.py").exists()
+        p.name for p in args.tasks_dir.iterdir() if p.is_dir() and (p / "main.py").exists()
     )
     if args.task_filter:
         patterns = [p.strip() for p in args.task_filter.split(",")]
@@ -238,9 +276,13 @@ def main() -> None:
         print(f"\n=== Model: {model_name} ({model_id}) ===")
         for attempt in range(args.attempts):
             run_id = _run_dataset(
-                model_name, model_id, attempt,
-                args.parallel, args.max_steps,
-                args.tasks_dir, task_ids,
+                model_name,
+                model_id,
+                attempt,
+                args.parallel,
+                args.max_steps,
+                args.tasks_dir,
+                task_ids,
             )
             _wait_for_run(run_id)
             out_dir = _get_run_output_dir(run_id)

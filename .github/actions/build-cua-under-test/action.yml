@@ -1,0 +1,80 @@
+name: "Build the Cua code under test"
+description: >-
+  Build the cua CLI, cua-spacesd and cua-driver from this checkout on a Linux
+  runner, for the cua-sandbox action (cua-bin and overlay). Each binary embeds
+  the checkout's git sha, which `cua doctor --expect ...=git:<sha>` checks.
+
+inputs:
+  components:
+    description: "Space separated: cua, cua-spacesd, cua-driver."
+    default: "cua cua-spacesd cua-driver"
+  cua-features:
+    description: "Cargo features of the cua CLI (for example contrib)."
+    default: ""
+
+outputs:
+  cua:
+    description: "Path of the cua CLI."
+    value: ${{ steps.build.outputs.cua }}
+  cua-spacesd:
+    description: "Path of cua-spacesd (release)."
+    value: ${{ steps.build.outputs.cua-spacesd }}
+  cua-driver:
+    description: "Path of cua-driver (release)."
+    value: ${{ steps.build.outputs.cua-driver }}
+  git-sha:
+    description: "The source revision the binaries embed."
+    value: ${{ steps.build.outputs.git-sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install protoc
+      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+      with:
+        version: "29.x"
+        repo-token: ${{ github.token }}
+    - uses: dtolnay/rust-toolchain@1.97.1
+    - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      with:
+        workspaces: |
+          libs/cua -> target
+          libs/cua-spacesd -> target
+          libs/cua-driver/rust -> target
+        key: cua-under-test
+    - name: Install build dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends \
+          clang pkg-config cmake nasm perl make \
+          libx11-dev libxi-dev libxtst-dev libxext-dev libxkbcommon-dev libxkbcommon-x11-dev \
+          libdbus-1-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxrandr-dev libxfixes-dev \
+          libxdamage-dev libudev-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev
+    - id: build
+      name: Build
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+        CUA_FEATURES: ${{ inputs.cua-features }}
+        CARGO_BUILD_JOBS: "4"
+      run: |
+        set -euo pipefail
+        sha="$(git rev-parse HEAD)"
+        echo "git-sha=$sha" >>"$GITHUB_OUTPUT"
+        # The build scripts also read these (containers without .git).
+        export CUA_SPACESD_GIT_SHA="$sha" CUA_DRIVER_GIT_SHA="$sha"
+        for c in $COMPONENTS; do
+          case "$c" in
+            cua)
+              (cd libs/cua && cargo build --locked -p cua-cli ${CUA_FEATURES:+--features "$CUA_FEATURES"})
+              echo "cua=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_OUTPUT" ;;
+            cua-spacesd)
+              (cd libs/cua-spacesd && cargo build --release --locked -p cua-spacesd --bin cua-spacesd)
+              echo "cua-spacesd=$PWD/libs/cua-spacesd/target/release/cua-spacesd" >>"$GITHUB_OUTPUT" ;;
+            cua-driver)
+              (cd libs/cua-driver/rust && cargo build --release --locked -p cua-driver)
+              echo "cua-driver=$PWD/libs/cua-driver/rust/target/release/cua-driver" >>"$GITHUB_OUTPUT" ;;
+            *) echo "::error::unknown component $c"; exit 1 ;;
+          esac
+        done

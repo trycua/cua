@@ -1,0 +1,2651 @@
+{
+  "arguments": [],
+  "commands": {
+    "agent": {
+      "arguments": [],
+      "commands": {
+        "build": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "tag",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--tag",
+                "-t"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "init": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "name",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "output_dir",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--output-dir",
+                "-o"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "push": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "cua-bench:latest",
+              "dest": "image_name",
+              "hidden": false,
+              "metavar": null,
+              "nargs": "?",
+              "options": [],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "registry",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--registry"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        }
+      },
+      "subcommand_dest": "agent_command"
+    },
+    "dataset": {
+      "arguments": [],
+      "commands": {
+        "build": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "outputs_path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "max_samples",
+              "hidden": false,
+              "metavar": null,
+              "nargs": "?",
+              "options": [],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "aguvis-stage-1",
+              "dest": "mode",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--mode"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "dataset_name",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--dataset-name"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "save_dir",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--save-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "push_to_hub",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--push-to-hub"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "repo_id",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--repo-id"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "private",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--private"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "list": {
+          "arguments": [],
+          "commands": {}
+        }
+      },
+      "subcommand_dest": "dataset_command"
+    },
+    "env": {
+      "arguments": [],
+      "commands": {
+        "gc": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "30m",
+              "dest": "idle",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--idle"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "ls": {
+          "aliases": [
+            "list"
+          ],
+          "arguments": [
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "local",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--local"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        }
+      },
+      "subcommand_dest": "env_command"
+    },
+    "image": {
+      "arguments": [],
+      "commands": {
+        "clone": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "source",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "target",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "force",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--force"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "create": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "platform",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "name",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--name"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "iso",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--iso"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "download_iso",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--download-iso"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "docker_image",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--docker-image"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "ubuntu",
+                "fedora"
+              ],
+              "const": null,
+              "default": "ubuntu",
+              "dest": "distro",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--distro"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "14",
+              "dest": "version",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--version"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "64G",
+              "dest": "disk",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--disk"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "8G",
+              "dest": "memory",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--memory"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "8",
+              "dest": "cpus",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--cpus"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "winarena_apps",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--winarena-apps"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "detach",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--detach",
+                "-d"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "force",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--force"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "skip_pull",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--skip-pull"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "no_kvm",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--no-kvm"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "vnc_port",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--vnc-port"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "api_port",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--api-port"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "delete": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "name",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "force",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--force"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "info": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "name",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "list": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "platform",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--platform"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "table",
+                "json"
+              ],
+              "const": null,
+              "default": "table",
+              "dest": "format",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--format"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "shell": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "name",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "writable",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--writable"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "detach",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--detach",
+                "-d"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "vnc_port",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--vnc-port"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "api_port",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--api-port"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "8G",
+              "dest": "memory",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--memory"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": "8",
+              "dest": "cpus",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--cpus"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "no_kvm",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--no-kvm"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        }
+      },
+      "subcommand_dest": "image_command"
+    },
+    "interact": {
+      "arguments": [
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "env_path",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [],
+          "required": true,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": 0,
+          "dest": "variant_id",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--variant-id"
+          ],
+          "required": false,
+          "type": "int"
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "dataset",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--dataset"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "dataset_path",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--dataset-path"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "oracle",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--oracle"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "max_steps",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--max-steps"
+          ],
+          "required": false,
+          "type": "int"
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "screenshot",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--screenshot"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "trace_out",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--trace-out"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "view",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--view"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "no_wait",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--no-wait"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "no_browser",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--no-browser"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": [
+            "local",
+            "cloud",
+            "e2b",
+            "daytona",
+            "modal",
+            "cloudflare",
+            "vercel",
+            "morph",
+            "runloop",
+            "fly",
+            "blaxel",
+            "codesandbox",
+            "northflank",
+            "aws",
+            "gcp"
+          ],
+          "const": null,
+          "default": null,
+          "dest": "on",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--on"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": [
+            "auto",
+            "container",
+            "vm"
+          ],
+          "const": null,
+          "default": null,
+          "dest": "kind",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--kind"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": [
+            "auto",
+            "gvisor",
+            "runc",
+            "qemu",
+            "lume",
+            "kubevirt"
+          ],
+          "const": null,
+          "default": null,
+          "dest": "runtime",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--runtime"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "image",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--image"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "cpu",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--cpu"
+          ],
+          "required": false,
+          "type": "int"
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "memory",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--memory"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "warm",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--warm"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "claim_ttl",
+          "hidden": false,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--claim-ttl"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": [
+            "linux-docker",
+            "linux-qemu",
+            "windows-qemu",
+            "android-qemu"
+          ],
+          "const": null,
+          "default": null,
+          "dest": "platform",
+          "hidden": true,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--platform"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "provider_type",
+          "hidden": true,
+          "metavar": null,
+          "nargs": null,
+          "options": [
+            "--provider-type"
+          ],
+          "required": false,
+          "type": null
+        }
+      ],
+      "commands": {}
+    },
+    "login": {
+      "arguments": [
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "no_browser",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--no-browser"
+          ],
+          "required": false,
+          "type": null
+        }
+      ],
+      "commands": {}
+    },
+    "platform": {
+      "arguments": [],
+      "commands": {
+        "info": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "platform",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "list": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "table",
+                "json"
+              ],
+              "const": null,
+              "default": "table",
+              "dest": "format",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--format"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        }
+      },
+      "subcommand_dest": "platform_command"
+    },
+    "prune": {
+      "arguments": [
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "all",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--all",
+            "-a"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "images",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--images"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "overlays",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--overlays"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "runs",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--runs"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "keep",
+          "hidden": false,
+          "metavar": "N",
+          "nargs": null,
+          "options": [
+            "--keep"
+          ],
+          "required": false,
+          "type": "int"
+        },
+        {
+          "action": "_StoreAction",
+          "choices": null,
+          "const": null,
+          "default": null,
+          "dest": "older_than",
+          "hidden": false,
+          "metavar": "DAYS",
+          "nargs": null,
+          "options": [
+            "--older-than"
+          ],
+          "required": false,
+          "type": "float"
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "docker",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--docker"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "dry_run",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--dry-run"
+          ],
+          "required": false,
+          "type": null
+        },
+        {
+          "action": "_StoreTrueAction",
+          "choices": null,
+          "const": true,
+          "default": false,
+          "dest": "force",
+          "hidden": false,
+          "metavar": null,
+          "nargs": 0,
+          "options": [
+            "--force",
+            "-f"
+          ],
+          "required": false,
+          "type": null
+        }
+      ],
+      "commands": {}
+    },
+    "run": {
+      "arguments": [],
+      "commands": {
+        "dataset": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "dataset_path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 4,
+              "dest": "max_parallel",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--max-parallel",
+                "-j"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "max_variants",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--max-variants"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "task_filter",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--task-filter"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "agent",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--agent"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "agent_import_path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--agent-import-path"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "model",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--model"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "oracle",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--oracle"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "noop",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--noop"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 100,
+              "dest": "max_steps",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--max-steps"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "local",
+                "cloud",
+                "e2b",
+                "daytona",
+                "modal",
+                "cloudflare",
+                "vercel",
+                "morph",
+                "runloop",
+                "fly",
+                "blaxel",
+                "codesandbox",
+                "northflank",
+                "aws",
+                "gcp"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "on",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--on"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "auto",
+                "container",
+                "vm"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "kind",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--kind"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "auto",
+                "gvisor",
+                "runc",
+                "qemu",
+                "lume",
+                "kubevirt"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "runtime",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--runtime"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "image",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--image"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "cpu",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--cpu"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "memory",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--memory"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "warm",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--warm"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "claim_ttl",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--claim-ttl"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "linux-docker",
+                "linux-qemu",
+                "windows-qemu",
+                "android-qemu"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "platform",
+              "hidden": true,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--platform"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "provider_type",
+              "hidden": true,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--provider-type"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "output_dir",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--output-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "detach",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--detach",
+                "-d"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 1,
+              "dest": "attempts",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--attempts"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 0,
+              "dest": "retries",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--retries"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "dry_run",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--dry-run"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "wait",
+              "hidden": true,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--wait",
+                "-w"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_AppendAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "dev_paths",
+              "hidden": true,
+              "metavar": "PATH",
+              "nargs": null,
+              "options": [
+                "--with"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "run_id",
+              "hidden": true,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--run-id"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "keep_runs",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--keep-runs"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "max_age",
+              "hidden": false,
+              "metavar": "DAYS",
+              "nargs": null,
+              "options": [
+                "--max-age"
+              ],
+              "required": false,
+              "type": "float"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "max_results_size",
+              "hidden": false,
+              "metavar": "SIZE",
+              "nargs": null,
+              "options": [
+                "--max-results-size"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "info": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "run_id",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "list": {
+          "arguments": [
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "verbose",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--verbose",
+                "-v"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "logs": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "identifier",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "tail",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--tail"
+              ],
+              "required": false,
+              "type": "int"
+            }
+          ],
+          "commands": {}
+        },
+        "stop": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "run_id",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "task": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "task_path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 0,
+              "dest": "variant_id",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--variant-id"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "session_id",
+              "hidden": true,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--session-id"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "agent",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--agent"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "agent_import_path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--agent-import-path"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "model",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--model"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "oracle",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--oracle"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "noop",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--noop"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 100,
+              "dest": "max_steps",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--max-steps"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "local",
+                "cloud",
+                "e2b",
+                "daytona",
+                "modal",
+                "cloudflare",
+                "vercel",
+                "morph",
+                "runloop",
+                "fly",
+                "blaxel",
+                "codesandbox",
+                "northflank",
+                "aws",
+                "gcp"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "on",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--on"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "auto",
+                "container",
+                "vm"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "kind",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--kind"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "auto",
+                "gvisor",
+                "runc",
+                "qemu",
+                "lume",
+                "kubevirt"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "runtime",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--runtime"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "image",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--image"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "cpu",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--cpu"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "memory",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--memory"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "warm",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--warm"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "claim_ttl",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--claim-ttl"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "linux-docker",
+                "linux-qemu",
+                "windows-qemu",
+                "android-qemu"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "platform",
+              "hidden": true,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--platform"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "provider_type",
+              "hidden": true,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--provider-type"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "output_dir",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--output-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "detach",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--detach",
+                "-d"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 1,
+              "dest": "attempts",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--attempts"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 0,
+              "dest": "retries",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--retries"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "dry_run",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--dry-run"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "wait",
+              "hidden": true,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--wait",
+                "-w"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_AppendAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "dev_paths",
+              "hidden": true,
+              "metavar": "PATH",
+              "nargs": null,
+              "options": [
+                "--with"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "run_id",
+              "hidden": true,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--run-id"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "keep_runs",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--keep-runs"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "max_age",
+              "hidden": false,
+              "metavar": "DAYS",
+              "nargs": null,
+              "options": [
+                "--max-age"
+              ],
+              "required": false,
+              "type": "float"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "max_results_size",
+              "hidden": false,
+              "metavar": "SIZE",
+              "nargs": null,
+              "options": [
+                "--max-results-size"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "watch": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "run_id",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            }
+          ],
+          "commands": {}
+        }
+      },
+      "subcommand_dest": "run_command"
+    },
+    "status": {
+      "arguments": [],
+      "commands": {}
+    },
+    "task": {
+      "arguments": [],
+      "commands": {
+        "create": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": ".",
+              "dest": "path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": "?",
+              "options": [],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "generate": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "prompt",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "output",
+              "hidden": false,
+              "metavar": null,
+              "nargs": "?",
+              "options": [],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "no_interaction",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--no-interaction"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "info": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            }
+          ],
+          "commands": {}
+        },
+        "list": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": ".",
+              "dest": "path",
+              "hidden": false,
+              "metavar": null,
+              "nargs": "?",
+              "options": [],
+              "required": false,
+              "type": null
+            }
+          ],
+          "commands": {}
+        }
+      },
+      "subcommand_dest": "task_command"
+    },
+    "trace": {
+      "arguments": [],
+      "commands": {
+        "traj": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "identifier",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 8090,
+              "dest": "port",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [
+                "--port",
+                "-p"
+              ],
+              "required": false,
+              "type": "int"
+            }
+          ],
+          "commands": {}
+        },
+        "view": {
+          "arguments": [
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "identifier",
+              "hidden": false,
+              "metavar": null,
+              "nargs": null,
+              "options": [],
+              "required": true,
+              "type": null
+            }
+          ],
+          "commands": {}
+        }
+      },
+      "subcommand_dest": "trace_command"
+    }
+  },
+  "subcommand_dest": "command"
+}

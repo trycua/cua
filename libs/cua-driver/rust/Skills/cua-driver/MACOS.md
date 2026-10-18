@@ -1,4 +1,4 @@
-# cua-driver — macOS specifics
+# cua-driver: macOS specifics
 
 This file is the macOS-specific extension to `SKILL.md`.
 The cross-platform core (snapshot invariant, CLI/MCP defaults,
@@ -15,7 +15,7 @@ reason cua-driver exists. Users pay for the right to keep typing in
 their editor while an agent drives another app in the background.
 Violate this rule and every other nice property the driver gives
 you (no cursor warp, no Space switch, no window raise) stops
-mattering — you just shipped the Accessibility Inspector with extra
+mattering: you just shipped the Accessibility Inspector with extra
 steps.
 
 Before running any shell command, ask: **"does this raise,
@@ -24,21 +24,21 @@ Every one of the commands below activates the target on macOS and
 is therefore forbidden unless the user **explicitly** asked for
 frontmost state:
 
-- **Every form of the `open` CLI — `open -a <App>`, `open -b
+- **Every form of the `open` CLI: `open -a <App>`, `open -b
 <bundle-id>`, `open <file>`, `open <path-to-App.app>`, `open
-<url>` — always activates.** macOS routes all forms through
+<url>`: always activates.** macOS routes all forms through
   LaunchServices, which unhides and foregrounds the target
   regardless of whether you passed an app name, a bundle id, a
   document, a URL, or the bundle path itself. The activation
   happens even when the only intent was "start the process."
   **Never use `open` for any app launch.** This includes launching
   a just-built .app from a local build dir (e.g. `open
-build/Build/Products/Debug/MyApp.app`) — resolve the
+build/Build/Products/Debug/MyApp.app`): resolve the
   `CFBundleIdentifier` from `Info.plist` and use `launch_app`
   with that id. See "The narrow carve-out" below for why
   `launch_app` is safe even when the app internally calls
   `NSApp.activate`.
-- `osascript -e 'tell application "X" to activate'` —
+- `osascript -e 'tell application "X" to activate'`:
   activates by design. Same for `... to open <file>`,
   `... to launch`, and anything with `activate` in the tell block.
 - `osascript -e 'tell application "System Events" to ... frontmost'`
@@ -46,7 +46,7 @@ build/Build/Products/Debug/MyApp.app`) — resolve the
 - AppleScript files that invoke `activate`, `launch`, or `open`
   against the target app.
 - `cliclick` (moves the user's real cursor to the target coords
-  before clicking — a focus-steal-equivalent even if the app's
+  before clicking: a focus-steal-equivalent even if the app's
   window state is unchanged).
 - `CGEventPost` with `cghidEventTap` targeting a coordinate over
   a different app's window (warps the cursor, possibly activates
@@ -54,13 +54,13 @@ build/Build/Products/Debug/MyApp.app`) — resolve the
 - `AppleScriptTask`, `NSAppleScript`, `Process` wrapping `osascript`
   that contains any of the above.
 - `NSRunningApplication.activate(options:)` called from your own
-  helper binary — same class.
-- Dock clicks and any `open` invocation (see the first bullet —
+  helper binary: same class.
+- Dock clicks and any `open` invocation (see the first bullet;
   every form of `open` goes through LaunchServices which
   activates, full stop).
-- **Keyboard shortcuts that semantically mean "focus here" —
+- **Keyboard shortcuts that semantically mean "focus here":
   most notably Chrome / Safari / Arc's `⌘L` (focus omnibox) and
-  Finder's `⌘⇧G` (Go to Folder).** These aren't pure key events —
+  Finder's `⌘⇧G` (Go to Folder).** These aren't pure key events:
   the receiving app interprets "user wants to type here" as
   activation intent and raises its window to be key. Even when
   delivered to a backgrounded pid via `hotkey`, the downstream app
@@ -80,18 +80,30 @@ Reading frontmost state is fine (`osascript -e 'tell application
 "System Events" to get name of first application process whose
 frontmost is true'`). Mutating it is not.
 
-**Corollary — the AXMenuBar rule.** Do not manually drive a background
+**Corollary: the AXMenuBar rule.** Do not manually drive a background
 application's `AXMenuBarItem`: the visible macOS menu bar belongs to the
 frontmost app, and command items may be disabled otherwise. Use `invoke_menu`
-for a known application-menu path. It owns the necessary temporary activation,
-resolves every AX level live, and restores the prior app on a best-effort basis. Prefer an in-window
+for a known application-menu path. With the app in the background it resolves
+the whole path without opening a menu and never activates the app; if macOS
+keeps the item unavailable to a background app it refuses with
+`background_unavailable` (then, if the user allows it, `bring_to_front` first).
+One exception: a disabled Save (the ⌘S item) of a document window is saved
+through the app's scripting interface instead, still in the background, and the
+result says so; TextEdit disables Save whenever it is behind the user's window.
+A Save is verified on disk. A background `hotkey` whose combo is a menu item's
+key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because
+background key events never reach an app's menus; no keys are sent. macOS asks
+the user once to allow Cua Driver to control the app (Automation) the first
+time a scripting route runs; when that is off, the call refuses and nothing is
+saved.
+With the app already in front it resolves every AX level live. Prefer an in-window
 element action when the same command has an ordinary control, and prefer
 `set_window_frame` for exact geometry. Full rationale is in “Navigating native
 menu bars” below.
 
 **"Open \<app\>" in user speech means launch, not activate.**
 `cua-driver launch_app` is the one correct path for process
-startup — it's idempotent (no-op on a running app), returns the
+startup: it's idempotent (no-op on a running app), returns the
 pid, and has an internal `FocusRestoreGuard` that catches
 `NSApp.activate(ignoringOtherApps:)` calls the target makes during
 `application(_:open:)` and clobbers the frontmost back to what it
@@ -106,13 +118,16 @@ is safe even for apps that normally foreground on media-load
 | ------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | Open / launch an app                  | `launch_app({bundle_id})` or `launch_app({bundle_id, urls:[...]})`                     | `open -a`, `osascript 'tell app … to launch/activate/open'` |
 | Find a pid                            | `list_apps` or `launch_app`'s return                                                   | `pgrep`, `ps`, `osascript frontmost`                        |
-| Enumerate an app's windows            | `list_windows({pid})` — or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
+| Enumerate an app's windows            | `list_windows({pid})`: or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
 | Move or resize one exact window       | `set_window_frame({pid, window_id, x, y, width, height})`                              | `osascript` position/size writes or title-bar dragging      |
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
-| Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag`                            |
+| Loop, branch or retry over app actions | `run_script({script})` (sandboxed JavaScript over the `cua` API, one call); `run_steps` for a fixed list | an AppleScript or shell loop around `osascript` or `cua-driver` calls |
+| Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y})` in the background (pixel-only: macOS AX has no semantic drag). Verify with a screenshot; `delivery_mode:"foreground"` only if nothing changed. A bound browser tab: `browser_pointer` `action:"drag"` | `cliclick dd:`, `osascript drag`, refusing a drag-only step as "needs the window in front" |
+| Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). A web page in Chrome, Edge or Brave: `browser_pointer` hover after `get_browser_state`. If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop", delivery_mode:"foreground"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover; a desktop `move_cursor` over a background browser page |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
+| View a local file in the GUI          | `launch_app({bundle_id, urls:["file:///…"]})`                                          | typing `file://` into the omnibox                           |
 
 ### The narrow carve-out
 
@@ -122,14 +137,19 @@ For authorized foreground input, use the Cua action's
 
 When a cua-driver call surprises you, diagnose cua-driver first:
 
+- **Large tree or repeated reads?** `get_window_state` returns one compact
+  markdown tree capped at 250 nodes; pass `since:"latest"` for a diff
+  (`no change since …; focused element is …` names the focused row on macOS)
+  and `tree_format:"elements"` for structured rows. `full_output:true` restores
+  the old payload (both forms, `_note`, `background_input`, 2 000 nodes).
 - **Empty `tree_markdown`?** `get_window_state` returns **both** the
-  AX tree and a screenshot by default — there's nothing to configure and
+  AX tree and a screenshot by default: there's nothing to configure and
   no capture mode to pick. An empty tree means the surface isn't AX (a
   non-AX surface: Electron/Chromium/canvas), and the response carries
-  `degraded: true` — so act by **`px`** off the screenshot that's
+  `degraded: true`, so act by **`px`** off the screenshot that's
   already in the same response. `capture_mode` is **deprecated and
   ignored** (still accepted so old callers don't error, but it has no
-  effect — tree + screenshot come back regardless); don't reach for
+  effect; tree + screenshot come back regardless); don't reach for
   `get_config` to "switch modes," there is no mode to switch.
 - **`has_screenshot: false`?** The window capture failed (transient
   race against a close, or the window has no backing store yet).
@@ -139,7 +159,7 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   Re-snapshot the exact window and use the new `element_token`. A new
   snapshot of that window invalidates older targets immediately; the refusal
   names the current snapshots so you can tell whether you already hold one.
-- **Sparse Chromium AX tree?** Retry `get_window_state` once — the
+- **Sparse Chromium AX tree?** Retry `get_window_state` once: the
   tree populates on second call.
 
 Only after those are ruled out, and only if the user's action
@@ -151,30 +171,32 @@ briefly bring Chrome to the front because …").
 
 There is no `ax`/`vision` capture toggle. **Every `get_window_state`
 returns both the AX tree and a screenshot** (default), so verifying that
-an action **landed** never means "go grab a screenshot" — it means
+an action **landed** never means "go grab a screenshot": it means
 cross-check the tree diff against the pixels you already have in the same
 response, and only switch _dispatch rung_ on a real signal:
 
-1. **Re-snapshot and read the tree diff** — a changed `AXValue`, a new
+1. **Re-snapshot and read the tree diff**: a changed `AXValue`, a new
    element, a collapsed menu, a disabled button. If the tree shows the
    change, you're done. When you only need the tree diff and don't need
-   fresh pixels, pass `include_screenshot:false` to skip the grab — a
-   **perf** knob, not a mode flip.
+   fresh pixels, pass `since:"latest"` and `include_screenshot:false` to
+   skip the grab: a **perf** knob, not a mode flip. The window keeps its
+   last screenshot's pixel frame while its size is unchanged, so `x,y`
+   from that screenshot still work afterwards.
 2. **Trust the screenshot and do an element px action** when the tree
-   **lies** — the action response carried `effect:"suspected_noop"`, the
+   **lies**: the action response carried `effect:"suspected_noop"`, the
    re-snapshot came back `degraded` (empty tree), or the tree looks
    unchanged/unreadable / disagrees with the pixels on a surface where
    it's known to lie:
-   - **Canvas-backed editors** — Monaco (VSCode, Cursor), xterm, Figma,
+   - **Canvas-backed editors**: Monaco (VSCode, Cursor), xterm, Figma,
      WebGL. The AX tree shows the chrome but nothing for the canvas
      content; a snapshot's tree can look unchanged after a successful
      edit while the pixels show it landed.
-   - **Catalyst / iOS-on-Mac text views** — see "Known text-input
+   - **Catalyst / iOS-on-Mac text views**: see "Known text-input
      limits" above. `AXValue` can lag the rendered pixels or report the
      placeholder while the field is actually populated.
 
 On these surfaces you read the result off the screenshot already in the
-response, then address the target by `x,y` — an **element px action**.
+response, then address the target by `x,y`: an **element px action**.
 `px` is your **conscious switch to the pixel addressing path**, not a
 different capture: the screenshot was always there, you just change _how
 you address_ the target. The point is to catch the "type → AX-check
@@ -183,10 +205,10 @@ the surfaces that warrant it.
 
 Rule of thumb:
 
-- **element ax action** (default) — the element lookup before a click
+- **element ax action** (default): the element lookup before a click
   AND the first verify after it; you address by the `[N]` row's `element_token`
   and read the tree diff.
-- **element px action** — when the tree is unreadable / `suspected_noop`
+- **element px action**: when the tree is unreadable / `suspected_noop`
   / `degraded` / disagrees with the pixels, or for pure visual
   inspection (reading a chart). You address by `x,y` off the screenshot
   that's already in the snapshot response.
@@ -197,27 +219,27 @@ Before every `Bash` call whose command line touches any macOS app
 (launching, opening, clicking, typing, scripting, screenshotting),
 run the self-check:
 
-1. **Does this command foreground the target?** If yes — stop and
+1. **Does this command foreground the target?** If yes: stop and
    translate to the cua-driver equivalent from the mapping table.
 2. **Does this command move the user's real cursor?** (`cliclick`,
    any `CGEventPost` at `cghidEventTap` over another app's window).
-   If yes — stop; use `click({pid, x, y})` which routes per-pid
+   If yes: stop; use `click({pid, x, y})` which routes per-pid
    via SkyLight and never warps the cursor.
 3. **Does this command bypass cua-driver entirely?** (`osascript`
    mutating GUI state, AppleScript files, external helpers.) If
-   yes — stop; find the cua-driver tool that does the intent.
+   yes: stop; find the cua-driver tool that does the intent.
 
 If all three are "no," the command is safe. If you can't answer,
 default to stop and ask rather than proceed. A single `open -a`
 run by accident kills the demo, the trust, and the user's in-flight
 editor state.
 
-## Prerequisites — macOS
+## Prerequisites: macOS
 
 1. `cua-driver` is on `$PATH` (`which cua-driver`). If not, point the
    user at `scripts/install-local.sh` and stop.
 2. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
-   recommended form — goes through LaunchServices so TCC attributes
+   recommended form: goes through LaunchServices so TCC attributes
    the process to CuaDriver.app). `cua-driver serve &` also works;
    the CLI auto-relaunches through `open -n -g -a CuaDriver` when it
    detects a wrong-TCC context (any IDE-spawned shell: Claude Code,
@@ -248,10 +270,10 @@ Reuse a discovered live target when available. Otherwise use `launch_app`
 when launch is requested or implied, then select the returned window. If the
 window has not appeared yet, bound retries of `list_windows`.
 
-- `launch_app({bundle_id: "com.apple.finder"})` — preferred, unambiguous.
-- `launch_app({name: "Calculator"})` — when bundle_id isn't known.
+- `launch_app({bundle_id: "com.apple.finder"})`, preferred, unambiguous.
+- `launch_app({name: "Calculator"})`, when bundle_id isn't known.
 
-`launch_app` is a **hidden-launch primitive by design** — that's the
+`launch_app` is a **hidden-launch primitive by design**: that's the
 entire point of cua-driver: agents drive apps in the background while
 the user keeps typing in their real foreground app. The target's
 window is initialized (AX tree fully populated, clickable via
@@ -261,7 +283,7 @@ would violate the no-foreground contract the whole driver exists to
 protect.
 
 If the user explicitly wants the window visible (usually for a demo
-or recording), they unhide it themselves — Dock click, Cmd-Tab, or
+or recording), they unhide it themselves: Dock click, Cmd-Tab, or
 Spotlight. Do not reach for `open` / `osascript activate` as a
 shortcut to make the window visible; those paths break the backgrounded
 invariant on every call, not just the call that "needed" the
@@ -269,7 +291,7 @@ foreground. Say out loud what the user needs to do ("click the
 Todo app in your Dock to bring it forward") and let them do it.
 
 Never shell out to **any** form of `open` (including `open
-<path-to-App.app>` for a just-built binary — resolve the bundle id
+<path-to-App.app>` for a just-built binary: resolve the bundle id
 from `Info.plist` and use `launch_app` with that), `osascript 'tell
 app … to launch/open'`, or similar. Those paths activate the target,
 bypass the driver's focus-restore guard, and require a Bash
@@ -279,26 +301,129 @@ permission prompt the agent loop shouldn't be burning on app launch.
 
 The pixel click is routed through SkyLight's per-pid event path
 (`SLEventPostToPid`), not the system HID stream. The dispatch recipe
-is the backgrounded "noraise" sequence: yabai's focus-without-raise
-SLPS event records followed by an off-screen user-activation primer
-and the real click. The target app becomes AppKit-active for event
-routing but its window does **not** rise to the front of the
-z-stack, and macOS's "switch to Space with windows for app" follow
-is suppressed. Full mechanics in
-`Sources/CuaDriverCore/Input/MouseInput.swift` (`clickViaAuthSignedPost`)
-and the companion `FocusWithoutRaise.swift`.
+is the backgrounded "noraise" sequence: a focus-without-raise
+SLPS event record to the target window, followed by an off-screen
+user-activation primer and the real click. The target window becomes
+AppKit-key for event routing, but it does **not** rise to the front of
+the z-stack, macOS's "switch to Space with windows for app" follow is
+suppressed, and the user's front window keeps key status, so their
+typing keeps landing there.
+
+### Menus opened in the background keep the user's keyboard
+
+A popup button, a `<select>`, or a context menu opened in a background
+app takes key focus from the user's front window for as long as the menu
+is open (AppKit's menu tracking steals it). While a background action
+runs, Cua Driver watches for that and hands key focus straight back, so
+the user's window never loses it. The menu stays open and its items are
+chosen with `click` on the `AXMenuItem` (or in one call with
+`set_value` on the popup). Keyboard navigation of such a menu with
+`press_key` is not the route; pick the item by element.
+
+Opening a menu also brings the app's window above the user's window for a
+moment, and no client can stop that. So in the background, a `click` on a
+web `<select>` in Chrome or an Electron app is refused before anything is
+sent (`select_menu_would_raise_window`): choose the option with
+`set_value` on the same element, which types the option's text into the
+closed control and never opens the menu. Native popups and context menus
+still open and flash the window briefly.
+
+### Apps that activate themselves
+
+Some apps activate themselves in answer to input, even in the background:
+Chrome when `cmd+L` focuses its address bar, GnuCash on a double-click in
+its account tree. No client can stop that. After a background
+action Cua Driver checks WindowServer's front process and, if the target
+made itself frontmost, re-activates the user's app and hands its window
+key focus back within a few tens of milliseconds. Prefer routes that do
+not ask the app to come forward: `set_value` on the address field or
+`browser_navigate` instead of `cmd+L`, and `AXOpen` through
+`double_click` on an element instead of a pixel double-click.
+### Hover in the background
+
+macOS apps track hover and show tooltips (help tags) from the real
+pointer. Pointer-move and enter events posted to a background app reach
+the app but never its tracking areas, so most hover-only controls and all
+native tooltips cannot be revealed in the background. A window-targeted
+`move_cursor` on a background app tries the two routes that leave the
+real pointer, focus and z-order alone. Its result says whether it hovered
+and how:
+
+- `ax_alternate_ui`: the element under the point (or an ancestor) lists
+  `showalternateui`, as sidebar section headers in Finder, Mail, Music and
+  System Settings do. The hover-only controls appear in the next
+  `get_window_state`; hovering elsewhere hides them. The same element can
+  be driven directly with `click` and `action:"show_alternate_ui"` /
+  `"show_default_ui"`.
+- `electron_input`: an Electron page gets `mouseEnter`/`mouseMove` through
+  the app's main process, so page hover effects update. Native tooltips do
+  not show.
+
+For a web page in Chrome, Edge or Brave use `browser_pointer` hover: a
+window-target `move_cursor` there says the page saw no hover and names
+`get_browser_state` as the next call. Otherwise `move_cursor` moves only the
+agent cursor and says so. Look for the same command elsewhere first: a menu
+item, a context menu, a keyboard shortcut, or the control's help text in
+`get_window_state` (toolbar tooltips are usually there as `help=`).
+Otherwise the step needs the user's pointer (`move_cursor` with
+`scope:"desktop"` and `delivery_mode:"foreground"`) or the app in front
+(`bring_to_front`); use either only if the user allows it, and say which.
+
+### Desktop-target pointer input over a background app
+
+`move_cursor`, `click`, `drag` and `scroll` with a desktop target move the
+user's real pointer. When the point lands on a window of an app that is not
+in front, they refuse with `background_unavailable` before sending anything,
+unless the call passes `delivery_mode:"foreground"`. Over a web browser the
+refusal names the browser tools (`get_browser_state`, then
+`browser_pointer`, `browser_click` or `browser_type`) instead of foreground.
+Points over the app in front, or over no window, behave as before.
 
 ### `delivery_mode` on the pointer family (macOS)
 
 `click`, `double_click`, `right_click`, `drag`, and `scroll` accept
-`delivery_mode` (`"background"` default / `"foreground"`) — matching the
+`delivery_mode` (`"background"` default / `"foreground"`): matching the
 breadth Windows and Linux already exposed (`type_text` / `press_key` /
 `hotkey` carry it too). `"background"` is the SkyLight per-pid path above:
 no raise, no focus steal. `"foreground"` briefly fronts the owning app,
-acts, then restores the prior frontmost — the explicit last resort for a
+acts, then restores the prior frontmost: the explicit last resort for a
 surface that only accepts events while frontmost (the canvas/viewport/game
 case below). Unmodified `element_token` (AX) actions remain background-capable
 and hold the no-foreground contract without the flag.
+
+`drag` runs in the background too. A window-scoped `drag` (`pid` and
+`window_id`) makes the window key without raising it, posts the press, the
+interpolated drags and the release to that window's process, and hands focus
+back to the user's window. The real pointer does not move. It reaches
+controls that follow the drag events: native sliders and canvases, and
+pointer-event sliders, canvases and boards on web pages in Chrome. The
+result is not driver-verified: check the outcome with a screenshot or the
+tree. Only if nothing changed, retry with `delivery_mode:"foreground"`,
+which fronts the window, moves the physical pointer along the path, and
+restores the prior frontmost app.
+
+A native `<input type="range">` in Chrome does not follow a background drag
+(pointer-event widgets do). Use `set_value` on its slider element, or
+`browser_pointer` `action:"drag"` on a bound tab, which sends the drag
+through CDP `Input.dispatchMouseEvent` with the button held.
+
+A drag that starts a macOS drag-and-drop session (reordering a list by drag
+and drop, moving a file, HTML5 `draggable` content) cannot drop in the
+background: macOS tracks those sessions with the real pointer. The driver
+sees the session start, releases at once, and returns
+`background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
+non-drag route first (Move Up/Down, a menu or context-menu command, a
+shortcut, cut and paste), then foreground if the user allows it.
+
+In an Electron window, `drag` is sent from the app's main process
+(CDP `Input.dispatchMouseEvent` with the button held, or
+`webContents.sendInputEvent`), because Chromium reads the held button from
+the hardware and a window-routed press cannot hold it. Pointer-capture
+widgets and HTML5 drag and drop both drop there, still without the real
+pointer, focus or a raise. If the app's inspector is off, the drag refuses
+with `background_unavailable`. Toolkits that read the hardware pointer (Tk) or drop routed
+mouse events (LibreOffice) refuse the background drag with
+`background_unavailable` before anything is sent.
 
 A foreground window-scoped **pixel** `click`, `double_click`, or
 `right_click` (`x`/`y` with `window_id`) is delivered like a desktop-scope click, not through the per-pid path: Cua Driver
@@ -320,7 +445,7 @@ pixel modified clicks leave it at the target like other foreground pixel
 clicks.
 
 macOS-specific residuals worth knowing (the rest of the capture/dispatch/
-addressing params are a shared cross-platform contract — see `SKILL.md` →
+addressing params are a shared cross-platform contract: see `SKILL.md` →
 _Cross-platform parameter contract_):
 
 - **`check_permissions.prompt` is macOS-only and public calls are
@@ -344,10 +469,10 @@ _Cross-platform parameter contract_):
 ### Canvases, viewports, games (Blender, Unity, GHOST, Qt, wxWidgets)
 
 Apps whose main surface is an OpenGL / Metal / Qt / wxWidgets
-viewport expose **no useful AX tree** — the whole surface is one
+viewport expose **no useful AX tree**: the whole surface is one
 opaque `AXGroup` or `AXWindow` from AX's perspective. Per-pid event
 paths (`SLEventPostToPid`, `CGEvent.postToPid`) are filtered by the
-viewport's own event-source check and silently dropped — the event
+viewport's own event-source check and silently dropped: the event
 loop wants "real HID origin".
 
 The working pattern:
@@ -378,10 +503,20 @@ There is no backgrounded path that reaches these apps today.
   `press_key({pid, key: "space"})` (generic). Keyboard events
   travel through a different auth envelope.
 - **Pixel right-click on Chromium web content** coerces to a
-  left-click — a known Chromium renderer-IPC limitation that affects
+  left-click: a known Chromium renderer-IPC limitation that affects
   every non-HID-tap synthesis path. For context menus on
   AX-addressable elements (links, buttons, toolbar items), use
   `right_click({pid, element_token})` instead.
+
+### A value write the app does not apply (LibreOffice)
+
+Some apps accept an accessibility value write and ignore it. LibreOffice
+Calc cells do: `set_value` returns success at the AX level and the cell
+keeps its old content. `set_value` re-reads the value, and when it has
+not moved it fails with `code:"write_not_applied"` and
+`effect:"not_applied"`, so a `run_script` stops there. LibreOffice also
+ignores background pointer input, so address it with `window_id` and type
+instead (see "LibreOffice, Numbers and other editors in the background").
 
 ### Known text-input limits (Catalyst + Electron)
 
@@ -390,7 +525,7 @@ anything in `/Applications` that's actually `iOSAppOnMac.app`) and
 **Electron** apps (VS Code's Monaco editor, Slack composer, Discord,
 Linear), an AX `type_text` can't reach the rendered text view: the
 `AXSetAttribute(kAXSelectedText)` write succeeds on the AX shim, but
-the UIKit/Chromium view that owns the input never observes it — and on
+the UIKit/Chromium view that owns the input never observes it. On
 Electron the shim _echoes the value straight back through `AXValue`_,
 so a naive read-back "confirms" a value that isn't really there.
 
@@ -400,11 +535,11 @@ AX-path `type_text` on an Electron app returns `effect:"unverifiable"` +
 false `effect:"confirmed"`.
 (On Catalyst the AX value reads back unreadable, so it reports
 unverified too.) Bottom line: on these surfaces **do not trust the AX
-confirm — the screenshot in the same response is the only truth.**
+confirm. The screenshot in the same response is the only truth.**
 
-Fix — **one call**: `type_text({pid, window_id, x, y, text})`. Passing
+Fix, in **one call**: `type_text({pid, window_id, x, y, text})`. Passing
 `x,y` (no `element_token`) is the **element px action** form of
-`type_text` — the tool pixel-clicks at `(x,y)` to give the Chromium /
+`type_text`: the tool pixel-clicks at `(x,y)` to give the Chromium /
 UIKit renderer the real keyboard focus the AX layer can't, then types
 into the now-focused field. Read `x,y` straight off the screenshot in
 the `get_window_state` response (same convention as `click`). This is
@@ -416,22 +551,22 @@ content. Send Cmd+V only after that read-back succeeds.
 
 0. **If the control is CLOSED, open it first.** A px focus-click won't
    reliably _open and focus_ a closed control (a search button, a
-   collapsed field) — it lands on whatever is already focused (e.g.
+   collapsed field): it lands on whatever is already focused (e.g.
    the message composer), so your text leaks there. **AX-press to
    open/activate the control first** (AX actions work in the
    background), then px-type into the now-open field.
-1. **`type_text({pid, window_id, x, y, text})`** — focus + type in a
+1. **`type_text({pid, window_id, x, y, text})`**: focus + type in a
    single call. Re-snapshot and read the text off the screenshot to
    confirm; the AX value can still lag on Catalyst/Electron.
 2. Only if the keystrokes _still_ drop (a focus-polling app), escalate
    that one `type_text` with `delivery_mode:"foreground"`.
 
 The `x,y` (px) form is **mutually exclusive** with `element_token`
-(ax) — pass one or the other, not both. Why not `Cmd+V` / `hotkey`: a
+(ax): pass one or the other, not both. Why not `Cmd+V` / `hotkey`: a
 keyboard combo does **not** focus a text field, and `hotkey` /
 `press_key` no longer raise the window on their own (raising is gated
 on `delivery_mode:"foreground"`, like every other tool). The reliable
-move is the px form of `type_text` — focus and type in one call.
+move is the px form of `type_text`: focus and type in one call.
 
 ## Navigating native menu bars (AXMenuBar)
 
@@ -443,6 +578,14 @@ application, resolves each immediate child from live AX state, uses only
 on a best-effort basis.
 It refuses missing, duplicate, disabled, or non-actionable segments and never
 falls back to pixels.
+When a path fails after the tool already opened a menu, it cancels that menu
+and the refusal says whether any menu window it opened is still on screen. If
+the refusal says the menu may still be open, press `escape` on the window
+before other input.
+
+A `get_window_state` read lists only the menu bar's titles and says
+`menus collapsed`; pass `query` to find an item in any menu, or run it with
+`invoke_menu`. A missed path segment lists the items at that level.
 
 ```bash
 cua-driver invoke_menu \
@@ -475,11 +618,11 @@ window, and PID-routes its bounded checkbox-pixel fallback. The same control's
 state must verify after mutation; unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click.
 
-Standalone Chromium activates its window when CDP's trusted pointer route is
-used on macOS. The driver therefore returns
-`browser_input_trust_unavailable` before dispatch rather than falsely claiming
-background delivery. Use `input_route:"dom_event"` only when synthetic click
-semantics are acceptable. Embedded Electron has a separately bounded route;
+CDP's trusted pointer route (the `browser_click` and `browser_pointer`
+default) stays in the background on macOS Chrome: it delivers trusted events
+to the bound tab, even an inactive one, without activating or raising the
+browser window. Use `input_route:"dom_event"` only when synthetic events are
+acceptable; controls that check `event.isTrusted` ignore it. Embedded Electron has a separately bounded route;
 do not infer that route for arbitrary WKWebView or Tauri hosts.
 
 For a declared session, typed browser click, type, and pointer mutations animate
@@ -506,6 +649,9 @@ starting point for new browser workflows.
 | macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section                                                             |
 | `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop; tell user to grant in System Settings                                                                                                                                                                                         |
 | `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
+| `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
+| `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | `set_value` the full new name on the file's name cell in a Finder window that lists it (renamed through Finder in the background and read back from disk) |
+| `Background input refused (no_focused_text_input)`           | Untargeted background `type_text` while the window's focused element is not a text input or an editing surface (spreadsheet grid, document canvas: `AXLayoutArea`, `AXScrollArea`, `AXTable`, `AXCell`, `AXGroup`; not in Finder/Dock); keys would drive the view (Finder type-to-select) | pass the field's `element_token`, or `x,y` to pixel-focus it first; to rename a Finder file, `set_value` its name cell |
 
 ## Example end-to-end task (macOS)
 
@@ -514,7 +660,7 @@ starting point for new browser workflows.
 1. `launch_app({bundle_id: "com.apple.finder", urls: ["~/Downloads"]})`
    → `{pid: 844, windows: [{window_id: 6123, title: "Downloads", ...}]}`.
    Idempotent launch; plus Finder opens a hidden window rooted at
-   `~/Downloads` via `application(_:open:)` — zero activation, no
+   `~/Downloads` via `application(_:open:)`: zero activation, no
    focus steal. The `windows` array lets you skip a `list_windows` hop.
 2. `get_window_state({pid: 844, window_id: 6123})` → verify an
    `AXWindow` whose title contains "Downloads" is present with a
@@ -523,4 +669,12 @@ starting point for new browser workflows.
 
 If the user instead asks to navigate _within_ an already-open Finder
 window, use the menu-bar flow from "Navigating native menu bars"
-above (click Go → pick a menu item → re-snapshot → click it).
+above (`invoke_menu` with a path such as `["Go", "Downloads"]`).
+
+### LibreOffice, Numbers and other editors in the background
+
+With `window_id`, `type_text`, `press_key` and `hotkey` post keys to that exact window: the driver makes it the app's key window through in-app key-window records (no raise, no activation, real pointer untouched), confirms that the app's focused window and focused element are in that window, posts, and hands key back. This also covers another window or dialog of the app holding focus, and a LibreOffice that was never activated. When the switch cannot be confirmed the call is refused with `window_not_key` and no key is sent. A second window of the same app (Find & Replace, another document) is no longer `same_pid_keyboard_ambiguity`. A command key whose menu route is refused (item disabled while the app is in the background) falls through to key events in that window. Recipe: pass `window_id` on every call; go to the cell with Name Box navigation (`type_text` `A1\n`), type with `\n` and `\t`, read the cell back; run commands (Paste Special, Format, Save) with `invoke_menu({pid, window_id, path})` rather than clicking the menu bar. A `background_unavailable` refusal here means use `get_window_state` and act by element, not stop.
+
+### Preview: export before resizing
+
+Duplicate is disabled in a background Preview, so work on an export: File > Export (`invoke_menu`) to the destination, then resize or edit the exported copy. Do not resize the original first.

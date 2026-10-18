@@ -121,14 +121,16 @@ write_failure_record() {
     > "${failures_file}"
 }
 
+# shellcheck source=../lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=macos
+
 run_test() {
   local name="$1"; shift
   local log_name="${name//[^a-zA-Z0-9._-]/_}"
   echo "[RUN] ${name}"
-  set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${log_name}.log"
-  local exit_code=${PIPESTATUS[0]}
-  set -e
+  local exit_code=0
+  cua_e2e_run_case "${name}" "${ARTIFACT_DIR}/${log_name}.log" "${RUST_ROOT}" "$@" || exit_code=$?
   if [[ "${exit_code}" != 0 ]]; then
     note_lane_failure "${name}"
   fi
@@ -329,6 +331,13 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     --test runtime_configuration -- --test-threads=1
   run_test private-worker-lifecycle cargo test -p cua-driver \
     --test private_worker_test -- --test-threads=1
+  # macOS private workers host the agent-cursor overlay window, so these rows
+  # are ignored under plain `cargo test` and run only on this desktop.
+  run_test private-worker-overlay cargo test -p cua-driver \
+    --test private_worker_test -- --ignored --exact \
+    private_worker_owns_one_runtime_without_a_reconnect_endpoint \
+    dropping_the_host_closes_and_terminates_the_private_worker \
+    private_worker_owns_the_macos_cursor_overlay_facility --test-threads=1
   run_test shared-app-matrix cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
     --ignored --exact shared_web_action_matrix_is_state_verified \
     --nocapture --test-threads=1
@@ -349,6 +358,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_stale_element_token_fails_closed \
     snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \
     harness_appkit_invoke_menu_live_path \
+    harness_appkit_invoke_menu_failed_path_leaves_no_menu_open \
     harness_appkit_text_input \
     harness_appkit_element_foreground_press_key_commits_edit \
     harness_appkit_foreground_press_key_chord_carries_its_modifiers \
@@ -358,14 +368,19 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_scroll_background \
     harness_appkit_counter \
     harness_appkit_counter_px_background \
+    harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved \
     harness_appkit_px_background_press_key_reports_honest_delivery_truth \
     harness_appkit_exact_activation_with_agent_cursor \
     harness_appkit_exact_activation_ignores_competing_application_window \
     harness_appkit_foreground_single_click_has_one_ordered_native_pair \
+    harness_appkit_middle_click_px_background_reaches_exact_window \
     harness_appkit_right_click_px_foreground \
     harness_appkit_right_click_px_background \
     harness_appkit_double_click_px_foreground \
     harness_appkit_double_click_px_background \
+    harness_appkit_popup_click_keeps_front_key_focus_background \
+    harness_appkit_popup_set_value_keeps_front_key_focus_background \
+    harness_appkit_context_menu_keeps_front_key_focus_background \
     harness_appkit_slider_drag_px_foreground \
       harness_appkit_slider_drag_px_background; do
       run_test "appkit-${appkit_test}" cargo test -p cua-driver-e2e --test harness_appkit_test -- \
@@ -409,6 +424,8 @@ EOF
     run_test tk-pointer-click env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test tk_pointer_click_macos_test -- \
       --ignored --nocapture --test-threads=1
+    run_test tk-pointer-toolkit-detect cargo test -p platform-macos --lib \
+      input::pointer_toolkit::tests:: -- --ignored --nocapture --test-threads=1
   fi
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
@@ -419,6 +436,8 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
     --ignored --nocapture --test-threads=1
   run_test desktop-scope cargo test -p cua-driver-e2e --test desktop_scope_macos_test -- \
     --ignored --nocapture --test-threads=1
+  run_test observer-native-snapshot cargo test -p cua-driver-testkit --lib \
+    observer::macos::tests:: -- --ignored --nocapture --test-threads=1
   # Runs a dedicated instance of the installed app with an isolated extension
   # home, so the shared daemon never gains the developer-only E2E extension or
   # the published cua-perception release. The published-catalog row downloads

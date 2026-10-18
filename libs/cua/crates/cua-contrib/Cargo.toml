@@ -1,0 +1,63 @@
+[package]
+name = "cua-contrib"
+description = "Contrib sandbox providers for the cua SDK: third-party platforms (E2B, Daytona, Modal) behind `--on <provider>`, one cargo feature each, off by default."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+# Every provider.
+all = ["e2b", "daytona", "modal"]
+# E2B (https://e2b.dev): REST control plane, templates built from the
+# registry image and cached by digest.
+e2b = []
+# Daytona (https://daytona.io): REST API, snapshots from the registry image.
+daytona = []
+# Modal Sandboxes (https://modal.com): through Modal's official Go SDK in
+# the cua-modal-helper binary (modal-helper/, `go build`); Modal documents no
+# HTTP API.
+modal = []
+
+# Loopback mocks of the provider APIs (tests and binding fixtures).
+testing = ["dep:axum", "dep:cua-spacesd-client", "cua-spacesd-client/testing"]
+
+[dependencies]
+cua-sandbox-core.workspace = true
+# `cua_home()` for the provider credential store.
+cua-auth.workspace = true
+# Image configs (entrypoint) from the registry, for platforms that need a
+# start command.
+cua-image.workspace = true
+async-trait.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+url.workspace = true
+base64.workspace = true
+axum = { workspace = true, optional = true, features = ["json"] }
+cua-spacesd-client = { workspace = true, optional = true }
+
+[[bin]]
+name = "cua-contrib-fixtures"
+path = "src/bin/cua-contrib-fixtures.rs"
+required-features = ["testing", "daytona"]
+
+[[bin]]
+name = "cua-contrib-fake-modal-helper"
+path = "src/bin/cua-contrib-fake-modal-helper.rs"
+required-features = ["testing", "modal"]
+
+
+[dev-dependencies]
+cua-contrib = { path = ".", features = ["testing", "all"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true }

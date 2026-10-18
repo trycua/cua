@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn full_frontmatter_preserves_nested_metadata_and_scalar_types() {
         let source = include_str!("../../../Skills/cua-driver/SKILL.md");
-        let yaml = source.splitn(3, "---").nth(1).unwrap();
+        let yaml = source.split("---").nth(1).unwrap();
         let expected: Value = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(pack().entry["frontmatter"], expected);
         assert!(expected["version"].is_string());

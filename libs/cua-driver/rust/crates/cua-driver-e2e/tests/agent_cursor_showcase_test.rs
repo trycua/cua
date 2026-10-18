@@ -53,6 +53,15 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "showcase requires a normal desktop, got {width}x{height}"
         );
 
+        // The showcase asserts the session badge at rest, which only the
+        // verbose badge mode draws; minimal (the default) shows no badge
+        // until a foreground moment or a key combo.
+        call_ok(
+            &mut driver,
+            "set_config",
+            serde_json::json!({ "cursor.badges": "verbose" }),
+        );
+
         call_ok(
             &mut driver,
             "start_session",
@@ -882,6 +891,57 @@ fn settle(milliseconds: u64) {
     std::thread::sleep(Duration::from_millis(milliseconds));
 }
 
+fn spawn_driver() -> McpDriver {
+    spawn_driver_named(CELL_ID)
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_driver_named(cell_id: &str) -> McpDriver {
+    McpDriver::spawn_macos_daemon_proxy_named(cell_id).expect("start installed macOS daemon proxy")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_driver_named(cell_id: &str) -> McpDriver {
+    McpDriver::spawn_named_with_overlay(cell_id)
+        .expect("start source-built driver with native cursor overlay")
+}
+
+#[cfg(target_os = "macos")]
+fn platform_toolkit() -> &'static str {
+    "appkit"
+}
+
+#[cfg(target_os = "windows")]
+fn platform_toolkit() -> &'static str {
+    "win32"
+}
+
+#[cfg(target_os = "linux")]
+fn platform_toolkit() -> &'static str {
+    "gtk3"
+}
+
+#[cfg(target_os = "macos")]
+fn platform_route() -> DriverRoute {
+    DriverRoute::Composite
+}
+
+#[cfg(target_os = "windows")]
+fn platform_route() -> DriverRoute {
+    DriverRoute::WindowsOverlay
+}
+
+#[cfg(target_os = "linux")]
+fn platform_route() -> DriverRoute {
+    if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
+        DriverRoute::LinuxCuaCompositorInject
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        DriverRoute::LinuxWaylandVirtualPointer
+    } else {
+        DriverRoute::LinuxXTest
+    }
+}
+
 #[cfg(test)]
 mod pixel_oracle_tests {
     use super::*;
@@ -1043,56 +1103,5 @@ mod pixel_oracle_tests {
                 image.put_pixel(x, y, Rgba([94, 192, 232, 255]));
             }
         }
-    }
-}
-
-fn spawn_driver() -> McpDriver {
-    spawn_driver_named(CELL_ID)
-}
-
-#[cfg(target_os = "macos")]
-fn spawn_driver_named(cell_id: &str) -> McpDriver {
-    McpDriver::spawn_macos_daemon_proxy_named(cell_id).expect("start installed macOS daemon proxy")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn spawn_driver_named(cell_id: &str) -> McpDriver {
-    McpDriver::spawn_named_with_overlay(cell_id)
-        .expect("start source-built driver with native cursor overlay")
-}
-
-#[cfg(target_os = "macos")]
-fn platform_toolkit() -> &'static str {
-    "appkit"
-}
-
-#[cfg(target_os = "windows")]
-fn platform_toolkit() -> &'static str {
-    "win32"
-}
-
-#[cfg(target_os = "linux")]
-fn platform_toolkit() -> &'static str {
-    "gtk3"
-}
-
-#[cfg(target_os = "macos")]
-fn platform_route() -> DriverRoute {
-    DriverRoute::Composite
-}
-
-#[cfg(target_os = "windows")]
-fn platform_route() -> DriverRoute {
-    DriverRoute::WindowsOverlay
-}
-
-#[cfg(target_os = "linux")]
-fn platform_route() -> DriverRoute {
-    if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
-        DriverRoute::LinuxCuaCompositorInject
-    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        DriverRoute::LinuxWaylandVirtualPointer
-    } else {
-        DriverRoute::LinuxXTest
     }
 }

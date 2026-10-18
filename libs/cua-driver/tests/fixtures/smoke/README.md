@@ -6,7 +6,7 @@ surface. Complements the Rust integration tests under `libs/cua-driver/rust/crat
 - Integration tests drive cua-driver through the MCP stdio loop and
   assert on specific UIA / AX state changes.
 - Smoke runners drive cua-driver through the CLI (`cua-driver call
-  <tool> <json>`) — different code path (CLI argument parser + tool
+  <tool> <json>`): different code path (CLI argument parser + tool
   resolution), one broad sweep across every registered tool in ~30 sec.
 
 | File              | Host OS  | What it runs                                                   |
@@ -14,7 +14,7 @@ surface. Complements the Rust integration tests under `libs/cua-driver/rust/crat
 | `macos.sh`        | macOS    | Spawns the AppKit harness, calls every tool once               |
 
 Each script checks in a baseline result file under `results/` for the
-current driver version — diff against it to catch regressions in tool
+current driver version. Diff against it to catch regressions in tool
 coverage:
 
 ```bash

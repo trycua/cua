@@ -1,0 +1,19 @@
+[package]
+name = "cua-home"
+description = "The cua home (`$CUA_HOME`, else `~/.cua`) and the test guard that refuses writes to the user's real `~/.cua` from test processes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell"] }
+
+[dev-dependencies]
+tempfile.workspace = true

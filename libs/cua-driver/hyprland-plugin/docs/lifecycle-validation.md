@@ -2,7 +2,7 @@
 
 On 2026-09-05, the experimental Hyprland input path released a held background
 button after operator Stop, agent disconnect, lease expiry, and plugin unload.
-The recorded runs observed release in 18–62 ms, with the expiry interval measured
+The recorded runs observed release in 18-62 ms, with the expiry interval measured
 from compositor resume. The foreground fixture retained its grab and received
 no pointer or keyboard events during each measured fault window.
 
@@ -76,7 +76,7 @@ Matching cursor endpoints alone cannot pass the test.
 Stop, disconnect, and unload occur within 900 ms of the application's actual
 press in a two-second drag. Natural completion cannot satisfy the 750 ms release
 bound. RPC entry is not the press timestamp: recording and snapshots introduced
-859–1000 ms of pre-delivery work in these recorded runs.
+859-1000 ms of pre-delivery work in these recorded runs.
 
 Expiry uses a 500 ms drag and deliberately freezes the disposable compositor
 past the grant deadline. A separate PID-fd watchdog resumes the exact process

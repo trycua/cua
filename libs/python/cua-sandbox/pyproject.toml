@@ -1,9 +1,10 @@
 [project]
 name = "cua-sandbox"
-version = "0.8.0"
+version = "0.9.0"
 description = "CUA Sandbox — ephemeral and persistent sandboxed computer environments"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [
     { name = "TryCua", email = "hello@trycua.com" }
 ]
@@ -27,12 +28,16 @@ classifiers = [
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
-    "cua-core>=0.3.0,<0.4.0",
-    "cua-auto>=0.1.2",
+    # The cua SDK (Rust core, UniFFI): spacesd, Fleet sandboxes, local runtimes.
+    "cua>=0.2.0",
+    # Telemetry only (imported optionally): 0.1.x is allowed so cua-sandbox
+    # co-installs with cua-computer 0.5 / cua-agent 0.7 based harnesses.
+    "cua-core>=0.1.18,<0.4.0",
+    # Typed Fleet resource model (pool/template/claim builders) re-exported by
+    # cua_sandbox; the cua SDK covers the data plane.
     "cua-fleet==0.1.17",
     "pydantic>=2.11,<3.0",
     "jsonschema>=4.23,<5.0",
-    "websockets>=12.0",
     "httpx>=0.27.0",
     "oras>=0.2.40",
     "vncdotool>=1.2.0",
@@ -44,10 +49,14 @@ dependencies = [
 
 [project.optional-dependencies]
 driver = [
-    "cua-driver==0.27.0",
+    "cua-driver==0.28.2",
 ]
 auth = [
     "webbrowser-open>=0.0.1",
+]
+# `sb.mcp(service)`: the official MCP Python SDK.
+mcp = [
+    "mcp>=1.10",
 ]
 dev = [
     "pytest>=8.0.0",
@@ -68,6 +77,7 @@ include = [
     "cua_sandbox/**",
     "README.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
 ]
 exclude = [
     "cua_sandbox/**/__pycache__",
@@ -99,10 +109,13 @@ dev = [
     "PyYAML>=6.0,<7.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-timeout>=2.3.1",
+    "ruff>=0.9.2",
 ]
 
 [tool.uv.sources]
 cua-agent = { path = "../agent", editable = true }
+cua = { path = "../../cua/python", editable = true }
 
 [[tool.uv.index]]
 name = "cua-wheels"

@@ -9,10 +9,11 @@ authors = [
 dependencies = [
     # The docs-only storage consumer uses the same image before reader rollout.
     "boto3==1.40.22",
-    # Held on the 2.x line: main.py is written against the fastmcp 2 API
-    # (FastMCP(...), @mcp.tool(), mcp.http_app()). Moving to 3.x is a
+    # Held on the 3.x line; 3.2.0 is the first release with the fixes for
+    # CVE-2026-27124 and CVE-2026-32871. main.py uses only FastMCP(...),
+    # @mcp.tool() and mcp.http_app(), which 3.x keeps. Moving to 4.x is a
     # deliberate upgrade, not something a rebuild should pick up silently.
-    "fastmcp>=2.14.0,<3",
+    "fastmcp>=3.2.0,<4",
     # lancedb and sentence-transformers must stay in step with the indexer in
     # ../modal_app.py. Both sides open the same table and build embeddings via
     # lancedb.embeddings.get_registry(), so a version split between reader and

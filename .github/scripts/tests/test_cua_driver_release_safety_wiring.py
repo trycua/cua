@@ -205,12 +205,15 @@ def test_signature_workflow_checks_what_the_operating_systems_check() -> None:
     assert set(trigger) == {
         "version",
         "source",
+        "release_repository",
         "verify_macos",
         "verify_windows",
         "expect_macos",
         "expect_windows",
         "legacy_unsigned_node_runtime",
     }
+    # Published releases default to this repository (the release pipeline).
+    assert trigger["release_repository"]["default"] == ""
     assert trigger["expect_macos"]["default"] == "pass"
     assert trigger["expect_windows"]["default"] == "pass"
     assert trigger["legacy_unsigned_node_runtime"]["default"] is False
@@ -253,22 +256,26 @@ def test_signature_team_matches_the_pinned_signing_team() -> None:
 def test_self_test_proves_the_gate_in_both_directions() -> None:
     workflow = load(SELF_TEST)
     jobs = workflow["jobs"]
+    # The fixture releases live on trycua/cua, including when a fork runs this.
     # 0.28.2 predates the signed Node runtime (#4168): it passes only in
     # legacy mode, and the strict gate must reject its real archives.
     assert jobs["signed-release"]["with"] == {
         "version": "0.28.2",
         "source": "release",
+        "release_repository": "trycua/cua",
         "legacy_unsigned_node_runtime": True,
     }
     assert jobs["unsigned-node-runtime"]["with"] == {
         "version": "0.28.2",
         "source": "release",
+        "release_repository": "trycua/cua",
         "verify_windows": False,
         "expect_macos": "fail",
     }
     assert jobs["unsigned-release"]["with"] == {
         "version": "0.28.3",
         "source": "release",
+        "release_repository": "trycua/cua",
         "expect_macos": "fail",
         "expect_windows": "pass",
     }

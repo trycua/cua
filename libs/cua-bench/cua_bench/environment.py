@@ -56,6 +56,12 @@ class Environment:
     bot: Optional[Bot] = None
     tracing: Optional[Tracing] = None
 
+    #: Where native sandboxes run (``cua_bench.targets.Target``); None:
+    #: ``resolve_target()`` (the user default: ``CUA_DEFAULT_ON``, then
+    #: ``cua config set default.on``, then local).
+    target: Optional[Any] = None
+    _sandbox_stack: Optional[Any] = None
+
     # step counter
     step_count: int = 0
     max_steps: Optional[int] = None
@@ -139,18 +145,54 @@ class Environment:
         provider_config: Dict[str, Any] | None = None,
         setup_config: DesktopSetupConfig | None = None,
     ) -> None:
+        """Open the task's environment and attach ``self.session`` to it.
+
+        The task gets its sandbox from the one lifecycle ``cb run`` uses
+        (:func:`cua_bench.sandboxes.open_sandbox`) on ``self.target``
+        (default: ``--on local``, or ``CUA_BENCH_*``); :meth:`close` releases
+        it. ``provider_config={"api_url": ...}`` attaches to an existing
+        machine instead. The retired ``simulated`` provider runs on the Linux
+        container (see :func:`cua_bench.targets.resolve_env_spec`).
+        """
+        from .targets import resolve_env_spec, resolve_target
+
         self.session_name = provider
         self.session_config = dict(provider_config or {})
         self.setup_config = DesktopSetupConfig(**(setup_config or {}))
 
-        SessionCls = get_session(self.session_name)
-        self.session = SessionCls(**self.session_config)
-        self.session.env = self
+        await self._release_sandbox()
+        target = self.target if self.target is not None else resolve_target()
+        spec = resolve_env_spec({"provider": provider, "setup_config": self.setup_config}, target)
+        if not self.session_config.get("api_url"):
+            from contextlib import AsyncExitStack
 
-        await self.session.start(config=self.setup_config, headless=self.headless)
+            from .computers.remote import RemoteDesktopSession
+            from .sandboxes import open_sandbox
+
+            stack = AsyncExitStack()
+            try:
+                sandbox = await stack.enter_async_context(open_sandbox(spec, target))
+            except BaseException:
+                await stack.aclose()
+                raise
+            self._sandbox_stack = stack
+            self.session = RemoteDesktopSession.attach(
+                sandbox, os_type=spec.os_type, width=spec.width, height=spec.height
+            )
+            self.session.env = self
+        else:
+            SessionCls = get_session("native")
+            self.session = SessionCls(**self.session_config)
+            self.session.env = self
+            await self.session.start(config=self.setup_config, headless=self.headless)
         self.page = self.session.page
 
         self.bot = Bot(self)
+
+    async def _release_sandbox(self) -> None:
+        stack, self._sandbox_stack = self._sandbox_stack, None
+        if stack is not None:
+            await stack.aclose()
 
     # --- Lifecycle API ---
     async def reset(
@@ -161,6 +203,7 @@ class Environment:
             await self.session.close()
             self.session = None
             self.page = None
+        await self._release_sandbox()
 
         # Reset step counter and telemetry tracking
         self.step_count = 0
@@ -182,8 +225,9 @@ class Environment:
             and self.current_task.computer
         ):
             computer_config = self.current_task.computer
-            provider = computer_config.get("provider", "webtop")
-            setup_config = computer_config.get("setup_config", {})
+            # No provider means a real sandbox, as in `cb run` (resolve_env_spec).
+            provider = computer_config.get("provider") or "native"
+            setup_config = computer_config.get("setup_config") or {}
             await self.create_sandbox(provider=provider, setup_config=setup_config)
 
         # Setup current task
@@ -197,13 +241,13 @@ class Environment:
                         env_name=self.env_name or "unknown",
                         task_index=task_id or 0,
                         error_type=type(e).__name__,
-                        error_message=str(e),
                         stage="setup",
                         run_id=self._run_id,
                     )
                 raise
 
-        # Track task execution started
+        # Track task execution started. env_name, provider and os_type are
+        # mapped to fixed vocabularies inside cua_bench.telemetry.
         if _telemetry_available:
             provider_type = self.session_name if self.session_name else None
             os_type = self.setup_config.get("os_type") if self.setup_config else None
@@ -295,7 +339,6 @@ class Environment:
                         env_name=self.env_name or "unknown",
                         task_index=0,
                         error_type=type(e).__name__,
-                        error_message=str(e),
                         stage="step",
                         run_id=self._run_id,
                     )
@@ -350,7 +393,6 @@ class Environment:
                     env_name=self.env_name or "unknown",
                     task_index=0,
                     error_type=type(e).__name__,
-                    error_message=str(e),
                     stage="solve",
                     run_id=self._run_id,
                 )
@@ -382,7 +424,6 @@ class Environment:
                     env_name=self.env_name or "unknown",
                     task_index=0,
                     error_type=type(e).__name__,
-                    error_message=str(e),
                     stage="evaluate",
                     run_id=self._run_id,
                 )
@@ -418,7 +459,10 @@ class Environment:
         return result
 
     async def close(self) -> None:
-        if self.session is not None:
-            await self.session.close()
-            self.session = None
-            self.page = None
+        try:
+            if self.session is not None:
+                await self.session.close()
+                self.session = None
+                self.page = None
+        finally:
+            await self._release_sandbox()

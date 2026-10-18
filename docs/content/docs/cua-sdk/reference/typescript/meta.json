@@ -1,0 +1,8 @@
+{
+  "title": "TypeScript additions",
+  "pages": [
+    "spaces",
+    "spaces-transport",
+    "spaces-host"
+  ]
+}

@@ -4,9 +4,15 @@ This file contains shared fixtures and configuration for all agent tests.
 Following SRP: This file ONLY handles test setup/teardown.
 """
 
+import os
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+
+# Tests must never send real telemetry. Importing cua_agent records a
+# module_init event, so switch telemetry off before any test module imports it.
+# Tests that exercise telemetry patch record_event/is_telemetry_enabled.
+os.environ["CUA_TELEMETRY"] = "0"
 
 
 @pytest.fixture

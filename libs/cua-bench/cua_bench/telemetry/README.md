@@ -1,106 +1,73 @@
 # Telemetry
 
-cua-bench collects anonymous usage statistics to help improve the product. No personal data, file contents, or sensitive information is collected. You can opt out completely at any time.
+cua-bench sends anonymous usage events so we can see which features are used. It never sends personal data, and you can turn it off at any time.
 
-## What's Collected
+## Turning it off
 
-### Enabled by Default
-
-Telemetry is **enabled by default**. You can disable it anytime (see "Disabling Telemetry" below).
-
-**System info:**
-
-- OS name and version
-- Python version
-- cua-bench version
-- Whether running in CI environment
-
-**Usage metrics:**
-
-- CLI commands used (e.g., `run`, `interact`, `trace`)
-- Task execution metadata (environment name, provider type, OS type)
-- Performance data (duration, step counts, success/failure)
-- Batch job configuration (task count, parallelism level)
-
-**Session tracking:**
-
-- Anonymous installation UUID (persisted locally)
-- No personal identifiers
-
-### Never Collected
-
-- Personal information or user identifiers
-- API keys or credentials
-- File contents, paths, or application data
-- Screenshots or traces
-- Full error tracebacks (only error type + truncated message)
-- Model outputs or prompts
-
-## Disabling Telemetry
-
-### Environment Variable
+Any one of these disables telemetry:
 
 ```bash
-export CUA_TELEMETRY_ENABLED=false
+export CUA_TELEMETRY=0          # also: false, no, off
+export DO_NOT_TRACK=1           # any non-empty value except 0
+export CUA_TELEMETRY_ENABLED=false   # legacy, still honored
+export CUA_TELEMETRY_DISABLED=1      # legacy, still honored
 ```
 
-### Check Status
+In CI (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`, `JENKINS_URL`, `TF_BUILD`, `CONTINUOUS_INTEGRATION`) telemetry is off unless you set `CUA_TELEMETRY=1`.
+
+Check the current state:
 
 ```python
 from cua_bench.telemetry import is_telemetry_enabled
-print(is_telemetry_enabled())  # True or False
+print(is_telemetry_enabled())
 ```
 
-## Events Reference
+## What is sent
 
-### CLI Events
+Every event carries:
 
-| Event                | Data                           | Trigger         |
-| -------------------- | ------------------------------ | --------------- |
-| `cb_command_invoked` | command, subcommand, safe args | Any CLI command |
+- cua-bench version
+- Python version (major.minor)
+- OS name (`darwin`, `linux`, `windows`)
+- a random installation id
 
-### Task Lifecycle Events
+User-chosen values are mapped to a fixed vocabulary before sending:
 
-| Event                          | Data                                           | Trigger        |
-| ------------------------------ | ---------------------------------------------- | -------------- |
-| `cb_task_execution_started`    | env_name, provider_type, os_type, agent, model | Task begins    |
-| `cb_task_evaluation_completed` | success, reward, total_steps, duration         | Task completes |
-| `cb_task_execution_failed`     | error_type, error_message (truncated), stage   | Task fails     |
+- task and environment names: sent only if they are a task shipped with cua-bench, otherwise `custom`
+- dataset names: `cua-bench-basic`, `cua-bench-kicad`, `cua-bench-workflows`, otherwise `custom`
+- agents: sent only if built in (`cua-agent`, `gemini`, `opencua`, `qwen3vl`, `qwen35`, `harness`), otherwise `custom`
+- models: path-like, URL-like, long ids, or ids with an unknown prefix before `/` are sent as `custom`
+- errors: exception class name only
 
-### Batch Events
+### Events
 
-| Event                     | Data                                                 | Trigger                            |
-| ------------------------- | ---------------------------------------------------- | ---------------------------------- |
-| `cb_batch_job_started`    | dataset_name, task_count, variant_count, parallelism | Batch job begins                   |
-| `cb_batch_task_completed` | env_name, success, reward, duration                  | Individual task in batch completes |
+| Event | Properties | When |
+| --- | --- | --- |
+| `cb_command_invoked` | command, subcommand, sanitized flags (agent, model, max_steps, on, kind, runtime, oracle, detach, max_parallel) | Any CLI command |
+| `cb_task_execution_started` | env_name, task_index, provider_type, os_type, max_steps, run_id | A task starts |
+| `cb_task_evaluation_completed` | env_name, success, reward, total_steps, duration_seconds, run_id | A task is evaluated |
+| `cb_task_execution_failed` | env_name, error_type (class name), stage, run_id | A task fails in setup, step, solve or evaluate |
+| `cua_bench_run_completed` | taskset, score_bucket, task_count (bucket), outcome | A `cb run` finishes, fails or is cancelled |
 
-## Why We Collect This
+## What is never sent
 
-This data helps us:
+- file paths, usernames, hostnames, IP addresses or emails
+- prompts, typed text, model outputs, screenshots or traces
+- API keys or credentials
+- error messages or tracebacks
+- your own task, dataset, agent or sandbox names
 
-1. **Understand what features are used** - So we can focus development on what matters
-2. **Identify what's not used** - So we can simplify or remove unused features
-3. **Track success/failure patterns** - So we can improve reliability
-4. **Understand usage scale** - So we can optimize for real-world workloads
+GeoIP lookup is disabled and no person profiles are created.
 
-## Data Storage
+## Where it goes
 
-- **Installation ID:** Stored locally at `~/.cua-bench/installation_id`
-- **Events:** Sent to PostHog (EU region: `eu.posthog.com`)
-- **Retention:** Standard PostHog data retention policies
+- Installation id: `~/.config/cua/installation_id`, created only while telemetry is on
+- Events: PostHog EU (`eu.i.posthog.com`)
 
-## Debug Mode
+## Debugging
 
-To see what's being sent:
-
-```bash
-export CUA_TELEMETRY_DEBUG=on
-export CUA_TELEMETRY_ENABLED=true
-cb platform list
-```
-
-You'll see PostHog debug output showing exact event payloads.
+`CUA_TELEMETRY_DEBUG=on` turns on the PostHog client's own debug logging.
 
 ## Questions
 
-Questions about telemetry? Open an issue on [GitHub](https://github.com/trycua/cua).
+Open an issue on [GitHub](https://github.com/trycua/cua).

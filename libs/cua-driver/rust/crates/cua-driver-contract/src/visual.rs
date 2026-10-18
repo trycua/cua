@@ -53,16 +53,10 @@ fn visual_regions_schema(_: &mut SchemaGenerator) -> Schema {
 
 fn region_kinds_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({
-        "anyOf": [
-            {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 2,
-                "uniqueItems": true,
-                "items": { "enum": ["text", "icon"] }
-            },
-            { "type": "null" }
-        ]
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2,
+        "items": { "type": "string", "enum": ["text", "icon"] }
     })
 }
 
@@ -175,12 +169,15 @@ pub struct VisualCaptureProvenance {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ParseVisualRegionsOptions {
+    /// Region kinds to return (`text`, `icon`). Omit for all kinds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "region_kinds_schema")]
     pub kinds: Option<Vec<VisualRegionKind>>,
+    /// Drop regions below this confidence (0 to 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "confidence_schema")]
     pub min_confidence: Option<f64>,
+    /// Return at most this many regions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "positive_integer_schema")]
     pub max_regions: Option<u32>,
@@ -192,6 +189,7 @@ pub struct ParseVisualRegionsOptions {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ParseVisualRegionsInput {
+    /// `capture_id` of a screenshot returned by get_window_state or get_desktop_state.
     #[schemars(length(min = 1))]
     pub capture_id: String,
     #[serde(default)]
@@ -882,7 +880,8 @@ mod tests {
 
         let schema =
             serde_json::to_string(&schemars::schema_for!(ParseVisualRegionsInput)).unwrap();
-        assert!(schema.contains("\"uniqueItems\":true"));
+        assert!(schema.contains("\"enum\":[\"text\",\"icon\"]"));
+        assert!(!schema.contains("uniqueItems"));
     }
 
     #[test]

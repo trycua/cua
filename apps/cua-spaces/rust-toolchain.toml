@@ -1,0 +1,5 @@
+# src-tauri links the cua SDK crates (libs/cua) by path; they pin 1.97.1 with
+# edition 2024, so builds started from this directory use the same toolchain.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"

@@ -111,6 +111,7 @@ impl Driver for CliDriver {
             }
         };
 
+        let args = crate::driver::with_full_window_state(tool, args);
         if let Some(mut stdin) = child.stdin.take() {
             let _ = writeln!(stdin, "{}", serde_json::to_string(&args).unwrap());
         }

@@ -5683,6 +5683,11 @@ fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u
     // Synchronous X11 lookups stay on the caller's blocking thread, outside
     // the AT-SPI runtime.
     let offset = window_to_screen_offset(pid, xid, None);
+    if offset.is_none() && exact_wayland_origin_required(xid) {
+        return Err(anyhow!(
+            "window {xid} has no exact frame from the GNOME Shell helper"
+        ));
+    }
     let display = (!crate::wayland::is_wayland())
         .then(x11_display_size)
         .flatten();
@@ -5989,9 +5994,10 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
         // compositor exposes no geometry. Keep that observation as the final
         // fallback so stale default placement cannot override Sway IPC or a
         // shell helper's authoritative frame.
-        return prefer_authoritative_wayland_origin(
+        return wayland_window_origin(
             authoritative,
-            crate::wayland::observed_window_origin(pid),
+            || crate::wayland::observed_window_origin(pid),
+            crate::wayland::shell_helper::available,
         );
     }
     // Resolve a usable window xid. `xid == 0` means "no hint" (get_element_bounds
@@ -6035,7 +6041,7 @@ fn authoritative_wayland_origin(pid: u32, xid: u64, title: Option<&str>) -> Opti
                 })
                 .flatten()
         })
-        .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
+        .or_else(|| crate::wayland::shell_helper::window_origin(pid, xid))
         .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title))
 }
 
@@ -6044,6 +6050,31 @@ fn prefer_authoritative_wayland_origin(
     observed: Option<(i32, i32)>,
 ) -> Option<(i32, i32)> {
     authoritative.or(observed)
+}
+
+/// [`prefer_authoritative_wayland_origin`] for one window's element geometry.
+/// The observation is keyed by PID alone, so it may be a sibling window's
+/// origin. An attested GNOME Shell helper reports every window's exact frame;
+/// when it has none for this window, the observation must not stand in.
+fn wayland_window_origin(
+    authoritative: Option<(i32, i32)>,
+    observed: impl FnOnce() -> Option<(i32, i32)>,
+    shell_reports_exact_frames: impl FnOnce() -> bool,
+) -> Option<(i32, i32)> {
+    if authoritative.is_some() || shell_reports_exact_frames() {
+        return authoritative;
+    }
+    observed()
+}
+
+/// A window-bound geometry query that must refuse instead of falling back to
+/// `CoordType::Screen`: the attested GNOME Shell helper reports exact frames,
+/// and Mutter's Screen extents are not screen coordinates.
+fn exact_wayland_origin_required(xid: u64) -> bool {
+    xid != 0
+        && crate::wayland::is_wayland()
+        && !crate::wayland::hyprland::is_session()
+        && crate::wayland::shell_helper::available()
 }
 
 fn combine_wayland_content_offsets(
@@ -6299,6 +6330,13 @@ async fn element_bounds_for_visited(
     if crate::wayland::is_wayland()
         && crate::wayland::hyprland::is_session()
         && (offset.is_none() || scoped_frame.is_none())
+    {
+        return (Vec::new(), true);
+    }
+    if offset.is_none()
+        && bounded_blocking(move || exact_wayland_origin_required(xid))
+            .await
+            .unwrap_or(true)
     {
         return (Vec::new(), true);
     }
@@ -6777,7 +6815,7 @@ mod coord_tests {
         is_showing_state, is_web_process_bus, listing_state, passive_marker,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
-        ApplicationSelection,
+        wayland_window_origin, ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -7205,6 +7243,26 @@ mod coord_tests {
         assert_eq!(
             prefer_authoritative_wayland_origin(None, Some((120, 120))),
             Some((120, 120))
+        );
+    }
+
+    #[test]
+    fn an_attested_shell_without_the_exact_frame_admits_no_pid_observation() {
+        let observed = || Some((120, 120));
+        assert_eq!(
+            wayland_window_origin(Some((600, 0)), observed, || true),
+            Some((600, 0))
+        );
+        assert_eq!(wayland_window_origin(None, observed, || true), None);
+        // Without a Shell helper (Sway, KDE, GNOME without it) the
+        // observation stays the last fallback.
+        assert_eq!(
+            wayland_window_origin(None, observed, || false),
+            Some((120, 120))
+        );
+        assert_eq!(
+            wayland_window_origin(Some((0, 0)), observed, || false),
+            Some((0, 0))
         );
     }
 

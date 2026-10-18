@@ -41,7 +41,9 @@
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -84,7 +86,9 @@
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -541,7 +545,7 @@
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
         ]
       }
@@ -582,7 +586,7 @@
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
         ]
       }
@@ -626,7 +630,7 @@
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
         ]
       }
@@ -667,7 +671,7 @@
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
         ]
       }
@@ -712,7 +716,7 @@
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
         ]
       }
@@ -757,7 +761,7 @@
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | Modal does not run this image. Ask your agent to deploy the Windows Server 2022 image on Modal and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | Modal does not run this image. Ask your agent to deploy the macOS Tahoe 26 image on Modal and add it with cua spaces add. | off"
         ]
       }
@@ -800,7 +804,9 @@
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     }
   ]

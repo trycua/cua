@@ -111,7 +111,7 @@ public struct NewSpaceWizardView: View {
                 get: { v.image.os },
                 set: { wizard.send(.chooseOs(os: $0)) })) {
                 ForEach(v.osTiles, id: \.id) { tile in
-                    Text(tile.title).tag(osOf(tile.id)).help(tile.detail)
+                    Text(tile.title).tag(osOf(tile.id)).selectionDisabled(!tile.enabled).help(tile.detail)
                 }
             }
             .pickerStyle(.segmented)

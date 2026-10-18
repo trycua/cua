@@ -11,16 +11,21 @@
 #                                     (`tauri icon`, via npx), same icon
 # Only needed when the art changes; releases use the committed files.
 #
-#   scripts/dmg-art/render.sh [--chrome PATH]
+#   scripts/dmg-art/render.sh [--chrome PATH] [--bg-only]
+#
+# --bg-only redraws just the DMG background (art.html "bg"); the icons stay.
+# Keep APP and APPS in art.html equal to icon_locations in dmg-settings.py.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 support="$here/../../Support"
 tauri_icons="$here/../../../cua-spaces/src-tauri/icons"
 chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+bg_only=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --chrome) chrome="$2"; shift ;;
-    -h | --help) sed -n '5,14p' "$0"; exit 0 ;;
+    --bg-only) bg_only=1 ;;
+    -h | --help) sed -n '5,17p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -51,6 +56,7 @@ icns() {
 mkdir -p "$support/dmg"
 shot bg 2560 1440 1 "$support/dmg/background.png"
 shot bg 2560 1440 2 "$support/dmg/background@2x.png"
+if [ "$bg_only" = 1 ]; then ls -l "$support/dmg"; exit 0; fi
 shot icon 1024 1024 1 "$work/icon.png"
 shot alias 1024 1024 1 "$work/alias.png"
 icns app "$work/icon.png" "$support/AppIcon.icns"

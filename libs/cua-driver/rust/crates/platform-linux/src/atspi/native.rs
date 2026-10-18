@@ -7158,6 +7158,16 @@ mod coord_tests {
     }
 
     #[test]
+    fn a_chromium_frame_in_dips_under_device_scale_2_is_not_rebased() {
+        let window = (604, 80, 1584, 1132);
+        assert_eq!(
+            screen_extent_rebase(window, (0, 0, 792, 566), Some((600, 50, 1600, 1200))),
+            None
+        );
+        assert_eq!(screen_extent_rebase(window, (0, 0, 792, 566), None), None);
+    }
+
+    #[test]
     fn renderer_window_offset_only_rebases_negative_frame_origins() {
         assert_eq!(
             rebase_renderer_window_offset((100, 50), Some((-8, -29))),

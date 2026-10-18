@@ -443,13 +443,27 @@ pub fn perform_action_at_point_in(
             }
         }
     }
-    match native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles) {
+    walk_unless_fired(
+        native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles),
+        || native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles),
+    )
+}
+
+/// The `GetAccessibleAtPoint` tier's outcome decides whether the full-walk
+/// tier runs. Only a miss (or a failure before anything was sent) walks: a
+/// hit, which includes a `doAction` that did not answer, or input that may
+/// have landed ends the click, since walking would send the action again.
+fn walk_unless_fired(
+    live: Result<Option<AtPointHit>>,
+    walk: impl FnOnce() -> Result<Option<AtPointHit>>,
+) -> Result<Option<AtPointHit>> {
+    match live {
         Ok(Some(hit)) => return Ok(Some(hit)),
         Ok(None) => {}
         Err(error) if input_may_have_landed(&error) => return Err(error),
         Err(error) => tracing::debug!("GetAccessibleAtPoint hit-test failed: {error:#}"),
     }
-    native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles)
+    walk()
 }
 
 /// Resolve a *screen* pixel to the indexable element whose reconstructed screen

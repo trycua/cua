@@ -348,7 +348,7 @@ fn bundle_identifier(bundle: &core_foundation::bundle::CFBundle) -> Option<Strin
 /// Read the running process's `CFBundleIdentifier` via CoreFoundation.
 /// Returns `None` when the process has no associated bundle (e.g.
 /// running the bare binary outside `CuaDriver.app`).
-fn current_bundle_identifier() -> Option<String> {
+pub(crate) fn current_bundle_identifier() -> Option<String> {
     use core_foundation::base::TCFType;
     use core_foundation::bundle::{CFBundle, CFBundleGetMainBundle};
 

@@ -947,7 +947,8 @@ impl Tool for ListWindowsTool {
                 on_current_space / space_ids fields are \
                 omitted on Windows; current_space_id is null.\n\n\
                 Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, \
-                default false). Filter with app or pid: an unfiltered call lists every window.".into(),
+                default false). Filter with app or pid: an unfiltered call lists every window. \
+                The driver's own overlay is omitted.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer","description":"Optional pid filter. When set, only this pid's windows are returned."},
                 "app":{"type":"string","description":cua_driver_core::tool_args::LIST_WINDOWS_APP_FILTER_DESCRIPTION},
@@ -973,6 +974,7 @@ impl Tool for ListWindowsTool {
         if on_screen_only {
             windows.retain(|w| w.is_on_screen);
         }
+        drop_own_windows(&mut windows, std::process::id());
         if let Some(filter) = args.opt_str("app") {
             windows.retain(|w| {
                 let app_name = pid_to_name.get(&w.pid).map(String::as_str).unwrap_or("");
@@ -1095,6 +1097,10 @@ impl Tool for ListWindowsTool {
 }
 
 use cua_driver_core::window_target::z_index_from_front_to_back;
+
+fn drop_own_windows(windows: &mut Vec<crate::win32::WindowInfo>, own_pid: u32) {
+    windows.retain(|w| w.pid != own_pid);
+}
 
 #[cfg(test)]
 mod list_windows_z_index_tests;

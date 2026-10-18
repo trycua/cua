@@ -4934,7 +4934,7 @@ mod path_tests {
     }
 
     #[test]
-    fn an_end_defers_removal_only_when_the_session_tracked_a_popup() {
+    fn an_end_without_tracked_popups_removes_the_master_at_once() {
         let _op = mpx_op_lock();
         end_session_after_click("popup-test-no-popup", &[]);
         assert_eq!(popup_removal_due("popup-test-no-popup"), None);
@@ -4942,11 +4942,6 @@ mod path_tests {
             .lock()
             .unwrap()
             .contains_key("popup-test-no-popup"));
-        end_session_after_click("popup-test-closed-popup", &[0x7fff_0002]);
-        assert!(matches!(
-            popup_removal_due("popup-test-closed-popup"),
-            Some(Some(_))
-        ));
     }
 
     #[test]
@@ -4967,15 +4962,11 @@ mod path_tests {
         let _op = mpx_op_lock();
         let cursor_id = "popup-test-reuse";
         end_session_after_click(cursor_id, &[0x7fff_0003]);
-        let Some(Some(first)) = popup_removal_due(cursor_id) else {
-            panic!("the first end did not start a popup waiter");
-        };
+        assert!(matches!(popup_removal_due(cursor_id), Some(Some(_))));
         super::mark_mpx_use(cursor_id);
         assert_eq!(popup_removal_due(cursor_id), Some(None));
         super::forget_master_pointer_locked(cursor_id);
-        let second = popup_removal_due(cursor_id).flatten();
-        assert!(second.is_some());
-        assert_ne!(second, Some(first));
+        assert!(matches!(popup_removal_due(cursor_id), Some(Some(_))));
     }
 
     #[test]

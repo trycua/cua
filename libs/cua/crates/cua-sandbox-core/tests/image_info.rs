@@ -210,6 +210,7 @@ async fn unresolved_local_images_and_direct_urls_report_none() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_managed_claims_report_the_pinned_template_image() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();

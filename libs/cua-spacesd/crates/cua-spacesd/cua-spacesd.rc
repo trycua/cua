@@ -1,0 +1,3 @@
+// RT_MANIFEST = 24, CREATEPROCESS_MANIFEST_RESOURCE_ID = 1.
+// Numeric type 24 ensures the Windows loader applies this as a manifest.
+1 24 "cua-spacesd.manifest"

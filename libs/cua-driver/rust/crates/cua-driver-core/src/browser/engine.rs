@@ -37,7 +37,7 @@ use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
     CdpWindowCandidate,
 };
-use super::cdp_ws::{CdpConnection, CdpPool};
+use super::cdp_ws::{CdpConnection, CdpPool, SharedSocketRelease};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
@@ -53,8 +53,8 @@ use super::semantic::{
     SEMANTIC_COMPUTED_STYLES,
 };
 use super::store::{
-    format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SemanticContinuation,
-    SnapshotRecord, TabRecord, TargetRecord,
+    format_ref, BrowserStore, BrowserVisibility, FrameIdentity, FrameKind, FrameRef, RefEntry,
+    SemanticContinuation, SnapshotRecord, TabRecord, TargetRecord,
 };
 use super::types::{
     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
@@ -173,6 +173,47 @@ pub(super) fn unsupported_engine_refusal(
     }))
 }
 
+/// What an agent reads when a user's own browser is not attached yet. Agents
+/// read the old "requires explicit existing-profile approval" wording as a
+/// request for the user's approval and gave up, or fell back to desktop pointer
+/// tools that move the user's pointer (Bench v2 PR-02: 23 of 28 trials stopped
+/// here without calling browser_prepare). Name the call that attaches instead.
+const CONSUMER_PROFILE_NOT_ATTACHED: &str = "Cua is not attached to this browser window yet. \
+     Call browser_prepare with this pid and window_id and strategy {\"kind\":\"existing_profile\"} \
+     (detail.next_call has the exact arguments). It attaches the browser tools, or refuses \
+     with nothing changed and says why; any approval the host requires is handled there. \
+     Do not switch to desktop pointer tools for this page: they move the user's pointer.";
+
+/// Add the exact `browser_prepare` call to a not-yet-attached refusal.
+fn with_existing_profile_next_call(
+    mut refusal: BrowserRefusal,
+    session: &str,
+    pid: i64,
+    window_id: u64,
+) -> BrowserRefusal {
+    if refusal.code != BrowserRefusalCode::BrowserConsentRequired {
+        return refusal;
+    }
+    let mut detail = match refusal.detail.take() {
+        Some(Value::Object(detail)) => detail,
+        _ => serde_json::Map::new(),
+    };
+    detail.insert(
+        "next_call".to_owned(),
+        json!({
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": pid,
+                "window_id": window_id,
+                "session": session,
+                "strategy": { "kind": "existing_profile" },
+            },
+        }),
+    );
+    refusal.detail = Some(Value::Object(detail));
+    refusal
+}
+
 fn endpoint_access_class(
     has_existing_profile_grant: bool,
     driver_owned: bool,
@@ -188,7 +229,7 @@ fn endpoint_access_class(
         BrowserProcessRole::EmbeddedApplication => Ok(EndpointAccessClass::EmbeddedApplication),
         BrowserProcessRole::StandaloneConsumer => Err(refuse(
             BrowserRefusalCode::BrowserConsentRequired,
-            "this standalone browser profile requires explicit existing-profile approval before Cua can inspect its DevTools endpoint",
+            CONSUMER_PROFILE_NOT_ATTACHED,
         )
         .with_detail(json!({
             "reason": "consumer_profile_endpoint_requires_grant",
@@ -658,7 +699,6 @@ impl BrowserEngine {
                         let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
                         let mut requests = pending.remove(session_id).unwrap_or_default();
                         for grant in engine.existing_profile_grants.remove_session(session_id) {
-                            engine.pool.release_claim_marker(&grant.endpoint_ws_url);
                             if grant.cleanup_remote_debugging {
                                 requests.push(ExistingProfileSetupRequest {
                                     pid: grant.pid,
@@ -672,9 +712,21 @@ impl BrowserEngine {
                             if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                                 let engine = engine.clone();
                                 runtime.spawn(async move {
+                                    // A normal session end parks the already-consented
+                                    // socket for the next approved session, unless the
+                                    // driver is turning remote debugging back off.
+                                    let mode = if grant.cleanup_remote_debugging {
+                                        SharedSocketRelease::Close
+                                    } else {
+                                        SharedSocketRelease::Park
+                                    };
                                     engine
                                         .pool
-                                        .release_existing(&grant.endpoint_ws_url, grant.generation)
+                                        .release_existing(
+                                            &grant.endpoint_ws_url,
+                                            grant.generation,
+                                            mode,
+                                        )
                                         .await;
                                     if let Some(protected) = grant.protected_consent.as_ref() {
                                         engine.approval_broker.revoke(protected).await;
@@ -727,7 +779,6 @@ impl BrowserEngine {
             GrantLookup::Missing => Ok(None),
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
-                self.pool.release_claim_marker(&grant.endpoint_ws_url);
                 if grant.cleanup_remote_debugging {
                     let request = ExistingProfileSetupRequest {
                         pid: grant.pid,
@@ -748,7 +799,11 @@ impl BrowserEngine {
                     }
                 }
                 self.pool
-                    .release_existing(&grant.endpoint_ws_url, grant.generation)
+                    .release_existing(
+                        &grant.endpoint_ws_url,
+                        grant.generation,
+                        SharedSocketRelease::Close,
+                    )
                     .await;
                 if let Some(protected) = grant.protected_consent.as_ref() {
                     self.approval_broker.revoke(protected).await;
@@ -771,7 +826,6 @@ impl BrowserEngine {
             .existing_profile_grants
             .revoke(session, transport_session, pid)
         {
-            self.pool.release_claim_marker(&grant.endpoint_ws_url);
             if grant.cleanup_remote_debugging {
                 let request = ExistingProfileSetupRequest {
                     pid: grant.pid,
@@ -792,7 +846,11 @@ impl BrowserEngine {
                 }
             }
             self.pool
-                .release_existing(&grant.endpoint_ws_url, grant.generation)
+                .release_existing(
+                    &grant.endpoint_ws_url,
+                    grant.generation,
+                    SharedSocketRelease::Close,
+                )
                 .await;
             if let Some(protected) = grant.protected_consent.as_ref() {
                 self.approval_broker.revoke(protected).await;
@@ -1258,8 +1316,8 @@ impl BrowserEngine {
         let driver_owned = self.is_driver_owned_pid_for_session(session, pid)
             || transport_session
                 .is_some_and(|owner| self.is_driver_owned_pid_for_session(owner, pid));
-        let access_class =
-            endpoint_access_class(grant.is_some(), driver_owned, class.process_role)?;
+        let access_class = endpoint_access_class(grant.is_some(), driver_owned, class.process_role)
+            .map_err(|refusal| with_existing_profile_next_call(refusal, session, pid, window_id))?;
 
         let native = self.native_window_checked(pid, window_id).await?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;
@@ -1685,21 +1743,7 @@ impl BrowserEngine {
         // focusing its native window or invoking any CDP activation command.
         // Treat an unavailable or malformed proof as inactive: omitting
         // feedback is safer than drawing a cursor over another tab.
-        let tab_is_active = validated
-            .conn
-            .call(
-                Some(&validated.cdp_session),
-                "Runtime.evaluate",
-                json!({
-                    "expression": "document.visibilityState === 'visible'",
-                    "returnByValue": true,
-                    "awaitPromise": false,
-                }),
-            )
-            .await
-            .ok()
-            .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
-            .unwrap_or(false);
+        let tab_is_active = tab_visibility_proven(&validated.conn, &validated.cdp_session).await;
 
         let screen_point = if cdp_session == validated.cdp_session {
             validated
@@ -2729,6 +2773,24 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
+        if !semantic.nodes.iter().any(|node| {
+            matches!(
+                node.visibility,
+                BrowserVisibility::InViewport
+                    | BrowserVisibility::NearViewport
+                    | BrowserVisibility::Offscreen
+            )
+        }) && !tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tab_visibility_proven(&conn, &cdp_session),
+        )
+        .await
+        .unwrap_or(false)
+        {
+            semantic.not_rendered_count = 1;
+            semantic.complete = false;
+        }
+
         let page = semantic.page(
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2790,6 +2852,22 @@ impl BrowserEngine {
             });
         Ok(outcome)
     }
+}
+
+async fn tab_visibility_proven(conn: &CdpConnection, cdp_session: &str) -> bool {
+    conn.call(
+        Some(cdp_session),
+        "Runtime.evaluate",
+        json!({
+            "expression": "document.visibilityState === 'visible'",
+            "returnByValue": true,
+            "awaitPromise": false,
+        }),
+    )
+    .await
+    .ok()
+    .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
+    .unwrap_or(false)
 }
 
 /// Attribute names that make an element interactive-enough to ref.
@@ -2862,6 +2940,9 @@ fn collect_interactive(
                 .find(|kv| kv[0].eq_ignore_ascii_case(key))
                 .map(|kv| kv[1].as_str())
         };
+        let closed_select = name == "select"
+            && attr("multiple").is_none()
+            && attr("size").and_then(|size| size.trim().parse::<u32>().ok()) <= Some(1);
         let interactive = INTERACTIVE_TAGS.contains(&name.as_str())
             || INTERACTIVE_ATTRS.iter().any(|a| attr(a).is_some());
         if interactive {
@@ -2879,6 +2960,9 @@ fn collect_interactive(
                     in_root_frame,
                 });
             }
+        }
+        if closed_select {
+            return;
         }
     }
     if let Some(children) = node.get("children").and_then(Value::as_array) {
@@ -3114,6 +3198,36 @@ mod tests {
         let inner = out.iter().find(|e| e.backend_node_id == 30).unwrap();
         assert!(!inner.in_root_frame);
         assert_eq!(inner.frame_id.as_deref(), Some("F_IFRAME"));
+    }
+
+    #[test]
+    fn collector_refs_a_closed_select_without_its_options() {
+        let option = |backend: i64| {
+            json!({"nodeType": 1, "nodeName": "OPTION", "backendNodeId": backend,
+                   "attributes": ["value", format!("c{backend}")]})
+        };
+        let doc = json!({
+            "nodeType": 9,
+            "nodeName": "#document",
+            "frameId": "F_MAIN",
+            "children": [
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 1,
+                 "attributes": ["name", "country"],
+                 "children": (100..250).map(option).collect::<Vec<_>>()},
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 2,
+                 "attributes": ["name", "tags", "multiple", ""],
+                 "children": [option(300), option(301)]},
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 3,
+                 "attributes": ["name", "list", "size", "4"],
+                 "children": [option(400)]},
+                {"nodeType": 1, "nodeName": "BUTTON", "backendNodeId": 4,
+                 "attributes": ["type", "submit"]}
+            ]
+        });
+        let mut out = Vec::new();
+        collect_interactive(&doc, Some("F_MAIN"), true, &mut out);
+        let backends: Vec<i64> = out.iter().map(|e| e.backend_node_id).collect();
+        assert_eq!(backends, vec![1, 2, 300, 301, 3, 400, 4]);
     }
 
     #[test]

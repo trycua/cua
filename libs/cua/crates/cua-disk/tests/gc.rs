@@ -514,7 +514,8 @@ async fn lume_bases_the_sdk_pulled_are_evicted_and_nothing_else() {
         OwnedKind::Base,
         Some("ghcr.io/trycua/macos:26"),
     );
-    owned.mark("my-mac", OwnedKind::Instance, Some("cua-base-old"));
+    // my-mac was cloned from the base still pulling, not from cua-base-old.
+    owned.mark("my-mac", OwnedKind::Instance, Some("cua-base-busy"));
     owned.mark("deleted-elsewhere", OwnedKind::Base, None);
     for n in [
         "cua-base-old",
@@ -524,6 +525,8 @@ async fn lume_bases_the_sdk_pulled_are_evicted_and_nothing_else() {
     ] {
         mark_used_at(&owned.dir().join(format!("{n}.json")), days_ago(30));
     }
+    // The newer pin of the same repository: cua-base-old is superseded.
+    mark_used_at(&owned.dir().join("cua-base-busy.json"), days_ago(20));
     let vm = |n: &str, s: &str| LumeVm {
         name: n.into(),
         status: s.into(),
@@ -677,4 +680,258 @@ async fn the_icon_cache_is_listed_and_pruned() {
     // `cua cache prune --all` evicts them.
     let g = collect(&s, opts(Some(Budget::Off), true, false)).await;
     assert!(!old.exists() && !old_1x.exists() && !svg.exists(), "{g:?}");
+}
+
+// ------------------------------------------------- base image policy
+//
+// QA 2026-10-04: a 28.6 GiB macOS base pulled for a create that failed was
+// evicted 20 minutes later by daemon maintenance (the automatic budget, a
+// tenth of free space, was smaller than the base), so the retry pulled it
+// again. `BasePolicy::NeverAutoEvictInUse` keeps bases in use, the current
+// pins and the base of a failed create; `--all` removes what no Space uses.
+
+/// Lume ownership records with explicit pull and use times, and a fake Lume
+/// listing every recorded VM (stopped, 28 GiB each).
+struct Bases {
+    _dir: tempfile::TempDir,
+    owned: cua_vmm::lume::OwnedVms,
+    lume: Arc<FakeLume>,
+    scanner: Scanner,
+}
+
+impl Bases {
+    /// `budget`: the cache budget; each base is 28 GiB.
+    fn new(budget: u64) -> Self {
+        let d = tempfile::tempdir().unwrap();
+        let l = Layout::new(d.path());
+        let owned = cua_vmm::lume::OwnedVms::new(l.lume_owned());
+        let lume = Arc::new(FakeLume {
+            vms: Mutex::new(vec![]),
+        });
+        let scanner = Scanner::new(
+            l,
+            config(Budget::Bytes(budget)),
+            None,
+            Some(lume.clone() as Arc<dyn LumeApi>),
+        );
+        Self {
+            _dir: d,
+            owned,
+            lume,
+            scanner,
+        }
+    }
+
+    fn record(
+        &self,
+        name: &str,
+        kind: cua_vmm::lume::OwnedKind,
+        source: &str,
+        pulled: SystemTime,
+        used: SystemTime,
+    ) {
+        let rec = cua_vmm::lume::OwnedVm {
+            name: name.into(),
+            kind,
+            source: Some(source.into()),
+            created_at: pulled.duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            last_used: None,
+        };
+        std::fs::create_dir_all(self.owned.dir()).unwrap();
+        let f = self.owned.dir().join(format!("{name}.json"));
+        std::fs::write(&f, serde_json::to_vec(&rec).unwrap()).unwrap();
+        mark_used_at(&f, used);
+        self.lume.vms.lock().unwrap().push(LumeVm {
+            name: name.into(),
+            status: "stopped".into(),
+            allocated: 28 * GIB,
+        });
+    }
+
+    fn base(&self, name: &str, reference: &str, pulled: SystemTime, used: SystemTime) {
+        self.record(
+            name,
+            cua_vmm::lume::OwnedKind::Base,
+            reference,
+            pulled,
+            used,
+        );
+    }
+
+    /// A Space cloned from `base`.
+    fn space(&self, name: &str, base: &str) {
+        self.record(
+            name,
+            cua_vmm::lume::OwnedKind::Instance,
+            base,
+            days_ago(1),
+            days_ago(1),
+        );
+    }
+
+    fn left(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .lume
+            .vms
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|v| v.name.clone())
+            .collect();
+        v.sort();
+        v
+    }
+}
+
+fn kept_why(g: &cua_disk::GcReport, name: &str) -> Option<cua_disk::KeepReason> {
+    g.kept_bases
+        .iter()
+        .find(|k| k.name == name)
+        .map(|k| k.why.clone())
+}
+
+#[tokio::test]
+async fn a_budget_smaller_than_one_base_keeps_the_base_a_space_uses() {
+    let b = Bases::new(26 * GIB);
+    // Not the release's pin, idle for a month, but a Space was cloned from it.
+    b.base(
+        "cua-base-mac15",
+        "ghcr.io/trycua/macos:15",
+        days_ago(40),
+        days_ago(30),
+    );
+    b.space("my-mac", "cua-base-mac15");
+    let g = collect(&b.scanner, opts(None, false, false)).await;
+    assert_eq!(b.left(), vec!["cua-base-mac15", "my-mac"], "{g:?}");
+    assert!(g.removed.is_empty(), "{g:?}");
+    assert_eq!(
+        kept_why(&g, "cua-base-mac15"),
+        Some(cua_disk::KeepReason::InUse {
+            by: vec!["my-mac".into()]
+        })
+    );
+    assert_eq!(g.kept_referenced, 1);
+    // Not even an explicit `--all` removes a base a Space uses.
+    let g = collect(&b.scanner, opts(Some(Budget::Off), true, false)).await;
+    assert_eq!(b.left(), vec!["cua-base-mac15", "my-mac"], "{g:?}");
+}
+
+#[tokio::test]
+async fn the_base_of_the_failed_create_at_22_05z_is_kept() {
+    // QA 2026-10-04: ghcr.io/trycua/macos:26 pulled at 21:42Z, the create
+    // failed at 21:45Z (its clone deleted), daemon maintenance at 22:05Z
+    // with an automatic budget of ~26.5 GiB.
+    let b = Bases::new(26 * GIB + GIB / 2);
+    let pulled = now() - Duration::from_secs(23 * 60);
+    b.base(
+        "cua-base-3416f98dedcf",
+        "ghcr.io/trycua/macos:26",
+        pulled,
+        now() - Duration::from_secs(20 * 60),
+    );
+    let g = collect(&b.scanner, opts(None, false, false)).await;
+    assert_eq!(b.left(), vec!["cua-base-3416f98dedcf"], "{g:?}");
+    assert_eq!(g.freed, 0);
+    // The release's pin (unless CUA_IMAGE_MACOS replaces it); either way it
+    // is kept for the retry.
+    assert!(
+        kept_why(&g, "cua-base-3416f98dedcf").is_some(),
+        "{:?}",
+        g.kept_bases
+    );
+}
+
+#[tokio::test]
+async fn a_failed_create_base_stays_until_a_newer_base_is_in_use() {
+    let b = Bases::new(26 * GIB);
+    // Not pinned, nothing cloned from it: a create from it failed.
+    b.base(
+        "cua-base-failed",
+        "ghcr.io/trycua/macos:15@sha256:aa",
+        days_ago(20),
+        days_ago(20),
+    );
+    let g = collect(&b.scanner, opts(None, false, false)).await;
+    assert_eq!(b.left(), vec!["cua-base-failed"], "{g:?}");
+    assert_eq!(
+        kept_why(&g, "cua-base-failed"),
+        Some(cua_disk::KeepReason::NoNewerBaseInUse)
+    );
+
+    // A newer base whose create also failed: both stay for a retry.
+    b.base(
+        "cua-base-newer",
+        "ghcr.io/trycua/macos:15@sha256:bb",
+        days_ago(10),
+        days_ago(10),
+    );
+    let g = collect(&b.scanner, opts(None, false, false)).await;
+    assert_eq!(b.left(), vec!["cua-base-failed", "cua-base-newer"], "{g:?}");
+
+    // A create from the newer base succeeds: the older one may go.
+    b.space("my-mac", "cua-base-newer");
+    let g = collect(&b.scanner, opts(None, false, false)).await;
+    assert_eq!(b.left(), vec!["cua-base-newer", "my-mac"], "{g:?}");
+    assert_eq!(g.removed.len(), 1, "{g:?}");
+    assert_eq!(g.removed[0].item.name, "cua-base-failed");
+    assert_eq!(g.removed[0].reason, "budget");
+}
+
+#[tokio::test]
+async fn an_older_unreferenced_base_is_evicted() {
+    let b = Bases::new(30 * GIB);
+    // Superseded: an older digest of a tag, nothing cloned from it.
+    b.base(
+        "cua-base-old",
+        "ghcr.io/trycua/macos:26-slim@sha256:00",
+        days_ago(60),
+        days_ago(30),
+    );
+    b.base(
+        "cua-base-new",
+        "ghcr.io/trycua/macos:26-slim@sha256:11",
+        days_ago(5),
+        days_ago(1),
+    );
+    b.space("my-mac", "cua-base-new");
+    let g = collect(&b.scanner, opts(None, false, false)).await;
+    assert_eq!(b.left(), vec!["cua-base-new", "my-mac"], "{g:?}");
+    assert_eq!(g.removed.len(), 1, "{g:?}");
+    assert_eq!(g.removed[0].item.name, "cua-base-old");
+    assert!(!b.owned.owns("cua-base-old"));
+    // The kept base is reported once, with why.
+    assert_eq!(g.kept_bases.len(), 1, "{:?}", g.kept_bases);
+    assert_eq!(g.kept_bases[0].name, "cua-base-new");
+}
+
+#[tokio::test]
+async fn an_explicit_prune_all_removes_kept_bases_no_space_uses() {
+    let b = Bases::new(26 * GIB);
+    b.base(
+        "cua-base-pin",
+        "ghcr.io/trycua/macos:26",
+        days_ago(3),
+        days_ago(3),
+    );
+    b.base(
+        "cua-base-failed",
+        "ghcr.io/trycua/macos:15",
+        days_ago(2),
+        days_ago(2),
+    );
+    b.base(
+        "cua-base-used",
+        "ghcr.io/trycua/macos:26-slim",
+        days_ago(4),
+        days_ago(4),
+    );
+    b.space("my-mac", "cua-base-used");
+    // Budget eviction keeps all three.
+    let g = collect(&b.scanner, opts(None, false, false)).await;
+    assert_eq!(b.left().len(), 4, "{g:?}");
+    // `cua cache prune --all`: only the base a Space uses stays.
+    let g = collect(&b.scanner, opts(Some(Budget::Off), true, false)).await;
+    assert_eq!(b.left(), vec!["cua-base-used", "my-mac"], "{g:?}");
+    assert!(g.removed.iter().all(|r| r.reason == "all"), "{g:?}");
+    assert!(g.kept_bases.is_empty());
 }

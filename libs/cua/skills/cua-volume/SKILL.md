@@ -17,8 +17,11 @@ Space, within seconds.
 | A macOS Space | `~/Cua Volume` |
 | No mount (Windows for now, or the Space has none) | use the `volume_*` tools below |
 
-Check with `ls /volume` or `ls ~/"Cua Volume"`. If neither exists, use the
-tools.
+Check that it is mounted, not just present: `mountpoint -q /volume` on Linux,
+`ls ~/"Cua Volume"` on macOS. A `/volume` holding only
+`CUA-VOLUME-UNAVAILABLE.txt` (read-only) is not the volume: the file says
+why (for example, a container without /dev/fuse). If it is not mounted, use
+the tools; nothing written to an unmounted folder is saved.
 
 ## Layout and what you may do
 

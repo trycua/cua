@@ -1,8 +1,9 @@
 // Offline: exercise the pinned Release Please engine without a GitHub client.
 // Cua Spaces releases are driven by the macOS SwiftUI app: a commit under
 // apps/cua-spaces-macos must produce a `cua-spaces` release PR that also bumps
-// the Tauri app (apps/cua-spaces) as extra files, and a Tauri-only commit
-// must not.
+// the Tauri app (apps/cua-spaces) and the Electron app
+// (apps/cua-spaces-desktop) as extra files, and a Tauri-only or
+// Electron-only commit must not.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,9 +17,12 @@ const config = JSON.parse(fs.readFileSync(path.join(root, 'release-please-config
 const manifest = JSON.parse(fs.readFileSync(path.join(root, '.release-please-manifest.json')));
 const packagePath = 'apps/cua-spaces-macos';
 const tauriPath = 'apps/cua-spaces';
+const electronPath = 'apps/cua-spaces-desktop';
 assert.equal(config.packages[packagePath].component, 'cua-spaces');
 assert.equal(config.packages[tauriPath], undefined, 'the Tauri app must not drive releases');
 assert.equal(manifest[tauriPath], undefined);
+assert.equal(config.packages[electronPath], undefined, 'the Electron app must not drive releases');
+assert.equal(manifest[electronPath], undefined);
 const options = Object.fromEntries(
   Object.entries({ ...config, ...config.packages[packagePath] })
     .map(([key, value]) => [key.replace(/-([a-z])/g, (_, c) => c.toUpperCase()), value])
@@ -65,6 +69,7 @@ async function preview(message, files, expectedVersion) {
     `${tauriPath}/src-tauri/Cargo.lock`,
     `${tauriPath}/src-tauri/Cargo.toml`,
     `${tauriPath}/src-tauri/tauri.conf.json`,
+    `${electronPath}/package.json`,
   ].sort());
   assert.equal(updates[`${packagePath}/VERSION`].trim(), expectedVersion);
   assert.ok(updates[`${packagePath}/CHANGELOG.md`].includes(`cua-spaces-v${expectedVersion}`));
@@ -75,6 +80,7 @@ async function preview(message, files, expectedVersion) {
   ));
   assert.equal(JSON.parse(updates[`${tauriPath}/package.json`]).version, expectedVersion);
   assert.equal(JSON.parse(updates[`${tauriPath}/src-tauri/tauri.conf.json`]).version, expectedVersion);
+  assert.equal(JSON.parse(updates[`${electronPath}/package.json`]).version, expectedVersion);
   assert.ok(updates[`${tauriPath}/src-tauri/Cargo.toml`].includes(`version = "${expectedVersion}"`));
   const lock = fs.readFileSync(path.join(root, tauriPath, 'src-tauri/Cargo.lock'), 'utf8');
   assert.equal(updates[`${tauriPath}/src-tauri/Cargo.lock`], lock.replace(
@@ -95,6 +101,8 @@ async function main() {
   await preview('docs(spaces-macos): clarify setup', swift, null);
   // The Tauri app (not shipped) shares the version but never drives a release.
   await preview('fix(spaces): tauri-only change', [`${tauriPath}/src/main.ts`], null);
+  // Nor does the Electron app (its prereleases are tagged by hand).
+  await preview('fix(spaces-desktop): electron-only change', [`${electronPath}/src/main.ts`], null);
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

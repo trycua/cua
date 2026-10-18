@@ -28,7 +28,7 @@ cua-driver mcp-config --client <client>
 | Claude Code | `claude mcp add --transport stdio cua-driver -- cua-driver mcp`, or `--client claude` for the computer-use compatibility profile | Install the skill for native skill activation. |
 | Codex (CLI, IDE, app) | `--client codex`, which prints `codex mcp add cua-driver -- <path> mcp` | Codex's own approval policy also applies. |
 | Cursor | `--client cursor`; paste into `~/.cursor/mcp.json` or `.cursor/mcp.json` | |
-| Antigravity CLI (Gemini) | `--client antigravity`; merge into `~/.gemini/config/mcp_config.json` | `--client gemini` is a legacy alias. |
+| Antigravity CLI (Gemini) | `--client antigravity`; merge into `~/.gemini/config/mcp_config.json` | `--client gemini` is a legacy alias. Building on the Gemini API directly? See [Computer use with Gemini](/cua-driver/guides/gemini). |
 | OpenClaw | `--client openclaw`, which prints `openclaw mcp set cua-driver '{…}'` | On macOS, a gateway-spawned server does not inherit OpenClaw.app's grants. |
 | Hermes | Built in: `hermes tools enable computer_use --platform cli`, then `hermes -t computer_use chat` | Repair with `hermes computer-use install` and `doctor`. Do not add a second raw MCP server. |
 | Prime Agent | `cua-driver skills install`, then `/reload` and `/skill:cua-driver` | Calls the CLI; no MCP. |
@@ -56,7 +56,8 @@ mcp-config` with no flag):
 
 Model providers map to harnesses: Claude through Claude Code, OpenAI through
 Codex, Gemini through Antigravity, Kimi through Kimi
-Code, Qwen through Qwen Code. MiniMax documents setups for
+Code, Qwen through Qwen Code. To call Gemini 4 Argon from your own agent
+loop instead, see [Computer use with Gemini](/cua-driver/guides/gemini). MiniMax documents setups for
 [Codex](https://platform.minimax.io/docs/token-plan/codex) and
 [Claude Code](https://platform.minimax.io/docs/token-plan/claude-code).
 
@@ -80,7 +81,9 @@ cua-driver skills status
 ```
 
 If `status` reports a client's skill directory as absent, create it
-(`~/.agents/skills` for Codex, `~/.claude/skills` for Claude Code) and rerun.
+(`~/.agents/skills` for Codex, `~/.claude/skills` for Claude Code,
+`~/.gemini/config/skills` for the Antigravity IDE,
+`~/.gemini/antigravity-cli/skills` for the Antigravity CLI) and rerun.
 Add `--all-platforms` to keep the macOS, Windows, and Linux guides together.
 OpenClaw can use ClawHub instead: `clawhub install @cua/driver`. Cua Driver
 0.28.0+ also serves the skill as MCP resources; whether that activates it as a
@@ -105,7 +108,7 @@ Ollama or by llama.cpp with Unsloth's `UD-Q4_K_XL` GGUF. Every tool schema
 costs context, so hide unused tools with the filter:
 
 ```bash skip="host-install"
-curl -fsSL https://cua.ai/docs/examples/local-models/cua-mcp-filter.py \
+curl -fsSL https://cua.ai/docs-assets/examples/local-models/cua-mcp-filter.py \
   -o "$HOME/.local/bin/cua-mcp-filter" && chmod +x "$HOME/.local/bin/cua-mcp-filter"
 ```
 

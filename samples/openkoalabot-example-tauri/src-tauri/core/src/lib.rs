@@ -55,9 +55,10 @@ pub struct CoreConfig {
     pub spaces_home: PathBuf,
     /// Where `download` lands.
     pub download_dir: PathBuf,
-    /// Connect to Cua Cloud with credentials from the environment
-    /// (`CUA_CLIENT_ID`/`SECRET` or `FLEETS_TOKEN`), which enables
-    /// [`Core::create_cloud_space`].
+    /// Connect a Cua Cloud client from the environment
+    /// (`CUA_CLIENT_ID`/`SECRET` or `FLEETS_TOKEN`). Cua Cloud has ended, so
+    /// [`Core::create_cloud_space`] still fails with
+    /// [`cua_sandbox_core::CLOUD_ENDED`] whatever the credentials.
     pub cloud_from_env: bool,
     /// spacesd handshake timeout.
     pub probe_timeout: Duration,
@@ -104,7 +105,8 @@ impl CoreConfig {
         self
     }
 
-    /// Enable Cua Cloud with credentials from the environment.
+    /// Read Cua Cloud credentials from the environment. Cua Cloud has ended:
+    /// cloud creates fail with [`cua_sandbox_core::CLOUD_ENDED`] either way.
     pub fn with_cloud_from_env(mut self, on: bool) -> Self {
         self.cloud_from_env = on;
         self
@@ -182,8 +184,9 @@ impl Core {
     }
     // #endregion docs:rs-add
 
-    /// Creates a Space in the cloud (metered): the image's registry
-    /// manifest decides the kind and engine.
+    /// Creates a Space in the cloud. Cua Cloud has ended: this always fails
+    /// with [`cua_sandbox_core::CLOUD_ENDED`]; create it on this machine
+    /// instead ([`Core::create_space`] with [`plan::Target::Local`]).
     pub async fn create_cloud_space(
         &self,
         image: Option<String>,
@@ -203,7 +206,8 @@ impl Core {
     }
 
     /// Creates a Space from the New Space wizard's plan: one
-    /// `Spaces::create` call, locally (free) or in the cloud (metered); see
+    /// `Spaces::create` call. A local plan creates the Space on this machine;
+    /// a cloud plan fails with [`cua_sandbox_core::CLOUD_ENDED`]; see
     /// [`plan::plan_call`].
     pub async fn create_space(&self, plan: &plan::SpacePlan) -> Result<SpaceInfo> {
         let create = plan::plan_call(plan)?;

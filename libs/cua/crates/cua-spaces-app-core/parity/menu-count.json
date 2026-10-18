@@ -1,6 +1,6 @@
 {
   "name": "menu-count",
-  "about": "The menu bar item and the notch tab count the same Spaces (This machine only while it is shared and reachable; a provider's Spaces count), and the menu shows Cua Volume's sync state next to the count when sync applies: synced, syncing, conflicts (they open the Volume page) and offline; nothing on this Mac's store with one device; a bucket that has not answered for 30 s is offline.",
+  "about": "The menu bar item and the notch tab count the same Spaces (never This machine or another machine's own desktop, even while it provides Spaces; the Spaces a machine provides count), and the menu shows Cua Volume's sync state next to the count when sync applies: synced, syncing, conflicts (they open the Volume page) and offline; nothing on this Mac's store with one device; a bucket that has not answered for 30 s is offline.",
   "now": 1800000000000,
   "cases": [
     {
@@ -203,6 +203,20 @@
           "os": "linux",
           "reachable": true,
           "error": null
+        },
+        {
+          "id": "relay:space-ca12d6d23907f387",
+          "name": "space-ca12d6d23907f387",
+          "provider": "relay",
+          "host": "studio-linux",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
         }
       ],
       "sync": null,
@@ -267,6 +281,20 @@
           "id": "relay:studio-linux",
           "name": "studio-linux",
           "provider": "relay",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        },
+        {
+          "id": "relay:space-ca12d6d23907f387",
+          "name": "space-ca12d6d23907f387",
+          "provider": "relay",
+          "host": "studio-linux",
           "spacesdVersion": "0.4.0",
           "features": [
             "desktop_stream"

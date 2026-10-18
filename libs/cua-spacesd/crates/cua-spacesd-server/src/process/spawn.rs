@@ -221,6 +221,12 @@ pub fn spawn_pipes(spec: &SpawnSpec) -> io::Result<Spawned> {
         command.process_group(0);
         install_user_switch(&mut command, spec.switch_user.clone(), false);
     }
+    #[cfg(windows)]
+    {
+        // Pipes already carry all shell I/O. A background host must not
+        // allocate a visible console for each ProcessService command.
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
     let mut child = command.spawn()?;
     let pid = child.id().unwrap_or(0);
     let stdin = child

@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::bundle::{BundleWriter, DEFAULT_MAX_TOTAL_BYTES};
 use crate::host::{HostEffects, default_host};
 use crate::layout::firefox::{
-    APP_IDS as FIREFOX_APP_IDS, BUNDLE_PREFIX, PROFILE_DIRS, PROFILE_FILES, TABS_JSON, root_for,
+    APP_IDS as FIREFOX_APP_IDS, BUNDLE_PREFIX, PROFILE_DIRS, PROFILE_FILES, TABS_JSON,
 };
 use crate::providers::util::{add_dir_recursive, add_file_best_effort, dir_len, file_len};
 use crate::{
@@ -87,7 +87,7 @@ impl FirefoxProvider {
         if let Some(dir) = &self.profile_dir_override {
             return Some(dir.clone());
         }
-        let root = self.host.home_dir()?.join(root_for(platform));
+        let root = crate::firefox_store::app_data_dir(&self.host.home_dir()?, platform);
         resolve_active_profile(&root)
     }
 }
@@ -835,7 +835,11 @@ mod tests {
     fn resolves_the_active_profile_under_the_host_home() {
         use crate::host::FakeHost;
         let home = tempfile::tempdir().unwrap();
-        let root = home.path().join(root_for(Platform::Linux));
+        let root = home
+            .path()
+            .join(cua_teleport_bundle::layout::firefox::root_for(
+                Platform::Linux,
+            ));
         std::fs::create_dir_all(&root).unwrap();
         let src = fake_profile();
         // Move the fake tree under the fake home's Linux Firefox root.
@@ -848,6 +852,44 @@ mod tests {
             provider.source_profile_dir(Platform::Linux),
             Some(root.join("Profiles/abc.default-release"))
         );
+    }
+
+    /// Current Firefox on Linux keeps its profile under `~/.config/mozilla/firefox`,
+    /// Ubuntu's snap under `~/snap/firefox/common/.mozilla/firefox` (CUA-1524):
+    /// either is found, and the classic `~/.mozilla/firefox` still wins when it has a profile.
+    #[test]
+    fn finds_the_profile_in_the_xdg_snap_and_flatpak_locations() {
+        use crate::host::FakeHost;
+        for rel in [
+            ".config/mozilla/firefox",
+            "snap/firefox/common/.mozilla/firefox",
+            ".var/app/org.mozilla.firefox/.mozilla/firefox",
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let root = home.path().join(rel);
+            std::fs::create_dir_all(&root).unwrap();
+            let src = fake_profile();
+            for entry in ["profiles.ini", "Profiles"] {
+                std::fs::rename(src.path().join(entry), root.join(entry)).unwrap();
+            }
+            let provider = FirefoxProvider::new()
+                .with_host(std::sync::Arc::new(FakeHost::new().with_home(home.path())));
+            assert_eq!(
+                provider.source_profile_dir(Platform::Linux),
+                Some(root.join("Profiles/abc.default-release")),
+                "{rel}"
+            );
+            let manifest = provider
+                .manifest(&app(Platform::Linux), None, TransferScope::FullProfile)
+                .unwrap();
+            assert!(
+                manifest
+                    .items
+                    .iter()
+                    .any(|i| i.rel_path.ends_with("cookies.sqlite")),
+                "{rel}: the manifest lists the signed-in state"
+            );
+        }
     }
 
     #[test]

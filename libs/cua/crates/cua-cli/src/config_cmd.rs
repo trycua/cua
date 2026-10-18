@@ -184,12 +184,12 @@ mod tests {
         let (r, o) = run_s(
             ConfigCmd::Set {
                 key: "default.on".into(),
-                value: "cloud".into(),
+                value: "aws".into(),
             },
             false,
         );
         assert_eq!(r.unwrap(), 0);
-        assert!(o.starts_with("default.on = cloud ("), "{o}");
+        assert!(o.starts_with("default.on = aws ("), "{o}");
         let (_, o) = run_s(ConfigCmd::List, true);
         let v: serde_json::Value = serde_json::from_str(&o).unwrap();
         let on = v
@@ -200,7 +200,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             (on["value"].as_str(), on["source"].as_str()),
-            (Some("cloud"), Some("config"))
+            (Some("aws"), Some("config"))
         );
         let kind = v
             .as_array()
@@ -227,7 +227,7 @@ mod tests {
         let (_, o) = run_s(
             ConfigCmd::Set {
                 key: "default.on".into(),
-                value: "cloud".into(),
+                value: "aws".into(),
             },
             false,
         );
@@ -246,6 +246,18 @@ mod tests {
         assert!(o.contains("default.on unset; now local (default)"), "{o}");
         let (_, o) = run_s(ConfigCmd::Path, false);
         assert!(o.trim().ends_with("config.toml"));
+        // Cua Cloud has ended: refused with the one message.
+        let (r, _) = run_s(
+            ConfigCmd::Set {
+                key: "default.on".into(),
+                value: "cloud".into(),
+            },
+            false,
+        );
+        assert!(
+            r.unwrap_err().to_string().contains("Cua Cloud has ended"),
+            "default.on cloud is refused"
+        );
         drop(env);
     }
 

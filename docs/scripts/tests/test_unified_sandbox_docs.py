@@ -35,7 +35,7 @@ class UnifiedSandboxDocsTests(unittest.TestCase):
                 self.assertNotRegex(text, r"local=True[,)]", f"{slug} passes the default")
 
     def test_pages_stay_short(self):
-        for folder in ("cua-sdk", "fleets"):
+        for folder in ("cua-sdk",):
             for path in (DOCS / folder).rglob("*.mdx"):
                 if "reference" in path.relative_to(DOCS).parts:
                     continue
@@ -54,12 +54,11 @@ class UnifiedSandboxDocsTests(unittest.TestCase):
         self.assertIn('<span id="choose-a-published-fleet-image" />', text)
         self.assertIn("Windows images do not include a Windows license", text)
 
-    def test_cloud_page_points_to_fleets_for_dedicated_capacity(self):
-        text = page("cua-sdk/guides/cloud")
-        self.assertIn("local=False", text)
-        self.assertIn("(/fleets)", text)
-        meta = json.loads((DOCS / "fleets" / "meta.json").read_text())
-        self.assertEqual(meta["title"], "Cua Fleets")
+    def test_cloud_guide_is_removed_and_the_ended_page_stays(self):
+        self.assertFalse((DOCS / "cua-sdk" / "guides" / "cloud.mdx").exists())
+        text = page("cua-sdk/guides/cua-cloud-ended")
+        self.assertIn("Cua Cloud has ended; use a local sandbox or your own machine.", text)
+        self.assertFalse((DOCS / "fleets").exists())
 
 
 if __name__ == "__main__":

@@ -74,10 +74,7 @@ struct CredentialForm: View {
     var body: some View {
         VStack(spacing: 8) {
             if form.method == .passphrase {
-                SecureField(form.passphraseLabel ?? "", text: $keyvault.passphrase)
-                if let confirm = form.confirmLabel {
-                    SecureField(confirm, text: $keyvault.passphraseConfirm)
-                }
+                PassphraseFields(keyvault: keyvault, form: form)
             }
             Button(form.submitLabel) { Task { await keyvault.submitCredential() } }
                 .buttonStyle(.glassProminent)
@@ -92,6 +89,63 @@ struct CredentialForm: View {
         .textFieldStyle(.roundedBorder)
         .frame(width: 340)
         .onSubmit { Task { await keyvault.submitCredential() } }
+    }
+}
+
+/// The passphrase and, at setup, its confirmation, typed into the model's
+/// fields (`submitCredential` reads and clears them).
+struct PassphraseFields: View {
+    @Bindable var keyvault: KeyvaultModel
+    let form: KvCredentialForm
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        SecureField(form.passphraseLabel ?? "", text: $keyvault.passphrase)
+            .focused($focused)
+            .onAppear { focused = true }
+        if let confirm = form.confirmLabel {
+            SecureField(confirm, text: $keyvault.passphraseConfirm)
+        }
+    }
+}
+
+/// The passphrase form as a sheet on the New UI window (`keyvault.setup`,
+/// `keyvault.unlockVault`): the same fields and hint as `CredentialForm`,
+/// with Cancel. `done(true)` sends it; the bridge then submits as the
+/// SwiftUI form does, so the passphrase stays in this process.
+struct PassphraseSheet: View {
+    @Bindable var keyvault: KeyvaultModel
+    let form: KvCredentialForm
+    let done: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(form.mode == .setup ? "Set up Keyvault" : "Unlock Keyvault")
+                .font(.headline)
+            Text(form.help)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 4)
+            PassphraseFields(keyvault: keyvault, form: form)
+            Text(keyvault.passphraseCheck?.hint ?? " ")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { done(false) }
+                    .keyboardShortcut(.cancelAction)
+                Button(form.submitLabel) { done(true) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!keyvault.canSubmitCredential)
+            }
+            .padding(.top, 4)
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(20)
+        .frame(width: 380)
+        .onSubmit { if keyvault.canSubmitCredential { done(true) } }
     }
 }
 

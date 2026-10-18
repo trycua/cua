@@ -122,6 +122,15 @@ struct Args {
     /// Devices and audit log file (default: `<state file>.devices.json`).
     #[arg(long, env = "CUA_RELAY_DEVICES_FILE")]
     devices_file: Option<std::path::PathBuf>,
+    /// Probe address answering `GET /healthz` from the moment the relay
+    /// starts, standby included (e.g. `0.0.0.0:8081`). See
+    /// `cua_relay::handover`.
+    #[arg(long, env = "CUA_RELAY_HEALTH_LISTEN")]
+    health_listen: Option<SocketAddr>,
+    /// Seconds after start during which a request for a known machine that
+    /// is not connected yet waits for it to reconnect instead of failing.
+    #[arg(long, env = "CUA_RELAY_RECONNECT_GRACE_SECS", default_value_t = 15)]
+    reconnect_grace_secs: u64,
     /// Seconds to let open requests finish after SIGTERM / SIGINT before
     /// exiting (machines and clients reconnect on their own).
     #[arg(long, env = "CUA_RELAY_SHUTDOWN_GRACE_SECS", default_value_t = 10)]
@@ -158,6 +167,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .init();
     let args = Args::parse();
+    // Ports first: from here on connections queue (the listen backlog)
+    // instead of being refused, while this relay waits its turn below.
+    let listener = tokio::net::TcpListener::bind(args.listen).await?;
+    if let Some(addr) = args.health_listen {
+        let health = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!(%addr, "health probe listening");
+        tokio::spawn(async move {
+            if let Err(e) = cua_relay::handover::serve_health(health).await {
+                tracing::error!(%e, "health probe stopped");
+            }
+        });
+    }
     let mut tokens: Vec<String> = args
         .tokens
         .iter()
@@ -188,12 +209,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if tokens.is_empty() && oidc.is_none() {
         return Err("no way to register machines: set CUA_RELAY_TOKENS / --token-file (static) or CUA_RELAY_OIDC_ISSUER (accounts)".into());
     }
-    let signing_key = match &args.signing_key_file {
-        Some(path) => Some(std::sync::Arc::new(
-            cua_relay::assertion::RelayKey::load_or_create(path)?,
-        )),
-        None => None,
-    };
     let device_enrollment = match args.device_enrollment.trim().to_ascii_lowercase().as_str() {
         "on" | "true" | "1" | "yes" => true,
         "off" | "false" | "0" | "no" => false,
@@ -204,6 +219,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if !device_enrollment && oidc.is_some() {
         tracing::warn!("device enrollment is off: an account token alone reaches machines");
     }
+    // One relay per state directory (CUA-1774): wait here, in standby, until
+    // the relay before this one exits. Every config error above surfaces
+    // before this point, so a bad deploy never takes over.
+    let state_dir = args
+        .state_file
+        .as_ref()
+        .or(args.devices_file.as_ref())
+        .map(|p| match p.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+            _ => std::path::PathBuf::from("."),
+        });
+    let _state_lock = match &state_dir {
+        Some(dir) => Some(
+            cua_relay::handover::StateLock::acquire(&cua_relay::handover::lock_path(dir)).await?,
+        ),
+        None => None,
+    };
+    let signing_key = match &args.signing_key_file {
+        Some(path) => Some(std::sync::Arc::new(
+            cua_relay::assertion::RelayKey::load_or_create(path)?,
+        )),
+        None => None,
+    };
     let relay = Relay::try_new(RelayConfig {
         tokens,
         max_machines_per_token: args.max_machines_per_token,
@@ -229,8 +267,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             ..cua_relay::devices::DevicePolicy::default()
         },
         devices_file: args.devices_file,
+        reconnect_grace: Duration::from_secs(args.reconnect_grace_secs),
     })?;
-    let listener = tokio::net::TcpListener::bind(args.listen).await?;
     tracing::info!(listen = %args.listen, "cua-relay listening");
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
     let serve = relay.serve(listener, async move {

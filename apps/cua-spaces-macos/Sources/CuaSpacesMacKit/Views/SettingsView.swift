@@ -20,6 +20,9 @@ struct SettingsView: View {
                 ForEach(sections, id: \.id) { section in
                     Section {
                         ForEach(section.rows, id: \.id) { row($0, in: section.id) }
+                        if section.id == "account", let usage = model.devices.relayUsageView {
+                            RelayUsageRow(view: usage) { model.devices.recordUpsell("upsell_plan_card_click") }
+                        }
                     } header: {
                         HStack {
                             Text(section.title)
@@ -45,6 +48,7 @@ struct SettingsView: View {
         .frame(width: 520)
         .frame(minHeight: 480)
         .task { await model.loadSettings() }
+        .task { await model.devices.readRelayUsage(maxAge: DevicesModel.relayUsageFocusAge) }
         .background { watchTask }
         // While the mount settles (mounting, or waiting for the extension's
         // approval in System Settings), follow it.

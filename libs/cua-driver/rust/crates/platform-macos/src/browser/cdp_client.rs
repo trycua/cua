@@ -13,6 +13,44 @@ use tokio::sync::Mutex as AsyncMutex;
 pub struct CdpClient;
 
 impl CdpClient {
+    /// Evaluate JavaScript in the Node.js main process behind an inspector
+    /// port (Electron's SIGUSR1 inspector), whose `/json` lists a `node`
+    /// target and no page.
+    pub async fn evaluate_node(javascript: &str, port: u16) -> anyhow::Result<String> {
+        let json = http_get_json(port).await?;
+        let targets: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| anyhow::anyhow!("inspector /json parse error: {e}"))?;
+        let ws_url = node_target_ws_url(&targets)
+            .ok_or_else(|| anyhow::anyhow!("no node target on inspector port {port}"))?;
+        let connection = CdpConnection::connect(&ws_url)
+            .await
+            .map_err(|e| anyhow::anyhow!("WebSocket connect failed: {e}"))?;
+        let obj = tokio::time::timeout(
+            Duration::from_secs(10),
+            connection.call(
+                None,
+                "Runtime.evaluate",
+                serde_json::json!({
+                    "expression": javascript,
+                    "returnByValue": true,
+                    "awaitPromise": true
+                }),
+            ),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("inspector evaluate timed out after 10s"))??;
+        parse_cdp_result(&obj)
+    }
+
+    /// Whether `port` serves a Node inspector (a `node` target).
+    pub async fn is_node_inspector(port: u16) -> bool {
+        http_get_json(port)
+            .await
+            .ok()
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+            .is_some_and(|targets| node_target_ws_url(&targets).is_some())
+    }
+
     /// Returns true if a CDP endpoint is listening on `port`.
     pub async fn is_available(port: u16) -> bool {
         http_get_json(port).await.is_ok()
@@ -110,6 +148,11 @@ impl CdpSessionCache {
         let arc = Arc::new(AsyncMutex::new(session));
         map.insert(port, arc.clone());
         Ok(arc)
+    }
+
+    /// Whether a connection for `port` is already open (and so approved).
+    pub async fn has_session(&self, port: u16) -> bool {
+        self.sessions.lock().await.contains_key(&port)
     }
 
     async fn evict(&self, port: u16) {
@@ -496,6 +539,18 @@ async fn ws_url_for_page_target(
     Ok((ws_url, target_url))
 }
 
+/// The debugger WebSocket URL of the first `node` target in an inspector's
+/// `/json` listing.
+fn node_target_ws_url(targets: &serde_json::Value) -> Option<String> {
+    targets
+        .as_array()?
+        .iter()
+        .find(|t| t.get("type").and_then(|v| v.as_str()) == Some("node"))?
+        .get("webSocketDebuggerUrl")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 fn parse_cdp_result(obj: &serde_json::Value) -> anyhow::Result<String> {
     if let Some(err) = obj.get("error") {
         let msg = err
@@ -619,6 +674,20 @@ async fn http_get_json(port: u16) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn node_target_is_picked_from_an_inspector_listing() {
+        let listing = serde_json::json!([
+            {"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/1"},
+            {"type": "node", "webSocketDebuggerUrl": "ws://127.0.0.1:9229/abc"}
+        ]);
+        assert_eq!(
+            super::node_target_ws_url(&listing).as_deref(),
+            Some("ws://127.0.0.1:9229/abc")
+        );
+        let pages_only = serde_json::json!([{"type": "page", "webSocketDebuggerUrl": "ws://x"}]);
+        assert!(super::node_target_ws_url(&pages_only).is_none());
+    }
+
     use super::CdpSessionCache;
     use futures_util::{SinkExt, StreamExt};
     use std::sync::{

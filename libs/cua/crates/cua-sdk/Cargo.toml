@@ -63,6 +63,7 @@ cua-fleet.workspace = true
 cua-image.workspace = true
 # Anonymous usage telemetry.
 cua-telemetry.workspace = true
+cua-create-failure.workspace = true
 cua-sandbox-core.workspace = true
 async-trait.workspace = true
 cua-host = { workspace = true, optional = true }

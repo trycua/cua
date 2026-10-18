@@ -86,17 +86,16 @@ where
             outcome = bounded.as_mut() => (None, outcome),
         }
     };
+    let consent_timed_out = outcome.is_err();
     let outcome = match outcome {
         Ok(outcome) => outcome?,
+        Err(_) if action.started() => consent.await.map_err(|mut error| {
+            error
+                .message
+                .push_str(" (consent attempt deadline expired)");
+            error
+        })?,
         Err(_) => {
-            if action.started() {
-                consent.await.map_err(|mut error| {
-                    error
-                        .message
-                        .push_str(" (consent attempt deadline expired)");
-                    error
-                })?;
-            }
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "browser consent did not settle within its bounded attempt",
@@ -110,13 +109,19 @@ where
             "browser consent action did not produce a confirmed outcome",
         ));
     }
-    Ok((
-        match result {
-            Some(result) => result,
-            None => claim.as_mut().await,
-        },
-        accepted,
-    ))
+    let result = match result {
+        Some(result) => result,
+        None if consent_timed_out => tokio::time::timeout(Duration::from_secs(4), claim.as_mut())
+            .await
+            .map_err(|_| {
+                refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "browser reconnect did not settle after confirmed consent",
+                )
+            })?,
+        None => claim.as_mut().await,
+    };
+    Ok((result, accepted))
 }
 
 async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
@@ -424,14 +429,49 @@ fn cleanup_created_profile_as_browser(
 fn configure_linux_isolated_browser_command(
     command: &mut Command,
     native_wayland: bool,
-    no_sandbox: bool,
+    sandbox: LinuxBrowserSandbox,
 ) {
     command.arg("--password-store=basic");
     if native_wayland {
         command.arg("--ozone-platform=wayland");
     }
-    if no_sandbox {
-        command.arg("--no-sandbox");
+    match sandbox {
+        LinuxBrowserSandbox::Full => {}
+        LinuxBrowserSandbox::NoSeccomp => {
+            command.arg("--disable-seccomp-filter-sandbox");
+        }
+        LinuxBrowserSandbox::None => {
+            command.arg("--no-sandbox");
+        }
+    }
+}
+
+/// How much of Chromium's own sandbox the runtime carries. The image decides
+/// (libs/images/common/desktop/browser-sandbox.sh writes the variables into
+/// the session environment); nothing is guessed here.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinuxBrowserSandbox {
+    /// Namespaces and seccomp-bpf, as shipped.
+    Full,
+    /// gVisor on arm64: namespaces work, the renderer's seccomp-bpf filter
+    /// kills every tab, so only that layer goes off.
+    NoSeccomp,
+    /// No unprivileged user namespaces (a container under docker's default
+    /// seccomp profile): the container boundary is the sandbox.
+    None,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_browser_sandbox(var: impl Fn(&str) -> Option<String>) -> LinuxBrowserSandbox {
+    let on = |name: &str| var(name).as_deref() == Some("1");
+    // CUA_E2E_BROWSER_NO_SANDBOX is the older test spelling.
+    if on("CUA_DRIVER_BROWSER_NO_SANDBOX") || on("CUA_E2E_BROWSER_NO_SANDBOX") {
+        LinuxBrowserSandbox::None
+    } else if on("CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX") {
+        LinuxBrowserSandbox::NoSeccomp
+    } else {
+        LinuxBrowserSandbox::Full
     }
 }
 
@@ -461,17 +501,8 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
             .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
             && std::env::var_os("WAYLAND_DISPLAY").is_some()
             && std::env::var_os("DISPLAY").is_none();
-        // The runtime cannot give Chromium its own sandbox (a container
-        // without unprivileged user namespaces): the container boundary is
-        // the sandbox. Set by the image (libs/images/linux detects it), never
-        // guessed here; CUA_E2E_BROWSER_NO_SANDBOX is the older test spelling.
-        let no_sandbox = [
-            "CUA_DRIVER_BROWSER_NO_SANDBOX",
-            "CUA_E2E_BROWSER_NO_SANDBOX",
-        ]
-        .iter()
-        .any(|name| std::env::var(name).as_deref() == Ok("1"));
-        configure_linux_isolated_browser_command(&mut command, native_wayland, no_sandbox);
+        let sandbox = linux_browser_sandbox(|name| std::env::var(name).ok());
+        configure_linux_isolated_browser_command(&mut command, native_wayland, sandbox);
     }
     let stderr = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
         Stdio::inherit()
@@ -899,9 +930,108 @@ impl BrowserEngine {
         })
     }
 
+    /// Existing-profile attachment, plus the foreground bookkeeping around
+    /// it: with `delivery_mode:"foreground"`, the app that was in front
+    /// before the call is brought back once the browser's setup and consent
+    /// prompt are done, instead of leaving the browser in front.
     async fn attach_existing_profile(
         &self,
         request: PrepareRequest,
+    ) -> Result<PrepareOutcome, BrowserRefusal> {
+        let browser_pid = request.pid;
+        // Where the platform can guard it (macOS: the browser window is on
+        // another Space), attach in the background under the guard instead of
+        // refusing.
+        let background_guard = match (browser_pid, request.window_id) {
+            (Some(pid), Some(window_id))
+                if !request.foreground
+                    && self
+                        .platform
+                        .existing_profile_attach_background_limitation()
+                        .is_some()
+                    && self.platform.frontmost_app_pid() != Some(pid) =>
+            {
+                self.platform.guard_background_attach(pid, window_id)
+            }
+            _ => None,
+        };
+        let guarded = background_guard.is_some();
+        let previous_front = match browser_pid {
+            Some(pid) if request.foreground || guarded => self
+                .platform
+                .frontmost_app_pid()
+                .filter(|front| *front != pid),
+            _ => None,
+        };
+        let mut result = self.attach_existing_profile_checked(request, guarded).await;
+        drop(background_guard);
+        if let (Some(previous), Some(pid)) = (previous_front, browser_pid) {
+            let restored = self.platform.restore_frontmost_app(previous, pid);
+            match &mut result {
+                Ok(outcome) => outcome.side_effects.restored_frontmost_app = restored,
+                Err(error) => {
+                    if let Some(serde_json::Value::Object(detail)) = error.detail.as_mut() {
+                        detail.insert(
+                            "restored_frontmost_app".to_owned(),
+                            serde_json::Value::Bool(restored),
+                        );
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Refuse a background attachment the platform cannot make without
+    /// bringing the browser in front of the user's app. Runs after the
+    /// read-only target proofs and before discovery, setup or any connection,
+    /// so a refusal has no visible effect.
+    fn existing_profile_background_check(
+        &self,
+        pid: i64,
+        foreground: bool,
+    ) -> Result<(), BrowserRefusal> {
+        if foreground {
+            return Ok(());
+        }
+        let Some(limitation) = self
+            .platform
+            .existing_profile_attach_background_limitation()
+        else {
+            return Ok(());
+        };
+        let frontmost = self.platform.frontmost_app_pid();
+        if frontmost == Some(pid) {
+            return Ok(());
+        }
+        Err(refusal(
+            BrowserRefusalCode::BackgroundUnavailable,
+            format!(
+                "{limitation}, so attaching now would bring the browser in front of the app the \
+                 user is working in. Nothing was changed, and browser_prepare is optional: \
+                 use get_window_state on the browser window and act through its accessibility \
+                 tree (set_value, click by element token), which needs no attachment. If the \
+                 first read shows only browser chrome, read the window again. A browser window \
+                 on another Space than the user's also attaches in the background. Retry with \
+                 delivery_mode:\"foreground\" only when nobody is using this screen or the \
+                 user agreed to the browser coming forward; the driver then brings the user's \
+                 app back."
+            ),
+        )
+        .with_detail(serde_json::json!({
+            "limitation": limitation,
+            "browser_pid": pid,
+            "frontmost_pid": frontmost,
+            "alternative_delivery_mode": "foreground",
+            "background_attach_requires": "browser_window_on_another_space",
+            "visible_effects": false,
+        })))
+    }
+
+    async fn attach_existing_profile_checked(
+        &self,
+        request: PrepareRequest,
+        guarded: bool,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         enum ConsentPath {
             Protected,
@@ -988,6 +1118,7 @@ impl BrowserEngine {
             ));
         }
         self.native_window_checked(pid, window_id).await?;
+        self.existing_profile_background_check(pid, request.foreground || guarded)?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;
         let mut setup = ExistingProfileSetupOutcome::default();
         let setup_request = ExistingProfileSetupRequest {
@@ -1182,13 +1313,14 @@ impl BrowserEngine {
         );
         if let Some(previous) = previous_grant {
             self.pool
-                .release_existing(&previous.endpoint_ws_url, previous.generation)
+                .release_existing(
+                    &previous.endpoint_ws_url,
+                    previous.generation,
+                    super::cdp_ws::SharedSocketRelease::Park,
+                )
                 .await;
             if let Some(protected) = previous.protected_consent.as_ref() {
                 self.approval_broker.revoke(protected).await;
-            }
-            if previous.endpoint_ws_url != endpoint.ws_url {
-                self.pool.release_claim_marker(&previous.endpoint_ws_url);
             }
         }
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
@@ -1490,7 +1622,7 @@ mod tests {
                 let result = claim_with_optional_consent(&mut claim, &action, consent).await;
                 assert!(dropped.load(Ordering::SeqCst));
                 match outcome {
-                    0 => {
+                    0 | 2 => {
                         let (claim, displayed) = result.unwrap();
                         assert_eq!(claim.is_ok(), claim_succeeds);
                         assert!(displayed && settled.load(Ordering::SeqCst));
@@ -1499,19 +1631,34 @@ mod tests {
                         result.unwrap_err().code,
                         BrowserRefusalCode::BrowserConsentRevoked
                     ),
-                    _ => {
-                        assert_eq!(
-                            result.unwrap_err().code,
-                            BrowserRefusalCode::BrowserWrongTargetRefused
-                        );
-                        assert!(
-                            settled.load(Ordering::SeqCst),
-                            "committed worker was detached on timeout"
-                        );
-                    }
+                    _ => unreachable!(),
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn late_confirmed_consent_allows_the_original_pending_claim_to_finish() {
+        let action = BrowserConsentAction::default();
+        let marker = action.clone();
+        let (confirmed, awaiting_confirmation) = tokio::sync::oneshot::channel();
+        let mut claim = Box::pin(async move {
+            awaiting_confirmation.await.unwrap();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok::<_, anyhow::Error>(7_u8)
+        });
+        let consent = async move {
+            marker.perform(|| ());
+            tokio::time::sleep(Duration::from_millis(4100)).await;
+            confirmed.send(()).unwrap();
+            Ok(BrowserConsentOutcome::Accepted)
+        };
+
+        let (result, displayed) = claim_with_optional_consent(&mut claim, &action, consent)
+            .await
+            .unwrap();
+        assert_eq!(result.unwrap(), 7);
+        assert!(displayed);
     }
 
     #[tokio::test]
@@ -1947,7 +2094,7 @@ mod tests {
     #[test]
     fn isolated_launch_can_select_native_wayland_and_test_vm_sandbox_mode() {
         let mut command = Command::new("chromium-under-test");
-        configure_linux_isolated_browser_command(&mut command, true, true);
+        configure_linux_isolated_browser_command(&mut command, true, LinuxBrowserSandbox::None);
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -1955,5 +2102,46 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--password-store=basic"));
         assert!(args.iter().any(|arg| arg == "--ozone-platform=wayland"));
         assert!(args.iter().any(|arg| arg == "--no-sandbox"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn isolated_launch_sandbox_flags_follow_the_image_variables() {
+        let flags = |vars: &[(&str, &str)]| {
+            let vars = vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<std::collections::HashMap<_, _>>();
+            let sandbox = linux_browser_sandbox(|name| vars.get(name).cloned());
+            let mut command = Command::new("chromium-under-test");
+            configure_linux_isolated_browser_command(&mut command, false, sandbox);
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .filter(|arg| arg.contains("sandbox"))
+                .collect::<Vec<_>>()
+        };
+        assert!(flags(&[]).is_empty());
+        assert_eq!(
+            flags(&[("CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX", "1")]),
+            ["--disable-seccomp-filter-sandbox"]
+        );
+        assert_eq!(
+            flags(&[("CUA_DRIVER_BROWSER_NO_SANDBOX", "1")]),
+            ["--no-sandbox"]
+        );
+        assert_eq!(
+            flags(&[("CUA_E2E_BROWSER_NO_SANDBOX", "1")]),
+            ["--no-sandbox"]
+        );
+        // --no-sandbox already drops the seccomp layer with the rest.
+        assert_eq!(
+            flags(&[
+                ("CUA_DRIVER_BROWSER_NO_SANDBOX", "1"),
+                ("CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX", "1"),
+            ]),
+            ["--no-sandbox"]
+        );
+        assert!(flags(&[("CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX", "0")]).is_empty());
     }
 }

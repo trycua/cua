@@ -321,6 +321,8 @@ export type SandboxImage = {
   variant: 'container' | 'vm';
   summary: string;
   spacesd: boolean;
+  /** `false`: the guest cannot use GPU acceleration. */
+  gpu?: false;
   /** Browsers the image ships; cua-driver's browser tools drive the Chromium-family ones. */
   browsers: string[];
   /** Platforms the image is published for. */
@@ -354,7 +356,7 @@ export type SandboxImageList = {
 
 export const IMAGE_LIST_PATH = 'libs/images/sandbox-images.json';
 
-const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier'];
+const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu'];
 
 /** The tag suffix each tier puts before `-disk`: `<os-version>[-<tier>][-disk]`. */
 const TIER_SUFFIX: Record<string, string> = { slim: '-slim', full: '', xcode: '-xcode' };
@@ -795,7 +797,7 @@ export function generateDocuments(): Map<string, string> {
       RUNTIME_DOC,
       page(
         'Runtime support',
-        'Which images run on which local runtime or in the cloud, what customization each accepts, and how ports reach them.',
+        'Which images run on which local runtime, what customization each accepts, and how ports reach them.',
         runtime
       ),
     ],

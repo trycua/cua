@@ -139,6 +139,12 @@ async fn a_space_without_a_volume_is_ready_and_says_why() {
         "{errors}"
     );
     assert_eq!(status().await["volumes"], json!([]));
+    // volume_mount_status says the same.
+    let o = Box::pin(server.call("volume_mount_status", json!({}))).await;
+    assert!(!o.is_error, "{:?}", o.content);
+    let m: Value = serde_json::from_str(o.content[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(m["volume_errors"], errors, "{m}");
+    assert_eq!(m["volumes"], json!([]));
 
     // The note goes with the Space.
     spaces.delete("local:novol").await.unwrap();

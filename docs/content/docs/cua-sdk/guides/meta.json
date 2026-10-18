@@ -11,7 +11,7 @@
     "spacesd",
     "local-runtimes",
     "disk-usage",
-    "cloud",
+    "cua-cloud-ended",
     "your-cloud",
     "your-cloud-resources",
     "contrib-providers",
@@ -20,6 +20,7 @@
     "coding-agent-options",
     "browse-the-web",
     "agent-frameworks",
-    "omarchy"
+    "omarchy",
+    "migrate-from-deprecated-packages"
   ]
 }

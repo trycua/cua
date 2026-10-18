@@ -1,6 +1,7 @@
 //! Win32 API wrappers for window/process enumeration.
 
 pub mod apps;
+pub mod combo;
 pub mod installed_apps;
 pub mod windows;
 

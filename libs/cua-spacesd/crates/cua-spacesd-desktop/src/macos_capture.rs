@@ -203,11 +203,13 @@ fn start_inner(
 
     let filter = &located.filter;
     let native_scale = f64::from(filter.point_pixel_scale()).max(1.0);
+    let h264 = encoder.is_some();
     let initial_geometry = capture_geometry(
         located.width_points,
         located.height_points,
         native_scale,
         config.max_dimension,
+        h264,
     );
     native_geometry(
         initial_geometry.native_width_px,
@@ -324,6 +326,7 @@ fn start_inner(
     let monitor = spawn_monitor(
         source,
         config.max_dimension,
+        h264,
         frame_interval,
         stream.clone(),
         sink,
@@ -346,6 +349,7 @@ fn start_inner(
 fn spawn_monitor(
     source: CaptureSource,
     max_dimension: u32,
+    h264: bool,
     frame_interval: screencapturekit::cm::CMTime,
     stream: Arc<SCStream>,
     sink: Arc<dyn CaptureSink>,
@@ -408,6 +412,7 @@ fn spawn_monitor(
                     located.height_points,
                     f64::from(located.filter.point_pixel_scale()),
                     max_dimension,
+                    h264,
                 );
                 let current = *expected_geometry
                     .lock()
@@ -464,16 +469,24 @@ fn frame_status_allows_content(status: Option<SCFrameStatus>) -> bool {
     status.is_none_or(SCFrameStatus::has_content)
 }
 
+/// The frame size a capture delivers. An `h264` stream is also kept within
+/// what the encoder accepts (a 6K display is downscaled, not refused).
 fn capture_geometry(
     width_points: f64,
     height_points: f64,
     native_scale: f64,
     max_dimension: u32,
+    h264: bool,
 ) -> CaptureGeometry {
     let width_points = width_points.max(1.0);
     let height_points = height_points.max(1.0);
     let native_width = (width_points * native_scale.max(1.0)).round() as u32;
     let native_height = (height_points * native_scale.max(1.0)).round() as u32;
+    let max_dimension = if h264 {
+        crate::h264_limits::h264_max_dimension(native_width, native_height, max_dimension)
+    } else {
+        max_dimension
+    };
     let (width_px, height_px) = fit_dimensions(native_width, native_height, max_dimension);
     CaptureGeometry {
         width_px,
@@ -567,11 +580,26 @@ mod tests {
 
     #[test]
     fn capture_geometry_keeps_native_action_dimensions_when_stream_is_scaled() {
-        let geometry = capture_geometry(960.0, 480.0, 2.0, 1280);
+        let geometry = capture_geometry(960.0, 480.0, 2.0, 1280, true);
         assert_eq!(geometry.width_px, 1280);
         assert_eq!(geometry.height_px, 640);
         assert_eq!(geometry.native_width_px, 1920);
         assert_eq!(geometry.native_height_px, 960);
         assert!((geometry.scale_factor - (4.0 / 3.0)).abs() < f64::EPSILON);
+    }
+
+    /// #4623: a 6K main display (3360x1890 pt @2x) streamed at native size
+    /// is encoded at 4096x2304, while clicks still map to native pixels; a
+    /// one-frame (non-H.264) grab keeps the native size.
+    #[test]
+    fn a_6k_display_streams_within_the_h264_limit() {
+        let geometry = capture_geometry(3360.0, 1890.0, 2.0, 0, true);
+        assert_eq!((geometry.width_px, geometry.height_px), (4096, 2304));
+        assert_eq!(
+            (geometry.native_width_px, geometry.native_height_px),
+            (6720, 3780)
+        );
+        let still = capture_geometry(3360.0, 1890.0, 2.0, 0, false);
+        assert_eq!((still.width_px, still.height_px), (6720, 3780));
     }
 }

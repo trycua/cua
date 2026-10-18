@@ -153,6 +153,7 @@ impl SdkAdapter {
 
     pub fn is_known_tool(&self, name: &str) -> bool {
         name == "type_text_chars"
+            || cua_driver_core::tool::renamed_tool(name).is_some()
             || self
                 .tools_list
                 .get("tools")
@@ -302,6 +303,9 @@ impl SdkAdapter {
         cua_driver_core::session::suspend_runtime_scope(&self.runtime_scope);
         let count = cua_driver_core::session::revoke_sessions_with_prefix(&self.runtime_prefix);
         self.mark_all_sessions_ended();
+        // Revoking everything must not leave an already-approved browser
+        // socket parked for a later session.
+        cua_driver_core::browser::cdp_ws::close_parked_browser_sockets().await;
         count
     }
 

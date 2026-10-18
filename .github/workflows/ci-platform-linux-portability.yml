@@ -1,7 +1,7 @@
 name: "CI: platform-linux off Linux"
 
 # `cargo test --workspace` must keep compiling on developer Macs, so the Linux
-# adapter and its tests are checked on macOS. Trigger on the adapter and the
+# adapter and its tests are run on macOS. Trigger on the adapter and the
 # workspace crates it depends on, not on unrelated platform code.
 on:
   pull_request:
@@ -12,6 +12,7 @@ on:
       - "libs/cua-driver/rust/rust-toolchain.toml"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
@@ -25,6 +26,7 @@ on:
       - "libs/cua-driver/rust/rust-toolchain.toml"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
@@ -37,6 +39,11 @@ permissions:
 concurrency:
   group: platform-linux-portability-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
   platform-linux-off-linux:
@@ -51,6 +58,6 @@ jobs:
           workspaces: "libs/cua-driver/rust -> target"
           key: platform-linux-off-linux
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Check platform-linux and its tests off Linux
+      - name: Test platform-linux off Linux
         working-directory: libs/cua-driver/rust
-        run: cargo check --locked -p platform-linux --all-targets
+        run: cargo test --locked -p platform-linux --all-targets

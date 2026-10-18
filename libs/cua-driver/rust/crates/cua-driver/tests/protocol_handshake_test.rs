@@ -60,6 +60,7 @@ fn all_expected_tools_registered() {
         "stop_recording",
         "get_recording_state",
         "replay_trajectory",
+        "run_steps",
         "page",
     ];
     for name in expected {

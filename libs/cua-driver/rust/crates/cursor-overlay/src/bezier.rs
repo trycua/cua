@@ -1,5 +1,12 @@
-//! Cubic Bezier math, ported from `Bezier.swift` and `CursorMotionSegment`.
-//! Derived from trope-cua (MIT); see THIRD_PARTY_NOTICES.md.
+//! Cubic Bezier math.
+//!
+//! Lineage:
+//! - The cubic point and tangent math and `build_motion_bezier` (the arc
+//!   formula) originate in Cua Driver's Swift `Bezier.swift` and
+//!   `CursorMotionPath.swift` (April 2026, #1359).
+//! - The cached arc length (32-point integration) and `sample_at_distance`
+//!   follow trope-cua's C# `CursorMotionSegment` (MIT); see
+//!   THIRD_PARTY_NOTICES.md.
 //!
 //! `B(t) = (1-t)³P₀ + 3(1-t)²tP₁ + 3(1-t)t²P₂ + t³P₃`
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 
+from cua_bench._ended import CLOUD_ENDED
+
 RESET = "\033[0m"
 GREEN = "\033[92m"
 RED = "\033[91m"
@@ -19,6 +21,9 @@ INSTALL_HINT = "Install the cua CLI: curl -fsSL https://cua.ai/install.sh | sh"
 
 
 def execute(args) -> int:
+    # Cua Cloud has ended: there is nothing to sign in to for --on cloud.
+    print(f"{RED}Error: {CLOUD_ENDED}{RESET}")
+    return 1
     cua = shutil.which("cua")
     if cua is None:
         print(f"{RED}The `cua` CLI is not on PATH.{RESET} {INSTALL_HINT}")

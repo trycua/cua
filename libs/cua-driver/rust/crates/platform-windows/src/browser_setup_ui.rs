@@ -41,8 +41,23 @@ fn release_nodes(nodes: &[UiaNode]) {
 /// `Document` node without its renderer-owned descendants. Tab topology and
 /// the committed setup URL are native facts, so reading them must not depend
 /// on the page renderer answering UIA (#4121).
+const NATIVE_READ_RETRIES: usize = 3;
+
 fn native_nodes(hwnd: u64) -> Result<Vec<UiaNode>, BrowserRefusal> {
-    crate::uia::walk_native_tree(hwnd).map_err(|error| {
+    // A UIA read can fail transiently while Chromium rebuilds its tree (for
+    // example "Malformed Cacheresponse" as a native prompt opens). Retry a
+    // few times before refusing.
+    let mut attempt = 0;
+    let walked = loop {
+        match crate::uia::walk_native_tree(hwnd) {
+            Err(_) if attempt < NATIVE_READ_RETRIES => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            result => break result,
+        }
+    };
+    walked.map_err(|error| {
         refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(

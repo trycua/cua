@@ -89,6 +89,7 @@ pub enum Command {
     },
     Status {
         socket: Option<String>,
+        pid_file: Option<String>,
     },
     /// `cua-driver sessions list [--json]` — content-free operator view of
     /// the live sessions owned by the selected daemon runtime.
@@ -249,6 +250,10 @@ const VALUE_FLAGS: &[&str] = &[
     // override (--experimental-pip itself is a bare flag and doesn't
     // need to be listed here).
     "--experimental-pip-geometry",
+    // `cursor motion` options.
+    "--style",
+    "--timing",
+    "--effects",
 ];
 
 /// Authorization selectors are trusted-daemon startup inputs. Direct MCP
@@ -351,6 +356,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("extension") => Some("extension"),
         Some("perception") => Some("perception"),
         Some("cursor-theme") => Some("cursor_theme"),
+        Some("cursor") => Some("call"),
         Some("config") => Some("config"),
         Some(_) => Some("call"),
     }
@@ -514,6 +520,7 @@ fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
     let positionals = positional_args(args);
     match positionals.as_slice() {
         ["call", tool, ..] => Some((*tool).to_owned()),
+        ["cursor", ..] => Some(<cua_driver_contract::SetAgentCursorMotionInput as cua_driver_contract::ToolInput>::TOOL_NAME.to_owned()),
         [tool, ..] => Some((*tool).to_owned()),
         _ => None,
     }
@@ -532,6 +539,10 @@ pub fn parse_command() -> Command {
         std::process::exit(0);
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
+        if let Some(help) = command_help(&args) {
+            print!("{help}");
+            std::process::exit(0);
+        }
         println!(
             "cua-driver {} — cross-platform computer-use automation driver",
             env!("CARGO_PKG_VERSION")
@@ -692,6 +703,17 @@ pub fn parse_command() -> Command {
         println!("  cua-driver cursor-theme list [--json]");
         println!("  cua-driver cursor-theme uninstall <theme-id>");
         println!("                                  Theme installation is local-only and is never an agent tool.");
+        println!();
+        println!("cursor options (forwards to set_agent_cursor_motion on the daemon):");
+        println!(
+            "  cua-driver cursor motion --session <label> [--style <name>] [--timing <timing>]"
+        );
+        println!("                           [--effects trail=on,glow=off,...] [--glide-ms <ms>]");
+        println!("    --style     signature_arc (default), spring_settle, magnetic, comet_swoop,");
+        println!("                adaptive, or classic (the previous Dubins glide).");
+        println!("    --timing    native (the style's own), fitts (distance and target size), or");
+        println!("                fixed (--glide-ms, 1430 ms when 0).");
+        println!("    --effects   trail, glow, magnet, ripple, squish set to on, off, or default.");
         println!();
         println!("manifest options:");
         println!("  cua-driver manifest             Emit a stable JSON description of this CLI's surface");
@@ -859,7 +881,10 @@ pub fn parse_command() -> Command {
                 all,
             }
         }
-        Some("status") => Command::Status { socket },
+        Some("status") => Command::Status {
+            socket,
+            pid_file: flag_value(&args, "--pid-file"),
+        },
         Some("sessions") => {
             let subcommand = pos.next().unwrap_or("list");
             if subcommand != "list" {
@@ -1074,6 +1099,25 @@ pub fn parse_command() -> Command {
                 args: args[index + 1..].to_vec(),
             }
         }
+        Some("cursor") => match pos.next() {
+            Some("motion") => match cursor_motion_args(&args) {
+                Ok(json_args) => Command::Call {
+                    tool: "set_agent_cursor_motion".to_owned(),
+                    json_args: Some(json_args),
+                    screenshot_out_file,
+                    socket: socket.clone(),
+                },
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    eprintln!("{CURSOR_MOTION_USAGE}");
+                    process::exit(64);
+                }
+            },
+            _ => {
+                eprintln!("{CURSOR_MOTION_USAGE}");
+                process::exit(64);
+            }
+        },
         Some(first) => {
             // Implicit call: unrecognised first positional → treat as tool name.
             // Same parse-error handling as the explicit `call` branch above. See #1637.
@@ -1108,6 +1152,75 @@ pub fn parse_command() -> Command {
             }
         }
     }
+}
+
+const CURSOR_MOTION_USAGE: &str = "Usage: cua-driver cursor motion --session <label> [--style <name>] [--timing native|fitts|fixed|relaxed|steady|calm|deliberate] [--effects trail=on,glow=off,...] [--glide-ms <ms>]";
+
+/// Build `set_agent_cursor_motion` arguments from `cua-driver cursor motion`
+/// flags. Effects take `on`, `off` or `default` (the style's own choice).
+fn cursor_motion_args(args: &[String]) -> Result<serde_json::Value, String> {
+    let mut out = serde_json::Map::new();
+    let session = flag_value(args, "--session")
+        .filter(|value| !value.is_empty())
+        .ok_or("cursor motion needs --session <label>")?;
+    out.insert("session".into(), session.into());
+    if let Some(style) = flag_value(args, "--style") {
+        let parsed: cua_driver_contract::CursorMotionStyle =
+            serde_json::from_value(style.clone().into()).map_err(|_| {
+                format!(
+                    "unknown style `{style}`; expected one of {}",
+                    cua_driver_contract::CursorMotionStyle::ALL
+                        .map(cua_driver_contract::CursorMotionStyle::as_str)
+                        .join(", ")
+                )
+            })?;
+        out.insert("style".into(), parsed.as_str().into());
+    }
+    if let Some(timing) = flag_value(args, "--timing") {
+        let parsed: cua_driver_contract::CursorMotionTiming =
+            serde_json::from_value(timing.clone().into()).map_err(|_| {
+                format!(
+                    "unknown timing `{timing}`; expected one of {}",
+                    cua_driver_contract::CursorMotionTiming::ALL
+                        .map(cua_driver_contract::CursorMotionTiming::as_str)
+                        .join(", ")
+                )
+            })?;
+        out.insert("timing".into(), parsed.as_str().into());
+    }
+    if let Some(effects) = flag_value(args, "--effects") {
+        let mut map = serde_json::Map::new();
+        for entry in effects.split(',').filter(|entry| !entry.trim().is_empty()) {
+            let (name, value) = entry
+                .split_once('=')
+                .ok_or_else(|| format!("effect `{entry}` must look like name=on|off|default"))?;
+            let name = name.trim();
+            if !matches!(name, "trail" | "glow" | "magnet" | "ripple" | "squish") {
+                return Err(format!(
+                    "unknown effect `{name}`; expected trail, glow, magnet, ripple or squish"
+                ));
+            }
+            let value = match value.trim() {
+                "on" | "true" => serde_json::Value::Bool(true),
+                "off" | "false" => serde_json::Value::Bool(false),
+                "default" => serde_json::Value::Null,
+                other => {
+                    return Err(format!(
+                        "effect `{name}` takes on, off or default, got `{other}`"
+                    ))
+                }
+            };
+            map.insert(name.to_owned(), value);
+        }
+        out.insert("effects".into(), map.into());
+    }
+    if let Some(ms) = flag_value(args, "--glide-ms") {
+        let ms: f64 = ms
+            .parse()
+            .map_err(|_| format!("--glide-ms takes a number of milliseconds, got `{ms}`"))?;
+        out.insert("glide_duration_ms".into(), ms.into());
+    }
+    Ok(out.into())
 }
 
 fn parse_expected_stop_pid(args: &[String], command: Option<&str>) -> Option<u32> {
@@ -2049,6 +2162,17 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--output", "type": "string", "description": "Output path (build, preview)." },
                   { "name": "--development", "type": "flag", "description": "Allow the reserved com.example development namespace (validate, build)." },
                   { "name": "--json", "type": "flag", "description": "Emit machine-readable JSON (inspect, list)." }
+              ] },
+            { "name": "cursor",
+              "description": "Set a session cursor's motion style, timing and effects through set_agent_cursor_motion.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "motion" },
+                  { "name": "--session", "type": "string", "description": "Public label of the session that owns the cursor (required)." },
+                  { "name": "--style", "type": "string", "description": "signature_arc | spring_settle | magnetic | comet_swoop | adaptive | classic" },
+                  { "name": "--timing", "type": "string", "description": "native | fitts | fixed" },
+                  { "name": "--effects", "type": "string", "description": "Comma-separated name=on|off|default for trail, glow, magnet, ripple, squish." },
+                  { "name": "--glide-ms", "type": "string", "description": "Move duration in milliseconds for fixed timing." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
               ] },
             { "name": "autostart",
               "description": "Platform-native auto-start so `cua-driver serve` comes up on every logon.",
@@ -3113,9 +3237,9 @@ fn run_recording_render(args: &[String]) {
 
 /// `cua-driver update [--apply]` — check for a newer release and optionally apply it.
 ///
-/// Shares the GitHub releases fetch with the startup banner via
+/// Shares the release lookup with the startup banner via
 /// [`crate::version_check::fetch_latest_version`] so both code paths agree on
-/// tag filtering and HTTP semantics. `--apply` delegates to the canonical
+/// the source (the installer's own version pin, then GitHub) and tag filtering. `--apply` delegates to the canonical
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
@@ -3171,6 +3295,10 @@ pub fn run_update_cmd(apply: bool, json: bool) {
     }
 
     let latest = crate::version_check::fetch_latest_version();
+    if let Ok(v) = &latest {
+        // Keep the cache in step with what the user was just told.
+        crate::version_check::record_latest(selected_channel, v);
+    }
     match latest {
         Err(e) => {
             crate::telemetry::capture_update_checked(
@@ -3188,12 +3316,11 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                     apply_started_at.elapsed(),
                 );
             }
-            // The shared helper returns a human-readable error string for
-            // the CLI surface — pass it through so the user can see why
-            // (timeout, parse error, etc.) instead of just "unreachable".
-            tracing::debug!(target: "cua_driver::update", "fetch failed: {e}");
+            // The error names the real cause: a GitHub API rate limit (with its
+            // reset time) is not a network failure, and vice versa.
+            tracing::debug!(target: "cua_driver::update", "fetch failed: {e:?}");
             if !json {
-                println!("Could not reach GitHub — check your connection and try again.");
+                println!("Could not check for updates: {e}");
             }
             process::exit(1);
         }
@@ -3260,6 +3387,9 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                         daemon_was_running,
                         apply_started_at.elapsed(),
                     );
+                    // What was "latest" before this install says nothing about
+                    // what is latest after it.
+                    crate::version_check::invalidate_cache();
                     if !json {
                         println!("Installed cua-driver {v}.");
                     }
@@ -3314,7 +3444,7 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
         "grant" => run_permissions_grant(),
         other => {
             eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant.");
-            process::exit(2);
+            process::exit(64);
         }
     }
 }
@@ -3350,10 +3480,21 @@ fn run_permissions_status(json: bool) {
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
-        crate::serve::send_request(&socket, &req)
+        let result = crate::serve::send_request(&socket, &req)
             .ok()
             .filter(|r| r.ok)
-            .and_then(|r| r.result)
+            .and_then(|r| r.result);
+        if let Some(content) = result
+            .as_ref()
+            .filter(|res| !json && res["structuredContent"].get("accessibility").is_none())
+            .and_then(|res| res["content"].as_array())
+        {
+            for text in content.iter().filter_map(|item| item["text"].as_str()) {
+                println!("{text}");
+            }
+            return;
+        }
+        result
             .and_then(|res| res.get("structuredContent").cloned())
             // Trust the booleans ONLY when the answering daemon is its own
             // responsible process (`driver-daemon`). Otherwise those grants
@@ -4013,6 +4154,7 @@ const HELP_SUBCOMMANDS: &[&str] = &[
     "perception",
     "channel",
     "cursor-theme",
+    "cursor",
     "sessions",
     "history",
     "mcp-config",
@@ -4030,6 +4172,133 @@ fn cli_docs_json() -> serde_json::Value {
         }
     }
     docs
+}
+
+/// Help for `cua-driver <command> [<subcommand>...] --help`: the deepest
+/// command the positional words name, rendered from `cli_docs_json()`. A word
+/// that is not a subcommand (an argument value) ends the walk. `None` when the
+/// first word is not a command, so the caller prints the top-level help.
+fn command_help(args: &[String]) -> Option<String> {
+    let docs = cli_docs_json();
+    let mut commands = docs["commands"].as_array()?;
+    let mut path = vec!["cua-driver"];
+    let mut found = None;
+    for word in positional_args(args) {
+        let Some(command) = commands.iter().find(|c| c["name"] == word) else {
+            break;
+        };
+        path.push(word);
+        found = Some(command);
+        let Some(subcommands) = command["subcommands"].as_array() else {
+            break;
+        };
+        commands = subcommands;
+    }
+    found.map(|command| render_command_help(command, &path.join(" ")))
+}
+
+/// One `cli_docs_json()` command as terminal help, in the order of its
+/// generated reference page (`scripts/docs-generators/lib/cli-mdx.ts`).
+fn render_command_help(command: &serde_json::Value, path: &str) -> String {
+    use std::fmt::Write as _;
+
+    let list = |key: &str| command[key].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let text = |value: &serde_json::Value, key: &str| {
+        value[key].as_str().unwrap_or_default().trim().to_owned()
+    };
+    let flag = |value: &serde_json::Value| match value["short_name"].as_str() {
+        Some(short) => format!("-{short}, --{}", text(value, "name")),
+        None => format!("--{}", text(value, "name")),
+    };
+    let (arguments, options, flags, subcommands) = (
+        list("arguments"),
+        list("options"),
+        list("flags"),
+        list("subcommands"),
+    );
+
+    let mut usage = vec![path.to_owned()];
+    if !options.is_empty() || !flags.is_empty() {
+        usage.push("[OPTIONS]".to_owned());
+    }
+    for argument in arguments {
+        let name = format!("<{}>", text(argument, "name"));
+        usage.push(if argument["is_optional"].as_bool().unwrap_or(false) {
+            format!("[{name}]")
+        } else {
+            name
+        });
+    }
+    if !subcommands.is_empty() {
+        let required = command["default_subcommand"].is_null();
+        usage.push(if required { "<COMMAND>" } else { "[COMMAND]" }.to_owned());
+    }
+
+    let mut out = String::new();
+    for key in ["abstract", "discussion"] {
+        let prose = text(command, key);
+        if !prose.is_empty() {
+            let _ = writeln!(out, "{prose}\n");
+        }
+    }
+    let _ = writeln!(out, "Usage: {}", usage.join(" "));
+    if let Some(default) = command["default_subcommand"].as_str() {
+        let _ = writeln!(out, "\nWithout a subcommand, runs {path} {default}.");
+    }
+
+    let mut section = |title: &str, rows: Vec<(String, String)>| {
+        if rows.is_empty() {
+            return;
+        }
+        let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
+        let _ = writeln!(out, "\n{title}:");
+        for (label, help) in rows {
+            let _ = writeln!(out, "  {label:width$}  {help}");
+        }
+    };
+    section(
+        "Arguments",
+        arguments
+            .iter()
+            .map(|a| (format!("<{}>", text(a, "name")), text(a, "help")))
+            .collect(),
+    );
+    section(
+        "Options",
+        options
+            .iter()
+            .map(|o| {
+                let repeat = if o["is_repeatable"].as_bool().unwrap_or(false) {
+                    "..."
+                } else {
+                    ""
+                };
+                let value = text(o, "type").to_lowercase();
+                (format!("{} <{value}>{repeat}", flag(o)), text(o, "help"))
+            })
+            .chain(flags.iter().map(|f| (flag(f), text(f, "help"))))
+            .collect(),
+    );
+    section(
+        "Commands",
+        subcommands
+            .iter()
+            .map(|s| (text(s, "name"), text(s, "abstract")))
+            .collect(),
+    );
+
+    let examples = list("examples");
+    if !examples.is_empty() {
+        let _ = writeln!(out, "\nExamples:");
+        for example in examples {
+            let description = text(example, "description");
+            if !description.is_empty() {
+                let _ = writeln!(out, "  # {description}");
+            }
+            let _ = writeln!(out, "  {}", text(example, "command"));
+        }
+    }
+    out
 }
 
 /// Command groups that run a default subcommand when given none (the
@@ -4122,7 +4391,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
-                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"Path","default_value":null,"is_optional":true},
+                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path.","type":"Path","default_value":null,"is_optional":true},
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
                     {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"Path","default_value":null,"is_optional":true},
@@ -4181,7 +4450,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
-                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"Path","default_value":null,"is_optional":true}
+                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path.","type":"Path","default_value":null,"is_optional":true}
                 ],
                 "flags": no_flags,
                 "subcommands": no_subcommands
@@ -4296,7 +4565,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -4323,7 +4592,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "options": no_options,
                 "flags": [
                     {"name":"json","short_name":null,"help":"Emit a machine-readable JSON payload.","default_value":false},
-                    {"name":"no-cache","short_name":null,"help":"Skip the 20-hour on-disk cache and force a GitHub request.","default_value":false}
+                    {"name":"no-cache","short_name":null,"help":"Skip the 1-hour on-disk cache and look up the latest release again.","default_value":false}
                 ],
                 "subcommands": no_subcommands
             },
@@ -4454,6 +4723,17 @@ fn cli_docs_literal() -> serde_json::Value {
                 ]
             },
             {
+                "name": "cursor",
+                "abstract": "Configure a session's agent cursor from the command line.",
+                "discussion": "Forwards to the set_agent_cursor_motion tool on the running daemon. Fields you leave out keep their current value.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"motion","abstract":"Set the cursor's motion style, timing and effects.","discussion":"Effects take on, off, or default (the style's own choice).","arguments":[],"options":[{"name":"session","short_name":null,"help":"Public label of the session that owns the cursor.","type":"String","default_value":null,"is_optional":false},{"name":"style","short_name":null,"help":"signature_arc, spring_settle, magnetic, comet_swoop, adaptive, or classic.","type":"String","default_value":null,"is_optional":true},{"name":"timing","short_name":null,"help":"native, fitts, or fixed.","type":"String","default_value":null,"is_optional":true},{"name":"effects","short_name":null,"help":"Comma-separated name=on|off|default for trail, glow, magnet, ripple, squish.","type":"String","default_value":null,"is_optional":true},{"name":"glide-ms","short_name":null,"help":"Move duration in milliseconds for fixed timing (1430 when 0).","type":"Number","default_value":null,"is_optional":true},{"name":"socket","short_name":null,"help":"Override the daemon socket path.","type":"Path","default_value":null,"is_optional":true}],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
                 "name": "dump-docs",
                 "abstract": "Output machine-readable CLI and MCP documentation JSON.",
                 "discussion": "Used by the docs generator to keep reference pages in sync with the live binary.",
@@ -4479,6 +4759,8 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver call list_apps", "Call a tool with no arguments"),
         ("cua-driver call click '{\"pid\":844,\"x\":100,\"y\":200}'", "Click at window coordinates"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725}' --screenshot-out-file state.png", "Save the screenshot from a tool response"),
+        ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"since\":\"s0000002a\"}'", "Read only what changed since an earlier snapshot_id"),
+        ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"tree_format\":\"elements\"}'", "Return the structured elements instead of the markdown tree"),
     ]),
     ("serve", &[
         ("cua-driver serve", "Run the daemon in the foreground"),
@@ -4518,7 +4800,13 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("config", &[("cua-driver config", "Print the full config")]),
     ("config show", &[("cua-driver config show", "Print the full config")]),
     ("config get", &[("cua-driver config get max_image_dimension", "Print one key")]),
-    ("config set", &[("cua-driver config set max_image_dimension 1568", "Downscale screenshots to at most 1568 px")]),
+    ("config set", &[
+        ("cua-driver config set max_image_dimension 1568", "Downscale screenshots to at most 1568 px"),
+        ("cua-driver config set cursor.motion.style magnetic", "Make magnetic the default cursor motion for new sessions"),
+        ("cua-driver config set cursor.motion.timing fitts", "Scale cursor move time with distance and target size"),
+        ("cua-driver config set cursor.motion.timing native", "Drop the 600 ms floor of the default steady timing"),
+        ("cua-driver config set cursor.motion.effects.trail true", "Turn the cursor trail on by default"),
+    ]),
     ("config reset", &[("cua-driver config reset", "Restore the defaults")]),
     ("telemetry", &[("cua-driver telemetry status", "Show the effective telemetry setting")]),
     ("telemetry enable", &[("cua-driver telemetry enable", "Enable telemetry")]),
@@ -4569,6 +4857,12 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("perception parse", &[("cua-driver perception parse --image screen.png --capture capture.json --json", "Parse a PNG into visual regions")]),
     ("manifest", &[("cua-driver manifest --pretty", "Print the CLI surface as JSON")]),
     ("cursor-theme", &[("cua-driver cursor-theme list", "List cursor themes")]),
+    ("cursor", &[("cua-driver cursor motion --session demo --style magnetic", "Use the magnetic cursor motion")]),
+    ("cursor motion", &[
+        ("cua-driver cursor motion --session demo --style comet_swoop", "Use the comet swoop cursor motion"),
+        ("cua-driver cursor motion --session demo --timing fixed --glide-ms 900", "Make every move take 900 ms"),
+        ("cua-driver cursor motion --session demo --effects trail=off,ripple=default", "Turn off the trail and reset the click ripple"),
+    ]),
     ("cursor-theme validate", &[("cua-driver cursor-theme validate my-cursor.lottie", "Validate a source archive")]),
     ("cursor-theme build", &[("cua-driver cursor-theme build my-cursor.lottie --output my-cursor.cua-theme", "Compile a theme")]),
     ("cursor-theme inspect", &[("cua-driver cursor-theme inspect my-cursor.cua-theme --json", "Print a theme's metadata")]),
@@ -4902,6 +5196,25 @@ fn diagnose_config_paths_section() -> String {
     lines.join("\n")
 }
 
+/// Print a tool-level error (`isError` result) to stderr and exit 1, so a
+/// rejected `config set` never reports success.
+fn exit_on_tool_error(result: &serde_json::Value) {
+    if result.get("isError").and_then(serde_json::Value::as_bool) != Some(true) {
+        return;
+    }
+    let message = result
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+        })
+        .unwrap_or("set_config failed");
+    eprintln!("{message}");
+    process::exit(1);
+}
+
 /// `cua-driver config [show|get|set|reset] [key] [value]`
 ///
 /// Thin daemon-only wrapper around the `get_config` / `set_config` tools.
@@ -4974,7 +5287,7 @@ pub fn run_config_cmd(
                 Some(k) => k,
                 None => {
                     eprintln!("Usage: cua-driver config get <key>");
-                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform");
+                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges");
                     process::exit(64);
                 }
             };
@@ -4987,11 +5300,8 @@ pub fn run_config_cmd(
             let config = get_config();
             // Support dotted key paths like "agent_cursor.enabled".
             let v = if key.contains('.') {
-                let (parent, child) = key.split_once('.').unwrap();
-
-                config
-                    .get(parent)
-                    .and_then(|object| object.get(child))
+                key.split('.')
+                    .try_fold(&config, |node, part| node.get(part))
                     .cloned()
             } else {
                 config.get(key).cloned()
@@ -5006,7 +5316,7 @@ pub fn run_config_cmd(
                 );
             } else {
                 eprintln!("Unknown config key: {key}");
-                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges");
                 process::exit(64);
             }
         }
@@ -5035,7 +5345,9 @@ pub fn run_config_cmd(
             // Parse value: try JSON, fall back to string.
             let parsed_value: serde_json::Value = serde_json::from_str(value)
                 .unwrap_or_else(|_| serde_json::Value::String(value.to_owned()));
-            call("set_config", serde_json::json!({ key: parsed_value }));
+            let set_args = serde_json::json!({ key: parsed_value });
+            let result = call("set_config", set_args);
+            exit_on_tool_error(&result);
             println!("Config updated.");
             let config = get_config();
             println!(
@@ -5053,6 +5365,11 @@ pub fn run_config_cmd(
                 "max_image_dimension": 0
             });
             call("set_config", defaults);
+            // Also clear the saved cursor motion defaults and badge mode.
+            exit_on_tool_error(&call(
+                "set_config",
+                serde_json::json!({ "cursor.motion": "default", "cursor.badges": "default" }),
+            ));
             println!("Config reset to defaults.");
             let config = get_config();
             println!(
@@ -5317,6 +5634,73 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn cursor_motion_builds_set_agent_cursor_motion_args() {
+        let argv = args(&[
+            "cursor",
+            "motion",
+            "--session",
+            "demo",
+            "--style",
+            "dubins-glide",
+            "--timing",
+            "fixed",
+            "--effects",
+            "trail=on,ripple=default",
+            "--glide-ms",
+            "900",
+        ]);
+        assert_eq!(
+            cursor_motion_args(&argv).unwrap(),
+            serde_json::json!({
+                "session": "demo",
+                "style": "classic",
+                "timing": "fixed",
+                "effects": {"trail": true, "ripple": null},
+                "glide_duration_ms": 900.0
+            })
+        );
+        assert_eq!(finite_command_name_from_args(&argv), Some("call"));
+        assert_eq!(
+            finite_tool_name_from_args(&argv).as_deref(),
+            Some("set_agent_cursor_motion")
+        );
+        let parsed: cua_driver_contract::SetAgentCursorMotionInput =
+            serde_json::from_value(cursor_motion_args(&argv).unwrap()).unwrap();
+        assert_eq!(
+            parsed.style,
+            Some(cua_driver_contract::CursorMotionStyle::Classic)
+        );
+    }
+
+    #[test]
+    fn cursor_motion_rejects_bad_flags() {
+        for argv in [
+            &["cursor", "motion", "--style", "magnetic"][..],
+            &["cursor", "motion", "--session", "s", "--style", "zigzag"],
+            &["cursor", "motion", "--session", "s", "--timing", "slow"],
+            &[
+                "cursor",
+                "motion",
+                "--session",
+                "s",
+                "--effects",
+                "sparkle=on",
+            ],
+            &[
+                "cursor",
+                "motion",
+                "--session",
+                "s",
+                "--effects",
+                "trail=maybe",
+            ],
+            &["cursor", "motion", "--session", "s", "--glide-ms", "fast"],
+        ] {
+            assert!(cursor_motion_args(&args(argv)).is_err(), "{argv:?}");
+        }
     }
 
     #[test]

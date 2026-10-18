@@ -306,3 +306,73 @@ fn the_inventory_counts_cookies_per_site_without_decrypting_anything() {
         inv.notes
     );
 }
+
+/// A teleport's own choice of saved passwords (`password_domains`) reads only
+/// those sites' logins, apart from the sites whose cookies go; without it
+/// the passwords follow the cookie sites.
+#[test]
+fn a_teleport_reads_only_the_passwords_of_the_sites_picked_for_them() {
+    use cua_teleport::passwords::{encrypt_for_tests, write_login_data_for_tests};
+    use cua_teleport::{HostOutput, Platform};
+    const SAFE_STORAGE: &str = "synthetic-safe-storage";
+    let home = tempfile::tempdir().unwrap();
+    let platform = Platform::current();
+    let profile = home
+        .path()
+        .join(cua_teleport::layout::chrome::user_data_dir_for(platform))
+        .join("Default");
+    let enc = |p: &str| match platform {
+        Platform::MacOS => encrypt_for_tests(b"v10", SAFE_STORAGE.as_bytes(), 1003, p),
+        _ => encrypt_for_tests(b"v10", b"peanuts", 1, p),
+    };
+    write_login_data_for_tests(
+        &profile,
+        &[
+            ("https://github.com/", "octocat", enc("gh-pass")),
+            ("https://bank.example/", "ada", enc("bank-pass")),
+        ],
+    )
+    .unwrap();
+    let host = Arc::new(FakeHost::new().with_home(home.path()).with_responder(|c| {
+        if c.args.iter().any(|a| a == "-w") {
+            Ok(HostOutput::ok(format!("{SAFE_STORAGE}\n").into_bytes()))
+        } else {
+            Ok(HostOutput::ok(b"    \"acct\"<blob>=\"Chrome\"\n".to_vec()))
+        }
+    }));
+    // The in-memory browser exports (no real profile, no prompt); the saved
+    // logins are read from the synthetic profile through the FakeHost.
+    let (b, _reg) = backend();
+    let b = b.with_host(host);
+    let logins = |spec: &ImportSpec| -> Vec<String> {
+        b.capture(spec)
+            .unwrap()
+            .iter()
+            .filter(|c| c.meta.kind == cua_keyvault::ItemKind::Password)
+            .map(|c| c.meta.key.clone())
+            .collect()
+    };
+    let spec = ImportSpec {
+        app: "chrome".into(),
+        whole_app: true,
+        confirm_passwords: true,
+        passwords: true,
+        domains: Some(vec!["github.com".into()]),
+        ..Default::default()
+    };
+    assert_eq!(logins(&spec), ["octocat"], "the cookie sites' passwords");
+    let picked = ImportSpec {
+        password_domains: Some(vec!["bank.example".into()]),
+        ..spec.clone()
+    };
+    assert_eq!(
+        logins(&picked),
+        ["ada"],
+        "only the site picked for passwords"
+    );
+    let none = ImportSpec {
+        passwords: false,
+        ..picked
+    };
+    assert!(logins(&none).is_empty(), "not ticked: no password at all");
+}

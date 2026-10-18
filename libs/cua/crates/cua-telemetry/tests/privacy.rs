@@ -149,6 +149,7 @@ fn all_builders(s: &str) -> Vec<Event> {
                 last_phase: s,
                 stalled: true,
                 gpu: true,
+                error_variant: s,
             },
             Outcome::Error,
             d,
@@ -204,12 +205,18 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::api_used("sandbox.connect", Outcome::Ok, Some(s), d).unwrap());
     v.push(events::spaces_feature_used("teleport_drop").unwrap());
     v.push(events::onboarding_step("signed_in", Outcome::Ok).unwrap());
+    v.push(events::onboarding_step("checklist_share", Outcome::Ok).unwrap());
+    v.push(events::app_launched(Some(true)));
+    v.push(events::app_launched(None));
+    v.push(events::sign_in_failed("timeout"));
+    v.push(events::sign_in_failed(s));
     // Known names with caller text wherever else a builder takes it.
     v.push(events::onboarding_page("volume", "completed", s).unwrap());
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
     v.push(events::share("share", s, Outcome::Ok).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());
+    v.push(events::app_update("downloaded", s, s).unwrap());
     v.push(events::device_enroll("rekey", Outcome::Ok).unwrap());
     v.push(events::experiment("experiment_off", "your_cloud").unwrap());
     v
@@ -942,13 +949,15 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             last_phase: "pulling",
             stalled: true,
             gpu: false,
+            error_variant: "InsufficientDisk",
         },
         Outcome::Ok,
         d,
     );
-    // Success never names a phase or a stall.
+    // Success never names a phase, a stall, or the variant.
     assert_eq!(e.props["failed_phase"], "none");
     assert_eq!(e.props["stalled"], false);
+    assert_eq!(e.props["error_kind"], "none");
     assert_eq!(e.props["time_bucket"], "40_59s");
     let e = events::space_create(
         &events::SpaceCreate {
@@ -958,14 +967,106 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             last_phase: "none",
             stalled: false,
             gpu: true,
+            error_variant: "",
         },
         Outcome::Error,
         Duration::from_secs(4000),
     );
     assert_eq!(e.props["failed_phase"], "other");
+    assert_eq!(e.props["error_kind"], "other");
     assert_eq!(e.props["time_bucket"], "gte_30m");
-    assert_eq!(e.props["location"], "cloud");
+    // Cua Cloud has ended: never reported as `cloud` any more.
+    assert_eq!(e.props["location"], "other");
     assert_eq!(e.props["gpu"], true);
+    let disk = events::space_create(
+        &events::SpaceCreate {
+            on: "local",
+            guest_os: "macos",
+            kind: "vm",
+            last_phase: "pulling",
+            stalled: false,
+            gpu: false,
+            error_variant: "InsufficientDisk",
+        },
+        Outcome::Error,
+        d,
+    );
+    assert_eq!(disk.props["error_kind"], "insufficient_disk");
+    // The causes the Spaces app reads from a failure's text.
+    for (variant, kind) in [
+        ("LocalNetwork", "local_network"),
+        ("VmLimit", "vm_limit"),
+        // The cause words the app core sends as they are.
+        ("image_pull_not_found", "image_pull_not_found"),
+        ("image_pull_auth", "image_pull_auth"),
+        ("image_pull_network", "image_pull_network"),
+        ("image_pull_rate_limited", "image_pull_rate_limited"),
+        ("vm_boot_timeout", "vm_boot_timeout"),
+        ("services_unreachable", "services_unreachable"),
+        ("virtualization_unavailable", "virtualization_unavailable"),
+        ("quota_exceeded", "quota_exceeded"),
+        ("runtime_not_running", "runtime_not_running"),
+        // A failure never reports `none`.
+        ("none", "other"),
+        ("", "other"),
+    ] {
+        let e = events::space_create(
+            &events::SpaceCreate {
+                on: "local",
+                guest_os: "macos",
+                kind: "vm",
+                last_phase: "waiting_for_services",
+                stalled: false,
+                gpu: false,
+                error_variant: variant,
+            },
+            Outcome::Error,
+            d,
+        );
+        assert_eq!(e.props["error_kind"], kind);
+    }
+    let stalled = events::space_create(
+        &events::SpaceCreate {
+            on: "local",
+            guest_os: "linux",
+            kind: "vm",
+            last_phase: "pulling",
+            stalled: true,
+            gpu: false,
+            error_variant: "",
+        },
+        Outcome::Error,
+        d,
+    );
+    assert_eq!(stalled.props["error_kind"], "timeout");
+    let transport = events::space_create(
+        &events::SpaceCreate {
+            on: "local",
+            guest_os: "linux",
+            kind: "vm",
+            last_phase: "pulling",
+            stalled: true,
+            gpu: false,
+            error_variant: "Transport",
+        },
+        Outcome::Error,
+        d,
+    );
+    assert_eq!(transport.props["error_kind"], "transport");
+    let sentence = events::space_create(
+        &events::SpaceCreate {
+            on: "local",
+            guest_os: "linux",
+            kind: "vm",
+            last_phase: "pulling",
+            stalled: false,
+            gpu: false,
+            error_variant: "the disk filled up",
+        },
+        Outcome::Error,
+        d,
+    );
+    assert_eq!(sentence.props["error_kind"], "other");
     // A cancel names the phase it was cancelled in, and is never a stall.
     let c = events::space_create(
         &events::SpaceCreate {
@@ -975,6 +1076,7 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             last_phase: "pulling",
             stalled: true,
             gpu: true,
+            error_variant: "InsufficientDisk",
         },
         Outcome::Cancelled,
         Duration::from_secs(25),
@@ -982,11 +1084,12 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(c.props["outcome"], "cancelled");
     assert_eq!(c.props["failed_phase"], "pulling");
     assert_eq!(c.props["stalled"], false);
+    assert_eq!(c.props["error_kind"], "none");
     assert_eq!(c.props["time_bucket"], "20_39s");
     let s = events::space_create_started("cloud", "windows", "vm", true);
     assert_eq!(
         (&s.props["location"], &s.props["gpu"]),
-        (&serde_json::json!("cloud"), &serde_json::json!(true))
+        (&serde_json::json!("other"), &serde_json::json!(true))
     );
     let v = events::volume_setup(
         &events::VolumeSetup {
@@ -1336,4 +1439,14 @@ fn agent_run_end_follows_the_published_status() {
     );
     assert_eq!(events::error_kind("AgentFailed"), "agent_failed");
     assert_eq!(events::error_kind("Agent"), "agent");
+}
+
+#[test]
+fn a_failed_host_space_never_reports_no_error_kind() {
+    let e = events::host_space_provided("vm", "macos", Outcome::Error, None);
+    assert_eq!(e.props["error_kind"], "other");
+    let e = events::host_space_provided("vm", "macos", Outcome::Error, Some("image_pull_auth"));
+    assert_eq!(e.props["error_kind"], "image_pull_auth");
+    let ok = events::host_space_provided("vm", "macos", Outcome::Ok, None);
+    assert_eq!(ok.props["error_kind"], "none");
 }

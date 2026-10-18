@@ -91,7 +91,13 @@ func gunzipChunkAndWriteSparse(
         throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
     }
 
-    let readHandle = try FileHandle(forReadingFrom: decompressedPath)
+    return try writeFileSparse(decompressedPath, to: outputHandle, startOffsets: startOffsets)
+}
+
+func writeFileSparse(
+    _ url: URL, to outputHandle: FileHandle, startOffsets: [UInt64]
+) throws -> UInt64 {
+    let readHandle = try FileHandle(forReadingFrom: url)
     defer { try? readHandle.close() }
 
     let blockSize = sparseHoleGranularityBytes
@@ -277,11 +283,44 @@ enum OCIMediaType {
     static let config = "application/vnd.trycua.lume.config.v1+json"
     static let disk   = "application/vnd.trycua.lume.disk.v1"
     static let nvram  = "application/vnd.trycua.lume.nvram.v1"
+    static let standardTarLayer = "application/vnd.oci.image.layer.v1.tar"
 
     static func detect(_ manifest: Manifest) -> ImageFormat {
         let hasOCIDisk = manifest.layers.contains { $0.mediaType == disk }
         let hasOCIConfig = manifest.config?.mediaType == config
         return (hasOCIDisk || hasOCIConfig) ? .oci : .legacy
+    }
+
+    static func rawDiskPart(_ layer: Layer) -> (number: Int, total: Int)? {
+        let fields = layer.mediaType.lowercased().split(separator: ";").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        guard fields.first == standardTarLayer,
+            layer.annotations?["org.opencontainers.image.title"]?.hasPrefix("disk.img.part.")
+                == true
+        else {
+            return nil
+        }
+        var parameters: [String: Int] = [:]
+        for field in fields.dropFirst() {
+            let pair = field.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            guard pair.count == 2, !pair[0].isEmpty else { return (0, 0) }
+            parameters[pair[0]] = Int(pair[1])
+        }
+        return (parameters["part.number"] ?? 0, parameters["part.total"] ?? 0)
+    }
+
+    static func validateRawDiskParts(_ manifest: Manifest) throws {
+        let parts = manifest.layers.compactMap(rawDiskPart)
+        guard !parts.isEmpty else { return }
+        guard parts.map({ $0.number }).sorted() == Array(1...parts.count),
+            parts.allSatisfy({ $0.total == parts.count }),
+            !manifest.layers.contains(where: { $0.mediaType == "application/octet-stream+lz4" })
+        else {
+            throw PullError.reassemblyFailed(
+                "raw OCI disk parts must be numbered 1...part.total without LZ4 parts")
+        }
     }
 }
 
@@ -376,9 +415,9 @@ actor DiskPartsCollector {
     private var partCounter = 0
 
     // Adds a part and returns its assigned sequential number
-    func addPart(url: URL) -> Int {
-        partCounter += 1  // Use counter logic
-        let partNum = partCounter
+    func addPart(url: URL, number: Int? = nil) -> Int {
+        let partNum = number ?? partCounter + 1
+        partCounter = max(partCounter, partNum)
         diskParts.append((partNum, url))  // Store sequential number
         return partNum  // Return assigned sequential number
     }
@@ -1229,6 +1268,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 Logger.info("Cache miss or invalid cache, setting up new cache")
             }
 
+            try OCIMediaType.validateRawDiskParts(manifest)
+
             // Clean up old versions of this repository before setting up new cache if caching is enabled
             if cachingEnabled {
                 try cleanupOldVersions(currentManifestId: manifestId, image: imageName)
@@ -1300,7 +1341,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     }
 
                     // Identify disk parts by media type
-                    if layer.mediaType == "application/octet-stream+lz4" {
+                    if layer.mediaType == "application/octet-stream+lz4"
+                        || OCIMediaType.rawDiskPart(layer) != nil
+                    {
                         // --- Handle LZ4 Disk Part Layer ---
                         lz4LayerCount += 1  // Increment count
                         let currentPartNum = lz4LayerCount  // Use the current count as the logical number for logging
@@ -1912,7 +1955,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "Cache pull simulation completed successfully with partition table preservation")
     }
 
-    private func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
+    func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
         async throws
     {
         Logger.debug("Copying from cache...")
@@ -1995,6 +2038,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // If we don't have a reassembled image, proceed with legacy part handling
         Logger.debug("No reassembled image found, using part-based reassembly")
 
+        try OCIMediaType.validateRawDiskParts(manifest)
         // Instantiate collector
         let diskPartsCollector = DiskPartsCollector()
         var lz4LayerCount = 0  // Count lz4 layers found
@@ -2005,19 +2049,21 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         for layer in manifest.layers {
             let cachedLayer = getCachedLayerPath(manifestId: manifestId, digest: layer.digest)
 
+            let rawPart = OCIMediaType.rawDiskPart(layer)
             // Identify disk parts simply by media type
-            if layer.mediaType == "application/octet-stream+lz4" {
+            if layer.mediaType == "application/octet-stream+lz4" || rawPart != nil {
                 lz4LayerCount += 1  // Increment count
 
                 // When caching is disabled, the file might not exist with the cache path name
                 // Check if the file exists before trying to use it
-                if !FileManager.default.fileExists(atPath: cachedLayer.path) {
+                if rawPart == nil && !FileManager.default.fileExists(atPath: cachedLayer.path) {
                     Logger.info("Layer file not found in cache: \(cachedLayer.path) - skipping")
                     continue
                 }
 
                 // Add to collector. It will assign the sequential part number.
-                let collectorPartNum = await diskPartsCollector.addPart(url: cachedLayer)
+                let collectorPartNum = await diskPartsCollector.addPart(
+                    url: cachedLayer, number: rawPart?.number)
                 Logger.info(
                     "Adding cached lz4 layer (part \(lz4LayerCount)) -> Collector #\(collectorPartNum): \(cachedLayer.lastPathComponent)"
                 )
@@ -2061,6 +2107,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // --- Safely retrieve parts AFTER loop ---
         let diskPartSources = await diskPartsCollector.getSortedParts()  // Sorted by assigned sequential number
         let totalParts = await diskPartsCollector.getTotalParts()  // Get total count from collector
+        let rawParts = manifest.layers.contains { OCIMediaType.rawDiskPart($0) != nil }
 
         Logger.info("Found \(totalParts) lz4 disk parts in cache to reassemble.")
         // --- End retrieving parts ---
@@ -2121,7 +2168,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
 
             // If we have just one disk part, use the shared function
-            if totalParts == 1 {
+            if totalParts == 1 && !rawParts {
                 // Single part - use shared function
                 let sourceURL = diskPartSources[0].1  // Get the first source URL (index 1 of the tuple)
                 try createDiskImageFromSource(
@@ -2186,11 +2233,15 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     )
 
                     // Always use the correct sparse decompression function
-                    let decompressedBytesWritten = try decompressChunkAndWriteSparse(
-                        inputPath: sourceURL.path,
-                        outputHandle: outputHandle,
-                        startOffset: currentOffset
-                    )
+                    let decompressedBytesWritten =
+                        try rawParts
+                        ? writeFileSparse(
+                            sourceURL, to: outputHandle, startOffsets: [currentOffset])
+                        : decompressChunkAndWriteSparse(
+                            inputPath: sourceURL.path,
+                            outputHandle: outputHandle,
+                            startOffset: currentOffset
+                        )
                     currentOffset += decompressedBytesWritten
                     // Update progress (using sizeForTruncate which should be available)
                     reassemblyProgressLogger.logProgress(
@@ -2202,15 +2253,6 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
                 // Finalize progress, close handle (done by defer)
                 reassemblyProgressLogger.logProgress(current: 1.0, context: "Reassembly Complete")
-
-                // Add test patterns at the beginning and end of the file
-                Logger.info("Writing test patterns to sparse file to verify integrity...")
-                let testPattern = "LUME_TEST_PATTERN".data(using: .utf8)!
-                try outputHandle.seek(toOffset: 0)
-                try outputHandle.write(contentsOf: testPattern)
-                try outputHandle.seek(toOffset: sizeForTruncate - UInt64(testPattern.count))
-                try outputHandle.write(contentsOf: testPattern)
-                try outputHandle.synchronize()
 
                 // Ensure handle is properly synchronized before closing
                 try outputHandle.synchronize()

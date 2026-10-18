@@ -3,6 +3,7 @@
   "pages": [
     "connect-your-agent",
     "use-the-sdk",
+    "gemini",
     "browsers",
     "visual-regions",
     "trajectories",
@@ -10,6 +11,7 @@
     "vms-and-remote",
     "test-in-a-sandbox",
     "operate",
+    "cursor-motion",
     "troubleshoot",
     "recipes"
   ]

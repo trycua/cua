@@ -488,9 +488,19 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status() != 22890:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_cursor_click_effects() != 47083:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_cursor_motion_spec_for_style() != 60220:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_default_cursor_motion_params() != 63994:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings() != 6663:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel() != 952:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_plan_cursor_move() != 47047:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_plan_cursor_spec() != 61096:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions() != 61823:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -659,6 +669,26 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_type_text() != 63241:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state() != 36472:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_arrival_t() != 18003:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_duration() != 45567:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effect_frame() != 63284:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effects() != 30979:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_linger() != 61008:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_sample_at() != 63579:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_samples() != 43656:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_snap_t() != 61947:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target() != 1238:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target_known() != 24778:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity() != 9786:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -985,6 +1015,16 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_free_cuadriversession.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_free_cuadriversession.restype = None
+_UniffiLib.uniffi_cua_driver_sdk_fn_clone_cursortrajectory.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_clone_cursortrajectory.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_free_cursortrajectory.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_free_cursortrajectory.restype = None
 _UniffiLib.uniffi_cua_driver_sdk_fn_clone_driveractivityobserver.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -1159,6 +1199,24 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status.argtyp
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_cursor_click_effects.argtypes = (
+    cua_driver._native_contract._UniffiRustBuffer,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_cursor_click_effects.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_cursor_motion_spec_for_style.argtypes = (
+    cua_driver._native_contract._UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_cursor_motion_spec_for_style.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_default_cursor_motion_params.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_default_cursor_motion_params.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1169,6 +1227,18 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_plan_cursor_move.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_plan_cursor_move.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_plan_cursor_spec.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_plan_cursor_spec.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1601,6 +1671,59 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_verify_state.argtype
     cua_driver._native_contract._UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_verify_state.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_arrival_t.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_arrival_t.restype = ctypes.c_double
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_duration.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_duration.restype = ctypes.c_double
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_effect_frame.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_double,
+    ctypes.c_int8,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_effect_frame.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_effects.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_effects.restype = cua_driver._native_contract._UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_linger.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_linger.restype = ctypes.c_double
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_sample_at.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_double,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_sample_at.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_samples.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_samples.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_snap_t.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_snap_t.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_target.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_target.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_target_known.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_target_known.restype = ctypes.c_int8
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_driveractivityobserver_on_activity.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1716,12 +1839,27 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_func_create_trusted_session.restype = 
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_cursor_click_effects.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_cursor_click_effects.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_cursor_motion_spec_for_style.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_cursor_motion_spec_for_style.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_default_cursor_motion_params.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_default_cursor_motion_params.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_plan_cursor_move.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_plan_cursor_move.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_plan_cursor_spec.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_plan_cursor_spec.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions.restype = ctypes.c_uint16
@@ -1974,6 +2112,36 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_type_text.rest
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_arrival_t.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_arrival_t.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_duration.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_duration.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effect_frame.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effect_frame.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effects.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effects.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_linger.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_linger.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_sample_at.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_sample_at.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_samples.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_samples.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_snap_t.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_snap_t.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target_known.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target_known.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity.restype = ctypes.c_uint16
@@ -2491,6 +2659,1838 @@ class _UniffiFfiConverterTypeConfiguredDriverOptions(_UniffiConverterRustBuffer)
         _UniffiFfiConverterBoolean.write(value.claude_code_compatibility, buf)
         _UniffiFfiConverterTypeRuntimeAuthorizationOptions.write(value.authorization, buf)
 
+class _UniffiFfiConverterFloat64(_UniffiConverterPrimitiveFloat):
+    @staticmethod
+    def read(buf):
+        return buf.read_double()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_double(value)
+
+@dataclass
+class CursorGlow:
+    """
+    Speed glow.
+"""
+    def __init__(self, *, x:float, y:float, r:float, alpha:float):
+        self.x = x
+        self.y = y
+        self.r = r
+        self.alpha = alpha
+
+
+
+
+    def __str__(self):
+        return "CursorGlow(x={}, y={}, r={}, alpha={})".format(self.x, self.y, self.r, self.alpha)
+    def __eq__(self, other):
+        if self.x != other.x:
+            return False
+        if self.y != other.y:
+            return False
+        if self.r != other.r:
+            return False
+        if self.alpha != other.alpha:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorGlow(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorGlow(
+            x=_UniffiFfiConverterFloat64.read(buf),
+            y=_UniffiFfiConverterFloat64.read(buf),
+            r=_UniffiFfiConverterFloat64.read(buf),
+            alpha=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.x)
+        _UniffiFfiConverterFloat64.check_lower(value.y)
+        _UniffiFfiConverterFloat64.check_lower(value.r)
+        _UniffiFfiConverterFloat64.check_lower(value.alpha)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.x, buf)
+        _UniffiFfiConverterFloat64.write(value.y, buf)
+        _UniffiFfiConverterFloat64.write(value.r, buf)
+        _UniffiFfiConverterFloat64.write(value.alpha, buf)
+
+class _UniffiFfiConverterOptionalTypeCursorGlow(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorGlow.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorGlow.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorGlow.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class CursorTrailSegment:
+    """
+    One round-capped stroke of the comet trail.
+"""
+    def __init__(self, *, ax:float, ay:float, bx:float, by:float, width:float, alpha:float):
+        self.ax = ax
+        self.ay = ay
+        self.bx = bx
+        self.by = by
+        self.width = width
+        self.alpha = alpha
+
+
+
+
+    def __str__(self):
+        return "CursorTrailSegment(ax={}, ay={}, bx={}, by={}, width={}, alpha={})".format(self.ax, self.ay, self.bx, self.by, self.width, self.alpha)
+    def __eq__(self, other):
+        if self.ax != other.ax:
+            return False
+        if self.ay != other.ay:
+            return False
+        if self.bx != other.bx:
+            return False
+        if self.by != other.by:
+            return False
+        if self.width != other.width:
+            return False
+        if self.alpha != other.alpha:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorTrailSegment(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorTrailSegment(
+            ax=_UniffiFfiConverterFloat64.read(buf),
+            ay=_UniffiFfiConverterFloat64.read(buf),
+            bx=_UniffiFfiConverterFloat64.read(buf),
+            by=_UniffiFfiConverterFloat64.read(buf),
+            width=_UniffiFfiConverterFloat64.read(buf),
+            alpha=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.ax)
+        _UniffiFfiConverterFloat64.check_lower(value.ay)
+        _UniffiFfiConverterFloat64.check_lower(value.bx)
+        _UniffiFfiConverterFloat64.check_lower(value.by)
+        _UniffiFfiConverterFloat64.check_lower(value.width)
+        _UniffiFfiConverterFloat64.check_lower(value.alpha)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.ax, buf)
+        _UniffiFfiConverterFloat64.write(value.ay, buf)
+        _UniffiFfiConverterFloat64.write(value.bx, buf)
+        _UniffiFfiConverterFloat64.write(value.by, buf)
+        _UniffiFfiConverterFloat64.write(value.width, buf)
+        _UniffiFfiConverterFloat64.write(value.alpha, buf)
+
+class _UniffiFfiConverterSequenceTypeCursorTrailSegment(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeCursorTrailSegment.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeCursorTrailSegment.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeCursorTrailSegment.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class CursorMotionRect:
+    """
+    A target rect in screen points.
+"""
+    def __init__(self, *, x:float, y:float, width:float, height:float):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+
+
+
+    def __str__(self):
+        return "CursorMotionRect(x={}, y={}, width={}, height={})".format(self.x, self.y, self.width, self.height)
+    def __eq__(self, other):
+        if self.x != other.x:
+            return False
+        if self.y != other.y:
+            return False
+        if self.width != other.width:
+            return False
+        if self.height != other.height:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionRect(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionRect(
+            x=_UniffiFfiConverterFloat64.read(buf),
+            y=_UniffiFfiConverterFloat64.read(buf),
+            width=_UniffiFfiConverterFloat64.read(buf),
+            height=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.x)
+        _UniffiFfiConverterFloat64.check_lower(value.y)
+        _UniffiFfiConverterFloat64.check_lower(value.width)
+        _UniffiFfiConverterFloat64.check_lower(value.height)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.x, buf)
+        _UniffiFfiConverterFloat64.write(value.y, buf)
+        _UniffiFfiConverterFloat64.write(value.width, buf)
+        _UniffiFfiConverterFloat64.write(value.height, buf)
+
+@dataclass
+class CursorMagnet:
+    """
+    Glow around the target after a magnetic lock-on.
+"""
+    def __init__(self, *, rect:CursorMotionRect, glow:float):
+        self.rect = rect
+        self.glow = glow
+
+
+
+
+    def __str__(self):
+        return "CursorMagnet(rect={}, glow={})".format(self.rect, self.glow)
+    def __eq__(self, other):
+        if self.rect != other.rect:
+            return False
+        if self.glow != other.glow:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMagnet(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMagnet(
+            rect=_UniffiFfiConverterTypeCursorMotionRect.read(buf),
+            glow=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeCursorMotionRect.check_lower(value.rect)
+        _UniffiFfiConverterFloat64.check_lower(value.glow)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeCursorMotionRect.write(value.rect, buf)
+        _UniffiFfiConverterFloat64.write(value.glow, buf)
+
+class _UniffiFfiConverterOptionalTypeCursorMagnet(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMagnet.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMagnet.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMagnet.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class CursorRipple:
+    """
+    Expanding click ring.
+"""
+    def __init__(self, *, x:float, y:float, r:float, width:float, alpha:float):
+        self.x = x
+        self.y = y
+        self.r = r
+        self.width = width
+        self.alpha = alpha
+
+
+
+
+    def __str__(self):
+        return "CursorRipple(x={}, y={}, r={}, width={}, alpha={})".format(self.x, self.y, self.r, self.width, self.alpha)
+    def __eq__(self, other):
+        if self.x != other.x:
+            return False
+        if self.y != other.y:
+            return False
+        if self.r != other.r:
+            return False
+        if self.width != other.width:
+            return False
+        if self.alpha != other.alpha:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorRipple(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorRipple(
+            x=_UniffiFfiConverterFloat64.read(buf),
+            y=_UniffiFfiConverterFloat64.read(buf),
+            r=_UniffiFfiConverterFloat64.read(buf),
+            width=_UniffiFfiConverterFloat64.read(buf),
+            alpha=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.x)
+        _UniffiFfiConverterFloat64.check_lower(value.y)
+        _UniffiFfiConverterFloat64.check_lower(value.r)
+        _UniffiFfiConverterFloat64.check_lower(value.width)
+        _UniffiFfiConverterFloat64.check_lower(value.alpha)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.x, buf)
+        _UniffiFfiConverterFloat64.write(value.y, buf)
+        _UniffiFfiConverterFloat64.write(value.r, buf)
+        _UniffiFfiConverterFloat64.write(value.width, buf)
+        _UniffiFfiConverterFloat64.write(value.alpha, buf)
+
+class _UniffiFfiConverterOptionalTypeCursorRipple(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorRipple.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorRipple.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorRipple.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class CursorEffectFrame:
+    """
+    The effects to paint at one moment.
+"""
+    def __init__(self, *, glow:typing.Optional[CursorGlow], trail:typing.List[CursorTrailSegment], magnet:typing.Optional[CursorMagnet], ripple:typing.Optional[CursorRipple], squish:float):
+        self.glow = glow
+        self.trail = trail
+        self.magnet = magnet
+        self.ripple = ripple
+        self.squish = squish
+
+
+
+
+    def __str__(self):
+        return "CursorEffectFrame(glow={}, trail={}, magnet={}, ripple={}, squish={})".format(self.glow, self.trail, self.magnet, self.ripple, self.squish)
+    def __eq__(self, other):
+        if self.glow != other.glow:
+            return False
+        if self.trail != other.trail:
+            return False
+        if self.magnet != other.magnet:
+            return False
+        if self.ripple != other.ripple:
+            return False
+        if self.squish != other.squish:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorEffectFrame(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorEffectFrame(
+            glow=_UniffiFfiConverterOptionalTypeCursorGlow.read(buf),
+            trail=_UniffiFfiConverterSequenceTypeCursorTrailSegment.read(buf),
+            magnet=_UniffiFfiConverterOptionalTypeCursorMagnet.read(buf),
+            ripple=_UniffiFfiConverterOptionalTypeCursorRipple.read(buf),
+            squish=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalTypeCursorGlow.check_lower(value.glow)
+        _UniffiFfiConverterSequenceTypeCursorTrailSegment.check_lower(value.trail)
+        _UniffiFfiConverterOptionalTypeCursorMagnet.check_lower(value.magnet)
+        _UniffiFfiConverterOptionalTypeCursorRipple.check_lower(value.ripple)
+        _UniffiFfiConverterFloat64.check_lower(value.squish)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalTypeCursorGlow.write(value.glow, buf)
+        _UniffiFfiConverterSequenceTypeCursorTrailSegment.write(value.trail, buf)
+        _UniffiFfiConverterOptionalTypeCursorMagnet.write(value.magnet, buf)
+        _UniffiFfiConverterOptionalTypeCursorRipple.write(value.ripple, buf)
+        _UniffiFfiConverterFloat64.write(value.squish, buf)
+
+
+
+
+
+
+
+@dataclass
+class CursorMotionParams:
+    """
+    Knobs of the built-in styles. Defaults match Cua Driver
+    (`default_cursor_motion_params`).
+"""
+    def __init__(self, *, style:cua_driver._native_contract.CursorMotionStyle, timing:cua_driver._native_contract.CursorMotionTiming, effects:cua_driver._native_contract.CursorMotionEffects, start_handle:float, end_handle:float, arc_size:float, arc_flow:float, spring:float, glide_duration_ms:float, peak_speed:float, min_start_speed:float, min_end_speed:float, turn_radius:float):
+        self.style = style
+        self.timing = timing
+        self.effects = effects
+        self.start_handle = start_handle
+        self.end_handle = end_handle
+        self.arc_size = arc_size
+        self.arc_flow = arc_flow
+        self.spring = spring
+        self.glide_duration_ms = glide_duration_ms
+        self.peak_speed = peak_speed
+        self.min_start_speed = min_start_speed
+        self.min_end_speed = min_end_speed
+        self.turn_radius = turn_radius
+
+
+
+
+    def __str__(self):
+        return "CursorMotionParams(style={}, timing={}, effects={}, start_handle={}, end_handle={}, arc_size={}, arc_flow={}, spring={}, glide_duration_ms={}, peak_speed={}, min_start_speed={}, min_end_speed={}, turn_radius={})".format(self.style, self.timing, self.effects, self.start_handle, self.end_handle, self.arc_size, self.arc_flow, self.spring, self.glide_duration_ms, self.peak_speed, self.min_start_speed, self.min_end_speed, self.turn_radius)
+    def __eq__(self, other):
+        if self.style != other.style:
+            return False
+        if self.timing != other.timing:
+            return False
+        if self.effects != other.effects:
+            return False
+        if self.start_handle != other.start_handle:
+            return False
+        if self.end_handle != other.end_handle:
+            return False
+        if self.arc_size != other.arc_size:
+            return False
+        if self.arc_flow != other.arc_flow:
+            return False
+        if self.spring != other.spring:
+            return False
+        if self.glide_duration_ms != other.glide_duration_ms:
+            return False
+        if self.peak_speed != other.peak_speed:
+            return False
+        if self.min_start_speed != other.min_start_speed:
+            return False
+        if self.min_end_speed != other.min_end_speed:
+            return False
+        if self.turn_radius != other.turn_radius:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionParams(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionParams(
+            style=cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionStyle.read(buf),
+            timing=cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionTiming.read(buf),
+            effects=cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffects.read(buf),
+            start_handle=_UniffiFfiConverterFloat64.read(buf),
+            end_handle=_UniffiFfiConverterFloat64.read(buf),
+            arc_size=_UniffiFfiConverterFloat64.read(buf),
+            arc_flow=_UniffiFfiConverterFloat64.read(buf),
+            spring=_UniffiFfiConverterFloat64.read(buf),
+            glide_duration_ms=_UniffiFfiConverterFloat64.read(buf),
+            peak_speed=_UniffiFfiConverterFloat64.read(buf),
+            min_start_speed=_UniffiFfiConverterFloat64.read(buf),
+            min_end_speed=_UniffiFfiConverterFloat64.read(buf),
+            turn_radius=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionStyle.check_lower(value.style)
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionTiming.check_lower(value.timing)
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffects.check_lower(value.effects)
+        _UniffiFfiConverterFloat64.check_lower(value.start_handle)
+        _UniffiFfiConverterFloat64.check_lower(value.end_handle)
+        _UniffiFfiConverterFloat64.check_lower(value.arc_size)
+        _UniffiFfiConverterFloat64.check_lower(value.arc_flow)
+        _UniffiFfiConverterFloat64.check_lower(value.spring)
+        _UniffiFfiConverterFloat64.check_lower(value.glide_duration_ms)
+        _UniffiFfiConverterFloat64.check_lower(value.peak_speed)
+        _UniffiFfiConverterFloat64.check_lower(value.min_start_speed)
+        _UniffiFfiConverterFloat64.check_lower(value.min_end_speed)
+        _UniffiFfiConverterFloat64.check_lower(value.turn_radius)
+
+    @staticmethod
+    def write(value, buf):
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionStyle.write(value.style, buf)
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionTiming.write(value.timing, buf)
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffects.write(value.effects, buf)
+        _UniffiFfiConverterFloat64.write(value.start_handle, buf)
+        _UniffiFfiConverterFloat64.write(value.end_handle, buf)
+        _UniffiFfiConverterFloat64.write(value.arc_size, buf)
+        _UniffiFfiConverterFloat64.write(value.arc_flow, buf)
+        _UniffiFfiConverterFloat64.write(value.spring, buf)
+        _UniffiFfiConverterFloat64.write(value.glide_duration_ms, buf)
+        _UniffiFfiConverterFloat64.write(value.peak_speed, buf)
+        _UniffiFfiConverterFloat64.write(value.min_start_speed, buf)
+        _UniffiFfiConverterFloat64.write(value.min_end_speed, buf)
+        _UniffiFfiConverterFloat64.write(value.turn_radius, buf)
+
+@dataclass
+class CursorMotionPoint:
+    """
+    A point in screen points (y down).
+"""
+    def __init__(self, *, x:float, y:float):
+        self.x = x
+        self.y = y
+
+
+
+
+    def __str__(self):
+        return "CursorMotionPoint(x={}, y={})".format(self.x, self.y)
+    def __eq__(self, other):
+        if self.x != other.x:
+            return False
+        if self.y != other.y:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionPoint(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionPoint(
+            x=_UniffiFfiConverterFloat64.read(buf),
+            y=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.x)
+        _UniffiFfiConverterFloat64.check_lower(value.y)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.x, buf)
+        _UniffiFfiConverterFloat64.write(value.y, buf)
+
+@dataclass
+class CursorMotionSample:
+    """
+    One sample: seconds from the start, the hotspot, and the arrow's heading.
+"""
+    def __init__(self, *, t:float, x:float, y:float, heading:float):
+        self.t = t
+        self.x = x
+        self.y = y
+        self.heading = heading
+
+
+
+
+    def __str__(self):
+        return "CursorMotionSample(t={}, x={}, y={}, heading={})".format(self.t, self.x, self.y, self.heading)
+    def __eq__(self, other):
+        if self.t != other.t:
+            return False
+        if self.x != other.x:
+            return False
+        if self.y != other.y:
+            return False
+        if self.heading != other.heading:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionSample(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionSample(
+            t=_UniffiFfiConverterFloat64.read(buf),
+            x=_UniffiFfiConverterFloat64.read(buf),
+            y=_UniffiFfiConverterFloat64.read(buf),
+            heading=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.t)
+        _UniffiFfiConverterFloat64.check_lower(value.x)
+        _UniffiFfiConverterFloat64.check_lower(value.y)
+        _UniffiFfiConverterFloat64.check_lower(value.heading)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.t, buf)
+        _UniffiFfiConverterFloat64.write(value.x, buf)
+        _UniffiFfiConverterFloat64.write(value.y, buf)
+        _UniffiFfiConverterFloat64.write(value.heading, buf)
+
+
+
+
+
+
+class CursorPathShape:
+    """
+    Path shape of a custom motion.
+"""
+    def __init__(self):
+        raise RuntimeError("CursorPathShape cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class STRAIGHT:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorPathShape.STRAIGHT()".format()
+        def __eq__(self, other):
+            if not isinstance(other, CursorPathShape):
+                return NotImplemented
+            if not other.is_STRAIGHT():
+                return False
+            return True
+
+    @dataclass
+    class ARC:
+        """
+        The Cua cubic bezier; a positive `arc_size` bends to the natural side.
+"""
+
+        def __init__(self, start_handle:float, end_handle:float, arc_size:float, arc_flow:float):
+            self.start_handle = start_handle
+
+
+            self.end_handle = end_handle
+
+
+            self.arc_size = arc_size
+
+
+            self.arc_flow = arc_flow
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorPathShape.ARC(start_handle={}, end_handle={}, arc_size={}, arc_flow={})".format(self.start_handle, self.end_handle, self.arc_size, self.arc_flow)
+        def __eq__(self, other):
+            if not isinstance(other, CursorPathShape):
+                return NotImplemented
+            if not other.is_ARC():
+                return False
+            if self.start_handle != other.start_handle:
+                return False
+            if self.end_handle != other.end_handle:
+                return False
+            if self.arc_size != other.arc_size:
+                return False
+            if self.arc_flow != other.arc_flow:
+                return False
+            return True
+
+    @dataclass
+    class BOW:
+        """
+        A gentle quadratic bow.
+"""
+
+        def __init__(self, amount:float):
+            self.amount = amount
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorPathShape.BOW(amount={})".format(self.amount)
+        def __eq__(self, other):
+            if not isinstance(other, CursorPathShape):
+                return NotImplemented
+            if not other.is_BOW():
+                return False
+            if self.amount != other.amount:
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_STRAIGHT(self) -> bool:
+        return isinstance(self, CursorPathShape.STRAIGHT)
+    def is_straight(self) -> bool:
+        return isinstance(self, CursorPathShape.STRAIGHT)
+    def is_ARC(self) -> bool:
+        return isinstance(self, CursorPathShape.ARC)
+    def is_arc(self) -> bool:
+        return isinstance(self, CursorPathShape.ARC)
+    def is_BOW(self) -> bool:
+        return isinstance(self, CursorPathShape.BOW)
+    def is_bow(self) -> bool:
+        return isinstance(self, CursorPathShape.BOW)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+CursorPathShape.STRAIGHT = type("CursorPathShape.STRAIGHT", (CursorPathShape.STRAIGHT, CursorPathShape,), {})  # type: ignore
+CursorPathShape.ARC = type("CursorPathShape.ARC", (CursorPathShape.ARC, CursorPathShape,), {})  # type: ignore
+CursorPathShape.BOW = type("CursorPathShape.BOW", (CursorPathShape.BOW, CursorPathShape,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeCursorPathShape(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorPathShape.STRAIGHT(
+            )
+        if variant == 2:
+            return CursorPathShape.ARC(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        if variant == 3:
+            return CursorPathShape.BOW(
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_STRAIGHT():
+            return
+        if value.is_ARC():
+            _UniffiFfiConverterFloat64.check_lower(value.start_handle)
+            _UniffiFfiConverterFloat64.check_lower(value.end_handle)
+            _UniffiFfiConverterFloat64.check_lower(value.arc_size)
+            _UniffiFfiConverterFloat64.check_lower(value.arc_flow)
+            return
+        if value.is_BOW():
+            _UniffiFfiConverterFloat64.check_lower(value.amount)
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_STRAIGHT():
+            buf.write_i32(1)
+        if value.is_ARC():
+            buf.write_i32(2)
+            _UniffiFfiConverterFloat64.write(value.start_handle, buf)
+            _UniffiFfiConverterFloat64.write(value.end_handle, buf)
+            _UniffiFfiConverterFloat64.write(value.arc_size, buf)
+            _UniffiFfiConverterFloat64.write(value.arc_flow, buf)
+        if value.is_BOW():
+            buf.write_i32(3)
+            _UniffiFfiConverterFloat64.write(value.amount, buf)
+
+
+
+
+
+
+
+
+class CursorEase:
+    """
+    Speed curve along the path.
+"""
+    def __init__(self):
+        raise RuntimeError("CursorEase cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class LINEAR:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorEase.LINEAR()".format()
+        def __eq__(self, other):
+            if not isinstance(other, CursorEase):
+                return NotImplemented
+            if not other.is_LINEAR():
+                return False
+            return True
+
+    @dataclass
+    class MIN_JERK:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorEase.MIN_JERK()".format()
+        def __eq__(self, other):
+            if not isinstance(other, CursorEase):
+                return NotImplemented
+            if not other.is_MIN_JERK():
+                return False
+            return True
+
+    @dataclass
+    class SMOOTHERSTEP:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorEase.SMOOTHERSTEP()".format()
+        def __eq__(self, other):
+            if not isinstance(other, CursorEase):
+                return NotImplemented
+            if not other.is_SMOOTHERSTEP():
+                return False
+            return True
+
+    @dataclass
+    class IN_OUT_CUBIC:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorEase.IN_OUT_CUBIC()".format()
+        def __eq__(self, other):
+            if not isinstance(other, CursorEase):
+                return NotImplemented
+            if not other.is_IN_OUT_CUBIC():
+                return False
+            return True
+
+    @dataclass
+    class IN_OUT_SINE:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorEase.IN_OUT_SINE()".format()
+        def __eq__(self, other):
+            if not isinstance(other, CursorEase):
+                return NotImplemented
+            if not other.is_IN_OUT_SINE():
+                return False
+            return True
+
+    @dataclass
+    class OUT_CUBIC:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorEase.OUT_CUBIC()".format()
+        def __eq__(self, other):
+            if not isinstance(other, CursorEase):
+                return NotImplemented
+            if not other.is_OUT_CUBIC():
+                return False
+            return True
+
+    @dataclass
+    class CUBIC_BEZIER:
+
+        def __init__(self, x1:float, y1:float, x2:float, y2:float):
+            self.x1 = x1
+
+
+            self.y1 = y1
+
+
+            self.x2 = x2
+
+
+            self.y2 = y2
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorEase.CUBIC_BEZIER(x1={}, y1={}, x2={}, y2={})".format(self.x1, self.y1, self.x2, self.y2)
+        def __eq__(self, other):
+            if not isinstance(other, CursorEase):
+                return NotImplemented
+            if not other.is_CUBIC_BEZIER():
+                return False
+            if self.x1 != other.x1:
+                return False
+            if self.y1 != other.y1:
+                return False
+            if self.x2 != other.x2:
+                return False
+            if self.y2 != other.y2:
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_LINEAR(self) -> bool:
+        return isinstance(self, CursorEase.LINEAR)
+    def is_linear(self) -> bool:
+        return isinstance(self, CursorEase.LINEAR)
+    def is_MIN_JERK(self) -> bool:
+        return isinstance(self, CursorEase.MIN_JERK)
+    def is_min_jerk(self) -> bool:
+        return isinstance(self, CursorEase.MIN_JERK)
+    def is_SMOOTHERSTEP(self) -> bool:
+        return isinstance(self, CursorEase.SMOOTHERSTEP)
+    def is_smootherstep(self) -> bool:
+        return isinstance(self, CursorEase.SMOOTHERSTEP)
+    def is_IN_OUT_CUBIC(self) -> bool:
+        return isinstance(self, CursorEase.IN_OUT_CUBIC)
+    def is_in_out_cubic(self) -> bool:
+        return isinstance(self, CursorEase.IN_OUT_CUBIC)
+    def is_IN_OUT_SINE(self) -> bool:
+        return isinstance(self, CursorEase.IN_OUT_SINE)
+    def is_in_out_sine(self) -> bool:
+        return isinstance(self, CursorEase.IN_OUT_SINE)
+    def is_OUT_CUBIC(self) -> bool:
+        return isinstance(self, CursorEase.OUT_CUBIC)
+    def is_out_cubic(self) -> bool:
+        return isinstance(self, CursorEase.OUT_CUBIC)
+    def is_CUBIC_BEZIER(self) -> bool:
+        return isinstance(self, CursorEase.CUBIC_BEZIER)
+    def is_cubic_bezier(self) -> bool:
+        return isinstance(self, CursorEase.CUBIC_BEZIER)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+CursorEase.LINEAR = type("CursorEase.LINEAR", (CursorEase.LINEAR, CursorEase,), {})  # type: ignore
+CursorEase.MIN_JERK = type("CursorEase.MIN_JERK", (CursorEase.MIN_JERK, CursorEase,), {})  # type: ignore
+CursorEase.SMOOTHERSTEP = type("CursorEase.SMOOTHERSTEP", (CursorEase.SMOOTHERSTEP, CursorEase,), {})  # type: ignore
+CursorEase.IN_OUT_CUBIC = type("CursorEase.IN_OUT_CUBIC", (CursorEase.IN_OUT_CUBIC, CursorEase,), {})  # type: ignore
+CursorEase.IN_OUT_SINE = type("CursorEase.IN_OUT_SINE", (CursorEase.IN_OUT_SINE, CursorEase,), {})  # type: ignore
+CursorEase.OUT_CUBIC = type("CursorEase.OUT_CUBIC", (CursorEase.OUT_CUBIC, CursorEase,), {})  # type: ignore
+CursorEase.CUBIC_BEZIER = type("CursorEase.CUBIC_BEZIER", (CursorEase.CUBIC_BEZIER, CursorEase,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeCursorEase(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorEase.LINEAR(
+            )
+        if variant == 2:
+            return CursorEase.MIN_JERK(
+            )
+        if variant == 3:
+            return CursorEase.SMOOTHERSTEP(
+            )
+        if variant == 4:
+            return CursorEase.IN_OUT_CUBIC(
+            )
+        if variant == 5:
+            return CursorEase.IN_OUT_SINE(
+            )
+        if variant == 6:
+            return CursorEase.OUT_CUBIC(
+            )
+        if variant == 7:
+            return CursorEase.CUBIC_BEZIER(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_LINEAR():
+            return
+        if value.is_MIN_JERK():
+            return
+        if value.is_SMOOTHERSTEP():
+            return
+        if value.is_IN_OUT_CUBIC():
+            return
+        if value.is_IN_OUT_SINE():
+            return
+        if value.is_OUT_CUBIC():
+            return
+        if value.is_CUBIC_BEZIER():
+            _UniffiFfiConverterFloat64.check_lower(value.x1)
+            _UniffiFfiConverterFloat64.check_lower(value.y1)
+            _UniffiFfiConverterFloat64.check_lower(value.x2)
+            _UniffiFfiConverterFloat64.check_lower(value.y2)
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_LINEAR():
+            buf.write_i32(1)
+        if value.is_MIN_JERK():
+            buf.write_i32(2)
+        if value.is_SMOOTHERSTEP():
+            buf.write_i32(3)
+        if value.is_IN_OUT_CUBIC():
+            buf.write_i32(4)
+        if value.is_IN_OUT_SINE():
+            buf.write_i32(5)
+        if value.is_OUT_CUBIC():
+            buf.write_i32(6)
+        if value.is_CUBIC_BEZIER():
+            buf.write_i32(7)
+            _UniffiFfiConverterFloat64.write(value.x1, buf)
+            _UniffiFfiConverterFloat64.write(value.y1, buf)
+            _UniffiFfiConverterFloat64.write(value.x2, buf)
+            _UniffiFfiConverterFloat64.write(value.y2, buf)
+
+
+
+
+
+
+
+
+class CursorSettle:
+    """
+    Overshoot or settle at the end of the glide.
+"""
+    def __init__(self):
+        raise RuntimeError("CursorSettle cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class NONE:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorSettle.NONE()".format()
+        def __eq__(self, other):
+            if not isinstance(other, CursorSettle):
+                return NotImplemented
+            if not other.is_NONE():
+                return False
+            return True
+
+    @dataclass
+    class FOLLOW_THROUGH:
+
+        def __init__(self, amount:float, max_pt:float, at:float):
+            self.amount = amount
+
+
+            self.max_pt = max_pt
+
+
+            self.at = at
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorSettle.FOLLOW_THROUGH(amount={}, max_pt={}, at={})".format(self.amount, self.max_pt, self.at)
+        def __eq__(self, other):
+            if not isinstance(other, CursorSettle):
+                return NotImplemented
+            if not other.is_FOLLOW_THROUGH():
+                return False
+            if self.amount != other.amount:
+                return False
+            if self.max_pt != other.max_pt:
+                return False
+            if self.at != other.at:
+                return False
+            return True
+
+    @dataclass
+    class SPRING:
+
+        def __init__(self, amount:float, max_pt:float, cycles:float, decay:float, start:float, glide_end:float):
+            self.amount = amount
+
+
+            self.max_pt = max_pt
+
+
+            self.cycles = cycles
+
+
+            self.decay = decay
+
+
+            self.start = start
+
+
+            self.glide_end = glide_end
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorSettle.SPRING(amount={}, max_pt={}, cycles={}, decay={}, start={}, glide_end={})".format(self.amount, self.max_pt, self.cycles, self.decay, self.start, self.glide_end)
+        def __eq__(self, other):
+            if not isinstance(other, CursorSettle):
+                return NotImplemented
+            if not other.is_SPRING():
+                return False
+            if self.amount != other.amount:
+                return False
+            if self.max_pt != other.max_pt:
+                return False
+            if self.cycles != other.cycles:
+                return False
+            if self.decay != other.decay:
+                return False
+            if self.start != other.start:
+                return False
+            if self.glide_end != other.glide_end:
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_NONE(self) -> bool:
+        return isinstance(self, CursorSettle.NONE)
+    def is_none(self) -> bool:
+        return isinstance(self, CursorSettle.NONE)
+    def is_FOLLOW_THROUGH(self) -> bool:
+        return isinstance(self, CursorSettle.FOLLOW_THROUGH)
+    def is_follow_through(self) -> bool:
+        return isinstance(self, CursorSettle.FOLLOW_THROUGH)
+    def is_SPRING(self) -> bool:
+        return isinstance(self, CursorSettle.SPRING)
+    def is_spring(self) -> bool:
+        return isinstance(self, CursorSettle.SPRING)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+CursorSettle.NONE = type("CursorSettle.NONE", (CursorSettle.NONE, CursorSettle,), {})  # type: ignore
+CursorSettle.FOLLOW_THROUGH = type("CursorSettle.FOLLOW_THROUGH", (CursorSettle.FOLLOW_THROUGH, CursorSettle,), {})  # type: ignore
+CursorSettle.SPRING = type("CursorSettle.SPRING", (CursorSettle.SPRING, CursorSettle,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeCursorSettle(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorSettle.NONE(
+            )
+        if variant == 2:
+            return CursorSettle.FOLLOW_THROUGH(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        if variant == 3:
+            return CursorSettle.SPRING(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_NONE():
+            return
+        if value.is_FOLLOW_THROUGH():
+            _UniffiFfiConverterFloat64.check_lower(value.amount)
+            _UniffiFfiConverterFloat64.check_lower(value.max_pt)
+            _UniffiFfiConverterFloat64.check_lower(value.at)
+            return
+        if value.is_SPRING():
+            _UniffiFfiConverterFloat64.check_lower(value.amount)
+            _UniffiFfiConverterFloat64.check_lower(value.max_pt)
+            _UniffiFfiConverterFloat64.check_lower(value.cycles)
+            _UniffiFfiConverterFloat64.check_lower(value.decay)
+            _UniffiFfiConverterFloat64.check_lower(value.start)
+            _UniffiFfiConverterFloat64.check_lower(value.glide_end)
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_NONE():
+            buf.write_i32(1)
+        if value.is_FOLLOW_THROUGH():
+            buf.write_i32(2)
+            _UniffiFfiConverterFloat64.write(value.amount, buf)
+            _UniffiFfiConverterFloat64.write(value.max_pt, buf)
+            _UniffiFfiConverterFloat64.write(value.at, buf)
+        if value.is_SPRING():
+            buf.write_i32(3)
+            _UniffiFfiConverterFloat64.write(value.amount, buf)
+            _UniffiFfiConverterFloat64.write(value.max_pt, buf)
+            _UniffiFfiConverterFloat64.write(value.cycles, buf)
+            _UniffiFfiConverterFloat64.write(value.decay, buf)
+            _UniffiFfiConverterFloat64.write(value.start, buf)
+            _UniffiFfiConverterFloat64.write(value.glide_end, buf)
+
+
+
+
+
+
+
+
+class CursorMotionDuration:
+    """
+    Duration model of a custom motion.
+"""
+    def __init__(self):
+        raise RuntimeError("CursorMotionDuration cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class FIXED:
+
+        def __init__(self, ms:float):
+            self.ms = ms
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorMotionDuration.FIXED(ms={})".format(self.ms)
+        def __eq__(self, other):
+            if not isinstance(other, CursorMotionDuration):
+                return NotImplemented
+            if not other.is_FIXED():
+                return False
+            if self.ms != other.ms:
+                return False
+            return True
+
+    @dataclass
+    class FITTS:
+
+        def __init__(self, a:float, b:float, min_ms:float, max_ms:float, scale:float):
+            self.a = a
+
+
+            self.b = b
+
+
+            self.min_ms = min_ms
+
+
+            self.max_ms = max_ms
+
+
+            self.scale = scale
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorMotionDuration.FITTS(a={}, b={}, min_ms={}, max_ms={}, scale={})".format(self.a, self.b, self.min_ms, self.max_ms, self.scale)
+        def __eq__(self, other):
+            if not isinstance(other, CursorMotionDuration):
+                return NotImplemented
+            if not other.is_FITTS():
+                return False
+            if self.a != other.a:
+                return False
+            if self.b != other.b:
+                return False
+            if self.min_ms != other.min_ms:
+                return False
+            if self.max_ms != other.max_ms:
+                return False
+            if self.scale != other.scale:
+                return False
+            return True
+
+    @dataclass
+    class DISTANCE:
+
+        def __init__(self, base_ms:float, ms_per_pt:float, min_ms:float, max_ms:float):
+            self.base_ms = base_ms
+
+
+            self.ms_per_pt = ms_per_pt
+
+
+            self.min_ms = min_ms
+
+
+            self.max_ms = max_ms
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "CursorMotionDuration.DISTANCE(base_ms={}, ms_per_pt={}, min_ms={}, max_ms={})".format(self.base_ms, self.ms_per_pt, self.min_ms, self.max_ms)
+        def __eq__(self, other):
+            if not isinstance(other, CursorMotionDuration):
+                return NotImplemented
+            if not other.is_DISTANCE():
+                return False
+            if self.base_ms != other.base_ms:
+                return False
+            if self.ms_per_pt != other.ms_per_pt:
+                return False
+            if self.min_ms != other.min_ms:
+                return False
+            if self.max_ms != other.max_ms:
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_FIXED(self) -> bool:
+        return isinstance(self, CursorMotionDuration.FIXED)
+    def is_fixed(self) -> bool:
+        return isinstance(self, CursorMotionDuration.FIXED)
+    def is_FITTS(self) -> bool:
+        return isinstance(self, CursorMotionDuration.FITTS)
+    def is_fitts(self) -> bool:
+        return isinstance(self, CursorMotionDuration.FITTS)
+    def is_DISTANCE(self) -> bool:
+        return isinstance(self, CursorMotionDuration.DISTANCE)
+    def is_distance(self) -> bool:
+        return isinstance(self, CursorMotionDuration.DISTANCE)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+CursorMotionDuration.FIXED = type("CursorMotionDuration.FIXED", (CursorMotionDuration.FIXED, CursorMotionDuration,), {})  # type: ignore
+CursorMotionDuration.FITTS = type("CursorMotionDuration.FITTS", (CursorMotionDuration.FITTS, CursorMotionDuration,), {})  # type: ignore
+CursorMotionDuration.DISTANCE = type("CursorMotionDuration.DISTANCE", (CursorMotionDuration.DISTANCE, CursorMotionDuration,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeCursorMotionDuration(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorMotionDuration.FIXED(
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        if variant == 2:
+            return CursorMotionDuration.FITTS(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        if variant == 3:
+            return CursorMotionDuration.DISTANCE(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_FIXED():
+            _UniffiFfiConverterFloat64.check_lower(value.ms)
+            return
+        if value.is_FITTS():
+            _UniffiFfiConverterFloat64.check_lower(value.a)
+            _UniffiFfiConverterFloat64.check_lower(value.b)
+            _UniffiFfiConverterFloat64.check_lower(value.min_ms)
+            _UniffiFfiConverterFloat64.check_lower(value.max_ms)
+            _UniffiFfiConverterFloat64.check_lower(value.scale)
+            return
+        if value.is_DISTANCE():
+            _UniffiFfiConverterFloat64.check_lower(value.base_ms)
+            _UniffiFfiConverterFloat64.check_lower(value.ms_per_pt)
+            _UniffiFfiConverterFloat64.check_lower(value.min_ms)
+            _UniffiFfiConverterFloat64.check_lower(value.max_ms)
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_FIXED():
+            buf.write_i32(1)
+            _UniffiFfiConverterFloat64.write(value.ms, buf)
+        if value.is_FITTS():
+            buf.write_i32(2)
+            _UniffiFfiConverterFloat64.write(value.a, buf)
+            _UniffiFfiConverterFloat64.write(value.b, buf)
+            _UniffiFfiConverterFloat64.write(value.min_ms, buf)
+            _UniffiFfiConverterFloat64.write(value.max_ms, buf)
+            _UniffiFfiConverterFloat64.write(value.scale, buf)
+        if value.is_DISTANCE():
+            buf.write_i32(3)
+            _UniffiFfiConverterFloat64.write(value.base_ms, buf)
+            _UniffiFfiConverterFloat64.write(value.ms_per_pt, buf)
+            _UniffiFfiConverterFloat64.write(value.min_ms, buf)
+            _UniffiFfiConverterFloat64.write(value.max_ms, buf)
+
+
+
+
+
+
+
+
+class CursorHeading(enum.Enum):
+    """
+    `Tangent`: the tip leads the motion. `Fixed`: the rest pose.
+"""
+
+    TANGENT = 0
+
+    FIXED = 1
+
+
+
+class _UniffiFfiConverterTypeCursorHeading(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorHeading.TANGENT
+        if variant == 2:
+            return CursorHeading.FIXED
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == CursorHeading.TANGENT:
+            return
+        if value == CursorHeading.FIXED:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == CursorHeading.TANGENT:
+            buf.write_i32(1)
+        if value == CursorHeading.FIXED:
+            buf.write_i32(2)
+
+
+
+
+
+class _UniffiFfiConverterUInt32(_UniffiConverterPrimitiveInt):
+    CLASS_NAME = "u32"
+    VALUE_MIN = 0
+    VALUE_MAX = 2**32
+
+    @staticmethod
+    def read(buf):
+        return buf.read_u32()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_u32(value)
+
+@dataclass
+class CursorTrailSpec:
+    """
+    The comet trail.
+"""
+    def __init__(self, *, secs:float, fade_len:float, steps:int, tail_width:float, head_width:float, alpha:float, anchor_offset:float):
+        self.secs = secs
+        self.fade_len = fade_len
+        self.steps = steps
+        self.tail_width = tail_width
+        self.head_width = head_width
+        self.alpha = alpha
+        self.anchor_offset = anchor_offset
+
+
+
+
+    def __str__(self):
+        return "CursorTrailSpec(secs={}, fade_len={}, steps={}, tail_width={}, head_width={}, alpha={}, anchor_offset={})".format(self.secs, self.fade_len, self.steps, self.tail_width, self.head_width, self.alpha, self.anchor_offset)
+    def __eq__(self, other):
+        if self.secs != other.secs:
+            return False
+        if self.fade_len != other.fade_len:
+            return False
+        if self.steps != other.steps:
+            return False
+        if self.tail_width != other.tail_width:
+            return False
+        if self.head_width != other.head_width:
+            return False
+        if self.alpha != other.alpha:
+            return False
+        if self.anchor_offset != other.anchor_offset:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorTrailSpec(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorTrailSpec(
+            secs=_UniffiFfiConverterFloat64.read(buf),
+            fade_len=_UniffiFfiConverterFloat64.read(buf),
+            steps=_UniffiFfiConverterUInt32.read(buf),
+            tail_width=_UniffiFfiConverterFloat64.read(buf),
+            head_width=_UniffiFfiConverterFloat64.read(buf),
+            alpha=_UniffiFfiConverterFloat64.read(buf),
+            anchor_offset=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterFloat64.check_lower(value.secs)
+        _UniffiFfiConverterFloat64.check_lower(value.fade_len)
+        _UniffiFfiConverterUInt32.check_lower(value.steps)
+        _UniffiFfiConverterFloat64.check_lower(value.tail_width)
+        _UniffiFfiConverterFloat64.check_lower(value.head_width)
+        _UniffiFfiConverterFloat64.check_lower(value.alpha)
+        _UniffiFfiConverterFloat64.check_lower(value.anchor_offset)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterFloat64.write(value.secs, buf)
+        _UniffiFfiConverterFloat64.write(value.fade_len, buf)
+        _UniffiFfiConverterUInt32.write(value.steps, buf)
+        _UniffiFfiConverterFloat64.write(value.tail_width, buf)
+        _UniffiFfiConverterFloat64.write(value.head_width, buf)
+        _UniffiFfiConverterFloat64.write(value.alpha, buf)
+        _UniffiFfiConverterFloat64.write(value.anchor_offset, buf)
+
+@dataclass
+class CursorMotionSpec:
+    """
+    A complete custom motion.
+"""
+    def __init__(self, *, path:CursorPathShape, ease:CursorEase, settle:CursorSettle, duration:CursorMotionDuration, heading:CursorHeading, effects:cua_driver._native_contract.CursorMotionEffectsOutput, trail:CursorTrailSpec):
+        self.path = path
+        self.ease = ease
+        self.settle = settle
+        self.duration = duration
+        self.heading = heading
+        self.effects = effects
+        self.trail = trail
+
+
+
+
+    def __str__(self):
+        return "CursorMotionSpec(path={}, ease={}, settle={}, duration={}, heading={}, effects={}, trail={})".format(self.path, self.ease, self.settle, self.duration, self.heading, self.effects, self.trail)
+    def __eq__(self, other):
+        if self.path != other.path:
+            return False
+        if self.ease != other.ease:
+            return False
+        if self.settle != other.settle:
+            return False
+        if self.duration != other.duration:
+            return False
+        if self.heading != other.heading:
+            return False
+        if self.effects != other.effects:
+            return False
+        if self.trail != other.trail:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionSpec(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionSpec(
+            path=_UniffiFfiConverterTypeCursorPathShape.read(buf),
+            ease=_UniffiFfiConverterTypeCursorEase.read(buf),
+            settle=_UniffiFfiConverterTypeCursorSettle.read(buf),
+            duration=_UniffiFfiConverterTypeCursorMotionDuration.read(buf),
+            heading=_UniffiFfiConverterTypeCursorHeading.read(buf),
+            effects=cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffectsOutput.read(buf),
+            trail=_UniffiFfiConverterTypeCursorTrailSpec.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeCursorPathShape.check_lower(value.path)
+        _UniffiFfiConverterTypeCursorEase.check_lower(value.ease)
+        _UniffiFfiConverterTypeCursorSettle.check_lower(value.settle)
+        _UniffiFfiConverterTypeCursorMotionDuration.check_lower(value.duration)
+        _UniffiFfiConverterTypeCursorHeading.check_lower(value.heading)
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffectsOutput.check_lower(value.effects)
+        _UniffiFfiConverterTypeCursorTrailSpec.check_lower(value.trail)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeCursorPathShape.write(value.path, buf)
+        _UniffiFfiConverterTypeCursorEase.write(value.ease, buf)
+        _UniffiFfiConverterTypeCursorSettle.write(value.settle, buf)
+        _UniffiFfiConverterTypeCursorMotionDuration.write(value.duration, buf)
+        _UniffiFfiConverterTypeCursorHeading.write(value.heading, buf)
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffectsOutput.write(value.effects, buf)
+        _UniffiFfiConverterTypeCursorTrailSpec.write(value.trail, buf)
+
+class _UniffiFfiConverterOptionalFloat64(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterFloat64.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterFloat64.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterFloat64.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+class _UniffiFfiConverterOptionalTypeCursorMotionRect(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionRect.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionRect.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionRect.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class CursorMoveRequest:
+    """
+    One move to plan.
+"""
+    def __init__(self, *, from_point:CursorMotionPoint, to_point:CursorMotionPoint, from_heading:typing.Optional[float], end_heading:typing.Optional[float], target:typing.Optional[CursorMotionRect], seed:str, reduced_motion:bool):
+        self.from_point = from_point
+        self.to_point = to_point
+        self.from_heading = from_heading
+        self.end_heading = end_heading
+        self.target = target
+        self.seed = seed
+        self.reduced_motion = reduced_motion
+
+
+
+
+    def __str__(self):
+        return "CursorMoveRequest(from_point={}, to_point={}, from_heading={}, end_heading={}, target={}, seed={}, reduced_motion={})".format(self.from_point, self.to_point, self.from_heading, self.end_heading, self.target, self.seed, self.reduced_motion)
+    def __eq__(self, other):
+        if self.from_point != other.from_point:
+            return False
+        if self.to_point != other.to_point:
+            return False
+        if self.from_heading != other.from_heading:
+            return False
+        if self.end_heading != other.end_heading:
+            return False
+        if self.target != other.target:
+            return False
+        if self.seed != other.seed:
+            return False
+        if self.reduced_motion != other.reduced_motion:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMoveRequest(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMoveRequest(
+            from_point=_UniffiFfiConverterTypeCursorMotionPoint.read(buf),
+            to_point=_UniffiFfiConverterTypeCursorMotionPoint.read(buf),
+            from_heading=_UniffiFfiConverterOptionalFloat64.read(buf),
+            end_heading=_UniffiFfiConverterOptionalFloat64.read(buf),
+            target=_UniffiFfiConverterOptionalTypeCursorMotionRect.read(buf),
+            seed=_UniffiFfiConverterString.read(buf),
+            reduced_motion=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeCursorMotionPoint.check_lower(value.from_point)
+        _UniffiFfiConverterTypeCursorMotionPoint.check_lower(value.to_point)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.from_heading)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.end_heading)
+        _UniffiFfiConverterOptionalTypeCursorMotionRect.check_lower(value.target)
+        _UniffiFfiConverterString.check_lower(value.seed)
+        _UniffiFfiConverterBoolean.check_lower(value.reduced_motion)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeCursorMotionPoint.write(value.from_point, buf)
+        _UniffiFfiConverterTypeCursorMotionPoint.write(value.to_point, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.from_heading, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.end_heading, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionRect.write(value.target, buf)
+        _UniffiFfiConverterString.write(value.seed, buf)
+        _UniffiFfiConverterBoolean.write(value.reduced_motion, buf)
+
 
 
 
@@ -2868,19 +4868,6 @@ class _UniffiFfiConverterTypeDriverAuthorizationRequest(_UniffiConverterRustBuff
         _UniffiFfiConverterString.write(value.human_summary, buf)
         _UniffiFfiConverterUInt64.write(value.expires_unix_ms, buf)
         _UniffiFfiConverterString.write(value.request_digest, buf)
-
-class _UniffiFfiConverterUInt32(_UniffiConverterPrimitiveInt):
-    CLASS_NAME = "u32"
-    VALUE_MIN = 0
-    VALUE_MAX = 2**32
-
-    @staticmethod
-    def read(buf):
-        return buf.read_u32()
-
-    @staticmethod
-    def write(value, buf):
-        buf.write_u32(value)
 
 @dataclass
 class DriverMetadata:
@@ -7342,6 +9329,292 @@ class _UniffiFfiConverterTypeCuaDriverSession:
     def write(cls, value: CuaDriverSession, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+class _UniffiFfiConverterSequenceTypeCursorMotionSample(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeCursorMotionSample.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeCursorMotionSample.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeCursorMotionSample.read(buf) for i in range(count)
+        ]
+
+
+class CursorTrajectoryProtocol(typing.Protocol):
+    """
+    A planned move, played back by time.
+"""
+
+    def arrival_t(self, ) -> float:
+        """
+        When the tip first reaches the target, seconds.
+"""
+        raise NotImplementedError
+    def duration(self, ) -> float:
+        """
+        Seconds until the last sample (any settle included).
+"""
+        raise NotImplementedError
+    def effect_frame(self, t: float,blend: bool) -> CursorEffectFrame:
+        """
+        The move's effects (glow, trail, magnet) at `t`, around the arrow's
+        body. `blend` is whether the surface can draw translucency.
+"""
+        raise NotImplementedError
+    def effects(self, ) -> cua_driver._native_contract.CursorMotionEffectsOutput:
+        raise NotImplementedError
+    def linger(self, ) -> float:
+        """
+        When the move and its trail or magnet glow have finished, seconds.
+"""
+        raise NotImplementedError
+    def sample_at(self, t: float) -> CursorMotionSample:
+        """
+        Interpolated sample at `t` seconds, clamped to the ends.
+"""
+        raise NotImplementedError
+    def samples(self, ) -> typing.List[CursorMotionSample]:
+        """
+        Every sample at 120 Hz. Read once; interpolate locally per frame.
+"""
+        raise NotImplementedError
+    def snap_t(self, ) -> typing.Optional[float]:
+        """
+        Magnetic lock-on time, seconds.
+"""
+        raise NotImplementedError
+    def target(self, ) -> CursorMotionRect:
+        """
+        The target used for timing (the request's, or a 24 pt box).
+"""
+        raise NotImplementedError
+    def target_known(self, ) -> bool:
+        raise NotImplementedError
+
+class CursorTrajectory(CursorTrajectoryProtocol):
+    """
+    A planned move, played back by time.
+"""
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cua_driver_sdk_fn_free_cursortrajectory, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_driver_sdk_fn_clone_cursortrajectory, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def arrival_t(self, ) -> float:
+        """
+        When the tip first reaches the target, seconds.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterFloat64.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_arrival_t,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def duration(self, ) -> float:
+        """
+        Seconds until the last sample (any settle included).
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterFloat64.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_duration,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def effect_frame(self, t: float,blend: bool) -> CursorEffectFrame:
+        """
+        The move's effects (glow, trail, magnet) at `t`, around the arrow's
+        body. `blend` is whether the surface can draw translucency.
+"""
+
+        _UniffiFfiConverterFloat64.check_lower(t)
+
+        _UniffiFfiConverterBoolean.check_lower(blend)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterFloat64.lower(t),
+            _UniffiFfiConverterBoolean.lower(blend),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCursorEffectFrame.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_effect_frame,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def effects(self, ) -> cua_driver._native_contract.CursorMotionEffectsOutput:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffectsOutput.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_effects,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def linger(self, ) -> float:
+        """
+        When the move and its trail or magnet glow have finished, seconds.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterFloat64.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_linger,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def sample_at(self, t: float) -> CursorMotionSample:
+        """
+        Interpolated sample at `t` seconds, clamped to the ends.
+"""
+
+        _UniffiFfiConverterFloat64.check_lower(t)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterFloat64.lower(t),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCursorMotionSample.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_sample_at,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def samples(self, ) -> typing.List[CursorMotionSample]:
+        """
+        Every sample at 120 Hz. Read once; interpolate locally per frame.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeCursorMotionSample.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_samples,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def snap_t(self, ) -> typing.Optional[float]:
+        """
+        Magnetic lock-on time, seconds.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterOptionalFloat64.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_snap_t,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def target(self, ) -> CursorMotionRect:
+        """
+        The target used for timing (the request's, or a 24 pt box).
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCursorMotionRect.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_target,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def target_known(self, ) -> bool:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterBoolean.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cursortrajectory_target_known,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeCursorTrajectory:
+    @staticmethod
+    def lift(value: int) -> CursorTrajectory:
+        return CursorTrajectory._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: CursorTrajectory):
+        if not isinstance(value, CursorTrajectory):
+            raise TypeError("Expected CursorTrajectory instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: CursorTrajectory) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> CursorTrajectory:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: CursorTrajectory, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
 
 class DriverActivityObserver():
     """
@@ -8140,6 +10413,31 @@ class _UniffiFfiConverterTypeMcpDriverChannel:
     def write(cls, value: McpDriverChannel, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+class _UniffiFfiConverterOptionalTypeCursorMotionSpec(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionSpec.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionSpec.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionSpec.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u8"
     VALUE_MIN = 0
@@ -8251,6 +10549,67 @@ def current_mac_os_permission_status() -> MacOsPermissionStatus:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def cursor_click_effects(effects: cua_driver._native_contract.CursorMotionEffectsOutput,age: float,x: float,y: float) -> CursorEffectFrame:
+    """
+    Click effects (ripple, squish) `age` seconds after a click at `(x, y)`.
+"""
+
+    cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffectsOutput.check_lower(effects)
+
+    _UniffiFfiConverterFloat64.check_lower(age)
+
+    _UniffiFfiConverterFloat64.check_lower(x)
+
+    _UniffiFfiConverterFloat64.check_lower(y)
+    _uniffi_lowered_args = (
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionEffectsOutput.lower(effects),
+        _UniffiFfiConverterFloat64.lower(age),
+        _UniffiFfiConverterFloat64.lower(x),
+        _UniffiFfiConverterFloat64.lower(y),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeCursorEffectFrame.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_cursor_click_effects,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def cursor_motion_spec_for_style(style: cua_driver._native_contract.CursorMotionStyle,params: CursorMotionParams) -> typing.Optional[CursorMotionSpec]:
+    """
+    The spec behind a built-in style (`signature_arc`, `spring_settle` and
+    `comet_swoop`); `None` for the simulated styles.
+"""
+
+    cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionStyle.check_lower(style)
+
+    _UniffiFfiConverterTypeCursorMotionParams.check_lower(params)
+    _uniffi_lowered_args = (
+        cua_driver._native_contract._UniffiFfiConverterTypeCursorMotionStyle.lower(style),
+        _UniffiFfiConverterTypeCursorMotionParams.lower(params),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterOptionalTypeCursorMotionSpec.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_cursor_motion_spec_for_style,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def default_cursor_motion_params() -> CursorMotionParams:
+    """
+    Cua Driver's default motion knobs.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeCursorMotionParams.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_default_cursor_motion_params,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def open_mac_os_screen_recording_settings() -> None:
     _uniffi_lowered_args = (
     )
@@ -8282,6 +10641,46 @@ def open_mcp_driver_channel(transport: DriverServiceTransport,authenticated_prin
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def plan_cursor_move(params: CursorMotionParams,request: CursorMoveRequest) -> CursorTrajectory:
+    """
+    Plan one move for a built-in style.
+"""
+
+    _UniffiFfiConverterTypeCursorMotionParams.check_lower(params)
+
+    _UniffiFfiConverterTypeCursorMoveRequest.check_lower(request)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterTypeCursorMotionParams.lower(params),
+        _UniffiFfiConverterTypeCursorMoveRequest.lower(request),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeCursorTrajectory.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_plan_cursor_move,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def plan_cursor_spec(spec: CursorMotionSpec,request: CursorMoveRequest) -> CursorTrajectory:
+    """
+    Plan one move for a custom spec.
+"""
+
+    _UniffiFfiConverterTypeCursorMotionSpec.check_lower(spec)
+
+    _UniffiFfiConverterTypeCursorMoveRequest.check_lower(request)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterTypeCursorMotionSpec.lower(spec),
+        _UniffiFfiConverterTypeCursorMoveRequest.lower(request),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeCursorTrajectory.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_plan_cursor_spec,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def request_mac_os_permissions() -> MacOsPermissionStatus:
     _uniffi_lowered_args = (
     )
@@ -8297,6 +10696,11 @@ def request_mac_os_permissions() -> MacOsPermissionStatus:
 __all__ = [
     "InternalError",
     "SessionPermissionMode",
+    "CursorPathShape",
+    "CursorEase",
+    "CursorSettle",
+    "CursorMotionDuration",
+    "CursorHeading",
     "DriverActivityKind",
     "DriverAuthorizationAction",
     "EmbeddedPermissionMode",
@@ -8311,6 +10715,18 @@ __all__ = [
     "SdkClientKind",
     "RuntimeAuthorizationOptions",
     "ConfiguredDriverOptions",
+    "CursorGlow",
+    "CursorTrailSegment",
+    "CursorMotionRect",
+    "CursorMagnet",
+    "CursorRipple",
+    "CursorEffectFrame",
+    "CursorMotionParams",
+    "CursorMotionPoint",
+    "CursorMotionSample",
+    "CursorTrailSpec",
+    "CursorMotionSpec",
+    "CursorMoveRequest",
     "DriverActivityEvent",
     "DriverAuthorizationDecision",
     "DriverAuthorizationRequest",
@@ -8338,8 +10754,13 @@ __all__ = [
     "create_remote_trusted_session",
     "create_trusted_session",
     "current_mac_os_permission_status",
+    "cursor_click_effects",
+    "cursor_motion_spec_for_style",
+    "default_cursor_motion_params",
     "open_mac_os_screen_recording_settings",
     "open_mcp_driver_channel",
+    "plan_cursor_move",
+    "plan_cursor_spec",
     "request_mac_os_permissions",
     "ForeignDriverEnvelopeChannelImpl",
     "ForeignDriverEnvelopeChannel",
@@ -8347,6 +10768,8 @@ __all__ = [
     "CuaDriverProtocol",
     "CuaDriverSession",
     "CuaDriverSessionProtocol",
+    "CursorTrajectory",
+    "CursorTrajectoryProtocol",
     "DriverActivityObserverImpl",
     "DriverActivityObserver",
     "DriverAuthorizationHostImpl",

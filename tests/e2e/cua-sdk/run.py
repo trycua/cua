@@ -2,7 +2,7 @@
 """Run the cua SDK e2e suite and print the guide x language x lane matrix.
 
     tests/e2e/cua-sdk/run.py --lanes hermetic,container --langs py,ts,rust
-    tests/e2e/cua-sdk/run.py --lanes fleet --strict        # nightly
+    tests/e2e/cua-sdk/run.py --lanes cua-sandbox,qemu --strict  # nightly
     tests/e2e/cua-sdk/run.py --matrix-only --out DIR       # re-render results
 
 Lanes map to the env gates in scenarios.json (the runner sets them). Every

@@ -15,7 +15,8 @@ use crate::{
 };
 
 /// A stand-in platform tool that records every call it receives and fails
-/// when asked to (`{"fail": true}`).
+/// when asked to (`{"fail": true}`, or `fail_message` with optional
+/// `fail_structured` content).
 struct Probe {
     def: ToolDef,
     calls: Arc<Mutex<Vec<Value>>>,
@@ -35,7 +36,11 @@ impl Tool for Probe {
             .unwrap()
             .push((self.def.name.clone(), crate::step_pacing::current()));
         if let Some(message) = args["fail_message"].as_str() {
-            return ToolResult::error(message.to_owned());
+            let result = ToolResult::error(message.to_owned());
+            return match args.get("fail_structured") {
+                Some(structured) => result.with_structured(structured.clone()),
+                None => result,
+            };
         }
         if args["fail"] == true {
             ToolResult::error(format!("{} refused: probe asked to fail", self.def.name))
@@ -75,6 +80,7 @@ impl Harness {
                             "text": {"type": "string"},
                             "fail": {"type": "boolean"},
                             "fail_message": {"type": "string"},
+                            "fail_structured": {"type": "object"},
                             "element_token": {"type": "string"},
                             "value": {"type": "string"},
                             "key": {"type": "string"},

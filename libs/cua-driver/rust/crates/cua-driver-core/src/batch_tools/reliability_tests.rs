@@ -147,6 +147,67 @@ async fn a_step_refused_for_background_delivery_says_how_or_falls_back() {
     assert_eq!(harness.last("click")["delivery_mode"], "foreground");
 }
 
+#[tokio::test]
+async fn a_step_whose_input_may_have_landed_is_never_replayed() {
+    let harness = Harness::new();
+    let hint = "Retry this action with delivery_mode:\"foreground\".";
+    let escalation = json!({"recommended": "foreground", "reason": "background route failed"});
+    // Each failure follows dispatch: the click may have landed, so sending it
+    // again in the foreground could click twice, whatever the hint says.
+    for structured in [
+        json!({"code": "background_unavailable", "effect": "unverifiable",
+               "suggestion": hint, "escalation": escalation}),
+        json!({"code": "ax_timeout", "effect": "unknown", "escalation": escalation}),
+        json!({"code": "background_unavailable", "effect": "partial",
+               "delivery": {"mode": "background", "delivered_count": 2},
+               "escalation": escalation}),
+        json!({"effect": "unverifiable", "route": "accessibility",
+               "delivery": {"mode": "unknown"}}),
+    ] {
+        let before = harness.hits("click");
+        let result = harness
+            .run(
+                json!({"pid": 1, "window_id": 2, "foreground_fallback": true, "steps": [
+                    {"tool": "click", "args": {"x": 3, "y": 4, "fail_message": hint,
+                                               "fail_structured": structured}}
+                ]}),
+            )
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(harness.hits("click"), before + 1, "replayed: {structured}");
+        assert!(
+            !text(&result).contains("foreground_fallback"),
+            "{}",
+            text(&result)
+        );
+    }
+
+    // A refusal raised before any input was sent, or one that proves nothing
+    // landed (a macOS drag-and-drop that released without a drop), is still
+    // replayed once.
+    for structured in [
+        json!({"code": "background_unavailable", "suggestion": hint, "escalation": escalation}),
+        json!({"code": "background_unavailable", "effect": "refused", "escalation": escalation}),
+        json!({"code": "background_unavailable", "effect": "no_drop", "escalation": escalation}),
+    ] {
+        let before = harness.hits("click");
+        let _ = harness
+            .run(
+                json!({"pid": 1, "window_id": 2, "foreground_fallback": true, "steps": [
+                    {"tool": "click", "args": {"x": 3, "y": 4, "fail_message": hint,
+                                               "fail_structured": structured}}
+                ]}),
+            )
+            .await;
+        assert_eq!(
+            harness.hits("click"),
+            before + 2,
+            "not replayed: {structured}"
+        );
+        assert_eq!(harness.last("click")["delivery_mode"], "foreground");
+    }
+}
+
 #[test]
 fn a_failed_batch_keeps_the_step_report_readable() {
     // v037c: a failed batch returned its step report plus a full read

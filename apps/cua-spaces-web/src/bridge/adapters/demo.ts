@@ -94,7 +94,7 @@ export interface DemoOptions {
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
    * Electron shell passes its own system and architecture). */
   platform?: DemoPlatform;
-  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`). */
+  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`, `?demo=update-error`). */
   update?: Partial<UpdateState>;
   /** A This Mac prompt to show (`?demo=nudge-second-agent`, `?demo=nudge-risky`). */
   nudge?: "second-agent" | "risky";
@@ -122,7 +122,7 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
  * `?demo=agents-readonly` (Cua can't write Hermes's config),
- * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`,
+ * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`, `?demo=update-error`,
  * and `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space). */
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
@@ -151,7 +151,9 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
       : flags.has("update-downloading")
         ? { update: { status: "downloading" as const, version: "0.9.3", percent: 42, notesUrl: DEMO_NOTES } }
-        : {}),
+        : flags.has("update-error")
+          ? { update: { status: "error" as const, message: "The network connection was lost." } }
+          : {}),
   };
 }
 

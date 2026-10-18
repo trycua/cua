@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
 import { Loader2Icon, LogOutIcon, TriangleAlertIcon } from "lucide-react";
 
@@ -21,7 +21,7 @@ import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
 import { SignInLink } from "@/components/sign-in-link";
 import { useNavItems } from "./nav";
-import { SidebarUpdateIndicator } from "./update-indicator";
+import { SidebarUpdateButton } from "./update-indicator";
 import { SidebarGetStarted } from "@/components/getting-started";
 
 export function Sidebar() {
@@ -78,9 +78,8 @@ export function Sidebar() {
       </nav>
       <div className="mt-auto">
         <SidebarCreating spaces={spaces ?? []} />
-        <SidebarUpdateIndicator />
         <SidebarGetStarted />
-        <AccountFooter />
+        <AccountFooter trailing={<SidebarUpdateButton />} />
       </div>
       <ResizeHandle />
     </aside>
@@ -121,8 +120,9 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
 /** The account and its sign-in, every state in one place (the core's
  * `signIn.footer`): signed in as, waiting for the browser with the code,
  * Open again and Cancel, or why it failed with Try again and a toast. And a
- * way back into a first run left halfway. */
-export function AccountFooter() {
+ * way back into a first run left halfway. `trailing` (the update button)
+ * sits at the far right of its first row. */
+export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
   const { core } = useBridge();
   const { data: session, signIn, signOut, cancelSignIn, openExternal } = useSession();
   const plan = useRelayUsageView()?.planCard;
@@ -145,7 +145,7 @@ export function AccountFooter() {
   // The last attempt used a code: another code would not help.
   const triedCode = useRef(false);
   if (footer?.state === "waiting" && footer.code) triedCode.current = true;
-  if (!session || !footer) return <div className="mt-auto h-12 border-t" />;
+  if (!session || !footer) return <div className="mt-auto flex h-12 items-center justify-end border-t px-3">{trailing}</div>;
 
   const unfinished = !session.onboarding.completed;
   const run = (f: () => Promise<unknown>, what: string) =>
@@ -204,6 +204,7 @@ export function AccountFooter() {
               </Button>
             </Tooltip>
           ) : null}
+          {trailing}
         </div>
       ) : footer.state === "starting" || footer.state === "waiting" ? (
         // The code to confirm, the page to open again if the tab was
@@ -211,7 +212,8 @@ export function AccountFooter() {
         <div>
           <p className="flex items-center gap-2 text-xs" role="status">
             <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
-            <span className="truncate">{footer.text}</span>
+            <span className="min-w-0 flex-1 truncate">{footer.text}</span>
+            <span className="shrink-0">{trailing}</span>
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-x-1 pl-5.5 text-2xs text-muted-foreground">
             {footer.code ? (
@@ -285,6 +287,7 @@ export function AccountFooter() {
                 {footer.detailsLabel}
               </button>
             ) : null}
+            <span className="ml-auto">{trailing}</span>
           </div>
           {details && footer.detail ? (
             <pre className="mt-2 max-h-28 overflow-auto rounded-md bg-muted px-2 py-1.5 font-mono text-2xs break-words whitespace-pre-wrap text-muted-foreground select-text">
@@ -295,11 +298,14 @@ export function AccountFooter() {
       ) : (
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-xs text-muted-foreground">{footer.text}</span>
-          {footer.actionLabel ? (
-            <Button variant="outline" size="sm" onClick={startSignIn}>
-              {footer.actionLabel}
-            </Button>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {footer.actionLabel ? (
+              <Button variant="outline" size="sm" onClick={startSignIn}>
+                {footer.actionLabel}
+              </Button>
+            ) : null}
+            {trailing}
+          </div>
         </div>
       )}
     </div>

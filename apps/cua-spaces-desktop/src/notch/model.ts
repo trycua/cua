@@ -156,6 +156,8 @@ export class NotchModel {
   private cancelTick?: () => void;
   private monitor?: { stop(): void };
   private dragsRunning = false;
+  /** Which monitor's events count (a stopped one's late events do not). */
+  private dragGeneration = 0;
   private permissionPoll?: () => void;
   private thumbnailLoop?: () => void;
   private lastThumbnails = Number.NEGATIVE_INFINITY;
@@ -508,11 +510,15 @@ export class NotchModel {
   }
 
   private async startDrags(teleport: NotchTeleport): Promise<void> {
+    const generation = ++this.dragGeneration;
     try {
-      const monitor = await teleport.startWindowDrag({ onEvent: (event) => this.handleDrag(event) });
-      // Hidden meanwhile: drop it.
-      if (!this.shown || !this.dragsRunning || this.monitor) return monitor.stop();
+      const monitor = await teleport.startWindowDrag({
+        onEvent: (event) => (event.phase === "stopped" ? this.dragsStopped(generation) : this.handleDrag(event)),
+      });
+      // Hidden (or stopped) meanwhile: drop it.
+      if (!this.shown || !this.dragsRunning || this.monitor || generation !== this.dragGeneration) return monitor.stop();
       this.monitor = monitor;
+      this.options.trace?.("window-drag monitor started");
     } catch (error) {
       this.log(`window-drag detection did not start: ${String(error)}`);
       if (!this.dragsRunning || this.monitor) return;
@@ -520,6 +526,20 @@ export class NotchModel {
       this.send({ tag: "DragPermission", inner: { granted: false } });
       this.pollPermission();
     }
+  }
+
+  /**
+   * The SDK's monitor died on its own (its event tap ended): it sends no
+   * more drags, so a new one starts on the next check (the readiness
+   * checks, the app becoming active, the notch shown again) and within 2 s.
+   */
+  private dragsStopped(generation: number): void {
+    if (generation !== this.dragGeneration || !this.dragsRunning) return;
+    this.log("window-drag detection stopped; starting it again");
+    this.monitor?.stop();
+    this.monitor = undefined;
+    this.dragsRunning = false;
+    this.pollPermission();
   }
 
   private pollPermission(): void {

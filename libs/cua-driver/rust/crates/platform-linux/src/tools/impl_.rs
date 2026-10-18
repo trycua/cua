@@ -3303,6 +3303,12 @@ fn background_virtual_key(
     modifiers: &[&str],
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
+        if let Some(owner) = crate::input::popup_click_session(popup.window) {
+            match crate::input::send_popup_keyboard_key(&owner, popup.window, key, modifiers) {
+                Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
+                delivered => return delivered,
+            }
+        }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
             crate::input::send_key_xtest(key, modifiers)
         });
@@ -3318,6 +3324,12 @@ fn background_virtual_text(
     text: &str,
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
+        if let Some(owner) = crate::input::popup_click_session(popup.window) {
+            match crate::input::send_popup_keyboard_text(&owner, popup.window, text) {
+                Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
+                delivered => return delivered,
+            }
+        }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
             crate::input::send_type_text_xtest(text)
         });

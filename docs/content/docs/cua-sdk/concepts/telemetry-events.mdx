@@ -38,7 +38,7 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_onboarding_page` | `page` (`welcome`, `command_line`, `signin`, `agents`, `presentation`, `volume`, `this_machine`, `done`), `action` (`shown`, `completed`, `skipped`, `back`), `choice` (a fixed word such as `installed`, `signed_in`, `menu_bar_only`, `s3`, `host`, or `none`) | Which first-run page people leave on, and what they pick. |
 | `cua_space_wizard` | `action` (`opened`, `cancelled`, `submitted`) | How often a New Space is started and abandoned. |
 | `cua_space_create_started` | `location`, `guest_os`, `kind`, `gpu` (GPU acceleration turned on) | Which Spaces are started, and how often with GPU acceleration. |
-| `cua_space_create` | `location`, `guest_os`, `kind`, `outcome` (`ok`, `error`, or `cancelled` when Cancel was pressed while it was being created), `error_kind`, `failed_phase` (the phase it failed or was cancelled in, or `none`), `stalled`, `time_bucket` (to ready, the failure, or cancel finishing), `gpu` | Space create success, failure and cancel rates, time to ready, and which phase fails. |
+| `cua_space_create` | `location`, `guest_os`, `kind`, `outcome` (`ok`, `error`, or `cancelled` when Cancel was pressed while it was being created), `error_kind` ([kinds](/cua-sdk/concepts/telemetry-error-kinds)), `failed_phase` (the phase it failed or was cancelled in, or `none`), `stalled`, `time_bucket` (to ready, the failure, or cancel finishing), `gpu` | Space create success, failure and cancel rates, time to ready, and which phase fails. |
 | `cua_volume_setup` | `surface` (`onboarding` or `settings`), `storage` (`this_mac`, `s3`, `later`), `add_to_finder`, `mount_method` (`fskit`, `nfs`, `fuse`, `none`, `unknown`), `outcome` | Cua Volume adoption. |
 | `cua_persistent_agent` | `action` (`create`, `pause`, `resume`, `routine_add`, ...), `harness`, `outcome`, `error_kind` | Persistent agents and routines adoption. |
 | `cua_host_setup` | `mode` (`relay` or `direct`), `profile` (`desktop`, `spare`, `both`), `outcome`, `error_kind`, `signed_in`, `token_state` (`provided`, `expired`, `missing`, `not_needed`; never the token), `failed_stage` (`none`, `preflight`, `token`, `register`, `download`, `service`), `http_status` (the status a server answered a failure with, `0` when none) | Machines set up for access, and where a failed setup stopped. |
@@ -49,34 +49,6 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_app_update` | `action` (`checked`, `found`, `not_found`, `downloaded`, `installed`, `failed`), `channel` (`stable` or `beta`), `trigger` (`user` or `background`) | Whether people update. |
 | `cua_device_enroll` | `method` (`sign_in`, `approval`, `rekey`), `outcome` | How devices join your account's relay. |
 | `cua_experiment` | `action` (`experiment_on` or `experiment_off`), `experiment` (`cua_volume`, `your_cloud`, `sharing`) | Which experiments people try, and turn off again. |
-
-## Create failure kinds
-
-When a create fails, `cua_space_create`, `cua_sandbox_created` and
-`cua_host_space_provided` set `error_kind` to a fixed word for the cause. The
-program reads the error on your machine and sends only the word, never the
-error text.
-
-| `error_kind` | Cause |
-|---|---|
-| `image_pull_not_found` | The image is not in the registry. |
-| `image_pull_auth` | The registry refused the download. |
-| `image_pull_network` | The network failed or timed out during the download. |
-| `image_pull_rate_limited` | The registry rate-limited the download. |
-| `image_pull` | The download failed for another reason, or stopped partway. |
-| `insufficient_disk` | Not enough disk space. |
-| `runtime_missing`, `runtime_not_running`, `runtime_permission` | The local runtime (Docker, Lume, QEMU) is not installed, not running, or not allowed. |
-| `virtualization_unavailable` | The machine cannot run VMs (no Virtualization.framework, KVM or hardware virtualization). |
-| `vm_limit` | The Mac already runs the two macOS VMs Apple allows. |
-| `vm_boot_timeout` | The VM did not finish booting in time. |
-| `services_unreachable` | The Space booted but its services never answered. |
-| `local_network` | macOS Local Network privacy blocked the connection to the new VM. |
-| `quota_exceeded` | The account's quota, plan limit or credits ran out. |
-| `cancelled` | You cancelled the create. |
-
-Otherwise it is the error's type (for example `unauthenticated`, `timeout`,
-`runtime`), and `other` only when nothing names the cause. A failed create
-never reports `none`.
 
 ## Teleport caller kinds
 

@@ -358,7 +358,7 @@ mod tests {
             "image_pull_not_found"
         );
         assert_eq!(
-            kind("registry: not found: ghcr.io/trycua/windows:11", p, ""),
+            kind("registry: not found: ghcr.io/example/missing:1", p, ""),
             "image_pull_not_found"
         );
         assert_eq!(

@@ -100,7 +100,7 @@ async def test_builtin_default_is_local_with_the_notice(local_sdk, cloud, notice
         await Sandbox.create(ROOTFS, telemetry_enabled=False)
     assert local_sdk[0].on == "local" and not cloud
     [message] = notice()
-    assert "cua config set default.on" in message and "local=False" in message
+    assert "defaulting to a local sandbox" in message and "CUA_QUIET_DEFAULT=1" in message
 
 
 @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")

@@ -64,6 +64,7 @@ def _make_sandbox(transport: FleetCloudTransport, **kwargs) -> Sandbox:
 # ===================================================================
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 class TestCreateCleansUpOnConnectFailure:
     """Sandbox._create() releases a managed Fleet claim when attaching fails.
 

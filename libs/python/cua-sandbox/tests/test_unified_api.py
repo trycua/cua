@@ -144,7 +144,7 @@ async def test_local_is_the_default_with_a_one_time_notice(monkeypatch, fresh_no
     assert len(calls) == 2, "both went to the local runtime"
     notices = [r for r in caplog.records if "defaulting to a local sandbox" in r.message]
     assert len(notices) == 1, "the notice is shown once"
-    assert "local=False" in notices[0].message
+    assert "CUA_QUIET_DEFAULT=1" in notices[0].message
 
 
 async def test_quiet_default_hides_the_notice(monkeypatch, fresh_notice, caplog):
@@ -419,6 +419,7 @@ async def test_flat_cloud_keywords_are_deprecated_and_conflicts_refused(monkeypa
 # ── cloud: the fake Fleet API ────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_cloud_command_services_info_urls_and_progress(fleet, rootfs_variant):
     events: list = []
     sb = await Sandbox.create(
@@ -470,6 +471,7 @@ async def test_cloud_command_services_info_urls_and_progress(fleet, rootfs_varia
         await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_cloud_env_is_created_and_keys_its_own_pool(fleet, rootfs_variant):
     # Cloud env= is the template's env (processMode Run on every runtime).
     plain = await Sandbox.create(Image.from_registry(ROOTFS), telemetry_enabled=False, local=False)

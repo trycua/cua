@@ -60,6 +60,8 @@ ALLOWED_SKIPS = (
     "docs block input",
     # The TypeScript Fleet guide page was removed upstream.
     "no Fleet TypeScript docs block is tagged",
+    # Cua Cloud has ended: there is no live Fleet lane to run.
+    "Cua Cloud has ended (CUA-1854)",
 )
 STATUS_ICON = {
     "pass": "pass",

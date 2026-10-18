@@ -195,6 +195,7 @@ def test_an_existing_pool_compares_sidecars_with_its_template(monkeypatch):
 # ── end to end on the fake Fleet ─────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_cloud_vm_images_take_sidecars(fleet):  # noqa: F811
     # IMAGE is a KubeVirt containerDisk in the fake registry: Fleet runs its
     # sidecars in a companion pod, addressed by name like on gVisor.
@@ -216,6 +217,7 @@ async def test_cloud_vm_images_take_sidecars(fleet):  # noqa: F811
         await sb.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize("reserved", ["main", "sidecars", "sc"])
 async def test_sidecars_reserve_service_names_before_creating_anything(
     fleet,  # noqa: F811 - fixture
@@ -236,6 +238,7 @@ async def test_sidecars_reserve_service_names_before_creating_anything(
     assert not [n for n in names if n.startswith("cua-auto-")], "nothing was created"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_cloud_layers_fail_clearly_until_fleet_builds_them(fleet):  # noqa: F811
     with pytest.raises(Exception, match="not deployed yet"):
         await Sandbox.create(Image.from_registry(IMAGE).pip_install("mcp"), local=False)

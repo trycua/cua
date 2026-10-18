@@ -1,6 +1,8 @@
 // The guide scenarios in TypeScript: your-first-cloud-fleet, create-pool
 // (Node), expire-pools-and-claims, run-omarchy, connect-with-viewer and
 // local-container. Same definitions as ../python/test_{fleet_guides,desktop}.py.
+// Cua Cloud has ended (CUA-1854): the hermetic cloud tests assert the one
+// "Cua Cloud has ended" error; the live fleet lanes skip (lib.mjs).
 import assert from "node:assert/strict"
 import { randomBytes } from "node:crypto"
 import { after, before } from "node:test"
@@ -8,7 +10,6 @@ import { after, before } from "node:test"
 import * as e from "./lib.mjs"
 
 const { cua } = e
-const FAKE_IMAGE = "registry.test/cua-e2e:fake"
 let fx
 before(async () => {
   if (!e.laneEnabled("hermetic")) fx = await e.startFixtures()
@@ -63,19 +64,8 @@ async function firstFleet(c, { image, runtime, desktop, services, command, token
   await assertGone(fleet, pool)
 }
 
-e.e2eTest("your-first-cloud-fleet", "hermetic", "pool -> claim -> uname -> screenshot -> delete (fake Fleet)", async () => {
-  const c = fakeFleet()
-  await firstFleet(c, { image: FAKE_IMAGE, runtime: "kubevirt", services: { server: 8000 }, desktop: async (sb) => {
-    assert.equal((await sb.service("server").request("GET", "/status", undefined, 5000)).status, 200)
-    const d = await c.sandboxes().connectUrl(fx.env_url, fx.env_token, e.name("first-env"))
-    try {
-      const env = await d.spacesd(5000)
-      const out = await env.run(e.cmd("echo", ["Linux", "mock"]))
-      return [e.str(out.stdout), (await env.screenshot(undefined)).image]
-    } finally {
-      await d.delete_()
-    }
-  } })
+e.e2eTest("your-first-cloud-fleet", "hermetic", "a cloud pool and claim fail: Cua Cloud has ended", async () => {
+  await e.assertCloudEnded(fakeFleet(), { pool: e.name("first"), name: e.name("first-claim") })
 })
 
 e.e2eTest("your-first-cloud-fleet", "fleet", "the tutorial's KubeVirt pool (legacy /cmd)", async () => {
@@ -158,10 +148,10 @@ async function ephemeral(c, image) {
   await assertGone(fleet, pool)
 }
 
-e.e2eTest("create-pool", "hermetic", "warm pool, named claim reattach, scaling, ephemeral cleanup (fake Fleet)", async () => {
+e.e2eTest("create-pool", "hermetic", "named, warm and ephemeral cloud creates fail: Cua Cloud has ended", async () => {
   const c = fakeFleet()
-  await createPool(c, { image: FAKE_IMAGE, live: false })
-  await ephemeral(c, FAKE_IMAGE)
+  await e.assertCloudEnded(c, { pool: e.name("pool"), name: e.name("claim") })
+  await e.assertCloudEnded(c, { runtime: "gvisor", warm: true, maxPoolSize: 2, fleetTtlSeconds: 3600 })
 })
 
 e.e2eTest("create-pool", "fleet", "warm pool, named claim reattach, scaling", async () => {
@@ -201,8 +191,8 @@ async function expire(c, { image, live }) {
   }
 }
 
-e.e2eTest("expire-pools-and-claims", "hermetic", "pool + claim TTLs reach Fleet (fake)", async () => {
-  await expire(fakeFleet(), { image: FAKE_IMAGE, live: false })
+e.e2eTest("expire-pools-and-claims", "hermetic", "pool and claim TTLs fail: Cua Cloud has ended", async () => {
+  await e.assertCloudEnded(fakeFleet(), { fleetTtlSeconds: 3600 })
 })
 
 e.e2eTest("expire-pools-and-claims", "fleet", "pool + claim TTLs reach Fleet", async () => {

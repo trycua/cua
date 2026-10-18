@@ -232,6 +232,7 @@ async def _apply(name: str) -> Pool:
     )
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_apply_export_and_terraform_against_the_fake_fleet(fleet):  # noqa: F811
     pool = await _apply("cua-e2e-py-spec")
     assert pool.name == "cua-e2e-py-spec"
@@ -255,6 +256,7 @@ async def test_apply_export_and_terraform_against_the_fake_fleet(fleet):  # noqa
     await pool.delete()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_a_named_pool_is_compared_and_applied(fleet):  # noqa: F811
     await _apply("cua-e2e-py-mm")
     await Pool.check("cua-e2e-py-mm", SandboxSpec(command=["python", "-m", "srv"]))

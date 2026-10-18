@@ -6,13 +6,13 @@ away in the next minor release.
 
 from typing import Any
 
-from cua_sandbox._ended import CloudEnded
 from cua_sandbox._autopool import (
     ClaimInfo,
     GcReport,
     ManagedPoolInfo,
     is_managed_pool_name,
 )
+from cua_sandbox._ended import CloudEnded
 
 
 async def list_pools(*args: Any, **kwargs: Any) -> list[ManagedPoolInfo]:

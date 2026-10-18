@@ -1,17 +1,17 @@
 ---
-title: Host Spaces on your spare Mac
+title: Host Spaces on a spare Mac
 description: 'Turn a spare Mac mini (or any machine) into a place your laptop and your agents create Spaces on, over the relay, ssh or Tailscale, without sharing its own desktop.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Spaces run on your own Mac, on your other machines, and in your own cloud
-account ([AWS, Google Cloud or Modal](/cua-sdk/guides/your-cloud)). In this walkthrough a spare Mac mini in a closet runs Spaces for
-your laptop: your laptop, or a coding agent on it, asks for them through the
-cua.ai relay or [directly over Tailscale](#over-tailscale-without-the-relay),
-and the Mac mini runs them with its own runtimes (Lume for macOS VMs, Docker
-for Linux). You can set the Mac up [over ssh](#over-ssh-or-tailscale). Its own
-desktop, shell and files stay private.
+A spare Mac mini in a closet can run Spaces for your laptop and your agents.
+Your laptop, or a coding agent on it, asks for Spaces through the cua.ai relay or
+[directly over Tailscale](#over-tailscale-without-the-relay). The Mac mini runs
+them with its own runtimes: Lume for macOS VMs and Docker for Linux. Its own
+desktop, shell and files stay private. You can set it up
+[over ssh](#over-ssh-or-tailscale). To share a computer's own desktop instead,
+see [Add a machine](/spaces/guides/add-a-machine).
 
 ## Set up the spare Mac
 
@@ -106,7 +106,7 @@ cua spaces create linux --on host:0123abcd4567ef89
 The SDK takes the same `on`: `spaces.create(on="host:spare mac mini", image="macos")`.
 
 The machine is matched by its ID, its exact name, or the words of its name,
-so "spare mac mini" finds `Mac mini (spare)` or `dillons-mac-mini`. When two
+so "spare mac mini" finds `Mac mini (spare)` or `office-mac-mini`. When two
 machines fit equally well (two Mac minis), the call fails with
 `ambiguous_host` and lists them with their IDs, so the agent can ask you
 which one you meant.

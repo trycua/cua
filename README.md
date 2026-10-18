@@ -84,7 +84,7 @@ On macOS the installer selects the Cua Spaces app by default and adds the `cua` 
 
 Spaces is free for individuals. Pro is $18 a month and Teams is $30 per seat a month, available now from 1 seat. See [pricing](https://cua.ai/pricing). The app is source-available under [FSL-1.1-MIT](#licensing).
 
-**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac (relay, Tailscale or SSH)](https://cua.ai/docs/start-here/host-spaces-on-your-spare-mac)** | **[Your own cloud](https://cua.ai/docs/cua-sdk/guides/your-cloud)** | **[App source](apps/cua-spaces-macos/README.md)**
+**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac (relay, Tailscale or SSH)](https://cua.ai/docs/spaces/guides/host-spaces-on-your-spare-mac)** | **[Your own cloud](https://cua.ai/docs/cua-sdk/guides/your-cloud)** | **[App source](apps/cua-spaces-macos/README.md)**
 
 ---
 

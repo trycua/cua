@@ -6,8 +6,17 @@ description: 'Let another cua.ai account watch or use one of your Spaces through
 import { Callout } from 'fumadocs-ui/components/callout';
 
 Share a Space with another cua.ai account by email or account ID. A **viewer**
-joins with their own named cursor and watches; an **editor** can also use the
-Space. They open it as `relay:<machine>` from `cua spaces ls` or the app.
+joins with their own named cursor and watches. An **editor** can also use the
+Space. They open it from their own app or terminal as `relay:<machine>`.
+
+To share from the app, press **Share** in the Space's toolbar, enter an email
+address or account ID, and choose **Viewer** or **Editor**. The same list shows
+who has access and who is connected. Cua Spaces asks you to confirm with Touch
+ID or your login password first.
+
+To share a whole machine with your team, see [Teams](/spaces/guides/teams).
+
+From a terminal:
 
 ```bash test="cli-shape" id="cua-spaces-share"
 cua spaces share local:studio bob@example.com                 # viewer
@@ -16,8 +25,6 @@ cua spaces shares local:studio                                # who, and who is 
 cua spaces unshare local:studio bob@example.com               # at once
 cua spaces unshare local:studio --all                         # nobody; leaves the relay
 ```
-
-In the app, **Share** in a Space's toolbar opens the same list.
 
 ## What each role can do
 
@@ -99,7 +106,7 @@ tools are `relay_register_space` and `relay_unregister_space`.
 |---|---|---|
 | Host (`relay:<id>`) | yes | Already on the relay. |
 | Local container or VM | yes, while this machine runs it | Its driver dials the relay. Suspending it disconnects everyone. |
-| Cloud | yes | Its driver dials the relay from the cloud. |
+| In your own cloud (AWS, Google Cloud, Modal) | yes | Its driver dials the relay from the cloud. |
 | Added by address (`direct:`) | yes, if its driver supports `relay_attach` | Older drivers report `capability_missing`. |
 | A Space shared with you | no | Only the owner can share (`permission_denied`). |
 

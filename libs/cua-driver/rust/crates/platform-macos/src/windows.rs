@@ -21,7 +21,7 @@ pub struct WindowInfo {
     pub title: String,
     pub bounds: WindowBounds,
     pub layer: i32,
-    pub z_index: usize,
+    pub z_index: Option<usize>,
     pub is_on_screen: bool,
     /// Active Space on the display WindowServer associates with this window.
     /// This can differ between windows when displays use independent Spaces.
@@ -311,7 +311,7 @@ fn enumerate_windows(
             title,
             bounds,
             layer,
-            z_index: 0,
+            z_index: None,
             is_on_screen,
             current_space_id: None,
             on_current_space: None,
@@ -331,12 +331,9 @@ fn enumerate_windows(
         .map(|w| w.window_id)
         .collect()
     } else {
-        enumerated.clone()
+        enumerated
     };
-    let z_indices = z_indices_from_live_order(&enumerated, &on_screen_front_to_back);
-    for window in &mut results {
-        window.z_index = z_indices.get(&window.window_id).copied().unwrap_or(0);
-    }
+    apply_live_z_order(&mut results, &on_screen_front_to_back);
 
     if let Some(query) = &space_query {
         for window in &mut results {
@@ -371,33 +368,18 @@ fn window_on_current_space(
     Some(space_ids?.contains(&current_space_id?))
 }
 
-fn z_indices_from_live_order(
-    enumerated: &[u32],
-    on_screen_front_to_back: &[u32],
-) -> std::collections::HashMap<u32, usize> {
-    let on_screen: std::collections::HashSet<u32> =
-        on_screen_front_to_back.iter().copied().collect();
-    let front_to_back: Vec<u32> = on_screen_front_to_back
+fn apply_live_z_order(windows: &mut [WindowInfo], on_screen_front_to_back: &[u32]) {
+    let total = on_screen_front_to_back.len();
+    let positions: std::collections::HashMap<u32, usize> = on_screen_front_to_back
         .iter()
-        .copied()
-        .chain(
-            enumerated
-                .iter()
-                .copied()
-                .filter(|id| !on_screen.contains(id)),
-        )
-        .collect();
-    let total = front_to_back.len();
-    front_to_back
-        .into_iter()
         .enumerate()
-        .map(|(position, window_id)| {
-            (
-                window_id,
-                cua_driver_core::window_target::z_index_from_front_to_back(total, position),
-            )
-        })
-        .collect()
+        .map(|(position, &window_id)| (window_id, position))
+        .collect();
+    for window in windows {
+        window.z_index = positions.get(&window.window_id).map(|&position| {
+            cua_driver_core::window_target::z_index_from_front_to_back(total, position)
+        });
+    }
 }
 
 fn get_bounds_num(
@@ -715,7 +697,7 @@ mod tests {
                 height: 500.,
             },
             layer: 0,
-            z_index: 1,
+            z_index: Some(1),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,
@@ -725,17 +707,24 @@ mod tests {
 
     #[test]
     fn z_index_follows_on_screen_order_when_all_windows_order_disagrees() {
-        let all_windows = [30, 20, 40, 10];
-        let on_screen = [10, 20];
-        let z = z_indices_from_live_order(&all_windows, &on_screen);
-        assert_eq!([z[&10], z[&20], z[&30], z[&40]], [3, 2, 1, 0]);
+        let mut windows = [30, 20, 40, 10].map(|id| window(id, 800, "TextEdit"));
+        apply_live_z_order(&mut windows, &[10, 20]);
+        let z: Vec<_> = windows.iter().map(|w| (w.window_id, w.z_index)).collect();
+        assert_eq!(z, [(30, None), (20, Some(0)), (40, None), (10, Some(1))]);
+    }
+
+    #[test]
+    fn app_with_no_on_screen_windows_has_no_z_index() {
+        let mut windows = [5, 6].map(|id| window(id, 900, "TextEdit"));
+        apply_live_z_order(&mut windows, &[1, 2]);
+        assert!(windows.iter().all(|w| w.z_index.is_none()));
     }
 
     #[test]
     fn on_screen_enumeration_keeps_its_own_order() {
-        let on_screen = [7, 3, 5];
-        let z = z_indices_from_live_order(&on_screen, &on_screen);
-        assert_eq!([z[&7], z[&3], z[&5]], [2, 1, 0]);
+        let mut windows = [7, 3, 5].map(|id| window(id, 800, "TextEdit"));
+        apply_live_z_order(&mut windows, &[7, 3, 5]);
+        assert_eq!(windows.map(|w| w.z_index), [Some(2), Some(1), Some(0)]);
     }
 
     #[test]

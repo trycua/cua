@@ -141,7 +141,7 @@ mod pid_window_target_tests {
                 height: 480.0,
             },
             layer: 0,
-            z_index: 1,
+            z_index: Some(1),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,

@@ -736,7 +736,7 @@ mod tests {
                 height,
             },
             layer: 0,
-            z_index: window_id as usize,
+            z_index: Some(window_id as usize),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,

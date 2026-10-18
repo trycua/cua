@@ -126,11 +126,9 @@ pub(crate) struct SemanticNode {
     pub(crate) document_order: usize,
 }
 
-// AX ids are local to a renderer/document, not unique across merged frame trees.
+// Same-process frames share an AX namespace; separate targets can reuse ids.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct AxNodeKey<'a> {
-    frame_id: Option<&'a str>,
-    loader_id: Option<&'a str>,
     target_id: Option<&'a str>,
     ax_id: &'a str,
 }
@@ -138,16 +136,6 @@ struct AxNodeKey<'a> {
 impl SemanticNode {
     fn ax_key<'a>(&'a self, ax_id: &'a str) -> AxNodeKey<'a> {
         AxNodeKey {
-            frame_id: self
-                .frame
-                .identity
-                .as_ref()
-                .map(|frame| frame.frame_id.as_str()),
-            loader_id: self
-                .frame
-                .identity
-                .as_ref()
-                .map(|frame| frame.loader_id.as_str()),
             target_id: self.frame.oopif_target_id.as_deref(),
             ax_id,
         }
@@ -1259,6 +1247,56 @@ mod tests {
                 }),
             },
         )
+    }
+
+    #[test]
+    fn scoped_container_keeps_same_process_iframe_content() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"},
+                 "name": {"value": "Container"}, "backendDOMNodeId": 101,
+                 "childIds": ["2"]},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "Iframe"},
+                 "name": {"value": "Embedded frame"}, "backendDOMNodeId": 102,
+                 "childIds": ["3"]}
+            ]}),
+        );
+        let child = compose_accessibility_tree(
+            &json!({"nodes": [
+                {"nodeId": "3", "parentId": "2", "role": {"value": "RootWebArea"},
+                 "childIds": ["4"]},
+                {"nodeId": "4", "parentId": "3", "role": {"value": "button"},
+                 "name": {"value": "Inner button"}, "backendDOMNodeId": 104}
+            ]}),
+            &DomIndex::default(),
+            &LayoutIndex::default(),
+            &Viewport::default(),
+            FrameRef {
+                kind: FrameKind::Iframe,
+                oopif_target_id: None,
+                identity: Some(FrameIdentity {
+                    frame_id: "inner".into(),
+                    loader_id: "loader-inner".into(),
+                }),
+            },
+        );
+        document.extend(child);
+
+        let scoped = document.page(0, 300, None, Some(101));
+        assert!(
+            scoped
+                .selected
+                .iter()
+                .any(|node| node.name.as_deref() == Some("Inner button")),
+            "scoped container lost its same-process iframe content"
+        );
+        let queried = document.page(0, 300, Some("Inner button"), Some(101));
+        assert_eq!(queried.selected_nodes, 1);
+        assert_eq!(
+            queried.outline,
+            "- group \"Container\"\n  - iframe \"Embedded frame\"\n    - button \"Inner button\""
+        );
     }
 
     #[test]

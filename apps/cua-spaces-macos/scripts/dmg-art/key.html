@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: FSL-1.1-MIT -->
+<!-- Copyright (c) 2026 Cua AI, Inc. -->
+<!--
+  The Cua key on its own: the app icon's key (product-1 with the official Cua
+  mark, unaltered, multiplied into the glaze, turned 6 degrees) on a
+  transparent square. Notifications use it as their icon, in place of a blue
+  tile. Render it with render-key.sh; the PNGs are checked in.
+-->
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  .stage { position: relative; width: 1024px; height: 1024px; }
+  .key { position: absolute; left: 62px; top: 74px; width: 900px; height: 870px; transform: rotate(6deg); }
+  .key img.sprite { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .legend { position: absolute; left: 0; top: 0; width: 100px; height: 100px; transform-origin: 0 0; }
+  .legend > img { position: absolute; inset: 20%; width: 60%; height: 60%; object-fit: contain; opacity: .8; mix-blend-mode: multiply; }
+</style>
+<div class="stage"><div class="key" id="key"></div></div>
+<script>
+  // product-1's sprite size and the quad of its top face, as in art.html.
+  const SPR = { w: 486, h: 470, quad: [[105, 78], [325, 22], [415, 215], [165, 268]] };
+  function homography(q, t = 100) {
+    const [[n, r], [i, a], [o, s], [c, l]] = q;
+    const u = i - o, d = c - o, f = a - s, p = l - s, m = n - i + o - c, h = r - a + s - l, g = u * p - d * f;
+    const _ = (m * p - d * h) / g, v = (u * h - m * f) / g;
+    const y = i - n + _ * i, b = c - n + v * c, x = a - r + _ * a, S = l - r + v * l, C = 1 / t, w = 1 / 100;
+    return `matrix3d(${y * C},${x * C},0,${_ * C},${b * w},${S * w},0,${v * w},0,0,1,0,${n},${r},0,1)`;
+  }
+  const k = 900 / SPR.w;
+  document.getElementById("key").innerHTML = `<img class="sprite" src="src/product-1.webp">` +
+    `<div class="legend" style="transform:${homography(SPR.quad.map(([x, y]) => [x * k, y * k]))}"><img src="src/cua-logo-black.svg"></div>`;
+</script>

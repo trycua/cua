@@ -546,7 +546,8 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f40 = target pid   (Chromium synthetic-event filter)
 ///  - f51 / f91 / f92 = CGWindowID (window routing)
 ///  - f58 = constant click-group ID across all events (gesture coalescing)
-///  - `CGEventSetWindowLocation` per-event (screen point for both routes)
+///  - `CGEventSetWindowLocation` per-event (window-local point on macOS 27+,
+///    screen point before; see `window_location_is_window_local`)
 ///
 /// Uses the SkyLight route required by Chromium-compatible targets, with the
 /// public API only as a fallback when the private symbol is unavailable.
@@ -570,22 +571,42 @@ struct ChromiumClickRouteStep {
     delay_after_ms: u64,
 }
 
+/// Whether WindowServer hands the `CGEventSetWindowLocation` stamp of a
+/// pid-routed click to the target as its window-local point. macOS 27 does:
+/// a screen-point stamp arrives as `locationInWindow == (screen_x, height -
+/// screen_y)`, so the click lands shifted by the window's origin (AppKit,
+/// Chromium and GPUI windows alike). Earlier releases derived the local point
+/// from the screen stamp themselves.
+fn window_location_is_window_local() -> bool {
+    static WINDOW_LOCAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WINDOW_LOCAL.get_or_init(|| {
+        crate::tools::health_report::sw_vers_product_version()
+            .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
+            .is_some_and(|major| major >= 27)
+    })
+}
+
 fn chromium_click_route_plan(
     screen_x: f64,
     screen_y: f64,
     win_local_x: f64,
     win_local_y: f64,
     count: usize,
+    window_local: bool,
 ) -> Vec<ChromiumClickRouteStep> {
     let screen_target = (screen_x, screen_y);
-    let _ = (win_local_x, win_local_y);
+    let stamped_target = if window_local {
+        (win_local_x, win_local_y)
+    } else {
+        screen_target
+    };
     let off_screen = (-1.0, -1.0);
     let mut steps = vec![
         ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Move,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state: 0,
             phase: 2,
             button_number: 0,
@@ -622,8 +643,8 @@ fn chromium_click_route_plan(
         steps.push(ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Down,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state,
             phase: 3,
             button_number: 0,
@@ -633,8 +654,8 @@ fn chromium_click_route_plan(
         steps.push(ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Up,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state,
             phase: 3,
             button_number: 0,
@@ -647,9 +668,8 @@ fn chromium_click_route_plan(
 
 /// Post the route plan for the Chromium-compatible background left-click
 /// recipe. `CGEvent::new_mouse_event` starts with the screen-space location.
-/// `CGEventSetWindowLocation` uses the screen point for both SkyLight and the
-/// public PID fallback. macOS interprets the stamped location in screen space
-/// even when the public route is used for a background process.
+/// `CGEventSetWindowLocation` carries the window-local point on macOS 27+ and
+/// the screen point before, for both SkyLight and the public PID fallback.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
     pid: i32,
@@ -665,7 +685,14 @@ pub fn click_at_xy_chromium(
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let route_plan = chromium_click_route_plan(screen_x, screen_y, win_local_x, win_local_y, count);
+    let route_plan = chromium_click_route_plan(
+        screen_x,
+        screen_y,
+        win_local_x,
+        win_local_y,
+        count,
+        window_location_is_window_local(),
+    );
     let flags = parse_modifier_flags(modifiers);
     let window_id = wid as i64;
 
@@ -2042,7 +2069,7 @@ mod tests {
         assert_eq!((screen_x, screen_y), (564.0, 504.0));
         assert_eq!((local_x, local_y), capture_local);
 
-        let plan = chromium_click_route_plan(screen_x, screen_y, local_x, local_y, 1);
+        let plan = chromium_click_route_plan(screen_x, screen_y, local_x, local_y, 1, false);
         assert_eq!(
             plan,
             vec![
@@ -2126,6 +2153,32 @@ mod tests {
         assert_eq!(skylight_journal_point, capture_local);
         assert!((292.0..=496.0).contains(&skylight_journal_point.0));
         assert!((132.0..=310.0).contains(&skylight_journal_point.1));
+    }
+
+    #[test]
+    fn macos_27_route_stamps_the_window_local_point() {
+        // macOS 27 reads the stamp as the window-local point: a screen-point
+        // stamp at (564, 504) for a window at (170, 194) would hit (564, 504)
+        // inside the window instead of (394, 310).
+        let plan = chromium_click_route_plan(564.0, 504.0, 394.0, 310.0, 2, true);
+        let targets: Vec<_> = plan
+            .iter()
+            .filter(|step| step.phase != 1 && step.event_location != (-1.0, -1.0))
+            .collect();
+        assert_eq!(targets.len(), 5, "move + two down/up pairs");
+        for step in targets {
+            assert_eq!(step.event_location, (564.0, 504.0));
+            assert_eq!(step.skylight_window_location, (394.0, 310.0));
+            assert_eq!(step.public_window_location, (394.0, 310.0));
+        }
+        let primers: Vec<_> = plan
+            .iter()
+            .filter(|step| step.event_location == (-1.0, -1.0))
+            .collect();
+        assert_eq!(primers.len(), 2);
+        for step in primers {
+            assert_eq!(step.skylight_window_location, (-1.0, -1.0));
+        }
     }
 
     #[test]

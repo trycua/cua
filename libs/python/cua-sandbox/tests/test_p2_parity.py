@@ -218,8 +218,8 @@ async def test_cloud_vm_images_take_sidecars(fleet):  # noqa: F811
 
 @pytest.mark.parametrize("reserved", ["main", "sidecars", "sc"])
 async def test_sidecars_reserve_service_names_before_creating_anything(
-    fleet,
-    reserved,  # noqa: F811 - fixture
+    fleet,  # noqa: F811 - fixture
+    reserved,
 ):
     with pytest.raises(Exception, match="reserved"):
         await Sandbox.create(

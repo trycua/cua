@@ -15,7 +15,15 @@ use anyhow::Result;
 pub mod native;
 pub mod snapshot;
 pub use native::ensure_listener_active;
+pub use native::InputMayHaveLanded;
 pub use snapshot::Snapshots;
+
+/// Whether `error` reports AT-SPI input that was sent and may have taken
+/// effect ([`InputMayHaveLanded`]). Such input must not be sent again by
+/// another route, and the result must not say that nothing was delivered.
+pub fn input_may_have_landed(error: &anyhow::Error) -> bool {
+    error.is::<InputMayHaveLanded>()
+}
 
 /// Stable address on one AT-SPI bus connection, including the owning frame.
 /// Unique bus names prevent a restarted process from reusing an observed path.
@@ -290,6 +298,7 @@ pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(Stri
     if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
         match native::perform_action_ref(&object_ref) {
             Ok(done) => return Ok(done),
+            Err(error) if input_may_have_landed(&error) => return Err(error),
             Err(error) => tracing::debug!(
                 "cached element {idx} (pid {pid}) action failed, re-resolving: {error:#}"
             ),
@@ -425,6 +434,7 @@ pub fn perform_action_at_point_in(
                                 object_ref.path.clone(),
                             )))
                         }
+                        Err(error) if input_may_have_landed(&error) => return Err(error),
                         Err(error) => tracing::debug!(
                             "cached hit-test element {idx} (pid {pid}) failed: {error:#}"
                         ),
@@ -436,6 +446,7 @@ pub fn perform_action_at_point_in(
     match native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles) {
         Ok(Some(hit)) => return Ok(Some(hit)),
         Ok(None) => {}
+        Err(error) if input_may_have_landed(&error) => return Err(error),
         Err(error) => tracing::debug!("GetAccessibleAtPoint hit-test failed: {error:#}"),
     }
     native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles)
@@ -468,6 +479,7 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
     if let Some(object_ref) = cache::cached_element(pid, None, idx).and_then(|e| e.object_ref) {
         match native::type_into_editable_ref(&object_ref, text) {
             Ok(()) => return Ok(()),
+            Err(error) if input_may_have_landed(&error) => return Err(error),
             Err(error) => tracing::debug!(
                 "cached element {idx} (pid {pid}) editable write failed, re-resolving: {error:#}"
             ),

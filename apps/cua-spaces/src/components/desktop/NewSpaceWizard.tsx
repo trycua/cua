@@ -10,6 +10,7 @@ import type { Runtime } from "../../model/types";
 import type { CloudPricing, GpuChoice } from "../../native/fleet";
 import type { LocalStorage } from "../../native/local";
 import { telemetryBridge, type TelemetryBridge } from "../../native/telemetry";
+import { hostOs } from "../../model/host";
 import { ImageField, type ImageFieldView } from "./ImageField";
 import { Sym } from "./Sym";
 
@@ -324,7 +325,7 @@ export function NewSpaceWizard({
   useEffect(() => {
     setState((s) => core<WizardState>("wizard.reduce", { state: s, action: { type: "sync-default", location: defaultLocation }, env }));
   }, [defaultLocation, env]);
-  const v = core<WizardView>("wizard.view", { state, env });
+  const v = core<WizardView>("wizard.view", { state, env, hostOs: hostOs() });
   // Before paint, so a quick create never shows the sheet; once, because StrictMode runs mount effects twice.
   const started = useRef(false);
   useLayoutEffect(() => {

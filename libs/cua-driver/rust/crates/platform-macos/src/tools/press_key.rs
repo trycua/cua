@@ -467,7 +467,7 @@ impl Tool for PressKeyTool {
                                         pre_focus_ptr,
                                         crate::input::ax_actions::focus_element,
                                         |target| {
-                                            crate::input::ax_actions::is_element_focused(
+                                            crate::input::ax_actions::element_has_keyboard_focus(
                                                 pid, target,
                                             )
                                         },
@@ -482,7 +482,9 @@ impl Tool for PressKeyTool {
                         with_confirmed_key_focus(
                             pre_focus_ptr,
                             crate::input::ax_actions::focus_element,
-                            |target| crate::input::ax_actions::is_element_focused(pid, target),
+                            |target| {
+                                crate::input::ax_actions::element_has_keyboard_focus(pid, target)
+                            },
                             || crate::input::keyboard::press_key(pid, &key, &m),
                         )
                     })

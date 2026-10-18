@@ -1120,12 +1120,12 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     ),
     (
         4,
-        "Not supported, or not configured (for example no Fleet credentials)",
+        "Not supported, or not configured (for example no cloud credentials)",
     ),
     (5, "No cua-spacesd answered, or a transport failure"),
     (
         6,
-        "Unauthenticated or permission denied (by Cua, Fleet or your cloud account)",
+        "Unauthenticated or permission denied (by Cua or your cloud account)",
     ),
     (7, "Not enough free disk space (see `cua cache`)"),
     (

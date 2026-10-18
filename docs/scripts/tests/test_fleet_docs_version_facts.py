@@ -41,7 +41,6 @@ EXPECTED_FACTS = {
     "cua-sdk/concepts/how-sandboxes-work.mdx": (f"`cua-sandbox` {SANDBOX_VERSION}",),
     "cua-sdk/guides/agent-frameworks.mdx": (f"cua-sandbox=={SANDBOX_VERSION}",),
     "cua-sdk/guides/desktop.mdx": (f"'cua-sandbox[driver]=={SANDBOX_VERSION}'",),
-    "fleets/guides/images.mdx": (f"`cua` {CUA_VERSION}",),
     "cua-sdk/reference/index.mdx": (
         f"`pip install cua` ({CUA_VERSION}",
         f"`npm install @trycua/cua` ({TYPESCRIPT_CUA_VERSION}",
@@ -58,10 +57,6 @@ EXPECTED_FACTS = {
     ),
     "cua-sdk/reference/typescript/index.mdx": (
         f"`npm install @trycua/cua` ({TYPESCRIPT_CUA_VERSION})",
-    ),
-    "fleets/quickstart.mdx": (
-        f"cua-sandbox=={SANDBOX_VERSION}",
-        f"@trycua/cua@{TYPESCRIPT_CUA_VERSION}",
     ),
 }
 

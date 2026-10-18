@@ -2911,6 +2911,11 @@ pub fn placement_options_on(
     out
 }
 
+/// The Windows tile's title on a Mac host.
+const WINDOWS_SOON_TITLE: &str = "Windows (coming soon)";
+/// Its tooltip.
+const WINDOWS_SOON_DETAIL: &str = "Windows Spaces are coming soon on Mac.";
+
 /// The wizard as drawn.
 pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
     view_on(state, env, SpaceOs::Macos)
@@ -2987,7 +2992,9 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     let custom = custom_ref(state).is_some();
     let image_error = validate_image_ref(&state.image_text);
     let disk = disk_view(state, &image, env, os);
+    let windows_soon = os == SpaceOs::Macos && image.os == SpaceOs::Windows;
     let can_continue = image.os != SpaceOs::Unknown
+        && !windows_soon
         && match state.step {
             0 => placeable && placement_ready && image_error.is_none(),
             1 => disk.error.is_none() && resource_edit.as_ref().is_none_or(|e| e.error.is_none()),
@@ -2996,6 +3003,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         };
     let images = &catalog().images;
     let pressed_os = selected_os(state);
+    let host_os = os;
     let os_tiles = [
         (SpaceOs::Linux, "Linux", "Ubuntu desktop with cua-spacesd"),
         (SpaceOs::Windows, "Windows", "Windows Server VM"),
@@ -3012,12 +3020,18 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
                 reasons.into_iter().next()
             })
             .flatten();
+        // Windows Spaces are not offered from a Mac yet: shown, not chosen.
+        let soon = host_os == SpaceOs::Macos && os == SpaceOs::Windows;
         Tile {
             id: os.as_str().into(),
-            title: title.into(),
-            detail: why.clone().unwrap_or_else(|| detail.into()),
+            title: if soon { WINDOWS_SOON_TITLE } else { title }.into(),
+            detail: if soon {
+                WINDOWS_SOON_DETAIL.to_string()
+            } else {
+                why.clone().unwrap_or_else(|| detail.into())
+            },
             pressed: pressed_os == Some(os),
-            enabled: images.iter().any(|i| i.os == os) && why.is_none(),
+            enabled: !soon && images.iter().any(|i| i.os == os) && why.is_none(),
         }
     })
     .collect();
@@ -3613,6 +3627,25 @@ mod tests {
             }),
             ..env()
         }
+    }
+
+    #[test]
+    fn windows_is_coming_soon_on_a_mac_and_cannot_continue() {
+        let e = env();
+        let s = reduce(
+            &initial(&e),
+            &WizardAction::ChooseOs {
+                os: SpaceOs::Windows,
+            },
+            &e,
+        );
+        let mac = view_on(&s, &e, SpaceOs::Macos);
+        let tile = mac.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!tile.enabled && tile.title.contains("coming soon"));
+        assert!(!mac.can_continue);
+        let win = view_on(&s, &e, SpaceOs::Windows);
+        let tile = win.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert_eq!(tile.title, "Windows");
     }
 
     /// A Windows VM runs on QEMU, which the app never installs: on a PC
@@ -4367,8 +4400,14 @@ mod tests {
             "each cloud is its own entry: no second menu"
         );
         // Systems and kinds it cannot run are greyed out with why.
-        let win = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
-        assert!(!win.enabled);
+        let soon = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!soon.enabled);
+        assert_eq!(soon.title, "Windows (coming soon)");
+        assert_eq!(soon.detail, "Windows Spaces are coming soon on Mac.");
+        // Off a Mac, the cloud's own reason shows.
+        let v_linux = view_on(&s, &e, SpaceOs::Linux);
+        let win = v_linux.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!win.enabled && win.title == "Windows");
         assert!(
             win.detail
                 .starts_with("Windows on AWS is not offered yet. Ask your agent to deploy the ")

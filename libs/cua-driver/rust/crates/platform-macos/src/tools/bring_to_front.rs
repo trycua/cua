@@ -209,6 +209,11 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     }
 }
 
+fn already_front(observation: ExactWindowObservation, pid: i32, window_id: u32) -> bool {
+    observation.exact_postcondition(pid, window_id)
+        && observation.exact_window_frontmost_ordinary(window_id)
+}
+
 fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     let deadline = Instant::now() + VERIFY_TIMEOUT;
     let mut stable_since = None;
@@ -423,6 +428,11 @@ impl Tool for BringToFrontTool {
                 }));
             }
 
+            let observed = observe_exact_window(pid, window_id);
+            if already_front(observed, pid, window_id) {
+                return exact_result(pid, window_id, "already_front", false, observed);
+            }
+
             // The persistent kCPSNoWindows request owns process activation
             // without broadly ordering every application window. The separate
             // kCPSUserGenerated sequence then makes only the requested window
@@ -576,6 +586,30 @@ mod tests {
             on_current_space: Some(true),
             space_ids: None,
         }
+    }
+
+    #[test]
+    fn only_a_focused_frontmost_window_of_the_active_process_skips_activation() {
+        assert!(already_front(
+            contested_observation(Some(7), Some(7), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            contested_observation(Some(7), Some(900), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            contested_observation(Some(8), Some(7), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            observation(Some(42), Some(false), Some(7), Some(7), true),
+            42,
+            7
+        ));
     }
 
     #[test]

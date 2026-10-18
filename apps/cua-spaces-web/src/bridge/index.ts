@@ -151,3 +151,4 @@ export {
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
+export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";

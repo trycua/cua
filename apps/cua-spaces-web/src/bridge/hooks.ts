@@ -48,6 +48,7 @@ import type {
   SessionData,
   SettingsData,
 } from "./store";
+import type { CreateReport, ReportSend } from "./diagnostic-report";
 
 function useBridgeContext(): BridgeContextValue {
   const ctx = useContext(BridgeContext);
@@ -100,6 +101,11 @@ export interface SpacesHook extends Resource<Space[]> {
   retryCreate(pendingId: string): string | undefined;
   /** Whether Try again can run the failed create again. */
   canRetryCreate(pendingId: string): boolean;
+  /** A failed create's diagnostic report, redacted, for the review sheet
+   * (null when there is none). Nothing is sent. */
+  createReport(pendingId: string): Promise<CreateReport | null>;
+  /** Send on the review sheet: opens an email to Cua support with the kept parts. */
+  sendCreateReport(send: ReportSend): Promise<void>;
   startSpace(id: string): Promise<void>;
   stopSpace(id: string): Promise<void>;
   /** Deletes the Space, or with `removeOnly` only removes it from the list. */
@@ -126,6 +132,8 @@ export function useSpaces(): SpacesHook {
     dismissCreate: (id) => run((s) => s.dismissCreate(id)),
     retryCreate: (id) => (ctx.store?.canRetryCreate(id) ? ctx.store.retryCreate(id) : undefined),
     canRetryCreate: (id) => ctx.store?.canRetryCreate(id) ?? false,
+    createReport: async (id) => (ctx.store ? ctx.store.createReport(id) : null),
+    sendCreateReport: (send) => run((s) => s.sendCreateReport(send)),
     startSpace: (id) => run((s) => s.setPower(id, true)),
     stopSpace: (id) => run((s) => s.setPower(id, false)),
     deleteSpace: (id, removeOnly) => run((s) => s.deleteSpace(id, removeOnly)),

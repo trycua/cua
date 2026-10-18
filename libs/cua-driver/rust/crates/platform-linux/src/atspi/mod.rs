@@ -269,7 +269,11 @@ pub fn walk_tree_bounded_within(
     fallback
 }
 
-/// Perform the first advertised action on element `idx` within pid's app tree.
+/// Perform the first advertised action on a node that a walk of window `xid`
+/// found, through the node's own D-Bus object, once a fresh walk proves the
+/// node still belongs to that window ([`require_window_element`]). The node's
+/// index is never looked up again: another snapshot of the process, or an
+/// application-wide walk, numbers elements differently.
 /// Returns `Ok((action_name, suspected_noop, unacknowledged))` on success —
 /// `suspected_noop` is true when the actuated node looked like a silent
 /// no-op (a passive display role, or no advertised action), so the caller
@@ -279,23 +283,21 @@ pub fn walk_tree_bounded_within(
 /// acceptance nor effect is known — the caller must report this as
 /// `unverifiable` with an explicit note, never as a plain confirmed/dispatched
 /// success.
-pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
-    perform_action_in(pid, None, idx)
+pub fn perform_action_walked(pid: u32, xid: u64, node: &AtspiNode) -> Result<(String, bool, bool)> {
+    let (identity, object_ref) = walked_object(node)?;
+    require_window_element(pid, xid, WindowElement::Identity(identity))?;
+    native::perform_action_ref(object_ref)
 }
 
-/// [`perform_action`] that first tries the element identity cached by the last
-/// `get_window_state` snapshot of (pid, xid) — no re-walk — and only resolves
-/// the index against a fresh walk when the cached object is gone.
-pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(String, bool, bool)> {
-    if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
-        match native::perform_action_ref(&object_ref) {
-            Ok(done) => return Ok(done),
-            Err(error) => tracing::debug!(
-                "cached element {idx} (pid {pid}) action failed, re-resolving: {error:#}"
-            ),
-        }
+/// The proven identity and the D-Bus object of a walked node: what an action
+/// on that node addresses.
+fn walked_object(node: &AtspiNode) -> Result<(AtspiIdentity, &native::ObjectRef)> {
+    match (&node.identity, &node.object_ref) {
+        (Some(identity), Some(object_ref)) => Ok((identity.clone(), object_ref)),
+        _ => Err(anyhow::anyhow!(
+            "the walked element has no proven AT-SPI identity"
+        )),
     }
-    native::perform_action(pid, idx)
 }
 
 /// [`perform_action`] on the exact object a snapshot observed. Never re-walks
@@ -991,6 +993,54 @@ mod token_dispatch_tests {
             })
             .unwrap_err();
         assert!(error.is::<native::CachedElementGone>());
+    }
+
+    #[test]
+    fn a_walked_action_addresses_the_node_it_walked_not_another_window_at_its_index() {
+        // Window A's snapshot is retained with an element at the same index
+        // as the consent control a walk of window B found.
+        let pid = 515_252;
+        let node = |path: &str| AtspiNode {
+            element_index: Some(3),
+            role: "push button".into(),
+            name: Some("Cancel".into()),
+            value: None,
+            checked: None,
+            enabled: Some(true),
+            selected: None,
+            description: None,
+            actions: vec!["click".into()],
+            element_key: 0,
+            identity: Some(AtspiIdentity {
+                bus_name: ":1.42".into(),
+                path: path.into(),
+                frame_bus_name: ":1.42".into(),
+                frame_path: "/frame".into(),
+            }),
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+            object_ref: Some(native::ObjectRef {
+                bus: ":1.42".into(),
+                path: path.into(),
+            }),
+        };
+        cache::update_snapshot(pid, 1, &[node("/window_a/button")], &[]);
+        let walked = node("/window_b/button");
+        let (identity, object) = walked_object(&walked).expect("walked node is addressable");
+        assert_eq!(identity.path, "/window_b/button");
+        assert_eq!(object.path, "/window_b/button");
+        // The PID-only lookup the earlier dispatch used names window A's node.
+        let pid_only = cache::cached_element(pid, None, 3).and_then(|element| element.object_ref);
+        assert_eq!(
+            pid_only.map(|object| object.path).as_deref(),
+            Some("/window_a/button")
+        );
+        cache::forget_window(pid, 1);
+
+        let mut unproven = node("/window_b/button");
+        unproven.identity = None;
+        assert!(walked_object(&unproven).is_err());
     }
 
     #[test]

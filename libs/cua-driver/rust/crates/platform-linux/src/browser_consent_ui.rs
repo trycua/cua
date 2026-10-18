@@ -221,20 +221,19 @@ fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
     })
 }
 
-/// Act on element `index` of a walk of `window_id`. `perform_action` acts on
-/// the application-wide index, so the element's window membership is proven
-/// first.
-fn exact_window_action(
-    pid: u32,
-    window_id: u64,
-    index: usize,
-) -> anyhow::Result<(String, bool, bool)> {
-    crate::atspi::require_window_element(
-        pid,
-        window_id,
-        crate::atspi::WindowElement::Index(index),
-    )?;
-    crate::atspi::perform_action(pid, index)
+/// The node at element `index` of a walk of the consent window, which an
+/// exact action addresses through its own object.
+fn walked_node(nodes: &[AtspiNode], index: usize) -> Result<AtspiNode, BrowserRefusal> {
+    nodes
+        .iter()
+        .find(|node| node.element_index == Some(index))
+        .cloned()
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the exact browser consent control left its walk",
+            )
+        })
 }
 
 pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
@@ -254,7 +253,8 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
                 "the exact remote-debugging consent prompt exposed no semantic cancel action",
             )
         })?;
-        exact_window_action(pid, window_id, index).map_err(|error| {
+        let node = walked_node(&tree.nodes, index)?;
+        crate::atspi::perform_action_walked(pid, window_id, &node).map_err(|error| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("the exact browser consent cancel action failed: {error}"),
@@ -342,8 +342,9 @@ pub async fn handle(
         saw_prompt |= prompt_present;
         match exact_allow_button(&tree.nodes, &tree.bounds)? {
             Some(index) if accessibility_action_at.is_none() => {
+                let node = walked_node(&tree.nodes, index)?;
                 consent_action(&request.action, deadline, move || {
-                    exact_window_action(pid, window_id, index)
+                    crate::atspi::perform_action_walked(pid, window_id, &node)
                 })
                 .await?;
                 accessibility_action_at = Some(Instant::now());

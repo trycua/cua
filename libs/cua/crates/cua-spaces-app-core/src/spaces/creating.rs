@@ -849,15 +849,28 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
     }
 }
 
-/// The error enum case name a failed create records in telemetry: what
-/// the shell sent, unless that is none or a generic case (`Runtime`,
-/// `Other`, as most are) and the text names a known cause
-/// ([`failure_cause`]).
-pub fn failure_variant<'a>(raw: &str, phase: Option<&str>, gpu: bool, shell: &'a str) -> &'a str {
-    if !matches!(shell.trim(), "" | "Runtime" | "Other") {
-        return shell;
+/// The `error_kind` word a failed create records in telemetry: the cause
+/// the SDK's text names (`image_pull_not_found`, `vm_boot_timeout`,
+/// `services_unreachable`, ...; [`cua_create_failure::create_failure_kind`]),
+/// else what the shell sent (`Runtime`, as most are), else `other`. Only
+/// the word leaves the process, never the text. `provider` is where it ran:
+/// a cloud create's "X is not available" is not this machine's runtime.
+pub fn failure_variant<'a>(
+    raw: &str,
+    phase: Option<&str>,
+    gpu: bool,
+    shell: &'a str,
+    provider: Option<SpaceProvider>,
+) -> &'a str {
+    if failure_cause(raw, phase, gpu) == Some(FailureCause::Gpu) {
+        return FailureCause::Gpu.variant();
     }
-    failure_cause(raw, phase, gpu).map_or(shell, |c| c.variant())
+    cua_create_failure::create_failure_kind(
+        &crate::errors::plain_error(raw),
+        phase.unwrap_or(""),
+        shell,
+        provider != Some(SpaceProvider::Cloud),
+    )
 }
 
 /// [`failure_text`] for a create on one of your machines named `host_name`:
@@ -2541,8 +2554,8 @@ mod tests {
              Try again; it picks up where it stopped."
         );
         assert_eq!(
-            failure_variant(stopped, Some("pulling"), false, "Runtime"),
-            "ImagePull"
+            failure_variant(stopped, Some("pulling"), false, "Runtime", None),
+            "image_pull"
         );
         // QEMU missing on a Windows PC: 0.9.2's after the pull, and the
         // refusal before it. Not `other` in telemetry, and the SDK's words.
@@ -2558,8 +2571,8 @@ mod tests {
                 "{raw}"
             );
             assert_eq!(
-                failure_variant(raw, Some("pulling"), false, "Other"),
-                "RuntimeMissing"
+                failure_variant(raw, Some("pulling"), false, "Other", None),
+                "runtime_missing"
             );
         }
         // Local Network privacy on the Mac that runs the VM.

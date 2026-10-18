@@ -51,6 +51,7 @@ required-features = ["mcp-client"]
 [dependencies]
 # Host Spaces use counts (fixed words only).
 cua-telemetry.workspace = true
+cua-create-failure.workspace = true
 cua-spaces-contract = { path = "../cua-spaces-contract" }
 cua-proto = { workspace = true, features = ["client", "serde"] }
 cua-spacesd-client.workspace = true

@@ -1,7 +1,7 @@
 {
   "$comment": "Old docs slug -> current slug. Read by the docs.cua.ai renderer and next.config. When a page is merged or removed, point its entry (and entries targeting it) at the page that preserves its intent.",
   "redirects": {
-    "cloud-fleets": "cua-sdk/guides/cloud",
+    "cloud-fleets": "cua-sdk/guides/cua-cloud-ended",
     "concepts": "",
     "concepts/architecture": "cua-sdk/concepts/how-sandboxes-work",
     "concepts/browser-targeting-and-background-delivery": "cua-driver/guides/browsers",
@@ -132,7 +132,7 @@
     "cua-sdk/guides/mcp": "cua-sdk/guides/services",
     "cua-sdk/guides/private-registries": "cua-sdk/guides/images",
     "cua-sdk/guides/scale-out": "cua-sdk/guides/lifecycle",
-    "cua-sdk/guides/set-up-fleet-credentials": "cua-sdk/guides/cloud",
+    "cua-sdk/guides/set-up-fleet-credentials": "cua-sdk/guides/cua-cloud-ended",
     "cua-sdk/guides/share-service-with-signed-url": "cua-sdk/guides/services",
     "cua-sdk/guides/tunneling": "cua-sdk/guides/services",
     "cua-sdk/reference/api": "cua-sdk/reference",
@@ -277,7 +277,7 @@
     "how-to-guides/sandbox/scale-out": "cua-sdk/guides/lifecycle",
     "how-to-guides/sandbox/secrets": "cua-sdk/guides/secrets",
     "how-to-guides/sandbox/services": "cua-sdk/guides/services",
-    "how-to-guides/sandbox/set-up-fleet-credentials": "cua-sdk/guides/cloud",
+    "how-to-guides/sandbox/set-up-fleet-credentials": "cua-sdk/guides/cua-cloud-ended",
     "how-to-guides/sandbox/share-service-with-signed-url": "cua-sdk/guides/services",
     "how-to-guides/sandbox/sidecars": "cua-sdk/guides/sidecars",
     "how-to-guides/sandbox/troubleshoot-fleet-pools": "cua-sdk/guides/cua-cloud-ended",
@@ -440,6 +440,7 @@
     "spaces/teams": "spaces/guides/teams",
     "spaces/teams/machines": "spaces/guides/teams/machines",
     "spaces/teams/faq": "spaces/guides/teams/faq",
-    "cua-cli/reference/cli/fleet": "cua-sdk/guides/cua-cloud-ended"
+    "cua-cli/reference/cli/fleet": "cua-sdk/guides/cua-cloud-ended",
+    "cua-sdk/guides/cloud": "cua-sdk/guides/cua-cloud-ended"
   }
 }

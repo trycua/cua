@@ -6,8 +6,8 @@
  * bridge plus whether real data is flowing, and a hook that keeps the
  * reducer's Space list in sync with the cua SDK's Spaces registry.
  *
- * The registry (`list_spaces`) covers every location (Cua Cloud, this Mac,
- * Spaces added by address) and works without cloud credentials, so `live`
+ * The registry (`list_spaces`) covers every location (this Mac, your machines
+ * and clouds, Spaces added by address) and works signed out, so `live`
  * simply means "running in the native shell". Outside
  * it (browser dev, Vitest) the portal keeps its synthetic fixtures, which is
  * also what keeps the existing tests hermetic.
@@ -75,10 +75,6 @@ export interface FleetSync {
   live: boolean;
   /** Refresh failure; previously loaded rows remain available. */
   rosterError: string | null;
-  /** Whether Cua Cloud credentials are configured in the shell. */
-  fleetConfigured: boolean;
-  /** OAuth client id reported by the shell, when signed in; shown in Settings. */
-  clientId?: string;
   /** Signed-in user identity (email/subject), when a user session is active. */
   identity?: string;
   /** Re-read the registry and sync the reducer now. */
@@ -131,8 +127,6 @@ export function useFleetSync(
   const live = fleet.isNative;
   const [rosterError, setRosterError] = useState<string | null>(null);
   const rosterLoaded = useRef(false);
-  const [fleetConfigured, setFleetConfigured] = useState(false);
-  const [clientId, setClientId] = useState<string | undefined>(undefined);
   const [identity, setIdentity] = useState<string | undefined>(undefined);
   const [defaultLocation, setDefaultLocationState] = useState<DefaultLocation>(BUILTIN_DEFAULT_LOCATION);
   /**
@@ -307,8 +301,6 @@ export function useFleetSync(
     return fleet
       .status()
       .then((status) => {
-        setFleetConfigured(status.configured);
-        setClientId(status.clientId);
         setIdentity(status.identity);
       })
       .catch(() => {});
@@ -492,8 +484,6 @@ export function useFleetSync(
   return {
     live,
     rosterError,
-    fleetConfigured,
-    clientId,
     identity,
     refresh,
     defaultLocation,

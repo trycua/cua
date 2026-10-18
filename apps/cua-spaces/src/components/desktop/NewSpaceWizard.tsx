@@ -27,7 +27,7 @@ export interface CreatePlan {
    * can run in `placement`. */
   runtime: Runtime;
   name?: string;
-  /** This Mac only: vCPUs and memory. Cua Cloud sizes its own Spaces. */
+  /** This Mac only: vCPUs and memory. */
   cpus?: number;
   memoryMb?: number;
   /** This Mac's VMs only: a disk larger than the image's, in GB. */
@@ -43,7 +43,7 @@ export interface NewSpaceWizardProps {
   /** Where "Run on" starts: the configured default location (Settings,
    * `cua config set default.on`). */
   defaultLocation?: Placement;
-  /** Cua Cloud needs an account (signed in, or client credentials). */
+  /** Cua Cloud has ended: the app passes `false`. */
   cloudAvailable: boolean;
   /** Local needs a container backend (docker / runsc) or Lume. */
   localAvailable: boolean;
@@ -66,7 +66,7 @@ export interface NewSpaceWizardProps {
   hostArch?: string;
   /** Free space where local Spaces are written, and what is pulled. */
   storage?: LocalStorage | null;
-  /** This account's Cua Cloud rates (no cloud estimate without). */
+  /** Cua Cloud rates (always none: it has ended). */
   cloudPricing?: CloudPricing | null;
   /** The GPU option of each runtime that has one (`gpu_support`); a
    * runtime not listed gets no GPU row. */

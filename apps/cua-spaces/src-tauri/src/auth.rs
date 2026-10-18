@@ -30,9 +30,10 @@ impl std::fmt::Display for TokenError {
     }
 }
 
-/// The shared, refreshable user session. [`crate::core::AppTokens`] pulls
-/// the Fleet bearer from this one handle; the store is shared with the CLI
-/// and the daemon, so a sign-in or sign-out anywhere is seen everywhere.
+/// The shared, refreshable user session. The relay account and this
+/// device's enrollment draw their bearer from this one handle; the store is
+/// shared with the CLI and the daemon, so a sign-in or sign-out anywhere is
+/// seen everywhere.
 pub struct SessionHandle {
     session: cua_auth::Session,
 }

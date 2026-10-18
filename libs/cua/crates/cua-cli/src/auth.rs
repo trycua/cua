@@ -104,15 +104,15 @@ pub async fn fleet_config() -> Result<Option<(cua_fleet::FleetConfig, FleetAuth)
     }
 }
 
-/// A connected Fleet client, or `ProviderNotConfigured`.
+/// A connected Fleet client. Cua Cloud has ended: always
+/// [`cloud_ended`], so no command reaches Fleet.
 pub async fn fleet_client() -> Result<(cua_fleet::FleetClient, FleetAuth), CuaError> {
-    let Some((cfg, auth)) = fleet_config().await? else {
-        return Err(CuaError::ProviderNotConfigured(
-            cua_fleet::MISSING_CREDENTIALS.into(),
-        ));
-    };
-    let c = cua_fleet::FleetClient::connect(cfg).map_err(fleet_err)?;
-    Ok((c, auth))
+    Err(cloud_ended())
+}
+
+/// The "Cua Cloud has ended" error every Cua Cloud command fails with.
+pub fn cloud_ended() -> CuaError {
+    CuaError::Unsupported(cua_sandbox_core::CLOUD_ENDED.into())
 }
 
 /// Maps a Fleet error.

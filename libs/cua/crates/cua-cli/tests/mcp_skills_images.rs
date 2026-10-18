@@ -580,6 +580,7 @@ async fn trajectory_view_serves_the_zip_with_cors_then_stops() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_image_resources() {
     let fake = FakeFleet::new();
     fake.put_object(

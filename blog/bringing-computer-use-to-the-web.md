@@ -2,6 +2,8 @@
 
 _Published on August 5, 2025 by Morgan Dean_
 
+> Update, October 2026: Cua Cloud (Fleets) ended on 16 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+
 In one of our original posts, we explored building Computer-Use Operators on macOS - first with a [manual implementation](build-your-own-operator-on-macos-1.md) using OpenAI's `computer-use-preview` model, then with our [cua-agent framework](build-your-own-operator-on-macos-2.md) for Python developers. While these tutorials have been incredibly popular, we've received consistent feedback from our community: **"Can we use Cua with JavaScript and TypeScript?"**
 
 Today, we're excited to announce the release of the **`@trycua/computer` Web SDK** - a new library that allows you to control your Cua cloud containers from any JavaScript or TypeScript project. With this library, you can click, type, and grab screenshots from your cloud containers - no extra servers required.

@@ -48,7 +48,7 @@ let sb = cua.sandboxes().create(SandboxCreateOptions {
     services: HashMap::from([("mcp".into(), 8765)]),
     wait_for: vec![ReadinessProbe::http("mcp", "/health")],
     cloud: Some(CloudOptions { warm: Some(true), ..Default::default() }), // ignored locally
-    ..SandboxCreateOptions::new("local", "python:3.12-slim")   // or "cloud"
+    ..SandboxCreateOptions::new("local", "python:3.12-slim")   // or "aws"
 }).await?;
 let svc = sb.service("mcp".into())?;
 let r = svc.request("POST".into(), "/mcp".into(), Some(body), None, Some(headers)).await?;

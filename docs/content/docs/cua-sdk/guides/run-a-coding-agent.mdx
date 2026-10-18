@@ -23,7 +23,7 @@ your own registry image, or a benchmark image.
 ```python test="excerpt" id="create" source="examples/agents-in-sandboxes/tour.py#create"
 c = cua.embedded()
 sb = await c.sandboxes().create(cua.SandboxCreateOptions(
-    on="local",                               # or "cloud"
+    on="local",                               # or "aws"
     image=image,                              # any image with cua-spacesd
     name=name,
     memory_mb=4096,

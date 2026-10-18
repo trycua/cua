@@ -2,6 +2,8 @@
 
 _Written by Francesco Bonacci — Reviewed by Parth Patel (HUD W25) — Sept 25, 2025_
 
+> Update, October 2026: Cua Cloud (Fleets) ended on 16 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+
 ## Prologue
 
 Hack the North ran Sept 12–14 at the University of Waterloo. Official count this year: **1,778 hackers**, and a [Guinness World Record for the most people building interlocking plastic brick sculptures simultaneously](https://uwaterloo.ca/news/eweal-making-hackathons-fun-again-breaking-guinness-world-record).

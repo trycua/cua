@@ -106,20 +106,44 @@ Describe 'functions' {
         { Get-CuaSelection -SelectList '' -OnlyList '' -Cli $true -App $true -InstallMode '' } | Should -Throw '*mutually exclusive*'
     }
 
-    It 'toggles items in the numbered checklist; the CLI row is locked' {
-        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('1 3', '4', ''))
+    It 'toggles the Cua Spaces and Cua Driver rows; there is no CLI row and no hosting row' {
+        # 2 turns Cua Driver on, 3 is past the last row, 1 turns the app off.
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('2 3', '1', ''))
         $sel = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $sel = Read-CuaSelection $sel { $script:answers.Dequeue() } 6>$null
-        @($sel.cli, $sel.spaces, $sel['cua-driver'], $sel.host) | Should -Be @($true, $true, $true, $true)
+        @($sel.cli, $sel.spaces, $sel['cua-driver'], $sel.host) | Should -Be @($true, $false, $true, $false)
         $script:Picked | Should -BeTrue
         $script:Picked = $false
     }
 
-    It 'shows Spaces in the checklist, where it can be unticked' {
-        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('2', ''))
+    It 'shows Spaces in the list, where it can be unticked' {
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('1', ''))
         $sel = Get-CuaSelection -SelectList 'spaces' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $sel = Read-CuaSelection $sel { $script:answers.Dequeue() } 6>$null
         @($sel.spaces, $sel['cua-driver']) | Should -Be @($false, $false)
+        $script:Picked = $false
+    }
+
+    It 'says what Cua Spaces is and what is always installed, and describes each row' {
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@(''))
+        $sel = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
+        $shown = @(& { $null = Read-CuaSelection $sel { $script:answers.Dequeue() } } 6>&1 | ForEach-Object { "$($_.MessageData)" })
+        $text = $shown -join "`n"
+        $text | Should -Match 'Cua Spaces: computers for you and your AI agents\.'
+        $text | Should -Match 'Always installed: the cua command-line tool\.'
+        $text | Should -Match '1 \[x\] Cua Spaces app'
+        $text | Should -Match '2 \[ \] Cua Driver, so coding agents can use apps in the background'
+        $text | Should -Match 'Installs Cua Driver and adds it to Claude Code, Codex and other agents\.'
+        $text | Should -Not -Match 'Host this machine'
+        $text | Should -Not -Match 'cua CLI \(required\)'
+        $script:Picked = $false
+    }
+
+    It 'says a scripted -Select host is on, though the list has no hosting row' {
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@(''))
+        $sel = Get-CuaSelection -SelectList 'host' -OnlyList '' -Cli $false -App $false -InstallMode ''
+        $shown = @(& { $null = Read-CuaSelection $sel { $script:answers.Dequeue() } } 6>&1 | ForEach-Object { "$($_.MessageData)" })
+        ($shown -join "`n") | Should -Match 'Also: let your other devices use this computer'
         $script:Picked = $false
     }
 
@@ -175,8 +199,20 @@ Describe 'install.ps1' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p1'
         $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix }
         Join-Path $prefix 'bin/cua.exe' | Should -Exist
-        $out | Should -Match 'Next steps'
+        $out | Should -Match 'Installed the cua command-line tool \(checksums verified\)\.'
+        $out | Should -Match 'Next: cua auth login, then cua agents setup'
+        $out | Should -Match 'To let your other devices use this computer: cua host setup'
         $out | Should -Match 'is not on your PATH'
+    }
+
+    It 'prints one plain line per step by default, and the detail with -Verbose' {
+        $prefix = Join-Path $env:CUA_TEST_ROOT 'p-quiet'
+        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix }
+        $out | Should -Match 'Installing the cua command-line tool to '
+        $out | Should -Not -Match 'cua-install:'
+        $out | Should -Not -Match 'manifest'
+        $verbose = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-verbose'); Verbose = $true }
+        $verbose | Should -Match 'cua-install: platform windows-x64, manifest '
     }
 
     # CUA-1704: `cua` must work in the next terminal without a manual step.
@@ -207,7 +243,7 @@ Describe 'install.ps1' {
     }
 
     # Clean machine: the manifest lists signatures but neither minisign nor
-    # cosign is installed. The "checked sha256" note reads $script:SigNoted,
+    # cosign is installed. The signature note reads $script:SigNoted,
     # which crashed under Set-StrictMode when it was never initialised.
     It 'installs under StrictMode when the manifest has signatures but no verifier is installed' {
         $sig = Join-Path $env:CUA_TEST_ROOT 'sig'
@@ -223,8 +259,15 @@ Describe 'install.ps1' {
             PATH = ((Get-Command python3).Source | Split-Path)
         }
         $out | Should -Not -Match 'has not been set'
-        $out | Should -Match 'checked sha256'
+        $out | Should -Match 'Installed the cua command-line tool \(checksums verified\)\.'
+        $out | Should -Not -Match 'cosign|minisign|signatures were not'
         Join-Path $prefix 'bin/cua.exe' | Should -Exist
+        # The detail is for -Verbose.
+        $verbose = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-sig-v'); Verbose = $true } @{
+            CUA_INSTALL_MANIFEST_URL = (ConvertTo-FileUrl $sigManifest)
+            PATH = ((Get-Command python3).Source | Split-Path)
+        }
+        $verbose | Should -Match 'release signatures were not checked'
     }
 
     It 'aborts on a checksum mismatch' {

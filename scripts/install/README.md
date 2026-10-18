@@ -14,14 +14,16 @@ The Cua Spaces app is the graphical path. Its first run installs the bundled `cu
 
 ## Choose what to install
 
-In a terminal, install.sh shows a checklist (arrow or number keys to move and toggle, space to toggle, Enter to install; install.ps1 asks for numbers to toggle). The CLI row is locked. Without a terminal, with `--yes`, or with `CUA_INSTALL_NONINTERACTIVE=1`, the defaults plus `--select` are installed without asking. `--only` installs exactly the listed items plus the CLI and never shows the checklist.
+In a terminal, install.sh first says what Cua Spaces is, then lists what to add to the `cua` CLI (arrow or number keys to move or toggle, space to select, Enter to install; install.ps1 asks for numbers to toggle, with a line under each row). The CLI is always installed, so it is not a row. Hosting is not a row either: the app's first run asks how you use this computer (`--mode host|client` preselects the answer). Without a terminal, with `--yes`, or with `CUA_INSTALL_NONINTERACTIVE=1`, the defaults plus `--select` are installed without asking. `--only` installs exactly the listed items plus the CLI and never shows the list.
 
-| Item | What it does | Default |
-|---|---|---|
-| `cli` | The `cua` CLI | Always (not with `--app-only`) |
-| `spaces` | The Cua Spaces app | On for macOS (the SwiftUI app) and Linux (the Electron app). On Windows (the Electron app) it is off by default: pick it in the checklist or use `-Select spaces`. `--app-only` and `--mode` imply it |
-| `cua-driver` | Installs cua-driver with its own release installer (`cua.ai/driver/install.sh` / `install.ps1`, which verify SHA256SUMS and the Sigstore bundle), then `cua agents setup --cua-driver --agents all --yes` registers its skill and MCP server for your agents | Off |
-| `host` | Runs `cua host setup` after sign-in so others on your account can reach this machine | Off |
+| Item | What it does | In the list | Default |
+|---|---|---|---|
+| `cli` | The `cua` CLI | No, always installed (not with `--app-only`) | Always |
+| `spaces` | The Cua Spaces app | "Cua Spaces app" | On for macOS (the SwiftUI app), Linux (the Electron app) and Windows (the Electron app). `--app-only` and `--mode` imply it |
+| `cua-driver` | Installs Cua Driver with its own release installer (`cua.ai/driver/install.sh` / `install.ps1`, which verify SHA256SUMS and the Sigstore bundle), then `cua agents setup --cua-driver --agents all --yes` registers its skill and MCP server for your agents | "Cua Driver, so coding agents can use apps in the background" | Off |
+| `host` | Runs `cua host setup` after sign-in, so your other devices can use this computer through the relay | No: a script flag (`--select host`, `--only host`, `--pair`). Interactively, the app's first run asks | Off |
+
+The Cua Spaces app registers the cua-driver skill and MCP server with your agents in its first run, but it does not install or update the Cua Driver program yet (CUA-1440). Until it does, the `cua-driver` item is how the installer puts Cua Driver on this computer.
 
 ```sh
 curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver   # checklist with cua-driver ticked
@@ -34,7 +36,7 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 
 | install.sh | install.ps1 | Effect |
 |---|---|---|
-| `--select a,b` | `-Select a,b` | Preselect items (`spaces`, `cua-driver`, `host`); the checklist still shows |
+| `--select a,b` | `-Select a,b` | Preselect items (`spaces`, `cua-driver`, `host`); the list still shows |
 | `--only a,b` | `-Only a,b` | Exactly these items plus the CLI, no checklist |
 | `--cli-only` | `-CliOnly` | Only the `cua` CLI (same as `--only cli`) |
 | `--app-only` | `-AppOnly` | Only the Cua Spaces app, no CLI (cannot be combined with `cua-driver` or `host`) |
@@ -44,12 +46,21 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 | `--modify-path` | `-ModifyPath` | Add the bin dir to your shell profile or user PATH without asking |
 | `--no-modify-path` | `-NoModifyPath` | Never edit the profile or user PATH; print the command instead |
 | `--no-onboarding` | `-NoOnboarding` | Skip `cua auth login` |
+| `-v`, `--verbose` | `-Verbose` | Print every step: platform, manifest, each download, signature checks. Also `CUA_INSTALL_VERBOSE=1` |
 | `--require-signature` | `-RequireSignature` | Fail unless minisign or cosign verifies |
 | `--dry-run` | `-DryRun` | Print the plan, change nothing |
 | `--yes` | `-Yes` | Accept the current selection and every prompt |
 | | `-Installer msi\|nsis` | Windows app installer (default nsis, the Electron app; msi only when a release has one) |
 
 Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`. `--only` and `--select` cannot be combined, nor can `--cli-only` with other items. Set `CUA_INSTALL_NONINTERACTIVE=1` to never prompt.
+
+## What it prints
+
+One plain line per step ("Installing the cua command-line tool to ...", "Installing the Cua Spaces app to ..."), then what was installed and what to do next: open Cua Spaces, or sign in and run `cua agents setup` to connect your agents. `--verbose` adds `cua-install:` lines with the platform, the manifest, each download and the signature checks.
+
+Every download is checked against its sha256 from the release manifest, and the summary says so. Signatures are checked as well when `minisign` or `cosign` is installed; without one, the detail shows only with `--verbose`, and `--require-signature` turns it into an error.
+
+Questions read from the terminal, never from the script on stdin, so they work under `curl | sh`. With no terminal to ask on, the defaults apply and the installer says so once. End of input (Ctrl-D, a closed terminal) is never an answer: the install questions take their default, and the PATH question leaves your profile alone.
 
 ## Where things go
 

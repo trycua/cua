@@ -54,6 +54,18 @@ pub fn available() -> bool {
     shell_owner(false).is_some()
 }
 
+/// Whether GNOME Shell is this session's compositor: the desktop name says
+/// so, or `org.gnome.Shell` has an owner on the session bus. The bus check
+/// keeps a daemon started without `XDG_CURRENT_DESKTOP` from treating GNOME
+/// as a compositor with no Shell at all.
+pub fn gnome_shell_session() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktops| {
+        desktops
+            .split(':')
+            .any(|desktop| desktop.eq_ignore_ascii_case("gnome"))
+    }) || SessionShellProbe.name_owner(COMPOSITOR_DEST).is_some()
+}
+
 pub fn semantic_cursor_available() -> bool {
     shell_owner_with_min_version(Some(SEMANTIC_CURSOR_API_VERSION)).is_some()
 }

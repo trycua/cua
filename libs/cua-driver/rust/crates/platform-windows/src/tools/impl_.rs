@@ -3503,8 +3503,15 @@ impl Tool for ClickTool {
                         3 => "triple-click",
                         _ => "click",
                     };
+                    let closed = !unsafe {
+                        windows::Win32::UI::WindowsAndMessaging::IsWindow(
+                            windows::Win32::Foundation::HWND(hwnd_u as usize as *mut _),
+                        )
+                    }
+                    .as_bool();
+                    let note = if closed { " The window closed." } else { "" };
                     ToolResult::text(format!(
-                        "✅ Sent {click_word} via SendInput at screen ({sx},{sy}) on HWND 0x{hwnd_u:x} (desktop scope)."
+                        "✅ Sent {click_word} via SendInput at screen ({sx},{sy}) on HWND 0x{hwnd_u:x} (desktop scope).{note}"
                     ))
                     // SendInput dispatched but is not driver-verifiable (no read-back).
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))

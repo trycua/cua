@@ -5,7 +5,8 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { parseDropped, useBridge, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type Space, type StreamRow } from "@/bridge";
+import { parseDropped, useBridge, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type CreateReport, type Space, type StreamRow } from "@/bridge";
+import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
 import { AgentsSection } from "@/components/space-detail/agents-section";
@@ -38,8 +39,24 @@ function SpaceDetailPage() {
   const { spaceId } = Route.useParams();
   const { dropped } = Route.useSearch();
   const navigate = useNavigate();
-  const { data: spaces, isLoading, error, startSpace, stopSpace, deleteSpace, openSpace, dismissCreate, retryCreate, canRetryCreate, createdId } =
-    useSpaces();
+  const {
+    data: spaces,
+    isLoading,
+    error,
+    startSpace,
+    stopSpace,
+    deleteSpace,
+    openSpace,
+    dismissCreate,
+    retryCreate,
+    canRetryCreate,
+    createdId,
+    createReport,
+    sendCreateReport,
+  } = useSpaces();
+  // The failed create's diagnostic report, while its review sheet is open.
+  const [report, setReport] = useState<CreateReport | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
   const { data: machines = [] } = useMachines();
   const [confirm, setConfirm] = useState<Confirm>(null);
   const teleport = useTeleport();
@@ -155,6 +172,14 @@ function SpaceDetailPage() {
         if (next) void navigate({ to: "/spaces/$spaceId", params: { spaceId: next }, replace: true });
       }
     : undefined;
+  // Send report: the review sheet with the core's redacted report; nothing
+  // is sent until the person presses Send there.
+  const openReport = () =>
+    void createReport(space.id).then((r) => {
+      if (!r) return;
+      setReport(r);
+      setReportOpen(true);
+    });
   // Picture in picture where the host has panels; its own window where it doesn't.
   const onPip = (row: StreamRow) =>
     run("open", async () => {
@@ -254,7 +279,7 @@ function SpaceDetailPage() {
           onAccessAction={enroll}
           className="h-72"
         >
-          {surfaceState(space, pending, turnOn, start, dismiss, retry) ?? poppedOutState}
+          {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport) ?? poppedOutState}
         </StreamSurface>
       )}
 
@@ -328,6 +353,12 @@ function SpaceDetailPage() {
         onConfirm={() => remove()}
         alternative={detail.confirm.removeLabel ? { label: detail.confirm.removeLabel, onClick: () => remove(true) } : null}
       />
+      <DiagnosticReportDialog
+        open={reportOpen}
+        onOpenChange={setReportOpen}
+        report={report}
+        onSend={(subject, parts) => sendCreateReport({ subject, parts })}
+      />
     </Page>
   );
 }
@@ -387,7 +418,15 @@ function BackLink() {
 
 /** What replaces the stream while there is no desktop to show: a create's
  * progress, a delete, a stopped Space. Undefined: the stream surface. */
-function surfaceState(space: Space, pending: string | null, startLabel: string, onStart: () => void, onDismiss: () => void, onRetry?: () => void): ReactNode {
+function surfaceState(
+  space: Space,
+  pending: string | null,
+  startLabel: string,
+  onStart: () => void,
+  onDismiss: () => void,
+  onRetry?: () => void,
+  onReport?: () => void,
+): ReactNode {
   const state = spaceState(space);
   if (state === "failed") {
     return (
@@ -402,6 +441,11 @@ function surfaceState(space: Space, pending: string | null, startLabel: string, 
             Remove from list
           </Button>
         </div>
+        {onReport ? (
+          <Button variant="ghost" size="sm" className="mt-2 text-muted-foreground" data-send-report="" onClick={onReport}>
+            Send a report…
+          </Button>
+        ) : null}
       </>
     );
   }

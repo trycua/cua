@@ -286,6 +286,7 @@ async fn local_pipe_is_transparent() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn fleet_gateway_pipe_is_transparent() {
     let dir = tempfile::tempdir().unwrap();
     let (sb, _server) = fleet_sandbox(
@@ -366,6 +367,7 @@ async fn rmcp_over_a_local_service() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn rmcp_through_the_fleet_gateway() {
     let dir = tempfile::tempdir().unwrap();
     let (sb, _server) =

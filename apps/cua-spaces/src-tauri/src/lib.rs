@@ -288,11 +288,17 @@ fn set_display_style(
 }
 
 /// Open an `http(s)` URL in the user's default browser (Settings "Sign in to
-/// Cua"). Restricted to web schemes so a webview call can never launch an
+/// Cua"), or the diagnostic report's email link to Cua support in the user's
+/// mail app. Restricted to those so a webview call can never launch an
 /// arbitrary local handler, and it hands the URL to the OS opener as a single
 /// argument (never a shell string) so nothing is interpreted by a shell.
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
+    if let Some(link) = checked_support_mailto(&url) {
+        // Not the link in the message: it carries the report.
+        return open_with_os(link)
+            .map_err(|error| format!("failed to open your mail app: {error}"));
+    }
     open_web_url(&url)
 }
 
@@ -304,6 +310,11 @@ fn open_external(url: String) -> Result<(), String> {
 /// shell.
 pub(crate) fn open_web_url(url: &str) -> Result<(), String> {
     let url = checked_web_url(url)?;
+    open_with_os(url).map_err(|error| format!("failed to open {url}: {error}"))
+}
+
+/// Hands an already checked `url` to the OS opener as one argument.
+fn open_with_os(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut c = std::process::Command::new("open");
@@ -324,10 +335,16 @@ pub(crate) fn open_web_url(url: &str) -> Result<(), String> {
         c.arg(url);
         c
     };
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("failed to open {url}: {error}"))
+    command.spawn().map(|_| ())
+}
+
+/// The first character of `url` that a real URL percent-encodes: anything but
+/// printable ASCII, and quotes, backslashes, angle brackets, carets, pipes,
+/// backticks and braces.
+fn unencoded_char(url: &str) -> Option<char> {
+    url.chars().find(|c| {
+        !c.is_ascii_graphic() || matches!(c, '"' | '\\' | '<' | '>' | '^' | '|' | '`' | '{' | '}')
+    })
 }
 
 /// The URL `open_web_url` hands to the OS opener: an `http(s)` URL with a
@@ -344,15 +361,31 @@ fn checked_web_url(url: &str) -> Result<&str, String> {
     if host.is_empty() {
         return Err("the URL has no host".to_string());
     }
-    if let Some(bad) = trimmed.chars().find(|c| {
-        !c.is_ascii_graphic() || matches!(c, '"' | '\\' | '<' | '>' | '^' | '|' | '`' | '{' | '}')
-    }) {
+    if let Some(bad) = unencoded_char(trimmed) {
         return Err(format!(
             "the URL contains a character that must be percent-encoded ({:?})",
             bad
         ));
     }
     Ok(trimmed)
+}
+
+/// The diagnostic report's link: a `mailto:` to Cua support (and nobody else)
+/// with a percent-encoded subject and body. Nothing else with that scheme
+/// opens.
+fn checked_support_mailto(url: &str) -> Option<&str> {
+    let trimmed = url.trim();
+    let rest = trimmed.strip_prefix("mailto:support@trycua.com")?;
+    if !(rest.is_empty() || rest.starts_with('?')) || unencoded_char(trimmed).is_some() {
+        return None;
+    }
+    // Only the subject and body: no `cc`, `bcc` or second recipient.
+    let only_subject_and_body = rest
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|kv| !kv.is_empty())
+        .all(|kv| kv.starts_with("subject=") || kv.starts_with("body="));
+    only_subject_and_body.then_some(trimmed)
 }
 
 /// The host backend: the `cua-host` library driven by the app's sign-in.
@@ -512,6 +545,10 @@ pub fn run() {
             commands::devices_rename,
             commands::devices_revoke,
             commands::devices_confirm_machine,
+            commands::devices_create_pairing_code,
+            commands::devices_pairing_codes,
+            commands::teams_list,
+            commands::devices_revoke_pairing_code,
             commands::devices_notify,
             commands::space_shares,
             commands::share_space,
@@ -843,7 +880,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod open_web_url_tests {
-    use super::checked_web_url;
+    use super::{checked_support_mailto, checked_web_url};
 
     #[test]
     fn only_plain_web_urls_reach_the_opener() {
@@ -873,6 +910,41 @@ mod open_web_url_tests {
         ] {
             assert!(checked_web_url(bad).is_err(), "{bad:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod support_mailto_tests {
+    use super::{checked_support_mailto, checked_web_url};
+
+    #[test]
+    fn only_the_report_email_to_cua_support_opens() {
+        for ok in [
+            "mailto:support@trycua.com",
+            "mailto:support@trycua.com?subject=Spaces%3A%20create%20failed&body=a%0D%0Ab",
+            "  mailto:support@trycua.com?body=x  ",
+        ] {
+            assert_eq!(checked_support_mailto(ok), Some(ok.trim()), "{ok:?}");
+        }
+        for bad in [
+            "",
+            "mailto:",
+            "mailto:other@example.com?subject=x",
+            "mailto:support@trycua.com,other@example.com?subject=x",
+            "mailto:support@trycua.com.evil.example?subject=x",
+            "mailto:support@trycua.com?cc=other@example.com",
+            "mailto:support@trycua.com?subject=x&bcc=other@example.com",
+            "mailto:support@trycua.com?to=other@example.com",
+            "mailto:support@trycua.com?subject=a b",
+            "mailto:support@trycua.com?subject=\"x\"",
+            "mailto:support@trycua.com?subject=\u{e9}",
+            "MAILTO:other@example.com",
+            "https://trycua.com",
+        ] {
+            assert_eq!(checked_support_mailto(bad), None, "{bad:?}");
+        }
+        // The sign-in's opener stays web only.
+        assert!(checked_web_url("mailto:support@trycua.com").is_err());
     }
 }
 

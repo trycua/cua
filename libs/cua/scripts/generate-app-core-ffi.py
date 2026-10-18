@@ -33,9 +33,9 @@ TYPES = [
     ("teleport/transfer.rs", "teleport::transfer", ["TransferPhase", "TransferOverlayState", "TransferStatus", "TransferSignal", "SentFileInfo"]),
     ("teleport/windows.rs", "teleport::windows", ["OpenWindow", "OpenApp", "RemoteWindow", "RemoteWindowGroup", "PickerTab", "PickerAction", "PickerPrimary"]),
     ("teleport/grid.rs", "teleport::grid", ["PickerTileIcon", "PickerTileThumbnail", "PickerTile", "PickerTileSection", "PickerGrid", "PickerGridTab", "PickerGridTabItem", "PickerGridPrimary"]),
-    ("teleport/review.rs", "teleport::review", ["SendSource", "RememberedChoice", "ReviewDomain", "ReviewToggle", "VaultSource", "ReviewChoice"]),
+    ("teleport/review.rs", "teleport::review", ["SendSource", "RememberedChoice", "ReviewDomain", "ReviewToggle", "VaultPassword", "ReviewPassword", "VaultSource", "ReviewChoice"]),
     ("teleport/flow.rs", "teleport::flow", ["Capability", "Move", "SensitiveGroup", "SensitiveOption", "CatalogEntry", "ConsentKind", "ConsentItem", "PlanStepView", "Plan", "RunPhase", "RunEvent", "RunReport", "Consent", "InstallCuaPrompt", "Step", "PickerState", "PickerEvent", "EntrySection", "ReviewView"]),
-    ("wizard.rs", "wizard", ["LocalEngine", "CloudEngine", "ImageTier", "ImageDistro", "PlatformSize", "ImageSizes", "SandboxImage", "ImageGroup", "KindOption", "StorageVolume", "LocalStorage", "CloudPricing", "CloudOffer", "ConnectedCloud", "HostLimit", "SpaceHost", "RuntimeSwitch", "PlacementOption", "GpuChoice", "WizardEnv", "WizardMode", "AddressForm", "WizardState", "WizardAction", "StepState", "StepView", "Tile", "MenuOption", "CreatePlan", "CreateSpaceArgs", "AddressView", "AddressSubmit", "ImageSuggestion", "SuggestionGroup", "ImageFieldView", "WizardField", "WizardLabels", "WizardFact", "GpuRow", "WizardView"]),
+    ("wizard.rs", "wizard", ["LocalEngine", "CloudEngine", "ImageTier", "ImageDistro", "PlatformSize", "ImageSizes", "SandboxImage", "ImageGroup", "KindOption", "StorageVolume", "LocalStorage", "CloudPricing", "CloudOffer", "ConnectedCloud", "HostLimit", "SpaceHost", "RuntimeSwitch", "PlacementOption", "GpuChoice", "WizardEnv", "WizardMode", "AddressForm", "ResourceField", "ResourceEdit", "WizardState", "WizardAction", "StepState", "StepView", "Tile", "MenuOption", "CreatePlan", "CreateSpaceArgs", "AddressView", "AddressSubmit", "ImageSuggestion", "SuggestionGroup", "ImageFieldView", "WizardField", "WizardLabels", "WizardFact", "GpuRow", "ResourceEditView", "WizardView"]),
     ("keyvault/wire.rs", "keyvault::wire", ["KvItemPolicy", "KvItem", "KvFavicon", "KvDomainCount", "KvInventory", "KvSigning", "KvCaller", "KvSelector", "KvAccessRequest", "KvPending", "KvGrant", "KvRuleCaller", "KvRule", "KvDelivery", "KvAuditEntry", "KvStatus", "KvVerification", "KeyvaultOverview", "KvCommand"]),
     ("keyvault/view.rs", "keyvault::view", ["Tone", "SigningBadge", "Tri", "DecisionTone", "Decision", "PendingRow", "AccessKind", "AccessRow", "KvLabels", "KeyvaultPage"]),
     ("keyvault/vault.rs", "keyvault::vault", ["KvKind", "KvLock", "VaultState", "VaultAction", "VaultRow", "VaultSite", "VaultFiles", "VaultApp", "VaultSelection", "VaultView", "UnlockPrompt", "KvDeleteConfirm", "KvVaultSource"]),
@@ -50,6 +50,7 @@ TYPES = [
     ("driver_preview.rs", "driver_preview", ["PreviewSegment", "PreviewWindow", "DriverPreview", "DriverFrame"]),
     ("drive_mount_preview.rs", "drive_mount_preview", ["DriveMountPreview", "DriveMountFrame"]),
     ("about.rs", "about", ["UpdateChannel", "AboutInput", "AboutLinkId", "AboutLink", "AboutUpdates", "AboutView", "LaunchInput", "LaunchPlan", "DaemonCheck", "RefreshReport"]),
+    ("agent_keys.rs", "agent_keys", ["AgentKeyInput", "AgentKeysInput", "AgentKeyRow", "AgentKeysView", "AgentKeyFormInput", "AgentKeyFormView", "AgentKeyConfirm"]),
     ("login_item.rs", "login_item", ["LoginItemStatus", "LoginItemInput", "LoginItemPlan"]),
     ("experiments.rs", "experiments", ["Experiments"]),
     ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),
@@ -64,6 +65,11 @@ TYPES = [
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),
     ("telemetry.rs", "telemetry", ["TelemetrySignal"]),
+    ("machines.rs", "machines", ["DeviceIn", "MachinesPageInput", "MachinePageRow"]),
+    ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistSeen", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
+    ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
+    ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
+    ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "PlanLink", "PlanCard", "RelayUsageView"]),
 ]
 
 # FFI names that read better than the plain prefix.

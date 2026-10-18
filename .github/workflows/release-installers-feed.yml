@@ -1,0 +1,47 @@
+name: "Release: installer scripts feed"
+
+# cua.ai/install.sh and install.ps1 redirect to the copies on the rolling
+# cua-install-latest release. cd-cua-sdk.yml and cd-cua-spaces.yml refresh
+# those copies only when a CLI or app release publishes, so an installer fix
+# merged between releases would not reach users (CUA-1771: the --pair guard
+# stayed unpublished while the manifest still pointed at CLI 0.4.2).
+# This workflow republishes the two scripts when they change on main. It
+# touches only the scripts, never release-artifacts.json.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/install/install.sh"
+      - "scripts/install/install.ps1"
+      - "scripts/install/stamp_installers.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-installers-feed
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish install.sh / install.ps1 to cua-install-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the scripts
+        run: sh -n scripts/install/install.sh
+      - name: Stamp and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view cua-install-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "no cua-install-latest release in $GITHUB_REPOSITORY yet; the first CLI or app release creates it"
+            exit 0
+          fi
+          python3 scripts/install/stamp_installers.py --repo "$GITHUB_REPOSITORY" --out stamped
+          gh release upload cua-install-latest stamped/install.sh stamped/install.ps1 \
+            --clobber --repo "$GITHUB_REPOSITORY"
+          echo "Published install.sh and install.ps1 from $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

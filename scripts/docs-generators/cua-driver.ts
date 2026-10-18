@@ -218,8 +218,8 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'config',
     title: 'Configuration',
-    summary: 'Driver configuration, telemetry and cursor themes',
-    commands: ['config', 'telemetry', 'cursor-theme'],
+    summary: 'Driver configuration, telemetry, cursor themes and cursor motion',
+    commands: ['config', 'telemetry', 'cursor-theme', 'cursor'],
   },
   {
     slug: 'extensions',
@@ -297,6 +297,25 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     tools: ['set_value', 'clipboard_read', 'clipboard_write'],
   },
   {
+    slug: 'batch',
+    title: 'Batch and script tools',
+    summary: 'Run several action tools, or a script that drives them, in one call',
+    intro: [
+      'Use `run_steps` for a fixed list of actions you have already decided. Use `run_script` when the flow needs',
+      'logic between actions (a loop over rows, a branch on what the app shows, a retry): it runs a JavaScript',
+      'program over the driver\'s own tools in one call and returns only its result. Every driver call either',
+      'tool makes passes the same session, permission and approval checks as a direct call.',
+      '',
+      '`run_script` runs in a QuickJS sandbox with no filesystem, network, process, timers or environment.',
+      'Limits: `timeout_ms` (default 30 s, max 120 s), `max_calls` (default 100, max 500), a 32 MiB heap and',
+      'a 64 KiB script. It is on by default. Whoever runs the driver turns it off with',
+      '`CUA_DRIVER_DISABLE_RUN_SCRIPT=1` or `"disable_run_script": true` in `~/.cua-driver/config.json`',
+      '(`CUA_DRIVER_EXPERIMENTAL_SCRIPT=0` and `"experimental_script": false` also work); `set_config` cannot',
+      'change it.',
+    ].join('\n'),
+    tools: ['run_steps', 'run_script'],
+  },
+  {
     slug: 'page',
     title: 'Page tools',
     summary: 'Read and act on web pages, and prepare and navigate browsers',
@@ -306,7 +325,7 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     slug: 'browser-input',
     title: 'Browser input tools',
     summary: 'Exact browser input over CDP: clicks, typing, pointer, dialogs, files and downloads',
-    tools: ['browser_click', 'browser_type', 'browser_pointer', 'browser_dialog', 'browser_set_input_files', 'browser_download'],
+    tools: ['browser_click', 'browser_type', 'browser_select', 'browser_pointer', 'browser_dialog', 'browser_set_input_files', 'browser_download'],
   },
   {
     slug: 'sessions',

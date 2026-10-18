@@ -113,13 +113,32 @@ impl SandboxState {
         }
     }
 
+    /// Sets `status`. A recorded [`STOP_REASON`] belonged to the stop
+    /// before: any lifecycle change clears it.
     fn set_status(&mut self, status: &str) {
         match self {
             SandboxState::Fleet(f) => f.status = status.into(),
-            SandboxState::Local(l) => l.status = status.into(),
+            SandboxState::Local(l) => {
+                l.status = status.into();
+                l.extra.remove(STOP_REASON);
+            }
+        }
+    }
+
+    /// Why it stopped without being asked to, when that was recorded.
+    pub fn stop_reason(&self) -> Option<crate::StopReason> {
+        match self {
+            SandboxState::Local(l) => {
+                serde_json::from_value(l.extra.get(STOP_REASON)?.clone()).ok()
+            }
+            SandboxState::Fleet(_) => None,
         }
     }
 }
+
+/// State-file key: why a local sandbox stopped without being asked to
+/// ([`crate::StopReason`]), until it is started again.
+pub const STOP_REASON: &str = "stop_reason";
 
 /// `datetime.now(timezone.utc).isoformat()`.
 pub fn python_utc_now() -> String {
@@ -283,6 +302,21 @@ impl StateStore {
     pub fn set_status(&self, name: &str, status: &str) -> Result<()> {
         if let Some(mut s) = self.load(name) {
             s.set_status(status);
+            self.save(&s)?;
+        }
+        Ok(())
+    }
+
+    /// Records that `name` stopped without being asked to, and why: its
+    /// status becomes `stopped` and [`STOP_REASON`] says why, until the
+    /// next lifecycle change.
+    pub fn record_stop(&self, name: &str, reason: &crate::StopReason) -> Result<()> {
+        if let Some(mut s) = self.load(name) {
+            s.set_status("stopped");
+            if let SandboxState::Local(l) = &mut s {
+                l.extra
+                    .insert(STOP_REASON.into(), serde_json::to_value(reason)?);
+            }
             self.save(&s)?;
         }
         Ok(())

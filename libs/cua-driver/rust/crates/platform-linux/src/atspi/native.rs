@@ -12,14 +12,15 @@
 //! `perform_action`, `set_value`, and `get_element_bounds` index into that same
 //! ordered set.
 
-use std::sync::OnceLock;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use atspi::connection::AccessibilityConnection;
 use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State, StateSet};
+use atspi_connection::AccessibilityConnection;
 
 use super::{AtspiIdentity, AtspiNode};
 
@@ -1332,6 +1333,9 @@ async fn collect_visited_bounded_opts<'a>(
             return Ok(None);
         }
     };
+    if first_application_walk(pid) {
+        let _ = call(app.get_attributes()).await;
+    }
     let zconn = conn.connection();
     // Mapped popups of this pid, read once and only when a menubar menu's
     // open state cannot be told from AT-SPI states alone (gail, focus elsewhere).
@@ -2338,6 +2342,14 @@ fn is_indexable_capabilities(
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
+
+fn first_application_walk(pid: u32) -> bool {
+    static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+    PIDS.get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap()
+        .insert(pid)
+}
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
     walk_tree_bounded(pid, 0, None, None)
@@ -5326,6 +5338,268 @@ pub fn set_value_ref(object_ref: &ObjectRef, value: &str) -> Result<()> {
     )
 }
 
+/// Error prefix: a selection container (combo box, list) has no option
+/// with the requested text.
+pub const NO_SUCH_OPTION: &str = "no_such_option";
+
+pub fn is_no_such_option(error: &anyhow::Error) -> bool {
+    error.to_string().starts_with(NO_SUCH_OPTION)
+}
+
+/// Options scanned under one combo box or list.
+const OPTION_SCAN_CAP: usize = 200;
+
+fn is_option_role(role: &str) -> bool {
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "menu item" | "check menu item" | "radio menu item" | "list item" | "option"
+    )
+}
+
+/// A combo box's options live in a child menu (GTK) or list (Qt).
+fn is_option_container_role(role: &str) -> bool {
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "menu" | "popup menu" | "list" | "list box" | "window"
+    )
+}
+
+/// Index of the option `value` names: an exact match first, then one that
+/// differs only in case or surrounding space.
+pub fn match_option(names: &[String], value: &str) -> Option<usize> {
+    names.iter().position(|name| name == value).or_else(|| {
+        let wanted = value.trim().to_lowercase();
+        names
+            .iter()
+            .position(|name| name.trim().to_lowercase() == wanted)
+    })
+}
+
+/// Outcome of picking an option of a selection container.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OptionPick {
+    /// The option was selected or activated.
+    Picked { name: String },
+    /// No option has that text; nothing was changed.
+    NoMatch { options: Vec<String> },
+    /// The element lists no options (or cannot select them).
+    Unavailable,
+}
+
+struct OptionNode {
+    oref: RawObjectRef,
+    name: String,
+    /// Position among its container's children: the model row of a GTK
+    /// combo box, which its `Selection.SelectChild` takes.
+    index: i32,
+}
+
+/// The options under `oref`: item children, or the items of its popup menu
+/// or list child (one level down), in order.
+async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Vec<OptionNode> {
+    let zconn = conn.connection();
+    let mut options = Vec::new();
+    let Some(Ok(children)) = call(raw_children(zconn, oref)).await else {
+        return options;
+    };
+    for (position, child) in children.into_iter().enumerate() {
+        if options.len() >= OPTION_SCAN_CAP {
+            break;
+        }
+        let Some(Ok(acc)) = call(accessible_for(conn, &child)).await else {
+            continue;
+        };
+        let role = call(acc.get_role_name())
+            .await
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+        if is_option_role(&role) {
+            let name = call(acc.name())
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            options.push(OptionNode {
+                oref: child,
+                name,
+                index: position as i32,
+            });
+            continue;
+        }
+        if !is_option_container_role(&role) {
+            continue;
+        }
+        let Some(Ok(items)) = call(raw_children(zconn, &child)).await else {
+            continue;
+        };
+        for (index, item) in items.into_iter().enumerate() {
+            if options.len() >= OPTION_SCAN_CAP {
+                break;
+            }
+            let Some(Ok(item_acc)) = call(accessible_for(conn, &item)).await else {
+                continue;
+            };
+            let item_role = call(item_acc.get_role_name())
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            if !is_option_role(&item_role) {
+                continue;
+            }
+            let name = call(item_acc.name())
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            options.push(OptionNode {
+                oref: item,
+                name,
+                index: index as i32,
+            });
+        }
+    }
+    options
+}
+
+/// Pick the option `value` names on a snapshot-cached selection container
+/// (a GTK combo box) through its own `Selection.SelectChild`: the toolkit
+/// sets the active row and emits its `changed` signal, focus-free and
+/// without opening the popup.
+pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPick> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            let ifaces = match call(acc.get_interfaces()).await {
+                Some(Ok(ifaces)) => ifaces,
+                _ => return Ok(OptionPick::Unavailable),
+            };
+            if !ifaces.contains(Interface::Selection) {
+                return Ok(OptionPick::Unavailable);
+            }
+            let options = list_options(conn, &raw_ref(object_ref)).await;
+            if options.is_empty() {
+                return Ok(OptionPick::Unavailable);
+            }
+            let names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
+            let Some(found) = match_option(&names, value) else {
+                return Ok(OptionPick::NoMatch { options: names });
+            };
+            let option = &options[found];
+            let proxies = acc
+                .proxies()
+                .await
+                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+            let selection = proxies
+                .selection()
+                .await
+                .map_err(|e| anyhow!("Selection unavailable: {e}"))?;
+            match call(selection.select_child(option.index)).await {
+                Some(Ok(true)) => Ok(OptionPick::Picked {
+                    name: option.name.clone(),
+                }),
+                Some(Ok(false)) => Err(anyhow!(
+                    "Selection.SelectChild({}) was refused for option {:?}",
+                    option.index,
+                    option.name
+                )),
+                Some(Err(e)) => Err(anyhow!("Selection.SelectChild failed: {e}")),
+                None => Err(anyhow!("Selection.SelectChild did not answer in time")),
+            }
+        },
+        || Err(anyhow!("select option (cached element) timed out")),
+    )
+}
+
+/// Activate the option `value` names in the open popup of a snapshot-cached
+/// combo box (its items exist and act only while it is open): the option's
+/// own click/activate action selects it and closes the popup.
+pub fn activate_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPick> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            live_accessible(conn, object_ref).await?;
+            let options = list_options(conn, &raw_ref(object_ref)).await;
+            if options.is_empty() {
+                return Ok(OptionPick::Unavailable);
+            }
+            let names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
+            let Some(found) = match_option(&names, value) else {
+                return Ok(OptionPick::NoMatch { options: names });
+            };
+            let option = &options[found];
+            let acc = match call(accessible_for(conn, &option.oref)).await {
+                Some(Ok(acc)) => acc,
+                _ => return Err(anyhow!("option {:?} is gone", option.name)),
+            };
+            let role = call(acc.get_role_name())
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            let proxies = acc
+                .proxies()
+                .await
+                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+            let ap = proxies
+                .action()
+                .await
+                .map_err(|e| anyhow!("option {:?} has no Action: {e}", option.name))?;
+            let actions = action_names(&ap).await;
+            let chosen = activation_index(&role, &actions).ok_or_else(|| {
+                anyhow!("option {:?} advertises no activation action", option.name)
+            })?;
+            match call(ap.do_action(chosen as i32)).await {
+                Some(Ok(true)) => Ok(OptionPick::Picked {
+                    name: option.name.clone(),
+                }),
+                Some(Ok(false)) => Err(anyhow!("option {:?} refused its action", option.name)),
+                Some(Err(e)) => Err(anyhow!("option action failed: {e}")),
+                None => Err(anyhow!("option action did not answer in time")),
+            }
+        },
+        || Err(anyhow!("activate option (cached element) timed out")),
+    )
+}
+
+/// Whether a snapshot-cached combo box's popup is open: any of its options
+/// is SHOWING.
+pub fn options_showing_ref(object_ref: &ObjectRef) -> bool {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            for option in list_options(conn, &raw_ref(object_ref)).await {
+                if let Some(Ok(acc)) = call(accessible_for(conn, &option.oref)).await {
+                    if let Some(Ok(state)) = call(acc.get_state()).await {
+                        if is_showing_state(&state) {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            Ok(false)
+        },
+        || Ok(false),
+    )
+    .unwrap_or(false)
+}
+
+/// Name of the selected child of a `Selection` element (a combo box's
+/// active option), for the `set_value` read-back.
+async fn selected_child_name(
+    conn: &AccessibilityConnection,
+    proxies: &atspi::proxy::proxy_ext::Proxies<'_>,
+) -> Option<String> {
+    let selection = call(proxies.selection()).await?.ok()?;
+    if call(selection.n_selected_children()).await?.ok()? < 1 {
+        return None;
+    }
+    let child = call(selection.get_selected_child(0)).await?.ok()?;
+    let raw = RawObjectRef::from_atspi(&child)?;
+    let acc = call(accessible_for(conn, &raw)).await?.ok()?;
+    call(acc.name()).await?.ok()
+}
+
 /// Current value of a cached element for read-back after a write: the
 /// `Value` interface's number, else the `Text` content. `None` when the
 /// element exposes neither (or does not answer in time).
@@ -5360,6 +5634,9 @@ pub fn read_value_ref(object_ref: &ObjectRef) -> Result<Option<String>> {
                         return Ok(Some(t));
                     }
                 }
+            }
+            if ifaces.contains(Interface::Selection) {
+                return Ok(selected_child_name(conn, &proxies).await);
             }
             Ok(None)
         },
@@ -5597,6 +5874,28 @@ pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
         .reply()
         .ok()?;
     Some((trans.dst_x as i32, trans.dst_y as i32))
+}
+
+fn x11_top_level_geometry(xid: u64) -> Option<(i32, i32, i32, i32)> {
+    use x11rb::protocol::xproto::*;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let mut window = xid as u32;
+    loop {
+        let tree = conn.query_tree(window).ok()?.reply().ok()?;
+        if tree.parent == tree.root || tree.parent == x11rb::NONE {
+            break;
+        }
+        window = tree.parent;
+    }
+    let geom = conn.get_geometry(window).ok()?.reply().ok()?;
+    Some((
+        i32::from(geom.x),
+        i32::from(geom.y),
+        i32::from(geom.width),
+        i32::from(geom.height),
+    ))
 }
 
 /// Read the GTK4 client-side-decoration shadow inset from the X11
@@ -5884,17 +6183,22 @@ async fn web_document_origin_for_visited(
 
 fn screen_extent_rebase(
     x11_origin: (i32, i32),
-    accessible_frame_origin: (i32, i32),
+    accessible_frame_extents: (i32, i32, i32, i32),
+    top_level: Option<(i32, i32, i32, i32)>,
 ) -> Option<(i32, i32)> {
+    if !crate::snapshot_queries::plausible_raw_extents(accessible_frame_extents) {
+        return None;
+    }
+    let (frame_x, frame_y, _, _) = accessible_frame_extents;
     // Chromium's broken "Screen" provider is rooted at the renderer-local
     // origin. A legitimate screen provider may differ from the X11 client
     // origin by title-bar/CSD extents; rebasing that small decoration delta
     // would move otherwise-correct GTK coordinates off their controls.
-    if accessible_frame_origin.0.abs() <= 2 && accessible_frame_origin.1.abs() <= 2 {
-        Some((
-            x11_origin.0 - accessible_frame_origin.0,
-            x11_origin.1 - accessible_frame_origin.1,
-        ))
+    if top_level == Some(accessible_frame_extents) {
+        return None;
+    }
+    if frame_x.abs() <= 2 && frame_y.abs() <= 2 {
+        Some((x11_origin.0 - frame_x, x11_origin.1 - frame_y))
     } else {
         None
     }
@@ -6019,6 +6323,9 @@ async fn element_bounds_for_visited(
         let x11_origin = bounded_blocking(move || x11_window_origin(xid))
             .await
             .flatten();
+        let top_level = bounded_blocking(move || x11_top_level_geometry(xid))
+            .await
+            .flatten();
         let frame = visited.iter().find(|node| {
             scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
                 && node.has_component
@@ -6028,11 +6335,11 @@ async fn element_bounds_for_visited(
                 )
         });
         if let (Some(origin), Some(frame)) = (x11_origin, frame) {
-            let accessible_origin = match call(frame.acc.proxies()).await {
+            let accessible_frame = match call(frame.acc.proxies()).await {
                 Some(Ok(proxies)) => match call(proxies.component()).await {
                     Some(Ok(component)) => {
                         match call(component.get_extents(CoordType::Screen)).await {
-                            Some(Ok((x, y, _, _))) => Some((x, y)),
+                            Some(Ok(extents)) => Some(extents),
                             _ => None,
                         }
                     }
@@ -6040,7 +6347,8 @@ async fn element_bounds_for_visited(
                 },
                 _ => None,
             };
-            accessible_origin.and_then(|frame_origin| screen_extent_rebase(origin, frame_origin))
+            accessible_frame
+                .and_then(|frame_extents| screen_extent_rebase(origin, frame_extents, top_level))
         } else {
             None
         }
@@ -6773,9 +7081,52 @@ mod coord_tests {
 
     #[test]
     fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {
-        assert_eq!(screen_extent_rebase((604, 80), (0, 0)), Some((604, 80)));
-        assert_eq!(screen_extent_rebase((604, 100), (604, 80)), None);
-        assert_eq!(screen_extent_rebase((604, 80), (604, 80)), None);
+        let frame = Some((600, 50, 800, 600));
+        assert_eq!(
+            screen_extent_rebase((604, 80), (0, 0, 792, 566), frame),
+            Some((604, 80))
+        );
+        assert_eq!(
+            screen_extent_rebase((604, 100), (604, 80, 792, 566), frame),
+            None
+        );
+        assert_eq!(
+            screen_extent_rebase((604, 80), (604, 80, 792, 566), frame),
+            None
+        );
+    }
+
+    #[test]
+    fn sentinel_frame_extents_are_not_a_renderer_origin() {
+        assert_eq!(
+            screen_extent_rebase((155, 149), (-1, -1, -1, -1), None),
+            None
+        );
+        assert_eq!(screen_extent_rebase((155, 149), (0, 0, 0, 0), None), None);
+    }
+
+    #[test]
+    fn a_renderer_local_frame_at_the_corner_keeps_its_rebase() {
+        assert_eq!(
+            screen_extent_rebase((5, 29), (0, 0, 640, 480), Some((0, 0, 650, 514))),
+            Some((5, 29))
+        );
+        assert_eq!(
+            screen_extent_rebase((5, 56), (0, 0, 640, 480), Some((0, 27, 650, 514))),
+            Some((5, 56))
+        );
+        assert_eq!(
+            screen_extent_rebase((5, 29), (0, 0, 640, 480), None),
+            Some((5, 29))
+        );
+    }
+
+    #[test]
+    fn a_gtk_frame_matching_its_window_manager_frame_at_the_corner_is_not_rebased() {
+        assert_eq!(
+            screen_extent_rebase((5, 29), (0, 0, 650, 514), Some((0, 0, 650, 514))),
+            None
+        );
     }
 
     #[test]
@@ -7131,6 +7482,14 @@ mod coord_tests {
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+
+    #[test]
+    fn application_attributes_wake_once_per_pid() {
+        assert!(first_application_walk(u32::MAX));
+        assert!(!first_application_walk(u32::MAX));
+        assert!(first_application_walk(u32::MAX - 1));
+        assert!(!first_application_walk(u32::MAX - 1));
+    }
 
     #[test]
     fn focus_log_tracks_latest_focused_object_per_bus_and_clears_on_blur() {

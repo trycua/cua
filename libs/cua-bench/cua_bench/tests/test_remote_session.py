@@ -39,7 +39,9 @@ def fake_sdk(monkeypatch):
 @pytest.mark.asyncio
 async def test_client_only_mode_connects_by_url(fake_sdk):
     mod, sb = fake_sdk
-    async with remote.RemoteDesktopSession(api_url="http://h:1234/", transport="spacesd") as session:
+    async with remote.RemoteDesktopSession(
+        api_url="http://h:1234/", transport="spacesd"
+    ) as session:
         assert session.sandbox is sb and session.computer.interface.sandbox is sb
     mod.Sandbox.connect.assert_awaited_once_with(url="http://h:1234")
     sb.disconnect.assert_awaited_once()
@@ -69,6 +71,7 @@ async def test_full_lifecycle_uses_the_runner_lifecycle(monkeypatch):
     assert sdk.live == 0 and sdk.released == 1
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_full_lifecycle_windows_and_cloud(monkeypatch):
     from cua_bench import sandboxes
@@ -232,9 +235,7 @@ async def test_click_element_scrolls_into_view_and_picks_options(monkeypatch):
     assert actions == [ClickAction(x=120, y=210)]
 
     # An <option> is picked in the page; the open native popup is closed.
-    session, scripts, actions = _scripted_session(
-        monkeypatch, [("'OPTION'", "option")], {}
-    )
+    session, scripts, actions = _scripted_session(monkeypatch, [("'OPTION'", "option")], {})
     await session.click_element(7, 'option[value="apple"]')
     assert [type(a).__name__ for a in actions] == ["KeyAction"]
     assert actions[0].key == "Escape"

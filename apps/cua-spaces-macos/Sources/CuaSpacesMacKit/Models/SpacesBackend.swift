@@ -30,6 +30,9 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// Your machines that provide Spaces (the SDK's `Spaces.hosts()`), for
     /// the New Space wizard's Run on menu; none when they cannot be read.
     func hosts() async -> [AppSpaceHost]
+    /// The hostname a reachable Space's cua-spacesd reported at the last
+    /// `rows()` probe (a relay machine's, to match its enrolled device).
+    func reportedHostname(id: String) -> String?
     /// Adds a machine that already runs cua-spacesd.
     func add(url: String, token: String?, name: String?) async throws
     /// Deletes a created Space, or forgets one added by address.
@@ -59,8 +62,11 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func localStorage() async -> LocalStorage?
     /// Cua Cloud can be used (signed in or client credentials).
     func cloudAvailable() async -> Bool
-    /// This account's Cua Cloud rates (`Fleet.usagePricing()`), when known:
-    /// the New Space estimate. `nil` shows none.
+    /// macOS VMs running on this Mac now (Lume's, Spaces or not: Apple's
+    /// license counts every one), when Lume says.
+    func runningMacosVms() async -> Int?
+    /// This account's Cua Cloud rates, when known: the New Space estimate.
+    /// `nil` shows none (the live backend has no source for them).
     func cloudPricing() async -> AppCloudPricing?
     /// The SDK's teleport handle and the Space handle, for "Teleport an app".
     func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)?
@@ -71,6 +77,9 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// The Space's coding-agent runs as rows (the app core's mapping of the
     /// SDK's run records, attention first).
     func agentRuns(id: String) async throws -> [AppSpaceAgentRun]
+    /// One run's events after `cursor`, as the `agent_events` JSON
+    /// (`events`, `cursor`, `caught_up`, `status`, `phase`).
+    func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String
     /// The Space's latest thumbnail from the SDK's shared cache (the cua
     /// daemon's): no older than `maxAgeMs` (nil: any age), captured fresh
     /// when the cache is older; `nil` when there is none and the Space
@@ -100,13 +109,18 @@ public extension SpacesBackend {
     func cloudPricing() async -> AppCloudPricing? { nil }
     func gpuChoices() async -> [AppGpuChoice]? { nil }
     func hosts() async -> [AppSpaceHost] { [] }
+    func reportedHostname(id: String) -> String? { nil }
     func localRuntimes() async -> (ready: [String], details: [String: String])? {
         await localBackends().map { (ready: $0, details: [:]) }
     }
     func shares(id: String) async throws -> [AppShareEntryInput] { [] }
     func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] { [] }
     func unshare(id: String, who: String) async throws -> [AppShareEntryInput] { [] }
+    func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        throw FixtureError(message: "This Space's runs can't be read here")
+    }
     func lumeSource() async -> String? { nil }
+    func runningMacosVms() async -> Int? { nil }
     func setLumeSource(_ value: String) async throws {}
     func linuxSource() async -> String? { nil }
     func setLinuxSource(_ value: String) async throws {}
@@ -177,7 +191,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         powerState: info.powerState.isEmpty ? nil : info.powerState,
                         cloud: info.cloud.isEmpty ? nil : info.cloud,
                         cloudPlace: info.cloudPlace.isEmpty ? nil : info.cloudPlace,
-                        cloudDelete: info.cloudDelete.isEmpty ? nil : info.cloudDelete)
+                        cloudDelete: info.cloudDelete.isEmpty ? nil : info.cloudDelete,
+                        stopReason: info.stopReason.isEmpty ? nil : info.stopReason)
                     // Turned off on purpose: no probe (it would only time out).
                     if ["suspended", "stopped"].contains(info.powerState) {
                         return (index, row)
@@ -189,10 +204,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                     switch probe {
                     case .success(let space):
                         row.reachable = true
-                        row.os = AppSpaceOs(word: space.info().os) ?? row.os
                         let info = space.info()
-                        if !info.osName.isEmpty { row.osName = info.osName }
-                        if !info.osPrettyName.isEmpty { row.osPrettyName = info.osPrettyName }
+                        row.os = AppSpaceOs(word: info.os)
+                        row.osName = info.osName.isEmpty ? nil : info.osName
+                        row.osPrettyName = info.osPrettyName.isEmpty ? nil : info.osPrettyName
                         if !info.image.isEmpty { row.image = info.image }
                         if !info.imageDigest.isEmpty { row.imageDigest = info.imageDigest }
                         if let kind = AppSpaceKind(word: info.kind) { row.kind = kind }
@@ -201,9 +216,11 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         // relay lists none until it is reached): one that
                         // does not share its desktop reports the desktop's
                         // features unsupported.
-                        if let live = Self.supportedFeatures(capabilitiesJson: try? space.capabilitiesJson()) {
+                        let caps = try? space.capabilitiesJson()
+                        if let live = Self.supportedFeatures(capabilitiesJson: caps) {
                             row.features = live
                         }
+                        self.remember(hostname: Self.hostname(capabilitiesJson: caps), for: info.id)
                     case .failure(let error):
                         row.error = Self.words(error)
                     }
@@ -214,6 +231,28 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             for await r in group { out.append(r) }
             return out.sorted { $0.0 < $1.0 }.map(\.1)
         }
+    }
+
+    /// What each reachable Space's cua-spacesd last said its hostname is.
+    private let hostnameLock = NSLock()
+    private var hostnames: [String: String] = [:]
+
+    public func reportedHostname(id: String) -> String? {
+        hostnameLock.withLock { hostnames[id] }
+    }
+
+    private func remember(hostname: String?, for id: String) {
+        guard let hostname, !hostname.isEmpty else { return }
+        hostnameLock.withLock { hostnames[id] = hostname }
+    }
+
+    /// The guest hostname of a `GetCapabilities` answer (proto3 JSON).
+    static func hostname(capabilitiesJson json: String?) -> String? {
+        guard let data = json?.data(using: .utf8),
+              let caps = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let name = caps["hostname"] as? String else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// The supported feature names of a `GetCapabilities` answer (proto3
@@ -336,19 +375,37 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// How long a probe the New Space sheet waits for may take.
     static let probeSeconds: Double = 10
 
+    /// Bounded: the session read can wait on the credential vault.
     public func cloudAvailable() async -> Bool {
         let env = ProcessInfo.processInfo.environment
         if env["FLEETS_TOKEN"] != nil || env["CUA_CLIENT_ID"] != nil { return true }
-        return (try? cua.auth().status().loggedIn) ?? false
+        let status = await withTimeout(seconds: Self.probeSeconds) { [cua] in try cua.auth().status().loggedIn }
+        return (try? status.get()) ?? false
     }
 
-    public func cloudPricing() async -> AppCloudPricing? {
-        guard await cloudAvailable(), let fleet = try? cua.fleet(),
-              case .success(let got) = await withTimeout(seconds: Self.probeSeconds, { try await fleet.usagePricing() }),
-              let p = got
-        else { return nil }
-        return AppCloudPricing(vcpuHourUsd: p.vcpuHourUsd, memoryGibHourUsd: p.memoryGibHourUsd)
+    /// From `lume serve` (`$LUME_API`, else its default address), bounded.
+    /// Its list reads every VM's disk, so it can take seconds on a busy Mac.
+    public func runningMacosVms() async -> Int? {
+        let base = ProcessInfo.processInfo.environment["LUME_API"] ?? "http://127.0.0.1:7777"
+        guard let url = URL(string: base.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/lume/vms") else { return nil }
+        let request = URLRequest(url: url, timeoutInterval: Self.probeSeconds)
+        let answer = await withTimeout(seconds: Self.probeSeconds) { try await URLSession.shared.data(for: request).0 }
+        guard case .success(let data) = answer else { return nil }
+        return Self.runningMacosVms(lumeVms: data)
     }
+
+    /// The running macOS VMs in `GET /lume/vms`.
+    static func runningMacosVms(lumeVms data: Data) -> Int? {
+        guard let vms = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return nil }
+        return vms.filter {
+            ($0["os"] as? String)?.lowercased() == "macos" && ($0["status"] as? String)?.lowercased() == "running"
+        }.count
+    }
+
+    /// No estimate: the rates came from the retired Fleets API
+    /// (`Fleet.usagePricing()` on run.cua.ai), and the app does not offer
+    /// new cloud Spaces. New Space never waits on it.
+    public func cloudPricing() async -> AppCloudPricing? { nil }
 
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
         (cua.teleport(), try await cua.spaces().space(space: id))
@@ -382,6 +439,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     public func agentRuns(id: String) async throws -> [AppSpaceAgentRun] {
         let runs = try await cua.spaces().space(space: id).agentList()
         return appAgentRows(runsJson: runs.map(\.json))
+    }
+
+    public func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        try await cua.spaces().space(space: id).agentEvents(runId: runId, cursor: cursor, max: nil)
     }
 
     public func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? {
@@ -427,6 +488,7 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             }
             return e.localizedDescription
         }
+        if let e = error as? LocalizedError, let text = e.errorDescription { return text }
         return String(describing: error)
     }
 }
@@ -440,19 +502,84 @@ final class CreateListener: SpaceCreateListener {
 
 enum TimeoutError: Error { case timedOut }
 
+/// Calls `fire` once, `seconds` from now.
+typealias DeadlineScheduler = @Sendable (_ seconds: Double, _ fire: @escaping @Sendable () -> Void) -> Void
+
+/// A dispatch timer, not a sleeping task: the deadline holds even when
+/// every cooperative thread is blocked (a synchronous SDK call).
+let dispatchDeadline: DeadlineScheduler = { seconds, fire in
+    DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: fire)
+}
+
 /// Runs `body`, giving up after `seconds`.
-func withTimeout<T: Sendable>(seconds: Double, _ body: @escaping @Sendable () async throws -> T) async -> Result<T, Error> {
-    await withTaskGroup(of: Result<T, Error>.self) { group in
-        group.addTask {
-            do { return .success(try await body()) } catch { return .failure(error) }
+///
+/// The bound holds even when `body` never returns: an SDK call (a UniFFI
+/// future) does not stop when its task is cancelled, and a task group
+/// waits for every child before it returns, so racing the two in a group
+/// waited as long as the call did (a Space list that never came back hung
+/// the list poll for good). `body` keeps running after the timeout, and its
+/// result is dropped.
+///
+/// It runs on the caller's actor (`isolation`), so a main-actor caller sets
+/// its deadline at once and is resumed straight on the main actor: neither
+/// needs one of the cooperative threads a blocked SDK call may be holding.
+/// `deadline` is the timer (tests fire it by hand).
+func withTimeout<T: Sendable>(seconds: Double, isolation: isolated (any Actor)? = #isolation,
+                              deadline: DeadlineScheduler = dispatchDeadline,
+                              _ body: @escaping @Sendable () async throws -> T) async -> Result<T, Error> {
+    let first = FirstResult<T>()
+    return await withCheckedContinuation(isolation: isolation) { (done: CheckedContinuation<Result<T, Error>, Never>) in
+        first.set(done)
+        let work = Task {
+            let r: Result<T, Error>
+            do { r = .success(try await body()) } catch { r = .failure(error) }
+            first.resume(r)
         }
-        group.addTask {
-            try? await Task.sleep(for: .seconds(seconds))
-            return .failure(TimeoutError.timedOut)
+        deadline(seconds) {
+            if first.resume(.failure(TimeoutError.timedOut)) { work.cancel() }
         }
-        let first = await group.next() ?? .failure(TimeoutError.timedOut)
-        group.cancelAll()
-        return first
+    }
+}
+
+/// Runs `op` on the main actor for at most `seconds`: true when it
+/// finished, false when it was still running (it keeps running).
+@MainActor
+@discardableResult
+func withDeadline(seconds: Double, _ op: @escaping @MainActor () async -> Void) async -> Bool {
+    let result = await withTimeout(seconds: seconds) { await op() }
+    if case .success = result { return true }
+    return false
+}
+
+/// Resumes a continuation once, with whichever result comes first.
+private final class FirstResult<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Result<T, Error>, Never>?
+    private var early: Result<T, Error>?
+    private var done = false
+
+    func set(_ c: CheckedContinuation<Result<T, Error>, Never>) {
+        let now: Result<T, Error>? = lock.withLock {
+            if let early { return early }
+            continuation = c
+            return nil
+        }
+        if let now { c.resume(returning: now) }
+    }
+
+    /// True when this result was the first.
+    @discardableResult
+    func resume(_ r: Result<T, Error>) -> Bool {
+        let c: CheckedContinuation<Result<T, Error>, Never>?? = lock.withLock {
+            guard !done else { return .none }
+            done = true
+            if let continuation { self.continuation = nil; return .some(continuation) }
+            early = r
+            return .some(nil)
+        }
+        guard case .some(let waiting) = c else { return false }
+        waiting?.resume(returning: r)
+        return true
     }
 }
 
@@ -471,6 +598,7 @@ extension AppSpaceOs {
         case .macos: return "macOS"
         case .windows: return "Windows"
         case .linux: return "Linux"
+        case .unknown: return "Unknown"
         }
     }
 }
@@ -542,17 +670,17 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                     image: "ghcr.io/trycua/linux:24.04",
                     imageDigest: "sha256:4f1c2a9d8e7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
                     kind: .container, arch: "arm64", reachable: true, error: nil, host: nil, hostName: nil,
-                    power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil),
+                    power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil),
         AppSpaceRow(id: "cloud:builder", name: "builder", provider: "cloud", spacesdVersion: "0.4.0",
                     features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z",
                     os: .linux, osName: "Arch Linux", osPrettyName: nil, image: nil, imageDigest: nil,
                     kind: nil, arch: nil, reachable: false, error: "timed out", host: nil, hostName: nil,
-                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil),
+                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil),
         AppSpaceRow(id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct",
                     spacesdVersion: "0.4.0", features: [], addedAt: nil, os: .windows,
                     osName: "Windows", osPrettyName: "Windows Server 2022 Datacenter 10.0.20348",
                     image: nil, imageDigest: nil, kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil),
+                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil),
     ]
 
     public func rows() async throws -> [AppSpaceRow] { await MainActor.run { fixtureRows } }
@@ -606,7 +734,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                                            addedAt: nil, os: .linux, osName: nil, osPrettyName: nil,
                                            image: args.image, imageDigest: nil, kind: args.kind, arch: nil,
                                            reachable: true, error: nil, host: nil, hostName: nil,
-                                           power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil))
+                                           power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil))
             return id
         }
     }
@@ -752,6 +880,9 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// Signed in to Cua Cloud (off: the fixture account is local only).
     public var fixtureCloud = false
     public func cloudAvailable() async -> Bool { await MainActor.run { fixtureCloud } }
+    /// macOS VMs running on the fixture Mac outside its Spaces (none known).
+    public var fixtureMacosVms: Int?
+    public func runningMacosVms() async -> Int? { await MainActor.run { fixtureMacosVms } }
     /// The fixture account's Cua Cloud rates (none: no estimate).
     public var fixturePricing: AppCloudPricing?
     public func cloudPricing() async -> AppCloudPricing? { await MainActor.run { fixturePricing } }
@@ -764,6 +895,13 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
         let (error, runs) = await MainActor.run { (agentRunsError, fixtureRuns[id] ?? []) }
         if let error { throw error }
         return appAgentRows(runsJson: runs)
+    }
+    /// `agent_events` pages, per run id: the whole run, caught up.
+    public var fixtureEvents: [String: String] = [:]
+    public func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        let page = await MainActor.run { fixtureEvents[runId] }
+        guard let page else { throw FixtureError(message: "no run \(runId) in \(id)") }
+        return page
     }
     public private(set) var sent: [String] = []
     public func sendFiles(id: String, paths: [String]) async throws -> [AppSentFileInfo] {

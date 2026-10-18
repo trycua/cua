@@ -1,0 +1,125 @@
+{
+  "cua_driver_version": "0.34.0",
+  "cua_driver_version_string": "cua-driver 0.34.0",
+  "cua_driver_binary_sha256": "54e5d48128fb62323366c49b6be480ccef83cdee23bd7fc1f19431347a5df86b",
+  "cua_driver_git_sha": "b0968e1b12834e485dda68789541a3cc57664a9f",
+  "cua_driver_tarball": "cua-driver-rs-0.34.0-darwin-universal.tar.gz",
+  "cua_driver_tarball_sha256": "2d0ade531c07b4d16e8078844fe1b63a0dfa0ee19677c9dcc079b4d3460ab387",
+  "cua_skills_tarball": "cua-driver-rs-v0.34.0-skills.tar.gz",
+  "cua_skills_tarball_sha256": "4ea2bfc2d833af791c8a6d9c5904f468bd35552728b4608e151b106ace02292f",
+  "cua_skills_tree_sha256": "aed1bc3a73badfb0b988e613095ff3307b5186e2ad5a08d421eb8ac62635275d",
+  "release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+  "claude_code_version": "2.1.289 (Claude Code)",
+  "macos_version": "26.5.2",
+  "macos_build": "25F84",
+  "chatgpt_app_version": "26.930.51102",
+  "unified_computer_use_plugin_version": "26.930.51102",
+  "cua_repl_package_version": "0.1.0",
+  "codex_computer_use_service_version": "26.929.1001365",
+  "environment": "Lume macOS VM on a Mac Studio host (M3 Ultra), cloned from the cached cua-base image; 6 CPU, 12 GB, 1920x1080; one VM for both arms",
+  "cdb_pack": {
+    "repo": "trycua/cua, benchmarks/cua-driver-bench/taskpack (public copy)",
+    "source": "Copied from Cua's private benchmark repository at revision 16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a; see taskpack/README.md. shared/cdb-s02 also carries the Amendment 19 checker fix (one Schedule row per session). The licence metadata (package.json/package-lock.json `license`, PROVENANCE.md) was changed from MIT to FSL-1.1-MIT on 11 Oct 2026; `mit_release_tree_sha256` holds the digests of the MIT copy published in #4973/#4978.",
+    "revision": "16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a",
+    "tree_sha256": {
+      "shared/cdb-s02": "86857b975b6d3e2a671ab0d577fc7aef0679ffcb488b09ee8e77f647d1630d94",
+      "shared/cdb-s03": "0c38419567b079ce3bb139e6105fe023ae7d1a8e60aef44278e93e6763099fff",
+      "shared/cdb-s04": "d93b31598682daa0f64e180f4e4950cf8530b792e61aed9d740d53df0783c53a"
+    },
+    "mit_release_tree_sha256": {
+      "shared/cdb-s02": "844dbbd2b247395303b901cbd328dee092adfa0e592b511ce6900c69e92073c9",
+      "shared/cdb-s03": "f018f55fa0208e6244e5789e0e306401a009f7ee07344aece1c741a3a9b70fa4",
+      "shared/cdb-s04": "f7c67bb4dec8711176897f6cc26df8ed55237c0de48dd13cb242119ac7ca81a8"
+    },
+    "registered_runs_tree_sha256": {
+      "shared/cdb-s02": "96f4a35667e90fb4272405030afc055093cbe2e628b6795099153e2274b83503",
+      "shared/cdb-s03": "9a0615c29150af95e6a133573ea3021f17222ee51480cb150427e90457f678d2",
+      "shared/cdb-s04": "240ab1b758603e938b688e4452f78a715bf4443a1df7f58535c20d8e47dc1efe"
+    }
+  },
+  "cua_main": {
+    "note": "Bench v2 runs: main at the commit of the latest registered run (A17.3 rerun: 984e5f9c5). Built in the VM with tools/vm_main_build. Earlier registered runs used other main commits; see the dated amendment commits.",
+    "git_sha": "984e5f9c5c5a39185e7d0e03f3d6937e44503c31",
+    "version": "0.34.0",
+    "version_string": "cua-driver 0.34.0",
+    "binary_sha256": "3657e899b14f734f71b4aa52af3f9bbf44c2a97a62947ea9c40cbf0e0a5c1098",
+    "skills_tree_sha256": "7f1c0fd0f22cb4a3dd0ae04256a3e78c9f4d51194e92284765cc554381249504",
+    "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
+    "script_binary_sha256": "8d5dc83f23e7ff0f95bcade4fff67e25cd7309bf02d67a5ca31e86ca5059cce4"
+  },
+  "codex_1007": {
+    "_note": "Arm cc-codex-cu-1007-browser (Amendment 10): the ChatGPT/Codex app 26.1007.21159 (build 20052) from the public appcast, installed in a clone of the bench VM only and never launched. The Computer Use service is not in the app bundle (the app installs it at run time), so it stays 26.929.1001365.",
+    "chatgpt_app_version": "26.1007.21159",
+    "unified_computer_use_plugin_version": "26.1007.21159",
+    "cua_repl_package_version": "0.1.0",
+    "codex_computer_use_service_version": "26.929.1001365",
+    "_zip_url": "https://persistent.oaistatic.com/codex-app-prod/ChatGPT-darwin-arm64-26.1007.21159.zip",
+    "_zip_sha256": "7a12eecaba6e0119e347517c499df006a501a7cc20402fba02b03de407142918",
+    "_app_executable_sha256": "78ea6475fc65222a54d627d637d25e372c755011b8997eb269de7a6c2f2fe544",
+    "_unified_cu_plugin_json_sha256": "ad7df426996e2628655ea2efb7789491feb9e6e3ac8d6ab1c7bbcd0eec9d398d",
+    "_cua_repl_tree_sha256": "17a99308fb982988e106d4f39acfd2e578075a369b43c3e1c369cd41f07ec1a0",
+    "_browser_desktop_tree_sha256": "310a213b0013aaccbadf0f0c89d01c830fe5250b035a91be44560a7852b926e1",
+    "_cua_node_sha256": "ee2d88fda15173431807447aa2b1949f1db4e822efc4a3f4ba2c9a2b83f592f8",
+    "_service_executable_sha256": "fa5b5d685f550af82902cff1a345db558a1da3eb526cf78cd4659fa0dcde01a5",
+    "_signature": "Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2), notarized"
+  },
+  "claude_cu_helper": {
+    "_note": "Amendment 11: arm cc-claude-cu-helper, \"Claude Desktop 2.31226.0 computer-use helper via a minimal adapter\". Claude Desktop 2.31226.0 downloaded and unpacked in a clone of the bench VM only (never launched, never moved to /Applications). The helper is used unmodified in place; tools/claude_cu_helper/install_cu_helper.sh checks the archive and helper hashes and the signature. The helper's Accessibility grant was given in System Settings (Privacy & Security > Accessibility > +), through the VM's UI. Public copy: adapter_sha256 is the published cu_helper_mcp.py with its licence header (the registered runs used the same adapter without it, d3f7797bee7b).",
+    "desktop_version": "2.31226.0",
+    "desktop_zip_url": "https://downloads.claude.ai/releases/darwin/universal/2.31226.0/Claude-eb794d1033f2a59c2cd89aa29ed1f8b5de12aa73.zip",
+    "desktop_zip_bytes": 383954641,
+    "desktop_zip_sha256": "bd38f1051a14cabd893c7422e106ad6318e8785f19472c8064eafa64ce235820",
+    "helper_sha256": "7bd631e8b5ae36941ac551c474055e2eff32163db6684628eac5cfcabcb3dc14",
+    "helper_signature": "Developer ID Application: Anthropic PBC (Q6L2SF6YDW), identifier app-cu-helper",
+    "adapter_sha256": "ed0da1fc5d00da2d8a3f8a43e3b18df9a41150e97a41632107eb8f82bcd058eb",
+    "winlist_sha256": "d150737bd4a3f7995a2abe7a615b951da8189236da7e3cb969e0de670d9614d4",
+    "launcher_sha256": "c9dd836899692149e0a7d2bf144aa5f1180b359661016fddd267140c77e0057f",
+    "actions": [
+      "click",
+      "right_click",
+      "type",
+      "key",
+      "scroll",
+      "drag",
+      "hover"
+    ],
+    "tools": [
+      "app_click",
+      "app_drag",
+      "app_hover",
+      "app_key",
+      "app_list_windows",
+      "app_screenshot",
+      "app_scroll",
+      "app_type"
+    ],
+    "probe_required": [
+      "skylight",
+      "axTrusted"
+    ],
+    "helper_methods": [
+      "probe",
+      "dispatchRaw",
+      "wakeChromiumCompositor",
+      "bringWindowToActiveSpace",
+      "keyWindowSpoof"
+    ],
+    "dispatch_kinds": [
+      "click",
+      "rclick",
+      "mclick",
+      "drag",
+      "scroll",
+      "hover",
+      "key",
+      "type"
+    ]
+  },
+  "codex_native": {
+    "_note": "Amendment 20 (CUA-1347): the Codex CLI bundled in ChatGPT 26.930.51102 (codex-cli/CodexCLI.app, Developer ID OpenAI OpCo, LLC, 2DC432GLL2), host protocol `codex app-server`, model gpt-6.1-sol (Amendment 23) at its catalog default effort (low); A20's smoke used gpt-6-astra (medium). Pinned from the host's identical app version; the smoke checks the VM copy.",
+    "codex_cli_version": "codex-cli 0.160.0",
+    "codex_cli_sha256": "6b582e8813ce7e8ed4c52814ee5cf230dba647bf2292df747a4003f2657ef201",
+    "model": "gpt-6.1-sol",
+    "effort": "low"
+  }
+}

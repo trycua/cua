@@ -56,23 +56,21 @@ async fn add_list_and_delete_a_direct_space() {
     assert!(core.list_spaces().unwrap().is_empty());
 }
 
-/// Agent runs read the guest user's `$HOME` first. The mock simulates only
-/// a few programs and cannot answer that probe, so attaching is refused with
-/// a typed reason instead of a thread that fails later; the roster says the
-/// same. Attaching to a real guest, the roster and NotFound for an unknown
-/// run are covered by the docker lane of the shared scenario, and real
-/// harness runs by `cargo test -p cua-agents --test e2e_live`
+/// Agent runs read the guest user's `$HOME` first; the mock answers that
+/// probe (`printf %s "$HOME"`: `/home/cua`), so a thread attaches without
+/// starting anything. Listing runs takes a shell the mock does not simulate,
+/// so the roster is an error here, never an empty list. Real harness runs are
+/// covered by the docker lane of the shared scenario and by
+/// `cargo test -p cua-agents --test e2e_live`
 /// (libs/cua/crates/cua-agents/tests/e2e/run-agents-e2e.sh).
 #[tokio::test]
-async fn an_agent_thread_needs_a_guest_with_a_home() {
+async fn an_agent_thread_attaches_without_starting_a_run() {
     let dir = tempfile::tempdir().unwrap();
     let (_d, _core, space) = setup(dir.path(), &[]).await;
-    let Err(e) = BotThread::new(&space, "claude-code").await else {
-        panic!("attached without a guest home");
-    };
-    assert!(e.to_string().contains("home directory"), "{e}");
-    let e = roster(&space).await.unwrap_err();
-    assert!(e.to_string().contains("home directory"), "{e}");
+    let thread = BotThread::new(&space, "claude-code").await.unwrap();
+    assert!(thread.run_id().is_none());
+    assert!(thread.transcript().is_empty());
+    assert!(roster(&space).await.is_err());
 }
 
 /// A drop the Space cannot receive is an error, never a "delivered".

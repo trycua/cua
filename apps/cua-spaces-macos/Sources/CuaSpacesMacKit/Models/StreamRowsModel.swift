@@ -33,14 +33,18 @@ final class StreamRowsModel: ObservableObject {
     private let listWindows: Windows
     private let primaryDisplay: Display
     private let appIcons: Icons
+    /// When a window listing times out (tests fire it by hand).
+    private let deadline: DeadlineScheduler
 
     init(os: AppSpaceOs, osName: String?, windows: @escaping Windows,
-         display: @escaping Display, icons: @escaping Icons) {
+         display: @escaping Display, icons: @escaping Icons,
+         deadline: @escaping DeadlineScheduler = dispatchDeadline) {
         self.os = os
         self.osName = osName
         self.listWindows = windows
         self.primaryDisplay = display
         self.appIcons = icons
+        self.deadline = deadline
     }
 
     /// From the app's backend.
@@ -75,12 +79,12 @@ final class StreamRowsModel: ObservableObject {
     /// Reads the windows and the display once.
     /// How long a window listing may take: a hung one would keep "Looking
     /// for this Space's windows…" up forever; past this it reads as failed.
-    static var windowsTimeout: Double = 15
+    static let windowsTimeout: Double = 15
 
     func refresh() async {
         async let d = primaryDisplay()
         do {
-            windows = try await withTimeout(seconds: Self.windowsTimeout) { [listWindows] in
+            windows = try await withTimeout(seconds: Self.windowsTimeout, deadline: deadline) { [listWindows] in
                 try await listWindows()
             }.get()
             failed = false

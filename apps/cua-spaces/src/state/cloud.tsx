@@ -73,6 +73,8 @@ export function viewerRequestFor(space: Space): ViewerWindowRequest | null {
 
 export interface FleetSync {
   live: boolean;
+  /** Refresh failure; previously loaded rows remain available. */
+  rosterError: string | null;
   /** Whether Cua Cloud credentials are configured in the shell. */
   fleetConfigured: boolean;
   /** OAuth client id reported by the shell, when signed in; shown in Settings. */
@@ -127,6 +129,8 @@ export function useFleetSync(
   now: () => number,
 ): FleetSync {
   const live = fleet.isNative;
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  const rosterLoaded = useRef(false);
   const [fleetConfigured, setFleetConfigured] = useState(false);
   const [clientId, setClientId] = useState<string | undefined>(undefined);
   const [identity, setIdentity] = useState<string | undefined>(undefined);
@@ -180,12 +184,21 @@ export function useFleetSync(
   const refresh = useCallback(async () => {
     try {
       rowsRef.current = await fleet.listSpaces();
+      rosterLoaded.current = true;
+      setRosterError(null);
       // Finished creates the registry lists, finished deletes it dropped
       // (by id: the timestamp does not matter).
       createsRef.current = settleCreates(
         createsRef.current,
         rowsRef.current.map((row) => rowToSpace(row, 0)),
       );
+    } catch {
+      // Do not display server bodies or credential-bearing URLs.
+      const message = rosterLoaded.current
+        ? "Could not refresh Spaces. Previously loaded rows may be out of date."
+        : "Could not load Spaces. Try refreshing again.";
+      setRosterError(message);
+      throw new Error(message);
     } finally {
       publish();
     }
@@ -478,6 +491,7 @@ export function useFleetSync(
 
   return {
     live,
+    rosterError,
     fleetConfigured,
     clientId,
     identity,

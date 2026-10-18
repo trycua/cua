@@ -1,17 +1,36 @@
 ---
 title: Quickstart
-description: 'Install the Cua Spaces app and the cua CLI, run a local Space in Docker, and register it from code.'
+description: 'Install the cua CLI and the Cua Spaces app, run a local Space in Docker, and register it from code.'
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Install Cua, run a Linux desktop locally, and register it as your first Space.
+Install the cua CLI and the Cua Spaces app (macOS, Windows or Linux), run a Linux desktop
+locally, and register it as your first Space.
 
 ## Prerequisites
 
 - macOS, Linux or Windows. The Cua Spaces app for macOS needs macOS 26 or
-  later.
+  later. On Windows the app is a preview. See [Install](/spaces/guides/install).
 - Docker, for the local Space.
+
+### Cua Spaces on Linux
+
+The supported Linux package is the **.deb** on Ubuntu 24.04 (x64 and arm64),
+installed with `sudo apt install ./cua-spaces_<version>_<arch>.deb`. It is
+sandboxed, installs the confirmation prompt the Keyvault needs, and
+`sudo apt remove cua-spaces` turns off what the app set up (see
+[Unattended access](/spaces/guides/unattended-access#check-pause-remove)).
+Other distributions and desktops are untested.
+
+The **AppImage** is a portable build, not a supported one. It cannot use the
+browser sandbox (it starts with `--no-sandbox`), and without the system's
+confirmation prompt the Keyvault is unavailable. Use it to try Cua Spaces
+without installing; install the .deb to keep it.
+
+For CLI-managed local Linux Spaces, use Docker (gVisor `runsc`, when installed, adds
+isolation) or QEMU. QEMU needs read/write access to `/dev/kvm` for hardware
+acceleration of same-architecture guests. The managed runtime is macOS-only.
 
 ## Run
 
@@ -29,13 +48,13 @@ Install Cua, run a Linux desktop locally, and register it as your first Space.
 </Tabs>
 
 In a terminal it first shows a checklist: the `cua` CLI, the Cua Spaces app
-(on by default on macOS; pass `--select spaces` on Linux, `-Select spaces` on
-Windows), the cua-driver MCP and skill for your agents, and hosting this
-machine. Then it signs you in and offers to set up your AI coding agents.
+(selected by default on macOS, Linux and Windows), the cua-driver MCP and skill
+for your agents, and hosting this machine. Then it signs you in and offers to set up your AI coding agents.
 Flags: `--select ITEMS`, `--only ITEMS`, `--cli-only`, `--app-only`,
 `--mode host|client`, `--version X`, `--no-onboarding`, `--dry-run`, `--yes`
 (`-Select`, `-CliOnly`, ... on Windows). GUI installers are on
-[GitHub releases](https://github.com/trycua/cua/releases).
+[GitHub releases](https://github.com/trycua/cua/releases). See [Install](/spaces/guides/install) for
+per-platform steps.
 
 Start the canonical Linux image with a token:
 
@@ -106,7 +125,7 @@ docker rm -f my-space
 
 ## Next
 
-- [Add a Space](/spaces/guides/add-a-space): create one locally or in the cloud, from any image.
+- [Add a Space](/spaces/guides/add-a-space): create one locally or in your own cloud, from any image.
 - [Stream a desktop](/spaces/guides/stream-a-desktop).
 - [Use Spaces from an agent](/spaces/guides/use-from-an-agent).
 - [Cua Bots](/spaces/examples/cua-bots): an example app of persistent bots, each with its own Space.

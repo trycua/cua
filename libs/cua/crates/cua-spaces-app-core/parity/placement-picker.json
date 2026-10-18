@@ -7,6 +7,7 @@
     "localAvailable": true,
     "localReason": null,
     "localBackends": ["docker", "lume"],
+    "nameSeed": 42,
     "maxCpus": 8,
     "hostArch": "arm64",
     "storage": null,

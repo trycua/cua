@@ -41,6 +41,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   CUA_TELEMETRY_ENABLED: "false"
   HF_HUB_DISABLE_TELEMETRY: "1"
   PYTHONHASHSEED: "0"

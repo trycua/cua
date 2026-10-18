@@ -661,3 +661,49 @@ mod tests {
         assert!(args.bool_or("from_zoom", false));
     }
 }
+
+/// Description of the `app` filter that `list_windows` accepts on every
+/// platform.
+pub const LIST_WINDOWS_APP_FILTER_DESCRIPTION: &str = "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.";
+
+/// Whether a window owned by `app_name` (and, where known, `bundle_id`)
+/// passes `list_windows`' `app` filter: a case-insensitive substring of the
+/// app name, or the exact bundle id. An empty filter matches everything.
+pub fn app_filter_matches(filter: &str, app_name: &str, bundle_id: Option<&str>) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+    if bundle_id.is_some_and(|id| id.eq_ignore_ascii_case(filter)) {
+        return true;
+    }
+    app_name.to_lowercase().contains(&filter.to_lowercase())
+}
+
+#[cfg(test)]
+mod app_filter_tests {
+    use super::app_filter_matches;
+
+    #[test]
+    fn matches_name_substrings_and_exact_bundle_ids() {
+        assert!(app_filter_matches("libreoffice", "LibreOffice", None));
+        assert!(app_filter_matches("Office", "LibreOffice", None));
+        assert!(app_filter_matches(
+            "com.google.Chrome",
+            "Google Chrome",
+            Some("com.google.Chrome")
+        ));
+        assert!(app_filter_matches(
+            "COM.GOOGLE.CHROME",
+            "Google Chrome",
+            Some("com.google.Chrome")
+        ));
+        assert!(app_filter_matches("  ", "Anything", None));
+        assert!(!app_filter_matches(
+            "Safari",
+            "Google Chrome",
+            Some("com.google.Chrome")
+        ));
+        assert!(!app_filter_matches("com.google", "Finder", None));
+    }
+}

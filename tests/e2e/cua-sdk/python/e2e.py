@@ -104,6 +104,27 @@ def env_token_command(token: str) -> list[str]:
     ]
 
 
+# Cua Cloud has ended: `Cua.fleet()` and every cloud create fail with this
+# message (`CLOUD_ENDED` in cua-sandbox-core). The live Fleet lanes skip with
+# CLOUD_ENDED_SKIP, which run.py allows under --strict.
+CLOUD_ENDED = "Cua Cloud has ended"
+CLOUD_ENDED_SKIP = "Cua Cloud has ended (CUA-1854): there is no live Fleet lane"
+
+
+async def assert_cloud_ended(c: "cua.Cua", **create: Any) -> None:
+    """``c.fleet()`` and a cloud create (``on="cloud"``, plus ``create``'s
+    options) fail with the one `Unsupported` message, even when ``c`` holds
+    Fleet credentials; nothing is created."""
+    import pytest
+
+    with pytest.raises(cua.CuaError.Unsupported, match=CLOUD_ENDED):
+        c.fleet()
+    options = cua.SandboxCreateOptions(on="cloud", image="registry.test/cua-e2e:fake", **create)
+    with pytest.raises(cua.CuaError.Unsupported, match=CLOUD_ENDED):
+        await c.sandboxes().create(options)
+    assert not any(s.location == "cloud" for s in await c.sandboxes().list(None))
+
+
 def lane_enabled(lane: str) -> Optional[str]:
     """``None`` when ``lane`` can run here, else the skip reason."""
     flag = lambda v: os.environ.get(v) == "1"  # noqa: E731
@@ -117,22 +138,9 @@ def lane_enabled(lane: str) -> Optional[str]:
         return None if flag("CUA_E2E_QEMU") else "set CUA_E2E_QEMU=1 for the QEMU lane"
     if lane == "lume":
         return None if flag("CUA_E2E_LUME") else "set CUA_E2E_LUME=1 for the Lume lane"
-    if lane == "fleet":
-        if not flag("CUA_E2E_FLEET"):
-            return "set CUA_E2E_FLEET=1 for live Fleet"
-        if not (os.environ.get("FLEETS_TOKEN") or os.environ.get("CUA_CLIENT_ID")):
-            return "no Fleet credentials (CUA_CLIENT_ID/SECRET or FLEETS_TOKEN)"
-        return None
-    if lane == "fleet-env":
-        why = lane_enabled("fleet")
-        if why:
-            return why
-        if not os.environ.get("CUA_E2E_FLEET_ENV_IMAGE"):
-            return (
-                "CUA_E2E_FLEET_ENV_IMAGE is unset: no linux (spacesd) image "
-                "in a registry Fleet can pull"
-            )
-        return None
+    if lane in ("fleet", "fleet-env"):
+        # Cua Cloud has ended (CUA-1854): there is no live Fleet to run on.
+        return CLOUD_ENDED_SKIP
     if lane == "docs":
         return None
     if lane == "contrib":

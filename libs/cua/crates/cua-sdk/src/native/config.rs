@@ -158,8 +158,11 @@ mod tests {
     fn set_get_unset_and_sources() {
         let env = super::super::test_env::EnvGuard::isolated();
         assert_eq!(config_get("default.on".into()).unwrap().value, "local");
-        let e = config_set("default.on".into(), "cloud".into()).unwrap();
-        assert_eq!((e.value.as_str(), e.source.as_str()), ("cloud", "config"));
+        let e = config_set("default.on".into(), "aws".into()).unwrap();
+        assert_eq!((e.value.as_str(), e.source.as_str()), ("aws", "config"));
+        // Cua Cloud has ended.
+        let e = config_set("default.on".into(), "cloud".into()).unwrap_err();
+        assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
         env.set("CUA_DEFAULT_ON", "local");
         let e = config_get("default.on".into()).unwrap();
         assert_eq!((e.value.as_str(), e.source.as_str()), ("local", "env"));
@@ -180,14 +183,8 @@ mod tests {
         let l = locations();
         let local = l.iter().find(|l| l.name == "local").unwrap();
         assert_eq!(local.runtimes["container"], ["gvisor", "runc"]);
-        let cloud = l.iter().find(|l| l.name == "cloud").unwrap();
-        assert_eq!(cloud.runtimes["vm"], ["kubevirt"]);
-        check_placement("cloud".into(), "vm".into(), "".into()).unwrap();
-        let e = check_placement("cloud".into(), "vm".into(), "gvisor".into()).unwrap_err();
-        assert!(
-            e.to_string().contains("valid runtime: auto, kubevirt"),
-            "{e}"
-        );
+        // Cua Cloud has ended: no longer listed.
+        assert!(!l.iter().any(|l| l.name == "cloud"));
         check_placement("".into(), "".into(), "".into()).unwrap();
     }
 }

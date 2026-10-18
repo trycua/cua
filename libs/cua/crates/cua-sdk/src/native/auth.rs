@@ -201,9 +201,11 @@ impl Auth {
     /// On an explicit session (Rust hosts and tests: a file store in a
     /// temporary directory and a fake issuer).
     pub fn with_session(session: cua_auth::Session) -> Arc<Self> {
-        Arc::new(Auth {
-            session: Arc::new(session),
-        })
+        let session = Arc::new(session);
+        // Refresh ahead of expiry in long-lived hosts (the app, the daemon)
+        // instead of only when a call finds the token expired.
+        session.spawn_keep_alive();
+        Arc::new(Auth { session })
     }
 
     /// The underlying session (Rust hosts: a Fleet token provider).

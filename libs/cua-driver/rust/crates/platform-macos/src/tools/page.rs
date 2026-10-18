@@ -25,6 +25,17 @@ impl MacOsPageBackend {
         Self { state }
     }
 
+    /// Evaluate `js` through a CDP session the driver already holds for this
+    /// browser. Never opens a new connection: a new one makes Chrome show its
+    /// "Allow remote debugging?" prompt and pull itself to the front.
+    async fn attached_cdp_evaluate(&self, pid: i32, js: &str) -> Option<String> {
+        let port = CdpClient::find_port_for_pid(pid).await?;
+        if !self.state.cdp_sessions.has_session(port).await {
+            return None;
+        }
+        self.state.cdp_sessions.evaluate(js, port, None).await.ok()
+    }
+
     /// Resolve `bundle_id` for `pid` via the running-apps list.
     async fn bundle_id_for(pid: i32) -> String {
         tokio::task::spawn_blocking(move || {
@@ -50,13 +61,22 @@ impl PageBackend for MacOsPageBackend {
                 .unwrap_or(false);
 
         if use_ax_fallback {
-            return ax_text_fallback(pid, window_id).await;
+            return ax_text_fallback(pid, window_id, false).await;
         }
 
-        // Try JS path first; on error, fall back to AX walk.
-        match execute_js("document.body.innerText", &bundle_id, pid, window_id).await {
+        // Try JS path first; on error, use a CDP session the driver already
+        // holds, then the window's web area.
+        let js = "document.body.innerText";
+        match execute_js(js, &bundle_id, pid, window_id).await {
             Ok(result) => Ok(result),
-            Err(_) => ax_text_fallback(pid, window_id).await,
+            Err(error) => {
+                if let Some(result) = self.attached_cdp_evaluate(pid, js).await {
+                    return Ok(result);
+                }
+                ax_text_fallback(pid, window_id, BrowserJs::supports(&bundle_id))
+                    .await
+                    .map_err(|ax| anyhow::anyhow!("{ax} (JavaScript read failed first: {error})"))
+            }
         }
     }
 
@@ -75,15 +95,25 @@ impl PageBackend for MacOsPageBackend {
                 .unwrap_or(false);
 
         if use_ax_fallback {
-            let results = ax_query_fallback(pid, window_id, css_selector).await?;
+            let results = ax_query_fallback(pid, window_id, css_selector, false).await?;
             return Ok(format_ax_elements(&results));
         }
 
         let js = build_query_selector_js(css_selector, attributes);
         match execute_js(&js, &bundle_id, pid, window_id).await {
             Ok(result) => Ok(result),
-            Err(_) => {
-                let results = ax_query_fallback(pid, window_id, css_selector).await?;
+            Err(error) => {
+                if let Some(result) = self.attached_cdp_evaluate(pid, &js).await {
+                    return Ok(result);
+                }
+                let results = ax_query_fallback(
+                    pid,
+                    window_id,
+                    css_selector,
+                    BrowserJs::supports(&bundle_id),
+                )
+                .await
+                .map_err(|ax| anyhow::anyhow!("{ax} (JavaScript read failed first: {error})"))?;
                 Ok(format_ax_elements(&results))
             }
         }
@@ -133,6 +163,8 @@ impl PageBackend for MacOsPageBackend {
   return JSON.stringify({{
     vx: r.left + r.width / 2,
     vy: r.top + r.height / 2,
+    vw: r.width,
+    vh: r.height,
     sx: window.screenX + (window.outerWidth - window.innerWidth) / 2,
     sy: window.screenY + (window.outerHeight - window.innerHeight),
     dpr: window.devicePixelRatio || 1
@@ -154,12 +186,30 @@ impl PageBackend for MacOsPageBackend {
 
         let screen_x = sx + vx * dpr;
         let screen_y = sy + vy * dpr;
+        // Element box in the same space as the click point (optional: an
+        // older probe without vw/vh simply glides without a target rect).
+        let finite = |key: &str| {
+            parsed
+                .get(key)
+                .and_then(serde_json::Value::as_f64)
+                .filter(|v| v.is_finite() && *v >= 0.0)
+        };
+        let target_rect = finite("vw").zip(finite("vh")).map(|(vw, vh)| {
+            let (w, h) = (vw * dpr, vh * dpr);
+            [screen_x - w / 2.0, screen_y - h / 2.0, w, h]
+        });
         let cursor_key = "default".to_owned();
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
             cursor_overlay::OverlayCommand::PinAbove(window_id),
         );
-        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+        crate::cursor::overlay::animate_cursor_to_target(
+            cursor_key.clone(),
+            screen_x,
+            screen_y,
+            target_rect,
+        )
+        .await;
         self.state
             .cursor_registry
             .update_position(&cursor_key, screen_x, screen_y);
@@ -287,15 +337,37 @@ async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u64) -> anyh
     anyhow::bail!("Unsupported browser: bundle_id={bundle_id}");
 }
 
+/// The tree rows that are page content. A browser window's walk also holds
+/// the app's menu bar and the browser toolbar, so a browser read is scoped to
+/// the window's `AXWebArea` and fails when there is none, instead of
+/// returning the menu bar as if it were the page. Other web-view apps keep
+/// the whole tree when they expose no web area.
+fn page_rows(tree_markdown: String, require_web_area: bool) -> anyhow::Result<String> {
+    match AXPageReader::web_area_markdown(&tree_markdown) {
+        Some(page) => Ok(page),
+        None if require_web_area => anyhow::bail!(
+            "This window's page content is not readable: its accessibility tree has no \
+             AXWebArea (only the browser's own controls and the menu bar). Read it again in \
+             a moment, use get_browser_state, or attach CDP with browser_prepare."
+        ),
+        None => Ok(tree_markdown),
+    }
+}
+
 /// Extract page text via the AX tree.
-async fn ax_text_fallback(pid: i32, window_id: u64) -> anyhow::Result<String> {
+async fn ax_text_fallback(
+    pid: i32,
+    window_id: u64,
+    require_web_area: bool,
+) -> anyhow::Result<String> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let result =
         tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
             .await
             .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
-    Ok(AXPageReader::extract_text(&result.tree_markdown))
+    let rows = page_rows(result.tree_markdown, require_web_area)?;
+    Ok(AXPageReader::extract_text(&rows))
 }
 
 /// Query AX tree by CSS selector.
@@ -303,6 +375,7 @@ async fn ax_query_fallback(
     pid: i32,
     window_id: u64,
     selector: &str,
+    require_web_area: bool,
 ) -> anyhow::Result<Vec<crate::browser::ax_page_reader::AXElement>> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
@@ -311,7 +384,8 @@ async fn ax_query_fallback(
         tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
             .await
             .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
-    Ok(AXPageReader::query(&sel, &result.tree_markdown))
+    let rows = page_rows(result.tree_markdown, require_web_area)?;
+    Ok(AXPageReader::query(&sel, &rows))
 }
 
 fn format_ax_elements(elements: &[crate::browser::ax_page_reader::AXElement]) -> String {
@@ -400,4 +474,32 @@ fn required_finite(value: &serde_json::Value, key: &str, raw: &str) -> anyhow::R
                 "click_element: probe JSON missing/invalid required field '{key}' (raw: {raw:?})"
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::page_rows;
+
+    const MENU_ONLY: &str = "- [0] AXMenuBar\n  - [1] AXMenuBarItem \"Apple\"\n";
+
+    #[test]
+    fn browser_read_without_a_web_area_fails_instead_of_returning_the_menu_bar() {
+        let error = page_rows(MENU_ONLY.to_owned(), true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("AXWebArea"), "{error}");
+    }
+
+    #[test]
+    fn browser_read_is_scoped_to_the_web_area() {
+        let tree = format!("{MENU_ONLY}- [2] AXWindow \"w\"\n  - [3] AXWebArea \"p\"\n    - [4] AXStaticText \"hello\"\n");
+        let page = page_rows(tree, true).unwrap();
+        assert!(page.contains("hello"));
+        assert!(!page.contains("Apple"));
+    }
+
+    #[test]
+    fn web_view_apps_keep_the_whole_tree_without_a_web_area() {
+        assert_eq!(page_rows(MENU_ONLY.to_owned(), false).unwrap(), MENU_ONLY);
+    }
 }

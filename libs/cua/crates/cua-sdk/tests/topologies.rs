@@ -26,7 +26,10 @@ const POOL: &str = "cua-e2e-gw";
 
 struct World {
     env: SpacesdFixture,
+    // Held for the test's lifetime; unused since Cua Cloud ended.
+    #[allow(dead_code)]
     gw: SpacesdFixture,
+    #[allow(dead_code)]
     fake: FakeFleet,
     _dirs: tempfile::TempDir,
     daemon: Option<DaemonHandle>,
@@ -42,6 +45,13 @@ enum Topology {
 }
 
 async fn world(t: Topology) -> (World, Arc<Cua>) {
+    world_with_relay(t, None).await
+}
+
+async fn world_with_relay(
+    t: Topology,
+    relay: Option<cua_spaces::RelayAccount>,
+) -> (World, Arc<Cua>) {
     let env = fixtures::start_env(Some(TOKEN), None).await;
     // Port forwards on a direct sandbox go over the driver's /tunnel.
     env.mock
@@ -59,6 +69,7 @@ async fn world(t: Topology) -> (World, Arc<Cua>) {
         ..Default::default()
     })
     .unwrap();
+    runtime.spaces().set_relay(relay);
     let (cua, daemon) = match t {
         Topology::Embedded => {
             // Host local public URLs in-process: never reach a daemon the
@@ -460,244 +471,14 @@ async fn suite(t: Topology) {
     );
 
     // ----------------------------------------------------------- fleet
-    // An explicit, user-owned pool (the gateway fixture knows its name).
-    w.fake
-        .client()
-        .apply_pool(&cua_fleet::PoolSpec::new(
-            POOL,
-            "ghcr.io/trycua/cua-desktop-linux:test",
-        ))
-        .await
-        .unwrap();
+    // Cua Cloud has ended: a cloud create fails before reaching Fleet, in
+    // every topology.
     let mut o = direct("", POOL, None);
     o.on = Some("cloud".into());
     o.pool = Some(POOL.into());
     o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    let fsb = sbx.create(o).await.unwrap();
-    assert_eq!(fsb.location(), "cloud");
-    assert!(w.fake.exists("pool", POOL, POOL));
-    let fenv = fsb.spacesd(Some(5_000)).await.unwrap();
-    // Embedded: gRPC-Web through the gateway. Daemon: native gRPC to the
-    // daemon, which speaks gRPC-Web upstream.
-    let expected = if matches!(t, Topology::Embedded) {
-        "grpc-web"
-    } else {
-        "grpc"
-    };
-    assert_eq!(fenv.transport(), expected);
-    let out = fenv.run(cmd("echo", &["gw"])).await.unwrap();
-    assert_eq!(out.stdout, b"gw\n");
-    let spaces = cua.spaces();
-    let direct_space = spaces
-        .add(w.env.url.clone(), Some(TOKEN.into()), None)
-        .await
-        .unwrap();
-    let mut cat = cmd("cat", &[]);
-    cat.stdin = true;
-    let p = spaces
-        .space(direct_space.id.clone())
-        .await
-        .unwrap()
-        .spacesd()
-        .unwrap()
-        .spawn(cat)
-        .await
-        .unwrap();
-    p.write_stdin(b"over stdin".to_vec()).await.unwrap();
-    p.close_stdin().await.unwrap();
-    assert_eq!(p.wait().await.unwrap().stdout, b"over stdin");
-    spaces.remove(direct_space.id).await.unwrap();
-    let cloud_space = spaces
-        .add(format!("cloud:{}", fsb.info().name), None, None)
-        .await
-        .unwrap();
-    let cenv = spaces
-        .space(cloud_space.id.clone())
-        .await
-        .unwrap()
-        .spacesd()
-        .unwrap();
-    assert_eq!(
-        cenv.run(cmd("echo", &["space"])).await.unwrap().stdout,
-        b"space\n"
-    );
-    assert!(
-        cenv.current_ws_headers()
-            .await
-            .unwrap()
-            .iter()
-            .any(|(k, _)| k == "authorization")
-    );
-    spaces.remove(cloud_space.id).await.unwrap();
-    let svc = fsb.service("env".into()).unwrap();
-    // Cloud: signed service URLs, no Fleet vocabulary outside the details.
-    let signed = svc.url().await.unwrap();
-    assert!(signed.starts_with("https://signed.fleet.test/"), "{signed}");
-    assert_eq!(svc.url().await.unwrap(), signed, "reused until near expiry");
-    let p = fsb.public_url("env".into(), Some(600), None).await.unwrap();
-    // The same from the service handle.
-    let sp = svc.public_url(Some(600), None).await.unwrap();
-    assert!(sp.url.starts_with("https://signed.fleet.test/"), "{sp:?}");
-    assert_eq!(sp.service, "env");
-    assert!(p.url.starts_with("https://signed.fleet.test/"), "{p:?}");
-    assert_eq!(p.service, "env");
-    assert_eq!(
-        p.provider_details.get("claim").map(String::as_str),
-        Some(POOL)
-    );
-    let finfo = fsb.info();
-    assert_eq!(finfo.location, "cloud");
-    // Listing: the default includes live cloud claims; `Local` never does,
-    // and `Fleet` lists only cloud ones.
-    let all = sbx.list_with_warnings(None).await.unwrap();
-    assert!(all.warnings.is_empty(), "{all:?}");
-    assert!(
-        all.sandboxes
-            .iter()
-            .any(|s| s.name == finfo.name && s.location == "cloud"),
-        "{all:?}"
-    );
-    assert!(
-        !sbx.list(Some("local".into()))
-            .await
-            .unwrap()
-            .iter()
-            .any(|s| s.location == "cloud")
-    );
-    let cloud = sbx.list(Some("cloud".into())).await.unwrap();
-    assert!(cloud.iter().all(|s| s.location == "cloud") && !cloud.is_empty());
-    // Deprecated alias.
-    assert_eq!(sbx.list_all().await.unwrap().len(), all.sandboxes.len());
-    assert_eq!(finfo.phase, cua_sdk::SandboxPhase::Ready);
-    assert_eq!(
-        finfo.provider_details.get("pool").map(String::as_str),
-        Some(POOL)
-    );
-    let hdr = |n: &str, v: &str| cua_sdk::HttpHeader {
-        name: n.into(),
-        value: v.into(),
-    };
-    // Service requests go straight to the gateway (the pipe itself is
-    // tested in tests/mcp.rs): the route carries the Fleet bearer and claim.
-    let ep = svc.endpoint().await.unwrap();
-    if matches!(t, Topology::Embedded) {
-        assert!(ep.url.ends_with("-env"), "{ep:?}");
-        assert!(
-            ep.headers
-                .iter()
-                .any(|h| h.name == "x-cua-fleet-claim" && h.value == POOL)
-        );
-    } else {
-        assert!(
-            ep.url.ends_with("/v1/sandboxes/cloud:cua-e2e-gw/svc/env"),
-            "daemon passthrough: {ep:?}"
-        );
-    }
-    // The gateway owns authorization.
-    assert!(matches!(
-        svc.request(
-            "GET".into(),
-            "/status".into(),
-            None,
-            Some(5_000),
-            Some(vec![hdr("authorization", "Bearer x")]),
-        )
-        .await,
-        Err(CuaError::InvalidArgument(_))
-    ));
-    // Fleet media carries the Fleet bearer and claim upstream.
-    let fsink = Arc::new(Collect::default());
-    let fs = fenv
-        .open_media(
-            MediaOpenOptions {
-                display: None,
-                window_handle: None,
-                max_fps: 0,
-                max_dimension: 0,
-                audio: false,
-                disable_video: false,
-                request_json: None,
-            },
-            fsink.clone(),
-        )
-        .await
-        .unwrap();
-    eventually("fleet frames", || fsink.frames.lock().unwrap().len() >= 2).await;
-    fs.close().await.unwrap();
-    {
-        let m = w.gw.media.lock().unwrap();
-        assert_eq!(
-            m.last_authorization.as_deref(),
-            Some("Bearer fake-fleet-token")
-        );
-        assert_eq!(m.last_claim.as_deref(), Some(POOL));
-    }
-    fsb.delete().await.unwrap();
-    assert!(
-        !w.fake.exists("claim", POOL, POOL),
-        "claim released on delete"
-    );
-    assert!(w.fake.exists("pool", POOL, POOL), "explicit pools stay");
-
-    // Managed pool (no `pool`): same API in every topology; the runtime
-    // (in daemon mode, the daemon) holds the claim and its heartbeat.
-    let mut o = direct("", "", None);
-    o.on = Some("cloud".into());
-    o.name = None;
-    o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    // The runtime defaults from the image's manifest (a fixture here).
-    cua_fleet::testing::set_image_variant(&o.image, cua_fleet::ImageVariant::ContainerDisk);
-    o.warm = Some(true);
-    o.max_pool_size = Some(3);
-    o.fleet_ttl_seconds = Some(120);
-    let msb = sbx.create(o).await.unwrap();
-    assert!(msb.is_ephemeral());
-    let managed: Vec<String> = w
-        .fake
-        .all_namespaces()
-        .into_iter()
-        .filter(|n| n.starts_with("cua-auto-"))
-        .collect();
-    assert_eq!(managed.len(), 1, "{managed:?}");
-    let mp = &managed[0];
-    let pool = w.fake.object("pool", mp, mp).unwrap();
-    assert_eq!(pool["spec"]["replicas"], 1);
-    assert_eq!(pool["spec"]["autoscaling"]["maxPoolSize"], 3);
-    let claims = w.fake.names("claim", mp);
-    assert_eq!(claims.len(), 1);
-    let claim = w.fake.object("claim", mp, &claims[0]).unwrap();
-    assert_eq!(claim["spec"]["ttlSecondsAfterCreated"], 120);
-    msb.delete().await.unwrap();
-    assert!(w.fake.names("claim", mp).is_empty(), "claim released");
-    assert!(w.fake.exists("pool", mp, mp), "managed pool kept for reuse");
-
-    // Fleet's per-account size cap refuses a bigger sandbox: the caller
-    // gets the typed denial with Fleet's own message, in every topology.
-    w.fake.faults.lock().unwrap().size_cap = Some((8, 32 * 1024));
-    let mut big = direct("", "", None);
-    big.on = Some("cloud".into());
-    big.name = None;
-    big.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    big.cpus = Some(16);
-    big.memory_mb = Some(64 * 1024);
-    match sbx.create(big).await {
-        Err(CuaError::FleetAdmissionDenied(m)) => {
-            assert!(m.contains(cua_fleet::testing::SIZE_LIMIT_MESSAGE), "{m}");
-        }
-        Err(e) => panic!("{t:?}: expected FleetAdmissionDenied, got {e:?}"),
-        Ok(_) => panic!("{t:?}: a 16 vCPU sandbox was admitted over the size cap"),
-    }
-    w.fake.faults.lock().unwrap().size_cap = None;
-    if matches!(t, Topology::Embedded) {
-        let pools = cua.fleet().unwrap().pools();
-        let listed = pools.list().await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(&listed[0].name, mp);
-        assert!(listed[0].managed);
-        let r = pools.gc(Some(0)).await.unwrap();
-        assert_eq!(r.deleted_pools, vec![mp.clone()]);
-        assert!(!w.fake.exists("pool", mp, mp));
-    }
+    let e = sbx.create(o).await.err().expect("cloud create fails");
+    assert!(e.to_string().contains("Cua Cloud has ended"), "{t:?}: {e}");
 
     // ---------------------------------------------------------- errors
     assert!(matches!(
@@ -843,4 +624,157 @@ async fn daemon_rejects_wrong_token_and_reports_missing_daemon() {
     tokio::time::timeout(Duration::from_secs(5), h.wait())
         .await
         .expect("daemon stopped");
+}
+
+async fn discovery_refusal(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(cua_host::StaticToken("invalid-token".into())),
+        )),
+    )
+    .await;
+    let error = cua.spaces().list().await.unwrap_err();
+    match error {
+        CuaError::Unauthenticated(message) => assert_eq!(
+            message,
+            "Relay authentication failed. Sign in again to refresh your machines."
+        ),
+        other => panic!("unexpected discovery refusal: {other:?}"),
+    }
+}
+
+// Exercise the same public SDK route used by the native app, including a
+// daemon that retains its own cached session while the relay restarts.
+async fn discovery_session_recovery(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    relay.add_account("account", "owner", None);
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "account",
+            &cua_host::relay::RegisterRequest {
+                id: "sdk-roster-machine".into(),
+                name: "studio".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    relay.require_devices(true);
+    relay.fresh_sign_in("owner");
+    let tokens = Arc::new(cua_host::StaticToken("account".into()));
+    let device = Arc::new(
+        cua_host::DeviceAuth::new(
+            &relay.url,
+            tokens.clone(),
+            Arc::new(cua_host::MemoryKeySlot::default()),
+            "client",
+        )
+        .unwrap(),
+    );
+    device.enroll().await.unwrap();
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(&relay.url, tokens).with_device(device.clone())),
+    )
+    .await;
+    let rows = cua.spaces().list().await.unwrap();
+    assert!(rows.iter().any(|row| row.id == "relay:sdk-roster-machine"));
+    let before = device.session().await.unwrap();
+    relay.forget_sessions();
+    let rows = cua
+        .spaces()
+        .list()
+        .await
+        .expect("same runtime recovers its roster");
+    assert!(rows.iter().any(|row| row.id == "relay:sdk-roster-machine"));
+    assert_ne!(device.session().await.unwrap(), before);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_embedded() {
+    discovery_session_recovery(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_daemon_socket() {
+    discovery_session_recovery(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_daemon_loopback() {
+    discovery_session_recovery(Topology::DaemonLoopback).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_embedded() {
+    discovery_refusal(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_daemon_socket() {
+    discovery_refusal(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_daemon_loopback() {
+    discovery_refusal(Topology::DaemonLoopback).await;
+}
+
+/// A `cua auth login` session as relay account tokens, as the daemon and
+/// the apps configure it (`SessionTokens`).
+struct Session(cua_auth::Session);
+
+#[async_trait::async_trait]
+impl cua_host::AccountTokens for Session {
+    async fn access_token(&self) -> cua_host::Result<String> {
+        self.0
+            .access_token(false)
+            .await
+            .map_err(|e| cua_host::Error::Unauthenticated(e.to_string()))
+    }
+    async fn signed_in(&self) -> bool {
+        !matches!(self.0.credentials(), Ok(None))
+    }
+}
+
+/// Signed out (an empty session store), the list is this machine's Spaces
+/// (no relay error): the apps show local Spaces before anyone signs in.
+async fn signed_out_lists(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    let store = tempfile::tempdir().unwrap();
+    let session = cua_auth::Session::new(
+        cua_auth::Oidc::from_env(),
+        cua_auth::Store::File(store.path().join("credentials.json")),
+    );
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(Session(session)),
+        )),
+    )
+    .await;
+    let listed = cua.spaces().list().await.unwrap();
+    assert!(
+        listed.iter().all(|s| !s.id.starts_with("relay:")),
+        "{listed:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_embedded() {
+    signed_out_lists(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_socket() {
+    signed_out_lists(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_loopback() {
+    signed_out_lists(Topology::DaemonLoopback).await;
 }

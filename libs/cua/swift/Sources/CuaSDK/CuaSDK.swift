@@ -2614,6 +2614,13 @@ public protocol DevicesProtocol: AnyObject, Sendable {
     func confirmMachine(machineId: String) async throws  -> RelayMachine
 
     /**
+     * Makes a one-time code (link, QR, install commands) that adds another
+     * computer to the account, or to `team` (from this enrolled device).
+     * It expires after `ttl_secs` (30 minutes when `None`).
+     */
+    func createPairingCode(team: String?, ttlSecs: UInt64?) async throws  -> PairingCode
+
+    /**
      * This device's id, when it has a key (no network).
      */
     func deviceId() throws  -> String?
@@ -2625,6 +2632,11 @@ public protocol DevicesProtocol: AnyObject, Sendable {
      * code to approve from an enrolled device.
      */
     func enroll() async throws  -> DeviceEnrollment
+
+    /**
+     * The account's pairing codes, newest first (without the codes).
+     */
+    func pairingCodes() async throws  -> [PairingCode]
 
     /**
      * The relay base URL.
@@ -2641,6 +2653,11 @@ public protocol DevicesProtocol: AnyObject, Sendable {
      * also deletes its key.
      */
     func revoke(id: String) async throws  -> RelayDevice
+
+    /**
+     * Revokes an unused pairing code (`pc_…`).
+     */
+    func revokePairingCode(id: String) async throws
 
     /**
      * The account's devices, the grace period, the newest `audit_limit`
@@ -2776,6 +2793,28 @@ open func confirmMachine(machineId: String)async throws  -> RelayMachine  {
 }
 
     /**
+     * Makes a one-time code (link, QR, install commands) that adds another
+     * computer to the account, or to `team` (from this enrolled device).
+     * It expires after `ttl_secs` (30 minutes when `None`).
+     */
+open func createPairingCode(team: String?, ttlSecs: UInt64?)async throws  -> PairingCode  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_create_pairing_code(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionString.lower(team),FfiConverterOptionUInt64.lower(ttlSecs)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePairingCode_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * This device's id, when it has a key (no network).
      */
 open func deviceId()throws  -> String?  {
@@ -2805,6 +2844,26 @@ open func enroll()async throws  -> DeviceEnrollment  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeDeviceEnrollment_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The account's pairing codes, newest first (without the codes).
+     */
+open func pairingCodes()async throws  -> [PairingCode]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_pairing_codes(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypePairingCode.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -2857,6 +2916,26 @@ open func revoke(id: String)async throws  -> RelayDevice  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeRelayDevice_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Revokes an unused pairing code (`pc_…`).
+     */
+open func revokePairingCode(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -8337,7 +8416,10 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func id()  -> String
 
     /**
-     * The registry entry.
+     * Connection-time snapshot; never refreshed. With spacesd, handshake
+     * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+     * families clear them. Other fields and non-spacesd services retain
+     * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
      */
     func info()  -> SpaceInfo
 
@@ -8953,7 +9035,10 @@ open func id() -> String  {
 }
 
     /**
-     * The registry entry.
+     * Connection-time snapshot; never refreshed. With spacesd, handshake
+     * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+     * families clear them. Other fields and non-spacesd services retain
+     * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
      */
 open func info() -> SpaceInfo  {
     return try!  FfiConverterTypeSpaceInfo_lift(try! rustCall() {
@@ -23730,6 +23815,7 @@ public struct LocalStorage: Equatable, Hashable {
      * Catalog image refs already pulled here at their published digest.
      */
     public var pulled: [String]
+    public var linuxRuntimeDownloadBytes: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -23753,13 +23839,14 @@ public struct LocalStorage: Equatable, Hashable {
          */container: StorageVolume?,
         /**
          * Catalog image refs already pulled here at their published digest.
-         */pulled: [String]) {
+         */pulled: [String], linuxRuntimeDownloadBytes: UInt64) {
         self.hostArch = hostArch
         self.reserveBytes = reserveBytes
         self.lume = lume
         self.qemu = qemu
         self.container = container
         self.pulled = pulled
+        self.linuxRuntimeDownloadBytes = linuxRuntimeDownloadBytes
     }
 
 
@@ -23783,7 +23870,8 @@ public struct FfiConverterTypeLocalStorage: FfiConverterRustBuffer {
                 lume: FfiConverterOptionTypeStorageVolume.read(from: &buf),
                 qemu: FfiConverterOptionTypeStorageVolume.read(from: &buf),
                 container: FfiConverterOptionTypeStorageVolume.read(from: &buf),
-                pulled: FfiConverterSequenceString.read(from: &buf)
+                pulled: FfiConverterSequenceString.read(from: &buf),
+                linuxRuntimeDownloadBytes: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -23794,6 +23882,7 @@ public struct FfiConverterTypeLocalStorage: FfiConverterRustBuffer {
         FfiConverterOptionTypeStorageVolume.write(value.qemu, into: &buf)
         FfiConverterOptionTypeStorageVolume.write(value.container, into: &buf)
         FfiConverterSequenceString.write(value.pulled, into: &buf)
+        FfiConverterUInt64.write(value.linuxRuntimeDownloadBytes, into: &buf)
     }
 }
 
@@ -24650,6 +24739,168 @@ public func FfiConverterTypeOverlayResult_lift(_ buf: RustBuffer) throws -> Over
 #endif
 public func FfiConverterTypeOverlayResult_lower(_ value: OverlayResult) -> RustBuffer {
     return FfiConverterTypeOverlayResult.lower(value)
+}
+
+
+/**
+ * A one-time code that adds a machine to the account ("Add a machine"
+ * by link or QR code).
+ */
+public struct PairingCode: Equatable, Hashable {
+    /**
+     * `pc_…` (to revoke it).
+     */
+    public var id: String
+    /**
+     * `XXXX-XXXX-XXXX`: only when just made.
+     */
+    public var code: String?
+    /**
+     * `https://cua.ai/add/<code>` (the link and the QR code): only
+     * when just made.
+     */
+    public var url: String?
+    /**
+     * `curl … | sh -s -- --pair <code>` (macOS, Linux): only when just made.
+     */
+    public var installSh: String?
+    /**
+     * The PowerShell one-liner (Windows): only when just made.
+     */
+    public var installPowershell: String?
+    /**
+     * `active`, `used`, `revoked` or `expired`.
+     */
+    public var state: String
+    /**
+     * Team the machine is added for.
+     */
+    public var team: String?
+    /**
+     * Unix seconds.
+     */
+    public var createdAt: UInt64
+    /**
+     * Unix seconds.
+     */
+    public var expiresAt: UInt64
+    /**
+     * When a machine used it.
+     */
+    public var usedAt: UInt64?
+    /**
+     * The machine it added (relay machine id).
+     */
+    public var machine: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `pc_…` (to revoke it).
+         */id: String,
+        /**
+         * `XXXX-XXXX-XXXX`: only when just made.
+         */code: String?,
+        /**
+         * `https://cua.ai/add/<code>` (the link and the QR code): only
+         * when just made.
+         */url: String?,
+        /**
+         * `curl … | sh -s -- --pair <code>` (macOS, Linux): only when just made.
+         */installSh: String?,
+        /**
+         * The PowerShell one-liner (Windows): only when just made.
+         */installPowershell: String?,
+        /**
+         * `active`, `used`, `revoked` or `expired`.
+         */state: String,
+        /**
+         * Team the machine is added for.
+         */team: String?,
+        /**
+         * Unix seconds.
+         */createdAt: UInt64,
+        /**
+         * Unix seconds.
+         */expiresAt: UInt64,
+        /**
+         * When a machine used it.
+         */usedAt: UInt64?,
+        /**
+         * The machine it added (relay machine id).
+         */machine: String?) {
+        self.id = id
+        self.code = code
+        self.url = url
+        self.installSh = installSh
+        self.installPowershell = installPowershell
+        self.state = state
+        self.team = team
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.usedAt = usedAt
+        self.machine = machine
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PairingCode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePairingCode: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PairingCode {
+        return
+            try PairingCode(
+                id: FfiConverterString.read(from: &buf),
+                code: FfiConverterOptionString.read(from: &buf),
+                url: FfiConverterOptionString.read(from: &buf),
+                installSh: FfiConverterOptionString.read(from: &buf),
+                installPowershell: FfiConverterOptionString.read(from: &buf),
+                state: FfiConverterString.read(from: &buf),
+                team: FfiConverterOptionString.read(from: &buf),
+                createdAt: FfiConverterUInt64.read(from: &buf),
+                expiresAt: FfiConverterUInt64.read(from: &buf),
+                usedAt: FfiConverterOptionUInt64.read(from: &buf),
+                machine: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PairingCode, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.code, into: &buf)
+        FfiConverterOptionString.write(value.url, into: &buf)
+        FfiConverterOptionString.write(value.installSh, into: &buf)
+        FfiConverterOptionString.write(value.installPowershell, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterOptionString.write(value.team, into: &buf)
+        FfiConverterUInt64.write(value.createdAt, into: &buf)
+        FfiConverterUInt64.write(value.expiresAt, into: &buf)
+        FfiConverterOptionUInt64.write(value.usedAt, into: &buf)
+        FfiConverterOptionString.write(value.machine, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePairingCode_lift(_ buf: RustBuffer) throws -> PairingCode {
+    return try FfiConverterTypePairingCode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePairingCode_lower(_ value: PairingCode) -> RustBuffer {
+    return FfiConverterTypePairingCode.lower(value)
 }
 
 
@@ -27639,6 +27890,11 @@ public struct SandboxInfo: Equatable, Hashable {
      * a registry, and the daemon topology.
      */
     public var imageInfo: ImageInfo?
+    /**
+     * Why a local sandbox stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+     */
+    public var stopReason: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -27700,7 +27956,11 @@ public struct SandboxInfo: Equatable, Hashable {
          * The image as resolved and pinned at create time (digest, variant).
          * `None` for direct connections, named pools, images not resolved from
          * a registry, and the daemon topology.
-         */imageInfo: ImageInfo? = nil) {
+         */imageInfo: ImageInfo? = nil,
+        /**
+         * Why a local sandbox stopped without being asked to, in plain words
+         * ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+         */stopReason: String? = nil) {
         self.name = name
         self.kind = kind
         self.runtime = runtime
@@ -27717,6 +27977,7 @@ public struct SandboxInfo: Equatable, Hashable {
         self.expiresAtUnix = expiresAtUnix
         self.providerDetails = providerDetails
         self.imageInfo = imageInfo
+        self.stopReason = stopReason
     }
 
 
@@ -27750,7 +28011,8 @@ public struct FfiConverterTypeSandboxInfo: FfiConverterRustBuffer {
                 location: FfiConverterString.read(from: &buf),
                 expiresAtUnix: FfiConverterOptionInt64.read(from: &buf),
                 providerDetails: FfiConverterDictionaryStringString.read(from: &buf),
-                imageInfo: FfiConverterOptionTypeImageInfo.read(from: &buf)
+                imageInfo: FfiConverterOptionTypeImageInfo.read(from: &buf),
+                stopReason: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -27771,6 +28033,7 @@ public struct FfiConverterTypeSandboxInfo: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.expiresAtUnix, into: &buf)
         FfiConverterDictionaryStringString.write(value.providerDetails, into: &buf)
         FfiConverterOptionTypeImageInfo.write(value.imageInfo, into: &buf)
+        FfiConverterOptionString.write(value.stopReason, into: &buf)
     }
 }
 
@@ -30043,6 +30306,12 @@ public struct SpaceInfo: Equatable, Hashable {
      * Empty for other Spaces.
      */
     public var cloudDelete: String
+    /**
+     * Why a local Space stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"); empty otherwise,
+     * and once it is started again.
+     */
+    public var stopReason: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30127,7 +30396,12 @@ public struct SpaceInfo: Equatable, Hashable {
          * device created it), `host:<machine>` (the device that created it,
          * through the relay) or `elsewhere` (only there; `remove` keeps it).
          * Empty for other Spaces.
-         */cloudDelete: String) {
+         */cloudDelete: String,
+        /**
+         * Why a local Space stopped without being asked to, in plain words
+         * ("out of memory", "killed", "exited with code 1"); empty otherwise,
+         * and once it is started again.
+         */stopReason: String = "") {
         self.id = id
         self.name = name
         self.provider = provider
@@ -30149,6 +30423,7 @@ public struct SpaceInfo: Equatable, Hashable {
         self.cloud = cloud
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
+        self.stopReason = stopReason
     }
 
 
@@ -30187,7 +30462,8 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
                 powerState: FfiConverterString.read(from: &buf),
                 cloud: FfiConverterString.read(from: &buf),
                 cloudPlace: FfiConverterString.read(from: &buf),
-                cloudDelete: FfiConverterString.read(from: &buf)
+                cloudDelete: FfiConverterString.read(from: &buf),
+                stopReason: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -30213,6 +30489,7 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
         FfiConverterString.write(value.cloud, into: &buf)
         FfiConverterString.write(value.cloudPlace, into: &buf)
         FfiConverterString.write(value.cloudDelete, into: &buf)
+        FfiConverterString.write(value.stopReason, into: &buf)
     }
 }
 
@@ -38379,6 +38656,31 @@ fileprivate struct FfiConverterSequenceTypeOverlayResult: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypePairingCode: FfiConverterRustBuffer {
+    typealias SwiftType = [PairingCode]
+
+    public static func write(_ value: [PairingCode], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePairingCode.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PairingCode] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PairingCode]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePairingCode.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePersistentAgentInfo: FfiConverterRustBuffer {
     typealias SwiftType = [PersistentAgentInfo]
 
@@ -40280,10 +40582,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_devices_confirm_machine() != 44995) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_devices_create_pairing_code() != 19274) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_devices_device_id() != 58064) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_enroll() != 25682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_devices_pairing_codes() != 10069) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_relay_url() != 39774) {
@@ -40293,6 +40601,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_revoke() != 27802) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132) {
@@ -40676,7 +40987,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_id() != 55610) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_space_info() != 1726) {
+    if (uniffi_cua_sdk_checksum_method_space_info() != 20024) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_join_presence() != 56636) {

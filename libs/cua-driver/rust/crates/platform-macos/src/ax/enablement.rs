@@ -31,6 +31,7 @@ const MATERIALIZE_MAX_ATTEMPTS: u32 = 3;
 const MATERIALIZE_RETRY_BACKOFF_SECONDS: f64 = 30.0;
 const RUN_LOOP_PUMPS_PER_POLL: u32 = 4;
 const WEB_AREA_ROLE: &str = "AXWebArea";
+const MENU_BAR_ROLE: &str = "AXMenuBar";
 const WEB_AREA_MAX_DEPTH: u32 = 10;
 const WEB_AREA_PROBE_NODES: u32 = 400;
 
@@ -136,18 +137,30 @@ fn wait_outcome(
 ) -> Option<Wait> {
     match opt_in {
         AccessibilityOptIn::NotAccepted => None,
-        AccessibilityOptIn::EnhancedUserInterface | AccessibilityOptIn::NotNeeded => {
-            Some(Wait::Complete)
+        AccessibilityOptIn::NotNeeded => Some(Wait::Complete),
+        // Chrome builds its web tree asynchronously after either opt-in, so
+        // both wait for it. Returning at once for `AXEnhancedUserInterface`
+        // let the first read return browser chrome only (CUA-1766).
+        AccessibilityOptIn::EnhancedUserInterface | AccessibilityOptIn::ManualAccessibility => {
+            Some(if await_tree() {
+                Wait::Complete
+            } else {
+                Wait::TimedOut {
+                    attempts: prior_timeouts + 1,
+                    attempted_at,
+                }
+            })
         }
-        AccessibilityOptIn::ManualAccessibility => Some(if await_tree() {
-            Wait::Complete
-        } else {
-            Wait::TimedOut {
-                attempts: prior_timeouts + 1,
-                attempted_at,
-            }
-        }),
     }
+}
+
+unsafe fn web_area_is_populated(web_area: AXUIElementRef) -> bool {
+    let children = copy_children(web_area);
+    let populated = !children.is_empty();
+    for child in children {
+        CFRelease(child as CFTypeRef);
+    }
+    populated
 }
 
 unsafe fn has_web_area(element: AXUIElementRef, depth: u32, visits: &mut u32) -> bool {
@@ -158,8 +171,15 @@ unsafe fn has_web_area(element: AXUIElementRef, depth: u32, visits: &mut u32) ->
     for child in copy_children(element) {
         if !found && *visits > 0 {
             *visits -= 1;
-            found = copy_string_attr(child, "AXRole").as_deref() == Some(WEB_AREA_ROLE)
-                || has_web_area(child, depth - 1, visits);
+            let role = copy_string_attr(child, "AXRole");
+            found = match role.as_deref() {
+                // Menu items are numerous and never hold web content.
+                Some(MENU_BAR_ROLE) => false,
+                // An AXWebArea with no children is a stub: Chrome has not
+                // built the page tree yet, so it does not count as content.
+                Some(WEB_AREA_ROLE) => web_area_is_populated(child),
+                _ => has_web_area(child, depth - 1, visits),
+            };
         }
         CFRelease(child as CFTypeRef);
     }
@@ -350,33 +370,45 @@ mod tests {
     }
 
     #[test]
-    fn only_the_manual_accessibility_path_polls_for_web_content() {
+    fn both_chromium_opt_ins_wait_for_web_content_and_others_do_not() {
         let now = Instant::now();
+        for opt_in in [
+            AccessibilityOptIn::EnhancedUserInterface,
+            AccessibilityOptIn::ManualAccessibility,
+        ] {
+            let polls = Cell::new(0u32);
+            let ready = wait_outcome(opt_in, 0, now, || {
+                polls.set(polls.get() + 1);
+                true
+            });
+            assert_eq!(ready, Some(Wait::Complete));
+            assert_eq!(polls.get(), 1, "{opt_in:?} must wait for the web tree");
+            assert_eq!(
+                wait_outcome(opt_in, 1, now, || false),
+                Some(Wait::TimedOut {
+                    attempts: 2,
+                    attempted_at: now
+                }),
+                "{opt_in:?}: a tree that never appears is a timeout, not Complete"
+            );
+        }
         let polls = Cell::new(0u32);
-        let probe = || {
-            polls.set(polls.get() + 1);
-            false
-        };
-
         assert_eq!(
-            wait_outcome(AccessibilityOptIn::EnhancedUserInterface, 0, now, probe),
-            Some(Wait::Complete),
-            "an app that only accepts AXEnhancedUserInterface has no web area to wait for"
-        );
-        assert_eq!(
-            wait_outcome(AccessibilityOptIn::NotNeeded, 0, now, probe),
+            wait_outcome(AccessibilityOptIn::NotNeeded, 0, now, || {
+                polls.set(polls.get() + 1);
+                false
+            }),
             Some(Wait::Complete),
             "a native app needs no enablement, so later walks skip it"
         );
         assert_eq!(
-            wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, probe),
+            wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, || {
+                polls.set(polls.get() + 1);
+                false
+            }),
             None
         );
-        assert_eq!(
-            polls.get(),
-            0,
-            "only the Chromium opt-in may pay the materialization wait"
-        );
+        assert_eq!(polls.get(), 0, "native apps must not pay the wait");
     }
 
     #[test]

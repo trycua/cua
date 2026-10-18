@@ -3,5 +3,5 @@
   "name": "WinRects",
   "description": "Expose window geometry, capture, cursor, and verified activation for cua-driver on Wayland.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
-  "version": 8
+  "version": 10
 }

@@ -31,6 +31,8 @@ struct FakeBackend {
     /// The `launch` flag of every launching delivery.
     launches: Mutex<Vec<bool>>,
     captures: Mutex<Vec<ImportSpec>>,
+    /// Makes every wipe fail like a removed Space or an expired import.
+    wipe_gone: Mutex<bool>,
     /// Name -> immutable Space id. A name absent here resolves to a stable
     /// `sandbox-<name>`; a test can insert a new id to model a rename or a
     /// re-created Space (red-team F1).
@@ -218,6 +220,9 @@ impl Backend for FakeBackend {
     }
 
     async fn wipe(&self, target: &str, import_id: &str) -> cua_keyvault::Result<Vec<String>> {
+        if *self.wipe_gone.lock().unwrap() {
+            return Err(Error::NotFound(format!("Space {target:?}")));
+        }
         self.wiped
             .lock()
             .unwrap()
@@ -819,6 +824,32 @@ async fn revoking_one_site_leaves_the_others() {
     let left = all_items(&r).await;
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].id, i2[0]);
+}
+
+/// #4887: items delivered to a Space that was since removed (or whose import
+/// expired) must still be deletable.
+#[tokio::test]
+async fn deleting_items_whose_space_or_import_is_gone_succeeds() {
+    let r = rig().await;
+    let (token, ids) = grant(&r, &r.koala, "github.com", "dev-1").await;
+    r.broker
+        .teleport(
+            &r.koala,
+            TeleportRequest {
+                token: Some(token),
+                items: ids.clone(),
+                target: "dev-1".into(),
+                include_passwords: false,
+                launch: false,
+            },
+        )
+        .await
+        .unwrap();
+    *r.backend.wipe_gone.lock().unwrap() = true;
+    r.broker.delete_items(&r.cua, ids.clone()).await.unwrap();
+    assert!(all_items(&r).await.is_empty());
+    let deliveries = r.broker.list_deliveries(&r.cua).await.unwrap();
+    assert!(deliveries.iter().all(|d| d.wiped));
 }
 
 #[tokio::test]
@@ -1561,8 +1592,14 @@ async fn os_setup_fails_fast_without_a_presence_prompt_when_unavailable() {
     let cua = CallerIdentity::for_tests("com.trycua.cua", true);
     // `false`: a debug daemon serving a test identity. `true`: a daemon
     // allowed to use it, but this test binary is not the signed Cua daemon,
-    // so it may not create the OS protector (red-team F2) either.
-    for configured in [false, true] {
+    // so it may not create the OS protector (red-team F2) either. (Only a
+    // Mac asks for the signature; elsewhere a configured daemon can.)
+    let configured_daemons: &[bool] = if cfg!(target_os = "macos") {
+        &[false, true]
+    } else {
+        &[false]
+    };
+    for &configured in configured_daemons {
         let (_dir, broker, presence) = bare_broker(configured);
         let st = broker.status(&cua).await;
         assert!(!st.os_protector_available, "configured={configured}");

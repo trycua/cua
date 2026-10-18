@@ -45,6 +45,8 @@ pkgs.rustPlatform.buildRustPackage {
     clang
     python3
   ];
+  # Transport tests launch an isolated D-Bus session instead of using the host bus.
+  nativeCheckInputs = [ pkgs.dbus ];
   CUA_TEST_PYTHON = "${pkgs.python3}/bin/python3";
   CUA_TEST_PYTHON_DYNAMIC_LINKER = pkgs.stdenv.cc.bintools.dynamicLinker;
   CUA_TEST_GLIBC_STATIC_LIB = "${pkgs.glibc.static}/lib";

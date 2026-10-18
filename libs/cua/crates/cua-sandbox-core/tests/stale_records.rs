@@ -19,6 +19,8 @@ use std::{
 struct Runtime {
     instances: Mutex<HashMap<String, InstanceStatus>>,
     unreachable: Vec<String>,
+    /// Instances `list` leaves out (the daemon's listing has no Lume VMs).
+    unlisted: Vec<String>,
 }
 
 #[async_trait]
@@ -45,6 +47,7 @@ impl LocalRuntime for Runtime {
             .lock()
             .unwrap()
             .iter()
+            .filter(|(n, _)| !self.unlisted.contains(n))
             .map(|(n, s)| LocalSummary {
                 name: n.clone(),
                 backend: "qemu".into(),
@@ -148,6 +151,32 @@ async fn an_unreachable_engine_is_not_reported_missing() {
     sbx.state().save(&record("cua-e2e-maybe")).unwrap();
     let list = sbx.list().await.unwrap();
     assert_eq!(status_of(&list, "cua-e2e-maybe"), Status::Running);
+}
+
+/// After a host reboot the state file still says `running`, but the VM is
+/// stopped. A VM the backend listing leaves out (Lume) is listed with the
+/// status its engine reports, not the recorded one.
+#[tokio::test]
+async fn a_vm_stopped_by_a_reboot_is_listed_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let rt = Arc::new(Runtime {
+        unlisted: vec!["cua-e2e-mac".into()],
+        ..Default::default()
+    });
+    rt.instances
+        .lock()
+        .unwrap()
+        .insert("cua-e2e-mac".into(), InstanceStatus::Stopped);
+    let sbx = Sandboxes::builder().local(rt).state_dir(dir.path()).build();
+    sbx.state().save(&record("cua-e2e-mac")).unwrap();
+    assert_eq!(sbx.state().load("cua-e2e-mac").unwrap().status(), "running");
+
+    let list = sbx.list().await.unwrap();
+    assert_eq!(status_of(&list, "cua-e2e-mac"), Status::Stopped);
+    assert_eq!(
+        sbx.get("cua-e2e-mac").await.unwrap().status,
+        Status::Stopped
+    );
 }
 
 #[tokio::test]

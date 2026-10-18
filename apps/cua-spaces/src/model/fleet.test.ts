@@ -43,6 +43,10 @@ describe("resolveMembers", () => {
 });
 
 describe("estimateHourly", () => {
+  it("does not price or create an unknown OS as Linux", () => {
+    expect(() => hourlyRate("unknown", "standard")).toThrow("Cannot price an unknown operating system");
+    expect(() => createFleetLocally({ ...qa, templateId: "custom", customOs: "unknown" }, [], FIXTURE_NOW)).toThrow("Choose an operating system");
+  });
   it("prices by OS multiplier and sums honestly", () => {
     expect(hourlyRate("linux", "standard")).toBe(0.34);
     expect(hourlyRate("windows", "standard")).toBe(0.46);

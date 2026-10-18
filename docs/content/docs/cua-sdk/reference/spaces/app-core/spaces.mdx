@@ -584,7 +584,7 @@ Returned by [`app_space_detail`](#app_space_detail), [`app_space_detail_for`](#a
 | `actions` | [`Vec<AppDetailAction>`](/cua-sdk/reference/spaces/app-core/window#appdetailaction-record) |  | Toolbar buttons, in order (none for this machine). |
 | `confirm` | [`AppDeleteConfirm`](/cua-sdk/reference/spaces/app-core/window#appdeleteconfirm-record) |  | What Delete asks first. |
 | `sections` | `Vec<String>` |  | The sections under the facts, in order (Stream, Agents, Teleport). |
-| `credit_notice` / `creditNotice` | [`Option<AppCreditNotice>`](/cua-sdk/reference/spaces/app-core/billing#appcreditnotice-record) |  | A cloud Space refused for want of credit: one line and "Add credit" (the website billing page). |
+| `credit_notice` / `creditNotice` | [`Option<AppCreditNotice>`](/cua-sdk/reference/spaces/account-app-core#appcreditnotice-record) |  | A cloud Space refused for want of credit: one line and "Add credit" (the website billing page). |
 | `power_error` / `powerError` | `Option<String>` |  | Why turning it off or on failed, shown inline under the preview. |
 | `access` | [`Option<AppMachineAccessNotice>`](/cua-sdk/reference/spaces/app-core/devices#appmachineaccessnotice-record) |  | Signed in, but this device is not enrolled: a machine reached through the relay is listed with its Connect greyed out under this line and its one action (`detail_for`). |
 | `desktop_note` / `desktopNote` | `Option<String>` |  | One of your machines that does not share its desktop: the line shown in place of its desktop, Stream, Agents and Teleport (`desktop_note`). |
@@ -631,6 +631,7 @@ Returned by [`app_space_rows_from_json`](#app_space_rows_from_json).
 | `cloud` | `Option<String>` |  | For a Space in your cloud: the provider word (`aws`, `gcp`, `modal`). |
 | `cloud_place` / `cloudPlace` | `Option<String>` |  | Its account and region in words ("AWS · us-west-2"). |
 | `cloud_delete` / `cloudDelete` | `Option<String>` |  | Where Delete permanently can delete it: `here`, `host:<machine>` (that machine created it) or `elsewhere` (another device did). |
+| `stop_reason` / `stopReason` | `Option<String>` |  | Why a local Space stopped without being asked to, in plain words ("out of memory", "killed", "exited with code 1"), as the SDK recorded it; absent otherwise. |
 
 ## `AppSpaceSdkRef` record
 

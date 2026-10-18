@@ -18,6 +18,7 @@ path = "src/main.rs"
 
 [features]
 default = []
+byoc = ["cua-sdk/byoc", "cua-daemon/byoc"]
 # Contrib sandbox providers (`--on e2b`, `--on daytona`, `--on modal`),
 # off by default: `contrib` for every one, `contrib-<name>` for one.
 contrib = ["cua-sdk/contrib", "cua-daemon/contrib"]
@@ -27,11 +28,11 @@ contrib-modal = ["cua-sdk/contrib-modal", "cua-daemon/contrib-modal"]
 
 [dependencies]
 cua-home.workspace = true
-cua-sdk = { workspace = true, features = ["local", "spaces", "media", "byoc"] }
+cua-sdk = { workspace = true, features = ["local", "spaces", "media"] }
 # `cua auth provider ...`: the contrib catalog and credential store (no
 # provider is compiled in unless a `contrib` feature is on).
 cua-contrib.workspace = true
-cua-daemon = { workspace = true, features = ["server", "client", "byoc"] }
+cua-daemon = { workspace = true, features = ["server", "client"] }
 cua-spacesd-client.workspace = true
 # `cua doctor`: resolve the image under test (registry facts).
 cua-image.workspace = true
@@ -76,7 +77,7 @@ libc = "0.2"
 
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 # `stream-probe` input batches checked against the protocol's own type.

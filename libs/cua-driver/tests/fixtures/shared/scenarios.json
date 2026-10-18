@@ -390,6 +390,15 @@
     }
    },
    {
+    "id": "popup_select",
+    "kind": "popup_select",
+    "description": "NSPopUpButton (Choose a team/Design/Research/Finance). AXPress opens its menu; choosing an item sets popup_value=. Background tests check the front window keeps key status while the menu is open.",
+    "controls": {
+     "popup_aid": "pop-team",
+     "value_label_aid": "lbl-popup-value"
+    }
+   },
+   {
     "id": "scroll_target",
     "kind": "scroll_viewer",
     "description": "NSScrollView with a tall NSTextView body between SCROLL_TOP/BOTTOM markers and an offset label. Tests scroll tool delivery. scroll_offset= label.",

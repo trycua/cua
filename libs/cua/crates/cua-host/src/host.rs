@@ -86,6 +86,9 @@ pub struct SetupOptions {
     /// Tailscale and private LAN addresses, and allow a public listen
     /// address (see [`crate::direct`]). Default off.
     pub allow_any_address: bool,
+    /// Install the driver before registering (a single-use pairing code is
+    /// then spent only once the download worked). Default off.
+    pub download_first: bool,
 }
 
 impl SetupOptions {
@@ -102,6 +105,7 @@ impl SetupOptions {
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            download_first: false,
         }
     }
 
@@ -124,6 +128,7 @@ impl SetupOptions {
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            download_first: false,
         }
     }
 }
@@ -287,6 +292,20 @@ pub struct HostConfig {
     /// [`Host::resume_signed_in`] can bring it back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub paused_signed_out: bool,
+    /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
+    /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
+    /// service. Unset, the service follows its own default (off unless the
+    /// Cua Spaces app's channel turns it on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+}
+
+/// `CUA_MESH` where setup runs, when set.
+fn mesh_env() -> Option<String> {
+    std::env::var("CUA_MESH")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
 }
 
 /// A macOS privacy pane the user must grant the driver in.
@@ -334,18 +353,86 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
     ]
 }
 
+/// What a Mac that provides Spaces must allow in Local Network privacy, or
+/// `None` (another OS, or no Spaces provided). Its macOS Spaces are Lume
+/// VMs on vmnet (192.168.64.x), and the cua daemon that creates them must
+/// reach the guest; macOS blocks that ("No route to host") until Local
+/// Network access is allowed for the process responsible for the daemon.
+/// For a host set up with the CLI, that is the cua-spacesd LaunchAgent
+/// (`driver`), which starts the daemon when a Space is created, unless the
+/// daemon was already running from Terminal or an SSH session: then it is
+/// that app's (and over SSH nobody can be asked). macOS asks once, on this
+/// Mac's own screen; it can't be granted from here. Linux Spaces (reached
+/// through localhost) don't need it.
+pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Option<PermissionHint> {
+    if os != "macos" || !provide_spaces {
+        return None;
+    }
+    let d = driver.display();
+    Some(PermissionHint {
+        id: "local-network".into(),
+        title: "Local Network".into(),
+        settings_url:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork".into(),
+        instructions: format!(
+            "macOS Spaces on this Mac need Local Network access for cua-spacesd ({d}). When \
+             macOS asks \"Allow cua-spacesd to find devices on local networks?\" on this Mac's \
+             screen, click Allow; or turn on cua-spacesd in System Settings → Privacy & \
+             Security → Local Network. If the cua daemon was started from Terminal or over SSH, \
+             run `cua daemon stop` so the host service starts it at the next create (over SSH \
+             nothing can grant it). Without it, macOS Space creates fail with \"No route to \
+             host\"; Linux Spaces don't need it."
+        ),
+    })
+}
+
 /// The relay machine meta key saying whether this machine provides Spaces
 /// (`on` / `off`), as of its last setup. Your other devices list a machine
 /// that provides Spaces in their "Run on" menu even while it is offline
 /// (with why), instead of leaving it out.
 pub const META_PROVIDES_SPACES: &str = "cua.host.spaces";
 
+/// The relay machine meta key with this machine's OS family (`macos`,
+/// `linux`, `windows`), as of its last setup. The relay directory says
+/// nothing else about the OS, so without it a client lists the machine
+/// with no OS until it has connected to it.
+pub const META_OS: &str = "cua.host.os";
+
+/// The relay machine meta key with this machine's architecture (`arm64`,
+/// `amd64`: the names Spaces use), as of its last setup.
+pub const META_ARCH: &str = "cua.host.arch";
+
+/// This build's OS family, as Spaces name it.
+fn os_family() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        "linux" => "linux",
+        _ => "",
+    }
+}
+
+/// This build's architecture, as Spaces name it.
+fn arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "amd64",
+        _ => "",
+    }
+}
+
 /// The meta a host registers with.
 fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
-    std::collections::BTreeMap::from([(
+    let mut meta = std::collections::BTreeMap::from([(
         META_PROVIDES_SPACES.to_string(),
         if provide_spaces { "on" } else { "off" }.to_string(),
-    )])
+    )]);
+    for (key, value) in [(META_OS, os_family()), (META_ARCH, arch())] {
+        if !value.is_empty() {
+            meta.insert(key.to_string(), value.to_string());
+        }
+    }
+    meta
 }
 
 /// What `status` reports (camelCase for the app).
@@ -830,10 +917,14 @@ impl Host {
                 "--no-mcp".into(),
             ]);
         }
+        let mut env = vec![("CUA_ENV_LOG".into(), "info".into())];
+        if let Some(mesh) = &config.mesh {
+            env.push(("CUA_MESH".into(), mesh.clone()));
+        }
         ServiceSpec {
             program: config.driver_bin.clone(),
             args,
-            env: vec![("CUA_ENV_LOG".into(), "info".into())],
+            env,
             log_path: p.log(),
             working_dir: user_home(&self.home),
         }
@@ -915,8 +1006,13 @@ impl Host {
             sharing: true,
             share_desktop: opts.share_desktop,
             provide_spaces: opts.provide_spaces,
+            mesh: mesh_env(),
             ..Default::default()
         };
+        if opts.download_first {
+            *stage = SetupStage::Download;
+            install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
+        }
         match &opts.mode {
             HostMode::Relay { url } => {
                 let relay = RelayClient::new(url)?;
@@ -989,16 +1085,10 @@ impl Host {
                 write_json(&self.paths.policy(), &policy)?;
             }
         }
-        *stage = SetupStage::Download;
-        let source = driver::locate(opts.driver_bin.as_deref())?;
-        match &source {
-            DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
-            DriverSource::Release { version, url, .. } => {
-                tracing::info!(%version, %url, "downloading cua-spacesd")
-            }
-            DriverSource::Local(_) => {}
+        if !opts.download_first {
+            *stage = SetupStage::Download;
+            install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
         }
-        driver::install_to(&source, &config.driver_bin).await?;
         *stage = SetupStage::Service;
         write_json(&self.paths.config(), &config)?;
         let manager = self.manager(runner);
@@ -1226,7 +1316,7 @@ impl Host {
         }
         status.paused_signed_out = config.paused_signed_out;
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
-            match self.relay_machine(url, id).await {
+            match recall_relay_view(url, id, self.relay_machine(url, id).await) {
                 Ok(m) => {
                     status.online = Some(m.online);
                     // Paused: nobody can reach it, whatever the relay's
@@ -1524,12 +1614,30 @@ impl Host {
     /// and deletes `<home>/host`. The machine id is kept so a later setup
     /// reuses it.
     pub async fn remove(&self) -> Result<()> {
+        self.remove_inner(false).await
+    }
+
+    /// [`Self::remove`] for an uninstall of the app: the Spaces this machine
+    /// provides do not stop it. Their relay machines (each Space joined the
+    /// relay as its own) are unregistered too, so nothing stays reachable
+    /// through the relay; the Spaces themselves are left as they are for
+    /// the caller to turn off ([`Self::provided_spaces`]).
+    pub async fn remove_for_uninstall(&self) -> Result<()> {
+        self.remove_inner(true).await
+    }
+
+    /// The Spaces this host provides to the owner's other devices.
+    pub fn provided_spaces(&self) -> Result<Vec<crate::provided::ProvidedSpace>> {
+        crate::provided::load_provided(&self.paths.dir)
+    }
+
+    async fn remove_inner(&self, uninstalling: bool) -> Result<()> {
         let Some(config) = self.config()? else {
             return Ok(());
         };
         // Spaces it provides would keep running with nobody to delete them.
         let provided = crate::provided::load_provided(&self.paths.dir)?;
-        if !provided.is_empty() {
+        if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
                 "this machine still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
                 provided.len(),
@@ -1543,26 +1651,76 @@ impl Host {
             )));
         }
         let mut relay_error = None;
-        if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
-            && let Ok(token) = read_secret(&self.paths.machine_token())
-        {
-            match RelayClient::new(url)?.delete(&token, id).await {
-                // Already gone: nothing to tell the relay.
-                Ok(()) | Err(Error::NotFound(_)) => {}
-                // A refused machine token leaves the entry listed under My
-                // machines; report it (after the local cleanup) rather than
-                // pretending the unregister worked.
-                Err(e) => relay_error = Some(e),
+        let mut note = |e: Error| match e {
+            // Already gone: nothing to tell the relay.
+            Error::NotFound(_) => {}
+            // A refused machine token leaves the entry listed under My
+            // machines; report it (after the local cleanup) rather than
+            // pretending the unregister worked.
+            e => relay_error = Some(e),
+        };
+        if uninstalling {
+            for space in &provided {
+                if space.machine_token.is_empty() || space.relay_url.is_empty() {
+                    continue;
+                }
+                if let Err(e) = RelayClient::new(&space.relay_url)?
+                    .delete(&space.machine_token, &space.relay_machine)
+                    .await
+                {
+                    note(e);
+                }
             }
         }
+        if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
+            && let Ok(token) = read_secret(&self.paths.machine_token())
+            && let Err(e) = RelayClient::new(url)?.delete(&token, id).await
+        {
+            note(e);
+        }
         self.manager_for_config(&config).uninstall()?;
-        std::fs::remove_dir_all(&self.paths.dir)?;
+        remove_dir_retrying(&self.paths.dir).await?;
         match relay_error {
             Some(e) => Err(Error::Relay(format!(
                 "removed locally, but the relay could not be told: {e}"
             ))),
             None => Ok(()),
         }
+    }
+}
+
+/// How long [`Host::status`] keeps the relay's last answer about this
+/// machine while the relay is briefly unreachable, before it shows the
+/// failure ("Needs attention"). A relay deploy replaces its one pod, and
+/// the proxy in front of it answers 503 for about 20 s meanwhile; the
+/// host service reconnects on its own.
+pub const RELAY_HICCUP_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The relay's last answer about each machine (relay URL, machine id),
+/// and when it came.
+type RelayViews = std::collections::HashMap<(String, String), (std::time::Instant, crate::Machine)>;
+static RELAY_VIEWS: std::sync::Mutex<Option<RelayViews>> = std::sync::Mutex::new(None);
+
+/// `read` (the relay's answer about machine `id`), remembered when it
+/// worked; a transient failure ([`Error::is_transient`]) within
+/// [`RELAY_HICCUP_GRACE`] of the last answer gets that answer instead.
+fn recall_relay_view(url: &str, id: &str, read: Result<crate::Machine>) -> Result<crate::Machine> {
+    let key = (url.to_string(), id.to_string());
+    let mut views = RELAY_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let views = views.get_or_insert_with(Default::default);
+    match read {
+        Ok(m) => {
+            views.insert(key, (std::time::Instant::now(), m.clone()));
+            Ok(m)
+        }
+        Err(e) if e.is_transient() => match views.get(&key) {
+            Some((at, m)) if at.elapsed() < RELAY_HICCUP_GRACE => {
+                tracing::debug!("relay status read failed; showing its last answer: {e}");
+                Ok(m.clone())
+            }
+            _ => Err(e),
+        },
+        Err(e) => Err(e),
     }
 }
 
@@ -1580,8 +1738,52 @@ pub fn owned_by(policy: &HostPolicy, account: &str) -> bool {
             .is_some_and(|e| e.eq_ignore_ascii_case(account))
 }
 
+/// Locates (or downloads) cua-spacesd and installs it at `dest`.
+async fn install_driver(explicit: Option<&Path>, dest: &Path) -> Result<()> {
+    let source = driver::locate(explicit)?;
+    match &source {
+        DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
+        DriverSource::Release { version, url, .. } => {
+            tracing::info!(%version, %url, "downloading cua-spacesd")
+        }
+        DriverSource::Local(_) => {}
+    }
+    driver::install_to(&source, dest).await
+}
+
+/// `remove_dir_all`, retried for up to 5 s: Windows releases a stopped
+/// driver's files (its exe, driver.log) a moment after it exits (CUA-1749).
+async fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if tries >= 20 => return Err(e),
+            Err(_) => {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_host_registers_its_os_and_arch() {
+        let meta = super::host_meta(true);
+        assert_eq!(meta[super::META_PROVIDES_SPACES], "on");
+        #[cfg(target_os = "macos")]
+        assert_eq!(meta[super::META_OS], "macos");
+        #[cfg(target_os = "linux")]
+        assert_eq!(meta[super::META_OS], "linux");
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(meta[super::META_ARCH], "arm64");
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(meta[super::META_ARCH], "amd64");
+    }
+
     #[test]
     fn strip_local_suffix_drops_mdns_and_localdomain() {
         use super::strip_local_suffix;
@@ -1607,6 +1809,25 @@ mod tests {
         assert_eq!(load_or_create_machine_id(&path).unwrap(), id);
         std::fs::write(&path, "NOT VALID").unwrap();
         assert_ne!(load_or_create_machine_id(&path).unwrap(), "NOT VALID");
+    }
+
+    #[test]
+    fn local_network_is_asked_of_macs_that_provide_spaces() {
+        let d = Path::new("/Users/me/.cua/host/bin/cua-spacesd");
+        assert!(local_network_hint("linux", true, d).is_none());
+        assert!(local_network_hint("macos", false, d).is_none());
+        let h = local_network_hint("macos", true, d).unwrap();
+        assert_eq!(h.id, "local-network");
+        assert!(h.settings_url.ends_with("Privacy_LocalNetwork"));
+        assert!(
+            h.instructions
+                .contains("cua-spacesd (/Users/me/.cua/host/bin/cua-spacesd)")
+        );
+        assert!(
+            h.instructions
+                .contains("Privacy & Security → Local Network")
+        );
+        assert!(h.instructions.contains("`cua daemon stop`"));
     }
 
     #[test]
@@ -1687,5 +1908,17 @@ mod tests {
             std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[tokio::test]
+    async fn remove_dir_retrying_removes_and_tolerates_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host");
+        std::fs::create_dir_all(host.join("bin")).unwrap();
+        std::fs::write(host.join("driver.log"), "x").unwrap();
+        super::remove_dir_retrying(&host).await.unwrap();
+        assert!(!host.exists());
+        // Already gone (removed by another step): not an error.
+        super::remove_dir_retrying(&host).await.unwrap();
     }
 }

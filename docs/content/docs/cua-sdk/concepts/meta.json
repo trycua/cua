@@ -3,6 +3,7 @@
   "pages": [
     "how-sandboxes-work",
     "telemetry",
-    "telemetry-events"
+    "telemetry-events",
+    "telemetry-error-kinds"
   ]
 }

@@ -5,9 +5,8 @@ name: "E2E: cua SDK"
 #
 #   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
 #                  the locally built reference images) + docs blocks.
-#   nightly        live Fleet (+ the spacesd image lane when
-#                  vars.CUA_E2E_FLEET_ENV_IMAGE names an image Fleet can pull),
-#                  cua-sandbox, and local QEMU (KVM) on the reference disk.
+#   nightly        cua-sandbox and local QEMU (KVM) on the reference disk.
+#                  Cua Cloud has ended, so there is no live Fleet lane.
 #   dispatch       any lane set.
 #
 # Lume needs a macOS host with nested virtualization, which hosted runners
@@ -32,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       lanes:
-        description: "Lanes (comma list: hermetic,container,qemu,fleet,fleet-env,cua-sandbox,conformance)"
+        description: "Lanes (comma list: hermetic,container,qemu,cua-sandbox,conformance)"
         default: "hermetic,container"
       langs:
         description: "Languages (py,ts,rust,go)"
@@ -46,6 +45,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -74,10 +76,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:
@@ -116,9 +115,6 @@ jobs:
         env:
           LANES: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }}
           LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust,go' }}
-          CUA_CLIENT_ID: ${{ contains(inputs.lanes, 'fleet') && secrets.CUA_CLIENT_ID || '' }}
-          CUA_CLIENT_SECRET: ${{ contains(inputs.lanes, 'fleet') && secrets.CUA_CLIENT_SECRET || '' }}
-          CUA_E2E_FLEET_ENV_IMAGE: ${{ vars.CUA_E2E_FLEET_ENV_IMAGE }}
           CUA_E2E_PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
           # cua keeps 5 GiB free by default. On this disposable runner, after
           # the setup and the Rust half's own debug build, that refused the
@@ -140,14 +136,10 @@ jobs:
           path: ${{ runner.temp }}/cua-e2e
 
   live:
-    name: nightly (fleet, cua-sandbox, qemu)
+    name: nightly (cua-sandbox, qemu)
     if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-    env:
-      CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
-      CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
-      CUA_E2E_FLEET_ENV_IMAGE: ${{ vars.CUA_E2E_FLEET_ENV_IMAGE }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
@@ -155,10 +147,7 @@ jobs:
       # push of this file a startup failure); set it for the later steps here.
       - run: echo "CUA_E2E_PLAYWRIGHT_DIR=$RUNNER_TEMP/pw" >>"$GITHUB_ENV"
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:
@@ -179,15 +168,11 @@ jobs:
           go-version: "1.24"
       - name: Build the SDK, fixtures, bindings, images, disks and runtimes
         run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
-      - name: Lanes
-        id: lanes
-        run: |
-          lanes="fleet,cua-sandbox,qemu"
-          [ -n "$CUA_E2E_FLEET_ENV_IMAGE" ] && lanes="$lanes,fleet-env"
-          echo "lanes=$lanes" >>"$GITHUB_OUTPUT"
+      # Cua Cloud has ended (CUA-1854): Fleet refuses the old live lane, so
+      # the nightly runs only the lanes that need no cloud account.
       - name: Run the suite
         run: >
-          python3 tests/e2e/cua-sdk/run.py --lanes "${{ steps.lanes.outputs.lanes }}"
+          python3 tests/e2e/cua-sdk/run.py --lanes cua-sandbox,qemu
           --langs py,ts,rust,go --strict --out "$RUNNER_TEMP/cua-e2e"
       - name: Matrix summary
         if: always()

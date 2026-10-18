@@ -137,6 +137,7 @@ impl SpacesExtension for DriveExtension {
             || drive_tools::SERVICE_TOOLS.contains(&tool)
             || persistent_tools::TOOLS.contains(&tool)
             || tool == "agent_start.home"
+            || tool == cua_spaces::agents::WATCH_OP
     }
 
     fn call_tool<'a>(&'a self, call: ToolCall<'a>) -> BoxFuture<'a, Result<ToolOutcome>> {
@@ -163,6 +164,19 @@ impl SpacesExtension for DriveExtension {
                     args,
                 )
                 .await;
+            }
+            if tool == cua_spaces::agents::WATCH_OP {
+                let field = |k: &str| {
+                    args.get(k)
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| Error::invalid(format!("{tool}: `{k}` is required")))
+                };
+                spaces.persistent().watch_run(
+                    field("space")?,
+                    field("run_id")?,
+                    field("agent")?,
+                )?;
+                return Ok(ToolOutcome::json(&json!({"watched": true})));
             }
             if tool == "agent_start.home" {
                 let space = match pinned {

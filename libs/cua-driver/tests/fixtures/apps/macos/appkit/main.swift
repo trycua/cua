@@ -19,6 +19,7 @@
 //                    whose accessibility press raises, so AppKit answers AXPress
 //                    with an AX error; one toggles before raising (#3835)
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
+//   popup_select   — NSPopUpButton (Design/Research/Finance → popup_value=)
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
@@ -65,6 +66,8 @@ let kErroringTogglesStateAID = "lbl-erroring-toggles"
 let kSelectionStateAID = "lbl-selection-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
+let kPopupAID = "pop-team"
+let kPopupValueAID = "lbl-popup-value"
 let kScrollerAID = "scroll-tall"
 let kScrollOffsetAID = "lbl-scroll-offset"
 let kAccelCountAID = "lbl-accel-count"
@@ -148,6 +151,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
     let saveSheetLabel = NSTextField(labelWithString: "save_sheet=none")
+    let popupValueLabel = NSTextField(labelWithString: "popup_value=Choose a team")
     let scrollOffsetLabel = NSTextField(labelWithString: "scroll_offset=0")
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
     var accelCount = 0
@@ -359,6 +363,25 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         contextRow.addArrangedSubview(contextButton)
         contextRow.addArrangedSubview(menuActionLabel)
         content.addArrangedSubview(contextRow)
+
+        // popup_select — an NSPopUpButton whose menu is opened by AXPress.
+        // Background tests check the user's front window keeps key status
+        // while the menu is open.
+        content.addArrangedSubview(sectionLabel("popup_select"))
+        let teamPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        teamPopup.addItems(withTitles: ["Choose a team", "Design", "Research", "Finance"])
+        teamPopup.target = self
+        teamPopup.action = #selector(onTeamPopup(_:))
+        teamPopup.setAccessibilityIdentifier(kPopupAID)
+        teamPopup.setAccessibilityLabel("Team")
+        popupValueLabel.setAccessibilityIdentifier(kPopupValueAID)
+        popupValueLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let popupRow = NSStackView()
+        popupRow.orientation = .horizontal
+        popupRow.spacing = 12
+        popupRow.addArrangedSubview(teamPopup)
+        popupRow.addArrangedSubview(popupValueLabel)
+        content.addArrangedSubview(popupRow)
 
         // scroll_target
         content.addArrangedSubview(sectionLabel("scroll_target"))
@@ -726,6 +749,10 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         menuActionLabel.stringValue = "menu_action=\(sender.title)"
     }
 
+    @objc private func onTeamPopup(_ sender: NSPopUpButton) {
+        popupValueLabel.stringValue = "popup_value=\(sender.titleOfSelectedItem ?? "")"
+    }
+
     @objc func onArrangeLeft(_ sender: NSMenuItem) {
         menuActionLabel.stringValue = "menu_action=window_arrange_left"
     }
@@ -969,6 +996,8 @@ final class SingleClickReceiver: NSView {
 
     override func mouseDown(with event: NSEvent) { record("down", event) }
     override func mouseUp(with event: NSEvent) { record("up", event) }
+    override func otherMouseDown(with event: NSEvent) { record("middle_down", event) }
+    override func otherMouseUp(with event: NSEvent) { record("middle_up", event) }
 }
 
 @main

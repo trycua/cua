@@ -946,9 +946,11 @@ impl Tool for ListWindowsTool {
                 explicit fallback instead of relying on array order. The macOS-specific \
                 on_current_space / space_ids fields are \
                 omitted on Windows; current_space_id is null.\n\n\
-                Inputs: pid (optional pid filter), on_screen_only (bool, default false).".into(),
+                Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, \
+                default false). Filter with app or pid: an unfiltered call lists every window.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer","description":"Optional pid filter. When set, only this pid's windows are returned."},
+                "app":{"type":"string","description":cua_driver_core::tool_args::LIST_WINDOWS_APP_FILTER_DESCRIPTION},
                 "on_screen_only":{"type":"boolean","description":"When true, drop windows that aren't currently on-screen. Default false."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
@@ -970,6 +972,12 @@ impl Tool for ListWindowsTool {
         .unwrap_or_default();
         if on_screen_only {
             windows.retain(|w| w.is_on_screen);
+        }
+        if let Some(filter) = args.opt_str("app") {
+            windows.retain(|w| {
+                let app_name = pid_to_name.get(&w.pid).map(String::as_str).unwrap_or("");
+                cua_driver_core::tool_args::app_filter_matches(&filter, app_name, None)
+            });
         }
 
         // Swift surfaces a warning when a pid filter matches nothing.
@@ -1199,7 +1207,9 @@ impl Tool for GetWindowStateTool {
                 INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
                 any element action against that window. The next snapshot of the same \
                 (pid, window_id) replaces this one, stales its element tokens, and lists the \
-                replaced ids in `invalidated_snapshot_ids`.\n\n\
+                replaced ids in `invalidated_snapshot_ids`. A screenshot-only read \
+                (`include_accessibility_tree:false`) keeps the current snapshot's rows and \
+                tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
                 window bounds reported come from the same `window_id`. This is the source of \
                 truth for which window the caller intends to reason about — the driver never \
@@ -1259,6 +1269,10 @@ impl Tool for GetWindowStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let display_only = match cua_driver_core::window_state_view::display_only(&args) {
+            Ok(display_only) => display_only,
+            Err(refusal) => return refusal,
+        };
         // Swift error wording 1:1.
         let pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(v) => v as u32,
@@ -1358,15 +1372,20 @@ impl Tool for GetWindowStateTool {
         let query = args.opt_str("query");
         let session_id = args.opt_str("_session_id");
         let screenshot_out_file = args.opt_str("screenshot_out_file");
+        // `display_only` is the public form of the internal observation-only
+        // read: pixels for a preview, with no snapshot or capture change.
+        let observation_only = display_only
+            || args
+                .get("_observation_only")
+                .and_then(|value| value.as_bool())
+                == Some(true);
         // Optional caps — when omitted, fall back to the walker's built-in
         // defaults (#22865). minimum:1 enforced in the schema, but defend
         // against 0 here too.
         let max_elements = view.max_elements(
             &args,
             crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
-            args.get("_observation_only")
-                .and_then(|value| value.as_bool())
-                == Some(true),
+            observation_only,
         );
         let max_depth = args
             .get("max_depth")
@@ -1383,10 +1402,6 @@ impl Tool for GetWindowStateTool {
         // `screenshot_out_file` the bytes go to disk and the path is surfaced
         // instead of embedding base64; otherwise the base64 PNG is embedded.
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
-        let observation_only = args
-            .get("_observation_only")
-            .and_then(|value| value.as_bool())
-            == Some(true);
         // `include_accessibility_tree` (default true) mirrors include_screenshot:
         // set false to SKIP the UIA walk and return just the screenshot + window
         // metadata (the capture-only / preview path).
@@ -1638,20 +1653,45 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
-                if !observation_only && !published_snapshot && screenshot_scale.is_some() {
-                    let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
-                        &[],
-                        crate::uia::snapshot::SnapshotKind::Uia,
-                    );
-                    if let Some((_, replaced)) = state.snapshots.publish_for_session(
+                // A screenshot-only read adds an image but no element rows: it
+                // refreshes the current snapshot's pixel frame in place and
+                // keeps its tokens valid. Only a window with no element
+                // snapshot yet gets a new, empty one.
+                let mut refreshed = None;
+                if let (false, false, Some(scale)) =
+                    (observation_only, published_snapshot, screenshot_scale)
+                {
+                    refreshed = state.snapshots.refresh_screenshot_for_session(
                         pid as i32,
                         hwnd,
-                        payload,
                         session_id.as_deref(),
-                        screenshot_scale,
-                    ) {
-                        invalidated.extend(replaced);
+                        scale,
+                        None,
+                    );
+                    if refreshed.is_none() {
+                        let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
+                            &[],
+                            crate::uia::snapshot::SnapshotKind::Uia,
+                        );
+                        if let Some((_, replaced)) = state.snapshots.publish_for_session(
+                            pid as i32,
+                            hwnd,
+                            payload,
+                            session_id.as_deref(),
+                            screenshot_scale,
+                        ) {
+                            invalidated.extend(replaced);
+                        }
                     }
+                }
+                if let Some(id) = refreshed {
+                    let sid = cua_driver_core::element_token::format_snapshot_id(id);
+                    content.push(cua_driver_core::protocol::Content::text(format!(
+                        "Screenshot only: snapshot {sid} keeps its rows, and its element_tokens \
+                         ({sid}:N) stay valid."
+                    )));
+                    structured["snapshot_id"] = json!(sid);
+                    structured["screenshot_refreshed_snapshot"] = json!(true);
                 }
                 if !invalidated.is_empty() {
                     let ids: Vec<String> = invalidated
@@ -1772,6 +1812,9 @@ impl Tool for GetWindowStateTool {
                     .with_structured(structured);
                 }
 
+                if display_only {
+                    cua_driver_core::window_state_view::mark_display_only(&mut structured);
+                }
                 if !observation_only {
                     cua_driver_core::window_state_view::apply(
                         &view,
@@ -5987,9 +6030,9 @@ impl Tool for SetValueTool {
                 `type_text` — UIA ValuePattern writes are ignored by some web inputs (same \
                 caveat as Swift's `AXValue`-vs-WebKit).".into(),
             input_schema: json!({
-                "type":"object","required":["pid","value"],"properties":{
+                "type":"object","required":["value"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
-                    "pid":{"type":"integer","description":"Target process ID."},
+                    "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                     "window_id":{"type":"integer","description":"HWND of the window. Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "value":{"type":"string","description":"New value. UIA will coerce to the element's native type."},
@@ -6853,11 +6896,11 @@ impl Tool for DoubleClickTool {
                 returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in \
                 quick succession to the deepest child window at that point.\n\n\
                 Exactly one of `element_token` or (`x` AND `y`) must be provided. \
-                `pid` is required in both modes. The macOS-only `modifier` field is accepted for \
+                `pid` is required with `x`, `y`; an `element_token` carries its own pid. The macOS-only `modifier` field is accepted for \
                 parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"HWND for the target window. Omit when element_token is supplied (the token carries it)."},
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
@@ -7219,12 +7262,12 @@ impl Tool for RightClickTool {
                 returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest \
                 child window at that point.\n\n\
                 Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is \
-                required in both modes. \
+                required with `x`, `y`; an `element_token` carries its own pid. \
                 `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't \
                 propagate modifier-key state).".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"HWND for the target window. Omit when element_token is supplied (the token carries it)."},
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
@@ -8504,7 +8547,7 @@ impl Tool for CheckPermissionsTool {
         PERMS_DEF.get_or_init(|| ToolDef {
             name: "check_permissions".into(),
             description: "Check required permissions for cua-driver-rs on Windows.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{"prompt":{"type":"boolean","description":"Ignored: Windows has no permission prompts."}},"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -8706,7 +8749,10 @@ impl Tool for GetConfigTool {
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
-            "cursor":              { "motion": cursor_overlay::motion_defaults::read_saved().config_json() },
+            "cursor":              {
+                "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
+                "badges": cursor_overlay::badge_mode::read_saved().as_str(),
+            },
             "experimental_pip":    pip_enabled,
             "experimental_pip_geometry": pip_geometry,
         });
@@ -8721,6 +8767,7 @@ impl Tool for GetConfigTool {
 fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
+        properties.extend(cursor_overlay::badge_mode::config_schema_properties());
     }
     schema
 }
@@ -8735,16 +8782,8 @@ impl Tool for SetConfigTool {
     fn def(&self) -> &ToolDef {
         SCFG_DEF.get_or_init(|| ToolDef {
             name: "set_config".into(),
-            // Description ported from Swift `SetConfigTool.swift`.  Windows
-            // accepts BOTH Swift's `{key, value}` dotted-path shape AND a
-            // legacy per-field shape; documented as intentional.
             description: "Write a setting into the persistent driver config. Values take \
-                effect immediately.\n\n\
-                Two input shapes:\n\
-                - **Swift-compatible** (preferred): `{\"key\": \"max_image_dimension\", \"value\": 1568}` \
-                  — single dotted-path leaf write.\n\
-                - **Legacy per-field** (Rust-only): `{\"max_image_dimension\": 0}` \
-                  — bulk write of named fields.\n\n\
+                effect immediately. Pass each setting as its own field.\n\n\
                 Known keys:\n\
                 - `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; \
                   `get_window_state` always returns both the UIA tree and a screenshot. Still \
@@ -8752,23 +8791,20 @@ impl Tool for SetConfigTool {
                 - `max_image_dimension` (integer)\n\
                 - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
                 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
-                - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` — saved default cursor motion for sessions started afterwards (see the cursor docs).\n\n\
+                - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\
+                - `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
-                "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
-                "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
-                "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
-                "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
-                "experimental_pip_geometry":{"type":"string","description":"Legacy per-field shape. PiP window size + optional position."}
+                "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
+                "experimental_pip":{"type":"boolean","description":"Enables PiP preview (applies next restart)."},
+                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position."}
             },"additionalProperties":false})),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
+        if args.get("capture_scope").is_some() {
             return ToolResult::error(
                 "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
@@ -8783,62 +8819,11 @@ impl Tool for SetConfigTool {
             Err(message) => return ToolResult::error(message),
         };
         let mut cfg = self.state.config.write().unwrap();
-        let mut applied = !motion_keys.is_empty();
-        // Swift-compatible {key, value} shape.
-        if let (Some(key), Some(val)) =
-            (args.get("key").and_then(|v| v.as_str()), args.get("value"))
-        {
-            match key {
-                "capture_mode" => match val.as_str() {
-                    Some(s) => {
-                        cfg.capture_mode = s.to_owned();
-                        if let Err(e) = pip_preview::write_config_key("capture_mode", Value::String(s.to_owned())) {
-                            tracing::warn!("set_config: failed to persist capture_mode: {e}");
-                        }
-                        applied = true;
-                    }
-                    None    => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
-                },
-                "max_image_dimension" => match val.as_u64() {
-                    Some(n) => {
-                        cfg.max_image_dimension = n as u32;
-                        if let Err(e) = pip_preview::write_config_key("max_image_dimension", Value::from(n)) {
-                            tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
-                        }
-                        applied = true;
-                    }
-                    None    => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
-                },
-                "experimental_pip" => match val.as_bool() {
-                    Some(b) => {
-                        if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
-                            return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
-                        }
-                        applied = true;
-                    }
-                    None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
-                },
-                "experimental_pip_geometry" => match val.as_str() {
-                    Some(s) => {
-                        if pip_preview::PipGeometry::parse(s).is_none() {
-                            return ToolResult::error(format!(
-                                "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
-                            ));
-                        }
-                        if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
-                            return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
-                        }
-                        applied = true;
-                    }
-                    None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
-                },
-                other if motion_keys.iter().any(|written| written == other) => {}
-                other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry, cursor.motion.style, cursor.motion.timing, cursor.motion.effects.<name>."
-                )),
-            }
-        }
-        // Legacy per-field shape.
+        let badge_key = match cursor_overlay::badge_mode::apply_config_args(&args) {
+            Ok(key) => key,
+            Err(message) => return ToolResult::error(message),
+        };
+        let mut applied = !motion_keys.is_empty() || badge_key.is_some();
         if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
             cfg.capture_mode = mode.to_owned();
             if let Err(e) =
@@ -8882,9 +8867,7 @@ impl Tool for SetConfigTool {
             applied = true;
         }
         if !applied {
-            return ToolResult::error(
-                "Missing required string field `key` (or a known legacy per-field).",
-            );
+            return ToolResult::error("set_config did not contain a known field.");
         }
         // Emit the same pretty-JSON payload as `get_config` (matches Swift's
         // `set_config` return shape — both tools echo the full config after).
@@ -10490,5 +10473,7 @@ mod desktop_scope_tests;
 #[cfg(test)]
 mod pid_window_target_tests;
 
+#[cfg(test)]
+mod display_only_tests;
 #[cfg(test)]
 mod value_write_readback_tests;

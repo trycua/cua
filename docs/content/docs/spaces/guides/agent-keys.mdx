@@ -1,0 +1,78 @@
+---
+title: Agent keys
+description: 'Give the coding agents in your Spaces a provider key (Anthropic, OpenAI or any other) once, in Cua Spaces → Settings → Agents. The key stays in the Keychain on your Mac and only reaches the agents that use it.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Claude Code, Codex and the other harnesses need a provider key to run. Add it
+once in **Cua Spaces → Settings → Agents**, and every agent you start in a
+Space gets the key it needs.
+
+- **Anthropic** (`ANTHROPIC_API_KEY`): Claude Code and other agents that use Claude.
+- **OpenAI** (`OPENAI_API_KEY`): Codex and other agents that use OpenAI models.
+- **Another key**: save it under the variable its agent reads, like
+  `GEMINI_API_KEY` or `OPENROUTER_API_KEY`.
+
+Each row shows only `•••• ` and the key's last four characters, and when you
+added it. Replace and Remove are on the same row. A key is never shown again
+after you save it.
+
+The same works from the `cua` CLI. The key is read from stdin, so it never
+lands in your shell history:
+
+```bash test="cli-shape" id="agent-keys-cli"
+cua agent keys
+pbpaste | cua agent keys set anthropic
+cua agent keys set other --env GEMINI_API_KEY < gemini.key
+cua agent keys rm OPENAI_API_KEY
+```
+
+## Which agents get a key
+
+When an agent starts (`agent_start`, a persistent agent's turn, a routine),
+the Cua daemon adds the saved keys that agent's harness reads, and no others:
+a Claude Code run gets `ANTHROPIC_API_KEY`, a Codex run gets
+`OPENAI_API_KEY`, and a Gemini CLI run gets neither. A key you pass yourself
+(`env`, or `env_from_host` from the daemon's environment) wins over a saved
+one.
+
+- **Other keys** reach a run only when its harness reads that variable, or
+  when the caller names it in `env_from_host`.
+- **A custom endpoint** (`base_url`) gets no saved key unless it is named in
+  `env_from_host`, so a key is never sent to a proxy you didn't mean it for.
+- **In the Space** the key is written 0600 into the run's own directory and
+  redacted from the run's event log, like any key a run gets.
+
+`agent_capabilities` counts saved keys: a harness whose key is saved reports
+`auth: ok`. A run with no key fails before anything is installed, and the
+error says to add the key in Settings → Agents or to set it for the Cua
+daemon.
+
+## Where the keys are kept
+
+The Cua daemon keeps the keys in one item of your login Keychain (service
+`run.cua.ai`, next to your Cua sign-in). The item trusts the Cua apps of this
+Mac, so the app, the daemon and the `cua` CLI read it without a prompt, and
+agents started at night by a routine still get their key.
+
+The keys are not kept in the [Keyvault](/spaces/guides/keyvault). The Keyvault
+holds app sessions and passwords that you approve one use at a time and can
+lock; a provider key has to reach an agent the moment it starts, unattended,
+with no vault to set up first. The Keychain item is the same store that
+already keeps your Cua session.
+
+<Callout type="info">
+  Agents never see this list. `agent_keys.list`, `agent_keys.set` and
+  `agent_keys.remove` are methods of the daemon for the Cua app, not MCP
+  tools: no agent can read, add or remove a key. Their answers carry only the
+  provider, the variable, the last four characters and when the key was
+  added. Keys never go to logs or usage data.
+</Callout>
+
+A build of cua that keeps its session in a file (an unsigned development
+build, or Linux today) can't save agent keys: they are never written to a
+plain file. Set the key in the Cua daemon's environment there instead
+(`export ANTHROPIC_API_KEY=…`, then `cua daemon stop` and `cua daemon start`)
+and name it in `env_from_host`. Windows uses the Credential Manager the same
+way as the macOS Keychain.

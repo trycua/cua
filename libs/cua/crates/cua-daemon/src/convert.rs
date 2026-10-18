@@ -128,6 +128,7 @@ pub fn info_to_pb(r: &SandboxRecord) -> pb::Sandbox {
         id: r.id.clone(),
         kind: r.kind.clone(),
         runtime: r.runtime.clone(),
+        stop_reason: r.stop_reason.clone().unwrap_or_default(),
     }
 }
 
@@ -168,6 +169,7 @@ pub fn info_from_pb(s: &pb::Sandbox) -> SandboxRecord {
         provider_details: s.provider_details.clone().into_iter().collect(),
         // Not on the daemon wire.
         image_info: None,
+        stop_reason: (!s.stop_reason.is_empty()).then(|| s.stop_reason.clone()),
     }
 }
 
@@ -221,6 +223,7 @@ mod tests {
             expires_at: Some(UNIX_EPOCH + Duration::from_secs(905)),
             provider_details: [("claim".to_string(), "c-1".to_string())].into(),
             image_info: None,
+            stop_reason: Some("out of memory".into()),
         };
         assert_eq!(info_from_pb(&info_to_pb(&r)), r);
         // An older daemon sends no id: it is derived from the location.

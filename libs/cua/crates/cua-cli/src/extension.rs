@@ -258,25 +258,114 @@ pub(crate) async fn missing_daemon_extensions() -> Vec<String> {
 /// the app updated to 0.7.0 was left without its daemon).
 pub(crate) const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long [`stop_daemon`] waits after each signal to a daemon that did
+/// not exit when asked.
+#[cfg(unix)]
+const TERMINATE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Asks the running daemon to stop and waits (bounded by [`STOP_WAIT`])
-/// for it to go.
+/// for it to go; a cua daemon still running then is ended (SIGTERM, then
+/// SIGKILL).
 pub(crate) async fn stop_daemon(discovery: &Path, pid: u32) -> Result<(), CuaError> {
+    stop_daemon_within(discovery, pid, STOP_WAIT).await
+}
+
+async fn stop_daemon_within(
+    discovery: &Path,
+    pid: u32,
+    wait: std::time::Duration,
+) -> Result<(), CuaError> {
     if let Ok(client) = cua_daemon::client::existing_daemon().await {
         let _ = client.shutdown().await;
     }
     let tick = std::time::Duration::from_millis(100);
-    for _ in 0..(STOP_WAIT.as_millis() / tick.as_millis()) {
+    for _ in 0..(wait.as_millis() / tick.as_millis()) {
         let gone = match cua_daemon::Discovery::read(discovery) {
             Some(d) => d.pid != pid,
             None => true,
         };
-        if gone && cua_daemon::client::live_address().is_none() {
+        // Removing discovery and closing listeners does not prove process exit.
+        if gone && !cua_daemon::pid_alive(pid) && cua_daemon::client::live_address().is_none() {
             return Ok(());
         }
         tokio::time::sleep(tick).await;
     }
+    // Asked and waited for, it still runs: after an app update such a
+    // daemon (its listeners closed, its process idle) kept holding the
+    // Keyvault socket (#4950). End it, so this build's daemon replaces it.
+    #[cfg(unix)]
+    if tokio::task::spawn_blocking(move || cua_daemon::terminate_daemon(pid, TERMINATE_WAIT))
+        .await
+        .unwrap_or(false)
+    {
+        eprintln!("cua: the running cua daemon (pid {pid}) did not exit when asked; ended it");
+        if cua_daemon::client::live_address().is_none() {
+            return Ok(());
+        }
+    }
     Err(CuaError::Timeout(format!(
         "the running cua daemon (pid {pid}) did not stop within {} s",
-        STOP_WAIT.as_secs()
+        wait.as_secs()
     )))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::process::{Child, Command};
+    use std::time::Duration;
+
+    struct Process(Child);
+
+    impl Drop for Process {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_discovery_does_not_mean_the_old_process_exited() {
+        let _env = crate::util::test_env::isolated();
+        let home = tempfile::tempdir().unwrap();
+        let discovery = home.path().join("daemon.json");
+        let mut process = Process(Command::new("sleep").arg("60").spawn().unwrap());
+        let pid = process.0.id();
+
+        let result =
+            tokio::time::timeout(Duration::from_millis(250), stop_daemon(&discovery, pid)).await;
+        assert!(result.is_err(), "must wait for the old process to exit");
+        assert!(process.0.try_wait().unwrap().is_none());
+
+        process.0.kill().unwrap();
+        process.0.wait().unwrap();
+        stop_daemon(&discovery, pid).await.unwrap();
+    }
+
+    /// The daemon of #4950: asked to stop, it closed its listeners but its
+    /// process never exited. It ignores SIGTERM here, so SIGKILL ends it.
+    #[tokio::test]
+    async fn a_daemon_that_never_exits_is_ended() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::util::test_env::isolated();
+        let home = tempfile::tempdir().unwrap();
+        let exe = home.path().join("cua");
+        std::fs::write(&exe, "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = Command::new(&exe)
+            .args(["daemon", "start", "--foreground"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        // Reaped as soon as it dies, so a killed one is not left a zombie.
+        let reaper = std::thread::spawn(move || child.wait().unwrap());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let discovery = home.path().join("daemon.json");
+        stop_daemon_within(&discovery, pid, Duration::from_millis(300))
+            .await
+            .expect("the stuck daemon is ended");
+        assert!(!reaper.join().unwrap().success());
+        assert!(!cua_daemon::pid_alive(pid));
+    }
 }

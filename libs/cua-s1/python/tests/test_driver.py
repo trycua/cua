@@ -122,3 +122,46 @@ def test_click_payload_and_effect_expectations_conform_to_portable_manifest():
         "refused",
     }
     assert all(tool["name"] != "set_value" for tool in manifest["tools"])
+
+
+def test_window_state_asks_for_the_full_response():
+    """cua-driver 0.35 returns lean markdown by default; s1 needs elements."""
+
+    calls = []
+
+    class RecordingDriver(BaseDriver):
+        def call(self, tool, **args):
+            calls.append((tool, args))
+            return {
+                "snapshot_id": "s1",
+                "elements_complete": True,
+                "elements": [],
+                "tree_markdown": "",
+            }
+
+    snapshot = RecordingDriver(session="test").window_state(WindowTarget(pid=10, window_id=20))
+    assert snapshot.elements_complete is True
+    assert calls[0][0] == "get_window_state"
+    assert calls[0][1]["full_output"] is True
+
+
+def test_window_state_falls_back_for_drivers_before_0_35():
+    calls = []
+
+    class OldDriver(BaseDriver):
+        def call(self, tool, **args):
+            calls.append(args)
+            if "full_output" in args:
+                raise DriverError(
+                    "driver_tool_refused",
+                    "refused",
+                    tool=tool,
+                    details={
+                        "response": {"error": "get_window_state: unknown argument full_output"}
+                    },
+                )
+            return {"snapshot_id": "s1", "elements_complete": True, "elements": []}
+
+    snapshot = OldDriver(session="test").window_state(WindowTarget(pid=10, window_id=20))
+    assert snapshot.snapshot_id == "s1"
+    assert [("full_output" in args) for args in calls] == [True, False]

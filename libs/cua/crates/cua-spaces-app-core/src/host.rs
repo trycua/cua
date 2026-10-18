@@ -312,8 +312,17 @@ pub fn validate_setup(mut request: HostSetupRequest) -> Result<HostSetupRequest,
     }
 }
 
-/// The relay host setup joins unless the form names another.
+/// The production relay. Host setup joins [`default_relay_url`] unless the
+/// form names another.
 pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
+
+/// The relay host setup joins unless the form names another:
+/// `CUA_RELAY_URL`, else the relay of `CUA_ENV` ([`DEFAULT_RELAY_URL`] in
+/// production).
+pub fn default_relay_url() -> String {
+    cua_home::env::relay_url()
+}
+
 /// The direct mode's default listen address.
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:3211";
 
@@ -1338,7 +1347,8 @@ pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac is shared with another Cua \
 account, so sharing stays paused. Remove the host setup, then set it up again \
 to share it with yours.";
 
-/// "Up to 4 Spaces · 2 macOS VMs (Apple's license allows two per Mac)".
+/// "Up to 4 Spaces · 2 macOS VMs". The macOS part is for a Mac: a shell on
+/// another system drops it (the web UI's `limitsFor`).
 pub fn limits_line(max_spaces: u32, max_macos_vms: u32) -> String {
     let spaces = if max_spaces == 0 {
         "No Space limit".to_string()
@@ -1352,7 +1362,7 @@ pub fn limits_line(max_spaces: u32, max_macos_vms: u32) -> String {
         return spaces;
     }
     format!(
-        "{spaces} \u{b7} {max_macos_vms} macOS VM{} (Apple\u{2019}s license allows two per Mac)",
+        "{spaces} \u{b7} {max_macos_vms} macOS VM{}",
         if max_macos_vms == 1 { "" } else { "s" }
     )
 }
@@ -1467,7 +1477,7 @@ impl Default for HostFormState {
             advanced: false,
             direct: false,
             listen: DEFAULT_LISTEN.into(),
-            relay_url: DEFAULT_RELAY_URL.into(),
+            relay_url: default_relay_url(),
             busy: false,
             error: None,
             spare: false,
@@ -1730,7 +1740,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             fields.push(text(
                 "relay",
                 "Relay",
-                DEFAULT_RELAY_URL,
+                &default_relay_url(),
                 &s.relay_url,
                 bad,
                 true,
@@ -2393,7 +2403,7 @@ mod tests {
         assert!(v.permissions.is_empty() && v.permissions_title.is_none());
         assert_eq!(
             v.limits.as_deref(),
-            Some("Up to 4 Spaces \u{b7} 2 macOS VMs (Apple\u{2019}s license allows two per Mac)")
+            Some("Up to 4 Spaces \u{b7} 2 macOS VMs")
         );
         assert_eq!(v.provided_empty.as_deref(), Some("None yet"));
 

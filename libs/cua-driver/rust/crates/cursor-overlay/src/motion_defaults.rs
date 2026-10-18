@@ -84,20 +84,10 @@ fn allowed_styles() -> String {
     MotionStyle::ALL.map(MotionStyle::as_str).join(", ")
 }
 
-fn effect_flag(key: &str, value: &Value) -> Result<Option<bool>, String> {
-    match value {
-        Value::Null => Ok(None),
-        Value::Bool(flag) => Ok(Some(*flag)),
-        Value::String(text) => match text.as_str() {
-            "true" | "on" => Ok(Some(true)),
-            "false" | "off" => Ok(Some(false)),
-            "default" => Ok(None),
-            _ => Err(format!(
-                "{key} must be true, false or default, got `{text}`"
-            )),
-        },
-        other => Err(format!("{key} must be true, false or default, got {other}")),
-    }
+pub(crate) fn effect_flag(key: &str, value: &Value) -> Result<Option<bool>, String> {
+    cua_driver_contract::CursorEffectSetting::from_json(value)
+        .map(cua_driver_contract::CursorEffectSetting::override_value)
+        .ok_or_else(|| format!("{key} must be on, off or default, got {value}"))
 }
 
 /// Validate one config write and fold it into `saved`.
@@ -146,7 +136,8 @@ pub fn apply_key(saved: &mut SavedMotionDefaults, key: &str, value: &Value) -> R
                     .ok_or_else(|| format!("{TIMING_KEY} must be a string, got {value}"))?;
                 Some(MotionTiming::parse(name).ok_or_else(|| {
                     format!(
-                        "unknown cursor motion timing `{name}`; expected native, fitts or fixed"
+                        "unknown cursor motion timing `{name}`; expected one of {}",
+                        MotionTiming::names()
                     )
                 })?)
             };
@@ -198,38 +189,35 @@ pub fn config_schema_properties() -> Map<String, Value> {
         TIMING_KEY.to_owned(),
         json!({
             "type": "string",
-            "enum": ["native", "fitts", "fixed"],
-            "description": "Saved default cursor move timing for new sessions."
+            "enum": MotionTiming::ALL.map(MotionTiming::as_str),
+            "description": "Saved default cursor move timing for new sessions. Built-in default: steady (a 600 ms floor on every move)."
         }),
     );
     for name in EFFECT_NAMES {
         properties.insert(
             format!("cursor.motion.effects.{name}"),
             json!({
-                "type": "boolean",
-                "description": format!("Saved default for the `{name}` cursor effect. Unset follows the style.")
+                "type": "string",
+                "enum": ["on", "off", "default"],
+                "description": format!("Saved default for the `{name}` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged.")
             }),
         );
     }
     properties.insert(
         KEY_PREFIX.to_owned(),
         json!({
-            "description": "Pass null (or `default`) to clear every saved cursor motion default."
+            "type": "string",
+            "enum": ["default"],
+            "description": "Pass `default` to clear every saved cursor motion default."
         }),
     );
     properties
 }
 
-/// Apply every cursor motion write in a `set_config` call, accepting both the
-/// `{key, value}` shape and direct dotted fields. Returns the keys written, or
+/// Apply every cursor motion write in a `set_config` call. Returns the keys written, or
 /// the first validation error (later keys are not written after an error).
 pub fn apply_config_args(args: &Value) -> Result<Vec<String>, String> {
     let mut writes: Vec<(String, Value)> = Vec::new();
-    if let (Some(key), Some(value)) = (args.get("key").and_then(Value::as_str), args.get("value")) {
-        if is_motion_key(key) {
-            writes.push((key.to_owned(), value.clone()));
-        }
-    }
     if let Some(object) = args.as_object() {
         for (key, value) in object {
             if is_motion_key(key) {
@@ -396,11 +384,11 @@ mod tests {
     }
 
     #[test]
-    fn built_in_default_is_signature_arc() {
+    fn built_in_default_is_signature_arc_with_steady_timing() {
         let mut motion = MotionConfig::default();
         SavedMotionDefaults::default().apply(&mut motion);
         assert_eq!(motion.style, MotionStyle::SignatureArc);
-        assert_eq!(motion.timing, MotionTiming::Native);
+        assert_eq!(motion.timing, MotionTiming::Steady);
     }
 
     #[test]
@@ -461,7 +449,7 @@ mod tests {
         }
         assert!(set_key_at(&path, TIMING_KEY, &json!("slow"))
             .unwrap_err()
-            .contains("native, fitts or fixed"));
+            .contains("native, fitts, fixed, relaxed, steady, calm, deliberate"));
         assert!(set_key_at(&path, "cursor.motion.effects.sparkle", &json!(true)).is_err());
         assert!(set_key_at(&path, "cursor.motion.effects.trail", &json!(3)).is_err());
         assert!(set_key_at(&path, STYLE_KEY, &json!(7)).is_err());
@@ -534,7 +522,87 @@ mod tests {
         assert!(properties.contains_key(TIMING_KEY));
         assert!(properties.contains_key(KEY_PREFIX));
         for name in EFFECT_NAMES {
-            assert!(properties.contains_key(&format!("cursor.motion.effects.{name}")));
+            let property = &properties[&format!("cursor.motion.effects.{name}")];
+            assert_eq!(property["enum"], json!(["on", "off", "default"]));
         }
+        assert_eq!(properties[KEY_PREFIX]["enum"], json!(["default"]));
+    }
+
+    #[test]
+    fn typed_effect_roundtrip_preserves_reset_and_omission_when_applied() {
+        use cua_driver_contract::{SetAgentCursorMotionInput, StartSessionInput};
+
+        let base = MotionConfig::default()
+            .with_style_args(&json!({"effects": {
+                "trail": false, "glow": false, "magnet": false,
+                "ripple": false, "squish": false
+            }}))
+            .unwrap();
+        for name in EFFECT_NAMES {
+            for value in [Value::Null, json!("default"), json!(true), json!(false)] {
+                let mut effects = Map::new();
+                effects.insert(name.to_owned(), value.clone());
+                let args = json!({"session": "test", "effects": effects});
+                let typed: SetAgentCursorMotionInput =
+                    serde_json::from_value(args.clone()).unwrap();
+                let wire = serde_json::to_value(typed).unwrap();
+                let direct = base.with_style_args(&args).unwrap();
+                let roundtrip = base.with_style_args(&wire).unwrap();
+                assert_eq!(roundtrip.effects, direct.effects, "{name}: {value}");
+                let serialized = serde_json::to_value(roundtrip.effects).unwrap();
+                let expected = if value.is_null() || value == "default" {
+                    Value::Null
+                } else {
+                    value.clone()
+                };
+                assert_eq!(serialized[name], expected, "{name}: reset/set intent");
+                for untouched in EFFECT_NAMES.into_iter().filter(|other| *other != name) {
+                    assert_eq!(serialized[untouched], false, "omitted {untouched}");
+                }
+                let start: StartSessionInput = serde_json::from_value(json!({
+                    "session": "test", "cursor_motion": {"effects": effects}
+                }))
+                .unwrap();
+                let wire = serde_json::to_value(start).unwrap();
+                let started = base.with_motion_args(&wire["cursor_motion"]).unwrap();
+                assert_eq!(started.effects, direct.effects, "nested {name}: {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn default_resets_one_effect_and_an_omitted_effect_keeps() {
+        let path = temp_path("effects");
+        set_key_at(&path, "cursor.motion.effects.trail", &json!("off")).unwrap();
+        set_key_at(&path, "cursor.motion.effects.glow", &json!("on")).unwrap();
+        set_key_at(&path, "cursor.motion.effects.trail", &json!("default")).unwrap();
+        let saved = load_from(&path);
+        assert_eq!(saved.effects.trail, None);
+        assert_eq!(saved.effects.glow, Some(true));
+
+        let base = MotionConfig::default();
+        let set = base
+            .with_style_args(
+                &json!({"effects": {"trail": "off", "glow": "on", "ripple": "default"}}),
+            )
+            .unwrap();
+        assert_eq!(set.effects.trail, Some(false));
+        assert_eq!(set.effects.glow, Some(true));
+        assert_eq!(set.effects.ripple, None);
+        let kept = set
+            .with_style_args(&json!({"effects": {"trail": "on"}}))
+            .unwrap();
+        assert_eq!(kept.effects.trail, Some(true));
+        assert_eq!(kept.effects.glow, Some(true));
+
+        let legacy = base
+            .with_style_args(&json!({"effects": {"trail": true, "glow": false, "magnet": null, "ripple": "true", "squish": "false"}}))
+            .unwrap();
+        assert_eq!(legacy.effects.trail, Some(true));
+        assert_eq!(legacy.effects.glow, Some(false));
+        assert_eq!(legacy.effects.magnet, None);
+        assert_eq!(legacy.effects.ripple, Some(true));
+        assert_eq!(legacy.effects.squish, Some(false));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

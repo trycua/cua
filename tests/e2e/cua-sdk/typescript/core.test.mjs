@@ -82,20 +82,10 @@ async function plainLocal(c, image, port, banner, what, memoryMb) {
   assert.ok(!(await sbx.list("local")).some((s) => s.name === nm))
 }
 
-e.e2eTest("daemon-agnostic", "hermetic", "fake Fleet pool without env + direct URL without a driver", async () => {
-  const c = fakeFleet()
-  const fleet = c.fleet()
-  const pool = e.name("agnostic")
-  await e.applyPool(fleet, { name: pool, image: "img:plain", services: { server: 8000 } })
-  let sb
-  try {
-    sb = await c.sandboxes().create(cua.SandboxCreateOptions.create({ on: "cloud", pool, name: `${pool}-c` }))
-    assert.equal((await sb.service("server").request("GET", "/status", undefined, 5000)).status, 200)
-    await assert.rejects(sb.spacesd(2000), (err) => e.isErr(err, "SpacesdNotAvailable"))
-  } finally {
-    await sb?.delete_()
-    await fleet.deletePool(pool)
-  }
+e.e2eTest("daemon-agnostic", "hermetic", "cloud create fails (Cua Cloud has ended) + direct URL without a driver", async () => {
+  await e.assertCloudEnded(fakeFleet(), { pool: e.name("agnostic") })
+  // Direct URL where no spacesd answers (the fake Fleet API's HTTP server).
+  const c = e.embeddedLocal(e.tmpState())
   const d = await c.sandboxes().connectUrl(fx.fleet_base_url, "t", e.name("nodriver"))
   await assert.rejects(d.spacesd(2000), (err) => e.isErr(err, "SpacesdNotAvailable"))
   await d.delete_()

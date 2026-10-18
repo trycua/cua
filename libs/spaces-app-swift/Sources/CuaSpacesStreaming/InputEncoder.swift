@@ -91,6 +91,33 @@ public struct InputEncoder {
 
     // MARK: - Keyboard
 
+    /// Whether a guest takes ⌘ as Control. A Linux or Windows Space gets
+    /// Command as Super, and Super+C types "c" in a terminal or does nothing,
+    /// so a Mac viewer sends ⌘C as Ctrl+C there (⌘⇧C as Ctrl+Shift+C),
+    /// the same mapping as the HTML5 viewer's `metaAsControl`. A macOS
+    /// guest, or one whose OS isn't known, keeps ⌘.
+    public static func commandAsControl(guestOS: String) -> Bool {
+        switch guestOS.lowercased() {
+        case "linux", "windows": return true
+        default: return false
+        }
+    }
+
+    /// `events` with Command replaced by Control on key events (no
+    /// duplicate when both were held). Pointer modifiers are left alone, as
+    /// in the HTML5 viewer.
+    public static func commandAsControl(_ events: [InteractiveInputEvent]) -> [InteractiveInputEvent] {
+        events.map { event in
+            guard case let .key(key, down, modifiers, repeatKey) = event, modifiers.contains(.command) else { return event }
+            var mapped: [InputModifier] = []
+            for modifier in modifiers {
+                let m: InputModifier = modifier == .command ? .control : modifier
+                if !mapped.contains(m) { mapped.append(m) }
+            }
+            return .key(key: key, down: down, modifiers: mapped, repeatKey: repeatKey)
+        }
+    }
+
     #if canImport(AppKit)
     public static func modifiers(from flags: NSEvent.ModifierFlags) -> [InputModifier] {
         var result: [InputModifier] = []

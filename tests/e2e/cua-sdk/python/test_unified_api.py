@@ -12,9 +12,9 @@ service (``services``) after a readiness probe on it (``wait_for``):
   a proxy through the gateway),
 * portable info: ``id``, phase, location, ``provider_details``.
 
-Lanes: hermetic (fake Fleet + MockServer through a private daemon),
-container (``python:3.12-slim`` on gVisor through a private daemon), fleet
-(live, one sandbox, managed pool removed in ``finally``).
+Lanes: hermetic (a cloud create fails: Cua Cloud has ended; MockServer
+through a private daemon), container (``python:3.12-slim`` on gVisor through
+a private daemon), fleet (live; skipped, Cua Cloud has ended).
 """
 
 from __future__ import annotations
@@ -127,44 +127,17 @@ def _plain_opts(image: str, what: str, *, env: bool) -> "cua.SandboxCreateOption
 
 
 @pytest.mark.e2e("unified-sandbox-api", "hermetic")
-def test_unified_api_fake_fleet_and_daemon_public_url(fixtures, fake_fleet):
+def test_unified_api_cloud_ended_and_daemon_public_url(fixtures, fake_fleet, local_cua):
     async def body():
-        # Cloud (fake Fleet): command and services on a managed gVisor pool;
-        # signed URLs; the forward proxies through the gateway.
-        sbx = fake_fleet.sandboxes()
-        sb = await sbx.create(
-            cua.SandboxCreateOptions(
-                on="cloud",
-                image="registry.example/mcp:docker-e2e",
-                command=["python", "/srv.py"],
-                services={"mcp": 8765},
-                runtime="gvisor",
-                cloud=cua.CloudOptions(max_pool_size=2),
-                ready_timeout_ms=120_000,
-            )
+        # Cua Cloud has ended: a cloud create (command and services on a
+        # managed gVisor pool) fails before anything is created.
+        await e2e.assert_cloud_ended(
+            fake_fleet,
+            command=["python", "/srv.py"],
+            services={"mcp": 8765},
+            runtime="gvisor",
+            cloud=cua.CloudOptions(max_pool_size=2),
         )
-        pool = sb.info().provider_details.get("pool", "")
-        try:
-            info = sb.info()
-            assert (info.location, info.phase) == ("cloud", cua.SandboxPhase.READY), info
-            assert info.id and pool.startswith("cua-auto-"), info
-            assert (await sb.service("mcp").url()).startswith("https://signed.fleet.test/")
-            p = await sb.public_url("mcp", 600, None)
-            assert p.url.startswith("https://signed.fleet.test/") and "claim" in p.provider_details
-            r = await sb.service("mcp").request(
-                "POST", "/mcp", b"{}", 30_000, [_h("accept", ACCEPT), _h("mcp-session-id", "s")]
-            )
-            assert r.status == 200
-            fwd = await sb.forward(8765)
-            try:
-                status, _, text = _http("GET", fwd.url() + "/x")
-                assert status == 200 and b"-mcp/x" in text, text
-            finally:
-                await fwd.close()
-        finally:
-            await sb.delete()
-            if pool:
-                await fake_fleet.fleet().pools().gc_pools([pool], 0)
 
         # Local public URL (a direct spacesd): served by the daemon; any
         # gRPC-Web client reaches the driver through it with its own token.
@@ -176,7 +149,7 @@ def test_unified_api_fake_fleet_and_daemon_public_url(fixtures, fake_fleet):
             assert (await direct.service("env").url()) == fixtures["env_url"].rstrip("/")
             pub = await direct.public_url("env", 120, None)
             assert pub.url.startswith("http://127.0.0.1:") and "/s/" in pub.url, pub
-            shared = await fake_fleet.sandboxes().connect_url(pub.url, fixtures["env_token"], None)
+            shared = await local_cua.sandboxes().connect_url(pub.url, fixtures["env_token"], None)
             out = await (await shared.spacesd(5_000)).sh("echo shared", None)
             assert bytes(out.stdout) == b"shared\n"
             await direct.revoke_public_url(pub.id)

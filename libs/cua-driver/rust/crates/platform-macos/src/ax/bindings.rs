@@ -588,6 +588,58 @@ fn focused_id_for_target(
     }
 }
 
+/// Put `pid`'s focused window (else its main window) back on top of the
+/// window order through the app's own `AXRaise`.
+///
+/// For the frontmost app this reorders without an activation: the app orders
+/// its own window, so it never resigns or regains active status and its key
+/// window does not change. `NSRunningApplication.activate` from the daemon,
+/// the alternative, is only a request under cooperative activation; Chromium
+/// keeps its window above it, and when it is honoured the user's app gets a
+/// fresh `didBecomeActive`.
+pub fn raise_focused_window_of_pid(pid: i32) -> bool {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        // A busy app must not stall the caller's order watch.
+        AXUIElementSetMessagingTimeout(app, 0.25);
+        let window = copy_element_attr(app, "AXFocusedWindow")
+            .or_else(|| copy_element_attr(app, "AXMainWindow"));
+        CFRelease(app as CFTypeRef);
+        let Some(window) = window else {
+            return false;
+        };
+        AXUIElementSetMessagingTimeout(window, 0.25);
+        let raised = perform_action(window, "AXRaise") == kAXErrorSuccess;
+        CFRelease(window as CFTypeRef);
+        raised
+    }
+}
+
+/// The CGWindowID of the window that holds `pid`'s focused UI element
+/// (`AXFocusedUIElement` → `AXWindow`). `None` when the app reports no focused
+/// element: a LibreOffice that has never been active names a focused window
+/// but has no focused element, and drops every key posted to it.
+pub fn focused_element_window_id_of_pid(pid: i32) -> Option<u32> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let element = copy_element_attr(app, "AXFocusedUIElement");
+        CFRelease(app as CFTypeRef);
+        let element = element?;
+        let window = copy_element_attr(element, "AXWindow");
+        CFRelease(element as CFTypeRef);
+        let window = window?;
+        let window_id = ax_get_window_id(window);
+        CFRelease(window as CFTypeRef);
+        window_id
+    }
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety

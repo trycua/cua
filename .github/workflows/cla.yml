@@ -39,4 +39,8 @@ jobs:
           path-to-signatures: "signatures/version1/cla.json"
           path-to-document: "https://github.com/${{ github.repository }}/blob/main/CLA.md"
           branch: "cla-signatures"
-          allowlist: "f-trycua,francedot,injaneity,ddupont808,JaiCode08,cuaclaw,dependabot[bot],github-actions[bot],release-please[bot],cua-release-bot[bot],trycua-release[bot]"
+          # The action locks every merged PR by default. A locked release PR
+          # (labelled `autorelease: pending`) makes release-please die when it
+          # comments on it, so it can never open the next release PR.
+          lock-pullrequest-aftermerge: false
+          allowlist: "f-trycua,francedot,injaneity,ddupont808,0xjohnnydev,cuaclaw,dependabot[bot],github-actions[bot],release-please[bot],cua-release-bot[bot],trycua-release[bot]"

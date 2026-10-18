@@ -172,7 +172,14 @@ fn grab(x: i32, y: i32, width: u32, height: u32) -> Result<Vec<u8>, ProviderErro
         let _ = DeleteObject(bitmap);
         let _ = DeleteDC(memory);
         ReleaseDC(HWND(std::ptr::null_mut()), screen);
-        copied.map_err(|error| capture_error(format!("BitBlt failed: {error}")))?;
+        copied.map_err(
+            |error| match platform_windows::diagnostics::desktop_unavailable() {
+                // A locked PC or a disconnected Remote Desktop session: the
+                // viewer says which, not a raw GDI error.
+                Some(why) => capture_error(format!("{} (BitBlt: {error})", why.message())),
+                None => capture_error(format!("BitBlt failed: {error}")),
+            },
+        )?;
         if rows == 0 {
             return Err(capture_error("GetDIBits copied no rows"));
         }

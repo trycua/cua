@@ -38,6 +38,7 @@ async def test_gym_reset_opens_and_close_releases(sdk):
     assert sdk.live == 0 and sdk.released == 1
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_gym_target_cloud(sdk):
     env = make(str(HELLO))

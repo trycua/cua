@@ -1208,6 +1208,8 @@ pub fn info_json(i: &SandboxInfo) -> serde_json::Value {
         "name": i.name,
         "status": row_status(i),
         "state": status_of(i),
+        // Why it stopped without being asked to ("out of memory"), or null.
+        "stop_reason": i.stop_reason,
         "location": i.location,
         "kind": i.kind,
         "runtime": i.runtime,
@@ -1226,6 +1228,16 @@ pub fn info_json(i: &SandboxInfo) -> serde_json::Value {
         "endpoints": i.endpoints,
         "provider_details": i.provider_details,
     })
+}
+
+/// A listing's STATUS cell: the row's status, and why it stopped when it
+/// stopped on its own (`stopped (out of memory)`).
+fn status_cell(row: &serde_json::Value) -> String {
+    let status = row["status"].as_str().unwrap_or_default();
+    match row["stop_reason"].as_str().filter(|r| !r.is_empty()) {
+        Some(why) if status == "stopped" => format!("{status} ({why})"),
+        _ => status.to_string(),
+    }
 }
 
 /// The status a listing shows: the portable phase, or `missing` for a
@@ -1299,10 +1311,17 @@ fn print(out: &mut dyn Write, v: serde_json::Value, json: bool, text: impl FnOnc
 /// flags, else `--pool` means the cloud, else the user defaults
 /// (`cua config`, `CUA_DEFAULT_*`), each with its source.
 pub fn resolve_placement(a: &CreateArgs) -> Result<cua_sandbox_core::settings::Resolved, CuaError> {
-    let on = a.on.clone().or_else(|| a.pool.as_ref().map(|_| On::Cloud));
+    // Cua Cloud has ended: `--pool` (a cloud pool, or its template run
+    // locally) and `--on cloud`, given or as the default.
+    if a.pool.is_some() {
+        return Err(auth::cloud_ended());
+    }
     let r = settings()?
-        .resolve(on, a.kind, a.runtime.clone())
+        .resolve(a.on.clone(), a.kind, a.runtime.clone())
         .map_err(|e| CuaError::InvalidArgument(e.0))?;
+    if r.on == On::Cloud {
+        return Err(auth::cloud_ended());
+    }
     cua_sandbox_core::placement::validate(&r.on, r.kind, &r.runtime)
         .map_err(|e| CuaError::InvalidPlacement(e.message))?;
     Ok(r)
@@ -1354,6 +1373,13 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::Cancelled(m) => E::Cancelled(f(m)),
     }
 }
+
+/// Appended when `--on cloud` has no Cua cloud account: Spaces run on
+/// compute you bring, so point at the ways that need no Cua cloud.
+const BYO_COMPUTE_HINT: &str = "Cua Spaces run on computers you bring: this one (`--on local`), \
+     a machine you own (`cua auth login`, then `cua host setup --profile spare` on that machine \
+     and `--on host:<machine>` here), or your own cloud account (`cua cloud connect \
+     aws|gcp|modal`, then `--on aws`)";
 
 /// What a failed create kept: the sandbox ref, its cloud claim (pool and
 /// namespace) when it has one, and how to delete it.
@@ -1514,9 +1540,30 @@ async fn create(
         eprintln!("Starting a cloud sandbox (first start of an image can take a few minutes)");
     }
     let requested_name = o.name.clone();
+    // Each step of the create on a terminal (never in --json output).
+    let steps = {
+        use std::io::IsTerminal as _;
+        (!json && std::io::stderr().is_terminal()).then(|| {
+            let mut words = crate::util::CreateWords::for_image(
+                &o.image,
+                o.kind.as_deref().unwrap_or_default(),
+                false,
+            );
+            words.macos |= o.os.as_deref() == Some("macos");
+            words.vm |= words.macos;
+            Arc::new(crate::util::StepLines::new(words))
+        })
+    };
     let created = {
         let sandboxes = cua.sandboxes();
-        let mut create = Box::pin(sandboxes.create(o));
+        let mut create: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
+            match &steps {
+                Some(steps) => {
+                    let steps = steps.clone();
+                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| steps.show(p))))
+                }
+                None => Box::pin(sandboxes.create(o)),
+            };
         tokio::select! {
             r = &mut create => r,
             _ = tokio::signal::ctrl_c() => {
@@ -1535,6 +1582,9 @@ async fn create(
         }
     };
     crate::util::exit_on_ctrl_c();
+    if let Some(steps) = &steps {
+        steps.finish();
+    }
     if created.is_err()
         && a.keep_on_failure
         && let Some(n) = &requested_name
@@ -1545,12 +1595,20 @@ async fn create(
     let sb = created
         .map_err(|e| match e {
             // The cloud came from a default: say how to sign in or go back.
-            CuaError::ProviderNotConfigured(m) => CuaError::ProviderNotConfigured(
-                match cua_sandbox_core::settings::cloud_default_hint(&placement.on_source) {
-                    Some(hint) => format!("{m}; {hint}"),
-                    None => m,
-                },
-            ),
+            // The cloud came from a default: say how to sign in or go back
+            // (once: some SDK paths have said it already).
+            CuaError::ProviderNotConfigured(mut m) => {
+                if let Some(hint) =
+                    cua_sandbox_core::settings::cloud_default_hint(&placement.on_source)
+                    && !m.contains(&hint)
+                {
+                    m = format!("{m}; {hint}");
+                }
+                if on == On::Cloud {
+                    m = format!("{m}. {BYO_COMPUTE_HINT}");
+                }
+                CuaError::ProviderNotConfigured(m)
+            }
             other => other,
         })
         .map_err(|e| on_backend(e, &label))?;
@@ -1741,20 +1799,8 @@ pub async fn run(
             let _ = all; // deprecated no-op: everything is the default
             return ls(cua, local, cloud, !no_size, json_global, out).await;
         }
-        SandboxCmd::KeepAlive { name, at, duration } => {
-            let name = at.apply(&name)?;
-            let sb = sbx.connect(name.clone()).await?;
-            sb.keep_alive(duration).await?;
-            let until =
-                std::time::SystemTime::now() + std::time::Duration::from_secs(u64::from(duration));
-            let until = humantime::format_rfc3339_seconds(until).to_string();
-            print(
-                out,
-                serde_json::json!({"name": name, "expires_at": until}),
-                json_global,
-                || format!("Sandbox '{name}' is kept alive until {until}"),
-            );
-        }
+        // Extends a Fleet claim's lease: Cua Cloud has ended.
+        SandboxCmd::KeepAlive { .. } => return Err(auth::cloud_ended()),
         SandboxCmd::Cp { src, dst, at } => return cp(cua, &src, &dst, at, json_global, out).await,
         SandboxCmd::Url {
             name,
@@ -1816,7 +1862,7 @@ pub async fn run(
                     } else {
                         line(out, format!("Name:     {}", i.name));
                         line(out, format!("Id:       {}", i.id));
-                        line(out, format!("Status:   {}", row_status(&i)));
+                        line(out, format!("Status:   {}", status_cell(&info_json(&i))));
                         line(out, format!("Location: {}", i.location));
                         line(out, format!("Expires:  {}", expires_of(i.expires_at_unix)));
                         if let Some(img) = &i.image {
@@ -2081,13 +2127,8 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
             crate::host::daemon_relay_account(&crate::util::cua_home())
         });
         let spaces = cua.spaces();
-        // `Spaces::space` looks the machine up in the relay directory cache.
-        // An embedded runtime fills that cache on list, not on connect. A
-        // qualified id that is not in the directory is not a Space yet.
-        let listed = spaces.list().await?;
-        if !listed.iter().any(|s| s.id == id) {
-            return Err(CuaError::NotFound(format!("Space {id}")));
-        }
+        // NotFound before dial, and the snapshot has the name space() dials with.
+        spaces.resolve(id.clone()).await?;
         return spaces.space(id).await?.spacesd();
     }
     let sbx = cua.sandboxes();
@@ -2108,6 +2149,14 @@ fn direct_token(info: &SandboxInfo) -> Option<String> {
         .iter()
         .find_map(|k| tokens.get(k.as_str()).and_then(|v| v.as_str()))
         .map(str::to_string)
+        .or_else(|| {
+            cua_spaces::registry::Registry::new(util::cua_home())
+                .credential(&info.id)
+                .ok()
+                .flatten()
+                .filter(|c| c.service_urls.is_empty())
+                .and_then(|c| c.token)
+        })
         .or_else(|| {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()
@@ -2402,7 +2451,7 @@ async fn ls(
             .map(|r| {
                 let mut row = vec![
                     s(&r["id"]),
-                    s(&r["status"]),
+                    status_cell(r),
                     s(&r["location"]),
                     dash(&r["kind"]),
                     dash(&r["runtime"]),
@@ -3050,6 +3099,25 @@ pub(crate) fn confirm_delete(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_space_that_stopped_on_its_own_says_why_in_the_listing() {
+        let row = |status: &str, why: serde_json::Value| serde_json::json!({"status": status, "stop_reason": why});
+        assert_eq!(
+            status_cell(&row("stopped", "out of memory".into())),
+            "stopped (out of memory)"
+        );
+        assert_eq!(
+            status_cell(&row("stopped", serde_json::Value::Null)),
+            "stopped"
+        );
+        assert_eq!(status_cell(&row("ready", serde_json::Value::Null)), "ready");
+        // A row from a daemon that sends no reason.
+        assert_eq!(
+            status_cell(&serde_json::json!({"status": "stopped"})),
+            "stopped"
+        );
+    }
+
     use cua_sandbox_core::{
         InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
         RuntimeError,
@@ -3301,30 +3369,27 @@ mod tests {
     #[test]
     fn placement_resolves_flags_then_pool_then_defaults() {
         let _env = crate::util::test_env::isolated();
-        let a = CreateArgs {
+        // Cua Cloud has ended: --pool (either location) and --on cloud.
+        let ended = |a: &CreateArgs| {
+            let e = resolve_placement(a).unwrap_err();
+            assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
+        };
+        ended(&CreateArgs {
             pool: Some("p".into()),
             ..Default::default()
-        };
-        assert_eq!(resolve_placement(&a).unwrap().on, On::Cloud);
-        let a = CreateArgs {
+        });
+        ended(&CreateArgs {
             on: Some(On::Local),
             pool: Some("p".into()),
             ..Default::default()
-        };
-        assert_eq!(resolve_placement(&a).unwrap().on, On::Local);
-        let a = CreateArgs::default();
-        assert_eq!(resolve_placement(&a).unwrap().on, On::Local);
-        let a = CreateArgs {
+        });
+        ended(&CreateArgs {
             on: Some(On::Cloud),
             runtime: Some(Runtime::Qemu),
             ..Default::default()
-        };
-        let e = resolve_placement(&a).unwrap_err();
-        assert!(
-            e.to_string()
-                .contains("valid runtime: auto, gvisor, kubevirt"),
-            "{e}"
-        );
+        });
+        let a = CreateArgs::default();
+        assert_eq!(resolve_placement(&a).unwrap().on, On::Local);
     }
 
     #[test]
@@ -3380,6 +3445,7 @@ mod tests {
                 ("namespace".to_string(), "cua-auto-abc".to_string()),
             ]),
             image_info: None,
+            stop_reason: None,
         };
         let m = kept_message(&info);
         assert!(m.contains("cloud:cua-e2e-kept"), "{m}");

@@ -34,6 +34,7 @@ More of this crate: [client](/cua-sdk/reference/rust/cua-spaces-client), [agents
 - `hotspot`: Hotspot: a Space borrows this machine's network.
 - `id`: Space ids: the unified sandbox ref scheme (a Space is a ...
 - `install_cache`: Pinned install archives, fetched once on this machine ...
+- `mesh`: Relay Spaces over the WireGuard®-based mesh ...
 - `operator`: Presenting a Space to the human: picture-in-picture ...
 - `presence`: Presence: who is looking at a Space and where their ...
 - `presence::art`: The shared presence cursor art (ass ...
@@ -990,6 +991,17 @@ pub enum Health {
 }
 ```
 
+### `reattach::Note`
+
+Whether to log a failure at `warn`.
+
+```rust
+pub enum Note {
+  Log { repeated: u32 },
+  Quiet,
+}
+```
+
 ### `reattach::Policy`
 
 Timing of `supervise`.
@@ -999,6 +1011,18 @@ pub struct Policy {
   pub poll: Duration,
   pub initial_backoff: Duration,
   pub max_backoff: Duration,
+}
+```
+
+### `reattach::RepeatLimiter`
+
+Rate-limits identical failure messages across every ...
+
+```rust
+pub struct RepeatLimiter { /* private fields */ }
+impl RepeatLimiter {
+  const fn new() -> Self;
+  fn note(&self, why: &str, now: Instant) -> Note;
 }
 ```
 
@@ -1087,9 +1111,12 @@ pub struct RelayAccount {
   pub url: String,
   pub tokens: Arc<dyn AccountTokens>,
   pub device: Option<Arc<DeviceAuth>>,
+  pub spaces_api: Option<String>,
 }
 impl RelayAccount {
   fn new(url: impl Into<String>, tokens: Arc<dyn AccountTokens>) -> Self;
+  fn with_spaces_api(self, url: impl Into<String>) -> Self;
+  fn spaces_api(&self) -> Result<SpacesApiClient>;
   fn with_device(self, device: Arc<DeviceAuth>) -> Self;
   async fn device_session(&self) -> Option<String>;
   async fn client(&self) -> Result<RelayClient>;
@@ -1470,6 +1497,7 @@ impl Space {
   fn provider(&self) -> Provider;
   fn spacesd(&self) -> Result<&SpacesdClient>;
   fn has_spacesd(&self) -> bool;
+  fn spacesd_unreachable_cause(&self) -> Option<String>;
   fn capabilities(&self) -> &GetCapabilitiesResponse;
   fn declared_services(&self) -> &BTreeMap<String, SpaceService>;
   fn env_token(&self) -> Option<&str>;
@@ -1600,6 +1628,7 @@ pub struct SpaceInfo {
   pub cloud_place: String,
   pub cloud_delete: String,
   pub status: String,
+  pub stop_reason: String,
 }
 ```
 
@@ -1648,7 +1677,10 @@ impl Spaces {
   fn set_share_consent(&self, consent: Option<Arc<dyn ShareConsent>>);
   fn has_share_consent(&self) -> bool;
   fn set_relay(&self, relay: Option<RelayAccount>);
+  async fn explain_mesh_cut(&self, space: &str, e: Error) -> Error;
+  async fn mesh_status(&self) -> Vec<(String, Status)>;
   async fn relay_machines(&self) -> Result<Vec<RelayMachine>>;
+  async fn find(&self, space: &str) -> Result<SpaceInfo>;
   fn resolve(&self, space: &str) -> Result<SpaceId>;
   async fn add(&self, url: &str, token: Option<String>, name: Option<String>) -> Result<SpaceInfo>;
   async fn add_with_service(&self, url: &str, token: Option<String>, name: Option<String>, service: Option<String>) -> Result<SpaceInfo>;
@@ -1665,6 +1697,7 @@ impl Spaces {
   async fn refresh_thumbnails(&self) -> usize;
   fn spawn_thumbnail_refresh(&self) -> JoinHandle<()>;
   fn power_of(&self, id: &str) -> (String, String);
+  fn stop_reason_of(&self, id: &str) -> String;
   async fn stop(&self, space: &str) -> Result<SpacePower>;
   async fn start(&self, space: &str) -> Result<SpacePower>;
   fn download_dir(&self) -> &Path;
@@ -1678,6 +1711,9 @@ impl Spaces {
   fn share_audit(&self, space: Option<&str>, limit: usize) -> Result<Vec<ShareAudit>>;
   async fn share_space(&self, space: &str, who: &str, role: ShareRole) -> Result<SpaceShares>;
   async fn unshare_space(&self, space: &str, who: Option<&str>) -> Result<SpaceShares>;
+  async fn share_with_team(&self, space: &str, team: &str) -> Result<SpaceShares>;
+  async fn share_with_team_waiting(&self, space: &str, team: &str, waiting: &mut dyn FnMut(Duration) + Send) -> Result<SpaceShares>;
+  async fn unshare_from_team(&self, space: &str, team: &str) -> Result<SpaceShares>;
   async fn relay_register(&self, space: &str) -> Result<RelayRegistration>;
   async fn relay_unregister(&self, space: &str) -> Result<bool>;
   async fn space_shares(&self, space: &str) -> Result<SpaceShares>;
@@ -2107,6 +2143,8 @@ pub struct WalkEntry {
 ```rust
 /// Whether `image` is expected to run ...
 pub fn expects_spacesd(image: Option<&str>, explicit: Option<bool>) -> bool
+/// A name in the form `SpaceCreate::name` ...
+pub fn is_generated_name(name: &str) -> bool
 /// The key a Fleet pool is named after ...
 pub fn pool_key(image: &str, command: Option<&[String]>, env: &BTreeMap<String, String>, services: &BTreeMap<String, u16>) -> String
 /// Lowercase DNS label: `[a-z0-9-]` ...
@@ -2143,8 +2181,12 @@ pub fn cap_output(text: &str) -> String
 pub fn outcome_json(out: ToolOutcome) -> Result<Value>
 
 // mod files
+/// Proves this process can read `path` ...
+pub async fn check_host_readable(path: &Path) -> Result<()>
 /// Normalizes a `send_file` target to a ...
 pub fn downloads_subdir(target: Option<&str>, home: Option<&str>) -> Result<String>
+/// The macOS privacy-protected location ...
+pub fn protected_folder(path: &Path, home: Option<&Path>) -> Option<&'static str>
 
 // mod fleet_runtime
 /// `resolve` with the image evidence ...
@@ -2191,6 +2233,10 @@ pub fn cache_dir() -> PathBuf
 pub async fn fetch(dir: &Path, a: &StagedArchive, progress: &mut dyn FnMut(u64, u64) + Send) -> Result<PathBuf>
 /// Whether to stage through the host for a ...
 pub fn wanted(url: &Url) -> bool
+
+// mod mesh
+/// The policy for this process now ...
+pub fn policy() -> MeshPolicy
 
 // mod presence
 /// The stable presence color of an agent ...
@@ -2251,6 +2297,8 @@ pub fn tool_result(resp: CallToolResponse) -> ToolResult
 pub fn apply_share(allow: &mut Vec<String>, viewers: &mut Vec<String>, who: &str, role: Option<ShareRole>)
 /// Normalizes an invitee: an email ...
 pub fn normalize_who(who: &str) -> Result<String>
+/// The team a `team:<id>` invitee names ...
+pub fn team_of(who: &str) -> Option<Result<String>>
 
 // mod site_login
 /// The `request_site_login` tool: files a ...
@@ -2308,6 +2356,8 @@ pub const MAX_OUTPUT_CHARS: usize = 16_000;
 // mod files
 /// Chunk used when the driver does not say.
 pub const DEFAULT_SEND_CHUNK: usize = _;
+/// How long opening a host file or folder ...
+pub const HOST_OPEN_TIMEOUT: Duration = _;
 /// Largest chunk sent to ...
 pub const MAX_SEND_CHUNK: usize = _;
 
@@ -2321,6 +2371,8 @@ pub const MIN_BOTS: usize = 2;
 pub const CALLER_METADATA: &str = "x-cua-host-caller";
 /// The spacesd feature a host reports ...
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
+/// `HostLimit::resource` of a host the ...
+pub const STOPPED_SHARING: &str = "sharing";
 
 // mod presence
 /// Roster heartbeat interval the SDK asks ...
@@ -2354,6 +2406,10 @@ pub const SNAP_DISTANCE: f64 = 0.25;
 /// Render delay on the 20 Hz `Join` stream.
 pub const STREAM_DELAY_MS: f64 = 100.0;
 
+// mod reattach
+/// How often the same re-attach failure is ...
+pub const REPEAT_LOG_EVERY: Duration = _;
+
 // mod registry
 /// File name of the 0600 credential store.
 pub const CREDENTIALS_FILE: &str = "spaces-credentials.json";
@@ -2375,6 +2431,8 @@ pub const DRIVER_ALIASES: [&str; 5] = _;
 pub const DRIVER_SERVICE: &str = "driver";
 
 // mod share
+/// Relay machine meta: the OS of the Space ...
+pub const META_SPACE_OS: &str = "cua.space.os";
 /// The spacesd feature a Space needs to be ...
 pub const RELAY_ATTACH_FEATURE: &str = "relay_attach";
 
@@ -2448,4 +2506,4 @@ pub type DatagramChannel = (Arc<dyn CursorUplink>, Receiver<PresenceEvent>);
 
 ## Re-exports
 
-`cua_sandbox_core::byoc::CloudCheck`, `cua_sandbox_core::byoc::CloudConnected`, `cua_sandbox_core::byoc::CloudCredentials`, `cua_sandbox_core::byoc::CloudDisconnected`, `cua_sandbox_core::byoc::CloudKind`, `cua_sandbox_core::byoc::CloudProvider`, `cua_sandbox_core::byoc::CloudResource`, `cua_sandbox_core::byoc::CloudStatusReport`, `cua_sandbox_core::byoc::CloudSweepItem`, `cua_sandbox_core::byoc::CloudSweepReport`, `cua_sandbox_core::byoc::CloudTarget`, `cua_sandbox_core::byoc::CloudTestReport`, `cua_spaces_contract`, `spaces::CreatePhase`, `spaces::CreateProgress`, `cua_spacesd_client`, `cua_host::relay::AccountTokens`, `cua_host::ConnectedClient`, `cua_host::DEFAULT_RELAY_URL`, `cua_host::DeviceAuth`, `cua_host::Identity`, `cua_host::relay::NoAccount`, `cua_host::relay_url_from_env`, `cua_host::relay::StaticToken`.
+`cua_sandbox_core::byoc::CloudCheck`, `cua_sandbox_core::byoc::CloudConnected`, `cua_sandbox_core::byoc::CloudCredentials`, `cua_sandbox_core::byoc::CloudDisconnected`, `cua_sandbox_core::byoc::CloudKind`, `cua_sandbox_core::byoc::CloudProvider`, `cua_sandbox_core::byoc::CloudResource`, `cua_sandbox_core::byoc::CloudStatusReport`, `cua_sandbox_core::byoc::CloudSweepItem`, `cua_sandbox_core::byoc::CloudSweepReport`, `cua_sandbox_core::byoc::CloudTarget`, `cua_sandbox_core::byoc::CloudTestReport`, `cua_spaces_contract`, `spaces::CreatePhase`, `spaces::CreateProgress`, `cua_spacesd_client`, `cua_mesh::policy::Policy`, `cua_host::relay::AccountTokens`, `cua_host::ConnectedClient`, `cua_host::DEFAULT_RELAY_URL`, `cua_host::DeviceAuth`, `cua_host::Identity`, `cua_host::relay::NoAccount`, `cua_host::relay_url_from_env`, `cua_host::relay::StaticToken`.

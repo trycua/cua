@@ -259,13 +259,12 @@ async fn suite(daemon: bool) {
     assert_pipe(sb.service("env".into()).unwrap().endpoint().await.unwrap()).await;
     sb.delete().await.unwrap();
 
-    // Fleet, through the (emulated) gateway.
+    // Cua Cloud has ended: a cloud create fails before reaching Fleet.
     let mut o = opts("cloud", CLAIM);
     o.pool = Some(CLAIM.into());
     o.image = IMAGE.into();
-    let fsb = sbx.create(o).await.unwrap();
-    exercise(&fsb.mcp("mcp".into(), None).await.unwrap()).await;
-    fsb.delete().await.unwrap();
+    let e = sbx.create(o).await.err().expect("cloud create fails");
+    assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
 
     exercise(
         &cua_sdk::mcp_connect_url(format!("{}/mcp", mcp_server.url), None)

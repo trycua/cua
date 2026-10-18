@@ -44,7 +44,7 @@ By default the tree comes back **once**, as compact `tree_markdown` (`tree_forma
 - After the first read, pass `since:"latest"` (or `since:<snapshot_id>`) to get only what changed. `latest` is this window's most recent read with the same `query`, `max_elements` and `max_depth`. You get: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), or `no change since …; focused element is …` (focus is reported on macOS only). The response carries a new `snapshot_id`: use it in tokens (`<new id>:N`). Rows not listed keep their `[N]` unless a `reindexed:` line says otherwise. An unknown, expired, other-window, or differently-scoped `since` returns a full read, and `since_status` says why. A diff reads the rendered tree rows only; it does not prove the screenshot is unchanged.
 - `_note`, `background_input`, and (Linux) `frame_note` are omitted unless `verbose:true`; a degraded snapshot keeps `background_input`.
 - `include_screenshot:false` returns the tree only. On macOS the window keeps the pixel frame of its last screenshot while its size is unchanged, so `x,y` read off that screenshot still work; elsewhere, and after a resize, take a new screenshot before a pixel action.
-- Where advertised, `include_accessibility_tree:false` requests capture without a tree walk. On macOS it keeps the current snapshot's rows and tokens valid. Use it when you only need to look; do not use `max_elements:1` or a `query` that matches nothing for that, because those replace the snapshot with an almost empty one.
+- Where advertised, `include_accessibility_tree:false` requests capture without a tree walk. It keeps the current snapshot's rows and tokens valid. `display_only:true` with it is for live previews: it also leaves your pixel frame alone, and its image cannot ground actions. Use it when you only need to look; do not use `max_elements:1` or a `query` that matches nothing for that, because those replace the snapshot with an almost empty one.
 - Row numbers belong to one read. A narrower re-read (smaller `max_elements`, `max_depth`, another `query`) can stop before a row you saw earlier, and `<new snapshot_id>:N` for that row is then out of range. Use rows printed in the read whose `snapshot_id` you use.
 - `capture_mode` is deprecated and ignored. Do not change configuration to repair a sparse tree.
 - Use `screenshot_out_file` to save a PNG instead of inlining it, then actually read the image. Use an absolute, run-scoped output path.
@@ -79,22 +79,38 @@ Keep `delivery_mode:"background"` as the default for window input. The route may
 
 ## Batch known actions
 
-`run_actions` is the default way to act. When the next action or actions are decided, send them as one `run_actions` call with `observe:true` instead of one call per action followed by a read. Even a single step pays off: the action and the look at its result become one call. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
+`run_steps` is the default way to act. When the next action or actions are decided, send them as one `run_steps` call with `observe:{}` instead of one call per action followed by a read. Even a single step pays off: the action and the look at its result become one call. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
 
 ```bash
-cua-driver run_actions '{"session":"run-1","steps":[
+cua-driver run_steps '{"session":"run-1","steps":[
   {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:14","value":"Ada"}},
   {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:15","value":"Lovelace"}},
   {"tool":"click","args":{"target":{"kind":"window","pid":844,"window_id":10725},"element_token":"s0000002a:21"}},
   {"tool":"press_key","args":{"pid":844,"key":"return"}}
- ],"delay_ms":100,"observe":true}'
+ ],"delay_ms":100,"observe":{}}'
 ```
 
-- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag` (`press` and `type` are accepted for `press_key` and `type_text`); `args` are exactly that tool's arguments. Observation tools cannot run inside a batch: use `observe`. A `get_window_state` as the last step, with no `observe`, is taken as the observation. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
+- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `move_cursor` (`press` and `type` are accepted for `press_key` and `type_text`, `triple_click` is a click with `count:3`, and a key name such as `down` as the tool is a `press_key`); `args` are exactly that tool's arguments. Observation tools do not run inside a batch: a read between actions is skipped (it could not change the later steps), a `get_window_state` as the last step is the observation (merged with `observe`), and a trailing `zoom` runs after it. Run `describe run_steps` and `describe <tool>` for schemas. Up to 64 steps. `delivery_mode` on `run_steps` is the default for steps that set none.
+- Name the window once: `pid` and `window_id` (or `app`/`window`) on `run_steps` itself are the default for every step that names none.
+- A step whose `element_token` went stale because an earlier step re-rendered the window is retried once on the element with the same role and label in a fresh read, when exactly one matches; the step's line says so.
 - Every step is validated before the first runs, so a malformed step changes nothing. Each step then passes the same session, permission, capability-manifest and approval checks as a direct call; a batch grants nothing a single call lacks, and a refused step ends the batch like any other failure.
-- A batch has one session. Set `session` on `run_actions`; a step may repeat it but not name another.
+- A batch has one session. Set `session` on `run_steps`; a step may repeat it but not name another.
 - `observe` is optional and reads once, after the last executed step (also after a failure). Pass `true` or `get_window_state` arguments; `pid`/`window_id` come from the last step that names both. Defaults: `since:"latest"` (only what changed since your last read of that window with the same view; a full read if there is none), `include_screenshot:false`, `max_elements:250`. Pass `include_screenshot:true` to see the window, or `since:null` for a full read. Omit `observe` to read nothing.
-- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action.
+- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action. When a step fails because another window of the app holds focus (a dialog opened mid-batch), the end read is of that window, even without `observe`; when a pixel step names a window with no screenshot yet, the end read includes its screenshot. A step refused because its app ignores background input (Electron, LibreOffice) says how to re-send it; set `foreground_fallback:true` on `run_steps` to retry such steps once in the foreground (the window is activated and the pointer may move).
+
+## Script a flow
+
+Use `run_script` when the flow needs logic between actions: a loop over rows, a branch on what the app shows, a retry, or a value read in one window and typed into another. The script is JavaScript, the body of an async function; it runs in ONE call and only its `return` value, console output and a per-call log come back. Use `run_steps` for a fixed list of steps you have already decided, and plain calls when the next step needs your judgement.
+
+```bash
+cua-driver run_script '{"session":"run-1","script":"const app = await cua.getApp(\"Calculator\"); for (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({role: \"button\", name: key}); const [display] = await app.query({role: \"statictext\"}); return display.value;"}'
+```
+
+- The only API is `cua`: `getApp`, `launch`, `listApps`, `listWindows`, `sleep`, and on an app `getState`, `query`, `waitFor`, `verify` and the actions (`click`, `typeText`, `pressKey`, `setValue`, `scroll`, `drag`, ...). A target is `{role, name, nth?}` (found fresh, waits up to 3 s), an `element_token`, or `[x, y]` window pixels. `describe run_script` lists the full API.
+- A failed driver call throws; catch it to recover. An uncaught error names the script line, the call and the reason.
+- Every driver call passes the same session, permission, capability-manifest and approval checks as a direct call, so a script grants nothing the same direct calls lack. It cannot call `run_steps`, `run_script`, `set_config` or tools outside its allowlist.
+- Sandbox: QuickJS with no filesystem, network, process, timers or environment. Limits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), a 32 MiB heap, a bounded stack, and a 64 KiB script. The script stops when the request is cancelled.
+- `run_script` is on by default. Whoever runs the driver can turn it off with `CUA_DRIVER_DISABLE_RUN_SCRIPT=1` or `"disable_run_script": true` in `~/.cua-driver/config.json` (the older `CUA_DRIVER_EXPERIMENTAL_SCRIPT=0` and `"experimental_script": false` also work). `set_config` cannot change it. When it is off, it is not in `tools/list`.
 
 ## Pixel coordinates
 

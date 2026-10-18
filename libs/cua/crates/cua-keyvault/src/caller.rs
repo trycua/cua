@@ -13,7 +13,13 @@
 //!   cdhash come from the same code object.
 //! - Linux: `SO_PEERCRED` pid and uid, then `/proc/<pid>/exe`. Same-user
 //!   processes can ptrace each other there, so the identity is marked
-//!   `os_verified: false` and third-party callers still need consent.
+//!   `os_verified: false` and third-party callers still need consent. Cua
+//!   itself is recognised by where it is installed: an executable inside a
+//!   Cua install root (`/opt/Cua Spaces`, the `.deb`'s) that no one but root
+//!   can change ([`TrustPolicy::linux_first_party_roots`]).
+//! - Windows: the named pipe's client process id, then its image file's
+//!   Authenticode signature ([`crate::winpeer`]). Cua is the code signed by
+//!   the same publisher as this process ([`TrustPolicy::windows_publisher`]).
 //! - Anything else: refused.
 //!
 //! What a client *claims* (`Hello.app_name`) is shown in the consent UI
@@ -216,12 +222,28 @@ pub struct TrustPolicy {
     pub require_hardened_runtime: bool,
     /// Linux: executable paths that count as Cua.
     pub linux_first_party_exes: Vec<String>,
+    /// Linux: install roots whose executables count as Cua, when every
+    /// directory from the root up is owned by root and closed to everyone
+    /// else (a same-user process cannot put its own binary there).
+    pub linux_first_party_roots: Vec<String>,
+    /// Windows: the publisher (the signing certificate's subject) that counts
+    /// as Cua. `None`: the publisher that signed this process, which is how a
+    /// signed daemon recognises the signed app and the other way round.
+    pub windows_publisher: Option<String>,
     /// Test policies are marked so the daemon can refuse them in release.
     pub is_test_policy: bool,
 }
 
 /// The Apple team that signs Cua releases.
 pub const CUA_TEAM_ID: &str = "YCK386LBJ7";
+/// Where the Linux packages install Cua (the `.deb`'s `/opt/<product name>`,
+/// and the distro-style locations): only executables inside one of these, in
+/// a tree no one but root can change, count as Cua on Linux.
+pub const LINUX_INSTALL_ROOTS: &[&str] = &[
+    "/opt/Cua Spaces",
+    "/usr/lib/cua-spaces",
+    "/usr/local/lib/cua-spaces",
+];
 /// Signing identifiers of first-party Cua binaries.
 /// `com.trycua.cua` is the standalone CLI (and the Spaces app sidecar);
 /// the Tauri Spaces app ships as `com.trycua.spaces.app` (pkg) with the
@@ -251,6 +273,8 @@ impl TrustPolicy {
             ),
             require_hardened_runtime: true,
             linux_first_party_exes: Vec::new(),
+            linux_first_party_roots: LINUX_INSTALL_ROOTS.iter().map(|r| r.to_string()).collect(),
+            windows_publisher: None,
             is_test_policy: false,
         }
     }
@@ -262,6 +286,8 @@ impl TrustPolicy {
             macos_requirement: requirement.into(),
             require_hardened_runtime: false,
             linux_first_party_exes: Vec::new(),
+            linux_first_party_roots: Vec::new(),
+            windows_publisher: None,
             is_test_policy: true,
         }
     }
@@ -284,6 +310,9 @@ pub enum PeerError {
     /// No peer verification on this OS.
     #[error("keyvault IPC is not supported on this OS yet")]
     Unsupported,
+    /// A Windows peer's process could not be inspected.
+    #[error("peer process could not be inspected: {0}")]
+    Inspect(String),
 }
 
 /// Identifies the process on the other end of a connected Unix socket.
@@ -307,9 +336,90 @@ pub fn identify_peer(
     }
 }
 
+/// What the Authenticode check found out about a Windows executable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowsSigner {
+    /// The signing certificate's subject as the system shows it: the
+    /// publisher a UAC prompt names.
+    pub subject: String,
+    /// The signing certificate's SHA-1 thumbprint, hex (shown, never compared:
+    /// short-lived signing certificates rotate under the same subject).
+    pub thumbprint: String,
+}
+
+/// A Windows peer's signing, judged against `policy`: how to record it, and
+/// whether it is Cua. `peer` is the signer of the peer's executable (`None`:
+/// unsigned, or the signature does not chain to a trusted root); `own` the
+/// signer of this process. Cua is the publisher the policy names or, with
+/// none named, the one that signed this process, so a signed daemon and a
+/// signed app recognise each other and an unsigned build recognises no one.
+pub fn windows_signing(
+    peer: Option<&WindowsSigner>,
+    own: Option<&WindowsSigner>,
+    file_name: &str,
+    policy: &TrustPolicy,
+) -> (Signing, bool) {
+    let Some(peer) = peer else {
+        return (Signing::Unsigned, false);
+    };
+    let first_party = match &policy.windows_publisher {
+        Some(publisher) => *publisher == peer.subject,
+        None => own.is_some_and(|own| own.subject == peer.subject),
+    };
+    let signing = Signing::Signed {
+        team_id: peer.subject.clone(),
+        identifier: file_name.to_string(),
+        cdhash: peer.thumbprint.clone(),
+    };
+    (signing, first_party)
+}
+
+/// Whether the executable `exe` (the target of `/proc/<pid>/exe`) counts as
+/// Cua on Linux under `policy`: a path the policy lists, or a file inside one
+/// of its install roots where `protected` says no one but root could have put
+/// it (see [`TrustPolicy::linux_first_party_roots`]). A file that was deleted
+/// or replaced since it started never counts.
+pub fn linux_first_party(
+    exe: &str,
+    policy: &TrustPolicy,
+    protected: impl Fn(&std::path::Path) -> bool,
+) -> bool {
+    use std::path::{Component, Path};
+    if exe.ends_with(" (deleted)") {
+        return false;
+    }
+    if policy.linux_first_party_exes.iter().any(|x| x == exe) {
+        return true;
+    }
+    let path = Path::new(exe);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+    {
+        return false;
+    }
+    policy
+        .linux_first_party_roots
+        .iter()
+        .any(|root| path.starts_with(root) && path != Path::new(root) && protected(path))
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
+
+    /// Whether every part of `path` (the file and each directory above it) is a
+    /// real file or directory owned by root that only root can write to. A path
+    /// like that cannot hold a binary a same-user process put there.
+    pub fn root_protected(path: &std::path::Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        path.ancestors().all(|p| {
+            std::fs::symlink_metadata(p).is_ok_and(|md| {
+                !md.file_type().is_symlink() && md.uid() == 0 && md.mode() & 0o022 == 0
+            })
+        })
+    }
 
     pub fn identify_peer(
         fd: std::os::fd::RawFd,
@@ -367,8 +477,8 @@ mod linux {
             _ => None,
         };
         let first_party = path
-            .as_ref()
-            .is_some_and(|p| policy.linux_first_party_exes.iter().any(|x| x == p));
+            .as_deref()
+            .is_some_and(|p| linux_first_party(p, policy, root_protected));
         Ok(CallerIdentity {
             pid: cred.pid,
             uid: cred.uid,
@@ -561,5 +671,180 @@ mod tests {
             assert!(ids.contains(&format!("identifier \"{id}\"")), "{id}: {req}");
         }
         assert!(p.require_hardened_runtime);
+    }
+
+    fn signer(subject: &str, thumbprint: &str) -> WindowsSigner {
+        WindowsSigner {
+            subject: subject.into(),
+            thumbprint: thumbprint.into(),
+        }
+    }
+
+    #[test]
+    fn windows_recognises_the_publisher_that_signed_this_process() {
+        let p = TrustPolicy::production();
+        let cua = signer("Cua AI, Inc.", "aa");
+        // The same publisher under a rotated certificate is still Cua.
+        let (signing, first_party) = windows_signing(
+            Some(&signer("Cua AI, Inc.", "bb")),
+            Some(&cua),
+            "Cua Spaces.exe",
+            &p,
+        );
+        assert!(first_party);
+        assert_eq!(
+            signing,
+            Signing::Signed {
+                team_id: "Cua AI, Inc.".into(),
+                identifier: "Cua Spaces.exe".into(),
+                cdhash: "bb".into()
+            }
+        );
+        // Another publisher, an unsigned peer, and an unsigned self recognise no one.
+        assert!(!windows_signing(Some(&signer("Mallory LLC", "cc")), Some(&cua), "x.exe", &p).1);
+        assert_eq!(
+            windows_signing(None, Some(&cua), "x.exe", &p),
+            (Signing::Unsigned, false)
+        );
+        assert!(!windows_signing(Some(&cua), None, "cua.exe", &p).1);
+    }
+
+    #[test]
+    fn windows_can_pin_a_publisher_by_name() {
+        let p = TrustPolicy {
+            windows_publisher: Some("Cua AI, Inc.".into()),
+            ..TrustPolicy::production()
+        };
+        // The name decides, whoever this process is signed by.
+        assert!(windows_signing(Some(&signer("Cua AI, Inc.", "aa")), None, "cua.exe", &p).1);
+        assert!(
+            !windows_signing(
+                Some(&signer("Mallory LLC", "bb")),
+                Some(&signer("Mallory LLC", "bb")),
+                "cua.exe",
+                &p
+            )
+            .1
+        );
+    }
+
+    #[test]
+    fn a_windows_signer_is_a_publisher_not_a_team() {
+        // Grants bind to the publisher and the file name, so an update keeps them.
+        let (a, _) = windows_signing(
+            Some(&signer("Cua AI, Inc.", "aa")),
+            None,
+            "Cua Spaces.exe",
+            &TrustPolicy::production(),
+        );
+        let (b, _) = windows_signing(
+            Some(&signer("Cua AI, Inc.", "zz")),
+            None,
+            "Cua Spaces.exe",
+            &TrustPolicy::production(),
+        );
+        let id = |signing| CallerIdentity {
+            signing,
+            ..CallerIdentity::for_tests("x", false)
+        };
+        assert_eq!(id(a).fingerprint(), id(b).fingerprint());
+    }
+
+    fn linux_policy() -> TrustPolicy {
+        TrustPolicy {
+            linux_first_party_exes: vec!["/usr/bin/cua".into()],
+            ..TrustPolicy::production()
+        }
+    }
+
+    #[test]
+    fn linux_trusts_the_install_roots_only_where_root_owns_the_tree() {
+        let p = linux_policy();
+        let root_only = |_: &std::path::Path| true;
+        let user_writable = |_: &std::path::Path| false;
+        // The deb's layout: the app and the daemon beside it.
+        assert!(linux_first_party(
+            "/opt/Cua Spaces/cua-spaces",
+            &p,
+            root_only
+        ));
+        assert!(linux_first_party(
+            "/opt/Cua Spaces/resources/native/cua",
+            &p,
+            root_only
+        ));
+        // The same path in a tree a user could change is not Cua.
+        assert!(!linux_first_party(
+            "/opt/Cua Spaces/cua-spaces",
+            &p,
+            user_writable
+        ));
+        // Listed paths are trusted as listed.
+        assert!(linux_first_party("/usr/bin/cua", &p, user_writable));
+        // Anywhere else, never: a downloaded AppImage, a build, /tmp.
+        for exe in [
+            "/tmp/.mount_CuaSpa1/cua-spaces",
+            "/home/ada/cua/target/debug/cua",
+            "/opt/Cua Spaces",
+            "/opt/Cua Spaces2/x",
+            "/usr/bin/other",
+        ] {
+            assert!(!linux_first_party(exe, &p, root_only), "{exe}");
+        }
+    }
+
+    #[test]
+    fn linux_refuses_a_replaced_binary_and_a_path_that_climbs_out() {
+        let p = linux_policy();
+        let root_only = |_: &std::path::Path| true;
+        assert!(!linux_first_party(
+            "/opt/Cua Spaces/cua-spaces (deleted)",
+            &p,
+            root_only
+        ));
+        assert!(!linux_first_party(
+            "/opt/Cua Spaces/../../tmp/evil",
+            &p,
+            root_only
+        ));
+        assert!(!linux_first_party(
+            "opt/Cua Spaces/cua-spaces",
+            &p,
+            root_only
+        ));
+        // A test policy lists no roots: nothing but its exact paths count.
+        assert!(!linux_first_party(
+            "/opt/Cua Spaces/cua-spaces",
+            &TrustPolicy::for_tests("x"),
+            root_only
+        ));
+    }
+
+    #[test]
+    fn production_policy_names_the_linux_install_roots_and_leaves_windows_to_the_signer() {
+        let p = TrustPolicy::production();
+        assert_eq!(p.linux_first_party_roots, LINUX_INSTALL_ROOTS);
+        assert!(p.linux_first_party_exes.is_empty());
+        assert_eq!(p.windows_publisher, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_tree_the_user_owns_is_not_root_protected() {
+        // SAFETY: geteuid has no preconditions. (Root owns its own files.)
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("cua");
+        std::fs::write(&f, b"x").unwrap();
+        assert!(
+            !linux::root_protected(&f),
+            "the test user owns its own temp files"
+        );
+        assert!(
+            !linux::root_protected(std::path::Path::new("/proc/self/exe")),
+            "a symlink is never protected"
+        );
     }
 }

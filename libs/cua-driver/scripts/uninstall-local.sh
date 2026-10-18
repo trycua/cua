@@ -135,6 +135,9 @@ for skill_link in \
     "$HOME/.agents/skills/cua-driver" \
     "$HOME/.openclaw/skills/cua-driver" \
     "$HOME/.config/opencode/skills/cua-driver" \
+    "$HOME/.gemini/config/skills/cua-driver" \
+    "$HOME/.gemini/antigravity/skills/cua-driver" \
+    "$HOME/.gemini/antigravity-cli/skills/cua-driver" \
     "$HOME/.gemini/skills/cua-driver" \
     "$HOME/.hermes/skills/cua-driver"; do
     if [[ -L "$skill_link" ]]; then

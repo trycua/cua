@@ -29,6 +29,19 @@ bug in this page: tell us.
   through it: it can mint assertions the machines still trust, and read
   whatever crosses it meanwhile.
 
+## The mesh (beta, opt-in)
+
+With [end-to-end encrypted connections](/spaces/guides/mesh) turned on
+(`CUA_MESH=prefer` or `require` on both the device and the machine), a
+`relay:` Space no longer goes through the HTTPS path below: the device and
+the machine talk WireGuard to each other, directly when they can, and the
+relay forwards only ciphertext it cannot read or change. It still decides
+who may connect, from the same accounts, devices and share lists. The mesh
+is off by default; everything on this page describes the HTTPS path, which
+stays in use for everything else (the browser viewer, web-hosted agents,
+machines and devices without the mesh, and `prefer` when the mesh is not
+available). With `CUA_MESH=require`, a device never falls back to it.
+
 ## What crosses the relay
 
 | | Path | Relay sees plaintext? |

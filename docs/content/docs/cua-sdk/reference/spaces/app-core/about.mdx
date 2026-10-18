@@ -119,8 +119,8 @@ AppUpdateChannel::Beta
 
 ## `AppCliInstaller`
 
-Puts the app's bundled `cua` on PATH on first launch (there is no
-onboarding page for it). The same installer the Tauri app runs;
+Puts the app's bundled `cua` on PATH after the first run's Command
+line page (`CliPlanned`, `CliDone`). The same installer the Tauri app runs;
 `plan` reads what installing would do without writing.
 
 | Method | Description |
@@ -268,9 +268,9 @@ Returned by [`app_about_input_from_json`](#app_about_input_from_json).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `auto_check_label` / `autoCheckLabel` | `String` |  | "Automatically check for updates". |
+| `auto_check_label` / `autoCheckLabel` | `String` |  | "Check for and download updates automatically". |
 | `auto_check` / `autoCheck` | `bool` |  | Checked. |
-| `auto_install_label` / `autoInstallLabel` | `String` |  | "Install updates automatically". |
+| `auto_install_label` / `autoInstallLabel` | `String` |  | "Install a downloaded update when Cua Spaces quits". |
 | `auto_install` / `autoInstall` | `bool` |  | Checked. |
 | `auto_install_enabled` / `autoInstallEnabled` | `bool` |  | It can be used (only with automatic checks). |
 | `channel_label` / `channelLabel` | `String` |  | "Update to:". |

@@ -15,6 +15,11 @@ use serde::{Deserialize, Serialize};
 /// ([`crate::model::CLOUD_SPACES_OFFERED`]); the SDK's billing calls stay.
 pub const BILLING_SHOWN: bool = crate::model::CLOUD_SPACES_OFFERED;
 
+/// The account app's billing page. Fleets (run.cua.ai) is shut down, so
+/// billing and account links point at the account app, and only while
+/// [`BILLING_SHOWN`] is on (off by default).
+pub const BILLING_URL: &str = "https://app.cua.ai/billing";
+
 /// The saved card (never its number).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,10 +91,12 @@ pub fn credit_notice(raw: &str) -> Option<CreditNotice> {
         .split_whitespace()
         .next()?
         .trim_end_matches(['.', ')', ',', '"', '\'']);
+    // Whatever page the error names (an old Fleet link), the button opens
+    // the account app.
     (url.starts_with("https://") || url.starts_with("http://")).then(|| CreditNotice {
         text: OUT_OF_CREDIT.into(),
         button: ADD_CREDIT.into(),
-        url: url.into(),
+        url: BILLING_URL.into(),
     })
 }
 
@@ -150,7 +157,7 @@ mod tests {
             credit: Some(BillingCredit {
                 balance_usd_cents: 742,
             }),
-            billing_url: Some("https://run.cua.ai/billing".into()),
+            billing_url: Some(BILLING_URL.into()),
         };
         assert_eq!(billing_line(&s), "$7.42 credit left");
         s.credit = None;
@@ -171,7 +178,7 @@ mod tests {
                 Some(CreditNotice {
                     text: OUT_OF_CREDIT.into(),
                     button: ADD_CREDIT.into(),
-                    url: "https://run.cua.ai/billing".into(),
+                    url: BILLING_URL.into(),
                 }),
                 "{raw}"
             );

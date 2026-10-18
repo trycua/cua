@@ -165,7 +165,7 @@ describe("ThisMachinePanel: a spare machine", () => {
     expect(screen.getByRole("switch", { name: /Provide Spaces/ })).toBeChecked();
     // Both may be off (sharing then stops), so the only one on can go off.
     expect(screen.getByRole("switch", { name: /Provide Spaces/ })).not.toBeDisabled();
-    expect(screen.getByText(/2 macOS VMs \(Apple’s license allows two per Mac\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Up to 4 Spaces · 2 macOS VMs$/)).toBeInTheDocument();
     expect(screen.getByText("None yet")).toBeInTheDocument();
     // No desktop, so no screen permissions to grant.
     expect(screen.queryByText("Screen Recording")).toBeNull();
@@ -239,7 +239,7 @@ describe("roster", () => {
         .getAllByRole("option")
         .filter((el) => !el.classList.contains("tile-new"))
         .map((el) => el.getAttribute("aria-label")?.split(",")[0]);
-      expect([...names].sort()).toEqual(["Office Pc", "This machine"]);
+      expect([...names].sort()).toEqual(["This machine", "office-pc"]);
     });
     // This machine's page opens in the main window, not inside the notch.
     await user.click(within(listbox).getByRole("option", { name: /This machine/ }));

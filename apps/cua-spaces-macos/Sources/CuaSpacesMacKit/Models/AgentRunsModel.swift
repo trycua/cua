@@ -21,6 +21,8 @@ public final class AgentRunsModel {
     public private(set) var load: Load = .loading
     let backend: SpacesBackend
     let spaceId: String
+    /// Told how many runs each read found (the checklist's "Run an agent").
+    var onRead: ((Int) -> Void)?
 
     public init(backend: SpacesBackend, spaceId: String) {
         self.backend = backend
@@ -30,7 +32,9 @@ public final class AgentRunsModel {
     /// Re-reads the runs.
     public func refresh() async {
         do {
-            load = .ready(try await backend.agentRuns(id: spaceId))
+            let runs = try await backend.agentRuns(id: spaceId)
+            load = .ready(runs)
+            onRead?(runs.count)
         } catch {
             load = .failed(LiveSpacesBackend.words(error))
         }

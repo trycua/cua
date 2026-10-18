@@ -4343,24 +4343,99 @@ fn element_click_prefers_ax(
     !has_modifiers && (!hyprland_foreground || (button == 1 && count == 1))
 }
 
-fn foreground_ax_click_unknown(pid: u32, idx: usize) -> ToolResult {
-    use cua_driver_core::action_record::{
-        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
-    };
-    let record = ActionExecutionRecord::builder(
-        ActionEffect::Unverifiable,
-        ActionTransport::LinuxAtSpiAction,
-        RequestedDelivery::Foreground,
-    )
-    .actual_delivery(ActualDelivery::Unknown)
-    .build()
-    .expect("uncertain semantic activation has no delivered count or replay");
-    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+/// The token click's AT-SPI action did not finish within [`ELEMENT_AX_BUDGET`].
+/// It may still land, so the result carries no escalation: `run_steps` must
+/// not send it again before the caller has looked.
+fn element_ax_timeout(idx: usize) -> ToolResult {
     ToolResult::error(format!(
-        "click: AT-SPI activation outcome is unknown for element [{idx}] (pid {pid}); refresh state before another action."
+        "click: the AT-SPI action for element [{idx}] did not complete within \
+         {ELEMENT_AX_BUDGET:?}; its effect is unknown. Take a screenshot; only if the \
+         click did not land, retry by pixel (x/y) or with delivery_mode:\"foreground\"."
     ))
-    .with_structured(public)
-    .with_action_record(record)
+    .with_structured(json!({
+        "code": "ax_timeout",
+        "effect": "unknown",
+    }))
+}
+
+fn foreground_ax_click_unknown(pid: u32, idx: usize) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "click: AT-SPI activation outcome is unknown for element [{idx}] (pid {pid}); refresh state before another action."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiAction,
+        crate::input::delivery::DeliveryMode::Foreground,
+        None,
+    )
+}
+
+/// The result for AT-SPI input that was sent and whose effect is unknown: an
+/// error with `effect: unverifiable` and `delivery.mode: unknown`. It has no
+/// `background_unavailable` code and no foreground escalation, so neither the
+/// caller nor `run_steps` sends the input a second time.
+fn atspi_outcome_unknown(
+    summary: String,
+    transport: cua_driver_core::action_record::ActionTransport,
+    delivery: crate::input::delivery::DeliveryMode,
+    detail: Option<String>,
+) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionExecutionRecord, ActualDelivery, RequestedDelivery,
+    };
+    let requested = if delivery.is_foreground() {
+        RequestedDelivery::Foreground
+    } else {
+        RequestedDelivery::Background
+    };
+    let mut record =
+        ActionExecutionRecord::builder(ActionEffect::Unverifiable, transport, requested)
+            .actual_delivery(ActualDelivery::Unknown);
+    if let Some(detail) = detail {
+        record = record.detail(detail);
+    }
+    let record = record
+        .build()
+        .expect("uncertain semantic activation has no delivered count or replay");
+    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+    ToolResult::error(summary)
+        .with_structured(public)
+        .with_action_record(record)
+}
+
+/// [`atspi_outcome_unknown`] for a `doAction` that failed after it was sent
+/// ([`crate::atspi::InputMayHaveLanded`]).
+fn atspi_click_outcome_unknown(
+    target: &str,
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "click: the AT-SPI action for {target} was sent, but {error}; whether it took \
+             effect is unknown. Refresh state (get_window_state or a screenshot) before \
+             clicking again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiAction,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
+/// [`atspi_outcome_unknown`] for an `EditableText` write that failed after it
+/// was sent ([`crate::atspi::InputMayHaveLanded`]).
+fn atspi_text_outcome_unknown(
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "type_text: the AT-SPI text write was sent, but {error}; whether the text \
+             landed is unknown. Read the field back (get_window_state) before typing again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiValue,
+        delivery,
+        Some(error.to_string()),
+    )
 }
 
 #[cfg(test)]
@@ -4380,6 +4455,57 @@ fn foreground_ax_click_error_does_not_claim_delivery_or_request_replay() {
     assert_eq!(public["delivery"]["mode"], "unknown");
     assert!(public.get("escalation").is_none());
     assert!(public["delivery"].get("delivered_count").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn atspi_input_that_may_have_landed_is_reported_without_a_retry_hint() {
+    use crate::input::delivery::DeliveryMode;
+    let sent = anyhow::Error::new(crate::atspi::InputMayHaveLanded(
+        "EditableText.InsertText did not answer in time".into(),
+    ));
+    for (result, route) in [
+        (
+            atspi_text_outcome_unknown(DeliveryMode::Background, &sent),
+            "accessibility",
+        ),
+        (
+            atspi_click_outcome_unknown("the point (4.0, 5.0)", DeliveryMode::Background, &sent),
+            "accessibility",
+        ),
+        (element_ax_timeout(3), ""),
+    ] {
+        assert_eq!(result.is_error, Some(true));
+        let wire = serde_json::to_value(&result).unwrap();
+        let structured = &wire["structuredContent"];
+        // Neither the code nor an escalation invites a second delivery.
+        assert_ne!(structured["code"], "background_unavailable", "{structured}");
+        assert!(structured.get("escalation").is_none(), "{structured}");
+        assert!(structured.get("suggestion").is_none(), "{structured}");
+        let text = wire["content"][0]["text"].as_str().unwrap();
+        assert!(
+            !text.contains("Retry this action with delivery_mode"),
+            "{text}"
+        );
+        if route.is_empty() {
+            assert_eq!(structured["effect"], "unknown");
+            continue;
+        }
+        // The public action contract: effect unknown to the driver, delivery
+        // happened in an unknown way, no delivered count claimed.
+        assert_eq!(structured["effect"], "unverifiable");
+        assert_eq!(structured["route"], route);
+        assert_eq!(structured["delivery"], json!({"mode": "unknown"}));
+        let record = result.action_record.unwrap();
+        assert_eq!(
+            record.requested_delivery,
+            cua_driver_core::action_record::RequestedDelivery::Background
+        );
+        assert_eq!(
+            *structured,
+            serde_json::to_value(record.public_result().unwrap()).unwrap()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -6765,16 +6891,7 @@ impl Tool for ClickTool {
                 .await
                 {
                     Ok(joined) => joined,
-                    Err(_elapsed) => {
-                        return ToolResult::error(format!(
-                            "click: the AT-SPI action for element [{idx}] did not complete                              within {ELEMENT_AX_BUDGET:?}; its effect is unknown. Take a                              screenshot, then retry by pixel (x/y) or with                              delivery_mode:\"foreground\"."
-                        ))
-                        .with_structured(json!({
-                            "code": "ax_timeout",
-                            "effect": "unknown",
-                            "escalation": non_ax_escalation(),
-                        }));
-                    }
+                    Err(_elapsed) => return element_ax_timeout(idx),
                 };
                 if let Ok(Ok(((_action, suspected_noop, unacknowledged), guard))) = ax_result {
                     let mut structured = json!({
@@ -6815,6 +6932,17 @@ impl Tool for ClickTool {
                 // primary-seat replay when its semantic outcome is uncertain.
                 if foreground_hyprland {
                     return foreground_ax_click_unknown(pid, idx);
+                }
+                // A doAction that failed after it was sent may have clicked: a
+                // pointer click on top of it would click twice.
+                if let Ok(Err(error)) = &ax_result {
+                    if crate::atspi::input_may_have_landed(error) {
+                        return atspi_click_outcome_unknown(
+                            &format!("element [{idx}] (pid {pid})"),
+                            delivery,
+                            error,
+                        );
+                    }
                 }
             }
             if foreground_hyprland {
@@ -7126,10 +7254,23 @@ impl Tool for ClickTool {
                     crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                 })
                 .await;
-                if matches!(semantic, Ok(Ok(Some(_)))) {
-                    return ToolResult::text("Dispatched AT-SPI click.").with_structured(json!({
-                        "path": "wayland_atspi", "verified": false, "effect": "unverifiable"
-                    }));
+                match &semantic {
+                    Ok(Ok(Some(_))) => {
+                        return ToolResult::text("Dispatched AT-SPI click.").with_structured(
+                            json!({
+                                "path": "wayland_atspi", "verified": false, "effect": "unverifiable"
+                            }),
+                        );
+                    }
+                    // Sent and failed: an isolated pointer click would click twice.
+                    Ok(Err(error)) if crate::atspi::input_may_have_landed(error) => {
+                        return atspi_click_outcome_unknown(
+                            &format!("the point ({x:.1}, {y:.1})"),
+                            delivery,
+                            error,
+                        );
+                    }
+                    _ => {}
                 }
             }
             return isolated_hyprland_action(
@@ -7167,10 +7308,15 @@ impl Tool for ClickTool {
                 // working. (x,y) are screen coords here, matching the frames in
                 // `get_window_state`. Miss → fall through to the injection paths.
                 if !delivery.is_foreground() && button == 1 && count == 1 {
-                    if let Ok(Some(_)) =
-                        crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
+                    match crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
-                        return Ok(("wayland_atspi", None, None, None));
+                        Ok(Some(_)) => return Ok(("wayland_atspi", None, None, None)),
+                        // Sent and failed: neither another route nor a
+                        // foreground retry may click a second time.
+                        Err(error) if crate::atspi::input_may_have_landed(&error) => {
+                            return Err(error)
+                        }
+                        _ => {}
                     }
                 }
                 if crate::wayland::is_inject_mode() {
@@ -7205,17 +7351,22 @@ impl Tool for ClickTool {
                     let real_click_for_focus_roles =
                         crate::input::real_pointer_input_available();
                     let (hit, guard) = crate::input::focus_guard::guarded(Some(pid), || {
-                        Ok(crate::atspi::perform_action_at_point_in(
+                        Ok(match crate::atspi::perform_action_at_point_in(
                             pid,
                             xid,
                             xi,
                             yi,
                             real_click_for_focus_roles,
-                        )
-                        .ok()
-                        .flatten())
+                        ) {
+                            Ok(hit) => Ok(hit),
+                            // Sent and failed: a pointer click would click twice.
+                            Err(error) if crate::atspi::input_may_have_landed(&error) => {
+                                Err(error)
+                            }
+                            Err(_) => Ok(None),
+                        })
                     })?;
-                    if let Some(hit) = hit {
+                    if let Some(hit) = hit? {
                         return Ok(("x11_atspi", Some(PointerRoute::Atspi(hit)), guard));
                     }
                 }
@@ -7294,6 +7445,13 @@ impl Tool for ClickTool {
             "background"
         };
         let outcome = match result {
+            Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                atspi_click_outcome_unknown(
+                    &format!("the point ({x:.1}, {y:.1})"),
+                    delivery,
+                    &error,
+                )
+            }
             Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
@@ -7648,13 +7806,17 @@ impl Tool for TypeTextTool {
             if !is_chromium_embedder(pid) && !is_webkitgtk_embedder(pid) {
                 if let Some(index) = resolved_elem_idx {
                     let text_ax = text.clone();
-                    if matches!(
-                        tokio::task::spawn_blocking(move || crate::atspi::type_into_editable_at(
-                            pid, index, &text_ax
-                        ))
-                        .await,
-                        Ok(Ok(()))
-                    ) {
+                    let written = tokio::task::spawn_blocking(move || {
+                        crate::atspi::type_into_editable_at(pid, index, &text_ax)
+                    })
+                    .await;
+                    // Sent and failed: typing keys on top would type twice.
+                    if let Ok(Err(error)) = &written {
+                        if crate::atspi::input_may_have_landed(error) {
+                            return atspi_text_outcome_unknown(delivery, error);
+                        }
+                    }
+                    if matches!(written, Ok(Ok(()))) {
                         position_named_session_keyboard_cursor(
                             &self.state,
                             &args,
@@ -7762,6 +7924,12 @@ impl Tool for TypeTextTool {
                 crate::atspi::type_into_editable_at(pid, idx, &text_at)
             })
             .await;
+            // Sent and failed: injected keys on top would type twice.
+            if let Ok(Err(error)) = &targeted {
+                if crate::atspi::input_may_have_landed(error) {
+                    return atspi_text_outcome_unknown(delivery, error);
+                }
+            }
             if let Ok(Ok(())) = targeted {
                 return type_text_ax_result_verified(
                     pid,
@@ -7890,6 +8058,12 @@ impl Tool for TypeTextTool {
                         "via targeted AT-SPI",
                     )
                     .await;
+                }
+                // Sent and failed: the text may be in the field. Report that
+                // instead of a refusal whose foreground retry, or a later key
+                // route, would type it twice.
+                Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                    return atspi_text_outcome_unknown(delivery, &error);
                 }
                 Ok(Err(_)) | Err(_)
                     if !delivery.is_foreground() && crate::wayland::wayland_input_enabled() =>
@@ -8159,6 +8333,9 @@ impl Tool for TypeTextTool {
                 // observing it, so the confirm is suppressed there (mirrors macOS).
                 return type_text_ax_result(pid, text_len, "via AT-SPI");
             }
+            Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                return atspi_text_outcome_unknown(delivery, &error);
+            }
             _ => {
                 // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
                 // when unfocused, so try the synthetic-focus workaround.
@@ -8191,6 +8368,9 @@ impl Tool for TypeTextTool {
             Ok(Ok(())) => {
                 return type_text_ax_result(pid, text_len, "via AT-SPI with focus workaround");
             }
+            Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                return atspi_text_outcome_unknown(delivery, &error);
+            }
             _ => {
                 // AT-SPI still didn't work. Fall back to X11 XSendEvent.
             }
@@ -8217,8 +8397,11 @@ impl Tool for TypeTextTool {
             // focused widget, so background XSendEvent typing doesn't land. Fill
             // the editable field via AT-SPI instead — focus-free and toolkit-
             // agnostic. Fall back to Tk send or XSendEvent when no a11y field is exposed.
-            if crate::atspi::insert_text(pid, &text).unwrap_or(false) {
-                return Ok(("ax", None));
+            match crate::atspi::insert_text(pid, &text) {
+                Ok(true) => return Ok(("ax", None)),
+                // Sent and failed: Tk send or key events would type it twice.
+                Err(error) if crate::atspi::input_may_have_landed(&error) => return Err(error),
+                _ => {}
             }
             // Tk apps: use Tk's `send` command (no AT-SPI bridge, so AT-SPI above
             // returned false). This is the Tk-specific override, like CDP for Chromium.
@@ -8259,6 +8442,9 @@ impl Tool for TypeTextTool {
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
             ))
             .with_structured(type_text_structured(path, text_len, false)),
+            Ok(Err(e)) if crate::atspi::input_may_have_landed(&e) => {
+                atspi_text_outcome_unknown(delivery, &e)
+            }
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

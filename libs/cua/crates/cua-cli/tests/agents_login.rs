@@ -375,6 +375,22 @@ async fn agents_commands_round_trip_and_protect_malformed_files() {
     assert_eq!(o.code, 2, "{o:?}");
 }
 
+/// A stand-in cua-driver whose `mcp` answers one MCP `initialize`.
+#[cfg(unix)]
+fn fake_driver(h: &Home) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let p = h.dir.path().join("opt/drv/cua-driver");
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(
+        &p,
+        "#!/bin/sh\nread line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p.display().to_string()
+}
+
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     let h = home();
@@ -384,6 +400,7 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
         "[mcp_servers.other]\ncommand = \"o\"\n",
     )
     .unwrap();
+    let drv = fake_driver(&h);
 
     // What the installers run: every detected agent, no prompts.
     let o = h
@@ -395,7 +412,7 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
             "all",
             "--yes",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -412,9 +429,9 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     assert!(!o.stdout.contains("not installed yet"), "{o:?}");
     let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
     assert!(
-        codex.contains(
-            "[mcp_servers.cua-driver]\ncommand = \"/opt/drv/cua-driver\"\nargs = [\"mcp\"]"
-        ),
+        codex.contains(&format!(
+            "[mcp_servers.cua-driver]\ncommand = \"{drv}\"\nargs = [\"mcp\"]"
+        )),
         "{codex}"
     );
     assert!(
@@ -440,7 +457,7 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
             "--agents",
             "codex",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -465,8 +482,20 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     assert_eq!(codex["cua_driver_configured"], true, "{codex}");
     assert_eq!(codex["cua_configured"], false, "{codex}");
 
-    // Without an installed cua-driver it points at the bare name and says how
-    // to install it.
+    // `cua agents remove` undoes it.
+    let o = h.run(&["agents", "remove", "--yes"]).await;
+    o.ok();
+    let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
+    assert_eq!(codex, "[mcp_servers.other]\ncommand = \"o\"\n");
+    assert!(!h.dir.path().join(".claude/skills/cua-driver").exists());
+}
+
+/// Without an installed cua-driver nothing is written: the row fails with
+/// the reason and the CLI says how to install it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agents_setup_cua_driver_without_cua_driver_writes_nothing() {
+    let h = home();
+    mkdirs(&h, &[".claude"]);
     let o = h
         .run(&[
             "agents",
@@ -478,7 +507,8 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
             "--yes",
         ])
         .await;
-    o.ok();
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stdout.contains("isn't installed"), "{o:?}");
     // The install one-liner is PowerShell's `-Only` on Windows, sh's `--only`
     // elsewhere.
     let hint = if cfg!(windows) {
@@ -487,13 +517,7 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
         "--only cua-driver"
     };
     assert!(o.stdout.contains(hint), "{o:?}");
-
-    // `cua agents remove` undoes it.
-    let o = h.run(&["agents", "remove", "--yes"]).await;
-    o.ok();
-    let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
-    assert_eq!(codex, "[mcp_servers.other]\ncommand = \"o\"\n");
-    assert!(!h.dir.path().join(".claude/skills/cua-driver").exists());
+    assert!(!h.dir.path().join(".claude.json").exists());
 }
 
 // ------------------------------------------------------------ PTY (expect)

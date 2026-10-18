@@ -297,6 +297,7 @@ Errors.
 ```rust
 pub enum Error {
   InvalidArgument(String),
+  CloudEnded,
   InvalidPlacement(PlacementError),
   NotFound(String),
   AmbiguousSandbox { name: String, candidates: Vec<String>, message: String },
@@ -1511,7 +1512,7 @@ pub fn capabilities(on: &On) -> Capabilities
 pub fn cloud_capabilities() -> Capabilities
 /// The built-in `local` capabilities.
 pub fn local_capabilities() -> Capabilities
-/// Every location: `local`, `cloud`, then ...
+/// Every location: `local`, then the ...
 pub fn locations() -> Vec<Capabilities>
 /// The registered third-party provider ...
 pub fn provider(name: &str) -> Option<Capabilities>
@@ -1582,6 +1583,9 @@ pub fn registry_image_dict(reference: &str, os_type: &str, kind: Option<&str>) -
 ## Constants
 
 ```rust
+/// The one "Cua Cloud has ended" message ...
+pub const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own machine. \
+     See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
 /// Your own cloud accounts as locations ...
 pub const CLOUD_LOCATIONS: &[&str] = _;
 /// Every contrib location word the refs ...

@@ -68,7 +68,7 @@ describe("Add a machine by link or QR code", () => {
     expect(screen.getByText("Waiting for the computer…")).toBeTruthy();
     expect(document.querySelector("[data-pairing-expires]")?.textContent).toBe("Works once. Expires in 30 min");
 
-    fireEvent.click(screen.getByText("Windows (preview)"));
+    fireEvent.click(screen.getByText("Windows"));
     await waitFor(() => expect(screen.getByText(/install\.ps1\)\)\) -Pair K7QM-4XPB-/)).toBeTruthy());
     // The by-hand steps stay one click away.
     expect(document.querySelector("details[data-manual-steps] summary")?.textContent?.trim()).toBe("Set it up by hand instead");

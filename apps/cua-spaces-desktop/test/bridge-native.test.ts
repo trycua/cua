@@ -20,7 +20,7 @@ import { OPERATIONS, type OpArgs, type OpName } from "../../cua-spaces-web/src/b
 import { createBridge, type Bridge } from "../src/bridge";
 import type { BridgeEvent } from "../src/bridge/host";
 import { createOptions } from "../src/bridge/spaces";
-import { telemetrySignal } from "../src/bridge/telemetry";
+import { hostRecorded, telemetrySignal } from "../src/bridge/telemetry";
 import { AppModel } from "../src/model/app-model";
 import { CloudModel } from "../src/model/cloud";
 import { DevicesModel } from "../src/model/devices";
@@ -332,11 +332,11 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       signals: [
         { type: "feature", feature: "space_open" },
         { type: "feature", feature: "Not A Word" },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false, errorVariant: "" },
+        { type: "space-wizard", action: "opened" },
       ],
     });
     const after = telemetry.recorded.slice(-2);
-    expect(after.map((s) => (s as unknown as { tag: string }).tag)).toEqual(["Feature", "SpaceCreate"]);
+    expect(after.map((s) => (s as unknown as { tag: string }).tag)).toEqual(["Feature", "SpaceWizard"]);
     telemetry.current = { ...telemetry.current, enabled: false };
     const before = telemetry.recorded.length;
     await call("telemetry.track", { signals: [{ type: "feature", feature: "space_open" }] });
@@ -345,6 +345,26 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetrySignal(native, { type: "experiments-on", experiments: ["cua_volume", "BAD"] })).toBeNull();
     expect(telemetrySignal(native, { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false })).toBeNull();
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
+  });
+
+  it("leaves a create's signals to the host, which records them from the create it runs", async () => {
+    const before = telemetry.recorded.length;
+    await call("telemetry.track", {
+      signals: [
+        { type: "feature", feature: "space_create_local" },
+        { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
+        { type: "step", step: "first_space_created", ok: true },
+        { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "error", failedPhase: "preparing", stalled: false, elapsedMs: 900, gpu: false, errorVariant: "" },
+        { type: "step", step: "first_space_ready", ok: true },
+      ],
+    });
+    expect(telemetry.recorded.length).toBe(before);
+    // The page's other signals still count.
+    await call("telemetry.track", { signals: [{ type: "feature", feature: "space_open" }, { type: "step", step: "onboarding_shown", ok: true }] });
+    expect(telemetry.recorded.length).toBe(before + 2);
+    expect(hostRecorded({ type: "feature", feature: "space_create_cloud" })).toBe(true);
+    expect(hostRecorded({ type: "step", step: "checklist_create_space", ok: true })).toBe(false);
+    expect(hostRecorded(null)).toBe(false);
   });
 
   it("records that the usage notice was seen once the first run leaves Welcome", async () => {

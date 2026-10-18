@@ -375,6 +375,8 @@ codesign --verify --deep --strict "${LOCAL_APP}"
 # macOS 15+ separately reminds each responsible app before direct capture,
 # even when Screen Recording is granted. The hosted image pre-approves its
 # runner agent, but this signed app is the responsible ScreenCaptureKit client.
+# The driver reads this bundle-identifier entry as recorded consent; without
+# it, implicit captures refuse with direct_capture_consent_required (CUA-1792).
 echo "[CAPTURE] Suppressing the app-specific private-window-picker reminder"
 mark_phase "screen-capture-approval"
 mkdir -p "$(dirname "${SCREEN_CAPTURE_APPROVALS}")"

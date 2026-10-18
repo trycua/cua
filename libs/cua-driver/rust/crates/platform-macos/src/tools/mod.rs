@@ -264,6 +264,7 @@ pub use check_permissions::{
 };
 
 pub use cua_driver_core::snapshot_store::ZoomContext;
+pub(crate) use health_report::current_bundle_identifier as main_bundle_identifier;
 pub(crate) use health_report::sw_vers_product_version as macos_product_version;
 
 /// The shared per-call delivery mode; see [`cua_driver_core::delivery`].

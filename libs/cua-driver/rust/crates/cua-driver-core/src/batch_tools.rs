@@ -1326,8 +1326,13 @@ fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
 
 /// Whether a refusal names foreground delivery as the route that works:
 /// the target ignores background input (Electron, LibreOffice VCL, ...).
+/// A result whose input may have landed is never one, whatever it recommends:
+/// sending it again could type or click twice.
 fn wants_foreground(result: &ToolResult) -> bool {
     let structured = result.structured_content.as_ref();
+    if structured.is_some_and(input_may_have_landed) {
+        return false;
+    }
     let recommended = structured
         .and_then(|value| {
             value
@@ -1348,6 +1353,17 @@ fn wants_foreground(result: &ToolResult) -> bool {
         .unwrap_or("");
     text.contains("Retry this action with delivery_mode:\"foreground\"")
         || text.contains("Retry with delivery_mode:\"foreground\"")
+}
+
+/// Whether a failed step reports input that may have reached the app: an
+/// `effect` of `unverifiable`, `partial`, `unknown` or `confirmed`, or a
+/// `delivery` record. A refusal (`refused`, `none`, macOS `no_drop`) is not.
+fn input_may_have_landed(structured: &Value) -> bool {
+    let effect = structured.get("effect").and_then(Value::as_str);
+    matches!(
+        effect,
+        Some("unverifiable" | "partial" | "unknown" | "confirmed")
+    ) || structured.get("delivery").is_some()
 }
 
 /// Whether an action failed because its element target died: the element

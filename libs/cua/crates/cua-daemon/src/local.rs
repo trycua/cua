@@ -1294,6 +1294,7 @@ pub async fn setup(
         components,
         dry_run,
         cua_vmm::qemu::install_qemu,
+        cua_vmm::lume::install_lume,
         kvm_step,
     )
     .await
@@ -1304,6 +1305,7 @@ async fn setup_with(
     components: &[String],
     dry_run: bool,
     install_qemu: impl AsyncFn() -> cua_vmm::Result<()>,
+    install_lume: impl AsyncFn() -> cua_vmm::Result<()>,
     kvm: impl AsyncFn(bool) -> Option<cua_proto::daemon::v1::SetupStep>,
 ) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
     use cua_proto::daemon::v1::{CheckStatus, SetupStep};
@@ -1351,7 +1353,7 @@ async fn setup_with(
         }
         let result = match kind {
             BackendKind::Qemu => install_qemu().await,
-            BackendKind::Lume => cua_vmm::lume::install_lume().await,
+            BackendKind::Lume => install_lume().await,
             _ => Err(VmmError::Unsupported {
                 backend: "container",
                 op: "unattended runsc install (run the plan shown by --dry-run)",
@@ -1977,7 +1979,7 @@ mod tests {
             false => Err(super::VmmError::PermissionDenied("sudo".into())),
         };
         let kvm = async |_| kvm_step();
-        super::setup_with(report, &components, dry_run, install, kvm)
+        super::setup_with(report, &components, dry_run, &install, &install, kvm)
             .await
             .unwrap()
             .into_iter()

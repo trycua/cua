@@ -2584,10 +2584,11 @@ fn runtime_doctor_output_with(
     json: bool,
     optional: &[String],
 ) -> i32 {
+    use cua_sdk::RuntimeCheckStatus as S;
     let mut checks = report.checks.clone();
     for check in &mut checks {
-        if check.status == cua_sdk::RuntimeCheckStatus::Error && optional.contains(&check.name) {
-            check.status = cua_sdk::RuntimeCheckStatus::NotApplicable;
+        if check.status == S::Error && optional.contains(&check.name) {
+            check.status = S::NotApplicable;
         }
     }
     if json {
@@ -2609,11 +2610,7 @@ fn runtime_doctor_output_with(
             );
         }
     }
-    i32::from(
-        checks
-            .iter()
-            .any(|c| c.status == cua_sdk::RuntimeCheckStatus::Error),
-    )
+    i32::from(checks.iter().any(|c| c.status == S::Error))
 }
 
 fn runtime_setup_output(
@@ -2629,11 +2626,7 @@ fn runtime_setup_output(
         }
         line(out, format!("{:<10} {:?}: {}", s.name, s.status, s.detail));
     }
-    i32::from(
-        steps
-            .iter()
-            .any(|s| s.status == cua_sdk::RuntimeCheckStatus::Error),
-    )
+    i32::from(steps.iter().any(|s| s.status == S::Error))
 }
 
 #[cfg(test)]

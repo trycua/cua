@@ -215,7 +215,7 @@ pub struct StartSpec {
     pub arch: Option<Arch>,
     pub cpus: u32,
     pub memory_mb: u64,
-    /// Enable a persistent software TPM 2.0 (QEMU, Unix only); stays on once the instance has TPM state.
+    /// Enable persistent software TPM 2.0 (QEMU, Unix only); retained once TPM state exists.
     #[serde(default)]
     pub tpm: bool,
     /// Boot firmware (VM backends). `None` = the backend decides.

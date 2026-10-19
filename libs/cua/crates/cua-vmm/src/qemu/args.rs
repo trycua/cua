@@ -40,6 +40,7 @@ pub struct LaunchConfig {
     pub seed_iso: Option<PathBuf>,
     /// Installer ISO attached as CD-ROM and booted first.
     pub install_iso: Option<PathBuf>,
+    /// Optional swtpm control socket.
     pub tpm_socket: Option<PathBuf>,
     pub firmware: Firmware,
     /// `(host_port, guest_port)` TCP forwards on 127.0.0.1.
@@ -161,14 +162,7 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
                 seed.display()
             ),
         ]);
-        push(&[
-            "-device",
-            if windows_arm {
-                "usb-storage,drive=cidata,bus=xhci.0"
-            } else {
-                "virtio-blk-pci,drive=cidata"
-            },
-        ]);
+        push(&["-device", "virtio-blk-pci,drive=cidata"]);
     }
     if let Some(iso) = &cfg.install_iso {
         match cfg.arch {
@@ -181,15 +175,10 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
                         iso.display()
                     ),
                 ]);
-                push(&[
-                    "-device",
-                    if windows_arm {
-                        "usb-storage,drive=cd0,bus=xhci.0,bootindex=0"
-                    } else {
-                        "virtio-scsi-pci,id=scsi0"
-                    },
-                ]);
-                if !windows_arm {
+                if windows_arm {
+                    push(&["-device", "usb-storage,drive=cd0,bus=xhci.0,bootindex=0"]);
+                } else {
+                    push(&["-device", "virtio-scsi-pci,id=scsi0"]);
                     push(&["-device", "scsi-cd,drive=cd0,bootindex=0"]);
                 }
             }
@@ -370,24 +359,10 @@ mod tests {
         }
         c.seed_iso = Some("/seed.iso".into());
         let seeded = build(&c);
-        assert!(has(
-            &seeded,
-            ["-device", "usb-storage,drive=cidata,bus=xhci.0"]
-        ));
-        assert!(!seeded.iter().any(|s| s == "virtio-blk-pci,drive=cidata"));
+        assert!(has(&seeded, ["-device", "virtio-blk-pci,drive=cidata"]));
         assert_eq!(
             seeded.iter().filter(|s| *s == "qemu-xhci,id=xhci").count(),
             1
-        );
-        assert!(
-            seeded
-                .iter()
-                .position(|s| s == "qemu-xhci,id=xhci")
-                .unwrap()
-                < seeded
-                    .iter()
-                    .position(|s| s == "usb-storage,drive=cidata,bus=xhci.0")
-                    .unwrap()
         );
         for arch in [Arch::Aarch64, Arch::X86_64] {
             c.arch = arch;

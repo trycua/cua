@@ -117,26 +117,19 @@ pub fn find_uefi_with(arch: Arch, qemu_bin: &Path, exists: impl Fn(&Path) -> boo
     None
 }
 
-pub fn find_windows_arm(qemu_bin: &Path) -> Option<Uefi> {
-    find_windows_arm_with(qemu_bin, |p| p.is_file())
-}
-
-fn find_windows_arm_with(qemu_bin: &Path, exists: impl Fn(&Path) -> bool) -> Option<Uefi> {
+pub fn find_windows_arm(qemu_bin: &Path, exists: impl Fn(&Path) -> bool) -> Option<Uefi> {
     let real = std::fs::canonicalize(qemu_bin).unwrap_or_else(|_| qemu_bin.into());
     let prefix = real.parent()?.parent()?;
-    [
-        prefix.join("share/AAVMF"),
-        PathBuf::from("/usr/share/AAVMF"),
-    ]
-    .into_iter()
-    .find_map(|dir| {
-        let code = dir.join("AAVMF_CODE.secboot.fd");
-        let vars = dir.join("AAVMF_VARS.ms.fd");
-        (exists(&code) && exists(&vars)).then_some(Uefi {
-            code,
-            vars_template: Some(vars),
+    ["share/AAVMF", "/usr/share/AAVMF"]
+        .into_iter()
+        .find_map(|dir| {
+            let code = prefix.join(dir).join("AAVMF_CODE.secboot.fd");
+            let vars = prefix.join(dir).join("AAVMF_VARS.ms.fd");
+            (exists(&code) && exists(&vars)).then_some(Uefi {
+                code,
+                vars_template: Some(vars),
+            })
         })
-    })
 }
 
 /// Find UEFI firmware on the real filesystem.
@@ -169,7 +162,7 @@ mod tests {
         std::fs::write(&vars, []).unwrap();
         let bin = tmp.path().join("bin/qemu-system-aarch64");
         // Exclude system firmware so the missing-pair check is host independent.
-        let find = || find_windows_arm_with(&bin, |p| p.starts_with(tmp.path()) && p.is_file());
+        let find = || find_windows_arm(&bin, |p| p.starts_with(tmp.path()) && p.is_file());
         assert_eq!(
             find(),
             Some(Uefi {

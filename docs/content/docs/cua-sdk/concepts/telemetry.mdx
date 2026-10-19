@@ -89,28 +89,8 @@ teleport (`first_teleport`), first agent run (`first_agent_run`) and an
 AI agent using a Space (`cua_agent_used_space`). The `first_*` steps are sent
 once per install.
 
-The installers (`install.sh`, `install.ps1`) send three events about their
-own run: `installer_started`, then `installer_completed` or
-`installer_failed` with the part that was running and a fixed reason word.
-They follow the same switches as every Cua program (`DO_NOT_TRACK`,
-`CUA_TELEMETRY`, the config file, CI) and send nothing on a dry run. Before
-the first one, the installer prints a short notice saying so. They create
-the same anonymous install id, so the app's later events continue the same
-install.
-
-`cua_agent_used_space` is sent when a tool call from an AI agent (through
-`cua mcp` or the daemon's MCP server) acts inside a Space and works: a
-command, a file, the screen, a service or an agent in the Space. It carries
-only the kind of tool, at most once per install per UTC day. Calls that only
-list, create or share Spaces do not count.
-
-An agent run is counted by the install that started it: once when it
-starts, and once when any Cua program of that install first sees its first
-turn end, fail or stop. Until then a marker with the same fixed words waits
-in `~/.cua/telemetry/agent_runs/` (dropped after 7 days). Cua programs
-inside an agent run (`CUA_AGENT_RUN_ID` set) record no agent runs, so a
-Space never counts as an install. Retention counts installs with a
-`cua_app_active` event on day 1, 7 and 30 after their first one.
+How the installers, an AI agent using a Space, agent runs and retention
+are counted: [How events are counted](/cua-sdk/concepts/telemetry-counting).
 
 ## Never collected
 

@@ -913,6 +913,7 @@ fn docs_page_names_every_event_and_property() {
     let page = concat!(
         include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry.mdx"),
         include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry-events.mdx"),
+        include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry-counting.mdx"),
     );
     for spec in schema::EVENTS {
         assert!(

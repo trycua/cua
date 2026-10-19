@@ -352,8 +352,7 @@ pub fn initialize_result() -> Value {
 /// MCP `instructions` (`InitializeResult.instructions`) sent to every
 /// connecting client. The spec frames this as a "hint... MAY be added
 /// to the system prompt" — eager, every-turn cost. We keep it under
-/// the community-recommended ~200-word ceiling (`INSTRUCTIONS_WORD_BUDGET`
-/// is that plus the macOS-only permission line) and host the long-form
+/// the community-recommended ~200-word ceiling and host the long-form
 /// workflow in `Skills/cua-driver/SKILL.md`.
 ///
 /// Templated per-host: the accessibility-tree provider name (AX on
@@ -363,10 +362,7 @@ pub fn initialize_result() -> Value {
 /// Interpreter uses for its system message.
 fn agent_instructions() -> String {
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
-        (
-            "AX (Accessibility)",
-            "MACOS.md (no-foreground contract, AXMenuBar navigation, SkyLight click dispatch, install and permissions)",
-        )
+        ("AX (Accessibility)", "MACOS.md (permissions)")
     } else if cfg!(target_os = "windows") {
         (
             "UIA (UI Automation)",
@@ -383,7 +379,7 @@ fn agent_instructions() -> String {
     // exception to "system prompts belong to the user"; the steps and
     // guardrails live in MACOS.md ("Install and approve permissions").
     let permission_line = if cfg!(target_os = "macos") {
-        "\n\nmacOS: if `check_permissions` shows Accessibility or Screen Recording off, ask the user. Click Allow on Cua Driver's own prompts only if the owner explicitly authorized it for this task, never on another app's."
+        "\n\nmacOS: if `check_permissions` shows Accessibility or Screen Recording off, ask the user; approve Cua Driver's own prompts only if the owner explicitly authorized it (MACOS.md)."
     } else {
         ""
     };
@@ -394,7 +390,7 @@ fn agent_instructions() -> String {
     #[cfg(not(feature = "script"))]
     let script_enabled = false;
     let script_line = if script_enabled {
-        " Loops, branches or retries: one `run_script` call (sandboxed JavaScript)."
+        " Loops, branches or retries: one `run_script` call."
     } else {
         ""
     };
@@ -402,14 +398,13 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
-Efficient loop:
 1. `list_windows({{app:"Name"}})` or `launch_app` for `pid` and `window_id`.
-2. Read narrowly: `get_window_state` with `query:"Save"` (or `max_elements`). Re-read with `since:"latest"`; for just a picture, `include_accessibility_tree:false`.
+2. Read narrowly: `get_window_state` with `query:"Save"`. Re-read with `since:"latest"`.
 3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixel `x,y` only for surfaces missing from the tree.
-4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: it stops at the first failure and returns what changed.{script_line}
+4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: stops at the first failure, returns what changed.{script_line}
 5. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)`. `unknown` and `effect:"unverifiable"` are not success.
 
-Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages, clipboard tools for the clipboard. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.
+Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.
 
 Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.next_call` (`browser_prepare`) if refused, then `browser_click`/`browser_type`/`browser_pointer` (hover, drag); never desktop pointer tools.
 
@@ -503,10 +498,6 @@ mod action_record_wire_tests {
 mod agent_instruction_tests {
     use super::{agent_instructions, initialize_result};
 
-    /// The ~200-word community ceiling for the cross-platform text, plus room
-    /// for the macOS-only permission line.
-    const INSTRUCTIONS_WORD_BUDGET: usize = 240;
-
     #[test]
     fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
         let instructions = agent_instructions();
@@ -537,7 +528,7 @@ mod agent_instruction_tests {
             assert!(instructions.contains("one `run_script` call"));
         }
         assert!(
-            instructions.split_whitespace().count() <= INSTRUCTIONS_WORD_BUDGET,
+            instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"
         );
     }
@@ -553,10 +544,12 @@ mod agent_instruction_tests {
         );
         if has_line {
             // Keeps the narrow exception narrow: ask first, own prompts only,
-            // explicit owner authorization, never another app's prompt.
+            // explicit owner authorization; MACOS.md holds the detail.
             assert!(instructions.contains("ask the user"));
-            assert!(instructions.contains("only if the owner explicitly authorized it"));
-            assert!(instructions.contains("never on another app's"));
+            assert!(instructions.contains(
+                "approve Cua Driver's own prompts only if the owner explicitly authorized it"
+            ));
+            assert!(instructions.contains("(MACOS.md)"));
             assert!(instructions.contains("`check_permissions`"));
         }
     }
@@ -594,7 +587,7 @@ mod agent_instruction_tests {
         assert!(status < bounded_query);
         assert!(bounded_query < discovery);
         assert!(instructions.contains("if ready"));
-        assert!(instructions.split_whitespace().count() <= INSTRUCTIONS_WORD_BUDGET);
+        assert!(instructions.split_whitespace().count() <= 200);
     }
 }
 

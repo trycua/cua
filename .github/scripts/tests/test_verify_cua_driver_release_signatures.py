@@ -86,6 +86,7 @@ class FakeMacTools:
         adhoc_names: tuple[str, ...] = (),
         unsigned_names: tuple[str, ...] = (),
         team: str = TEAM,
+        requirement: str | None = None,
     ) -> None:
         self.signed = signed
         self.unsigned_names = unsigned_names
@@ -93,6 +94,7 @@ class FakeMacTools:
         self.stapled = stapled
         self.adhoc_names = adhoc_names
         self.team = team
+        self.requirement = requirement
         self.calls: list[list[str]] = []
 
     def __call__(self, argv) -> CommandResult:
@@ -108,6 +110,11 @@ class FakeMacTools:
             if not self.signed or target.name in self.unsigned_names:
                 return CommandResult(1, f"{target}: code object is not signed at all")
             return CommandResult(0, f"{target}: valid on disk")
+        if tool == "codesign" and "-r-" in argv:
+            if adhoc:
+                return CommandResult(0, f"Executable={target}\ndesignated => cdhash H\"{'ab' * 20}\"\n")
+            requirement = self.requirement or gate.expected_designated_requirement(self.team)
+            return CommandResult(0, f"Executable={target}\ndesignated => {requirement}\n")
         if tool == "codesign":
             details = ADHOC_DETAILS if adhoc else SIGNED_DETAILS.replace(TEAM, self.team)
             return CommandResult(0, details)
@@ -194,6 +201,62 @@ def test_each_macos_signature_requirement_is_enforced(
 ) -> None:
     report = verify_macos(make_darwin_artifacts(tmp_path / "a"), VERSION, run=tools)
     assert any(message in failure for failure in report.failures), report.failures
+
+
+# What `codesign -d -r- CuaDriver.app` printed for the shipped 0.36.0 app. macOS
+# keeps the user's Accessibility and Screen Recording approval against this
+# exact requirement, so changing it makes every user approve again.
+SHIPPED_0_36_0_REQUIREMENT = (
+    'identifier "com.trycua.driver" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6]'
+    " /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */"
+    " and certificate leaf[subject.OU] = YCK386LBJ7"
+)
+
+
+def test_expected_designated_requirement_is_the_one_shipped_apps_carry() -> None:
+    assert gate.expected_designated_requirement() == SHIPPED_0_36_0_REQUIREMENT
+    assert "cdhash" not in SHIPPED_0_36_0_REQUIREMENT
+    assert "CFBundleShortVersionString" not in SHIPPED_0_36_0_REQUIREMENT
+
+
+def test_release_app_designated_requirement_is_checked_once_per_archive(tmp_path: Path) -> None:
+    tools = FakeMacTools()
+    report = verify_macos(make_darwin_artifacts(tmp_path / "a"), VERSION, run=tools)
+
+    assert report.failures == []
+    requirement_calls = [call for call in tools.calls if "-r-" in call]
+    assert len(requirement_calls) == 3
+    assert all(Path(call[-1]).name == "CuaDriver.app" for call in requirement_calls)
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        'cdhash H"' + "ab" * 20 + '"',
+        SHIPPED_0_36_0_REQUIREMENT + ' and info[CFBundleShortVersionString] = "0.36.0"',
+        SHIPPED_0_36_0_REQUIREMENT.replace("com.trycua.driver", "com.trycua.driver.local"),
+        SHIPPED_0_36_0_REQUIREMENT.replace("YCK386LBJ7", "ZZZZZZZZZZ"),
+        "anchor apple generic",
+    ],
+)
+def test_a_requirement_that_pins_a_build_fails_the_release(tmp_path: Path, requirement: str) -> None:
+    report = verify_macos(
+        make_darwin_artifacts(tmp_path / "a"), VERSION, run=FakeMacTools(requirement=requirement)
+    )
+
+    assert any(
+        "CuaDriver.app: designated requirement is not the stable one" in failure
+        and "Accessibility and Screen Recording again" in failure
+        for failure in report.failures
+    ), report.failures
+
+
+def test_a_quoted_team_id_in_the_requirement_is_still_the_same_requirement(tmp_path: Path) -> None:
+    quoted = SHIPPED_0_36_0_REQUIREMENT.replace("= YCK386LBJ7", '= "YCK386LBJ7"')
+    report = verify_macos(
+        make_darwin_artifacts(tmp_path / "a"), VERSION, run=FakeMacTools(requirement=quoted)
+    )
+    assert report.failures == []
 
 
 @pytest.mark.parametrize(

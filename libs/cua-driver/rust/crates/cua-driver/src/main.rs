@@ -22,6 +22,8 @@ mod broken_pipe;
 mod bundle;
 mod check_update_tool;
 mod cli;
+#[cfg(any(feature = "computeruse", test))]
+mod computeruse_product;
 mod doctor;
 mod driver_service_http;
 mod extension_manager;
@@ -284,6 +286,12 @@ fn maybe_init_pip() {
 // ── Public SDK runtime host ──────────────────────────────────────────────
 
 fn register_host_tools(registry: &mut cua_driver_core::tool::ToolRegistry) {
+    // ComputerUse product build: keep the local history tools, but no check_for_update and no
+    // extension install/management tools (the host also rejects them).
+    if cfg!(feature = "computeruse") {
+        history_runtime::register_into(registry);
+        return;
+    }
     history_runtime::register_host_tools(registry);
     extension_manager::register_host_tools(registry);
 }

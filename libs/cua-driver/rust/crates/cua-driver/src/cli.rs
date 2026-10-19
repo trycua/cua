@@ -787,6 +787,16 @@ pub fn parse_command() -> Command {
 
     let expected_stop_pid = parse_expected_stop_pid(&args, positionals.first().copied());
 
+    // ComputerUse product build: the embedding host pins this binary, so verbs that reach the network,
+    // install or replace files, or register persistent OS integrations are compiled out of the CLI.
+    #[cfg(feature = "computeruse")]
+    if let Some(verb) = positionals.first().copied() {
+        if crate::computeruse_product::cli_verb_disabled(verb, positionals.get(1).copied()) {
+            eprintln!("cua-driver: '{verb}' is not available in this ComputerUse build.");
+            process::exit(64);
+        }
+    }
+
     if matches!(positionals.first().copied(), None | Some("mcp")) {
         if let Some(flag) = serve_only_authorization_flag(&args) {
             eprintln!("cua-driver mcp does not accept {flag}; authorization flags belong to `cua-driver serve`.");

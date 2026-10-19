@@ -214,6 +214,10 @@ pub fn is_enabled() -> bool {
 }
 
 fn effective_enabled() -> (bool, &'static str) {
+    // ComputerUse product build: telemetry is compiled off regardless of environment or config.
+    if cfg!(feature = "computeruse") {
+        return (false, "computeruse_build");
+    }
     // The cross-tool opt-out wins over everything.
     if std::env::var("DO_NOT_TRACK").is_ok_and(|v| {
         let v = v.trim();

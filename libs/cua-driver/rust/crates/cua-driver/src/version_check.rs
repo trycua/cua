@@ -473,6 +473,10 @@ fn format_banner(
 /// 2. Persisted config `update_check_enabled` (false → off)
 /// 3. Built `CARGO_PKG_VERSION` is a pre-release (`-dev`, `-rc.1`, …) → off
 fn is_enabled() -> bool {
+    // ComputerUse product build: the host ships a pinned driver; never contact GitHub.
+    if cfg!(feature = "computeruse") {
+        return false;
+    }
     if let Some(false) = parse_env_bool(ENV_UPDATE_CHECK) {
         return false;
     }

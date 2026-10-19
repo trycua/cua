@@ -139,11 +139,20 @@ class InstallTelemetry(unittest.TestCase):
         self.assertNotIn(str(self.home), raw)
         self.assertNotIn(os.environ.get("USER", "nobody-here"), raw)
 
+    def test_healthy_qemu_host_sends_completed(self):
+        self.check_runtime_completion(0)
+
     def test_deferred_runtime_failure_sends_failed_not_completed(self):
-        # Reuse a CLI; app installation is stubbed, not diagnostics or completion.
+        self.check_runtime_completion(1)
+
+    def check_runtime_completion(self, doctor_status):
         cli = self.home / "cua"
-        cli.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "cua {VERSION}"; fi\nif [ "$*" = "runtime doctor" ]; then echo "doctor Error"; exit 1; fi\nexit 0\n')
+        cli.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "cua {VERSION}"; fi\nif [ "$*" = "runtime doctor" ]; then echo "doctor status {doctor_status}"; exit {doctor_status}; fi\nexit 0\n')
         cli.chmod(0o755)
+        for name in ("qemu-img", f"qemu-system-{os.uname().machine}"):
+            binary = self.home / name
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o755)
         script = self.home / "install.sh"
         script.write_text(SCRIPT.read_text().replace(
             'main "$@"',
@@ -157,13 +166,13 @@ class InstallTelemetry(unittest.TestCase):
                  CUA_TELEMETRY_ENDPOINT=f"{self.base}/batch/", CUA_POSTHOG_KEY="phc_test")
         p = subprocess.run(["sh", str(script), "--yes", "--no-onboarding", "--select", "spaces"],
                            env=e, capture_output=True, text=True, timeout=120)
-        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
-        self.assertIn("doctor Error", p.stdout)
+        self.assertEqual(p.returncode, doctor_status, p.stdout + p.stderr)
+        self.assertIn(f"doctor status {doctor_status}", p.stdout)
         self.assertIn("Next:", p.stdout)
         evs = self.events()
         self.assertEqual([e["properties"]["step"] for e in evs],
-                         ["installer_started", "installer_failed"])
-        self.assertEqual(evs[-1]["properties"]["install_stage"], "runtime")
+                         ["installer_started", "installer_failed" if doctor_status else "installer_completed"])
+        self.assertEqual(evs[-1]["properties"]["install_stage"], "runtime" if doctor_status else "none")
 
     def test_an_existing_install_id_is_kept(self):
         d = self.home / ".cua" / "telemetry"

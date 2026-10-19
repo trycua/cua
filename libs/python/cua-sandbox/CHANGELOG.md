@@ -5,6 +5,7 @@
 
 ### Bug Fixes
 
+* post-launch CI follow-ups ([#4405](https://github.com/trycua/cua/issues/4405)) ([352507b](https://github.com/trycua/cua/commit/352507b6c03162ab286b21d5ed509125cc3daece))
 * lock the cua SDK checkout at 0.3.1 ([#4593](https://github.com/trycua/cua/issues/4593)) ([fcb386f](https://github.com/trycua/cua/commit/fcb386f4f958d1357af31ccb0056376f06d9db37))
 * **python:** cua-sandbox, cua-bench and the playground no longer depend on Fleet; remove cua-train (CUA-1834) ([#5445](https://github.com/trycua/cua/issues/5445)) ([7733289](https://github.com/trycua/cua/commit/773328941ead1b83a616e8b6c5a5ac4851af7114))
 * **sandbox:** report directory types in file listings ([#5175](https://github.com/trycua/cua/issues/5175)) ([1e53b1c](https://github.com/trycua/cua/commit/1e53b1cef43a650ff35a7299c470963244b84ce0))

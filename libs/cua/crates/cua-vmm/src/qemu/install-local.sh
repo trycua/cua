@@ -33,7 +33,7 @@ wrapper() {
     quoted=$(printf '%s' "$root" | sed "s/'/'\\\\''/g")
     {
         printf "#!/bin/sh\nroot='%s'\n" "$quoted"
-        printf '%s\n' 'export LD_LIBRARY_PATH="$root/usr/lib:$(find "$root/usr/lib" -mindepth 1 -maxdepth 1 -type d | paste -sd: -)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' 'export QEMU_MODULE_DIR="$(find "$root/usr/lib" -mindepth 2 -maxdepth 2 -type d -name qemu | head -n 1)"'
+        printf '%s\n' 'export LD_LIBRARY_PATH="$root/usr/lib:$(find "$root/usr/lib" -mindepth 1 -maxdepth 1 -type d | paste -sd: -)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' 'export QEMU_MODULE_DIR="$(find "$root/usr/lib" -mindepth 2 -maxdepth 2 -type d -path "*-linux-gnu*/qemu" | head -n 1)"'
         if [ "$binary" = qemu-img ]; then
             printf 'exec "$root/usr/bin/%s" "$@"\n' "$binary"
         else

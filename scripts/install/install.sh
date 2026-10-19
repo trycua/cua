@@ -1423,7 +1423,6 @@ main() {
     tel_stage=runtime
     if [ "$os" = linux ] && [ "$sel_spaces" = 1 ] && { [ "$dry_run" = 1 ] || has "$cua_bin"; }; then
         linux_runtime
-        # Diagnose only Linux Spaces installs with a CLI, never dry runs.
         if [ "$dry_run" != 1 ] && { [ "$want_cli" = 1 ] || [ -n "$existing_cua" ]; }; then
             "$cua_bin" runtime doctor || runtime_failed=1
         fi

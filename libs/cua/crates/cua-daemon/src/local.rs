@@ -1253,7 +1253,6 @@ pub fn doctor_checks(r: &DoctorReport) -> Vec<cua_proto::daemon::v1::RuntimeChec
     r.backends
         .iter()
         .map(|b| {
-            // Unavailable alternatives are not failures when another backend works.
             let not_applicable = match b.backend {
                 BackendKind::Lume => !r.lume.supported_host,
                 BackendKind::Managed => !cua_vmm::managed::supported(),

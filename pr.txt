@@ -1,7 +1,0 @@
-Return failure for runtime setup and doctor errors
-
-Problem: On cua 0.5.0, runtime setup and doctor returned 0 even when reporting Error, hiding missing QEMU and KVM permission failures.
-
-Fix: Return documented exit code 1 for structured Error statuses after printing every result, preserving JSON and warning success. Treat unavailable alternative backends as not applicable when another runtime works, and exclude unsupported host backends. Linux Spaces installs with a managed CLI run doctor, finish onboarding and the closing summary, then return accumulated runtime failure with failure telemetry. Dry runs and macOS do not run these diagnostics. Regenerated CLI reference output.
-
-Test: Synthetic CLI output tests cover OK, warnings, errors, KVM, continued output and JSON. Daemon tests cover healthy Linux without Docker and Docker without QEMU. Installer suite: 138 passed (three regressions fail against the original installer). Telemetry suite: 8 passed, including deferred runtime failure without a completion event.

@@ -352,7 +352,8 @@ pub fn initialize_result() -> Value {
 /// MCP `instructions` (`InitializeResult.instructions`) sent to every
 /// connecting client. The spec frames this as a "hint... MAY be added
 /// to the system prompt" — eager, every-turn cost. We keep it under
-/// the community-recommended ~200-word ceiling and host the long-form
+/// the community-recommended ~200-word ceiling (`INSTRUCTIONS_WORD_BUDGET`
+/// is that plus the macOS-only permission line) and host the long-form
 /// workflow in `Skills/cua-driver/SKILL.md`.
 ///
 /// Templated per-host: the accessibility-tree provider name (AX on
@@ -364,7 +365,7 @@ fn agent_instructions() -> String {
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
         (
             "AX (Accessibility)",
-            "MACOS.md (no-foreground contract, AXMenuBar navigation, SkyLight click dispatch)",
+            "MACOS.md (no-foreground contract, AXMenuBar navigation, SkyLight click dispatch, install and permissions)",
         )
     } else if cfg!(target_os = "windows") {
         (
@@ -376,6 +377,15 @@ fn agent_instructions() -> String {
             "AT-SPI",
             "LINUX.md (X11/Wayland status, AT-SPI bus, BETA-level support)",
         )
+    };
+
+    // macOS only: Cua Driver's own TCC prompts have one narrow, owner-gated
+    // exception to "system prompts belong to the user"; the steps and
+    // guardrails live in MACOS.md ("Install and approve permissions").
+    let permission_line = if cfg!(target_os = "macos") {
+        "\n\nmacOS: if `check_permissions` shows Accessibility or Screen Recording off, ask the user. Click Allow on Cua Driver's own prompts only if the owner explicitly authorized it for this task, never on another app's."
+    } else {
+        ""
     };
 
     // Only point at run_script when this driver offers it.
@@ -403,7 +413,7 @@ Use the narrowest semantic route first: `set_window_frame` plus `list_windows` f
 
 Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.next_call` (`browser_prepare`) if refused, then `browser_click`/`browser_type`/`browser_pointer` (hover, drag); never desktop pointer tools.
 
-`start_session` is optional; repeat a short `session` label on every call that accepts it. On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.
+`start_session` is optional; repeat a short `session` label on every call that accepts it. On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.{permission_line}
 
 Details: `skill://cua-driver/SKILL.md` and {platform_skill_pointer}."#
     )
@@ -493,6 +503,10 @@ mod action_record_wire_tests {
 mod agent_instruction_tests {
     use super::{agent_instructions, initialize_result};
 
+    /// The ~200-word community ceiling for the cross-platform text, plus room
+    /// for the macOS-only permission line.
+    const INSTRUCTIONS_WORD_BUDGET: usize = 240;
+
     #[test]
     fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
         let instructions = agent_instructions();
@@ -523,9 +537,28 @@ mod agent_instruction_tests {
             assert!(instructions.contains("one `run_script` call"));
         }
         assert!(
-            instructions.split_whitespace().count() <= 200,
+            instructions.split_whitespace().count() <= INSTRUCTIONS_WORD_BUDGET,
             "initialize instructions should stay within the documented context budget"
         );
+    }
+
+    #[test]
+    fn macos_instructions_gate_permission_approval_on_owner_authorization() {
+        let instructions = agent_instructions();
+        let has_line = instructions.contains("Cua Driver's own prompts");
+        assert_eq!(
+            has_line,
+            cfg!(target_os = "macos"),
+            "only the macOS instructions mention TCC prompts"
+        );
+        if has_line {
+            // Keeps the narrow exception narrow: ask first, own prompts only,
+            // explicit owner authorization, never another app's prompt.
+            assert!(instructions.contains("ask the user"));
+            assert!(instructions.contains("only if the owner explicitly authorized it"));
+            assert!(instructions.contains("never on another app's"));
+            assert!(instructions.contains("`check_permissions`"));
+        }
     }
 
     #[test]
@@ -561,7 +594,7 @@ mod agent_instruction_tests {
         assert!(status < bounded_query);
         assert!(bounded_query < discovery);
         assert!(instructions.contains("if ready"));
-        assert!(instructions.split_whitespace().count() <= 200);
+        assert!(instructions.split_whitespace().count() <= INSTRUCTIONS_WORD_BUDGET);
     }
 }
 

@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from ._driver_env_support import McpTransport
-from ._driver_env_support import sandbox as mcp_sandbox
 from ._driver_env_support import records as _records_fixture
+from ._driver_env_support import sandbox as mcp_sandbox
 
 records = _records_fixture
 

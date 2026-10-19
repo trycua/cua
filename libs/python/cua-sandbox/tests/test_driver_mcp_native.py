@@ -4,8 +4,9 @@ import asyncio
 
 import pytest
 
-from ._driver_env_support import McpTransport, sandbox
+from ._driver_env_support import McpTransport
 from ._driver_env_support import records as _records_fixture
+from ._driver_env_support import sandbox
 from .test_typed_driver_native import sdk as _sdk_fixture
 
 records = _records_fixture

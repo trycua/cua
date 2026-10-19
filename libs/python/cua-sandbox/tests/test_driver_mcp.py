@@ -7,8 +7,9 @@ import httpx
 import pytest
 from cua_sandbox.interfaces.driver import DriverConnectionError
 
-from ._driver_env_support import McpTransport, sandbox
+from ._driver_env_support import McpTransport
 from ._driver_env_support import records as _records_fixture
+from ._driver_env_support import sandbox
 from .test_typed_driver_native import sdk as _sdk_fixture
 
 records = _records_fixture
@@ -179,7 +180,7 @@ async def test_disconnect_during_initialization_cleans_late_session(sdk, records
     ],
 )
 async def test_shared_decoder_refuses_ambiguous_incomplete_or_non_json_responses(
-    sdk, monkeypatch, body, media
+    sdk, records, monkeypatch, body, media
 ):
     transport = McpTransport()
     original = transport.request_service

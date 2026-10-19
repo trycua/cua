@@ -142,6 +142,19 @@ export {
   type RelayUsageView,
 } from "./relay-usage";
 export {
+  useResources,
+  hostResources,
+  spaceResources,
+  RESOURCES_HIDDEN_MS,
+  RESOURCES_VISIBLE_MS,
+  type ComputerResources,
+  type DiskOnHost,
+  type DiskWarning,
+  type GuestUsage,
+  type ResourcesSnapshot,
+  type SpaceResources,
+} from "./resources";
+export {
   resetUpsellMemory,
   useQuiet,
   useTrackPlanClick,

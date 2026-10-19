@@ -40,6 +40,7 @@ import { HOST_SETUP_COVERAGE } from "./ops/host-setup";
 import { SPACE_DETAIL_COVERAGE } from "./ops/space-detail";
 import { STREAM_COVERAGE } from "./ops/stream";
 import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
+import { RESOURCES_COVERAGE } from "./ops/resources";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
 import { PRESENCE_COVERAGE } from "./ops/presence";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
@@ -164,6 +165,7 @@ export const HOST_COVERAGE = {
   ...STARTUP_COVERAGE,
   ...STREAM_COVERAGE,
   ...RELAY_USAGE_COVERAGE,
+  ...RESOURCES_COVERAGE,
   ...CHECKLIST_COVERAGE,
   ...PRESENCE_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,

@@ -200,7 +200,7 @@ struct BridgeContractTests {
     func cases(space: String) -> [(String, [String: Any])] {
         [
             // The relay allowance before the sign-out below (signed out, it is null).
-            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("session.signOut", [:]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),

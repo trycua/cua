@@ -169,10 +169,25 @@ struct GettingStartedCommand: View {
 /// The menu bar item's menu: the core's items in order.
 struct MenuBarContent: View {
     let model: AppModel
+    var disk: LowDiskMonitor = .shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
+        // This Mac is short of space: the warning, with the Cua key, first.
+        // Nothing when there's room. It opens the Spaces, biggest first.
+        if let text = disk.warning.menuText {
+            Button {
+                MainUIRouter(model: model).open(.path("/spaces?sort=size")) { activate(); openWindow(id: "main") }
+            } label: {
+                if let key = MenuBarKey.image {
+                    Label { Text(text) } icon: { Image(nsImage: key) }
+                } else {
+                    Text(text)
+                }
+            }
+            Divider()
+        }
         ForEach(Array(model.menuBar.enumerated()), id: \.offset) { _, item in
             switch item.id {
             case .status: Text(item.label)
@@ -214,6 +229,15 @@ struct MenuBarContent: View {
     }
 
     private func activate() { NSApp.activate() }
+}
+
+/// The Cua key at menu item size, for the low-disk warning.
+enum MenuBarKey {
+    static let image: NSImage? = {
+        guard let key = CuaKey.image?.copy() as? NSImage else { return nil }
+        key.size = NSSize(width: 16, height: 16)
+        return key
+    }()
 }
 
 /// The Cua mark as a template image (from apps/cua-spaces/src-tauri/icons,
@@ -274,6 +298,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         start(Self.model)
+        // The menu bar's low-disk warning: read now, then every 5 minutes.
+        LowDiskMonitor.shared.start()
     }
 
     /// The Dock icon (or opening the app again) with no window up: the main

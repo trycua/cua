@@ -112,6 +112,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
         "relay.usage",
+        // Processor, memory and disk (WebUIBridge+Pages.swift).
+        "resources.get",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
     ]

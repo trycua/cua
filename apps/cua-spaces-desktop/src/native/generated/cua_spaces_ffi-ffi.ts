@@ -547,11 +547,6 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
-    "uniffi_cua_spaces_ffi_fn_func_app_billing_status": {
-      args: [FfiType.RustBuffer],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
     "uniffi_cua_spaces_ffi_fn_func_app_catalog_entries_from_json": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -2238,11 +2233,6 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_approve_view": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_spaces_ffi_checksum_func_app_billing_status": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4005,7 +3995,6 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_approve_reduce(state: Uint8Array, action: Uint8Array, devices: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_approve_sheet_action_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_approve_view(state: Uint8Array, devices: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_spaces_ffi_fn_func_app_billing_status(status: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_catalog_entries_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_catalog_entry(entry: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_checklist_observe_from(seen: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4344,7 +4333,6 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_approve_reduce(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_approve_sheet_action_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_approve_view(): number;
-    uniffi_cua_spaces_ffi_checksum_func_app_billing_status(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_catalog_entry(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_checklist_observe_from(): number;

@@ -23,7 +23,7 @@ asyncio.run(main())
 ```python
 c = cua.embedded()
 sb = await c.sandboxes().create(cua.SandboxCreateOptions(
-    on="local",                                   # or "cloud": same options
+    on="local",                                   # or "aws": same options
     image="python:3.12-slim",
     command=["python", "-m", "my_mcp", "--port", "8765"],
     env={"FOO": "bar"},

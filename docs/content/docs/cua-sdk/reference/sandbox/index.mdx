@@ -334,7 +334,7 @@ import cua
 async def main():
     c = cua.embedded()
     sb = await c.sandboxes().create(cua.SandboxCreateOptions(
-        on="local",                                    # or "cloud"
+        on="local",                                    # or "aws"
         image=cua.canonical_image("linux", None),
         name="dev",
         wait_for=[cua.ReadinessProbe(service="env")],  # until its spacesd answers
@@ -375,7 +375,7 @@ import Cua
 
 let cua = try Cua.embedded()
 let sb = try await cua.sandboxes().create(options: SandboxCreateOptions(
-    on: "local",  // or "cloud"
+    on: "local",  // or "aws"
     image: try Image.linux(),
     name: "dev",
     waitFor: [ReadinessProbe(service: "env")]  // until its spacesd answers
@@ -399,7 +399,7 @@ import ai.cua.sdk.SandboxCreateOptions
 val cua = Cua.embedded(CuaConfig())
 val sb = cua.sandboxes().create(
     SandboxCreateOptions(
-        on = "local", // or "cloud"
+        on = "local", // or "aws"
         image = Image.linux(),
         name = "dev",
         waitFor = listOf(ReadinessProbe(service = "env")), // until its spacesd answers

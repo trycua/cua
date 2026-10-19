@@ -103,18 +103,18 @@ the browser with `cua sb view NAME` ([Browser view](/cua-sdk/guides/desktop#brow
 [image catalog details](/cua-sdk/reference/os-image-catalog).
 
 {/* GENERATED:catalog-cua-images:start */}
-| Image | Name | Local | Cloud | cua-spacesd |
-| --- | --- | --- | --- | --- |
-| `ghcr.io/trycua/linux:24.04` | Ubuntu 24.04 | Container (gVisor when installed) | gVisor container | Yes |
-| `ghcr.io/trycua/linux:24.04-disk` | Ubuntu 24.04 VM | QEMU VM | KubeVirt VM | Yes |
-| `ghcr.io/trycua/linux:24.04-slim` | Ubuntu 24.04 slim | Container (gVisor when installed) | gVisor container | Yes |
-| `ghcr.io/trycua/linux:24.04-slim-disk` | Ubuntu 24.04 slim VM | QEMU VM | KubeVirt VM | Yes |
-| `ghcr.io/trycua/windows:2022` | Windows Server 2022 | QEMU VM | KubeVirt VM | Yes |
-| `ghcr.io/trycua/macos:26` | macOS Tahoe 26 | Lume VM (Apple silicon) | Not available yet | Yes |
-| `ghcr.io/trycua/macos:26-slim` | macOS Tahoe 26 slim | Lume VM (Apple silicon) | Not available yet | Yes |
-| `ghcr.io/trycua/macos:15` | macOS Sequoia 15 | Lume VM (Apple silicon) | Not available yet | No |
-| `ghcr.io/trycua/omarchy:edge` | Omarchy | QEMU VM | KubeVirt VM | Yes |
-| `ghcr.io/trycua/omarchy:edge-disk` | Omarchy disk | QEMU VM | KubeVirt VM | Yes |
+| Image | Name | Local | cua-spacesd |
+| --- | --- | --- | --- |
+| `ghcr.io/trycua/linux:24.04` | Ubuntu 24.04 | Container (gVisor when installed) | Yes |
+| `ghcr.io/trycua/linux:24.04-disk` | Ubuntu 24.04 VM | QEMU VM | Yes |
+| `ghcr.io/trycua/linux:24.04-slim` | Ubuntu 24.04 slim | Container (gVisor when installed) | Yes |
+| `ghcr.io/trycua/linux:24.04-slim-disk` | Ubuntu 24.04 slim VM | QEMU VM | Yes |
+| `ghcr.io/trycua/windows:2022` | Windows Server 2022 | QEMU VM | Yes |
+| `ghcr.io/trycua/macos:26` | macOS Tahoe 26 | Lume VM (Apple silicon) | Yes |
+| `ghcr.io/trycua/macos:26-slim` | macOS Tahoe 26 slim | Lume VM (Apple silicon) | Yes |
+| `ghcr.io/trycua/macos:15` | macOS Sequoia 15 | Lume VM (Apple silicon) | No |
+| `ghcr.io/trycua/omarchy:edge` | Omarchy | QEMU VM | Yes |
+| `ghcr.io/trycua/omarchy:edge-disk` | Omarchy disk | QEMU VM | Yes |
 {/* GENERATED:catalog-cua-images:end */}
 
 `Image.linux()` is the Linux container and `Image.linux(kind="vm")` the same desktop as a VM.

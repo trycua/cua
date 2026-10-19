@@ -10,7 +10,7 @@ Reference guest images for the cua SDK, built for amd64 and arm64:
 | `macos` | The Lume macOS base plus **cua-spacesd** at login, TCC grants seeded (see [macOS](#macos-lume)) | `ghcr.io/trycua/macos`, local Lume on Apple silicon |
 | `omarchy` | Omarchy edge (Arch, Hyprland) with Omarchy's `cua-driver-bin` and `cua-hyprland-plugin` turned on, plus **cua-spacesd**. VM only, amd64 | `ghcr.io/trycua/omarchy:edge` ([guide](../../docs/content/docs/cua-sdk/guides/omarchy.mdx)) |
 
-`cua sb create linux` resolves to `ghcr.io/trycua/linux:24.04`; pass any of these references (or a local tag) as the image, with `--on local|docker|qemu|fleet`. The same image runs locally and on Fleet.
+`cua sb create linux` resolves to `ghcr.io/trycua/linux:24.04`; pass any of these references (or a local tag) as the image, with `--on local|docker|qemu`.
 
 ## Canonical published images
 

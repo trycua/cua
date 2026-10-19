@@ -54,6 +54,10 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 
 Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`. `--only` and `--select` cannot be combined, nor can `--cli-only` with other items. Set `CUA_INSTALL_NONINTERACTIVE=1` to never prompt.
 
+## Telemetry
+
+Both installers send three anonymous events about their own run (`cua_installer_step`: `installer_started`, then `installer_completed` or `installer_failed` with the stage and a fixed reason word), and print a two-line notice before the first one. They follow the switches every Cua program uses: `DO_NOT_TRACK=1`, `CUA_TELEMETRY=0`, `[telemetry] enabled = "off"` in `$CUA_HOME/config.toml`, and off in CI unless `CUA_TELEMETRY=1`. `--dry-run` sends nothing. They create or reuse `$CUA_HOME/telemetry/install_id`, the anonymous id the CLI and app send with, and never send a name, path, URL or error message. The tests set `CUA_TELEMETRY_FORBID_NETWORK=1`, which allows only a loopback `CUA_TELEMETRY_ENDPOINT`. See [Telemetry and privacy](https://cua.ai/docs/cua-sdk/concepts/telemetry).
+
 ## What it prints
 
 One plain line per step ("Installing the command-line tools to ...", "Installing the Cua Spaces app to ..."), then what was installed and what to do next: open Cua Spaces, or sign in and run `cua agents setup` to connect your AI agents. `--verbose` adds `cua-install:` lines with the platform, the manifest, each download and the signature checks.

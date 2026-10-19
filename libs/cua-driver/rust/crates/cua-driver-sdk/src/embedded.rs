@@ -8,6 +8,7 @@ use cua_driver_contract::{
 };
 use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
 use cua_driver_core::key_pacing::KEY_GAP_ENV;
+use cua_driver_core::step_pacing::BATCH_PACING_ENV;
 use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
 use std::collections::BTreeMap;
 use std::process::Stdio;
@@ -842,6 +843,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
         || upper == WINDOW_CHANGE_TIMEOUT_ENV
         || upper == WINDOW_CHANGE_POLL_ENV
         || upper == KEY_GAP_ENV
+        || upper == BATCH_PACING_ENV
         || matches!(
             upper.as_str(),
             "PATH"
@@ -1591,6 +1593,20 @@ mod tests {
         assert!(merged
             .iter()
             .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "3"));
+    }
+
+    /// `CUA_DRIVER_BATCH_PACING` must reach an embedded child, or a host that
+    /// sets it to record full-speed cursor motion is silently overridden.
+    #[test]
+    fn batch_pacing_env_propagates() {
+        assert!(allowed_environment_name("CUA_DRIVER_BATCH_PACING"));
+        let merged = merge_safe_environment(
+            [("CUA_DRIVER_BATCH_PACING".to_owned(), "full".to_owned())],
+            &[],
+        );
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_BATCH_PACING") && v.value == "full"));
     }
 
     #[cfg(target_os = "windows")]

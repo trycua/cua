@@ -30,7 +30,8 @@ BeforeAll {
 
     function script:Invoke-Installer([hashtable]$Params, [hashtable]$Vars = @{}) {
         $saved = @{}
-        $all = @{ CUA_INSTALL_MANIFEST_URL = $env:CUA_TEST_MANIFEST_URL; CUA_INSTALL_ARCH = 'AMD64'; CUA_HOME = (Join-Path $env:CUA_TEST_ROOT 'cuahome') }
+        # Install telemetry may only reach a loopback endpoint here.
+        $all = @{ CUA_INSTALL_MANIFEST_URL = $env:CUA_TEST_MANIFEST_URL; CUA_INSTALL_ARCH = 'AMD64'; CUA_HOME = (Join-Path $env:CUA_TEST_ROOT 'cuahome'); CUA_TELEMETRY_FORBID_NETWORK = '1' }
         foreach ($k in $Vars.Keys) { $all[$k] = $Vars[$k] }
         foreach ($k in $all.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $all[$k]) }
         try {
@@ -419,5 +420,100 @@ Describe 'install.ps1' {
     It 'dry run: -Mode writes the install-mode file when the app is installed' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'host' }
         $out | Should -Match 'spaces-install-mode'
+    }
+}
+
+Describe 'install telemetry' {
+    BeforeAll {
+        $env:CUA_INSTALL_NO_RUN = '1'
+        . $script:Installer
+        Remove-Item Env:CUA_INSTALL_NO_RUN
+        $script:Fixture = Get-Content -Raw (Join-Path $PSScriptRoot 'fixtures/installer-step.json') | ConvertFrom-Json
+        $script:Switches = @('DO_NOT_TRACK', 'CUA_TELEMETRY', 'CUA_TELEMETRY_ENABLED', 'CUA_TELEMETRY_DISABLED') + $script:TelCiVars
+        function script:With-Env([hashtable]$Vars, [scriptblock]$Body) {
+            $saved = @{}
+            foreach ($k in $script:Switches + @($Vars.Keys)) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $null) }
+            foreach ($k in $Vars.Keys) { [Environment]::SetEnvironmentVariable($k, $Vars[$k]) }
+            try { return (& $Body) } finally { foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) } }
+        }
+        function script:Get-Events([string]$Out) {
+            return @(($Out -split "`r?`n") | Where-Object { $_ -like '`[cua telemetry`] *' } | ForEach-Object { ($_.Substring(16) | ConvertFrom-Json).batch[0] })
+        }
+    }
+
+    It 'follows the same switches as every Cua program' {
+        $h = Join-Path $env:CUA_TEST_ROOT 'tel-home'
+        New-Item -ItemType Directory -Force -Path $h | Out-Null
+        With-Env @{} { Test-TelemetryEnabled $h } | Should -BeTrue
+        With-Env @{ DO_NOT_TRACK = '1'; CUA_TELEMETRY = '1' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ CUA_TELEMETRY = '0' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ CUA_TELEMETRY_ENABLED = 'false' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ CUA_TELEMETRY_DISABLED = '1' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ GITHUB_ACTIONS = 'true' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ CI = 'true'; CUA_TELEMETRY = '1' } { Test-TelemetryEnabled $h } | Should -BeTrue
+        Set-Content -LiteralPath (Join-Path $h 'config.toml') -Value "[other]`nenabled = `"on`"`n[telemetry]`nenabled = `"off`""
+        With-Env @{} { Test-TelemetryEnabled $h } | Should -BeFalse
+    }
+
+    It 'names a failure with a fixed word, never the message' {
+        Get-CuaInstallErrorKind 'cua-install: error: checksum mismatch for cua.zip' | Should -Be 'checksum'
+        Get-CuaInstallErrorKind 'cua-install: error: cosign signature check failed' | Should -Be 'signature'
+        Get-CuaInstallErrorKind 'cua-install: error: unsupported CPU architecture: x86' | Should -Be 'unsupported_platform'
+        Get-CuaInstallErrorKind 'Unable to connect to the remote server' | Should -Be 'network'
+        Get-CuaInstallErrorKind 'C:\Users\alice\secret' | Should -Be 'other'
+    }
+
+    It 'sends nothing on a dry run, with DO_NOT_TRACK, or to a real endpoint in tests' {
+        foreach ($vars in @(@{ DO_NOT_TRACK = '1' }, @{ CUA_TELEMETRY_ENDPOINT = 'https://eu.i.posthog.com/batch/' })) {
+            $vars.CUA_TELEMETRY_DEBUG = '1'
+            $vars.CUA_HOME = Join-Path $env:CUA_TEST_ROOT ('tel-off-' + [Guid]::NewGuid().ToString('N'))
+            $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-tel-off') } $vars
+            $out | Should -Not -Match 'cua telemetry'
+            $out | Should -Not -Match 'anonymous data about this install'
+            Test-Path (Join-Path $vars.CUA_HOME 'telemetry/install_id') | Should -BeFalse
+        }
+        $out = Invoke-Installer @{ DryRun = $true; CliOnly = $true } @{ CUA_TELEMETRY_DEBUG = '1'; CUA_TELEMETRY_ENDPOINT = 'http://127.0.0.1:9/batch/' }
+        $out | Should -Not -Match 'cua telemetry'
+    }
+
+    It 'sends started then completed with the fixture properties and the stored install id' {
+        $cuaHome = Join-Path $env:CUA_TEST_ROOT 'tel-on'
+        $vars = @{ CUA_TELEMETRY_DEBUG = '1'; CUA_TELEMETRY_ENDPOINT = 'http://127.0.0.1:9/batch/'; CUA_HOME = $cuaHome; CUA_POSTHOG_KEY = 'phc_test' }
+        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-tel') } $vars
+        $out | Should -Match 'anonymous data about this install'
+        $events = Get-Events $out
+        @($events | ForEach-Object { $_.properties.step }) | Should -Be @('installer_started', 'installer_completed')
+        $id = (Get-Content -Raw (Join-Path $cuaHome 'telemetry/install_id')).Trim()
+        $ref = $script:Fixture.events[2].properties
+        foreach ($e in $events) {
+            $e.distinct_id | Should -Be $id
+            $e.event | Should -Be 'cua_installer_step'
+            @($e.properties.PSObject.Properties.Name | Sort-Object) | Should -Be @($ref.PSObject.Properties.Name | Sort-Object)
+            $e.properties.installer | Should -Be 'ps1'
+            $e.properties.items | Should -Be 'cli'
+            $e.properties.'$lib' | Should -Be 'cua-installer'
+        }
+        $events[1].properties.product_version | Should -Be '1.2.3'
+        $out | Should -Not -Match ([regex]::Escape('"api_key":"phc_eSk'))
+    }
+
+    It 'sends installer_failed with the stage and kind when the install stops' {
+        $vars = @{ CUA_INSTALL_MANIFEST_URL = (ConvertTo-FileUrl (Join-Path $env:CUA_TEST_ROOT 'missing/release-artifacts.json'))
+            CUA_INSTALL_ARCH = 'AMD64'; CUA_HOME = (Join-Path $env:CUA_TEST_ROOT 'tel-fail'); CUA_TELEMETRY_FORBID_NETWORK = '1'
+            CUA_TELEMETRY_DEBUG = '1'; CUA_TELEMETRY_ENDPOINT = 'http://127.0.0.1:9/batch/'
+        }
+        $out = With-Env $vars {
+            $params = @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-tel-fail') }
+            $lines = & { try { & $env:CUA_TEST_INSTALLER @params } catch { "threw: $_" } } *>&1
+            ($lines | ForEach-Object { "$_" }) -join "`n"
+        }
+        $out | Should -Match 'threw: '
+        $events = Get-Events $out
+        @($events | ForEach-Object { $_.properties.step }) | Should -Be @('installer_started', 'installer_failed')
+        $failed = $events[1].properties
+        $failed.install_stage | Should -Be 'manifest'
+        $failed.outcome | Should -Be 'error'
+        $failed.error_kind | Should -BeIn @('network', 'other')
+        ($events | ConvertTo-Json -Depth 6) | Should -Not -Match 'missing'
     }
 }

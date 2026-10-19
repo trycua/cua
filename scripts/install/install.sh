@@ -55,6 +55,14 @@
 #   CUA_INSTALL_OS, CUA_INSTALL_ARCH  override platform detection
 #   CUA_INSTALL_MINISIGN_PUBKEY       minisign public key for artifacts
 #   CUA_HOME                  cua state dir (default ~/.cua)
+#   DO_NOT_TRACK=1 or CUA_TELEMETRY=0  send no install events (see below)
+#
+# Telemetry: the installer sends three anonymous events about its own run
+# (installer started, finished, or failed with the step and a fixed reason
+# word), under the same switches as every Cua program: DO_NOT_TRACK,
+# CUA_TELEMETRY, `[telemetry] enabled = "off"` in $CUA_HOME/config.toml, and
+# off in CI. Never names, paths or messages. Nothing on --dry-run.
+# https://cua.ai/docs/cua-sdk/concepts/telemetry
 set -eu
 
 REPO="${CUA_INSTALL_REPO:-trycua/cua}"
@@ -114,6 +122,7 @@ info() { [ "$verbose" = 0 ] || printf 'cua-install: %s\n' "$*"; }
 warn() { printf 'cua-install: warning: %s\n' "$*" >&2; }
 die() {
     printf 'cua-install: error: %s\n' "$*" >&2
+    tel_kind="$(tel_error_kind "$*")"
     exit 1
 }
 
@@ -122,6 +131,11 @@ usage() {
 }
 
 cleanup() {
+    rc=$?
+    if [ "$rc" != 0 ] && [ "$tel_on" = 1 ] && [ "$tel_ended" = 0 ]; then
+        [ "$rc" != 130 ] || tel_kind=cancelled
+        tel_send installer_failed "$tel_stage" "${tel_kind:-other}"
+    fi
     if [ -n "$tty_saved" ]; then
         stty "$tty_saved" </dev/tty 2>/dev/null || true
         tty_saved=""
@@ -135,6 +149,202 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+
+# ---------------------------------------------------------------- telemetry
+
+# Three anonymous events about this install (cua_installer_step):
+# installer_started, then installer_completed or installer_failed with the
+# stage that was running and a fixed reason word. The same switches as
+# every Cua program (libs/cua/crates/cua-telemetry/src/config.rs); the same
+# anonymous install id, so the app's later events continue this install.
+# Never a name, a path, a URL or an error message. Best effort: a send never
+# fails or slows the install by more than a few seconds.
+TEL_ENDPOINT_DEFAULT="https://eu.i.posthog.com/batch/"
+TEL_KEY_PROD="phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14"
+TEL_KEY_STAGING="phc_xDNLpzypNLVGmzQeBZEgZDZK7Ea6yYAmAnGZ6hMtHNKG"
+tel_on=0
+tel_ended=0
+tel_stage=other
+tel_kind=""
+tel_version=""
+tel_id=""
+tel_session=""
+tel_ci=false
+
+tel_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'; }
+
+# tel_bool VALUE: prints on, off, or nothing (unset or not a switch word).
+tel_bool() {
+    case "$(tel_lower "$1")" in
+    0 | false | no | off | disable | disabled) echo off ;;
+    1 | true | yes | on | enable | enabled) echo on ;;
+    esac
+}
+
+# The [telemetry] enabled value in $CUA_HOME/config.toml (on, off, or nothing).
+tel_config() {
+    f="${CUA_HOME:-$HOME/.cua}/config.toml"
+    [ -r "$f" ] || return 0
+    v="$(awk '
+        /^[[:space:]]*\[/ { sect = $0; gsub(/[[:space:]\[\]]/, "", sect); next }
+        sect == "telemetry" && /^[[:space:]]*enabled[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*(#.*)?$/, ""); gsub(/"/, ""); print; exit
+        }' "$f" 2>/dev/null)"
+    tel_bool "$v"
+}
+
+tel_is_ci() {
+    for v in CI CONTINUOUS_INTEGRATION GITHUB_ACTIONS GITLAB_CI JENKINS_URL CIRCLECI BUILDKITE \
+        TF_BUILD TEAMCITY_VERSION TRAVIS APPVEYOR BITBUCKET_BUILD_NUMBER CODEBUILD_BUILD_ID DRONE HUDSON_URL; do
+        eval "x=\${$v:-}"
+        x="$(tel_lower "$x")"
+        case "$x" in "" | false | 0) ;; *) return 0 ;; esac
+    done
+    return 1
+}
+
+tel_hex() { # BYTES: random lowercase hex
+    od -An -N"$1" -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'
+}
+
+# telemetry_init: decide, show the notice, load or create the install id.
+telemetry_init() {
+    tel_on=0
+    [ "$dry_run" = 0 ] || return 0
+    if [ -n "${CUA_POSTHOG_KEY:-}" ]; then
+        tel_key="$CUA_POSTHOG_KEY"
+    elif [ "$(tel_lower "${CUA_ENV:-}")" = staging ]; then
+        tel_key="$TEL_KEY_STAGING"
+    else
+        tel_key="$TEL_KEY_PROD"
+    fi
+    [ -n "$tel_key" ] || return 0
+    case "$(tel_lower "${DO_NOT_TRACK:-}")" in "" | 0 | false) ;; *) return 0 ;; esac
+    tel_is_ci && tel_ci=true
+    sw="$(tel_bool "${CUA_TELEMETRY:-}")"
+    if [ -z "$sw" ]; then
+        [ "$(tel_bool "${CUA_TELEMETRY_ENABLED:-}")" != off ] || return 0
+        [ "$(tel_bool "${CUA_TELEMETRY_DISABLED:-}")" != on ] || return 0
+        sw="$(tel_config)"
+        [ -n "$sw" ] || { [ "$tel_ci" = true ] && sw=off; }
+    fi
+    [ "$sw" != off ] || return 0
+    tel_endpoint="${CUA_TELEMETRY_ENDPOINT:-$TEL_ENDPOINT_DEFAULT}"
+    if [ "$(tel_bool "${CUA_TELEMETRY_FORBID_NETWORK:-}")" = on ]; then
+        case "$tel_endpoint" in
+        http://127.0.0.1[:/]* | http://localhost[:/]* | http://\[::1\][:/]*) ;;
+        *) return 0 ;;
+        esac
+    fi
+    has curl || has wget || return 0
+    dir="${CUA_HOME:-$HOME/.cua}/telemetry"
+    tel_id="$(cat "$dir/install_id" 2>/dev/null | tr -d '[:space:]')"
+    case "$tel_id" in
+    *[!0-9a-f]* | "") tel_id="" ;;
+    esac
+    [ "${#tel_id}" = 32 ] || tel_id=""
+    if [ -z "$tel_id" ]; then
+        tel_id="$(tel_hex 16)"
+        [ "${#tel_id}" = 32 ] || return 0
+        (umask 077 && mkdir -p "$dir" && printf '%s' "$tel_id" >"$dir/install_id") 2>/dev/null || true
+    fi
+    tel_session="$(tel_hex 16)"
+    [ "${#tel_session}" = 32 ] || return 0
+    tel_on=1
+    say "Cua sends anonymous data about this install (whether it worked, and where it stopped if not). Never names, file paths or anything you type."
+    say "To turn it off, set DO_NOT_TRACK=1. Details: https://cua.ai/docs/cua-sdk/concepts/telemetry"
+}
+
+# tel_error_kind MESSAGE: the fixed reason word for a die message.
+tel_error_kind() {
+    case "$1" in
+    *"checksum mismatch"*) echo checksum ;;
+    *signature* | *"release identity"*) echo signature ;;
+    *"unsupported OS"* | *"unsupported CPU"* | *"on Windows, run"*) echo unsupported_platform ;;
+    *"cannot create"* | *ermission*) echo permission_denied ;;
+    *"need curl"* | *"need sha256sum"* | *"not found; cannot"* | *"needs bash"* | *"needs QEMU"*) echo missing_tool ;;
+    *cancelled*) echo cancelled ;;
+    *"download failed"* | *"could not read"* | *"unsupported release manifest"*) echo network ;;
+    *) echo other ;;
+    esac
+}
+
+tel_os() {
+    case "$(uname -s 2>/dev/null)" in
+    Darwin) echo macos ;;
+    Linux) echo linux ;;
+    MINGW* | MSYS* | CYGWIN*) echo windows ;;
+    *) echo other ;;
+    esac
+}
+
+tel_os_major() {
+    case "$(uname -s 2>/dev/null)" in
+    Darwin) v="$(sw_vers -productVersion 2>/dev/null)" ;;
+    Linux) v="$(sed -n 's/^VERSION_ID=//p' /etc/os-release 2>/dev/null | tr -d '"')" ;;
+    *) v="" ;;
+    esac
+    v="${v%%[!0-9]*}"
+    v="$(printf '%s' "$v" | sed 's/^0*//')"
+    case "$v" in "" | ????*) echo 0 ;; *) echo "$v" ;; esac
+}
+
+tel_arch() {
+    case "$(uname -m 2>/dev/null)" in
+    arm64 | aarch64) echo arm64 ;;
+    x86_64 | amd64) echo x86_64 ;;
+    *) echo other ;;
+    esac
+}
+
+tel_items() {
+    items=""
+    [ "$want_cli" = 0 ] || items="cli"
+    [ "$sel_spaces" = 0 ] || items="${items:+$items+}spaces"
+    [ "$sel_driver" = 0 ] || items="${items:+$items+}cua_driver"
+    [ "$sel_host" = 0 ] || items="${items:+$items+}host"
+    echo "${items:-none}"
+}
+
+# tel_send STEP [STAGE KIND]: one cua_installer_step, at most 3 seconds.
+tel_send() {
+    [ "$tel_on" = 1 ] || return 0
+    step_name="$1"
+    stage=none
+    kind=none
+    outcome=ok
+    case "$step_name" in
+    installer_completed) tel_ended=1 ;;
+    installer_failed)
+        tel_ended=1
+        stage="${2:-other}"
+        kind="${3:-other}"
+        outcome=error
+        [ "$kind" != cancelled ] || outcome=cancelled
+        ;;
+    esac
+    pv="${tel_version:-${version:-}}"
+    case "$pv" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) pv=0.0.0 ;;
+    esac
+    pv="${pv%%[!0-9A-Za-z.-]*}"
+    synthetic=false
+    [ "$(tel_bool "${CUA_TELEMETRY_SYNTHETIC:-}")" != on ] || synthetic=true
+    u="$(tel_hex 16)"
+    uuid="$(printf '%s' "$u" | sed 's/^\(.\{8\}\)\(.\{4\}\).\(.\{3\}\).\(.\{3\}\)\(.\{12\}\)$/\1-\2-4\3-8\4-\5/')"
+    # The $-prefixed names are PostHog property names, not shell expansions.
+    # shellcheck disable=SC2016
+    body="$(printf '{"api_key":"%s","batch":[{"event":"cua_installer_step","distinct_id":"%s","uuid":"%s","timestamp":"%s","properties":{"telemetry_schema_version":1,"event_version":1,"product":"cli","product_version":"%s","os_family":"%s","os_major":%s,"arch":"%s","is_ci":%s,"is_synthetic":%s,"process_session_id":"%s","sample_rate":1,"$process_person_profile":false,"$geoip_disable":true,"$lib":"cua-installer","$lib_version":"1.0.0","step":"%s","outcome":"%s","install_stage":"%s","error_kind":"%s","installer":"sh","items":"%s"}}]}' \
+        "$tel_key" "$tel_id" "$uuid" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pv" "$(tel_os)" "$(tel_os_major)" "$(tel_arch)" \
+        "$tel_ci" "$synthetic" "$tel_session" "$step_name" "$outcome" "$stage" "$kind" "$(tel_items)")"
+    [ "$(tel_bool "${CUA_TELEMETRY_DEBUG:-}")" != on ] || printf '[cua telemetry] %s\n' "$body" >&2
+    if has curl; then
+        curl -s -o /dev/null --max-time 3 -H 'Content-Type: application/json' --data "$body" "$tel_endpoint" >/dev/null 2>&1 || true
+    else
+        wget -q -O /dev/null --timeout=3 --tries=1 --header='Content-Type: application/json' --post-data="$body" "$tel_endpoint" >/dev/null 2>&1 || true
+    fi
+}
 
 # ---------------------------------------------------------------- arguments
 
@@ -641,6 +851,7 @@ load_manifest() {
     fetch "$manifest_url" "$manifest"
     grep -q '"schema" *: *1' "$manifest" || die "unsupported release manifest at $manifest_url"
     manifest_dir="${manifest_url%/*}"
+    tel_version="$(sed -n 's/.*"version" *: *"\([0-9][0-9A-Za-z.-]*\)".*/\1/p' "$manifest" | head -n 1)"
 }
 
 # resolve_url VALUE: absolute URLs pass through; names are relative to the manifest.
@@ -1176,9 +1387,12 @@ run_onboarding() {
 
 main() {
     parse_args "$@"
+    telemetry_init
+    tel_stage=platform
     detect_platform
     init_selection
     reuse_installed
+    tel_send installer_started
     tmp="$(mktemp -d 2>/dev/null || mktemp -d -t cua-install)"
     if wants_checklist; then
         checklist
@@ -1188,6 +1402,7 @@ main() {
     fi
     # Nothing to download (--pair on a computer that has Cua): no manifest to read.
     if [ "$want_cli" = 1 ] || [ "$sel_spaces" = 1 ] || [ "$sel_driver" = 1 ]; then
+        tel_stage=manifest
         load_manifest
         info "platform $platform, manifest $manifest_url"
     fi
@@ -1200,12 +1415,15 @@ main() {
     cua_bin="${existing_cua:-cua}"
     app_path=""
     if [ "$want_cli" = 1 ]; then
+        tel_stage=cli
         install_cli
     fi
+    tel_stage=runtime
     if [ "$os" = linux ] && [ "$sel_spaces" = 1 ] && { [ "$dry_run" = 1 ] || has "$cua_bin"; }; then
         linux_runtime
     fi
     if [ "$sel_spaces" = 1 ]; then
+        tel_stage=app
         case "$os" in
         darwin) install_app_darwin ;;
         linux) install_app_linux ;;
@@ -1217,12 +1435,17 @@ main() {
     CUA_INSTALL_CHANNEL=install_script
     export CUA_INSTALL_CHANNEL
     if [ "$sel_driver" = 1 ]; then
+        tel_stage=driver
         install_driver
     fi
+    tel_stage=sign_in
     run_onboarding
     if [ "$sel_host" = 1 ]; then
+        tel_stage=host
         host_setup
     fi
+    tel_stage=other
+    tel_send installer_completed
     summary
     if [ -n "$path_hint" ]; then
         say ""

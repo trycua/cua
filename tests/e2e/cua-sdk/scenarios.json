@@ -334,7 +334,7 @@
     },
     {
       "id": "browse-the-web",
-      "guide": "cua-sdk/guides/browse-the-web.mdx",
+      "guide": "cua-sdk/guides/desktop.mdx#give-an-agent-a-browser",
       "langs": [
         "py"
       ],

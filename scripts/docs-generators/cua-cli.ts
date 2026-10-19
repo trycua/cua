@@ -9,7 +9,7 @@
  *
  * - docs/content/docs/cua-cli/reference/index.mdx (the Reference index)
  * - docs/content/docs/cua-cli/reference/cli/ (one page per command group)
- * - docs/content/docs/cua-cli/reference/mcp-tools/ (one page per tool group)
+ * - docs/content/docs/cua-cli/reference/mcp-tools.mdx (every tool on one page)
  * - scripts/docs-generators/cli-specs/cua.json (the CLI-shape lane's oracle)
  *
  * Usage:
@@ -90,47 +90,46 @@ export interface CuaDumpDocs {
 
 // ---------------------------------------------------------------- CLI
 
-/** Command groups: one page each, in the order readers meet them. */
+/** Command groups: one page each (several commands per page), in the order readers meet them. */
 export const CLI_GROUPS: CliGroup[] = [
-  { slug: 'auth', title: 'cua auth', summary: 'Sign in and out, see who is signed in, and store sandbox provider keys', commands: ['auth'] },
   {
-    slug: 'sandbox',
-    title: 'cua sandbox',
-    summary: 'Create, list, connect to, suspend and delete sandboxes, local or on your own machines',
-    commands: ['sandbox'],
-    subcommands: ['create', 'launch', 'connect', 'ls', 'info', 'suspend', 'resume', 'restart', 'rm'],
+    slug: 'spaces-and-computers',
+    title: 'Spaces, computers and teams',
+    summary:
+      'Your Spaces and machines, unattended access on this machine, devices, teams, your remote use this month, and a cua-spacesd by URL',
+    commands: ['spaces', 'host', 'devices', 'team', 'usage', 'spacesd'],
   },
   {
-    slug: 'sandbox-access',
-    title: 'Sandbox access',
-    summary: 'Run commands, copy files, forward ports, take screenshots, reach the MCP and view a sandbox (`cua sandbox exec`, `cp`, `view`, ...)',
-    commands: ['sandbox'],
-    subcommands: ['exec', 'shell', 'cp', 'overlay', 'logs', 'port-forward', 'url', 'screenshot', 'mcp', 'view'],
+    slug: 'files-teleport-and-keys',
+    title: 'Files, teleport and keys',
+    summary: 'Cua Volume files and sharing, moving an app session into a sandbox, and the Cua Keyvault',
+    commands: ['volume', 'teleport', 'keyvault'],
   },
-  { slug: 'config', title: 'cua config', summary: 'User defaults: where sandboxes run (`default.on`), the default kind and runtime', commands: ['config'] },
-  { slug: 'viewer', title: 'cua viewer', summary: 'One local browser page that lists every sandbox and opens its viewer', commands: ['viewer'] },
-  { slug: 'do', title: 'cua do', summary: 'One-shot computer actions (screenshot, click, type, windows) against a selected target', commands: ['do', 'do-host-consent'] },
-  { slug: 'image', title: 'cua image', summary: 'Pull, build and push OCI images; list the image catalog', commands: ['image', 'images'] },
-  { slug: 'mcp', title: 'cua mcp', summary: 'The stdio MCP server for AI assistants', commands: ['mcp'] },
-  { slug: 'agent', title: 'cua agent', summary: 'Run coding agents (Claude Code, Codex, Gemini CLI, ...) inside a sandbox and follow, continue or stop them', commands: ['agent'] },
-  { slug: 'agents', title: 'cua agents', summary: 'Install cua skills and the cua MCP server into AI coding agents', commands: ['agents'] },
-  { slug: 'skills', title: 'cua skills', summary: 'Record, list and replay demonstrations (skills)', commands: ['skills'] },
-  { slug: 'trajectory', title: 'cua trajectory', summary: 'Recorded `cua do` trajectories', commands: ['trajectory'] },
-  { slug: 'spaces', title: 'cua spaces', summary: 'Registered Spaces and your machines on the relay', commands: ['spaces'] },
-  { slug: 'cloud', title: 'cua cloud', summary: 'Your own AWS, Google Cloud or Modal account as a place for sandboxes and Spaces: connect, test, status, sweep', commands: ['cloud'] },
-  { slug: 'host', title: 'cua host', summary: 'Set this machine up for unattended access', commands: ['host'] },
-  { slug: 'devices', title: 'cua devices', summary: 'Enroll this device on the relay, approve, rename and revoke devices, and read the access log', commands: ['devices'] },
-  { slug: 'team', title: 'cua team', summary: 'Teams (organizations), their members, machines and device approvals', commands: ['team'] },
-  { slug: 'usage', title: 'cua usage', summary: 'Your hosted relay allowance this month: live sessions and relay hours', commands: ['usage'] },
-  { slug: 'teleport', title: 'cua teleport', summary: 'Move a desktop app session into a sandbox', commands: ['teleport'] },
-  { slug: 'volume', title: 'cua volume', summary: 'Cua Volume: files, versions, grants, access requests and audit of the volume every Space and agent shares', commands: ['volume'] },
-  { slug: 'keyvault', title: 'cua keyvault', summary: 'Set up, unlock and lock the Cua Keyvault, with the OS key store or a passphrase', commands: ['keyvault'] },
-  { slug: 'spacesd', title: 'cua spacesd', summary: 'Talk to a cua-spacesd directly by URL', commands: ['spacesd'] },
-  { slug: 'daemon', title: 'cua daemon', summary: 'Start, stop and inspect the cua daemon', commands: ['daemon'] },
-  { slug: 'cache', title: 'cua cache', summary: 'See and reclaim the disk used by images, sandboxes, builds and logs', commands: ['cache'] },
-  { slug: 'runtime', title: 'cua runtime', summary: 'Inspect and provision local runtimes', commands: ['runtime'] },
-  { slug: 'doctor', title: 'cua doctor', summary: 'Check the host, an image and a sandbox guest, or eval parity between image variants', commands: ['doctor'] },
-  { slug: 'telemetry', title: 'cua telemetry', summary: 'Anonymous usage telemetry (status, off, show-last)', commands: ['telemetry'] },
+  {
+    slug: 'sandboxes',
+    title: 'Sandboxes and images',
+    summary:
+      'Create, reach and delete sandboxes; pull, build and push images; local runtimes, disk cleanup, your own cloud account and the sandbox viewer',
+    commands: ['sandbox', 'image', 'images', 'runtime', 'cache', 'cloud', 'viewer'],
+  },
+  {
+    slug: 'computer-actions',
+    title: 'Computer actions',
+    summary: 'One-shot computer actions (screenshot, click, type, windows) against a selected target, and their recorded trajectories',
+    commands: ['do', 'do-host-consent', 'trajectory'],
+  },
+  {
+    slug: 'agents',
+    title: 'Agents, MCP and skills',
+    summary: 'Run coding agents in a sandbox, set up your AI agents, the stdio MCP server, and recorded skills',
+    commands: ['agent', 'agents', 'mcp', 'skills'],
+  },
+  {
+    slug: 'account-and-setup',
+    title: 'Account and setup',
+    summary: 'Sign in and out, user defaults, the cua daemon, health checks and usage telemetry',
+    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry'],
+  },
 ];
 
 export function cliReference(cli: CLIDocumentation): CliReference {
@@ -254,6 +253,7 @@ export function mcpReference(mcp: McpDocumentation, spaces: SpacesLinks): McpRef
     tools,
     header,
     footer: permissionsSection(mcp),
+    singlePage: true,
   };
 }
 

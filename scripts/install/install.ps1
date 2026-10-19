@@ -138,6 +138,164 @@ function Write-Step([string]$Message) { Write-Host $Message }
 function Write-Info([string]$Message) { Write-Verbose "cua-install: $Message" }
 function Stop-Install([string]$Message) { throw "cua-install: error: $Message" }
 
+# ---------------------------------------------------------------- telemetry
+# Three anonymous events about this install (cua_installer_step):
+# installer_started, then installer_completed or installer_failed with the
+# stage that was running and a fixed reason word. The same switches as every
+# Cua program (DO_NOT_TRACK, CUA_TELEMETRY, `[telemetry] enabled = "off"` in
+# $CUA_HOME\config.toml, off in CI) and the same anonymous install id. Never a
+# name, a path, a URL or an error message; nothing with -DryRun. Best effort:
+# a send never fails the install and waits at most 3 seconds.
+$script:TelKeyProd = 'phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14'
+$script:TelKeyStaging = 'phc_xDNLpzypNLVGmzQeBZEgZDZK7Ea6yYAmAnGZ6hMtHNKG'
+$script:TelCiVars = @('CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'GITLAB_CI', 'JENKINS_URL', 'CIRCLECI', 'BUILDKITE',
+    'TF_BUILD', 'TEAMCITY_VERSION', 'TRAVIS', 'APPVEYOR', 'BITBUCKET_BUILD_NUMBER', 'CODEBUILD_BUILD_ID', 'DRONE', 'HUDSON_URL')
+$script:Tel = $null
+$script:TelStage = 'other'
+$script:TelVersion = ''
+
+# 'on', 'off' or $null for a switch word.
+function ConvertTo-TelSwitch([string]$Value) {
+    if ($null -eq $Value) { return $null }
+    switch -Regex ($Value.Trim().ToLowerInvariant()) {
+        '^(0|false|no|off|disable|disabled)$' { return 'off' }
+        '^(1|true|yes|on|enable|enabled)$' { return 'on' }
+    }
+    return $null
+}
+
+function Get-TelConfigSwitch([string]$CuaHome) {
+    $f = Join-Path $CuaHome 'config.toml'
+    if (-not (Test-Path -LiteralPath $f)) { return $null }
+    $section = ''
+    foreach ($line in (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*\[\s*([^\]]+?)\s*\]') { $section = $Matches[1]; continue }
+        if ($section -eq 'telemetry' -and $line -match '^\s*enabled\s*=\s*"?([^"#\s]*)"?') { return (ConvertTo-TelSwitch $Matches[1]) }
+    }
+    return $null
+}
+
+# Whether install events may be sent here (the rules of cua-telemetry's config.rs).
+function Test-TelemetryEnabled([string]$CuaHome) {
+    $dnt = "$env:DO_NOT_TRACK".Trim().ToLowerInvariant()
+    if ($dnt -and $dnt -ne '0' -and $dnt -ne 'false') { return $false }
+    $sw = ConvertTo-TelSwitch $env:CUA_TELEMETRY
+    if ($sw) { return ($sw -eq 'on') }
+    if ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_ENABLED) -eq 'off') { return $false }
+    if ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_DISABLED) -eq 'on') { return $false }
+    $sw = Get-TelConfigSwitch $CuaHome
+    if ($sw) { return ($sw -eq 'on') }
+    return -not (Test-TelCi)
+}
+
+function Test-TelCi {
+    foreach ($v in $script:TelCiVars) {
+        $x = "$([Environment]::GetEnvironmentVariable($v))".Trim().ToLowerInvariant()
+        if ($x -and $x -ne 'false' -and $x -ne '0') { return $true }
+    }
+    return $false
+}
+
+function New-TelHex {
+    $b = New-Object byte[] 16
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+    return (($b | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+# Decides, shows the notice, and loads or creates the anonymous install id.
+function Initialize-CuaTelemetry {
+    $script:Tel = $null
+    if ($DryRun) { return }
+    $key = if ($env:CUA_POSTHOG_KEY) { $env:CUA_POSTHOG_KEY } elseif ("$env:CUA_ENV".Trim().ToLowerInvariant() -eq 'staging') { $script:TelKeyStaging } else { $script:TelKeyProd }
+    if (-not $key) { return }
+    $cuaHome = if ($env:CUA_HOME) { $env:CUA_HOME } else { Join-Path $HOME '.cua' }
+    if (-not (Test-TelemetryEnabled $cuaHome)) { return }
+    $endpoint = if ($env:CUA_TELEMETRY_ENDPOINT) { $env:CUA_TELEMETRY_ENDPOINT } else { 'https://eu.i.posthog.com/batch/' }
+    if ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_FORBID_NETWORK) -eq 'on' -and $endpoint -notmatch '^http://(127\.0\.0\.1|localhost|\[::1\])[:/]') { return }
+    $dir = Join-Path $cuaHome 'telemetry'
+    $idFile = Join-Path $dir 'install_id'
+    $id = $null
+    try { $id = (Get-Content -Raw -LiteralPath $idFile -ErrorAction Stop).Trim() } catch { }
+    if ($id -notmatch '^[0-9a-f]{32}$') {
+        $id = New-TelHex
+        try {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Set-Content -LiteralPath $idFile -Value $id -NoNewline
+        } catch { Write-Verbose "could not store the telemetry id: $_" }
+    }
+    $script:Tel = @{ Key = $key; Endpoint = $endpoint; Id = $id; Session = (New-TelHex); Ci = (Test-TelCi); Ended = $false }
+    Write-Host 'Cua sends anonymous data about this install (whether it worked, and where it stopped if not). Never names, file paths or anything you type.'
+    Write-Host 'To turn it off, set DO_NOT_TRACK=1. Details: https://cua.ai/docs/cua-sdk/concepts/telemetry'
+}
+
+# The fixed reason word for an install error message.
+function Get-CuaInstallErrorKind([string]$Message) {
+    switch -Wildcard ($Message) {
+        '*checksum mismatch*' { return 'checksum' }
+        '*signature*' { return 'signature' }
+        '*release identity*' { return 'signature' }
+        '*unsupported CPU*' { return 'unsupported_platform' }
+        '*cannot create*' { return 'permission_denied' }
+        '*ermission*' { return 'permission_denied' }
+        '*Access*denied*' { return 'permission_denied' }
+        '*cancelled*' { return 'cancelled' }
+        '*download failed*' { return 'network' }
+        '*unsupported release manifest*' { return 'network' }
+        '*Unable to connect*' { return 'network' }
+        '*could not be resolved*' { return 'network' }
+        '*timed out*' { return 'network' }
+        '*No such host*' { return 'network' }
+        '*404*' { return 'network' }
+    }
+    return 'other'
+}
+
+# The cua_installer_step payload (one batch body).
+function New-CuaInstallerStepBody($Sel, [string]$Step, [string]$Stage = 'none', [string]$Kind = 'none') {
+    $failed = $Step -eq 'installer_failed'
+    if (-not $failed) { $Stage = 'none'; $Kind = 'none' }
+    $outcome = if (-not $failed) { 'ok' } elseif ($Kind -eq 'cancelled') { 'cancelled' } else { 'error' }
+    $items = @()
+    if ($Sel) {
+        if ($Sel.cli) { $items += 'cli' }
+        if ($Sel.spaces) { $items += 'spaces' }
+        if ($Sel['cua-driver']) { $items += 'cua_driver' }
+        if ($Sel.host) { $items += 'host' }
+    }
+    $pv = if ($script:TelVersion) { $script:TelVersion } elseif ($Version) { $Version.TrimStart('v') } else { '' }
+    if ($pv -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { $pv = '0.0.0' }
+    $isWin = (-not (Test-Path variable:IsWindows)) -or $IsWindows
+    $os = if ($isWin) { 'windows' } elseif ($IsMacOS) { 'macos' } elseif ($IsLinux) { 'linux' } else { 'other' }
+    $major = [int][Environment]::OSVersion.Version.Major
+    if ($major -gt 999 -or $major -lt 0) { $major = 0 }
+    $archRaw = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } elseif ($env:PROCESSOR_ARCHITECTURE) { $env:PROCESSOR_ARCHITECTURE } else { [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() }
+    $arch = switch -Regex ($archRaw) { '^(AMD64|x64|X64|x86_64)$' { 'x86_64' } '^(ARM64|Arm64|aarch64)$' { 'arm64' } default { 'other' } }
+    $u = New-TelHex
+    $uuid = '{0}-{1}-4{2}-8{3}-{4}' -f $u.Substring(0, 8), $u.Substring(8, 4), $u.Substring(13, 3), $u.Substring(17, 3), $u.Substring(20, 12)
+    $props = [ordered]@{
+        telemetry_schema_version = 1; event_version = 1; product = 'cli'; product_version = $pv
+        os_family = $os; os_major = $major; arch = $arch; is_ci = [bool]$script:Tel.Ci
+        is_synthetic = ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_SYNTHETIC) -eq 'on'); process_session_id = $script:Tel.Session
+        sample_rate = 1; '$process_person_profile' = $false; '$geoip_disable' = $true
+        '$lib' = 'cua-installer'; '$lib_version' = '1.0.0'
+        step = $Step; outcome = $outcome; install_stage = $Stage; error_kind = $Kind; installer = 'ps1'
+        items = $(if ($items.Count) { $items -join '+' } else { 'none' })
+    }
+    $event = [ordered]@{ event = 'cua_installer_step'; distinct_id = $script:Tel.Id; uuid = $uuid
+        timestamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); properties = $props }
+    return (ConvertTo-Json -Depth 6 -Compress ([ordered]@{ api_key = $script:Tel.Key; batch = @($event) }))
+}
+
+function Send-CuaInstallerStep($Sel, [string]$Step, [string]$Stage = 'none', [string]$Kind = 'none') {
+    if (-not $script:Tel -or $script:Tel.Ended) { return }
+    if ($Step -ne 'installer_started') { $script:Tel.Ended = $true }
+    try {
+        $body = New-CuaInstallerStepBody $Sel $Step $Stage $Kind
+        if ((ConvertTo-TelSwitch $env:CUA_TELEMETRY_DEBUG) -eq 'on') { Write-Host "[cua telemetry] $body" }
+        Invoke-RestMethod -Method Post -Uri $script:Tel.Endpoint -ContentType 'application/json' -Body $body -TimeoutSec 3 | Out-Null
+    } catch { Write-Verbose "install telemetry not sent: $_" }
+}
+
 function Get-CuaPlatform {
     param([string]$Arch = $env:CUA_INSTALL_ARCH)
     if (-not $Arch) {
@@ -603,13 +761,33 @@ function Invoke-CuaInstall {
     $ProgressPreference = 'SilentlyContinue'
     Test-PairArgs
     $sel = Get-CuaSelection
+    Initialize-CuaTelemetry
+    $script:TelStage = 'platform'
+    try {
+        Invoke-CuaInstallSteps $sel
+        $script:TelStage = 'other'
+        Send-CuaInstallerStep $sel 'installer_completed'
+    } catch {
+        Send-CuaInstallerStep $sel 'installer_failed' $script:TelStage (Get-CuaInstallErrorKind "$_")
+        throw
+    } finally {
+        # Stopped without an error (Ctrl+C): cancelled.
+        Send-CuaInstallerStep $sel 'installer_failed' $script:TelStage 'cancelled'
+    }
+}
+
+function Invoke-CuaInstallSteps($sel) {
     if ($sel.spaces -and -not $script:SpacesSupported) {
         Write-Step 'Cua Spaces is not available on this platform; skipping the app'
         $sel.spaces = $false
     }
     if ($Version -and $Version.TrimStart('v') -notmatch '^\d+\.\d+\.\d+') { Stop-Install "-Version must look like 1.2.3, not '$Version'" }
     $platform = Get-CuaPlatform
-    if (Test-WantsChecklist) { $sel = Read-CuaSelection $sel }
+    Send-CuaInstallerStep $sel 'installer_started'
+    if (Test-WantsChecklist) {
+        $picked = Read-CuaSelection $sel
+        foreach ($k in @($picked.Keys)) { $sel[$k] = $picked[$k] }
+    }
     if ($DryRun) { Write-Step 'Dry run: nothing will be changed' }
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("cua-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
@@ -624,15 +802,19 @@ function Invoke-CuaInstall {
         $manifestUrl = $null
         # Nothing to download (-Pair on a computer that has Cua): no manifest to read.
         if ($sel.cli -or $sel.spaces -or $sel['cua-driver']) {
+            $script:TelStage = 'manifest'
             $manifestUrl = Get-ManifestUrl
             $manifestFile = Join-Path $tmp 'release-artifacts.json'
             Get-Remote $manifestUrl $manifestFile
             $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
             if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
             Write-Info "platform $platform, manifest $manifestUrl"
+            $script:TelVersion = "$(@($manifest.artifacts | Where-Object { $_.component -eq 'cli' } | Select-Object -First 1).version)"
         }
+        $script:TelStage = 'cli'
         if ($sel.cli) { $cua = Install-Cli $manifest $manifestUrl $platform $tmp }
         if ($sel.spaces) {
+            $script:TelStage = 'app'
             if ($Mode) {
                 $cuaHome = if ($env:CUA_HOME) { $env:CUA_HOME } else { Join-Path $HOME '.cua' }
                 $modeFile = Join-Path $cuaHome 'spaces-install-mode'
@@ -656,13 +838,16 @@ function Invoke-CuaInstall {
             } catch { Write-Verbose "could not record the install channel: $_" }
         }
         $env:CUA_INSTALL_CHANNEL = 'install_script'
+        $script:TelStage = 'driver'
         if ($sel['cua-driver']) { Install-CuaDriver $cua $tmp $manifestUrl }
+        $script:TelStage = 'sign_in'
         if ($cua -and -not $Pair -and -not $CliOnly -and -not $NoOnboarding -and -not $DryRun -and (Test-Interactive)) {
             Write-Host ''
             Write-Step 'Signing in to Cua'
             & $cua auth login
             if ($LASTEXITCODE -ne 0) { Write-Warning 'Sign-in did not finish. Run "cua auth login" later (add --remote if this computer has no web browser).' } else { $script:SignedIn = $true }
         }
+        $script:TelStage = 'host'
         if ($sel.host) { Invoke-HostSetup $cua }
         Write-CuaSummary $sel
         if ($script:PathHint) {

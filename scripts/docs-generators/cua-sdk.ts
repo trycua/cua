@@ -981,10 +981,19 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/app-core/onboarding-settings',
     title: 'Onboarding and settings',
-    description: 'First-run onboarding, its card miniatures, the settings file and the hotkey label.',
-    intro: '`app_onboarding_reduce` steps through first-run onboarding. `app_settings_load` and `app_settings_save` read and write the apps\' settings file.',
-    items: ['app_format_hotkey', 'AppKeyCombo', 'AppSwitcherTheme', 'AppUsageToggle', 'AppModeChoice'],
-    prefixes: ['AppOnboarding', 'app_onboarding_', 'AppSettings', 'app_settings_', 'AppPresentation', 'app_presentation_', 'AppMenuPreview', 'AppPreview', 'AppDriver', 'app_driver_'],
+    description: 'First-run onboarding, the settings file and the hotkey label.',
+    intro: '`app_onboarding_reduce` steps through first-run onboarding. `app_settings_load` and `app_settings_save` read and write the apps\' settings file. The animated miniatures on the onboarding cards are on [Onboarding previews](/cua-sdk/reference/spaces/app-core/onboarding-previews).',
+    items: ['app_format_hotkey', 'AppKeyCombo', 'AppSwitcherTheme', 'AppUsageToggle', 'AppModeChoice', 'AppPresentationCard'],
+    prefixes: ['AppOnboarding', 'app_onboarding_', 'AppSettings', 'app_settings_'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/onboarding-previews',
+    title: 'Onboarding previews',
+    description: 'The animated miniatures on the onboarding cards: the background computer-use card, the notch and the menu bar.',
+    intro: '`app_driver_preview` and `app_presentation_preview` return the miniatures of the AI agents and presentation cards; the `*_frame` functions give one frame of the loop and the `*_still` functions the frame shown with Reduce Motion. The onboarding flow itself is on [Onboarding and settings](/cua-sdk/reference/spaces/app-core/onboarding-settings).',
+    items: [],
+    prefixes: ['AppPresentation', 'app_presentation_', 'AppMenuPreview', 'AppPreview', 'AppDriver', 'app_driver_'],
     spaces: true,
   },
   {

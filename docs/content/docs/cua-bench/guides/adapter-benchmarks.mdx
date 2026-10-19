@@ -35,8 +35,8 @@ Both run cua-spacesd, and every result records `image_ref`, `image_variant`,
 | [OSWorld-G](https://github.com/xlang-ai/OSWorld-G) | Click the described element | 564 | none |
 | [ScreenSpot-Pro](https://huggingface.co/datasets/likaixin/ScreenSpot-Pro) | High-resolution professional app screenshots | ~1,581 | none |
 
-Images live under `ghcr.io/trycua/`. How they are built:
-[Convert benchmark images](/cua-bench/guides/convert-benchmark-images).
+Images live under `ghcr.io/trycua/`. To see how they are built, read
+[Build a benchmark image](/cua-bench/guides/benchmarks#build-a-benchmark-image).
 
 ## OSWorld-Verified
 
@@ -83,7 +83,7 @@ docker build -t osworld-guestfs:local osworld-image/guestfs
 docker run --rm --device /dev/kvm -v "$PWD:/work" osworld-guestfs:local \
   bash /work/osworld-image/build-osworld-cua.sh           # -> disk.img
 export OSWORLD_IMAGE="<registry>/<repo>@sha256:<digest>"  # after pushing the containerDisk
-uv run samples/python/3_osworld_fleet.py                  # OSWORLD_LOCAL=1 boots it under QEMU
+uv run samples/python/3_osworld_local.py                  # boots it under QEMU
 ```
 
 - Wrap OSWorld setup and evaluation in timeouts: its controller has none.

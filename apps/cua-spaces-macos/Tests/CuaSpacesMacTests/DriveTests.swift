@@ -159,7 +159,7 @@ struct DriveTests {
         await p.continueDrive()
         #expect(p.view.step == .mode)
         p.send(.modeChosen(mode: .client))
-        #expect(p.view.summary.first { $0.label == "Cua Volume" }?.value == "In Finder")
+        #expect(p.view.todos.first { $0.id == .volume }?.done == true, "Done shows Cua Volume on")
     }
 
     @Test func theFirstRunSavesYourBucketThenMounts() async throws {

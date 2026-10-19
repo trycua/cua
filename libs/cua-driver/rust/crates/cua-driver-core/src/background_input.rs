@@ -74,6 +74,12 @@ pub struct BackgroundTargetFacts {
     pub competing_keyboard_destinations: usize,
     /// Ancestry proof for an explicitly addressed element, when one exists.
     pub element: ElementAncestry,
+    /// The login session reports its screen as locked (macOS: the screen
+    /// saver, display sleep or a lock put the session behind the lock
+    /// screen). The lock screen owns input while this holds and every app's
+    /// accessibility windows read as empty, so no route can reach the target.
+    /// `false` when the platform cannot tell; the other facts then decide.
+    pub screen_locked: bool,
 }
 
 /// The background action classes v1 distinguishes. Route order and trust are
@@ -120,7 +126,20 @@ pub mod refusal_codes {
     pub const MINIMIZED_OR_HIDDEN: &str = "minimized_or_hidden_window";
     pub const SAME_PID_KEYBOARD_AMBIGUITY: &str = "same_pid_keyboard_ambiguity";
     pub const ELEMENT_OUTSIDE_TARGET_WINDOW: &str = "element_outside_target_window";
+    pub const SCREEN_LOCKED: &str = "screen_locked";
 }
+
+/// Shown with every `screen_locked` refusal: what happened and how to keep it
+/// from happening while an agent works. Never advises foreground input, which
+/// would land on the lock screen.
+pub const SCREEN_LOCKED_HINT: &str = "the screen is locked or showing the screen saver, \
+     which also happens when the screen saver starts or the display sleeps with no password \
+     required. While it lasts, macOS hides every app's windows from accessibility and sends \
+     input to the lock screen, so Cua Driver refuses instead of acting; screenshots still \
+     work. Wake and unlock the Mac, then retry. Cua Driver keeps the display awake for 10 \
+     minutes after each tool call (CUA_DRIVER_KEEP_DISPLAY_AWAKE sets the seconds, 0 turns \
+     it off), so this usually means the Mac sat idle between agent turns; running \
+     `caffeinate -d` keeps it awake for longer";
 
 /// A typed refusal: no actuator ran and none may run for this decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,6 +238,20 @@ pub fn decide_background_input(
             );
         }
         WindowServerOwnership::SamePid => {}
+    }
+
+    // A locked session hides every app's AX windows, so the AX checks below
+    // would misreport it as an off-Space window and advise foreground input,
+    // which would land on the lock screen. Report the real cause first.
+    if facts.screen_locked {
+        return refuse(
+            refusal_codes::SCREEN_LOCKED,
+            format!(
+                "window {} cannot receive input: {SCREEN_LOCKED_HINT}",
+                target.window_id
+            ),
+            None,
+        );
     }
 
     match facts.element {
@@ -328,6 +361,7 @@ fn exact_window_status(facts: &BackgroundTargetFacts) -> &'static str {
     match &facts.window_server {
         WindowServerOwnership::NotFound => "not_found",
         WindowServerOwnership::ForeignPid { .. } => "owner_mismatch",
+        WindowServerOwnership::SamePid if facts.screen_locked => "screen_locked",
         WindowServerOwnership::SamePid if facts.ax_window_present => "matched",
         WindowServerOwnership::SamePid => "ax_unresolved",
     }
@@ -394,6 +428,7 @@ mod tests {
             app_hidden: Some(false),
             competing_keyboard_destinations: 0,
             element: ElementAncestry::NotAddressed,
+            screen_locked: false,
         }
     }
 
@@ -658,6 +693,7 @@ mod tests {
             app_hidden: Some(true),
             competing_keyboard_destinations: 3,
             element: ElementAncestry::OutsideTargetWindow,
+            screen_locked: false,
         };
         assert_eq!(
             code_of(decide_background_input(
@@ -745,5 +781,53 @@ mod tests {
             refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY
         );
         assert_eq!(report["observation"]["one_shot_capture"], "unknown");
+    }
+
+    /// A locked session (screen saver or display sleep) empties every app's
+    /// AXWindows. Every route refuses with `screen_locked`, not the misleading
+    /// off-Space code, and no refusal advises foreground input, which would
+    /// reach the lock screen.
+    #[test]
+    fn locked_screen_refuses_every_route_without_foreground_advice() {
+        let facts = BackgroundTargetFacts {
+            screen_locked: true,
+            ax_window_present: false,
+            element: ElementAncestry::Unproven,
+            ..matched_facts()
+        };
+        for action in ALL_ACTIONS {
+            match decide_background_input(TARGET, &facts, action) {
+                BackgroundInputDecision::Refuse(refusal) => {
+                    assert_eq!(refusal.code, refusal_codes::SCREEN_LOCKED, "{action:?}");
+                    assert_eq!(refusal.advice, None, "{action:?}");
+                    assert!(refusal.reason.contains("display sleeps"));
+                }
+                BackgroundInputDecision::Execute { .. } => panic!("{action:?} must refuse"),
+            }
+        }
+        let report = background_input_capability_report(TARGET, &facts, Some(true));
+        assert_eq!(report["exact_window"]["status"], "screen_locked");
+        for route in report["routes"].as_array().unwrap() {
+            assert_eq!(route["reason"], refusal_codes::SCREEN_LOCKED);
+        }
+    }
+
+    /// A stale or foreign window id is still reported as such while locked:
+    /// re-targeting is needed either way.
+    #[test]
+    fn ownership_failures_precede_the_lock() {
+        let facts = BackgroundTargetFacts {
+            window_server: WindowServerOwnership::NotFound,
+            screen_locked: true,
+            ..matched_facts()
+        };
+        assert_eq!(
+            code_of(decide_background_input(
+                TARGET,
+                &facts,
+                BackgroundAction::AxSemantic
+            )),
+            refusal_codes::WINDOW_NOT_FOUND
+        );
     }
 }

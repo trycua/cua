@@ -765,6 +765,7 @@
         "step": "welcome",
         "summary": [],
         "title": "Welcome to Cua Spaces",
+        "todos": [],
         "usage": "Share anonymous usage data [x]"
       },
       "onboarding": "initial"
@@ -787,6 +788,7 @@
         "step": "welcome",
         "summary": [],
         "title": "Welcome to Cua Spaces",
+        "todos": [],
         "usage": "Share anonymous usage data [x]"
       },
       "onboarding": "cli-installed"
@@ -809,6 +811,7 @@
         "step": "signin",
         "summary": [],
         "title": "Sign in",
+        "todos": [],
         "usage": null
       },
       "onboarding": "start"
@@ -831,6 +834,7 @@
         "step": "signin",
         "summary": [],
         "title": "Sign in",
+        "todos": [],
         "usage": null
       },
       "onboarding": "signed-in"
@@ -853,6 +857,7 @@
         "step": "agents",
         "summary": [],
         "title": "AI agents",
+        "todos": [],
         "usage": null
       },
       "onboarding": "signin-done"
@@ -878,6 +883,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "agents-done"
@@ -900,6 +906,7 @@
         "step": "agents",
         "summary": [],
         "title": "AI agents",
+        "todos": [],
         "usage": null
       },
       "onboarding": "back"
@@ -925,6 +932,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "agents-done"
@@ -950,6 +958,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-picked"
@@ -975,6 +984,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-picked"
@@ -1000,6 +1010,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-picked"
@@ -1025,6 +1036,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-done"
@@ -1050,6 +1062,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "back"
@@ -1075,6 +1088,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "presentation-done"
@@ -1100,6 +1114,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "onboarding": "drive-continue"
@@ -1126,13 +1141,16 @@
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: /Users/me/.local/bin/cua",
-          "Account: ada@example.com",
-          "AI agents: Codex",
           "Shows in: Menu bar only",
-          "This machine: Reachable from your other devices"
+          "This machine: Your other devices can reach it"
         ],
         "title": "You're all set",
+        "todos": [
+          "[x] Cua CLI ~Command-line tools for you and your agents.",
+          "[x] Account ~Signed in as ada@example.com.",
+          "[x] AI agents ~Codex, Pi can use Cua.",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+        ],
         "usage": null
       },
       "onboarding": "mode-chosen"

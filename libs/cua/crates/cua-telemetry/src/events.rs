@@ -1159,3 +1159,86 @@ pub fn device_enroll(method: &str, outcome: Outcome) -> Option<Event> {
             .s("outcome", outcome.as_str())
     })
 }
+
+/// `cua_installer_step`, as `install.sh` and `install.ps1` send it (they
+/// build the same payload themselves; this builder is the reference the
+/// tests hold them to). None for a step outside [`schema::INSTALLER_STEPS`].
+/// `stage` and `error_kind` are kept only on `installer_failed`.
+pub fn installer_step(
+    step: &str,
+    stage: &str,
+    error_kind: &str,
+    installer: &str,
+    items: &[&str],
+) -> Option<Event> {
+    let s = pick(schema::INSTALLER_STEPS, step, "");
+    if s.is_empty() {
+        return None;
+    }
+    let failed = s == "installer_failed";
+    let kind = if failed {
+        pick(schema::INSTALL_ERROR_KINDS, error_kind, "other")
+    } else {
+        "none"
+    };
+    let outcome = match (failed, kind) {
+        (false, _) => Outcome::Ok,
+        (true, "cancelled") => Outcome::Cancelled,
+        (true, _) => Outcome::Error,
+    };
+    let on: Vec<&str> = schema::INSTALL_ITEMS
+        .iter()
+        .copied()
+        .filter(|i| items.iter().any(|x| x.trim() == *i))
+        .collect();
+    Some(
+        Event::new(event::INSTALLER_STEP)
+            .s("step", s)
+            .s("outcome", outcome.as_str())
+            .s(
+                "install_stage",
+                if failed {
+                    pick(schema::INSTALL_STAGES, stage, "other")
+                } else {
+                    "none"
+                },
+            )
+            .s("error_kind", kind)
+            .s("installer", pick(schema::INSTALLERS, installer, "sh"))
+            .owned(
+                "items",
+                if on.is_empty() {
+                    "none".into()
+                } else {
+                    on.join("+")
+                },
+            ),
+    )
+}
+
+/// The kind of Spaces tool `tool` is, when calling it means an agent used
+/// a Space (it acts inside one); None for tools that only list, create,
+/// share or administer Spaces.
+pub fn space_tool_group(tool: &str) -> Option<&'static str> {
+    Some(match tool {
+        "space_bash" | "computer_shell" => "shell",
+        "space_write"
+        | "upload"
+        | "send_file"
+        | "download"
+        | "computer_file_read"
+        | "computer_file_write"
+        | "computer_file_list" => "files",
+        "list_tools" | "call_tool" => "services",
+        "agent_start" | "agent_message" => "agents",
+        "list_space_windows" | "teleport_app" => "other",
+        t if t.starts_with("computer_") && !t.starts_with("computer_access_") => "computer",
+        _ => return None,
+    })
+}
+
+/// `cua_agent_used_space`: an agent's tool call reached a Space and worked.
+/// None for a tool that does not act inside a Space.
+pub fn agent_used_space(tool: &str) -> Option<Event> {
+    space_tool_group(tool).map(|g| Event::new(event::AGENT_USED_SPACE).s("tool_group", g))
+}

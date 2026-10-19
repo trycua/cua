@@ -229,6 +229,12 @@ public final class AppModel {
         onboarding.currentMenuBar = { [weak self] in self?.settings.menuBar ?? false }
         // Done's "Launch at login" checkbox is the user's choice.
         onboarding.onLaunchAtLogin = { [weak self] on in self?.setLaunchAtLogin(on) }
+        // Done reads the account again (the CLI's sign-in is the same
+        // session), and its "Turn on" turns the Cua Volume experiment on.
+        onboarding.readIdentity = { [weak self] in self?.account?.identity() }
+        onboarding.onTurnOnVolume = { [weak self] in
+            self?.chooseExperiment(row: "experiment:cua_volume", option: "on")
+        }
         // Settings, Experiments decide the first run's pages (Cua Volume).
         onboarding.currentExperiments = { [weak self] in
             self?.settings.experiments ?? AppExperiments(cuaVolume: false, yourCloud: false, sharing: true, webUi: false)

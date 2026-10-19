@@ -27,6 +27,8 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_spaces_feature_used` | `feature` (a fixed Spaces app feature) | Spaces app feature adoption. |
 | `cua_stream_stats` | `transport`, `codec`, `decode` (`hw` or `sw`), `fps_bucket`, `latency_bucket`, `resolution`, `duration_bucket` | Streaming performance (50% sampled). |
 | `cua_onboarding_step` | `step`, `outcome`, `onboarding_eligible` (`yes` or `no` on the Spaces app's `app_launched`: its first run was still due; `unknown` otherwise), `error_kind` (a failed `signed_in`: `timeout`, `cancelled`, `permission_denied`, `transport`, `unauthenticated` or `other`, never the message; `none` otherwise) | Install and onboarding funnel, and the Spaces checklist: `checklist_shown`, `checklist_<step>` (`add_machine`, `create_space`, `teleport`, `share`, `run_agent`), `checklist_completed`, `checklist_dismissed`, `checklist_reopened`. |
+| `cua_installer_step` | `step` (`installer_started`, `installer_completed`, `installer_failed`), `outcome`, `install_stage`, `error_kind`, `installer` (`sh` or `ps1`), `items` (what was asked for: `cli`, `spaces`, `cua_driver`, `host` joined with `+`) | Install funnel: how many installs start and finish, and where and why they fail ([values](/cua-sdk/concepts/telemetry-counting#installers)). |
+| `cua_agent_used_space` | `tool_group` (`shell`, `files`, `computer`, `services`, `agents` or `other`) | First success and agent retention: an AI agent's tool call acted inside a Space and worked. At most one per install per UTC day. |
 | `cua_agent_run_started` | `harness` (cua-agents id or `other`), `location`, `entry` (`spaces_tool`, `cli`, `sdk`, `persistent`, `routine`), `outcome`, `error_kind` | Agent runs started, and failed starts. |
 | `cua_agent_run_completed` | `harness`, `location`, `entry`, `outcome`, `error_kind`, `duration_bucket` | First agent run, and how reliably runs finish. Once per run. |
 | `cua_bench_run_completed` | `taskset` (cua-bench dataset or `custom`), `score_bucket`, `task_count`, `outcome` | Benchmark use and coarse scores. |
@@ -50,20 +52,5 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_device_enroll` | `method` (`sign_in`, `approval`, `rekey`), `outcome` | How devices join your account's relay. |
 | `cua_experiment` | `action` (`experiment_on` or `experiment_off`), `experiment` (`cua_volume`, `your_cloud`, `sharing`) | Which experiments people try, and turn off again. |
 
-## Teleport caller kinds
-
-`caller_kind` says who asked for a teleport: `cua_app_signed` (the Cua app or
-CLI, verified by its code signature), `embedded_sdk` (another app that embeds
-the cua SDK), `unsigned` (ad hoc or unsigned code) or `unknown` (the platform
-cannot verify signatures). With `caller_kind_source: broker_verified` it comes
-from the Keyvault broker's OS-verified caller identity; with `self_reported`
-the calling process reported it, and an SDK process only ever reports
-`embedded_sdk` or `unknown`. Paths, bundle ids and signing ids of callers are
-never sent.
-
-A modified build can remove its own telemetry. The receive-side count
-(`cua_spacesd_session_deliveries`) is recorded by cua-spacesd inside the
-sandbox, and only when the host enabled telemetry for that sandbox
-(`CUA_SPACESD_TELEMETRY=1`, which the SDK sets on local sandboxes while
-telemetry is on).
-
+Teleport caller kinds and how session deliveries are counted:
+[How events are counted](/cua-sdk/concepts/telemetry-counting).

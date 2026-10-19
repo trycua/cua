@@ -38,6 +38,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -67,6 +68,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -96,6 +98,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -125,6 +128,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": "mount",
@@ -154,6 +158,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -182,6 +187,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -198,7 +204,7 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -211,14 +217,16 @@
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "Cua Volume: Waiting for approval",
-          "This machine: Only used to open other computers"
+          "This machine: Opens your other computers"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. Waiting for approval. -> Turn on (optional)"
+        ],
         "usage": null
       },
       "request": null,
@@ -244,6 +252,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -269,6 +278,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -294,6 +304,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": "mount",
@@ -322,6 +333,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -338,7 +350,7 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -351,14 +363,16 @@
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "Cua Volume: /home/maya/Cua Volume",
-          "This machine: Only used to open other computers"
+          "This machine: Opens your other computers"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+          "[x] Cua Volume ~Shared folder: files your agents can share across your computers. /home/maya/Cua Volume. (optional)"
+        ],
         "usage": null
       },
       "request": null,
@@ -384,6 +398,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -409,6 +424,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -437,6 +453,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -465,6 +482,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -493,6 +511,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -521,6 +540,7 @@
         "step": "presentation",
         "summary": [],
         "title": "Where should Cua Spaces show up?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -537,7 +557,7 @@
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-        "lede": "Cua Spaces is in your menu bar.",
+        "lede": "3 things are left. You can finish them now, or later from the menu bar.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -550,13 +570,15 @@
         "showMark": false,
         "step": "done",
         "summary": [
-          "cua command: not installed",
-          "Account: not signed in",
-          "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Only used to open other computers"
+          "This machine: Opens your other computers"
         ],
-        "title": "You're all set",
+        "title": "Almost done",
+        "todos": [
+          "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent"
+        ],
         "usage": null
       },
       "request": null,
@@ -587,6 +609,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -615,6 +638,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -645,6 +669,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -681,6 +706,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -717,6 +743,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -753,6 +780,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -790,6 +818,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -826,6 +855,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -862,6 +892,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -898,6 +929,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -933,6 +965,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": "mount",
@@ -961,6 +994,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -991,6 +1025,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1021,6 +1056,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1052,6 +1088,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1087,6 +1124,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1115,6 +1153,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1144,6 +1183,7 @@
         "step": "drive",
         "summary": [],
         "title": "Cua Volume",
+        "todos": [],
         "usage": null
       },
       "request": null,
@@ -1172,6 +1212,7 @@
         "step": "mode",
         "summary": [],
         "title": "How do you want to use this Mac?",
+        "todos": [],
         "usage": null
       },
       "request": null,

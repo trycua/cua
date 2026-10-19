@@ -45,7 +45,7 @@
         }
       ],
       "enabled": true,
-      "notes": "Renders reference/index.mdx, reference/cli/ (one page per command group) and reference/mcp-tools/ (one page per tool category) with the shared renderers in lib/. The CLI comes from the hand-maintained cli_docs_json() in crates/cua-driver/src/cli.rs (host independent). The MCP registry differs per OS: each host refreshes (or, with --check, verifies) its own snapshot cli-specs/cua-driver-mcp-<macos|linux|windows>.json and every page renders from the three committed snapshots, so the pages are identical on every host. Curated headers: scripts/docs-generators/headers/cua-driver/."
+      "notes": "Renders reference/index.mdx, reference/cli/ (one page per command group, several commands each) and reference/mcp-tools/ (an index and a few pages of tool categories) with the shared renderers in lib/. The CLI comes from the hand-maintained cli_docs_json() in crates/cua-driver/src/cli.rs (host independent). The MCP registry differs per OS: each host refreshes (or, with --check, verifies) its own snapshot cli-specs/cua-driver-mcp-<macos|linux|windows>.json and every page renders from the three committed snapshots, so the pages are identical on every host. Curated headers: scripts/docs-generators/headers/cua-driver/."
     },
     "lume": {
       "name": "Lume VM Manager",
@@ -74,18 +74,13 @@
         },
         {
           "type": "cli",
-          "outputFile": "cli/index.mdx",
+          "outputFile": "cli.mdx",
           "extractCommand": ".build/release/lume dump-docs --type cli"
         },
         {
           "type": "api",
           "outputFile": "http-api.mdx",
-          "extractCommand": ".build/release/lume dump-docs --type api"
-        },
-        {
-          "type": "mcp",
-          "outputFile": "mcp-tools.mdx",
-          "extractCommand": ".build/release/lume dump-docs --type mcp"
+          "extractCommand": ".build/release/lume dump-docs --type api (and --type mcp)"
         },
         {
           "type": "nav",
@@ -94,7 +89,7 @@
         }
       ],
       "enabled": true,
-      "notes": "Renders reference/index.mdx, reference/cli/ (one page per command group), http-api.mdx and mcp-tools.mdx from `lume dump-docs --type all` with the shared renderers in lib/."
+      "notes": "Renders reference/index.mdx, reference/cli.mdx (the whole CLI on one page, a section per command group) and http-api.mdx (the HTTP API, then the MCP tools) from `lume dump-docs --type all` with the shared renderers in lib/."
     },
     "cua-bench": {
       "name": "Cua Bench (cb CLI, task and result schemas)",
@@ -132,17 +127,12 @@
         },
         {
           "type": "cli",
-          "outputFile": "cli/index.mdx",
+          "outputFile": "cli.mdx",
           "extractCommand": null
         },
         {
           "type": "reference",
           "outputFile": "task-definition.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "results.mdx",
           "extractCommand": null
         },
         {
@@ -168,7 +158,7 @@
         "libs/images/sandbox-images.json",
         "libs/images/bench/*/lock.json",
         "docs/content/docs/cua-sdk/quickstart.mdx",
-        "docs/content/docs/start-here/sandbox-images.mdx",
+        "docs/content/docs/cua-sdk/guides/images.mdx",
         "scripts/docs-generators/sandbox.test.ts",
         "scripts/docs-generators/headers/cua-sdk/runtime-support.md",
         "scripts/docs-generators/headers/cua-sdk/os-image-catalog.md",
@@ -233,7 +223,7 @@
         },
         {
           "type": "mcp",
-          "outputFile": "mcp-tools/index.mdx",
+          "outputFile": "mcp-tools.mdx",
           "extractCommand": "${CARGO_TARGET_DIR:-target}/debug/cua dump-docs --type mcp"
         },
         {
@@ -243,7 +233,7 @@
         }
       ],
       "enabled": true,
-      "notes": "Renders reference/index.mdx, reference/cli/ (one page per command group) and reference/mcp-tools/ (one page per tool group) from the hidden `cua dump-docs` (the clap definition and the MCP tool list) with the shared renderers in lib/, plus scripts/docs-generators/cli-specs/cua.json, the docs CLI-shape lane's oracle. Examples come from each command's clap `after_help` (a cua-cli test parses every one)."
+      "notes": "Renders reference/index.mdx, reference/cli/ (one page per command group, several commands each) and reference/mcp-tools.mdx (every tool on one page) from the hidden `cua dump-docs` (the clap definition and the MCP tool list) with the shared renderers in lib/, plus scripts/docs-generators/cli-specs/cua.json, the docs CLI-shape lane's oracle. Examples come from each command's clap `after_help` (a cua-cli test parses every one)."
     },
     "cua-sdk": {
       "name": "Cua SDK object reference (UniFFI)",

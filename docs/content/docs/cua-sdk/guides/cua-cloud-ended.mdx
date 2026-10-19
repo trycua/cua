@@ -1,43 +1,121 @@
 ---
-title: Cua Cloud (Fleets) has ended
-description: Cua Cloud and Cua Fleets stopped on 16 October 2026. What changed, what happened to your data, and where to run sandboxes now.
+title: Migrate from Cua Cloud and deprecated packages
+description: Cua Cloud and Fleets ended on 18 October 2026, and cuabot, cua-computer, cua-computer-server and cua-agent are no longer maintained. What changed and what to use instead.
 ---
 
-Cua Cloud, including Cua Fleets (pools, claims, warm replicas and the Terraform
-provider), stopped on Friday 16 October 2026. Remaining customer data was
-deleted then. The Fleets pages that used to be here have been removed.
+import { Callout } from 'fumadocs-ui/components/callout';
 
-## What still works
+## Cua Cloud (Fleets) has ended
+
+Cua Cloud, including Cua Fleets (pools, claims, warm replicas and the Terraform
+provider), ended on 18 October 2026. The Fleets pages have been removed.
+
+### What still works
 
 The same SDK calls, images and `cua` CLI commands run anywhere else:
 
 | Where | How | Guide |
 | --- | --- | --- |
-| This machine | `Sandbox.create(...)` (the default), `cua sb create` | [Set up local runtimes](/cua-sdk/guides/local-runtimes) |
-| Your own AWS, Google Cloud or Modal account | `on="aws"`, `on="gcp"`, `on="modal"`; `--on aws` in the CLI | [Use your own cloud](/cua-sdk/guides/your-cloud) |
+| This machine | `Sandbox.create(...)` (the default), `cua sb create` | [Choose where sandboxes run](/cua-sdk/guides/local-runtimes#this-machine) |
+| Your own AWS, Google Cloud or Modal account | `on="aws"`, `on="gcp"`, `on="modal"`; `--on aws` in the CLI | [Choose where sandboxes run](/cua-sdk/guides/local-runtimes#your-own-cloud) |
 | A machine you run, shared with your team and agents | Cua Spaces | [Cua Spaces](/spaces) |
 
-## In your code
+### In your code
 
-`on="cloud"`, `local=False`, `--on cloud`, `Cua.fleet()` and `cua fleet` are
-deprecated in `cua` 0.4.2 and `cua-sandbox` 0.9.1. They fail with this message:
+`on="cloud"`, `local=False`, `--on cloud` and `pool:` image references fail
+with this message:
 
 ```text output
 Cua Cloud has ended; use a local sandbox or your own machine. See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended
 ```
 
-They are removed in `cua` 0.5.0. The same goes for `cua images` listings of
-cloud images, `cua pools`, `--pool`, `FLEETS_TOKEN` and cloud suspend, resume
-and extend-lease.
+`Cua.fleet()`, `cua fleet`, `cua pools`, `--pool`, `FLEETS_TOKEN`, cloud image
+listings and cloud suspend, resume and extend-lease are removed from the SDKs and
+the `cua` CLI.
 
 Replace `on="cloud"` with a local runtime or your own cloud. Sidecars,
 services, secrets and images work the same way there:
-[Sidecars](/cua-sdk/guides/sidecars), [Services](/cua-sdk/guides/services),
-[Secrets](/cua-sdk/guides/secrets), [Images](/cua-sdk/guides/images).
+[Sidecars](/cua-sdk/guides/services#sidecars), [services](/cua-sdk/guides/services),
+[secrets](/cua-sdk/guides/services#secrets) and [images](/cua-sdk/guides/images).
 
 Fleet pool names, claim TTLs and warm-replica settings have no replacement.
 Your own cloud gives each sandbox a time limit and cleans up after it
-([Time limits and cleanup](/cua-sdk/guides/your-cloud#time-limits-and-cleanup)).
+([Time limits and cleanup](/cua-sdk/guides/local-runtimes#time-limits-and-cleanup)).
 
 Questions: [GitHub issues](https://github.com/trycua/cua/issues) or
 [Discord](https://discord.com/invite/mVnXXpdE85).
+
+## Deprecated packages
+
+<Callout type="warn" title="Deprecated">
+  Cua no longer maintains `cuabot`, `cua-computer`, `cua-computer-server` or
+  `cua-agent`. They will not receive updates or fixes. Existing releases stay on
+  npm and PyPI, so current installs keep installing, but you should move off them.
+</Callout>
+
+<Callout type="error" title="Do not run cuabot">
+  `cuabot` has known security issues and is no longer maintained. Do not run it.
+  If it is installed, [stop and remove it](#cuabot) now.
+</Callout>
+
+| Package | Registry | Last release | Use instead |
+| --- | --- | --- | --- |
+| `cuabot` | npm | 1.0.14 | [Cua Driver](/cua-driver) over MCP, or a sandbox from the [`cua` CLI](/cua-sdk/quickstart) or [Cua Spaces](/spaces) |
+| `cua-computer` | PyPI | 0.5.19 | The [`cua` SDK](/cua-sdk/quickstart) (`cua-sandbox`) for sandboxes, [Cua Driver](/cua-driver) for the machine you are on |
+| `cua-computer-server` | PyPI | 0.3.46 | Images that ship [cua-spacesd](/cua-sdk/guides/spacesd), or [Cua Driver](/cua-driver) on a host |
+| `cua-agent` | PyPI | 0.9.0 | A coding agent with the [Cua Driver MCP](/cua-driver/guides/connect-your-agent), or [`sandbox.agents()`](/cua-sdk/guides/run-a-coding-agent) |
+
+### cuabot
+
+`cuabot` ran coding agents in a Docker sandbox with a local server and a
+desktop you could watch. Stop it, uninstall it and remove what it created:
+
+```bash skip="destructive"
+cuabot --stop                      # repeat with --name <session> for each named session
+npm uninstall -g cuabot            # or delete any local node_modules/cuabot
+docker rm -f cuabot-xpra
+docker images -q trycua/cuabot | xargs docker rmi
+rm -rf ~/.cuabot
+```
+
+Instead:
+
+- To let Claude Code, Codex, Cursor or another agent operate apps on your
+  machine, [connect it to Cua Driver](/cua-driver/guides/connect-your-agent).
+- To give an agent its own computer that you can watch,
+  [create a Space](/spaces/guides/add-a-space) or a sandbox with the
+  [`cua` CLI](/cua-sdk/quickstart), then
+  [run the agent in it](/cua-sdk/guides/run-a-coding-agent).
+
+### cua-computer
+
+`cua-computer` was the Python `Computer` class that started a VM or container
+and drove it through `cua-computer-server`. Use the `cua` SDK instead: it
+creates local sandboxes and sandboxes in your own cloud, and `Sandbox` exposes the screen, input,
+shell and files. Start with the [SDK quickstart](/cua-sdk/quickstart) and the
+[sandbox reference](/cua-sdk/reference/python/sandbox).
+
+To operate native apps on the machine you are on, use
+[Cua Driver](/cua-driver/quickstart).
+
+### cua-computer-server
+
+`cua-computer-server` was the HTTP and WebSocket server inside a guest that
+`cua-computer` talked to. The in-guest agent is now
+[cua-spacesd](/cua-sdk/guides/spacesd), which Cua Spaces and the current
+sandbox images ship. Nothing in the `cua` SDK talks to `cua-computer-server`
+any more. Images built before that change still carry it; see the
+[image catalog](/cua-sdk/reference/os-image-catalog) for which ones.
+
+To drive a desktop directly, install [Cua Driver](/cua-driver/quickstart) on it.
+
+### cua-agent
+
+`cua-agent` was the Python `ComputerAgent` loop with LiteLLM. Bring your own
+agent instead:
+
+- Connect Claude Code, Codex, Cursor, OpenClaw or another agent to the
+  [Cua Driver MCP server](/cua-driver/guides/connect-your-agent).
+- Run a coding agent inside a sandbox with
+  [`sandbox.agents()` or `cua agent run`](/cua-sdk/guides/run-a-coding-agent).
+- Score agents on tasks with [Cua Bench](/cua-bench).

@@ -29,7 +29,7 @@ on:
       - "libs/images/sandbox-images.json"
       - "libs/images/bench/*/lock.json"
       - "docs/content/docs/cua-sdk/quickstart.mdx"
-      - "docs/content/docs/start-here/sandbox-images.mdx"
+      - "docs/content/docs/cua-sdk/guides/images.mdx"
       - ".github/workflows/ci-check-docs.yml"
       - ".gitattributes"
   # Run every native check on demand, e.g. to produce the native Windows Driver

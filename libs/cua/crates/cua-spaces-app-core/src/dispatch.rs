@@ -711,10 +711,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "onboarding.reduce" => out(onboarding::reduce(&a.get("state")?, &a.get("action")?)),
         // `hostOs`: the shell's system, for its words (macOS when absent).
-        "onboarding.view" => out(onboarding::view_on(
+        // `withoutCli`: a shell with no Command line page (the web UI):
+        // Done neither lists the Cua CLI nor waits for it.
+        "onboarding.view" => out(onboarding::view_for(
             &a.get("state")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
+            !a.get::<Option<bool>>("withoutCli")?.unwrap_or(false),
         )),
         "onboarding.copy" => out(onboarding::copy()),
         "onboarding.signedInText" => out(onboarding::signed_in_text(
@@ -1257,6 +1260,9 @@ mod tests {
         .unwrap();
         let mut done = state.clone();
         done["step"] = json!("done");
+        done["identity"] = json!("ada@example.com");
+        done["cliTarget"] = json!("/h/.local/bin/cua");
+        done["agents"] = json!(["Claude Code"]);
         let lede = |os: Value| {
             call_value("onboarding.view", json!({ "state": done, "hostOs": os })).unwrap()["lede"]
                 .as_str()

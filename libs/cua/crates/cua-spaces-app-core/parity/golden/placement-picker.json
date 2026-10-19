@@ -407,7 +407,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 0,

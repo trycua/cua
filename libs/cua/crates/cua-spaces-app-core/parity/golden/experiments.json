@@ -23,7 +23,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -41,7 +41,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -133,7 +133,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -151,7 +151,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -262,7 +262,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -280,7 +280,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -395,7 +395,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -413,7 +413,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -514,7 +514,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -532,7 +532,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -633,7 +633,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -651,7 +651,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -751,7 +751,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -769,7 +769,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -876,7 +876,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -894,7 +894,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -996,7 +996,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -1014,7 +1014,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -1114,7 +1114,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -1132,7 +1132,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
@@ -1234,7 +1234,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -1252,7 +1252,7 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other computers"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [

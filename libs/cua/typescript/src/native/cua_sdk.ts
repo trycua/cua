@@ -18834,7 +18834,7 @@ export const CuaError = (() => {
      * Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
      * this.
      *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
      * ended guide.
      */
     class Fleet extends UniffiError {
@@ -18865,7 +18865,7 @@ export const CuaError = (() => {
      * Fleet's admission refused the request. Cua Cloud has ended, so the SDK
      * no longer raises this.
      *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
      * ended guide.
      */
     class FleetAdmissionDenied extends UniffiError {
@@ -19202,7 +19202,7 @@ export const CuaError = (() => {
      * display, a local runtime) is not available.
      *
      * Fix: Install or start the prerequisite the message names on this
-     * machine.
+     * computer.
      */
     class HostCapabilityMissing extends UniffiError {
         /**
@@ -19262,7 +19262,7 @@ export const CuaError = (() => {
      * A named cloud pool's template differs from the requested sandbox
      * fields. Cua Cloud has ended, so the SDK no longer raises this.
      *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
      * ended guide.
      */
     class PoolSpecMismatch extends UniffiError {
@@ -19294,7 +19294,7 @@ export const CuaError = (() => {
      * reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
      * this.
      *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
      * ended guide.
      */
     class ClaimSecretsNotDelivered extends UniffiError {

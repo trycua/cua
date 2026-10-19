@@ -45,7 +45,7 @@ const COMMAND_LABEL: Record<KeybindingCommand, string> = {
   "commandPalette.toggle": "Open command palette",
   "sidebar.toggle": "Show or hide sidebar",
   "nav.spaces": "Go to Spaces",
-  "nav.machines": "Go to Machines",
+  "nav.machines": "Go to Computers",
   "nav.agents": "Go to Agents",
   "nav.keyvault": "Go to Keyvault",
   "nav.settings": "Open Settings",

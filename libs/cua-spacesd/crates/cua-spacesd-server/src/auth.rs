@@ -968,7 +968,7 @@ where
                             tonic::Code::PermissionDenied,
                             cua_proto::env::v1::ErrorReason::PermissionDenied,
                             format!(
-                                "this machine does not share its desktop (it only provides Spaces): \
+                                "this computer does not share its desktop (it only provides Spaces): \
                                  {who} cannot call {path}"
                             ),
                         )
@@ -1004,7 +1004,7 @@ where
                             tonic::Code::PermissionDenied,
                             cua_proto::env::v1::ErrorReason::PermissionDenied,
                             format!(
-                                "this machine does not share its desktop (it only provides Spaces): \
+                                "this computer does not share its desktop (it only provides Spaces): \
                                  {who} cannot call {path}"
                             ),
                         )

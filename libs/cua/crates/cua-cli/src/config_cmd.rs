@@ -33,7 +33,7 @@ pub enum ConfigCmd {
     #[command(after_help = "Examples:
   # Create sandboxes in your AWS account unless --on says otherwise
   cua config set default.on aws
-  # Back to this machine
+  # Back to this computer
   cua config set default.on local
   # Prefer VMs when the image offers both
   cua config set default.kind vm")]

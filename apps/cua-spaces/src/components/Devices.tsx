@@ -142,7 +142,7 @@ export function DevicesSection({
           <h3 className="st-title">Devices</h3>
         </div>
         <div className="st-rows">
-          <p className="st-note">{signedIn ? (error ?? "Loading…") : "Sign in to Cua to see the devices that can reach your machines."}</p>
+          <p className="st-note">{signedIn ? (error ?? "Loading…") : "Sign in to Cua to see the devices that can reach your computers."}</p>
         </div>
       </section>
     );

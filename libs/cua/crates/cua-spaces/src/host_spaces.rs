@@ -653,7 +653,7 @@ impl HostSpacesServer {
         self.host().policy()?.ok_or_else(|| {
             Error::host(
                 "host spaces",
-                "this machine is not set up to provide Spaces (run `cua host setup --provide-spaces` on it)",
+                "this computer is not set up to provide Spaces (run `cua host setup --provide-spaces` on it)",
             )
         })
     }
@@ -859,7 +859,7 @@ impl HostSpacesServer {
                 &label,
                 Error::host(
                     "host spaces",
-                    "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+                    "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
                 ),
             ));
         }
@@ -868,7 +868,7 @@ impl HostSpacesServer {
                 caller,
                 &label,
                 Error::Relay(cua_host::Error::PermissionDenied(
-                    "only the owner and the accounts this machine is shared with (as editors) can create Spaces on it"
+                    "only the owner and the accounts this computer is shared with (as editors) can create Spaces on it"
                         .into(),
                 )),
             ));
@@ -881,7 +881,7 @@ impl HostSpacesServer {
                     &label,
                     Error::host(
                         "host spaces",
-                        "this machine provides Spaces through the relay, not directly (on it: \
+                        "this computer provides Spaces through the relay, not directly (on it: \
                          `cua host setup --direct <ip:port> --provide-spaces`)",
                     ),
                 ));
@@ -904,7 +904,7 @@ impl HostSpacesServer {
                 caller,
                 &label,
                 Error::invalid(
-                    "attach needs the relay URL, machine id and machine token the caller registered",
+                    "attach needs the relay URL, computer id and computer token the caller registered",
                 ),
             ));
         }
@@ -1104,7 +1104,7 @@ impl HostSpacesServer {
                 caller,
                 &machine,
                 Error::Relay(cua_host::Error::PermissionDenied(
-                    "only the owner and the accounts this machine is shared with (as editors) can cancel creates on it"
+                    "only the owner and the accounts this computer is shared with (as editors) can cancel creates on it"
                         .into(),
                 )),
             ));
@@ -1147,7 +1147,7 @@ impl HostSpacesServer {
                 caller,
                 &machine,
                 Error::NotFound(format!(
-                    "{id} is not a Space in your cloud that this machine created"
+                    "{id} is not a Space in your cloud that this computer created"
                 )),
             ));
         }
@@ -1381,7 +1381,7 @@ impl HostSpacesServer {
     async fn reattach(&self, record: &ProvidedSpace) -> Result<()> {
         if record.machine_token.is_empty() || record.relay_url.is_empty() {
             return Err(Error::invalid(format!(
-                "relay:{} has no machine token on this host, so it cannot rejoin the relay; delete it and create a new one",
+                "relay:{} has no computer token on this host, so it cannot rejoin the relay; delete it and create a new one",
                 record.relay_machine
             )));
         }
@@ -1714,7 +1714,7 @@ fn ambiguous_host(query: &str, choices: &[cua_host::Machine]) -> Error {
         query: query.to_string(),
         choices: choices.iter().map(|m| format!("host:{}", m.id)).collect(),
         message: format!(
-            "{query:?} matches several of your machines: {}; say which (on=\"host:<id>\")",
+            "{query:?} matches several of your computers: {}; say which (on=\"host:<id>\")",
             provided::describe_choices(choices)
         ),
     }
@@ -1999,7 +1999,7 @@ impl Spaces {
         }
         if machines.is_empty() && direct.is_empty() && self.relay_account().is_none() {
             return Err(Error::NotFound(format!(
-                "a machine matching {query:?}: you have no machines (sign in to cua.ai to use \
+                "a computer matching {query:?}: you have no computers (sign in to cua.ai to use \
                  the ones on the relay, or add one by its Tailscale or LAN address with `cua \
                  spaces add <addr> --host --token <token>`)"
             )));
@@ -2007,7 +2007,7 @@ impl Spaces {
         let mut all = machines;
         all.extend(as_machines);
         Err(Error::NotFound(format!(
-            "a machine matching {query:?} among your machines ({}); set one up with \
+            "a computer matching {query:?} among your computers ({}); set one up with \
              `cua host setup --provide-spaces` on it, or add one by its Tailscale or LAN address \
              with `cua spaces add <addr> --host --token <token>`",
             if all.is_empty() {
@@ -2451,7 +2451,7 @@ impl Spaces {
             Err(cua_host::Error::NotFound(_)) => {
                 self.remove_relay_machine(&machine.id).await?;
                 return Ok(format!(
-                    "Removed relay:{}: a stale entry (its host, machine {host_id}, is no longer \
+                    "Removed relay:{}: a stale entry (its host, computer {host_id}, is no longer \
                      on the relay).",
                     machine.id
                 ));
@@ -2520,7 +2520,7 @@ impl Spaces {
         let client = relay.client().await?;
         let host = client.machine(&token, host_id).await.map_err(|e| match e {
             cua_host::Error::NotFound(_) => Error::NotFound(format!(
-                "the host of relay:{} (machine {host_id}) is no longer on the relay",
+                "the host of relay:{} (computer {host_id}) is no longer on the relay",
                 machine.id
             )),
             other => other.into(),
@@ -2862,15 +2862,15 @@ mod tests {
     #[test]
     fn both_wordings_of_stopped_sharing_are_recognized() {
         for reason in [
-            "the host stopped sharing this machine",
-            "relay:96fe has no cua-spacesd (gRPC: relay assertion refused: this machine \
-             stopped sharing; gRPC-Web: relay assertion refused: this machine stopped sharing)",
+            "the host stopped sharing this computer",
+            "relay:96fe has no cua-spacesd (gRPC: relay assertion refused: this computer \
+             stopped sharing; gRPC-Web: relay assertion refused: this computer stopped sharing)",
         ] {
             assert!(is_stopped_sharing(reason), "{reason}");
         }
-        assert!(!is_stopped_sharing("the machine is not connected"));
+        assert!(!is_stopped_sharing("the computer is not connected"));
         assert!(!is_stopped_sharing(
-            "relay assertion refused: not your machine"
+            "relay assertion refused: not your computer"
         ));
     }
 

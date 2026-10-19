@@ -12,7 +12,7 @@ description: "Sandbox, the sandbox() helper and its creation options, the Image 
 
 The `Sandbox` class is the entry point of `cua-sandbox`: create, connect to, or reattach a sandbox, then use its interfaces.
 
-Local is the default: `Sandbox.create(image)` runs on this machine, `on="aws"`, `"gcp"` or `"modal"` in your own cloud. `local=False` and `cloud=CloudOptions(...)` meant Cua Cloud, which has ended: they fail with a clear error and are removed in `cua-sandbox` 0.10.0. `Sandbox.connect(name)` and the class methods take `local=None`: the local sandbox of that name when one exists.
+Local is the default: `Sandbox.create(image)` runs on this computer, `on="aws"`, `"gcp"` or `"modal"` in your own cloud. `local=False` and `cloud=CloudOptions(...)` meant Cua Cloud, which has ended: they fail with a clear error and are removed in `cua-sandbox` 0.10.0. `Sandbox.connect(name)` and the class methods take `local=None`: the local sandbox of that name when one exists.
 
 ## Sandboxes
 

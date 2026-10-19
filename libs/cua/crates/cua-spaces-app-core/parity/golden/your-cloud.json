@@ -529,7 +529,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 0,
@@ -570,7 +570,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 1,
@@ -614,7 +614,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 2,
@@ -655,7 +655,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 3,
@@ -700,7 +700,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 2,
@@ -745,7 +745,7 @@
         "price": "About $0.10/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: 2 CPU, 4 GiB",
+          "Computer: 2 CPU, 4 GiB",
           "Deletes itself: After 2 hours"
         ],
         "step": 2,

@@ -300,7 +300,7 @@ pub fn plan_card(u: &RelayUsage, account_app: &str) -> PlanCard {
         ),
         "pro" => (
             format!(
-                "{}, for you. Teams adds team-owned machines, roles and device approval.",
+                "{}, for you. Teams adds team-owned computers, roles and device approval.",
                 allowance(u.live_sessions_limit, u.hours_limit)
             ),
             Some(link("Manage plan", "/billing")),

@@ -96,7 +96,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await waitFor(() => expect(hooks.login.data?.input.status).toBe("enabled"));
     await hooks.login.setLaunchAtLogin(false);
     await waitFor(() => expect(hooks.login.data?.input.status).toBe("notRegistered"));
-    expect(hooks.login.data?.rows?.[1]?.label).toBe("This machine runs persistent agents, which stop after a restart until you open Cua Spaces.");
+    expect(hooks.login.data?.rows?.[1]?.label).toBe("This computer runs persistent agents, which stop after a restart until you open Cua Spaces.");
   });
 
   it("lists the account's devices, approves the waiting one by code and revokes another", async () => {

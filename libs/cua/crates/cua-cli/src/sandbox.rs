@@ -102,12 +102,12 @@ pub struct CreateArgs {
     /// Image: a registry reference (`ghcr.io/org/image:tag`), an alias
     /// (`linux`, `ubuntu`, `windows`, `macos[:tahoe|sequoia]`, `omarchy`).
     image: Option<String>,
-    /// Where it runs: local, direct:<addr> (an existing machine
+    /// Where it runs: local, direct:<addr> (an existing computer
     /// running cua-spacesd), or a registered provider. Default: `cua config
     /// get default.on` (`CUA_DEFAULT_ON`), else local.
     #[arg(long, value_parser = parse_on, value_name = "WHERE")]
     on: Option<On>,
-    /// What kind of machine: auto (from the image: a container when it has
+    /// What kind of computer: auto (from the image: a container when it has
     /// a container rootfs; macOS, Windows and disk-only images are VMs),
     /// container or vm.
     #[arg(long, value_parser = parse_kind)]
@@ -237,7 +237,7 @@ pub struct LaunchArgs {
     /// Deprecated: use `--kind vm`.
     #[arg(long, hide = true, conflicts_with = "kind")]
     vm: bool,
-    /// What kind of machine: auto, container or vm.
+    /// What kind of computer: auto, container or vm.
     #[arg(long, value_parser = parse_kind)]
     kind: Option<Kind>,
     /// Which engine (see `sb create --runtime`).
@@ -309,7 +309,7 @@ pub enum SandboxCmd {
     /// Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>]
     /// [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`.
     #[command(after_help = "Examples:
-  # A Linux desktop on this machine (a gVisor container)
+  # A Linux desktop on this computer (a gVisor container)
   cua sb create linux --name dev
   # A web server container, ready when its HTTP service answers
   cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000
@@ -524,7 +524,7 @@ pub enum SandboxCmd {
         #[arg(long)]
         no_wait: bool,
     },
-    /// Print a URL for a named service: usable from this machine (default),
+    /// Print a URL for a named service: usable from this computer (default),
     /// or `--public` for a shareable URL that expires (`--ttl`, default 1h;
     /// a token URL served by the cua daemon).
     #[command(after_help = "Examples:
@@ -1370,7 +1370,7 @@ async fn create(
     if let On::Direct(_) = &on {
         if a.image.is_some() || a.image_flag.is_some() {
             return Err(CuaError::InvalidArgument(format!(
-                "--on {label} connects to an existing machine: IMAGE does not apply"
+                "--on {label} connects to an existing computer: IMAGE does not apply"
             )));
         }
         o.token = a.token.clone();

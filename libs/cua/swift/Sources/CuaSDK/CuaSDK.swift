@@ -36265,7 +36265,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
      * this.
      *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
      * ended guide.
      */
     case Fleet(message: String)
@@ -36274,7 +36274,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * Fleet's admission refused the request. Cua Cloud has ended, so the SDK
      * no longer raises this.
      *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
      * ended guide.
      */
     case FleetAdmissionDenied(message: String)
@@ -36369,7 +36369,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * display, a local runtime) is not available.
      *
      * Fix: Install or start the prerequisite the message names on this
-     * machine.
+     * computer.
      */
     case HostCapabilityMissing(message: String)
 
@@ -36385,7 +36385,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * A named cloud pool's template differs from the requested sandbox
      * fields. Cua Cloud has ended, so the SDK no longer raises this.
      *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
      * ended guide.
      */
     case PoolSpecMismatch(message: String)
@@ -36395,7 +36395,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
      * this.
      *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
      * ended guide.
      */
     case ClaimSecretsNotDelivered(message: String)

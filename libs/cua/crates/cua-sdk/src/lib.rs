@@ -138,14 +138,14 @@ pub enum CuaError {
     /// Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
     /// this.
     ///
-    /// Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+    /// Fix: Use a local sandbox or your own computer; see the Cua Cloud has
     /// ended guide.
     #[error("fleet: {0}")]
     Fleet(String),
     /// Fleet's admission refused the request. Cua Cloud has ended, so the SDK
     /// no longer raises this.
     ///
-    /// Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+    /// Fix: Use a local sandbox or your own computer; see the Cua Cloud has
     /// ended guide.
     #[error("fleet admission denied: {0}")]
     FleetAdmissionDenied(String),
@@ -218,7 +218,7 @@ pub enum CuaError {
     /// display, a local runtime) is not available.
     ///
     /// Fix: Install or start the prerequisite the message names on this
-    /// machine.
+    /// computer.
     #[error("host capability missing: {0}")]
     HostCapabilityMissing(String),
     /// The teleport consent gate refused (or the approver declined).
@@ -230,7 +230,7 @@ pub enum CuaError {
     /// A named cloud pool's template differs from the requested sandbox
     /// fields. Cua Cloud has ended, so the SDK no longer raises this.
     ///
-    /// Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+    /// Fix: Use a local sandbox or your own computer; see the Cua Cloud has
     /// ended guide.
     #[error("pool spec mismatch: {0}")]
     PoolSpecMismatch(String),
@@ -238,7 +238,7 @@ pub enum CuaError {
     /// reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
     /// this.
     ///
-    /// Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+    /// Fix: Use a local sandbox or your own computer; see the Cua Cloud has
     /// ended guide.
     #[error("claim secrets not delivered: {0}")]
     ClaimSecretsNotDelivered(String),

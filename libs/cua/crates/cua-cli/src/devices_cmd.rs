@@ -25,7 +25,7 @@ pub enum DevicesCmd {
         relay: Option<String>,
     },
     /// Enroll this device. Right after a fresh `cua auth login` it enrolls
-    /// at once (and replaces this machine's older device key, if any);
+    /// at once (and replaces this computer's older device key, if any);
     /// otherwise it shows a one-time code to approve from an enrolled
     /// device (`cua devices approve <code>` or the Cua Spaces app).
     #[command(after_help = "Examples:
@@ -85,7 +85,7 @@ pub enum DevicesCmd {
         #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Revoke a device: it can no longer list or reach your machines.
+    /// Revoke a device: it can no longer list or reach your computers.
     #[command(after_help = "Examples:
   cua devices revoke dev_0123456789abcdef01234567")]
     Revoke {
@@ -98,7 +98,7 @@ pub enum DevicesCmd {
         #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Who accessed what, and when: enrollments, device sessions, machine
+    /// Who accessed what, and when: enrollments, device sessions, computer
     /// access (yours and by accounts you share with), sharing changes.
     #[command(after_help = "Examples:
   cua devices audit
@@ -227,7 +227,7 @@ fn approve_needs_terminal(cmd: &DevicesCmd, interactive: bool) -> Option<CuaErro
     match cmd {
         DevicesCmd::Approve { yes: false, .. } if !interactive => Some(CuaError::InvalidArgument(
             "`cua devices approve` needs --yes when not run in a terminal (it cannot ask \
-                 for confirmation): approving lets that device list and reach your machines"
+                 for confirmation): approving lets that device list and reach your computers"
                 .into(),
         )),
         _ => None,
@@ -378,7 +378,7 @@ pub async fn run_with(
                     line(
                         out,
                         format!(
-                            "It replaces this machine's older device key ({}).",
+                            "It replaces this computer's older device key ({}).",
                             r.superseded.join(", ")
                         ),
                     );
@@ -442,7 +442,7 @@ pub async fn run_with(
                     )
                 })?;
             // Enrolling a device widens who reaches your machines: ask.
-            if !yes && !confirm(&format!("Let {target} list and reach your machines?")) {
+            if !yes && !confirm(&format!("Let {target} list and reach your computers?")) {
                 return Err(CuaError::PermissionDenied(
                     "not approved (pass --yes to approve without a prompt)".into(),
                 ));
@@ -528,7 +528,7 @@ pub async fn run_with(
                     parts.push(format!("device {d}"));
                 }
                 if let Some(m) = &e.machine {
-                    parts.push(format!("machine {m}"));
+                    parts.push(format!("computer {m}"));
                 }
                 if let Some(s) = &e.subject {
                     parts.push(s.clone());
@@ -738,7 +738,9 @@ mod tests {
         let text = run_text(enroll(), &rekeyed, false).await.unwrap();
         let old = laptop.device_id().unwrap().unwrap();
         assert!(
-            text.contains(&format!("replaces this machine's older device key ({old})")),
+            text.contains(&format!(
+                "replaces this computer's older device key ({old})"
+            )),
             "{text}"
         );
         // A pending device, approved by the id `cua devices ls` shows.

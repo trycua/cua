@@ -622,13 +622,13 @@ async fn machine_connect(
         .map(str::to_owned)
         .filter(|id| valid_machine_id(id))
     else {
-        return text(StatusCode::BAD_REQUEST, "missing or invalid machine id");
+        return text(StatusCode::BAD_REQUEST, "missing or invalid computer id");
     };
     let registrant = if let Some(index) = relay.token_index(&headers) {
         if relay.directory.get(&id).is_some() {
             return text(
                 StatusCode::CONFLICT,
-                "machine id is registered to an account",
+                "computer id is registered to an account",
             );
         }
         Registrant::Static(index)
@@ -641,7 +641,7 @@ async fn machine_connect(
             Some(_) => {
                 return text(
                     StatusCode::FORBIDDEN,
-                    "machine token belongs to another machine id",
+                    "computer token belongs to another computer id",
                 )
             }
             None => {
@@ -672,7 +672,7 @@ async fn machine_connect(
             if same_token >= relay.config.max_machines_per_token {
                 return text(
                     StatusCode::TOO_MANY_REQUESTS,
-                    "machine limit for this token reached",
+                    "computer limit for this token reached",
                 );
             }
         }
@@ -680,7 +680,7 @@ async fn machine_connect(
             if existing.registrant != registrant {
                 return text(
                     StatusCode::CONFLICT,
-                    "machine id registered with another token",
+                    "computer id registered with another token",
                 );
             }
         }
@@ -917,7 +917,7 @@ async fn authorize_account_client(
             headers,
             StatusCode::BAD_GATEWAY,
             GrpcCode::Unavailable,
-            format!("machine {id:?} is not registered"),
+            format!("computer {id:?} is not registered"),
         ));
     };
     let is_health = forwarded == "/health" || forwarded.starts_with("/health?");
@@ -942,7 +942,7 @@ async fn authorize_account_client(
             headers,
             StatusCode::FORBIDDEN,
             GrpcCode::PermissionDenied,
-            "the host stopped sharing this machine",
+            "the host stopped sharing this computer",
         ));
     }
     let mut gate = None;
@@ -953,7 +953,7 @@ async fn authorize_account_client(
                     headers,
                     StatusCode::FORBIDDEN,
                     GrpcCode::PermissionDenied,
-                    "this machine is not shared with your account",
+                    "this computer is not shared with your account",
                 ));
             };
             // The account token alone is not enough: the client device must
@@ -999,7 +999,7 @@ async fn authorize_account_client(
                 headers,
                 StatusCode::UNAUTHORIZED,
                 GrpcCode::Unauthenticated,
-                "sign in: this machine accepts cua.ai account tokens",
+                "sign in: this computer accepts cua.ai account tokens",
             ));
         }
     };
@@ -1020,8 +1020,8 @@ async fn authorize_account_client(
 async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
     let Some((id, forwarded, prefix)) = route(&relay, request.uri(), request.headers()) else {
         let message = match &relay.config.host_domain {
-            Some(domain) => format!("use <machine-id>.{domain}/…"),
-            None => "use /m/<machine-id>/…".to_owned(),
+            Some(domain) => format!("use <computer-id>.{domain}/…"),
+            None => "use /m/<computer-id>/…".to_owned(),
         };
         return refuse(
             request.headers(),
@@ -1077,7 +1077,7 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             request.headers(),
             StatusCode::BAD_GATEWAY,
             GrpcCode::Unavailable,
-            format!("machine {id:?} is not connected"),
+            format!("computer {id:?} is not connected"),
         );
     };
     if machine.active.fetch_add(1, Ordering::SeqCst) >= relay.config.max_streams_per_machine {
@@ -1086,7 +1086,7 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             request.headers(),
             StatusCode::SERVICE_UNAVAILABLE,
             GrpcCode::ResourceExhausted,
-            "too many concurrent streams for this machine",
+            "too many concurrent streams for this computer",
         );
     }
     // The global memory budget (S7): checked in addition to the per-machine
@@ -1120,7 +1120,7 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
                 request.headers(),
                 StatusCode::BAD_GATEWAY,
                 GrpcCode::Unavailable,
-                format!("machine tunnel: {e}"),
+                format!("computer tunnel: {e}"),
             )
         }
     };

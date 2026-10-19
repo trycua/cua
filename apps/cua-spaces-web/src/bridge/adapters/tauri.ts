@@ -187,7 +187,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       const selfId = status?.machineId ?? "local";
       const self: MachineRow = {
         id: selfId,
-        name: status?.name ?? "This machine",
+        name: status?.name ?? "This computer",
         via: "local",
         online: true,
         os: env?.platform ?? "macos",

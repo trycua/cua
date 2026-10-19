@@ -26,7 +26,7 @@ export function plainJoinError(e: unknown): string {
   const raw = rawText(e);
   console.warn("[Cua Spaces] join with a code failed:", raw);
   if (/pairing code|unauthenticated|not valid|expired|revoked|already used|invalid code/i.test(raw)) {
-    return "That code didn't work. It may be used, expired or mistyped. Make a new one in Add a machine.";
+    return "That code didn't work. It may be used, expired or mistyped. Make a new one in Add a computer.";
   }
   if (/timed out/i.test(raw)) return "This took too long. Check the internet connection and try again.";
   if (/could not start|no bundled cua/i.test(raw)) return "Couldn't set this computer up. Update Cua Spaces and try again.";
@@ -39,9 +39,9 @@ export function plainPairingError(e: unknown): string {
   const raw = rawText(e);
   console.warn("[Cua Spaces] making a pairing link failed:", raw);
   if (/no such device|not enrolled|not registered|unknown device/i.test(raw)) {
-    return "This computer isn't set up for access yet. Set it up first, then add machines.";
+    return "This computer isn't set up for access yet. Set it up first, then add computers.";
   }
-  if (/unauthenticated|unauthori[sz]ed|\b40[13]\b/i.test(raw)) return "Sign in again to add a machine.";
+  if (/unauthenticated|unauthori[sz]ed|\b40[13]\b/i.test(raw)) return "Sign in again to add a computer.";
   if (/network|connect|dns|unreachable|offline|timed out/i.test(raw)) return "Couldn't reach Cua. Check the internet connection.";
   const rest = stripInternalPrefixes(raw).replace(/\.$/, "");
   return rest ? `Couldn't make a link: ${rest}.` : "Couldn't make a link.";

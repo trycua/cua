@@ -716,7 +716,7 @@ describe("SettingsPanel launch at login", () => {
     const { fakeLoginItemBridge } = await import("../native/loginItem");
     renderPanel({ loginItem: fakeLoginItemBridge("notRegistered"), serves: { providesSpaces: true, runsAgents: false } });
     expect(
-      await screen.findByText("This machine provides Spaces, which stop after a restart until you open Cua Spaces."),
+      await screen.findByText("This computer provides Spaces, which stop after a restart until you open Cua Spaces."),
     ).toBeInTheDocument();
   });
 

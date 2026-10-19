@@ -209,7 +209,7 @@ async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<Caller, Response> 
             .map(Caller::Machine)
             .ok_or_else(|| {
                 auth_log::rejected(headers, Route::Machines, Reason::UnknownMachineToken, None);
-                error(StatusCode::UNAUTHORIZED, "invalid machine token")
+                error(StatusCode::UNAUTHORIZED, "invalid computer token")
             });
     }
     let Some(oidc) = &relay.config.oidc else {
@@ -298,7 +298,7 @@ fn authorize(caller: &Caller, relay: &Relay, id: &str) -> Result<(MachineRecord,
         Caller::Machine(record) if record.id == id => Ok((record.clone(), Role::Owner)),
         Caller::Machine(_) => Err(error(
             StatusCode::FORBIDDEN,
-            "machine token for another machine",
+            "computer token for another computer",
         )),
         Caller::Account(who, _) => {
             let record = relay
@@ -358,7 +358,7 @@ async fn register(
     {
         return error(
             StatusCode::CONFLICT,
-            "machine id is connected with a relay token",
+            "computer id is connected with a relay token",
         );
     }
     let existing = relay.directory.get(&body.id);
@@ -402,7 +402,7 @@ async fn register(
                 let m = device.as_ref().err().cloned().unwrap_or_default();
                 return error(
                     StatusCode::FORBIDDEN,
-                    format!("re-registering this machine needs its machine token or an enrolled device ({m})"),
+                    format!("re-registering this computer needs its computer token or an enrolled device ({m})"),
                 );
             }
         }
@@ -424,7 +424,7 @@ async fn register(
                     "that host is shared with you to watch only",
                 )
             }
-            None => return error(StatusCode::NOT_FOUND, "no such host machine"),
+            None => return error(StatusCode::NOT_FOUND, "no such host computer"),
         }
     }
     let actor = device
@@ -638,7 +638,7 @@ async fn patch_one(
     if let Caller::Machine(_) = caller {
         return error(
             StatusCode::FORBIDDEN,
-            "a machine token cannot rename the machine or change who it is shared with; use your account",
+            "a computer token cannot rename the computer or change who it is shared with; use your account",
         );
     }
     if let Err(r) = caller.require_device() {
@@ -781,7 +781,7 @@ async fn confirm(
     if let Caller::Machine(_) = caller {
         return error(
             StatusCode::FORBIDDEN,
-            "a machine cannot confirm itself; confirm it from an enrolled device",
+            "a computer cannot confirm itself; confirm it from an enrolled device",
         );
     }
     if let Err(r) = caller.require_device() {

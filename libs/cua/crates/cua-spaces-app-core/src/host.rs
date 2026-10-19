@@ -124,7 +124,7 @@ pub fn this_machine_status(status: Option<&HostSummaryInput>) -> SpaceStatus {
 pub fn this_machine_space(status: Option<&HostSummaryInput>, now: i64, os: SpaceOs) -> Space {
     Space {
         id: THIS_MACHINE_ID.into(),
-        name: "This machine".into(),
+        name: "This computer".into(),
         os,
         status: this_machine_status(status),
         detail: host_summary(status),
@@ -720,7 +720,7 @@ pub fn remove_confirm() -> HostConfirm {
     HostConfirm {
         title: "Remove host setup?".into(),
         message: "Everyone connected is disconnected, the host service is \
-                  uninstalled and this machine leaves your machines on the \
+                  uninstalled and this computer leaves your computers on the \
                   relay. Setting it up again is needed to share it."
             .into(),
         confirm_label: "Remove".into(),
@@ -1087,7 +1087,7 @@ pub const OPEN_SETTINGS_LABEL: &str = "Open Settings";
 pub fn panel(state: Option<&HostState>) -> HostPanelView {
     use crate::spaces::sidebar::Fact;
     let mut v = HostPanelView {
-        title: "This machine".into(),
+        title: "This computer".into(),
         summary: "Checking\u{2026}".into(),
         notice: None,
         notice_action: None,
@@ -1144,7 +1144,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
             s.direct_url
                 .as_deref()
                 .filter(|u| !u.is_empty())
-                .unwrap_or("this machine\u{2019}s address")
+                .unwrap_or("this computer\u{2019}s address")
         )
     } else {
         match s.relay_url.as_deref().filter(|u| !u.is_empty()) {
@@ -1166,7 +1166,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
                 .name
                 .clone()
                 .filter(|n| !n.is_empty())
-                .unwrap_or_else(|| "This machine".into()),
+                .unwrap_or_else(|| "This computer".into()),
             copy: None,
             help: None,
             warning: None,
@@ -1358,7 +1358,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
 
 /// Resume sharing's tooltip while both settings are off.
 pub const NOTHING_TO_SHARE_HELP: &str =
-    "Turn on Share this desktop or Provide Spaces to share this machine.";
+    "Turn on Share this desktop or Provide Spaces to share this computer.";
 
 /// The page's line while another account is signed in and this machine's
 /// relay sharing (registered to the account that signed out) is paused.

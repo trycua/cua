@@ -106,7 +106,7 @@ cua do switch [OPTIONS] <TARGET> [NAME]
 cua do switch dev
 cua do switch relay:0123abcd4567ef89
 
-# This machine (after `cua do-host-consent`)
+# This computer (after `cua do-host-consent`)
 cua do switch host
 ```
 
@@ -764,7 +764,7 @@ cua do-host-consent [OPTIONS]
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-do-host-consent"
-# Allow `cua do` to act on this machine's desktop
+# Allow `cua do` to act on this computer's desktop
 cua do-host-consent
 ```
 
@@ -783,12 +783,12 @@ Alias: `cua traj`.
 List sessions.
 
 ```text output
-cua trajectory ls [OPTIONS] [MACHINE]
+cua trajectory ls [OPTIONS] [TARGET]
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<MACHINE>` | string | optional | Only sessions of this target (sandbox name or `host`). |
+| `<TARGET>` | string | optional | Only sessions of this target (sandbox name or `host`). |
 
 **Examples**
 
@@ -848,7 +848,7 @@ cua trajectory clean [OPTIONS]
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | <span id="cua-trajectory-clean--older-than"></span>`--older-than` |  | integer |  | Only sessions older than this many days. |
-| <span id="cua-trajectory-clean--machine"></span>`--machine` |  | string |  | Only sessions of this target. |
+| <span id="cua-trajectory-clean--machine"></span>`--machine` |  | string |  | Only sessions of this target. Alias: `--computer`. |
 | <span id="cua-trajectory-clean--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. |
 
 **Examples**

@@ -88,7 +88,7 @@ pub const FLEET_NO_GPU_REASON: &str = sandbox::FLEET_NO_GPU;
 /// The one "Cua Cloud has ended" message: every Cua Cloud (`on="cloud"`,
 /// `cloud:` refs, pools) entry point in the SDKs, the CLI, the MCP server and
 /// Spaces fails with it ([`Error::CloudEnded`]) instead of calling Fleet.
-pub const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own machine. \
+pub const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own computer. \
      See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
 pub use state::{EphemeralLease, FleetState, LEASE_DIR, LocalState, SandboxState, StateStore};
 
@@ -99,7 +99,7 @@ pub enum Error {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
     /// Cua Cloud (`on="cloud"`, a `cloud:` sandbox, a pool) has ended
-    /// ([`CLOUD_ENDED`]). Use a local sandbox or your own machine.
+    /// ([`CLOUD_ENDED`]). Use a local sandbox or your own computer.
     #[error("{}", CLOUD_ENDED)]
     CloudEnded,
     /// A location, kind or runtime that does not exist, or a combination

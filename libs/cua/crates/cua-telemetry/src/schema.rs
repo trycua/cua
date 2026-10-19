@@ -653,7 +653,7 @@ const AGENT_HARNESS: Prop = p(
 const AGENT_LOCATION: Prop = p(
     "location",
     Kind::Enum(LOCATIONS),
-    "Where the Space runs: local, cloud, relay (a machine of the account) or direct (added by address).",
+    "Where the Space runs: local, cloud, relay (a computer of the account) or direct (added by address).",
 );
 const AGENT_ENTRY: Prop = p(
     "entry",
@@ -1251,7 +1251,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "storage",
                 Kind::Enum(VOLUME_STORAGE),
-                "Where the files live: this machine, an S3-compatible bucket, or decide later.",
+                "Where the files live: this computer, an S3-compatible bucket, or decide later.",
             ),
             p(
                 "add_to_finder",
@@ -1307,7 +1307,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "signed_in",
                 Kind::Bool,
-                "A Cua account session is stored on this machine (no network, no keychain read).",
+                "A Cua account session is stored on this computer (no network, no keychain read).",
             ),
             p(
                 "token_state",
@@ -1325,7 +1325,7 @@ pub const EVENTS: &[EventSpec] = &[
                 "The HTTP status the relay or download answered a failure with; 0 when none.",
             ),
         ],
-        purpose: "Host Spaces adoption: machines set up for access, and by which profile.",
+        purpose: "Host Spaces adoption: computers set up for access, and by which profile.",
     },
     EventSpec {
         name: event::HOST_SPACE_PROVIDED,
@@ -1339,7 +1339,7 @@ pub const EVENTS: &[EventSpec] = &[
             OUTCOME,
             ERROR_KIND,
         ],
-        purpose: "Host Spaces use: Spaces a host machine created for the account's other devices.",
+        purpose: "Host Spaces use: Spaces a host computer created for the account's other devices.",
     },
     EventSpec {
         name: event::KEYVAULT_ACTION,
@@ -1445,7 +1445,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "method",
                 Kind::Enum(ENROLL_METHODS),
-                "A fresh sign-in, an approval from an enrolled device, or a same-machine re-key.",
+                "A fresh sign-in, an approval from an enrolled device, or a same-computer re-key.",
             ),
             OUTCOME,
         ],

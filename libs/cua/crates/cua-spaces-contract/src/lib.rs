@@ -223,7 +223,7 @@ pub fn categories() -> Vec<CategoryInfo> {
         c(
             Teleport,
             "Session teleport",
-            "Move a signed-in app session from this machine into a Space.",
+            "Move a signed-in app session from this computer into a Space.",
         ),
         c(
             Keyvault,
@@ -233,7 +233,7 @@ pub fn categories() -> Vec<CategoryInfo> {
         c(
             Hotspot,
             "Hotspot",
-            "Share this machine's network with a Space.",
+            "Share this computer's network with a Space.",
         ),
         c(
             Volume,
@@ -277,7 +277,7 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
     },
     ErrorKind {
         kind: "spacesd_not_available",
-        meaning: "The machine answered but runs no cua-spacesd, so the spacesd primitives cannot work.",
+        meaning: "The computer answered but runs no cua-spacesd, so the spacesd primitives cannot work.",
         fix: "Use an image that runs cua-spacesd (for example ghcr.io/trycua/linux:24.04), or reach the Space's own services with list_tools and call_tool.",
     },
     ErrorKind {
@@ -287,7 +287,7 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
     },
     ErrorKind {
         kind: "host_capability_missing",
-        meaning: "A prerequisite on this machine is missing: Fleet credentials, a local runtime, an operator display or app-session providers.",
+        meaning: "A prerequisite on this computer is missing: Fleet credentials, a local runtime, an operator display or app-session providers.",
         fix: "Set up what the message names (see the tool's `host_requires`).",
     },
     ErrorKind {
@@ -302,18 +302,18 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
     },
     ErrorKind {
         kind: "permission_denied",
-        meaning: "The signed-in account may not reach that relay machine.",
-        fix: "Sign in with the account that owns the machine.",
+        meaning: "The signed-in account may not reach that relay computer.",
+        fix: "Sign in with the account that owns the computer.",
     },
     ErrorKind {
         kind: "ambiguous_host",
-        meaning: "The machine name given to on=\"host:<name>\" fits several of your machines equally well; the message lists them.",
-        fix: "Ask the user which machine they meant, then pass on=\"host:<machine id>\" from the list.",
+        meaning: "The computer name given to on=\"host:<name>\" fits several of your computers equally well; the message lists them.",
+        fix: "Ask the user which computer they meant, then pass on=\"host:<computer id>\" from the list.",
     },
     ErrorKind {
         kind: "limit_exceeded",
         meaning: "The host is at a capacity limit: two macOS VMs per Mac (Apple's macOS license, enforced by Apple Virtualization) or the host's own Space limit.",
-        fix: "Delete a Space on that host (delete_space), pick another machine, or create a Linux Space instead.",
+        fix: "Delete a Space on that host (delete_space), pick another computer, or create a Linux Space instead.",
     },
     ErrorKind {
         kind: "ambiguous_sandbox",
@@ -363,17 +363,17 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
     ErrorKind {
         kind: "fleet",
         meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call.",
-        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
+        fix: "Create the Space locally or on one of your computers; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "fleet_admission_denied",
         meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit.",
-        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
+        fix: "Create the Space locally or on one of your computers; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "cloud_credit_exhausted",
         meaning: "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space.",
-        fix: "Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
+        fix: "Create the Space locally or on one of your computers; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.",
     },
     ErrorKind {
         kind: "invalid_placement",
@@ -403,7 +403,7 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
     ErrorKind {
         kind: "io",
         meaning: "Reading or writing a local file failed.",
-        fix: "Check the path and its permissions on this machine.",
+        fix: "Check the path and its permissions on this computer.",
     },
     ErrorKind {
         kind: "json",
@@ -613,17 +613,17 @@ const AGENT_START_INSTRUCTIONS: &str = "Installs the harness if needed (pinned, 
 
 const AGENT_EVENTS_INSTRUCTIONS: &str = "Normalized events (install, session, turn_started, message, thought, tool_call, tool_update, plan, usage, permission, turn_ended, error, exited, ...) after `cursor`. Pass the returned cursor back to continue; caught_up=true means nothing more is written yet. The same kinds for every harness.";
 
-const PERSISTENT_INSTRUCTIONS: &str = "A persistent agent is a harness with a name, a Space and a home in the Cua Volume (agents/<name>/). Its harness keeps its memory in the home (Claude Code auto memory, Codex memories, Hermes MEMORY.md, the OpenClaw workspace), which is restored into the Space before each run and saved after each turn, so the agent remembers across runs, Space releases and machines. One run writes a home at a time. Start it with persistent_agent_send (or agent_start with home=<name>); the daemon notifies the user when a turn ends. Inside the Space the agent gets the `cua` bridge: notify_user, the drive, and the user's computers it was granted.";
+const PERSISTENT_INSTRUCTIONS: &str = "A persistent agent is a harness with a name, a Space and a home in the Cua Volume (agents/<name>/). Its harness keeps its memory in the home (Claude Code auto memory, Codex memories, Hermes MEMORY.md, the OpenClaw workspace), which is restored into the Space before each run and saved after each turn, so the agent remembers across runs, Space releases and computers. One run writes a home at a time. Start it with persistent_agent_send (or agent_start with home=<name>); the daemon notifies the user when a turn ends. Inside the Space the agent gets the `cua` bridge: notify_user, the drive, and the user's computers it was granted.";
 
-const POWER_INSTRUCTIONS: &str = "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your machines provides is stopped by that machine, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Fleet cloud Space, a Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.";
+const POWER_INSTRUCTIONS: &str = "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Fleet cloud Space, a Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.";
 
-const PAUSE_INSTRUCTIONS: &str = "One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended (Fleet has no per-claim pause), so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own machines are never suspended.";
+const PAUSE_INSTRUCTIONS: &str = "One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended (Fleet has no per-claim pause), so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own computers are never suspended.";
 
 const SITE_LOGIN_INSTRUCTIONS: &str = "Signs in to a website in the Space's browser with a password the user saved in the Cua Keyvault (imported from their browser). The first call files a Keyvault request and returns a request_id; the user approves it in Cua (Touch ID or the login password), once per sign-in by default. Call again with the same space, url and request_id: the Keyvault checks the page is on the saved login's exact origin, types the username and password through the Space's cua-driver, submits the form and returns what it did, never the password. Pass the browser tab you opened (session, target_id, tab_id from get_browser_state on the same Space) to sign in there; without one the Keyvault opens its own browser in the Space on `url` and returns its target_id and tab_id. `agent` names the persistent agent asking, shown to the user.";
 
 const DRIVE_INSTRUCTIONS: &str = "Cua Volume is one versioned drive per account, shared by every Space and agent: public/ (shared reference, read by everyone), agents/<agent>/ (a persistent agent's home: memory, outputs, inbox) and spaces/<space>/ (per-Space scratch). As the user (the default) you see everything. With as_agent (and in_space) you see exactly what that agent sees: it reads public/, writes its own home and its Space's folder, and anything wider needs a grant the user approves.";
 
-const SHARES_RESULT: &str = "JSON: `space`, `machine` (the relay machine it is shared as; empty when not shared), `invitee_space` (what the people it is shared with open: `relay:<machine>`), `url`, `online` and `shares` (each `who`, `role`: viewer or editor, and `connected`).";
+const SHARES_RESULT: &str = "JSON: `space`, `machine` (the relay computer it is shared as; empty when not shared), `invitee_space` (what the people it is shared with open: `relay:<computer>`), `url`, `online` and `shares` (each `who`, `role`: viewer or editor, and `connected`).";
 
 const SHARE_INSTRUCTIONS: &str = "Shares the Space through the cua.ai relay with one account, by verified email or account id, or with a whole team as `team:<id>` (always as an editor; Teams plan); the same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.";
 
@@ -641,13 +641,13 @@ pub fn tools() -> Vec<Tool> {
             annotations: Annotations::mutating_idempotent(),
             sdk_symbol: "SpacesConnection.addSpace(url:token:)",
             rust_symbol: "Spaces::add",
-            ..Spec::new("add_space", "Add an existing machine as a Space by address and token.")
+            ..Spec::new("add_space", "Add an existing computer as a Space by address and token.")
         }
         .with::<i::AddSpace>(),
         Spec {
             category: Category::Lifecycle,
             result: "JSON: `{\"removed\": <Space>}`, the registration that was removed.",
-            instructions: "Only the registration and its stored token are removed. The sandbox keeps running, including a Space in your cloud (its cloud resources and relay machine stay); delete_space deletes a Space that create_space made.",
+            instructions: "Only the registration and its stored token are removed. The sandbox keeps running, including a Space in your cloud (its cloud resources and relay computer stay); delete_space deletes a Space that create_space made.",
             capabilities: &["space.register"],
             annotations: Annotations::mutating_idempotent(),
             sdk_symbol: "SpacesConnection.removeSpace(_:)",
@@ -657,9 +657,9 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::RemoveSpace>(),
         Spec {
             category: Category::Lifecycle,
-            result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your machines provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay machine the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay machine the relay cannot reach now (a machine that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
+            result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
             errors: &["relay", "unauthenticated"],
-            instructions: "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<machine-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's machines on the relay are listed too: those are the names `create_space` accepts as on=\"host:<machine>\". A Space a machine provides carries `host` (that machine's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<machine>, or elsewhere).",
+            instructions: "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<computer-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's computers on the relay are listed too: those are the names `create_space` accepts as on=\"host:<computer>\". A Space a computer provides carries `host` (that computer's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<computer>, or elsewhere).",
             capabilities: &["space.discover"],
             sdk_symbol: "SpacesConnection.spaces()",
             rust_symbol: "Spaces::list",
@@ -679,7 +679,7 @@ pub fn tools() -> Vec<Tool> {
                 "ambiguous_host",
                 "limit_exceeded",
             ],
-            instructions: "Creates a new sandbox where `on` says (local: this machine, free; aws, gcp or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own machines: on=\"host:<machine>\" creates the Space on a machine set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The machine is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<machine> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the machine's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on.",
+            instructions: "Creates a new sandbox where `on` says (local: this computer, free; aws, gcp or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own computers: on=\"host:<computer>\" creates the Space on a computer set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The computer is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<computer> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the computer's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on.",
             providers: &CREATE_PROVIDERS,
             metering: Metering::Cloud,
             capabilities: &["space.create"],
@@ -690,7 +690,7 @@ pub fn tools() -> Vec<Tool> {
             notes: &["Cloud needs Fleet credentials (`cua auth login`); local needs a container engine, QEMU or Lume (`cua runtime doctor`)."],
             ..Spec::new(
                 "create_space",
-                "Create a Space: a new sandbox on this machine, on one of your machines, or in the cloud.",
+                "Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud.",
             )
         }
         .with::<i::CreateSpace>(),
@@ -698,7 +698,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Lifecycle,
             result: "Text: what was deleted (`Deleted <id> (...)`), or `Removed <id> (...)` for a Space added by address.",
             errors: &["fleet", "sandbox"],
-            instructions: "Deletes the sandbox of a Space that create_space made (cloud: metering stops; local: the instance is deleted; on one of your machines, on=\"host:...\": that machine deletes it and it leaves the relay) and forgets it. A Space in your cloud (list_spaces: cloud, cloud_place, cloud_delete) is deleted permanently through the records of the device that created it: cloud_delete \"here\" deletes it from this device; \"host:<machine>\" asks that host (it must be online, and only its owner may); \"elsewhere\" is refused with where it was created: delete it there, or remove_space. Another Space added by address (direct:, relay:) is only forgotten: cua did not create it. Any hotspot on the Space is stopped first. To forget a Space without deleting anything, use remove_space.",
+            instructions: "Deletes the sandbox of a Space that create_space made (cloud: metering stops; local: the instance is deleted; on one of your computers, on=\"host:...\": that computer deletes it and it leaves the relay) and forgets it. A Space in your cloud (list_spaces: cloud, cloud_place, cloud_delete) is deleted permanently through the records of the device that created it: cloud_delete \"here\" deletes it from this device; \"host:<computer>\" asks that host (it must be online, and only its owner may); \"elsewhere\" is refused with where it was created: delete it there, or remove_space. Another Space added by address (direct:, relay:) is only forgotten: cua did not create it. Any hotspot on the Space is stopped first. To forget a Space without deleting anything, use remove_space.",
             capabilities: &["space.delete"],
             annotations: Annotations::mutating(),
             sdk_symbol: "Spaces.delete(space)",
@@ -723,7 +723,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Lifecycle,
             result: "JSON: `space`, `state` (`running`), `power` (`suspend` or `stop`) and `message`.",
             errors: &["wrong_provider", "sandbox", "relay", "permission_denied", "cloud", "timeout"],
-            instructions: "Turns a Space stop_space turned off on again: resumes a suspended one, boots a stopped one (a Space one of your machines provides, or one in your cloud, joins the relay again), and leaves a running one as it is. Returns once it answers again (bounded). The same Spaces turn on as turn off.",
+            instructions: "Turns a Space stop_space turned off on again: resumes a suspended one, boots a stopped one (a Space one of your computers provides, or one in your cloud, joins the relay again), and leaves a running one as it is. Returns once it answers again (bounded). The same Spaces turn on as turn off.",
             capabilities: &["space.power"],
             annotations: Annotations::mutating_idempotent(),
             sdk_symbol: "Spaces.start(space)",
@@ -839,7 +839,7 @@ pub fn tools() -> Vec<Tool> {
             annotations: Annotations::mutating_idempotent(),
             sdk_symbol: "space.operatorDisplay.streamWindowToOperatorDesktop(_:)",
             rust_symbol: "OperatorDisplay::stream_window",
-            notes: &["Operator-side: the pixels land on the human's machine, so the platform axis is the operator's OS and not the Space's."],
+            notes: &["Operator-side: the pixels land on the human's computer, so the platform axis is the operator's OS and not the Space's."],
             ..Spec::new("stream_space_window", "Draw one Space window on the operator's desktop.")
         }
         .with::<i::StreamSpaceWindow>(),
@@ -1017,7 +1017,7 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::PersistentAgents,
             result: "JSON: `{\"agents\"}`, each with `name`, `harness`, `space`, `paused`, `space_state`, `run_id`, `saved_ms` and `last_error`.",
-            instructions: "Every persistent agent of this machine's cua home, with its Space, its current run and when its home was last saved.",
+            instructions: "Every persistent agent of this computer's cua home, with its Space, its current run and when its home was last saved.",
             capabilities: &["agent.persistent.read"],
             sdk_symbol: "spaces.persistentAgents.list()",
             rust_symbol: "Persistent::list",
@@ -1161,7 +1161,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::PersistentAgents,
             result: "JSON: the grant: `id`, `agent`, `machine`, `created_ms`, `expires_ms`.",
             errors: &["not_confirmed"],
-            instructions: "Lets one persistent agent use one of the user's machines (its computer-use tools, through the agent's bridge). Asks the user for presence (Touch ID or passphrase) first. Other agents of the account get nothing.",
+            instructions: "Lets one persistent agent use one of the user's computers (its computer-use tools, through the agent's bridge). Asks the user for presence (Touch ID or passphrase) first. Other agents of the account get nothing.",
             capabilities: &["computer.access.grant"],
             annotations: Annotations::mutating(),
             sdk_symbol: "spaces.persistentAgents.allowComputer(_:machine:)",
@@ -1182,7 +1182,7 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::ComputerAccessRevoke>(),
         Spec {
             category: Category::PersistentAgents,
-            result: "JSON: `{\"grants\"}` (each `id`, `agent`, `machine`, `created_ms`, `expires_ms`, `revoked`) and, with `audit`, `audit` (newest first: `ts_ms`, `principal`, `action`, `path` (the machine), `detail`) plus `audit_verified`.",
+            result: "JSON: `{\"grants\"}` (each `id`, `agent`, `machine`, `created_ms`, `expires_ms`, `revoked`) and, with `audit`, `audit` (newest first: `ts_ms`, `principal`, `action`, `path` (the computer), `detail`) plus `audit_verified`.",
             instructions: "Which agents may use which of the user's computers, and the audited record of grants, uses and refusals.",
             capabilities: &["computer.access.read"],
             sdk_symbol: "spaces.persistentAgents.computerAccess(agent:)",
@@ -1194,7 +1194,7 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::Teleport,
             result: "JSON: `app`, `display_name`, `scope`, `items` (each `relative_path`, `label`, `estimated_bytes`, `is_sensitive`, `is_checked_by_default`), `total_estimated_bytes`, `notes`; with `space`, a `receiver` (`supported`, `limitation`, `app_installed`, `supported_apps`).",
-            instructions: "Read on this machine from the app's own provider: items, sizes, which are sensitive and which are checked by default. With `space`, also reports whether the Space can import the app.",
+            instructions: "Read on this computer from the app's own provider: items, sizes, which are sensitive and which are checked by default. With `space`, also reports whether the Space can import the app.",
             capabilities: &["session.teleport.inspect"],
             host_requires: &[host::APP_SESSIONS],
             sdk_symbol: "space.sessions.manifest(for:scope:)",
@@ -1243,14 +1243,14 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::Hotspot,
             result: "JSON: the hotspot (`space`, `state`, `hotspot_id`, `socks_address`, `active_connections`, `bytes_out`, `bytes_in`, `served_here`).",
-            instructions: "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this machine, so the Space browses as this machine. Runs until hotspot_stop, delete_space, or this server exiting.",
+            instructions: "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. Runs until hotspot_stop, delete_space, or this server exiting.",
             capabilities: &["hotspot.control"],
             requires: &["hotspot"],
             annotations: Annotations::mutating(),
             sdk_symbol: "connection.hotspot.start(sharingWith:)",
             rust_symbol: "Spaces::hotspot_start",
-            notes: &["Capability-gated rather than cloud-only: any Space whose spacesd supports `hotspot` can borrow this machine's network."],
-            ..Spec::new("hotspot_start", "Start sharing this machine's network with a Space.")
+            notes: &["Capability-gated rather than cloud-only: any Space whose spacesd supports `hotspot` can borrow this computer's network."],
+            ..Spec::new("hotspot_start", "Start sharing this computer's network with a Space.")
         }
         .with::<i::HotspotStart>(),
         Spec {
@@ -1261,7 +1261,7 @@ pub fn tools() -> Vec<Tool> {
             annotations: Annotations::mutating(),
             sdk_symbol: "connection.hotspot.stop()",
             rust_symbol: "Spaces::hotspot_stop",
-            ..Spec::new("hotspot_stop", "Stop sharing this machine's network.")
+            ..Spec::new("hotspot_stop", "Stop sharing this computer's network.")
         }
         .with::<i::HotspotTarget>(),
         Spec {
@@ -1271,7 +1271,7 @@ pub fn tools() -> Vec<Tool> {
             requires: &["hotspot"],
             sdk_symbol: "connection.hotspot.status()",
             rust_symbol: "Spaces::hotspot_statuses",
-            ..Spec::new("hotspot_status", "Report which Spaces are sharing this machine's network, with counters.")
+            ..Spec::new("hotspot_status", "Report which Spaces are sharing this computer's network, with counters.")
         }
         .with::<i::HotspotTarget>(),
         // --- Cua Volume -------------------------------------------------------------
@@ -1492,9 +1492,9 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::NoArgs>(),
         Spec {
             category: Category::Volume,
-            result: "JSON: `device_id`, `device_name`, `feed` (`live`, `off` for a store on this machine, `offline` when the bucket stops answering, with `last_error`), `poll_interval_ms`, `last_poll_ms`, `last_remote_change_ms`, `pending_uploads`, `pending_bytes`, `conflicts` (each `path`, `conflict_path`, `winner_device`, `loser_device`, `winner_version`, `loser_version`, `ts_ms`), `devices` (each `id`, `name`, `this_device`, `last_seen_ms`, `last_change_ms`, `changes`), `last_error`, `pending` (each `path`, `bytes`: files still uploading), `backend` (`fs` or `s3`), `mount` (this machine's mount: `off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `cache` (a bucket's block cache, when there is one) and `volumes` (the volume mounted in Spaces: each `space`, `mount_path`, `backend`, `principal`).",
+            result: "JSON: `device_id`, `device_name`, `feed` (`live`, `off` for a store on this computer, `offline` when the bucket stops answering, with `last_error`), `poll_interval_ms`, `last_poll_ms`, `last_remote_change_ms`, `pending_uploads`, `pending_bytes`, `conflicts` (each `path`, `conflict_path`, `winner_device`, `loser_device`, `winner_version`, `loser_version`, `ts_ms`), `devices` (each `id`, `name`, `this_device`, `last_seen_ms`, `last_change_ms`, `changes`), `last_error`, `pending` (each `path`, `bytes`: files still uploading), `backend` (`fs` or `s3`), `mount` (this computer's mount: `off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `cache` (a bucket's block cache, when there is one) and `volumes` (the volume mounted in Spaces: each `space`, `mount_path`, `backend`, `principal`).",
             errors: &["forbidden"],
-            instructions: "Devices sharing one bucket learn each other's changes through a change log in the bucket itself. A write that lost to a later one is never dropped: it stays in the file's history and as the visible conflict copy. A persistent agent may call it too (through its bridge): it sees the pending uploads and conflicts of files it can read and its own Space's volume. In a Space it reports this machine's view.",
+            instructions: "Devices sharing one bucket learn each other's changes through a change log in the bucket itself. A write that lost to a later one is never dropped: it stays in the file's history and as the visible conflict copy. A persistent agent may call it too (through its bridge): it sees the pending uploads and conflicts of files it can read and its own Space's volume. In a Space it reports this computer's view.",
             capabilities: &["drive.read"],
             sdk_symbol: "spaces.volumeSyncStatus()",
             rust_symbol: "cua_volume::service::DriveService::sync_status",
@@ -1601,9 +1601,9 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::SpaceShares>(),
         Spec {
             category: Category::Sharing,
-            result: "JSON: `space`, `relay_space` (`relay:<machine>`: how the account's other devices reach it), `machine`, `url` and `online`.",
+            result: "JSON: `space`, `relay_space` (`relay:<computer>`: how the account's other devices reach it), `machine`, `url` and `online`.",
             errors: &["relay", "unauthenticated"],
-            instructions: "Publishes the Space as a machine of the signed-in account on the cua.ai relay, the way `cua host setup` publishes this computer: the Space's own driver joins the relay over outbound WSS with a machine token the account registered, so no inbound port is opened. The account's other devices (a phone off this network, the Cua app on another computer) then open `relay_space`; nobody else can until share_space adds them. Idempotent, and it re-attaches a Space that restarted. Needs a driver with relay_attach (a host is already registered).",
+            instructions: "Publishes the Space as a computer of the signed-in account on the cua.ai relay, the way `cua host setup` publishes this computer: the Space's own driver joins the relay over outbound WSS with a computer token the account registered, so no inbound port is opened. The account's other devices (a phone off this network, the Cua app on another computer) then open `relay_space`; nobody else can until share_space adds them. Idempotent, and it re-attaches a Space that restarted. Needs a driver with relay_attach (a host is already registered).",
             capabilities: &["space.relay"],
             host_requires: &[host::RELAY_ACCOUNT],
             annotations: Annotations::mutating_idempotent(),
@@ -1616,7 +1616,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Sharing,
             result: "JSON: `space` and `unregistered` (false when it was not on the relay).",
             errors: &["relay", "unauthenticated", "permission_denied", "invalid_argument"],
-            instructions: "Takes the Space off the relay: its driver leaves and its machine is removed, with every share. A `relay:<machine>` id removes that machine's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a machine that is no longer connected. A host that is connected now is taken off with `cua host remove` on that machine instead.",
+            instructions: "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead.",
             capabilities: &["space.relay"],
             host_requires: &[host::RELAY_ACCOUNT],
             annotations: Annotations::mutating_idempotent(),
@@ -1690,7 +1690,7 @@ pub fn tools() -> Vec<Tool> {
 
 const CLOUD_STATUS_RESULT: &str = "JSON: `default_on`, `providers` (each `name`, `title`, `tier` (`vm`: a VM that provides Spaces, `sandbox`: one sandbox per Space), `connected`, `default`, `credentials` (`found`, `source`), `account`, `profile`, `region`, `zone`, `project`, `environment`, `label` (\"AWS · us-west-2\"), `ttl_hours` and `kinds` (each `image`, `kind`, `supported`, `reason`, `machine_type`, `usd_per_hour`)) and `resources` (what Cua created: `provider`, `id`, `type`, `space`, `region`, `state`, `created`, `expires`, `expired`).";
 
-const CLOUD_INSTRUCTIONS: &str = "Sandboxes and Spaces can run in the user's own cloud account: on=\"aws\" (EC2), \"gcp\" (Compute Engine) or \"modal\" (Modal Sandboxes). EC2 and Compute Engine start one small VM per sandbox that runs the image with Docker; Modal runs one Modal sandbox. Either way the guest's cua-spacesd dials out to the cua.ai relay as a machine of the signed-in account (no inbound port), and the Space is that machine, relay:<machine>. Each cloud uses its own CLI sign-in; connect it first with cloud_connect (the user decides; it costs money in their account). Everything Cua creates is tagged cua-managed=true with this cua home's cua-owner and an expiry, recorded under the cua home, deleted with its sandbox, and ends itself at its expiry; cloud_sweep removes leftovers.";
+const CLOUD_INSTRUCTIONS: &str = "Sandboxes and Spaces can run in the user's own cloud account: on=\"aws\" (EC2), \"gcp\" (Compute Engine) or \"modal\" (Modal Sandboxes). EC2 and Compute Engine start one small VM per sandbox that runs the image with Docker; Modal runs one Modal sandbox. Either way the guest's cua-spacesd dials out to the cua.ai relay as a computer of the signed-in account (no inbound port), and the Space is that computer, relay:<computer>. Each cloud uses its own CLI sign-in; connect it first with cloud_connect (the user decides; it costs money in their account). Everything Cua creates is tagged cua-managed=true with this cua home's cua-owner and an expiry, recorded under the cua home, deleted with its sandbox, and ends itself at its expiry; cloud_sweep removes leftovers.";
 
 /// Former tool names still accepted (for one release) and the tool each is
 /// now: `(old, new)`. Hidden: never in `tools/list` or the manifest.

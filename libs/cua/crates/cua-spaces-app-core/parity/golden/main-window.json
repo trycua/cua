@@ -11,7 +11,7 @@
         "openSettings": "Open Settings",
         "permissions": [],
         "summary": "Checking…",
-        "title": "This machine"
+        "title": "This computer"
       },
       "sidebar": {
         "emptyText": null,
@@ -22,12 +22,12 @@
           "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My machines",
+          "# My computers",
           "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
           "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
+        "thisMachine": "<os-macos> This computer | This Mac | Set up for access"
       }
     },
     {
@@ -42,7 +42,7 @@
         "openSettings": "Open Settings",
         "permissions": [],
         "summary": "Your other devices can’t reach this computer yet.",
-        "title": "This machine"
+        "title": "This computer"
       },
       "sidebar": {
         "emptyText": null,
@@ -53,12 +53,12 @@
           "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My machines",
+          "# My computers",
           "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
           "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
+        "thisMachine": "<os-macos> This computer | This Mac | Set up for access"
       }
     },
     {
@@ -81,7 +81,7 @@
           "screen-recording: Screen Recording ?Turn on Cua Spaces <x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture>"
         ],
         "summary": "Sharing · 2 connected",
-        "title": "This machine"
+        "title": "This computer"
       },
       "sidebar": {
         "emptyText": null,
@@ -92,12 +92,12 @@
           "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My machines",
+          "# My computers",
           "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
           "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This machine | This Mac | Sharing · 2 connected"
+        "thisMachine": "<os-macos> This computer | This Mac | Sharing · 2 connected"
       }
     },
     {
@@ -110,14 +110,14 @@
         "clients": "Connected now: Nobody",
         "configured": true,
         "facts": [
-          "Name: This machine",
+          "Name: This computer",
           "Access: Direct at http://10.0.0.9:3211",
           "Service: launchd · stopped"
         ],
         "openSettings": "Open Settings",
         "permissions": [],
         "summary": "Host service stopped",
-        "title": "This machine"
+        "title": "This computer"
       },
       "sidebar": {
         "emptyText": null,
@@ -128,12 +128,12 @@
           "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My machines",
+          "# My computers",
           "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
           "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This machine | This Mac | Host service stopped"
+        "thisMachine": "<os-macos> This computer | This Mac | Host service stopped"
       }
     },
     {
@@ -180,7 +180,7 @@
       "frame": {
         "actions": [],
         "canStream": false,
-        "confirm": "Delete This machine? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
+        "confirm": "Delete This computer? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
           "Status: This Mac",
           "Identifier: this-mac [copy this-mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -189,7 +189,7 @@
         "isHost": true,
         "previewText": "Not reachable",
         "sections": [],
-        "title": "This machine"
+        "title": "This computer"
       }
     },
     {
@@ -752,7 +752,7 @@
         "canBack": false,
         "canSkip": false,
         "choices": [],
-        "dots": "*Welcome,Sign in,AI agents,Menu bar,This machine,Done",
+        "dots": "*Welcome,Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Computers for you and your agents.",
@@ -775,7 +775,7 @@
         "canBack": false,
         "canSkip": false,
         "choices": [],
-        "dots": "*Welcome,Sign in,AI agents,Menu bar,This machine,Done",
+        "dots": "*Welcome,Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Computers for you and your agents.",
@@ -798,7 +798,7 @@
         "canBack": true,
         "canSkip": true,
         "choices": [],
-        "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
+        "dots": "Welcome,*Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
@@ -821,7 +821,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
+        "dots": "Welcome,*Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
@@ -844,7 +844,7 @@
         "canBack": true,
         "canSkip": true,
         "choices": [],
-        "dots": "Welcome,Sign in,*AI agents,Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,*AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Give your coding agents the cua skills and MCP server.",
@@ -867,7 +867,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -893,7 +893,7 @@
         "canBack": true,
         "canSkip": true,
         "choices": [],
-        "dots": "Welcome,Sign in,*AI agents,Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,*AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Give your coding agents the cua skills and MCP server.",
@@ -916,7 +916,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -942,7 +942,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -968,7 +968,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -994,7 +994,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -1023,7 +1023,7 @@
           "client: Just use this Mac to open my other computers",
           "host: Let my other devices reach this Mac (preselected)"
         ],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
@@ -1046,7 +1046,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "You can change this in Settings.",
@@ -1075,7 +1075,7 @@
           "client: Just use this Mac to open my other computers",
           "host: Let my other devices reach this Mac (preselected)"
         ],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
@@ -1101,7 +1101,7 @@
           "client: Just use this Mac to open my other computers",
           "host: Let my other devices reach this Mac (preselected)"
         ],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This computer,Done",
         "drive": null,
         "driveStorage": null,
         "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
@@ -1124,7 +1124,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -1142,7 +1142,7 @@
         "step": "done",
         "summary": [
           "Shows in: Menu bar only",
-          "This machine: Your other devices can reach it"
+          "This computer: Your other devices can reach it"
         ],
         "title": "You're all set",
         "todos": [

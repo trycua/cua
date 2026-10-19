@@ -219,7 +219,7 @@ async def test_a_runtime_object_still_runs_locally(monkeypatch, notice):
     assert len(calls) == 2 and not notice()
     for _, opts in calls:
         assert "kind" not in opts and "runtime" not in opts, "the adapter decides"
-    with pytest.raises(InvalidArgument, match="on this machine"):
+    with pytest.raises(InvalidArgument, match="on this computer"):
         await Sandbox.create(ROOTFS, runtime=_Recorder(calls), on="cloud")
 
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { CheckIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 
 import {
@@ -365,13 +366,44 @@ function Permissions({ flow }: { flow: OnboardingHook }) {
 function DoneCard({ view, flow }: { view: OnboardingView; flow: OnboardingHook }) {
   // "Launch at login", where the host applies it (the SwiftUI app's Done has it too).
   const login = flow.launchAtLogin;
+  const todos = view.todos ?? [];
   return (
     <Card>
+      {todos.length ? (
+        <ul className="-mx-1 mb-3 flex flex-col divide-y" data-onboarding-todos="">
+          {todos.map((t) => (
+            <li key={t.id} className="flex items-center gap-3 px-1 py-2.5" data-onboarding-todo={t.id} data-done={t.done ? "" : undefined}>
+              <span
+                aria-hidden
+                className={cn(
+                  "flex size-5 shrink-0 items-center justify-center rounded-full border",
+                  t.done ? "border-brand bg-brand text-white" : "border-foreground/20",
+                )}
+              >
+                {t.done ? <CheckIcon className="size-3" strokeWidth={3} /> : null}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className={cn("text-[13px] font-medium", t.done && "text-muted-foreground")}>
+                  {t.title}
+                  <span className="sr-only">{t.done ? " (done)" : ""}</span>
+                  {t.optional && !t.done ? <span className="font-normal text-muted-foreground"> (optional)</span> : null}
+                </p>
+                <p className="text-xs text-muted-foreground">{t.note}</p>
+              </div>
+              {t.action ? (
+                <Button variant="outline" size="sm" className="shrink-0" onClick={() => void flow.fixTodo(t.id)}>
+                  {t.action}
+                </Button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-1.5 text-[13px]">
         {view.summary.map((f) => (
           <div key={f.label} className="contents">
             <dt className="text-muted-foreground">{f.label}</dt>
-            <dd className="truncate">{f.value}</dd>
+            <dd>{f.value}</dd>
           </div>
         ))}
       </dl>

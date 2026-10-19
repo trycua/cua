@@ -31,6 +31,7 @@ import type {
   OnboardingFlowState,
   OnboardingStep,
   OnboardingTelemetry,
+  OnboardingTodo,
   OnboardingView,
   PermissionRow,
   SandboxImage,
@@ -49,10 +50,11 @@ export function passedSteps(os: HostOs = hostOs()): readonly OnboardingStep[] {
   return hasNotch(os) ? [] : ["presentation"];
 }
 
-/** Done's summary facts about pages the web passes through: the `cua`
- * install is the SwiftUI app's own page, Shows in follows Menu bar. */
+/** Done's summary facts about pages the web passes through: Shows in
+ * follows Menu bar. (The Cua CLI install is the SwiftUI app's own page:
+ * the core leaves it off Done for the web, `withoutCli`.) */
 function passedFacts(os: HostOs): Set<string> {
-  return new Set(hasNotch(os) ? ["cua command"] : ["cua command", "Shows in"]);
+  return new Set(hasNotch(os) ? [] : ["Shows in"]);
 }
 
 /** What the pass-through answers need from the host. */
@@ -119,7 +121,7 @@ export function onboardingReduce(
  * passes through, in the words of the system the app runs on (the tray off
  * a Mac). */
 export function onboardingView(core: CoreClient, state: OnboardingFlowState, os: HostOs = hostOs()): OnboardingView {
-  const v = core.tryCall<OnboardingView>("onboarding.view", { state, hostOs: os }) ?? fallbackView(state, os);
+  const v = core.tryCall<OnboardingView>("onboarding.view", { state, hostOs: os, withoutCli: true }) ?? fallbackView(state, os);
   const passed = passedSteps(os);
   const facts = passedFacts(os);
   return {
@@ -212,6 +214,8 @@ function fallbackReduce(s: OnboardingFlowState, a: OnboardingAction): Onboarding
       return at("signin") ? { ...s, step: "agents" } : s;
     case "agents-done":
       return at("agents") ? { ...s, agents: a.configured, step: "presentation" } : s;
+    case "agents-detected":
+      return { ...s, agents: [...new Set([...(Array.isArray(s.agents) ? (s.agents as string[]) : []), ...a.configured])] };
     case "presentation-picked":
       return at("presentation") ? { ...s, menuBar: a.menuBar } : s;
     case "presentation-done":
@@ -232,6 +236,29 @@ function fallbackReduce(s: OnboardingFlowState, a: OnboardingAction): Onboarding
   }
 }
 
+/** Done's to-do list without the core (the core's `done_todos`, less the Cua CLI). */
+function fallbackTodos(s: OnboardingFlowState): OnboardingTodo[] {
+  const agents = Array.isArray(s.agents) ? (s.agents as string[]) : [];
+  return [
+    {
+      id: "signin",
+      title: "Account",
+      note: s.identity ? `Signed in as ${s.identity}.` : "Reach your computers from any device.",
+      done: Boolean(s.identity),
+      optional: false,
+      action: s.identity ? null : "Sign in",
+    },
+    {
+      id: "agents",
+      title: "AI agents",
+      note: agents.length ? `${agents.join(", ")} can use Cua.` : "Let Claude Code, Codex and others use Cua.",
+      done: agents.length > 0,
+      optional: false,
+      action: agents.length ? null : "Connect an AI agent",
+    },
+  ];
+}
+
 /** How the copy names the computer the app runs on (the core's `this_computer`). */
 function thisComputer(os: HostOs): string {
   return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this computer";
@@ -245,6 +272,18 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
     mode: [`How do you want to use ${thisComputer(os)}?`, "Use it only to open your other computers, or let your other devices reach it too. You can change this later.", "Continue"],
     done: ["You're all set", os === "macos" ? "Cua Spaces is in your menu bar." : "Cua Spaces is in your system tray.", "Start using Cua Spaces"],
   };
+  const todos = s.step === "done" ? fallbackTodos(s) : [];
+  const left = todos.filter((t) => !t.done && !t.optional).length;
+  const place = os === "macos" ? "the menu bar" : "the system tray";
+  if (left > 0) {
+    pages.done = [
+      "Almost done",
+      left === 1
+        ? `One thing is left. You can finish it now, or later from ${place}.`
+        : `${left} things are left. You can finish them now, or later from ${place}.`,
+      "Start using Cua Spaces",
+    ];
+  }
   const [title, lede, primaryLabel] = pages[s.step] ?? ["", "", "Continue"];
   const pre = s.installerMode ?? "client";
   const locked = s.telemetry?.lockedBy || null;
@@ -261,12 +300,11 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
     summary:
       s.step === "done"
         ? [
-            { label: "Account", value: s.identity ?? "not signed in" },
-            { label: "AI agents", value: Array.isArray(s.agents) && s.agents.length ? s.agents.join(", ") : "none" },
             { label: "Shows in", value: s.menuBar ? "Menu bar only" : "Notch and menu bar" },
-            { label: "This machine", value: s.mode === "host" ? "Reachable from your other devices" : "Only used to open other computers" },
+            { label: "This machine", value: s.mode === "host" ? "Your other devices can reach it" : "Opens your other computers" },
           ]
         : [],
+    todos,
     choices:
       s.step === "mode"
         ? [

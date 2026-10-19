@@ -27,7 +27,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -40,13 +40,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -134,7 +137,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -147,14 +150,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -261,7 +266,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -274,14 +279,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -392,7 +399,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -405,14 +412,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -509,7 +518,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -522,14 +531,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -626,7 +637,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -639,14 +650,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "Cua Volume: In Finder",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -742,7 +755,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -755,13 +768,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -864,7 +880,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -877,13 +893,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -981,7 +1000,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -994,13 +1013,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -1096,7 +1118,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -1109,13 +1131,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [
@@ -1213,7 +1238,7 @@
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
-          "lede": "Cua Spaces is in your menu bar.",
+          "lede": "3 things are left. You can finish them now, or later from the menu bar.",
           "notice": null,
           "noticeLink": null,
           "presentations": [],
@@ -1226,13 +1251,16 @@
           "showMark": false,
           "step": "done",
           "summary": [
-            "cua command: not installed",
-            "Account: not signed in",
-            "AI agents: none",
             "Shows in: Notch and menu bar",
-            "This machine: Only used to open other computers"
+            "This machine: Opens your other computers"
           ],
-          "title": "You're all set",
+          "title": "Almost done",
+          "todos": [
+            "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
+            "[ ] Account ~Reach your computers from any device. -> Sign in",
+            "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
+          ],
           "usage": null
         },
         "pages": [

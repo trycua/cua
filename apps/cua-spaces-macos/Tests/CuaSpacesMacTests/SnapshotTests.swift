@@ -66,6 +66,11 @@ struct SnapshotTests {
         try assertSnapshot(OnboardingView(onboarding: o), "onboarding-mode", size: size)
         o.send(.modeChosen(mode: .client))
         try assertSnapshot(OnboardingView(onboarding: o), "onboarding-done", size: size)
+        // Everything set up: "You're all set" only now.
+        o.send(.cliInstalled(target: "/Users/me/.local/bin/cua"))
+        o.send(.signedIn(identity: "ada@example.com"))
+        o.send(.agentsDetected(configured: ["Claude Code"]))
+        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-done-all-set", size: size)
     }
 
     /// The AI agents page with twelve agents at the window's minimum size:

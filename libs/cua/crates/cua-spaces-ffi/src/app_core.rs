@@ -2396,6 +2396,7 @@ impl AppCliInstaller {
                 path_env,
                 profile: profile.into(),
                 prefer_symlink: false,
+                search_dirs: vec![],
             },
         })
     }

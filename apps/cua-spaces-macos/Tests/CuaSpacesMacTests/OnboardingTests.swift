@@ -99,7 +99,7 @@ struct OnboardingTests {
         #expect(o.view.step == .welcome)
         o.send(.start)
         #expect(o.view.step == .cli)
-        #expect(o.view.title == "Install the cua command and add it to your PATH")
+        #expect(o.view.title == "Install the Cua CLI and add it to your PATH")
         #expect(!FileManager.default.fileExists(atPath: tmp.home.path), "nothing written on the page")
         await o.finishCli(install: true)
         #expect(o.view.step == .signin)
@@ -126,7 +126,7 @@ struct OnboardingTests {
         o.send(.presentationDone)
         o.send(.driveContinue)
         o.send(.modeChosen(mode: .client))
-        #expect(o.view.summary.first { $0.label == "cua command" }?.value == target)
+        #expect(o.view.todos.first { $0.id == .cli }?.done == true, "Done counts the installed Cua CLI")
         #expect(o.cliShadowedBy == nil, "nothing else on PATH")
         // A second launch finds it current and writes nothing new.
         let again = OnboardingModel(statePath: nil, cli: tmp.installer())
@@ -191,7 +191,7 @@ struct OnboardingTests {
         toMode(o)
         o.send(.modeChosen(mode: .client))
         #expect(o.view.step == .done)
-        #expect(o.view.summary.first { $0.label == "cua command" }?.value == target, "Done shows the installed path")
+        #expect(o.view.todos.first { $0.id == .cli }?.done == true, "Done counts the installed Cua CLI")
     }
 
     @Test func withoutABundledCliNothingIsInstalled() async throws {
@@ -228,6 +228,30 @@ struct OnboardingTests {
         o.send(.agentsDone(configured: []))
         o.send(.presentationDone)
         o.send(.driveContinue)
+    }
+
+    /// Done is honest about the machine (CUA-1862): a sign-in from the CLI
+    /// while the window was past Welcome, and an agent set up earlier,
+    /// count; what is missing has a fix that opens its page and comes back.
+    @Test func doneReadsTheMachineAndEachFixComesBack() async {
+        let o = model(agents: FixtureAgentSetup())
+        toMode(o)
+        o.send(.modeChosen(mode: .client))
+        #expect(o.view.step == .done)
+        #expect(o.view.title == "Almost done")
+        #expect(o.view.todos.compactMap(\.action).contains("Sign in"))
+        // Signed in with `cua auth login` (the same session) after Welcome.
+        o.adoptIdentity("ada@example.com")
+        #expect(o.state.identity == "ada@example.com")
+        o.readIdentity = { "ada@example.com" }
+        await o.refreshDone()
+        #expect(o.state.agents == ["Codex"], "the fixture's Codex already uses cua")
+        #expect(o.view.todos.first { $0.id == .signin }?.done == true)
+        // The Cua CLI fix opens its page; Back returns to Done.
+        await o.fixTodo(.cli)
+        #expect(o.view.step == .cli)
+        o.send(.back)
+        #expect(o.view.step == .done)
     }
 
     /// Welcome counts the run as it shows once this machine showed the usage
@@ -343,7 +367,7 @@ struct OnboardingTests {
         #expect(o.state.mode == .host)
         #expect(o.hostPermissions.map(\.id) == ["accessibility"])
         #expect(!o.showingHostForm)
-        #expect(o.view.summary.last?.value == "Reachable from your other devices")
+        #expect(o.view.summary.last?.value == "Your other devices can reach it")
     }
 
     @Test func directSetupNeedsAnAddressAndSendsNoToken() async {

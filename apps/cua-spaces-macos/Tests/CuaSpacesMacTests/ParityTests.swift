@@ -1284,6 +1284,10 @@ struct ParityTests {
             "showMark": v.showMark,
             "dots": v.dots.map { "\($0.current ? "*" : "")\($0.label)" }.joined(separator: ","),
             "summary": facts(v.summary),
+            // Done's to-do list: `[x] title ~note -> fix (optional)`.
+            "todos": v.todos.map { t in
+                "[\(t.done ? "x" : " ")] \(t.title) ~\(t.note)\(t.action.map { " -> \($0)" } ?? "")\(t.optional ? " (optional)" : "")"
+            },
             "choices": v.choices.map { "\($0.mode): \($0.label)\($0.preselected ? " (preselected)" : "")" },
             "presentations": v.presentations.map { "\($0.title) [\($0.id)]\($0.selected ? " (selected)" : "")" },
             "prompts": v.prompts,

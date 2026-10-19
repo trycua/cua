@@ -5598,6 +5598,8 @@ pub struct AppOnboardingState {
     /// shown, else when Welcome was left. Once per run, however often
     /// Welcome shows again (Back).
     pub run_counted: bool,
+    /// A page opened from Done's to-do list: leaving it comes back to Done.
+    pub revisit: bool,
 }
 
 /// An input.
@@ -5728,6 +5730,49 @@ pub enum AppOnboardingAction {
         /// The switches.
         experiments: AppExperiments,
     },
+    /// A to-do on Done was clicked: its page opens, and leaving it comes
+    /// back to Done.
+    TodoChosen {
+        /// Which.
+        id: AppOnboardingTodoId,
+    },
+    /// The coding agents that already use cua, as the shell read them.
+    AgentsDetected {
+        /// Their names.
+        configured: Vec<String>,
+    },
+}
+
+/// A line of Done's to-do list.
+pub type AppOnboardingTodoId = core::onboarding::OnboardingTodoId;
+#[uniffi::remote(Enum)]
+pub enum AppOnboardingTodoId {
+    /// The Cua CLI.
+    Cli,
+    /// The Cua account.
+    Signin,
+    /// A coding agent that uses cua.
+    Agents,
+    /// Cua Volume (optional).
+    Volume,
+}
+
+/// One line of Done's to-do list.
+pub type AppOnboardingTodo = core::onboarding::OnboardingTodo;
+#[uniffi::remote(Record)]
+pub struct AppOnboardingTodo {
+    /// Which.
+    pub id: AppOnboardingTodoId,
+    /// "Cua CLI".
+    pub title: String,
+    /// One plain line under it.
+    pub note: String,
+    /// Set up.
+    pub done: bool,
+    /// Nice to have: "You're all set" does not wait for it.
+    pub optional: bool,
+    /// The fix's button, while not done.
+    pub action: Option<String>,
 }
 
 /// A page dot.
@@ -5817,6 +5862,8 @@ pub struct AppOnboardingView {
     pub drive: Option<AppDriveCard>,
     /// Done's "Launch at login" checkbox.
     pub launch_at_login: Option<AppOnboardingCheckbox>,
+    /// Done's to-do list.
+    pub todos: Vec<AppOnboardingTodo>,
 }
 
 /// The Cua Volume page's card: an animated miniature
@@ -7495,6 +7542,8 @@ pub struct AppCliInstallPlan {
     pub path_profile: Option<String>,
     /// The line that would be added to `path_profile`.
     pub path_line: Option<String>,
+    /// A working `cua` CLI already on this machine.
+    pub found: Option<String>,
 }
 
 /// What the user agreed to in the CLI step.

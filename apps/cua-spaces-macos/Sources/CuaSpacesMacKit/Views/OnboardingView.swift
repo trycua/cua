@@ -63,7 +63,8 @@ public struct OnboardingView: View {
                             teamsLine
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Done's to-do list takes the room it needs.
+                    .frame(maxWidth: v.step == .done ? 250 : .infinity, alignment: .leading)
                     card(v)
                         .frame(maxWidth: .infinity)
                 }
@@ -82,6 +83,9 @@ public struct OnboardingView: View {
         }
         .frame(minWidth: 720, minHeight: 520)
         .task { await onboarding.planCli() }
+        // Done reads the machine again: a CLI from install.sh, a sign-in
+        // from the CLI and agents set up earlier all count.
+        .task(id: v.step) { if v.step == .done { await onboarding.refreshDone() } }
         .task { if !onboarding.state.driveChecked { await onboarding.checkDrive() } }
     }
 
@@ -281,16 +285,24 @@ public struct OnboardingView: View {
             }
         case .done:
             VStack(alignment: .leading, spacing: 8) {
+                // What is set up, and a one-click fix for what is not (the
+                // core's to-do list, in the Home checklist's style).
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(v.todos.enumerated()), id: \.element.title) { i, todo in
+                        if i > 0 { Divider() }
+                        OnboardingTodoRow(todo: todo) { Task { await onboarding.fixTodo(todo.id) } }
+                            .padding(.vertical, 6)
+                    }
+                }
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
                     ForEach(v.summary, id: \.label) { f in
                         GridRow {
                             Text(f.label).foregroundStyle(.secondary)
-                            Text(f.value)
-                                .font(f.label == "cua command" && onboarding.state.cliTarget != nil ? .body.monospaced() : .body)
-                                .lineLimit(1).truncationMode(.middle)
+                            Text(f.value).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
+                .padding(.top, 4)
                 if let other = onboarding.cliShadowedBy {
                     Text("Another \(Text("cua").monospaced()) at \(other) comes first on PATH.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -577,6 +589,39 @@ public struct OnboardingView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \((v.dots.firstIndex { $0.current } ?? 0) + 1) of \(v.dots.count)")
+    }
+}
+
+/// One line of Done's to-do list: a tick when set up, its name (with
+/// "(optional)") and plain line, and its fix until done.
+struct OnboardingTodoRow: View {
+    let todo: AppOnboardingTodo
+    let fix: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: todo.done ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(todo.done ? Color.accentColor : Color.secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                (Text(todo.title).fontWeight(.medium)
+                    + Text(todo.optional && !todo.done ? " (optional)" : "").foregroundStyle(.secondary))
+                    .foregroundStyle(todo.done ? .secondary : .primary)
+                Text(todo.note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if let action = todo.action {
+                Button(action, action: fix)
+                    .fixedSize()
+                    .accessibilityIdentifier("onboarding-fix-\(todo.title)")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityValue(todo.done ? "Done" : "")
     }
 }
 

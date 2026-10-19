@@ -42,6 +42,9 @@ pub struct AppCopy {
     pub version: Option<String>,
     /// False when the registration outlived the files (a deleted copy).
     pub exists: bool,
+    /// LaunchServices has this copy registered, so macOS can launch it. A copy
+    /// that only Spotlight lists is on disk but is not launched by `open -a`.
+    pub registered: bool,
 }
 
 impl AppCopy {
@@ -105,41 +108,51 @@ fn strip_record_id(text: &str) -> String {
     }
 }
 
-/// The copies that are not `active`, from every path macOS reported.
+/// The copies that are not `active`, from every `(path, registered)` pair macOS
+/// reported. A path reported both ways counts as registered.
 pub fn other_copies(
     active: &Path,
-    reported: impl IntoIterator<Item = PathBuf>,
+    reported: impl IntoIterator<Item = (PathBuf, bool)>,
     version_of: impl Fn(&Path) -> Option<String>,
 ) -> Vec<AppCopy> {
     let canonical = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let active_real = canonical(active);
-    let mut seen: Vec<PathBuf> = Vec::new();
     let mut copies: Vec<AppCopy> = Vec::new();
-    for path in reported {
+    for (path, registered) in reported {
         if path == active || canonical(&path) == active_real {
             continue;
         }
-        if seen.contains(&path) {
+        if let Some(seen) = copies.iter_mut().find(|copy| copy.path == path) {
+            seen.registered |= registered;
             continue;
         }
-        seen.push(path.clone());
         let exists = path.is_dir();
         let version = if exists { version_of(&path) } else { None };
         copies.push(AppCopy {
             path,
             version,
             exists,
+            registered,
         });
     }
     copies.sort_by(|a, b| a.path.cmp(&b.path));
     copies
 }
 
-/// Every other bundle with `bundle_id` that LaunchServices or Spotlight knows.
+/// Every other bundle with `bundle_id` that LaunchServices (`lsregister -dump`)
+/// or Spotlight (`mdfind`) knows. If the LaunchServices dump is unavailable the
+/// Spotlight hits are treated as registered, so the doctor errs on the side of
+/// warning.
 pub fn discover(active: &Path, bundle_id: &str, run: Run) -> Vec<AppCopy> {
-    let mut reported: Vec<PathBuf> = Vec::new();
-    if let Some(dump) = run(LSREGISTER, &["-dump"], DUMP_TIMEOUT) {
-        reported.extend(parse_lsregister_dump(&dump, bundle_id));
+    let mut reported: Vec<(PathBuf, bool)> = Vec::new();
+    let dump = run(LSREGISTER, &["-dump"], DUMP_TIMEOUT);
+    let dump_available = dump.is_some();
+    if let Some(dump) = dump {
+        reported.extend(
+            parse_lsregister_dump(&dump, bundle_id)
+                .into_iter()
+                .map(|path| (path, true)),
+        );
     }
     let query = format!("kMDItemCFBundleIdentifier == '{bundle_id}'");
     if let Some(found) = run(MDFIND, &[&query], QUICK_TIMEOUT) {
@@ -148,7 +161,7 @@ pub fn discover(active: &Path, bundle_id: &str, run: Run) -> Vec<AppCopy> {
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
-                .map(PathBuf::from),
+                .map(|line| (PathBuf::from(line), !dump_available)),
         );
     }
     other_copies(active, reported, |bundle| bundle_version_of(bundle, run))
@@ -207,14 +220,41 @@ pub fn duplicate_probe(
     active: &Path,
     app_name: &str,
     copies: &[AppCopy],
+    indexed_only: &[AppCopy],
     fixed: Option<(&[FixOutcome], &[AppCopy])>,
 ) -> Probe {
     let label = "duplicate copies";
     if copies.is_empty() {
-        return Probe::ok(
+        let probe = Probe::ok(
             label,
             format!("only {} is registered with macOS", active.display()),
         );
+        if indexed_only.is_empty() {
+            return probe;
+        }
+        // On disk and listed by Spotlight, but not registered: `open -a` does not
+        // launch them. Say so without nagging.
+        return probe.with_detail(format!(
+            "Spotlight also lists {} {} on disk that macOS does not launch:\n{}\n\
+             Delete {} when you no longer need {}.",
+            indexed_only.len(),
+            plural(indexed_only.len()),
+            indexed_only
+                .iter()
+                .map(|copy| format!("- {}", copy.describe()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            if indexed_only.len() == 1 {
+                "it"
+            } else {
+                "them"
+            },
+            if indexed_only.len() == 1 {
+                "it"
+            } else {
+                "them"
+            },
+        ));
     }
     let list = |copies: &mut dyn Iterator<Item = &AppCopy>| {
         copies
@@ -514,11 +554,11 @@ identifier:                 com.trycua.driver
         let copies = other_copies(
             &active,
             [
-                active.clone(),
-                old.clone(),
-                old.clone(),
-                gone.clone(),
-                alias,
+                (active.clone(), true),
+                (old.clone(), false),
+                (old.clone(), true),
+                (gone.clone(), true),
+                (alias, true),
             ],
             |path| (path == old).then(|| "0.34.0".to_owned()),
         );
@@ -529,12 +569,14 @@ identifier:                 com.trycua.driver
                 AppCopy {
                     path: gone,
                     version: None,
-                    exists: false
+                    exists: false,
+                    registered: true
                 },
                 AppCopy {
                     path: old,
                     version: Some("0.34.0".to_owned()),
-                    exists: true
+                    exists: true,
+                    registered: true
                 },
             ]
         );
@@ -569,10 +611,45 @@ identifier:                 com.trycua.driver
         let copies = discover(&active, "com.trycua.driver", &run);
 
         let paths: Vec<_> = copies.iter().map(|c| c.path.clone()).collect();
-        assert_eq!(paths, [indexed, old]);
+        assert_eq!(paths, [indexed.clone(), old.clone()]);
         assert!(copies
             .iter()
             .all(|c| c.version.as_deref() == Some("0.36.0")));
+        // Only LaunchServices' own dump makes a copy launchable; Spotlight alone
+        // just means the files exist.
+        let registered: Vec<_> = copies.iter().map(|c| c.registered).collect();
+        assert_eq!(registered, [false, true]);
+    }
+
+    #[test]
+    fn without_a_launchservices_dump_spotlight_hits_count_as_registered() {
+        let root = tempfile::tempdir().unwrap();
+        let active = root.path().join("Applications/CuaDriver.app");
+        let found = root.path().join("tmp/CuaDriver.app");
+        std::fs::create_dir_all(&found).unwrap();
+        let spotlight = format!("{}\n", found.display());
+        let run = move |program: &str, _: &[&str], _: Duration| -> Option<String> {
+            (program == MDFIND).then(|| spotlight.clone())
+        };
+
+        let copies = discover(&active, "com.trycua.driver", &run);
+
+        assert_eq!(copies.len(), 1);
+        assert!(copies[0].registered, "cannot prove it is unregistered");
+    }
+
+    #[test]
+    fn copies_only_spotlight_lists_do_not_raise_a_warning() {
+        let active = Path::new("/Applications/CuaDriver.app");
+        let indexed = [copy("/Users/me/Downloads/CuaDriver.app", Some("0.34.0"))];
+
+        let probe = duplicate_probe(active, "CuaDriver", &[], &indexed, None);
+
+        assert_eq!(probe.status, Status::Ok);
+        assert!(probe.message.contains("only /Applications/CuaDriver.app"));
+        let detail = probe.detail.unwrap();
+        assert!(detail.contains("Spotlight also lists 1 copy on disk that macOS does not launch"));
+        assert!(detail.contains("Downloads/CuaDriver.app (version 0.34.0)"));
     }
 
     #[test]
@@ -589,11 +666,13 @@ identifier:                 com.trycua.driver
                 path: "/good/CuaDriver.app".into(),
                 version: None,
                 exists: true,
+                registered: true,
             },
             AppCopy {
                 path: "/bad/CuaDriver.app".into(),
                 version: None,
                 exists: true,
+                registered: true,
             },
         ];
 
@@ -613,6 +692,7 @@ identifier:                 com.trycua.driver
             path: path.into(),
             version: version.map(str::to_owned),
             exists: true,
+            registered: true,
         }
     }
 
@@ -624,7 +704,7 @@ identifier:                 com.trycua.driver
             copy("/tmp/CuaDriver.app", Some("0.36.0")),
         ];
 
-        let probe = duplicate_probe(active, "CuaDriver", &copies, None);
+        let probe = duplicate_probe(active, "CuaDriver", &copies, &[], None);
 
         assert_eq!(probe.status, Status::Warn);
         assert!(probe.message.contains("2 other copies of CuaDriver"));
@@ -639,6 +719,7 @@ identifier:                 com.trycua.driver
         let probe = duplicate_probe(
             Path::new("/Applications/CuaDriver.app"),
             "CuaDriver",
+            &[],
             &[],
             None,
         );
@@ -667,6 +748,7 @@ identifier:                 com.trycua.driver
             active,
             "CuaDriver",
             &[a.clone(), b.clone()],
+            &[],
             Some((&outcomes, &[])),
         );
         assert_eq!(clean.status, Status::Ok);
@@ -679,6 +761,7 @@ identifier:                 com.trycua.driver
             active,
             "CuaDriver",
             &[a.clone(), b.clone()],
+            &[],
             Some((&outcomes, std::slice::from_ref(&b))),
         );
         assert_eq!(reregistered.status, Status::Warn);
@@ -689,7 +772,7 @@ identifier:                 com.trycua.driver
             copy: a.clone(),
             result: Err("`lsregister -u` failed".to_owned()),
         }];
-        let probe = duplicate_probe(active, "CuaDriver", &[a], Some((&failed, &[])));
+        let probe = duplicate_probe(active, "CuaDriver", &[a], &[], Some((&failed, &[])));
         assert_eq!(probe.status, Status::Warn);
         assert!(probe.message.contains("could not unregister 1 of 1"));
     }

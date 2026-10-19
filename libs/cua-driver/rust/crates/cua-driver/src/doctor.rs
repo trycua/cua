@@ -653,10 +653,17 @@ fn append_install_hygiene_probes(report: &mut Report, fix: bool) {
 
     let active = PathBuf::from(crate::bundle::app_bundle_path());
     let bundle_id = crate::bundle::bundle_id();
-    let found = copies::discover(&active, bundle_id, &copies::run_program);
-    let fixed = if fix && !found.is_empty() {
-        let outcomes = copies::unregister(&found, &copies::run_program);
-        let remaining = copies::discover(&active, bundle_id, &copies::run_program);
+    let (registered, indexed_only): (Vec<_>, Vec<_>) =
+        copies::discover(&active, bundle_id, &copies::run_program)
+            .into_iter()
+            .partition(|copy| copy.registered);
+    let fixed = if fix && !registered.is_empty() {
+        let outcomes = copies::unregister(&registered, &copies::run_program);
+        // What LaunchServices still has registered after the fix.
+        let remaining: Vec<_> = copies::discover(&active, bundle_id, &copies::run_program)
+            .into_iter()
+            .filter(|copy| copy.registered)
+            .collect();
         Some((outcomes, remaining))
     } else {
         None
@@ -664,7 +671,8 @@ fn append_install_hygiene_probes(report: &mut Report, fix: bool) {
     report.push(copies::duplicate_probe(
         &active,
         crate::bundle::app_name(),
-        &found,
+        &registered,
+        &indexed_only,
         fixed
             .as_ref()
             .map(|(outcomes, remaining)| (outcomes.as_slice(), remaining.as_slice())),

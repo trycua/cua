@@ -100,6 +100,7 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
     // Activation funnel: a sign-in from the CLI (browser or device code)
     // counts like one in the Spaces app's first run.
     cua_telemetry::global().capture_step("signed_in", cua_telemetry::Outcome::Ok);
+    link_usage(&s).await;
     let who = match (&id.username, &id.email) {
         (Some(u), Some(e)) if u != e => format!(" as {u} ({e})"),
         (Some(u), _) | (None, Some(u)) => format!(" as {u}"),
@@ -109,9 +110,43 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
     Ok(0)
 }
 
+/// Links this install's usage data to the signed-in account when the
+/// Spaces API offers an account id (CUA-1881), and prints the one-time
+/// notice when this machine saw only the older "anonymous" notice. Best
+/// effort: a sign-in never fails or waits long on it.
+async fn link_usage(s: &cua_auth::Session) {
+    let t = cua_telemetry::global();
+    if !t.is_enabled() {
+        return;
+    }
+    let Ok(Ok(token)) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), s.access_token(false)).await
+    else {
+        return;
+    };
+    let Ok(api) = SpacesApiClient::current() else {
+        return;
+    };
+    if let Ok(Ok(me)) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), api.me(&token)).await
+    {
+        offer_account(&me);
+    }
+}
+
+/// Hands the account id `GET /v1/me` answered with (or its absence) to
+/// telemetry, then shows the linking notice if it is due.
+fn offer_account(me: &cua_host::spaces_api::ApiMe) {
+    let t = cua_telemetry::global();
+    t.offer_account(me.analytics_id.as_deref());
+    t.show_notice_if_needed();
+}
+
 /// `cua auth logout`.
 pub async fn logout(out: &mut dyn Write) -> Result<i32, CuaError> {
     let (existed, revoked) = session().logout().await.map_err(auth_err)?;
+    // Signed out: usage data goes back to a new anonymous install id.
+    let _ = cua_telemetry::global().forget_account();
     if !existed {
         line(out, "Not logged in.");
         return Ok(0);
@@ -226,7 +261,10 @@ pub async fn whoami_with(
     // failure (offline, a server error, no Teams routes yet) only costs the
     // plan and team count.
     let me = match api.me(token).await {
-        Ok(me) => Some(me),
+        Ok(me) => {
+            offer_account(&me);
+            Some(me)
+        }
         Err(e @ (E::Unauthenticated(_) | E::PermissionDenied(_))) => {
             return Err(CuaError::Unauthenticated(format!(
                 "your Cua sign-in is no longer valid ({e}); run 'cua auth login' again"

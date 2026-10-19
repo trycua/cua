@@ -45,6 +45,26 @@ fn t() -> Option<&'static Telemetry> {
     CLIENT.get()
 }
 
+/// Asks the Spaces API for the signed-in account's opaque id and hands it
+/// to telemetry (CUA-1881). The state is the install's, in
+/// `$CUA_HOME/telemetry`, so the app's and the SDK's clients both see it.
+pub async fn sync_account(session: &crate::auth::SessionHandle) {
+    let Some(t) = t() else { return };
+    if !t.is_enabled() {
+        return;
+    }
+    let budget = std::time::Duration::from_secs(10);
+    let Ok(Ok(token)) = tokio::time::timeout(budget, session.get_valid_token(false)).await else {
+        return;
+    };
+    let Ok(api) = cua_host::spaces_api::SpacesApiClient::current() else {
+        return;
+    };
+    if let Ok(Ok(me)) = tokio::time::timeout(budget, api.me(&token)).await {
+        t.offer_account(me.analytics_id.as_deref());
+    }
+}
+
 /// Records signals the app core derived (both shells send them the same
 /// way) and marks the day active.
 pub fn record(signals: &[TelemetrySignal]) {
@@ -120,6 +140,8 @@ pub struct TelemetryView {
     pub notice_shown: bool,
     pub notice_text: String,
     pub docs_url: String,
+    /// Show the one-time linking notice now (CUA-1881).
+    pub link_notice_due: bool,
 }
 
 fn client() -> Result<&'static Telemetry, String> {
@@ -136,7 +158,16 @@ fn view(t: &Telemetry) -> TelemetryView {
         notice_shown: s.notice_shown,
         notice_text: cua_telemetry::notice::TEXT.to_string(),
         docs_url: cua_telemetry::notice::DOCS_URL.to_string(),
+        link_notice_due: t.link_notice_due(),
     }
+}
+
+/// The one-time linking notice was closed (either button).
+#[tauri::command]
+pub fn telemetry_acknowledge_link_notice() -> Result<TelemetryView, String> {
+    let t = client()?;
+    t.acknowledge_link_notice();
+    Ok(view(t))
 }
 
 #[tauri::command]

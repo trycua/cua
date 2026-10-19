@@ -177,6 +177,11 @@ pub struct ApiMe {
     pub orgs: Vec<ApiOrg>,
     #[serde(default)]
     pub entitlements: ApiEntitlements,
+    /// The opaque account id usage data is linked to (`acct_` and 32 hex,
+    /// never the email or the subject). Absent while linking is off on the
+    /// server (`SPACES_CP_LINK_USAGE`), so no client links anything then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analytics_id: Option<String>,
 }
 
 /// The parts of the entitlements the apps read. Unknown plans mean free

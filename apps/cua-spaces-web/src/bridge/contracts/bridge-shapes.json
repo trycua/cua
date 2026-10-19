@@ -6457,12 +6457,6 @@
     "notifications.markRead": {
       "type": "null"
     },
-    "onboarding.complete": {
-      "$ref": "#/$defs/WkOnboarding"
-    },
-    "onboarding.get": {
-      "$ref": "#/$defs/WkOnboarding"
-    },
     "nudges.answer": {
       "type": "null"
     },
@@ -6495,6 +6489,12 @@
           "expiresMs"
         ]
       }
+    },
+    "onboarding.complete": {
+      "$ref": "#/$defs/WkOnboarding"
+    },
+    "onboarding.get": {
+      "$ref": "#/$defs/WkOnboarding"
     },
     "relay.usage": {
       "type": [

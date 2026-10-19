@@ -197,28 +197,22 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
         net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-:{guest}"));
     }
     push(&["-netdev", &net]);
-    push(&[
-        "-device",
-        if windows_arm {
-            "usb-net,netdev=net0,bus=xhci.0"
-        } else {
-            "virtio-net-pci,netdev=net0"
-        },
-    ]);
+    push(&["-device", "virtio-net-pci,netdev=net0"]);
 
     // Display + input: a framebuffer for VNC/screendump and an absolute
     // pointer so QMP input-send-event `abs` coordinates work.
-    if windows_arm {
-        push(&["-device", "ramfb"]);
-    } else {
-        match (&cfg.virgl_render_node, cfg.arch) {
-            (Some(_), _) => push(&["-device", "virtio-gpu-gl-pci"]),
-            (None, Arch::Aarch64) => push(&["-device", "virtio-gpu-pci"]),
-            (None, Arch::X86_64) => push(&["-vga", "std"]),
+    match (&cfg.virgl_render_node, cfg.arch, windows_arm) {
+        (_, _, true) => push(&["-device", "ramfb"]),
+        (Some(_), _, false) => push(&[
+            "-device",
+            "virtio-gpu-gl-pci",
+            "-device",
+            "qemu-xhci,id=xhci",
+        ]),
+        (None, Arch::Aarch64, false) => {
+            push(&["-device", "virtio-gpu-pci", "-device", "qemu-xhci,id=xhci"])
         }
-    }
-    if !windows_arm {
-        push(&["-device", "qemu-xhci,id=xhci"]);
+        (None, Arch::X86_64, false) => push(&["-vga", "std", "-device", "qemu-xhci,id=xhci"]),
     }
     push(&["-device", "usb-kbd", "-device", "usb-tablet"]);
     if let Some(socket) = &cfg.tpm_socket {
@@ -352,7 +346,7 @@ mod tests {
         for device in [
             "ramfb",
             "nvme,drive=disk0,serial=cua-disk0,bootindex=1",
-            "usb-net,netdev=net0,bus=xhci.0",
+            "virtio-net-pci,netdev=net0",
             "usb-storage,drive=cd0,bus=xhci.0,bootindex=0",
         ] {
             assert!(has(&a, ["-device", device]));
@@ -362,7 +356,11 @@ mod tests {
             if arg.contains("bus=xhci.0") {
                 assert!(controller < i);
             }
-            assert!(!arg.contains("virtio") && !arg.contains("ahci"));
+            assert!(
+                !arg.contains("virtio-gpu")
+                    && !arg.contains("virtio-scsi")
+                    && !arg.contains("ahci")
+            );
             assert!(!arg.contains("tpm") && arg != "-chardev");
         }
         for arch in [Arch::Aarch64, Arch::X86_64] {

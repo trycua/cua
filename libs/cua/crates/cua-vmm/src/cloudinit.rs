@@ -124,14 +124,6 @@ impl Seed {
 /// created, so a refused start leaves nothing behind.
 pub fn check_guest_support(spec: &StartSpec) -> Result<()> {
     let linux = spec.os == GuestOs::Linux;
-    if spec.os == GuestOs::Windows
-        && spec.effective_arch() == crate::types::Arch::Aarch64
-        && (spec.ssh.is_some() || spec.cloud_init_user_data.is_some())
-    {
-        return Err(VmmError::invalid(
-            "Windows ARM does not support SSH or cloud-init user-data",
-        ));
-    }
     if !linux && spec.command.as_ref().is_some_and(|c| !c.is_empty()) {
         // Only Linux guests run cloud-init; never drop the command silently.
         return Err(VmmError::Unsupported {

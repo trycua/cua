@@ -11,7 +11,7 @@
   "-drive", "file=/install.iso,if=none,id=cd0,format=raw,readonly=on,media=cdrom",
   "-device", "usb-storage,drive=cd0,bus=xhci.0,bootindex=0",
   "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:40022-:22,hostfwd=tcp:127.0.0.1:40080-:8080",
-  "-device", "usb-net,netdev=net0,bus=xhci.0",
+  "-device", "virtio-net-pci,netdev=net0",
   "-device", "ramfb",
   "-device", "usb-kbd",
   "-device", "usb-tablet",

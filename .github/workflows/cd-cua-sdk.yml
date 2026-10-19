@@ -584,7 +584,8 @@ jobs:
           # Sigstore identity they verify).
           python3 scripts/install/stamp_installers.py --repo "$GITHUB_REPOSITORY" --out stamped
           gh release upload cua-install-latest release-artifacts.json \
-            stamped/install.sh stamped/install.ps1 --clobber --repo "$GITHUB_REPOSITORY"
+            stamped/install.sh stamped/install.ps1 stamped/uninstall.sh stamped/uninstall.ps1 \
+            --clobber --repo "$GITHUB_REPOSITORY"
 
   # The Swift package's CuaSDKFFI.xcframework.zip joins the already-published
   # release when its build finishes; checksums.txt is rewritten to include it.

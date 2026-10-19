@@ -239,9 +239,8 @@ mod tests {
                 root: format!("daemon-{:08x}/", rand::random::<u32>()),
                 path_style: true,
             }),
-            cloud_ttl_secs: None,
         };
-        let b = backend(&config, home.path(), None);
+        let b = backend(&config, home.path());
         assert_eq!(b.kind(), "s3");
         let d = Drive::new(b, home.path().join("volume")).with_presence(Arc::new(Yes));
         let s = d.session(cua_volume::Context::agent("ada", None));

@@ -320,7 +320,7 @@ Named agents whose memory outlives their Space: homes in Cua Volume, routines, n
 
 Create a named agent whose memory outlives its Space.
 
-A persistent agent is a harness with a name, a Space and a home in the Cua Volume (agents/&lt;name&gt;/). Its harness keeps its memory in the home (Claude Code auto memory, Codex memories, Hermes MEMORY.md, the OpenClaw workspace), which is restored into the Space before each run and saved after each turn, so the agent remembers across runs, Space releases and machines. One run writes a home at a time. Start it with persistent_agent_send (or agent_start with home=&lt;name&gt;); the daemon notifies the user when a turn ends. Inside the Space the agent gets the `cua` bridge: notify_user, the drive, and the user's computers it was granted.
+A persistent agent is a harness with a name, a Space and a home in the Cua Volume (agents/&lt;name&gt;/). Its harness keeps its memory in the home (Claude Code auto memory, Codex memories, Hermes MEMORY.md, the OpenClaw workspace), which is restored into the Space before each run and saved after each turn, so the agent remembers across runs, Space releases and computers. One run writes a home at a time. Start it with persistent_agent_send (or agent_start with home=&lt;name&gt;); the daemon notifies the user when a turn ends. Inside the Space the agent gets the `cua` bridge: notify_user, the drive, and the user's computers it was granted.
 
 | | |
 | --- | --- |
@@ -355,7 +355,7 @@ JSON: the agent record: `name`, `harness`, `space`, `model`, `base_url`, `env_fr
 
 List persistent agents.
 
-Every persistent agent of this machine's cua home, with its Space, its current run and when its home was last saved.
+Every persistent agent of this computer's cua home, with its Space, its current run and when its home was last saved.
 
 | | |
 | --- | --- |
@@ -470,7 +470,7 @@ JSON: `files`, `bytes`, `unchanged`, `removed`, `blocked` (files the secret scan
 
 Pause a persistent agent: its run, its routines and its Space.
 
-One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended (Fleet has no per-claim pause), so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own machines are never suspended.
+One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended (Fleet has no per-claim pause), so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own computers are never suspended.
 
 | | |
 | --- | --- |
@@ -736,7 +736,7 @@ JSON: `marked` (how many changed).
 
 Let a persistent agent use one of the user's computers.
 
-Lets one persistent agent use one of the user's machines (its computer-use tools, through the agent's bridge). Asks the user for presence (Touch ID or passphrase) first. Other agents of the account get nothing.
+Lets one persistent agent use one of the user's computers (its computer-use tools, through the agent's bridge). Asks the user for presence (Touch ID or passphrase) first. Other agents of the account get nothing.
 
 | | |
 | --- | --- |
@@ -753,7 +753,7 @@ Lets one persistent agent use one of the user's machines (its computer-use tools
 | --- | --- | --- | --- |
 | `agent` | `string` | required | The persistent agent. |
 | `expires_in_secs` | `integer` | none | End the grant after this many seconds. Default: until revoked. At least 0. |
-| `machine` | `string` | required | The machine (a Space id, usually `relay:<machine-id>` from `cua host setup`). |
+| `machine` | `string` | required | The computer (a Space id, usually `relay:<computer-id>` from `cua host setup`). |
 
 #### Result
 
@@ -783,7 +783,7 @@ Takes the access back at once: the agent's next call is refused. No presence nee
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `agent` | `string` | required | The persistent agent. |
-| `machine` | `string` | none | The machine. Default: every machine. |
+| `machine` | `string` | none | The computer. Default: every computer. |
 
 #### Result
 
@@ -817,7 +817,7 @@ Which agents may use which of the user's computers, and the audited record of gr
 
 #### Result
 
-JSON: `{"grants"}` (each `id`, `agent`, `machine`, `created_ms`, `expires_ms`, `revoked`) and, with `audit`, `audit` (newest first: `ts_ms`, `principal`, `action`, `path` (the machine), `detail`) plus `audit_verified`.
+JSON: `{"grants"}` (each `id`, `agent`, `machine`, `created_ms`, `expires_ms`, `revoked`) and, with `audit`, `audit` (newest first: `ts_ms`, `principal`, `action`, `path` (the computer), `detail`) plus `audit_verified`.
 
 #### Errors
 
@@ -825,7 +825,7 @@ JSON: `{"grants"}` (each `id`, `agent`, `machine`, `created_ms`, `expires_ms`, `
 
 ## Session teleport
 
-Move a signed-in app session from this machine into a Space.
+Move a signed-in app session from this computer into a Space.
 
 | Tool | Description |
 | --- | --- |
@@ -836,7 +836,7 @@ Move a signed-in app session from this machine into a Space.
 
 Describe what a session teleport would move.
 
-Read on this machine from the app's own provider: items, sizes, which are sensitive and which are checked by default. With `space`, also reports whether the Space can import the app.
+Read on this computer from the app's own provider: items, sizes, which are sensitive and which are checked by default. With `space`, also reports whether the Space can import the app.
 
 | | |
 | --- | --- |
@@ -844,7 +844,7 @@ Read on this machine from the app's own provider: items, sizes, which are sensit
 | Platforms | all (macos, windows, linux) |
 | Metering | free |
 | Approval | permission `spaces:teleport_manifest`, in `spaces:readonly`; read-only, idempotent |
-| Requires (this machine) | `app_sessions` |
+| Requires (this computer) | `app_sessions` |
 | Swift SDK | `space.sessions.manifest(for:scope:)` |
 | Rust | `Teleport::manifest` |
 
@@ -881,7 +881,7 @@ Moves the app's signed-in session into the Space, but only through the Cua Keyva
 | Metering | free |
 | Approval | permission `spaces:teleport_app`; destructive |
 | Requires (spacesd) | `teleport.*` |
-| Requires (this machine) | `app_sessions` |
+| Requires (this computer) | `app_sessions` |
 | Swift SDK | `space.sessions.send(_ approval:)` |
 | Rust | `Teleport::send` |
 
@@ -1462,7 +1462,7 @@ Only for the user. Tests the storage first (bucket versioning, list, then write,
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `access_key_id` | `string` | none | The access key id (with the secret; both or neither). Saved in the credential store, never in a file. |
-| `backend` | `string` | required | `fs` (this machine) or `s3` (an S3-compatible bucket: AWS S3, R2, MinIO). `cloud` is refused. |
+| `backend` | `string` | required | `fs` (this computer) or `s3` (an S3-compatible bucket: AWS S3, R2, MinIO). `cloud` is refused. |
 | `dry_run` | `boolean` | `false` | Only test the connection; change nothing. Default false. |
 | `s3` | `object` | none | The bucket, for `s3`. |
 | `s3.bucket` | `string` | required |  |
@@ -1565,7 +1565,7 @@ JSON: the mount status after unmounting.
 
 Show the Cua Volume's sync state across devices.
 
-Devices sharing one bucket learn each other's changes through a change log in the bucket itself. A write that lost to a later one is never dropped: it stays in the file's history and as the visible conflict copy. A persistent agent may call it too (through its bridge): it sees the pending uploads and conflicts of files it can read and its own Space's volume. In a Space it reports this machine's view.
+Devices sharing one bucket learn each other's changes through a change log in the bucket itself. A write that lost to a later one is never dropped: it stays in the file's history and as the visible conflict copy. A persistent agent may call it too (through its bridge): it sees the pending uploads and conflicts of files it can read and its own Space's volume. In a Space it reports this computer's view.
 
 | | |
 | --- | --- |
@@ -1582,7 +1582,7 @@ No parameters.
 
 #### Result
 
-JSON: `device_id`, `device_name`, `feed` (`live`, `off` for a store on this machine, `offline` when the bucket stops answering, with `last_error`), `poll_interval_ms`, `last_poll_ms`, `last_remote_change_ms`, `pending_uploads`, `pending_bytes`, `conflicts` (each `path`, `conflict_path`, `winner_device`, `loser_device`, `winner_version`, `loser_version`, `ts_ms`), `devices` (each `id`, `name`, `this_device`, `last_seen_ms`, `last_change_ms`, `changes`), `last_error`, `pending` (each `path`, `bytes`: files still uploading), `backend` (`fs` or `s3`), `mount` (this machine's mount: `off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `cache` (a bucket's block cache, when there is one) and `volumes` (the volume mounted in Spaces: each `space`, `mount_path`, `backend`, `principal`).
+JSON: `device_id`, `device_name`, `feed` (`live`, `off` for a store on this computer, `offline` when the bucket stops answering, with `last_error`), `poll_interval_ms`, `last_poll_ms`, `last_remote_change_ms`, `pending_uploads`, `pending_bytes`, `conflicts` (each `path`, `conflict_path`, `winner_device`, `loser_device`, `winner_version`, `loser_version`, `ts_ms`), `devices` (each `id`, `name`, `this_device`, `last_seen_ms`, `last_change_ms`, `changes`), `last_error`, `pending` (each `path`, `bytes`: files still uploading), `backend` (`fs` or `s3`), `mount` (this computer's mount: `off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `cache` (a bucket's block cache, when there is one) and `volumes` (the volume mounted in Spaces: each `space`, `mount_path`, `backend`, `principal`).
 
 #### Errors
 

@@ -12,7 +12,7 @@ description: "Create, reach and delete sandboxes; pull, build and push images; l
 
 | Command | Description |
 | --- | --- |
-| [`cua sandbox`](#cua-sandbox) | Sandboxes: local or an existing machine (direct). |
+| [`cua sandbox`](#cua-sandbox) | Sandboxes: local or an existing computer (direct). |
 | [`cua sandbox create`](#cua-sandbox-create) | Create a sandbox: `cua sb create IMAGE [--on local\|direct:<addr>] [--kind auto\|container\|vm] [--runtime auto\|gvisor\|runc\|qemu\|lume]`. |
 | [`cua sandbox launch`](#cua-sandbox-launch) | Deprecated alias of `create`. |
 | [`cua sandbox connect`](#cua-sandbox-connect) | Reattach to a sandbox (NAME or a ref such as `local:NAME`) and print it. |
@@ -28,7 +28,7 @@ description: "Create, reach and delete sandboxes; pull, build and push images; l
 | [`cua sandbox overlay`](#cua-sandbox-overlay) | Inject freshly built binaries into a running sandbox (see `create --overlay`): NAME=PATH or NAME=PATH:GUEST_PATH. |
 | [`cua sandbox logs`](#cua-sandbox-logs) | Show logs: the backend console (QEMU serial, container) when there is one, else the guest system log through the spacesd. |
 | [`cua sandbox port-forward`](#cua-sandbox-port-forward) | Forward a guest port: `port-forward NAME PORT[:LOCAL]` (a local sandbox's port not published at create tunnels through cua-spacesd when the image has it). |
-| [`cua sandbox url`](#cua-sandbox-url) | Print a URL for a named service: usable from this machine (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; a token URL served by the cua daemon). |
+| [`cua sandbox url`](#cua-sandbox-url) | Print a URL for a named service: usable from this computer (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; a token URL served by the cua daemon). |
 | [`cua sandbox screenshot`](#cua-sandbox-screenshot) | Save a screenshot (PNG). |
 | [`cua sandbox mcp`](#cua-sandbox-mcp) | Talk to an MCP server a sandbox serves: `mcp NAME SERVICE tools`, `mcp NAME SERVICE call TOOL '{"a":1}'`. |
 | [`cua sandbox mcp config`](#cua-sandbox-mcp-config) | The endpoint URL and headers, for any MCP client. |
@@ -74,7 +74,7 @@ Every command also accepts the [global options](/cua-cli/reference/cli#global-op
 
 ## `cua sandbox`
 
-Sandboxes: local or an existing machine (direct).
+Sandboxes: local or an existing computer (direct).
 
 ```text output
 cua sandbox [OPTIONS] <COMMAND>
@@ -97,8 +97,8 @@ cua sandbox create [OPTIONS] [IMAGE] [-- <COMMAND>...]
 
 | Flag | Type | Default | Env var | Description |
 | --- | --- | --- | --- | --- |
-| <span id="cua-sandbox-create--on"></span>`--on` | string |  |  | Where it runs: local, direct:&lt;addr&gt; (an existing machine running cua-spacesd), or a registered provider. Default: `cua config get default.on` (`CUA_DEFAULT_ON`), else local. |
-| <span id="cua-sandbox-create--kind"></span>`--kind` | string |  |  | What kind of machine: auto (from the image: a container when it has a container rootfs; macOS, Windows and disk-only images are VMs), container or vm. |
+| <span id="cua-sandbox-create--on"></span>`--on` | string |  |  | Where it runs: local, direct:&lt;addr&gt; (an existing computer running cua-spacesd), or a registered provider. Default: `cua config get default.on` (`CUA_DEFAULT_ON`), else local. |
+| <span id="cua-sandbox-create--kind"></span>`--kind` | string |  |  | What kind of computer: auto (from the image: a container when it has a container rootfs; macOS, Windows and disk-only images are VMs), container or vm. |
 | <span id="cua-sandbox-create--runtime"></span>`--runtime` | string |  |  | Which engine: auto (the safest available) or one the location offers for the kind. Local: gvisor or runc (containers), qemu or lume (VMs). A local sandbox with --sidecar needs `--runtime runc` where gVisor would run (separate gVisor containers cannot share a network namespace). |
 | <span id="cua-sandbox-create--tier"></span>`--tier` | string |  |  | Image tier for an alias: `slim`, `full` (default) or macOS `xcode`. |
 | <span id="cua-sandbox-create--name"></span>`--name` | string |  |  | Sandbox name (generated when omitted). |
@@ -124,7 +124,7 @@ cua sandbox create [OPTIONS] [IMAGE] [-- <COMMAND>...]
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-sandbox-create"
-# A Linux desktop on this machine (a gVisor container)
+# A Linux desktop on this computer (a gVisor container)
 cua sb create linux --name dev
 
 # A web server container, ready when its HTTP service answers
@@ -475,7 +475,7 @@ cua sb port-forward local:dev 5432:15432
 
 ### `cua sandbox url`
 
-Print a URL for a named service: usable from this machine (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; a token URL served by the cua daemon).
+Print a URL for a named service: usable from this computer (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; a token URL served by the cua daemon).
 
 ```text output
 cua sandbox url [OPTIONS] <NAME> <SERVICE>

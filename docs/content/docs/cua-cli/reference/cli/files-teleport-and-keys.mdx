@@ -34,7 +34,7 @@ description: "Cua Volume files and sharing, moving an app session into a sandbox
 | [`cua volume config set`](#cua-volume-config-set) | Choose the backend. |
 | [`cua volume config set-keys`](#cua-volume-config-set-keys) | Save S3 keys in the credential store: the access key id and the secret, one per line on stdin. |
 | [`cua teleport`](#cua-teleport) | Move a desktop app session (tabs, profile, sign-in) into a sandbox. |
-| [`cua teleport providers`](#cua-teleport-providers) | List the apps this machine can teleport (JSON). |
+| [`cua teleport providers`](#cua-teleport-providers) | List the apps this computer can teleport (JSON). |
 | [`cua teleport manifest`](#cua-teleport-manifest) | Describe what teleporting an app would move (JSON). |
 | [`cua teleport push`](#cua-teleport-push) | Teleport an app session into a sandbox. |
 | [`cua keyvault`](#cua-keyvault) | The Cua Keyvault the daemon hosts: status, init, unlock, lock, saved passwords and approvals. |
@@ -467,7 +467,7 @@ cua teleport [OPTIONS] <COMMAND>
 
 ### `cua teleport providers`
 
-List the apps this machine can teleport (JSON).
+List the apps this computer can teleport (JSON).
 
 ```text output
 cua teleport providers [OPTIONS]
@@ -660,7 +660,7 @@ cua keyvault import-session [OPTIONS] --app <APP>
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-keyvault-import-session--app"></span>`--app` | string | required | The app to import from (a teleport provider id: `chrome`, `firefox`, `slack`, ...; `cua teleport providers` lists every one on this machine). |
+| <span id="cua-keyvault-import-session--app"></span>`--app` | string | required | The app to import from (a teleport provider id: `chrome`, `firefox`, `slack`, ...; `cua teleport providers` lists every one on this computer). |
 | <span id="cua-keyvault-import-session--profile"></span>`--profile` | string |  | The browser profile (name or path); default: the default profile. Ignored for a single-app provider (Slack, Discord, ...). |
 | <span id="cua-keyvault-import-session--site"></span>`--site` | string |  | Only this site's cookies (a registrable domain such as github.com). Repeatable; a browser with none named imports every site's cookies. Ignored (the whole session is one item) for a single-app provider. |
 | <span id="cua-keyvault-import-session--include-storage"></span>`--include-storage` | boolean | `false` | Also carry each named site's localStorage / IndexedDB origins. |

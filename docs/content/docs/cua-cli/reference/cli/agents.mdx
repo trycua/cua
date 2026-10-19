@@ -44,7 +44,7 @@ description: "Run coding agents in a sandbox, set up your AI agents, the stdio M
 | [`cua agent revoke-computer`](#cua-agent-revoke-computer) | Take a persistent agent's computer access back. |
 | [`cua agent computer-access`](#cua-agent-computer-access) | Which agents may use which computers, and the audit log. |
 | [`cua agent notifications`](#cua-agent-notifications) | The notifications the Cua app shows (turn ends, notify_user, requests). |
-| [`cua agents`](#cua-agents) | AI coding agents on this machine: install cua skills and configure the cua MCP server. |
+| [`cua agents`](#cua-agents) | AI coding agents on this computer: install cua skills and configure the cua MCP server. |
 | [`cua agents detect`](#cua-agents-detect) | List supported AI coding agents and which are installed (read-only). |
 | [`cua agents setup`](#cua-agents-setup) | Install the default cua skills and configure the cua MCP server. |
 | [`cua agents status`](#cua-agents-status) | What cua configured for each agent. |
@@ -636,13 +636,13 @@ cua agent routine disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
 Let a persistent agent use one of your computers (asks for presence).
 
 ```text output
-cua agent allow-computer [OPTIONS] <NAME> <MACHINE>
+cua agent allow-computer [OPTIONS] <NAME> <COMPUTER>
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `<NAME>` | string | required |  |
-| `<MACHINE>` | string | required | The machine's Space id (`cua host status` shows this machine's). |
+| `<COMPUTER>` | string | required | The computer's Space id (`cua host status` shows this computer's). |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -659,13 +659,13 @@ cua agent allow-computer ada relay:0123456789abcdef
 Take a persistent agent's computer access back.
 
 ```text output
-cua agent revoke-computer [OPTIONS] <NAME> [MACHINE]
+cua agent revoke-computer [OPTIONS] <NAME> [COMPUTER]
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `<NAME>` | string | required |  |
-| `<MACHINE>` | string | optional |  |
+| `<COMPUTER>` | string | optional |  |
 
 **Examples**
 

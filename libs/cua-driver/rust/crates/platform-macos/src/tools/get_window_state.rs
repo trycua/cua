@@ -1256,7 +1256,24 @@ mod window_scope_contract_tests {
 
     #[test]
     fn an_ax_windows_read_error_is_named_instead_of_a_zero_window_count() {
-        let reason = ax_window_unresolved_reason(800, 11, 0, Some(-25204));
+        let error = Some(crate::ax::bindings::kAXErrorCannotComplete);
+        let degradation = degradation_for(
+            true,
+            0,
+            Some(&WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: error,
+            }),
+            false,
+        );
+        assert_eq!(
+            degradation,
+            Degradation::AxWindowUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: error
+            }
+        );
+        let reason = ax_window_unresolved_reason(800, 11, 0, error);
         assert!(reason.contains("AXError -25204 (kAXErrorCannotComplete)"));
         assert!(!reason.contains("none of the 0 AXWindow"));
         assert!(ax_window_unresolved_reason(800, 11, 2, None).contains("none of the 2 AXWindow"));

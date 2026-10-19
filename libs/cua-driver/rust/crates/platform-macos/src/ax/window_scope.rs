@@ -261,6 +261,25 @@ mod tests {
     }
 
     #[test]
+    fn an_ax_windows_read_error_survives_the_scope_decision() {
+        let candidates = [TopLevelCandidate::new("AXMenuBar", None)];
+        let d = decide_window_scope(
+            &candidates,
+            67340,
+            Some(crate::ax::bindings::kAXErrorCannotComplete),
+            || WindowOwner::SamePid,
+        );
+        assert_eq!(
+            d.scope,
+            WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: Some(crate::ax::bindings::kAXErrorCannotComplete)
+            }
+        );
+        assert!(d.walk.is_empty());
+    }
+
+    #[test]
     fn foreign_id_reports_the_owner_pid() {
         let candidates = [
             TopLevelCandidate::new("AXMenuBar", None),

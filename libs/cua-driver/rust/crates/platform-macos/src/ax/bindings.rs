@@ -28,11 +28,20 @@ pub type AXUIElementRef = *mut __AXUIElement;
 pub type AXError = c_int;
 pub const kAXErrorSuccess: AXError = 0;
 pub const kAXErrorFailure: AXError = -25200;
+pub const kAXErrorIllegalArgument: AXError = -25201;
 pub const kAXErrorInvalidUIElement: AXError = -25202;
+pub const kAXErrorInvalidUIElementObserver: AXError = -25203;
+pub const kAXErrorCannotComplete: AXError = -25204;
 pub const kAXErrorAttributeUnsupported: AXError = -25205;
 pub const kAXErrorActionUnsupported: AXError = -25206;
-pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorNotificationUnsupported: AXError = -25207;
+pub const kAXErrorNotImplemented: AXError = -25208;
+pub const kAXErrorNotificationAlreadyRegistered: AXError = -25209;
+pub const kAXErrorNotificationNotRegistered: AXError = -25210;
 pub const kAXErrorAPIDisabled: AXError = -25211;
+pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorParameterizedAttributeUnsupported: AXError = -25213;
+pub const kAXErrorNotEnoughPrecision: AXError = -25214;
 
 // ── AXValue opaque type ──────────────────────────────────────────────────────
 
@@ -855,21 +864,21 @@ pub unsafe fn copy_ax_windows_or_error(
 
 pub fn ax_error_name(error: AXError) -> &'static str {
     match error {
-        -25200 => "kAXErrorFailure",
-        -25201 => "kAXErrorIllegalArgument",
-        -25202 => "kAXErrorInvalidUIElement",
-        -25203 => "kAXErrorInvalidUIElementObserver",
-        -25204 => "kAXErrorCannotComplete",
-        -25205 => "kAXErrorAttributeUnsupported",
-        -25206 => "kAXErrorActionUnsupported",
-        -25207 => "kAXErrorNotificationUnsupported",
-        -25208 => "kAXErrorNotImplemented",
-        -25209 => "kAXErrorNotificationAlreadyRegistered",
-        -25210 => "kAXErrorNotificationNotRegistered",
-        -25211 => "kAXErrorAPIDisabled",
-        -25212 => "kAXErrorNoValue",
-        -25213 => "kAXErrorParameterizedAttributeUnsupported",
-        -25214 => "kAXErrorNotEnoughPrecision",
+        kAXErrorFailure => "kAXErrorFailure",
+        kAXErrorIllegalArgument => "kAXErrorIllegalArgument",
+        kAXErrorInvalidUIElement => "kAXErrorInvalidUIElement",
+        kAXErrorInvalidUIElementObserver => "kAXErrorInvalidUIElementObserver",
+        kAXErrorCannotComplete => "kAXErrorCannotComplete",
+        kAXErrorAttributeUnsupported => "kAXErrorAttributeUnsupported",
+        kAXErrorActionUnsupported => "kAXErrorActionUnsupported",
+        kAXErrorNotificationUnsupported => "kAXErrorNotificationUnsupported",
+        kAXErrorNotImplemented => "kAXErrorNotImplemented",
+        kAXErrorNotificationAlreadyRegistered => "kAXErrorNotificationAlreadyRegistered",
+        kAXErrorNotificationNotRegistered => "kAXErrorNotificationNotRegistered",
+        kAXErrorAPIDisabled => "kAXErrorAPIDisabled",
+        kAXErrorNoValue => "kAXErrorNoValue",
+        kAXErrorParameterizedAttributeUnsupported => "kAXErrorParameterizedAttributeUnsupported",
+        kAXErrorNotEnoughPrecision => "kAXErrorNotEnoughPrecision",
         _ => "unknown AXError",
     }
 }

@@ -327,8 +327,8 @@ the key was, so installing is dragging the key into its place.
 `package-dmg.sh` lays the window out with a pinned
 [dmgbuild](https://github.com/dmgbuild/dmgbuild) (`scripts/dmg-settings.py`)
 and makes the alias with `scripts/make-alias.swift`. The art in
-`Support/dmg` and the app icon `Support/AppIcon.icns` (the key with the Cua
-mark, on a slate tile) are drawn from the site's keycap sprites by
+`Support/dmg` and the app icon `Support/AppIcon.icns` (the key with the Spaces
+mark, the Cua mark in stacked squares, on a slate tile) are drawn from the site's keycap sprites by
 `scripts/dmg-art/render.sh` (headless Chrome), which also writes the same icon
 to `apps/cua-spaces/src-tauri/icons` for the other apps; rerun it only when
 the art changes.

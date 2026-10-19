@@ -5,7 +5,6 @@
 <style>
   @font-face { font-family: "Outfit"; font-weight: 400; src: url(src/outfit-latin-400-normal.woff2) format("woff2"); }
   @font-face { font-family: "Outfit"; font-weight: 500; src: url(src/outfit-latin-500-normal.woff2) format("woff2"); }
-  @font-face { font-family: "Instrument Serif"; font-style: italic; src: url(src/instrument-serif-latin-400-italic.woff2) format("woff2"); }
   html, body { margin: 0; background: transparent; overflow: hidden; }
   .stage { position: relative; overflow: hidden; }
   .sky { position: absolute; inset: -12px; }
@@ -20,7 +19,6 @@
   /* Baked into the image, so it reads the same in light and dark Finder. */
   .copy { position: absolute; left: 42px; top: 34px; z-index: 30; font-family: "Outfit", sans-serif; color: #fff; text-shadow: 0 0 6px #000, 0 0 18px #000; }
   .copy h1 { margin: 0; font-size: 44px; font-weight: 500; letter-spacing: -0.035em; line-height: 1; white-space: nowrap; }
-  .copy .accent { font-family: "Instrument Serif", serif; font-style: italic; font-weight: 400; letter-spacing: -0.01em; font-size: 1.22em; line-height: .86; margin-right: .04em; }
   .copy p { margin: 14px 0 0 1px; font-size: 13.5px; font-weight: 400; color: #b4b8bf; letter-spacing: -0.005em; white-space: nowrap; }
 </style>
 <div class="stage" id="stage"></div>
@@ -55,11 +53,10 @@
     { src: "near-3", x: 97, y: 96, size: 19, depth: .95, rot: 0 },
   ];
   const LEGEND = {
+    // Also the app icon's legend: the Spaces stack, the official Cua mark (unaltered) in the front square.
     spaces: '<img src="src/spaces-tray-template.svg" style="opacity:.8;mix-blend-mode:multiply">',
     driver: '<img src="src/cua-driver-cursor.svg" style="opacity:.88">',
     lume: '<img src="src/lume-icon-white.svg" style="opacity:.88">',
-    // The app icon's key: the official Cua mark (unaltered), dark ink multiplied into the glaze.
-    cua: '<img src="src/cua-logo-black.svg" style="inset:20%;width:60%;height:60%;opacity:.8;mix-blend-mode:multiply">',
     apps: '<svg viewBox="0 0 100 100" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" opacity=".55"><path d="M58,14L24,78M42,14L76,78M16,60H84M20,86L28,72"/></svg>',
   };
   const TARGET = "product-1";
@@ -143,13 +140,13 @@
       LAYOUT.filter((e) => e.src !== TARGET).map((e) =>
         item(e.src, e.x / 100 * WIN.w, e.y / 100 * WIN.h, e.size / 100 * WIN.w, e.rot, { legend: e.legend, z: Math.round(e.depth * 10), soft: e.soft })).join("") +
       guides() +
-      `<div class="copy"><h1>One more <span class="accent">key</span>.</h1><p>Drag Cua Spaces into Applications.</p></div>`;
+      `<div class="copy"><h1>One more key.</h1><p>Drag Cua Spaces into Applications.</p></div>`;
   } else if (mode === "icon") {
     Object.assign(stage.style, { width: ICON + "px", height: ICON + "px" });
     const clip = `path('${squircle(ICON, (ICON - TILE) / 2)}')`;
-    // Slate night: a vertical slate gradient, the key on a soft drop shadow.
+    // Slate night (variant B): a vertical slate gradient, the key on a soft drop shadow.
     stage.innerHTML = `<div style="position:absolute;inset:0;clip-path:${clip};background:linear-gradient(#33415a, #121a27);overflow:hidden">
-        <div style="position:absolute;inset:0;filter:drop-shadow(0 26px 28px rgba(0,0,0,.35))">${iconKey((w) => sprite(TARGET, w, "cua"))}</div>
+        <div style="position:absolute;inset:0;filter:drop-shadow(0 26px 28px rgba(0,0,0,.35))">${iconKey((w) => sprite(TARGET, w, "spaces"))}</div>
       </div>`;
   } else if (mode === "alias") {
     Object.assign(stage.style, { width: ICON + "px", height: ICON + "px" });

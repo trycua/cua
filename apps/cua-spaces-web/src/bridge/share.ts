@@ -9,6 +9,7 @@
  * shows that a request is running.
  */
 
+import { noteTeammates } from "./first-run";
 import { useContext, useSyncExternalStore } from "react";
 import type { DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
@@ -113,7 +114,11 @@ export class ShareStore {
           : await this.adapter.call("sharing.unshare", { spaceId: request.space, who: request.who });
       this.setShares(spaceId, shares);
       outcome = { type: "done" };
-      if (request.kind === "share") this.onShared();
+      if (request.kind === "share") {
+        this.onShared();
+        // Teammates' emails entered: the first run's plan card offers Teams, not Pro.
+        if (request.who.includes("@")) noteTeammates();
+      }
     } catch (e) {
       outcome = { type: "failed", error: words(e) };
     }

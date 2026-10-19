@@ -128,6 +128,10 @@ public protocol TelemetryRunning: AnyObject, Sendable {
     /// Records signals the app core derived (`appTelemetry*`): the same ones
     /// the Tauri app sends for the same step.
     func record(_ signals: [AppTelemetrySignal])
+    /// The first run's usage notice was on screen and the person moved on
+    /// (left Welcome, finished the first run, or used the switch beside the
+    /// note): from here usage events may be sent. Keeps the switch as it is.
+    func acknowledgeNotice()
 }
 
 /// The SDK's telemetry setting (`$CUA_HOME/config.toml`, the same switch as
@@ -148,6 +152,15 @@ public final class LiveTelemetry: TelemetryRunning, @unchecked Sendable {
         guard !signals.isEmpty else { return }
         _ = appTelemetryRecord(signals: signals)
     }
+    /// Writes the notice marker (and records the `app_launched` that waited
+    /// for it) once; the switch stays as it is.
+    public func acknowledgeNotice() {
+        let s = telemetryStatus()
+        guard !s.noticeShown else { return }
+        do { try appTelemetryWelcomeLeft(on: s.enabled) } catch {
+            NSLog("Cua Spaces: the usage notice was not recorded: %@", LiveSpacesBackend.words(error))
+        }
+    }
 }
 
 /// An in-memory switch (fixtures, tests).
@@ -163,6 +176,12 @@ public final class FixtureTelemetry: TelemetryRunning, @unchecked Sendable {
     public private(set) var recorded: [AppTelemetrySignal] = []
     public func record(_ signals: [AppTelemetrySignal]) {
         if current.enabled { recorded += signals }
+    }
+    /// How many times the notice was acknowledged.
+    public private(set) var acknowledgements = 0
+    public func acknowledgeNotice() {
+        acknowledgements += 1
+        current.noticeShown = true
     }
 }
 

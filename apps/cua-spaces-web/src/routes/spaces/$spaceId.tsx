@@ -5,19 +5,21 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { parseDropped, useBridge, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type CreateReport, type Space, type StreamRow } from "@/bridge";
+import { hostResources, parseDropped, spaceResources, useBridge, useResources, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow } from "@/bridge";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
 import { AgentsSection } from "@/components/space-detail/agents-section";
 import { DropWell } from "@/components/space-detail/drop-well";
 import { FactList } from "@/components/space-detail/facts";
+import { SpaceResourcesPanel } from "@/components/resources/space-resources-panel";
 import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { thisComputerText } from "@/lib/host-labels";
 import { useSpaceVolumeError } from "@/lib/space-volume";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
@@ -58,6 +60,7 @@ function SpaceDetailPage() {
   const [report, setReport] = useState<CreateReport | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const { data: machines = [] } = useMachines();
+  const resources = useResources();
   const [confirm, setConfirm] = useState<Confirm>(null);
   const teleport = useTeleport();
   const sharing = useShareSheet();
@@ -283,6 +286,8 @@ function SpaceDetailPage() {
         </StreamSurface>
       )}
 
+      <SpaceResources space={space} spaces={spaces ?? []} snapshot={resources} machines={machines} />
+
       <div className="mt-8 grid items-start gap-x-6 md:grid-cols-2">
         <div>
           <FactList title="Details" facts={detail.facts} />
@@ -478,4 +483,22 @@ function surfaceState(
     );
   }
   return undefined;
+}
+
+/** Processor, memory and disk for this Space, when its computer sends them. */
+function SpaceResources({ space, spaces, snapshot, machines }: { space: Space; spaces: Space[]; snapshot: ResourcesSnapshot | null; machines: Machine[] }) {
+  const mine = spaceResources(snapshot, space.id);
+  const state = spaceState(space);
+  if (!mine || (state !== "running" && state !== "stopped")) return null;
+  const local = space.provider === "local";
+  const machine = local ? machines.find((m) => m.current) : machines.find((m) => m.id === space.host || m.spaceIds.includes(space.id));
+  const host = hostResources(snapshot, machine);
+  const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its computer");
+  // The Spaces on the same computer, with the numbers it sent, for the disk bar.
+  const sameComputer = (s: Space) => (local ? s.provider === "local" : s.host === space.host);
+  const siblings = spaces.flatMap((s) => {
+    const bytes = sameComputer(s) ? spaceResources(snapshot, s.id)?.diskOnHost?.bytes : null;
+    return bytes != null ? [{ id: s.id, name: s.name, bytes }] : [];
+  });
+  return <SpaceResourcesPanel space={mine} name={space.name} host={host} computer={computer} siblings={siblings} />;
 }

@@ -68,6 +68,7 @@ pub mod drive_settings;
 pub mod driver_preview;
 pub mod errors;
 pub mod experiments;
+pub mod first_run;
 pub mod host;
 pub mod installer;
 pub mod keyvault;

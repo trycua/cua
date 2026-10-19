@@ -1,6 +1,6 @@
 ---
-title: "System"
-description: "cua.env.v1 SystemService: capabilities, init, health, shutdown, viewer tickets and relay attach."
+title: "System, diagnostics and shared types"
+description: "cua.env.v1 SystemService, the image self-test report, and the types every spacesd service shares: ErrorInfo, principals and geometry."
 ---
 
 {/*
@@ -10,9 +10,9 @@ description: "cua.env.v1 SystemService: capabilities, init, health, shutdown, vi
   Version: 0.5.0
 */}
 
-The handshake (`GetCapabilities`), session init, health, shutdown, viewer tickets and joining a relay (`AttachRelay`).
+The handshake (`GetCapabilities`), session init, health, shutdown, viewer tickets and joining a relay (`AttachRelay`); the report of the image self-test (`SystemService.Diagnose` / `DiagnoseOnce`); and the shared types: errors (`google.rpc.Status` carrying `ErrorInfo`), principals and geometry.
 
-Source: `libs/cua/proto/cua/env/v1/system.proto`.
+Source: `libs/cua/proto/cua/env/v1/system.proto`, `libs/cua/proto/cua/env/v1/diagnose.proto`, `libs/cua/proto/cua/env/v1/common.proto`.
 
 ## SystemService
 
@@ -30,8 +30,8 @@ cua-spacesd at all (`sb.spacesd()`), and which features it may rely on.
 | [`Health`](#systemservicehealth) | [`HealthRequest`](#healthrequest) | [`HealthResponse`](#healthresponse) | unary |
 | [`Metrics`](#systemservicemetrics) | [`MetricsRequest`](#metricsrequest) | [`MetricsResponse`](#metricsresponse) | unary |
 | [`Shutdown`](#systemserviceshutdown) | [`ShutdownRequest`](#shutdownrequest) | [`ShutdownResponse`](#shutdownresponse) | unary |
-| [`Diagnose`](#systemservicediagnose) | [`DiagnoseRequest`](/cua-sdk/reference/protocol/env-diagnose#diagnoserequest) | [`DiagnoseResponse`](/cua-sdk/reference/protocol/env-diagnose#diagnoseresponse) | server stream |
-| [`DiagnoseOnce`](#systemservicediagnoseonce) | [`DiagnoseOnceRequest`](/cua-sdk/reference/protocol/env-diagnose#diagnoseoncerequest) | [`DiagnoseOnceResponse`](/cua-sdk/reference/protocol/env-diagnose#diagnoseonceresponse) | unary |
+| [`Diagnose`](#systemservicediagnose) | [`DiagnoseRequest`](#diagnoserequest) | [`DiagnoseResponse`](#diagnoseresponse) | server stream |
+| [`DiagnoseOnce`](#systemservicediagnoseonce) | [`DiagnoseOnceRequest`](#diagnoseoncerequest) | [`DiagnoseOnceResponse`](#diagnoseonceresponse) | unary |
 | [`CreateViewerTicket`](#systemservicecreateviewerticket) | [`CreateViewerTicketRequest`](#createviewerticketrequest) | [`CreateViewerTicketResponse`](#createviewerticketresponse) | unary |
 | [`AttachRelay`](#systemserviceattachrelay) | [`AttachRelayRequest`](#attachrelayrequest) | [`AttachRelayResponse`](#attachrelayresponse) | unary |
 | [`DetachRelay`](#systemservicedetachrelay) | [`DetachRelayRequest`](#detachrelayrequest) | [`DetachRelayResponse`](#detachrelayresponse) | unary |
@@ -70,7 +70,7 @@ Stops or restarts the driver, or powers off or reboots the guest.
 
 ### SystemService.Diagnose
 
-`/cua.env.v1.SystemService/Diagnose`, server stream: [`DiagnoseRequest`](/cua-sdk/reference/protocol/env-diagnose#diagnoserequest) to [`DiagnoseResponse`](/cua-sdk/reference/protocol/env-diagnose#diagnoseresponse).
+`/cua.env.v1.SystemService/Diagnose`, server stream: [`DiagnoseRequest`](#diagnoserequest) to [`DiagnoseResponse`](#diagnoseresponse).
 
 Runs the image self-test (the checks of `cua-spacesd doctor`) and
 streams each check as it finishes, then the report. Requires the token
@@ -78,7 +78,7 @@ even in bootstrap modes: the report names paths, versions and units.
 
 ### SystemService.DiagnoseOnce
 
-`/cua.env.v1.SystemService/DiagnoseOnce`, unary: [`DiagnoseOnceRequest`](/cua-sdk/reference/protocol/env-diagnose#diagnoseoncerequest) to [`DiagnoseOnceResponse`](/cua-sdk/reference/protocol/env-diagnose#diagnoseonceresponse).
+`/cua.env.v1.SystemService/DiagnoseOnce`, unary: [`DiagnoseOnceRequest`](#diagnoseoncerequest) to [`DiagnoseOnceResponse`](#diagnoseonceresponse).
 
 `Diagnose` as one unary call returning only the final report, for
 clients that cannot read server streams.
@@ -133,7 +133,7 @@ Response for `SystemService.GetCapabilities`.
 | `runtime_detail` | 6 | `string` | Free-form runtime detail (for example "runsc 20260901" or "kubevirt 1.4 / qemu 9.1"). |
 | `arch` | 7 | [`Architecture`](#architecture) | Guest CPU architecture. |
 | `display_server` | 8 | [`DisplayServer`](#displayserver) | The graphical session type, or `DISPLAY_SERVER_NONE` when headless. |
-| `displays` | 9 | repeated [`Display`](/cua-sdk/reference/protocol/env-common#display) | Displays attached to the guest desktop. Empty when headless. |
+| `displays` | 9 | repeated [`Display`](#display) | Displays attached to the guest desktop. Empty when headless. |
 | `features` | 10 | repeated [`Feature`](#feature) | Every feature the driver knows about, supported or not. Unsupported features carry a `limitation`. See `Feature` for canonical names. |
 | `hostname` | 11 | `string` | Guest hostname. |
 | `initialized` | 12 | `bool` | True once `Init` has succeeded at least once since the driver started. |
@@ -326,7 +326,7 @@ Request for `SystemService.CreateViewerTicket`.
 | `clipboard` | 3 | `bool` | Allow `ComputerService.GetClipboard` and `SetClipboard`. |
 | `files_root` | 4 | `string` | Guest directory the viewer may read and write through `FilesystemService` (drag-and-drop uploads and folder sharing). Empty means no file access. `~` is the desktop user's home. |
 | `audio_uplink` | 5 | `bool` | Allow a microphone uplink track (still subject to `InitRequest.audio_uplink`). |
-| `principal` | 6 | [`Principal`](/cua-sdk/reference/protocol/env-common#principal) | Who is viewing, shown to other participants. The id is prefixed with `viewer:` by the server. |
+| `principal` | 6 | [`Principal`](#principal) | Who is viewing, shown to other participants. The id is prefixed with `viewer:` by the server. |
 
 ### CreateViewerTicketResponse
 
@@ -457,3 +457,389 @@ What `SystemService.Shutdown` stops.
 | `SHUTDOWN_MODE_DRIVER_RESTART` | 2 | Restart the driver in place (re-exec). |
 | `SHUTDOWN_MODE_GUEST_POWEROFF` | 3 | Power off the guest. |
 | `SHUTDOWN_MODE_GUEST_REBOOT` | 4 | Reboot the guest. |
+
+## Types in `cua/env/v1/diagnose.proto`
+
+### DiagnoseOptions
+
+Options shared by `Diagnose` and `DiagnoseOnce`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `strict` | 1 | `bool` | Treat warnings (and skips not allowed by the manifest) as failures. |
+| `only` | 2 | repeated `string` | Run only checks whose id equals, or starts with `<entry>.`, one of these (for example "stream" or "auth.token_file"). Empty runs all. |
+| `skip` | 3 | repeated `string` | Skip checks matched the same way as `only`. |
+| `effects` | 4 | [`DiagnoseEffects`](#diagnoseeffects) | Which checks may change guest state. Unspecified means `NONE`. |
+| `expect_manifest` | 5 | `bytes` | A manifest (JSON, same schema as `/etc/cua-image/manifest.json`) to check against instead of the one baked into the image. Empty uses the image's own. |
+| `timeout` | 6 | `google.protobuf.Duration` | Overall budget. Unset means 120 seconds. Checks still running when it expires fail with a timeout. |
+| `host_time` | 7 | `google.protobuf.Timestamp` | The caller's wall clock, for the clock-skew check. Unset skips the comparison. |
+
+### DiagnoseRequest
+
+Request for `SystemService.Diagnose`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `options` | 1 | [`DiagnoseOptions`](#diagnoseoptions) | What to run. |
+
+### DiagnoseResponse
+
+One event of `SystemService.Diagnose`: `started`, then `check`, for each
+check, and a final `report`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `started` | 1 | [`DiagnoseCheckStarted`](#diagnosecheckstarted) (oneof `event`) | A check began. |
+| `check` | 2 | [`DiagnoseCheck`](#diagnosecheck) (oneof `event`) | A check finished. |
+| `report` | 3 | [`DiagnoseReport`](#diagnosereport) (oneof `event`) | The run finished. Always the last message. |
+
+### DiagnoseCheckStarted
+
+A check began.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `id` | 1 | `string` | Check id, for example "stream.encode.openh264". |
+| `group` | 2 | `string` | Check group, the id's first segment. |
+
+### DiagnoseOnceRequest
+
+Request for `SystemService.DiagnoseOnce`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `options` | 1 | [`DiagnoseOptions`](#diagnoseoptions) | What to run. |
+
+### DiagnoseOnceResponse
+
+Response for `SystemService.DiagnoseOnce`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `report` | 1 | [`DiagnoseReport`](#diagnosereport) | The final report. |
+
+### DiagnoseCheck
+
+The result of one check.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `id` | 1 | `string` | Stable id, `<group>.<name>[.<detail>]`. |
+| `group` | 2 | `string` | Group, the id's first segment (for example "auth"). |
+| `status` | 3 | [`CheckStatus`](#checkstatus) | Outcome after severity is applied. |
+| `severity` | 4 | [`CheckSeverity`](#checkseverity) | Severity from the manifest. |
+| `claimed_by` | 5 | repeated `string` | Manifest claims that make this check matter, for example "feature:desktop_stream" or "auth_mode:local". |
+| `message` | 6 | `string` | What happened, in one line. |
+| `remediation` | 7 | `string` | What to do about a warning or failure. Empty on pass. |
+| `duration_ms` | 8 | `uint32` | Wall time of the check in milliseconds. |
+| `facts` | 9 | map of `string` to `string` | Measured values (for example &#123;"backend": "openh264", "psnr_db": "41.2"&#125;). |
+| `artifacts` | 10 | repeated [`DiagnoseArtifact`](#diagnoseartifact) | Evidence files. |
+
+### DiagnoseArtifact
+
+Evidence produced by a check.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | File name, unique within the report (for example "screenshot.display0.png"). |
+| `media_type` | 2 | `string` | Media type, for example "image/png". |
+| `data` | 3 | `bytes` | Contents, when small enough to inline (at most 1 MiB). Empty otherwise. |
+| `path` | 4 | `string` | Where the full file was written in the guest. Empty when not written. |
+
+### DiagnoseReport
+
+The whole report.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `schema_version` | 1 | `uint32` | Report schema version. Always 1 for this message. |
+| `spacesd` | 2 | [`DiagnoseSpacesd`](#diagnosespacesd) | The daemon that ran the checks. Unset when a shim produced the report for an image without cua-spacesd. |
+| `image` | 3 | [`DiagnoseImage`](#diagnoseimage) | The image under test. |
+| `environment` | 4 | [`DiagnoseEnvironment`](#diagnoseenvironment) | Where the guest runs. |
+| `summary` | 5 | [`DiagnoseSummary`](#diagnosesummary) | Totals. |
+| `checks` | 6 | repeated [`DiagnoseCheck`](#diagnosecheck) | Every check, in run order. |
+| `fidelity` | 7 | [`DiagnoseFidelity`](#diagnosefidelity) | Facts that make a task behave differently between variants of one image. Compared key by key by the eval-parity lane. |
+| `producer` | 8 | `string` | What produced the report: "cua-spacesd", or "cua-doctor-shim/&lt;target&gt;". |
+| `started_at` | 9 | `google.protobuf.Timestamp` | When the run started. |
+
+### DiagnoseSpacesd
+
+The daemon that ran the checks.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `version` | 1 | `string` | cua-spacesd version. |
+| `protocol_revision` | 2 | `uint32` | `cua.env.v1` protocol revision it serves. |
+| `git_sha` | 3 | `string` | Source revision of the build, when known. |
+| `cua_driver_version` | 4 | `string` | Version of the linked cua-driver core. |
+
+### DiagnoseImage
+
+The image under test.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Image name from the manifest, for example "linux". |
+| `ref` | 2 | `string` | Reference the image was built as, when the manifest records it. |
+| `variant` | 3 | `string` | "rootfs" (container) or "containerdisk" (VM). |
+| `os` | 4 | `string` | "linux", "windows" or "macos". |
+| `manifest_sha256` | 5 | `string` | SHA-256 of the manifest the checks ran against. Empty without one. |
+| `manifest_source` | 6 | `string` | Where the manifest came from: a guest path, "request", or empty when there is none. |
+
+### DiagnoseEnvironment
+
+Where the guest runs.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `runtime` | 1 | `string` | Runtime: "container", "gvisor", "qemu", "kubevirt", "lume", "hyperv", "bare" or "unknown". |
+| `runtime_detail` | 2 | `string` | Free-form runtime detail, for example "runsc". |
+| `arch` | 3 | `string` | "x86_64" or "arm64". |
+| `init` | 4 | `string` | Init system: "systemd", "supervisord", "launchd", "scm" or "unknown". |
+| `display_server` | 5 | `string` | "x11", "wayland", "quartz", "win32" or "none". |
+| `os` | 6 | `string` | OS name and version, for example "Ubuntu 24.04". |
+
+### DiagnoseSummary
+
+Totals of a report.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `status` | 1 | [`CheckStatus`](#checkstatus) | Worst outcome: fail if any check failed, warn if any warned (fail under `strict`), else pass. |
+| `pass` | 2 | `uint32` | Passed checks. |
+| `warn` | 3 | `uint32` | Warnings. |
+| `fail` | 4 | `uint32` | Failures. |
+| `skip` | 5 | `uint32` | Skipped checks. |
+| `duration_ms` | 6 | `uint32` | Wall time of the whole run in milliseconds. |
+| `strict` | 7 | `bool` | True when the run used `strict`. |
+
+### DiagnoseFidelity
+
+Facts that change how a task behaves. Every key is always present; an
+unknown value is the empty string.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `display` | 1 | `string` | Primary display, "&lt;width&gt;x&lt;height&gt;@&lt;scale&gt;". |
+| `fonts_sha256` | 2 | `string` | SHA-256 over the sorted list of installed font files. |
+| `tz` | 3 | `string` | Time zone name. |
+| `locale` | 4 | `string` | Locale, for example "C.UTF-8". |
+| `clock_skew_ms` | 5 | `int64` | Guest clock minus the caller's clock, in milliseconds. 0 when the caller sent no `host_time`. |
+| `encoder` | 6 | `string` | Video encoder the stream would use, for example "openh264". |
+| `a11y_backend` | 7 | `string` | Accessibility backend, for example "atspi". |
+| `audio_backend` | 8 | `string` | Audio backend, for example "pipewire". |
+| `cpu_model` | 9 | `string` | CPU model string. |
+| `cpu_count` | 10 | `uint32` | Logical CPUs. |
+| `memory_mib` | 11 | `uint64` | Total memory in MiB. |
+| `gpu` | 12 | `string` | GPU description, or "none". |
+| `kernel` | 13 | `string` | Kernel release. |
+| `runtime` | 14 | `string` | Runtime, as in `DiagnoseEnvironment.runtime`. |
+| `init` | 15 | `string` | Init system, as in `DiagnoseEnvironment.init`. |
+| `packages_sha256` | 16 | `string` | SHA-256 over the installed package list (name and version). |
+| `app_versions` | 17 | map of `string` to `string` | Versions of the apps the manifest lists (for example &#123;"firefox": "130.0"&#125;). |
+| `tool_versions` | 18 | map of `string` to `string` | Versions of the tools the manifest lists (dev tiers, for example &#123;"node": "v22.20.0"&#125;). |
+| `simulator_runtimes` | 19 | repeated `string` | Available simulator runtimes, sorted (for example "iOS 26.0"). Empty unless the manifest claims some. |
+
+### DiagnoseEffects
+
+Which checks may act on the guest.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `DIAGNOSE_EFFECTS_UNSPECIFIED` | 0 | Not set. Same as `DIAGNOSE_EFFECTS_NONE`. |
+| `DIAGNOSE_EFFECTS_NONE` | 1 | Read-only checks. Input, window and fixture checks are skipped. |
+| `DIAGNOSE_EFFECTS_VIRTUAL_ONLY` | 2 | Effectful checks run, but only against fixture windows the doctor itself launched on the guest's virtual display. Refused on bare hosts. |
+
+### CheckStatus
+
+Outcome of one check.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `CHECK_STATUS_UNSPECIFIED` | 0 | Not reported. |
+| `CHECK_STATUS_PASS` | 1 | Works as claimed. |
+| `CHECK_STATUS_WARN` | 2 | Works with a caveat, or something unclaimed is off. |
+| `CHECK_STATUS_FAIL` | 3 | Broken. |
+| `CHECK_STATUS_SKIP` | 4 | Not run; `message` says why. |
+
+### CheckSeverity
+
+How much a check matters for this image, derived from the manifest.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `CHECK_SEVERITY_UNSPECIFIED` | 0 | Not reported. |
+| `CHECK_SEVERITY_REQUIRED` | 1 | The image claims it: a failure fails the report. |
+| `CHECK_SEVERITY_RECOMMENDED` | 2 | Optional in the manifest: a failure is reported as a warning. |
+| `CHECK_SEVERITY_INFO` | 3 | Not claimed: a failure is reported as a warning. |
+
+## Types in `cua/env/v1/common.proto`
+
+### Point
+
+A point in a two-dimensional coordinate space. Which space is always stated
+by the enclosing message (see `CoordinateSpace`).
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `x` | 1 | `double` | Horizontal coordinate, growing to the right. |
+| `y` | 2 | `double` | Vertical coordinate, growing downward. |
+
+### Rect
+
+An axis-aligned rectangle in a coordinate space stated by the enclosing
+message.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `x` | 1 | `double` | Left edge. |
+| `y` | 2 | `double` | Top edge. |
+| `width` | 3 | `double` | Width. Never negative. |
+| `height` | 4 | `double` | Height. Never negative. |
+
+### PixelSize
+
+A size in device (physical) pixels.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `width` | 1 | `uint32` | Width in pixels. |
+| `height` | 2 | `uint32` | Height in pixels. |
+
+### WindowRef
+
+Opaque, server-issued reference to a window.
+
+Native window identifiers (CGWindowID, HWND, X11 Window, portal tokens) are
+never exposed. `id` stays stable for the life of the native window. `epoch`
+changes whenever the server recycles an `id` or the window's identity is no
+longer trustworthy (for example, the owning process restarted). A request
+with a stale epoch fails with FAILED_PRECONDITION and
+`ERROR_REASON_STALE_HANDLE`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `id` | 1 | `string` | Opaque window identifier. Compare only for equality. |
+| `epoch` | 2 | `uint64` | Identity generation of `id`. |
+
+### Display
+
+A display (monitor) attached to the guest desktop.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `id` | 1 | `string` | Opaque, stable display identifier. The alias "primary" is accepted wherever a display id is expected. |
+| `name` | 2 | `string` | Human-readable name, for example "Built-in Retina Display" or "XVFB-0". |
+| `primary` | 3 | `bool` | True for the primary display. |
+| `bounds` | 4 | [`Rect`](#rect) | Display bounds in global logical points (`COORDINATE_SPACE_SCREEN`). |
+| `native_size` | 5 | [`PixelSize`](#pixelsize) | Size of the display's framebuffer in physical pixels. |
+| `scale_factor` | 6 | `double` | Physical pixels per logical point (for example 2.0 on Retina, 1.0 on most Linux framebuffers). |
+| `refresh_rate_hz` | 7 | `uint32` | Nominal refresh rate in hertz, 0 when unknown (for example Xvfb). |
+| `rotation_degrees` | 8 | `uint32` | Clockwise rotation in degrees: 0, 90, 180 or 270. |
+
+### DeliveryReport
+
+What the server actually did for an input or action request.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `delivery` | 1 | [`Delivery`](#delivery) | The delivery mode that was used. Never `DELIVERY_AUTO` or unspecified. |
+| `focus_changed` | 2 | `bool` | True if the focused window or frontmost app changed as a result. |
+| `pointer_moved` | 3 | `bool` | True if the user-visible pointer moved as a result. |
+| `detail` | 4 | `string` | Free-form, human-readable note (for example which platform path was used). Not for programmatic use. |
+
+### Principal
+
+Who is making a call. Sent as serialized bytes in the `x-cua-principal-bin`
+metadata entry.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `id` | 1 | `string` | Stable identifier chosen by the client (for example a user id or an agent run id). |
+| `display_name` | 2 | `string` | Name shown to other participants. |
+| `color` | 3 | `string` | Preferred cursor color as `#RRGGBB`. The server may substitute a different color to keep participants distinguishable. |
+| `kind` | 4 | [`PrincipalKind`](#principalkind) | Whether the principal is a human or an automated agent. |
+
+### ErrorInfo
+
+Machine-readable error detail, packed as `google.protobuf.Any` inside the
+`google.rpc.Status` in the `grpc-status-details-bin` trailer.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `reason` | 1 | [`ErrorReason`](#errorreason) | The specific reason. More precise than the gRPC status code. |
+| `message` | 2 | `string` | Human-readable description. Not for programmatic use. |
+| `feature` | 3 | `string` | Capability feature name involved, when `reason` is `ERROR_REASON_FEATURE_UNSUPPORTED` (for example "a11y"). |
+| `metadata` | 4 | map of `string` to `string` | Structured context. Well-known keys: "expected_sequence", "expected_offset", "path", "pid", "tag", "retry_after_ms". |
+
+### KeepAlive
+
+Periodic empty message sent on long-lived server streams so proxies (the
+Fleet gateway, load balancers) do not time out an idle stream. Clients
+ignore it apart from resetting their own liveness timers.
+
+No fields.
+
+### CoordinateSpace
+
+The coordinate space a `Point` or `Rect` is expressed in.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `COORDINATE_SPACE_UNSPECIFIED` | 0 | Not set. Servers treat it as `COORDINATE_SPACE_SCREEN`. |
+| `COORDINATE_SPACE_SCREEN` | 1 | Global desktop space in logical points, origin at the top-left of the primary display. This is the space `Display.bounds` uses. |
+| `COORDINATE_SPACE_WINDOW` | 2 | Logical points relative to the top-left corner of the target window's frame. Requires a target window on the request. |
+| `COORDINATE_SPACE_SCREENSHOT` | 3 | Pixels of a screenshot previously returned by `ComputerService.Screenshot`, identified by `screenshot_id` on the request. The server performs the one conversion to native coordinates and fails with `ERROR_REASON_STALE_GEOMETRY` if the display or window geometry changed since the screenshot was taken. |
+| `COORDINATE_SPACE_NORMALIZED` | 4 | Normalized coordinates in [0, 1] relative to the target window, or the target display when no window is given. |
+
+### Delivery
+
+How synthetic input or an action is delivered to the guest.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `DELIVERY_UNSPECIFIED` | 0 | Not set. Servers treat it as `DELIVERY_AUTO`. |
+| `DELIVERY_AUTO` | 1 | Prefer background delivery and fall back to foreground delivery when the platform or target cannot receive background input. |
+| `DELIVERY_BACKGROUND` | 2 | Deliver without moving the user-visible pointer, changing the focused window or activating the target app. Fails with `ERROR_REASON_WOULD_REQUIRE_ACTIVATION` rather than falling back. |
+| `DELIVERY_FOREGROUND` | 3 | Activate the target (if any) and deliver through the global input stream, moving the real pointer and focus. |
+
+### PrincipalKind
+
+Kind of principal behind a call.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `PRINCIPAL_KIND_UNSPECIFIED` | 0 | Not set. Servers treat it as `PRINCIPAL_KIND_HUMAN`. |
+| `PRINCIPAL_KIND_HUMAN` | 1 | A person driving a client UI. |
+| `PRINCIPAL_KIND_AGENT` | 2 | An automated agent. |
+
+### ErrorReason
+
+Machine-readable error reasons shared by every service.
+
+| Value | # | Description |
+| --- | --- | --- |
+| `ERROR_REASON_UNSPECIFIED` | 0 | Not set. |
+| `ERROR_REASON_UNAUTHENTICATED` | 1 | Missing or wrong bearer token, or an expired ticket. |
+| `ERROR_REASON_FEATURE_UNSUPPORTED` | 2 | The operation needs a feature the guest does not support. See `ErrorInfo.feature` and `SystemService.GetCapabilities`. |
+| `ERROR_REASON_PERMISSION_DENIED` | 3 | The guest OS denied permission (for example macOS TCC, UAC, AT-SPI disabled). |
+| `ERROR_REASON_STALE_HANDLE` | 4 | A `WindowRef` epoch no longer matches. |
+| `ERROR_REASON_STALE_GEOMETRY` | 5 | Geometry changed since the referenced screenshot or media frame. |
+| `ERROR_REASON_STALE_SNAPSHOT` | 6 | An accessibility element's snapshot is no longer current. |
+| `ERROR_REASON_WOULD_REQUIRE_ACTIVATION` | 7 | `DELIVERY_BACKGROUND` was requested but only foreground delivery could reach the target. |
+| `ERROR_REASON_TARGET_UNAVAILABLE` | 8 | The target window, app, display or element is gone. |
+| `ERROR_REASON_DELIVERY_FAILED` | 9 | The platform accepted the request but native delivery failed. |
+| `ERROR_REASON_PROCESS_NOT_FOUND` | 10 | No process matches the given pid or tag. |
+| `ERROR_REASON_PATH_NOT_FOUND` | 11 | The path does not exist. |
+| `ERROR_REASON_PATH_EXISTS` | 12 | The path already exists and overwrite was not requested. |
+| `ERROR_REASON_NOT_A_DIRECTORY` | 13 | A directory was required. |
+| `ERROR_REASON_IS_A_DIRECTORY` | 14 | A regular file was required. |
+| `ERROR_REASON_DISK_FULL` | 15 | The guest disk is full (HTTP 507 on the `/files` route). |
+| `ERROR_REASON_CHECKSUM_MISMATCH` | 16 | Received content does not match the declared SHA-256. |
+| `ERROR_REASON_SESSION_NOT_FOUND` | 17 | Unknown or expired upload, transfer, watcher, media session or forward. |
+| `ERROR_REASON_OFFSET_MISMATCH` | 18 | A chunk arrived at the wrong offset. `metadata["expected_offset"]` holds the offset the server expects next. |
+| `ERROR_REASON_SEQUENCE_GAP` | 19 | A sequenced input chunk skipped ahead. `metadata["expected_sequence"]` holds the sequence the server expects next. |
+| `ERROR_REASON_RATE_LIMITED` | 20 | Too many requests. `metadata["retry_after_ms"]` may hint a delay. |
+| `ERROR_REASON_LIMIT_EXCEEDED` | 21 | A request limit was exceeded (chunk size, message size, tree depth). |
+| `ERROR_REASON_NOT_INITIALIZED` | 22 | `SystemService.Init` has not configured a required default yet. |
+| `ERROR_REASON_INTERNAL` | 23 | An internal server error. Report a bug. |

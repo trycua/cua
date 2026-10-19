@@ -199,8 +199,8 @@ const PY = '/cua-sdk/reference/python';
 export const PAGES: PageSpec[] = [
   {
     slug: 'cua',
-    title: 'Cua client',
-    description: 'The Cua handle: embedded or daemon client, its configuration, and the SDK version.',
+    title: 'Cua client and local runtimes',
+    description: 'The Cua handle (embedded or daemon client, configuration, SDK version) and the local container and VM runtimes.',
     intro:
       'Every program starts from one `Cua` handle, embedded in the process or connected to a running `cua daemon`, with the same API either way. Its accessors return the other objects. The `config_*` functions read and write the user defaults in `$CUA_HOME/config.toml` (`cua config`).',
     items: ['Cua', 'CuaConfig', 'CuaInfo', 'CuaMode', 'cua_sdk_version', 'config_list', 'config_get', 'config_set', 'config_unset', 'config_path', 'ConfigEntry', 'locations', 'LocationInfo', 'check_placement'],
@@ -209,7 +209,7 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'sandbox',
     title: 'Sandbox',
-    description: 'Create, find, connect to and control sandboxes, locally, in the cloud or by address.',
+    description: 'Create, find, connect to and control sandboxes, and their lifecycle: wait, suspend, resume, restart, detach and delete.',
     intro: '`cua.sandboxes()` returns the `Sandboxes` collection; each sandbox is a `Sandbox` handle. The same options run locally and in the cloud: `on` is the switch (`local`, `cloud`, `direct:<addr>`), `kind` and `runtime` pick the machine.',
     items: [
       'Sandboxes',
@@ -268,8 +268,8 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'image',
-    title: 'Image',
-    description: 'Canonical images, image references, build layers and registry credentials.',
+    title: 'Images and create options',
+    description: 'Canonical images, image references, build layers, registry credentials, and the options `Sandboxes.create` takes.',
     intro:
       'Images are references: the functions here resolve and normalise them without pulling anything. `ImageBuild` layers and a `RegistrySecret` go into `SandboxCreateOptions`.',
     items: [
@@ -286,7 +286,7 @@ export const PAGES: PageSpec[] = [
       'RegistrySecret',
     ],
     modules: ['image'],
-    python: [['`cua_sandbox.Image`', `${PY}/image#image`]],
+    python: [['`cua_sandbox.Image`', `${PY}/sandbox#image`]],
   },
   {
     slug: 'services',
@@ -314,14 +314,14 @@ export const PAGES: PageSpec[] = [
         methods: ['service', 'services', 'forward', 'public_url', 'revoke_public_url', 'mcp_config', 'mcp'],
       },
     ],
-    python: [['`cua_sandbox` services, tunnels and MCP', `${PY}/services`]],
+    python: [['`cua_sandbox` services, tunnels and MCP', `${PY}/sandbox#services-tunnels-and-mcp`]],
   },
   {
     slug: 'spacesd',
-    title: 'Spacesd client',
-    description: 'SpacesdClient: the cua-spacesd client for processes, files, the desktop and media in a sandbox.',
+    title: 'Spacesd client and processes',
+    description: 'SpacesdClient: the cua-spacesd client, running processes in a sandbox, and sandboxes without cua-spacesd.',
     intro:
-      '`sandbox.spacesd()`, `space.spacesd()` (or `cua.spacesd(url, token)` for any spacesd) returns a `SpacesdClient`. It picks native gRPC or gRPC-Web, sends the token and chunks transfers. Methods by task: [processes](/cua-sdk/reference/spacesd/shell), [files](/cua-sdk/reference/spacesd/files), [computer](/cua-sdk/reference/spacesd/computer) and [media](/cua-sdk/reference/spacesd/media).',
+      '`sandbox.spacesd()`, `space.spacesd()` (or `cua.spacesd(url, token)` for any spacesd) returns a `SpacesdClient`. It picks native gRPC or gRPC-Web, sends the token and chunks transfers. Processes are below; [files](/cua-sdk/reference/spacesd/files) and the [computer and media](/cua-sdk/reference/spacesd/computer) have their own pages.',
     members: [{ object: 'Space', title: 'From a Space', methods: ['spacesd'] }],
     items: ['SpacesdClient', 'SpacesdCapabilities', 'SpacesdFeature', 'SpacesdHttpRequest', 'SpacesdHttpResponse', 'SpacesdHttpHeader'],
     modules: ['spacesd', 'types'],
@@ -353,8 +353,8 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'spacesd/computer',
-    title: 'Computer',
-    description: 'Screenshots, pointer, keyboard, clipboard and displays of a sandbox desktop through cua-spacesd.',
+    title: 'Computer and media',
+    description: 'Screenshots, pointer, keyboard, clipboard and displays of a sandbox desktop, and its video and audio streams.',
     intro: 'Coordinates are screen pixels. cua-spacesd delegates input to Cua Driver in the guest; these calls need an image with a desktop.',
     members: [
       {
@@ -388,7 +388,7 @@ export const PAGES: PageSpec[] = [
     title: 'Media',
     description: 'Video and audio streaming sessions and the sink callbacks you implement.',
     intro:
-      'Media sessions deliver encoded frames and audio packets (`FrameSink`, `AudioSink`) to callbacks you implement. Decoded BGRA frames and PCM audio come with Cua Spaces: see [Decoded media](/cua-sdk/reference/spaces/decoded-media).',
+      'Media sessions deliver encoded frames and audio packets (`FrameSink`, `AudioSink`) to callbacks you implement.',
     members: [
       {
         object: 'SpacesdClient',
@@ -412,7 +412,7 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces',
     title: 'Spaces',
-    description: 'The Spaces registry: create, add, resolve, delete and remove Spaces.',
+    description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
       '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).',
     items: ['Spaces', 'SpaceInfo', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
@@ -428,7 +428,7 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/space',
     title: 'Space',
-    description: 'A connected Space: shell, files, tools, windows and the hotspot.',
+    description: 'A connected Space: shell, files, tools, windows, icons, displays, the hotspot and teleport.',
     intro:
       'Connected machine primitives; missing spacesd features return `CapabilityMissing`.',
     items: [
@@ -449,7 +449,7 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/volume',
     title: 'Cua Volume',
-    description: 'The versioned volume every Space and agent shares: files, history, grants, requests and audit.',
+    description: 'The versioned volume every Space and agent shares: files, history, grants, requests, audit, storage and sync.',
     intro:
       'Cua Volume methods on the `Spaces` registry. Access is checked by the runtime; pass a `DriveView` to see the drive as a persistent agent does. Grants and approvals ask the user for presence. Guide: [Cua Volume](/spaces/guides/cua-volume).',
     members: [
@@ -584,8 +584,8 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'spaces/persistent-agents',
-    title: 'Persistent agents',
-    description: 'Named agents whose memory outlives their Space: homes in the Cua Volume, routines, notifications, pause and resume, access to your computers.',
+    title: 'Persistent agents and your cloud',
+    description: 'Named agents whose memory outlives their Space: homes in the Cua Volume, routines, notifications, pause and resume, access to your computers, and Spaces in your own AWS, Google Cloud or Modal account.',
     intro:
       'A persistent agent keeps its harness memory in its home in the Cua Volume (`agents/<name>/`). The daemon restores the home before each run, saves it after each turn, fires routines with or without an app open, and posts notifications. See [Persistent agents](/spaces/guides/persistent-agents).',
     members: [
@@ -653,457 +653,14 @@ export const PAGES: PageSpec[] = [
     title: 'Teleport',
     description: 'Move a running app between machines, with an approval callback.',
     intro:
-      'Teleport exports an app session from this machine and imports it on another. A consent callback sees the manifest first. `Space.teleport` and `Space.teleport_manifest` ask the Cua Spaces daemon, which runs teleport; an embedded runtime without Cua Spaces raises `HostCapabilityMissing`. To bring any app into a Space (install it, open files in it), see [Teleport an app](/cua-sdk/reference/spaces/teleport-apps).',
+      'Teleport exports an app session from this machine and imports it on another. A consent callback sees the manifest first. `Space.teleport` and `Space.teleport_manifest` ask the Cua Spaces daemon, which runs teleport; an embedded runtime without Cua Spaces raises `HostCapabilityMissing`. To bring any app into a Space (install it, open files in it), see [Teleport an app](/spaces/guides/teleport-an-app).',
     members: [{ object: 'Space', title: 'Teleport into a Space', methods: ['teleport', 'teleport_manifest'] }],
     items: ['TeleportApprover', 'TeleportDecision', 'TeleportReceipt'],
     modules: ['teleport_types'],
   },
   {
-    slug: 'spaces/decoded-media',
-    title: 'Decoded media',
-    description: 'Media sessions that deliver decoded BGRA frames and PCM audio.',
-    intro:
-      'The streaming decoder ships with Cua Spaces. `spacesd_open_media_decoded` opens a media session on a `SpacesdClient` and delivers decoded video (packed BGRA; VideoToolbox on macOS, OpenH264 elsewhere) to a `DecodedFrameSink`, requesting a keyframe whenever a reference is lost (Swift: `client.openMediaDecoded(...)`). The open source SDK delivers the encoded frames: see [Media](/cua-sdk/reference/spacesd/media).',
-    items: ['spacesd_open_media_decoded', 'spacesd_open_media_decoded_with_audio', 'DecodedVideoFrame', 'PcmAudio', 'DecodedFrameSink', 'PcmSink'],
-    modules: ['media_decode'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/teleport-host',
-    title: 'Host teleport',
-    description: 'The Teleport object of the Spaces apps: providers, manifests and sends from this machine.',
-    intro:
-      '[`teleport(cua)`](/cua-sdk/reference/spaces/teleport-apps#teleport) returns the `Teleport` object (Swift: `cua.teleport()`). It lists the apps whose sessions this machine can export, builds manifests and sends them into a Space; the app catalog, plans and runs are on [Teleport an app](/cua-sdk/reference/spaces/teleport-apps).',
-    items: ['Teleport', 'TeleportApproval'],
-    modules: ['teleport'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/teleport-apps',
-    title: 'Teleport an app',
-    description: 'The app catalog, plans with consent, runs, drops and window drags.',
-    intro: '`Teleport.catalog` lists every app on this machine with what teleport can do (full, install only, unsupported). `plan` says what will be installed, sent and imported, with a consent item per path and secret; `run` executes an approved plan with progress. `parse_drop` and `start_window_drag` feed drag-and-drop onto a Space.',
-    items: ['teleport'],
-    modules: ['teleport_app', 'teleport_app::space_side'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core',
-    title: 'Spaces app core',
-    description: 'The view models the Cua Spaces apps share: Space list, New Space wizard, teleport review, notch and Keyvault.',
-    intro:
-      'The Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
-    items: ['cua_spaces_register'],
-    modules: ['app_core', 'app_core_types'],
-    catalog: true,
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/spaces',
-    title: 'Space list',
-    description: 'The Space list (roster), the sidebar, a Space\'s detail and its remote windows.',
-    intro: 'The roster is the list of Spaces the app shows, from `Spaces.list` rows. `app_roster_reduce` applies an action; `app_sidebar` and `app_space_detail` derive the main window.',
-    items: [
-      'AppFactWarning',
-      'app_rows_to_spaces',
-      'app_status_line',
-      'app_this_machine_space',
-      'AppHostSummaryInput',
-      'app_agent_name',
-      'AppAgentStatus',
-      'app_ambient_dots',
-      'AppAmbientDots',
-      'app_group_windows_by_app',
-      'AppOpenApp',
-      'AppOpenWindow',
-      'AppThumbnailScene',
-      'AppWindowMode',
-      'AppNotice',
-      'AppNoticeKind',
-      'AppNewSpaceOn',
-      'app_hosted_rows',
-      'app_without_this_relay_machine',
-    ],
-    prefixes: ['AppRoster', 'app_roster_', 'AppSidebar', 'app_sidebar', 'AppSpace', 'app_space', 'AppRemoteWindow'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/creates',
-    title: 'Creates and deletes',
-    description: 'Spaces being created or deleted: the rows they show at once, their progress and how they hand over to the registry.',
-    intro:
-      '`app_creates_reduce` applies a create or delete action (a start, the SDK\'s create progress, a timer tick, the result) and `app_creates_compose` adds the pending rows to the registry\'s Spaces. Progress moves by the SDK\'s fractions, else by the time each phase usually takes for the image, from the `now` the shell passes.',
-    items: ['AppCreatesState', 'AppCreateAction', 'AppPendingCreate', 'AppPendingDelete'],
-    prefixes: ['app_creates_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/stream',
-    title: 'Stream section and facts',
-    description: 'A Space detail\'s Stream rows (desktop and windows with their icons and picture in picture) and its facts with live memory and storage use.',
-    intro: '`app_stream_section` builds the Stream rows both apps draw: the Desktop with the OS mark and the display\'s resolution, then one row per window titled by the window, with the app\'s icon source and a picture-in-picture button. `app_space_detail_live` adds Memory and Storage to the facts from `Space.usage`. `app_desktop_cover` says what the preview card shows before the first frame (Connecting, a Connect button, or the Space\'s own line) and `app_thumbnail_policy` how fresh the shells keep its blurred preview.',
-    items: [
-      'app_space_detail_live',
-      'AppSpaceUsage',
-      'app_usage_refresh_ms',
-      'AppPipCommand',
-      'AppPipEvent',
-      'app_desktop_cover',
-      'AppDesktopCover',
-      'AppDesktopCoverInput',
-      'AppDesktopCoverKind',
-      'app_thumbnail_policy',
-      'AppThumbnailPolicy',
-    ],
-    prefixes: ['AppStream', 'app_stream_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/new-space',
-    title: 'New Space wizard',
-    description: 'The New Space wizard: where it runs, image, engine, address and the create call.',
-    intro: '`app_wizard_initial` starts the wizard, `app_wizard_reduce` applies an action, and `app_wizard_view` derives the screen. `app_wizard_create_args` turns a finished wizard into `Spaces.create` arguments.',
-    items: [
-      'AppLocation',
-      'AppCloudEngine',
-      'AppLocalEngine',
-      'AppRuntime',
-      'AppKindOption',
-      'AppMenuOption',
-      'AppTile',
-      'AppCreatePlan',
-      'AppCreateSpaceArgs',
-      'AppLocalStorage',
-      'AppStorageVolume',
-      'AppCloudPricing',
-      'AppGpuChoice',
-      'AppGpuRow',
-      'AppRuntimeSwitch',
-    ],
-    prefixes: ['AppWizard', 'app_wizard_', 'AppAddress', 'AppStep'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/images',
-    title: 'Image catalog',
-    description: 'The images the New Space wizard offers: groups, sizes, the image field and its suggestions.',
-    intro: 'The catalog behind the New Space image field: each `AppSandboxImage` with its group, distro, tier and download sizes, and the suggestions the field shows as you type.',
-    items: ['AppSandboxImage', 'AppImageGroup', 'AppImageSizes', 'AppPlatformSize', 'AppImageFieldView', 'AppImageSuggestion', 'AppSuggestionGroup', 'AppImageDistro', 'AppImageTier'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/teleport',
-    title: 'Teleport picker',
-    description: 'The teleport picker and its catalog.',
-    intro: 'The picker lists `Teleport.catalog` entries and drives the steps up to the review. The overlays that show a teleport in progress are on [Teleport transfer and drag](/cua-sdk/reference/spaces/app-core/teleport-transfer).',
-    items: ['AppEntrySection'],
-    prefixes: ['AppPicker', 'app_picker_', 'AppCatalog', 'app_catalog_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/teleport-transfer',
-    title: 'Teleport transfer and drag',
-    description: 'The overlays that show a teleport in progress: the transfer overlay and drag-and-drop onto a Space.',
-    intro: 'The transfer overlay follows a running teleport step by step; the drag overlay shows a file or app dragged onto a Space.',
-    items: [],
-    prefixes: ['AppTransfer', 'app_transfer_', 'AppDragOverlay'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/teleport-run',
-    title: 'Teleport plan and run',
-    description: 'The teleport plan, its consent and capabilities, and the run\'s steps.',
-    intro: '`app_teleport_plan` turns a `Teleport.plan` into the consent the user sees; `AppTeleportRunEvent` and `AppTeleportRunReport` follow the run.',
-    items: [],
-    prefixes: ['AppTeleport', 'app_teleport_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/teleport-review',
-    title: 'Teleport review',
-    description: 'The review and consent before a teleport: what to send per site, from the app or from the Keyvault, and the choice remembered for next time.',
-    intro: '`AppReviewView` is the review sheet. `AppReviewToggle` and `AppReviewChoice` change what is sent, per site or per part; `app_review_remember` keeps the choice for the next teleport of the same app to the same Space, and `AppVaultSource` offers the items the Keyvault already holds, which need no Keychain prompt.',
-    items: ['AppReviewView', 'AppSendSource', 'AppVaultSource', 'AppRememberedChoice', 'AppPlanStepView', 'AppInstallCuaPrompt'],
-    prefixes: ['AppReview', 'app_review_', 'AppConsent'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/teleport-grid',
-    title: 'Teleport picker grid',
-    description: 'The teleport picker\'s tiles in both apps: tabs, app and window tiles with their icon and preview sources, and the arrow keys.',
-    intro: '`app_picker_app_grid`, `app_picker_window_grid` and `app_picker_remote_grid` build each tab\'s tiles; an app tile previews its frontmost window. `app_picker_grid_step` moves the selection for the arrow keys and `app_picker_grid_tabs` names the tabs.',
-    items: [],
-    prefixes: ['AppPickerTile', 'AppPickerGrid', 'app_picker_app_grid', 'app_picker_window_grid', 'app_picker_remote_grid', 'app_picker_grid_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/volume-app-core',
-    title: 'App core: Cua Volume storage, mount and sync',
-    description: 'Settings, Storage (this machine or an S3-compatible bucket, the Finder volume, the cache), the first run\'s Cua Volume page and the Drive page\'s devices and conflicts.',
-    intro:
-      '`app_storage_reduce` and `app_storage_section` drive Settings, Storage from the daemon\'s `volume_storage`, `volume_mount_status` and `volume_cache_stats` answers; its `request` names the tool to run (`volume_storage_set`, `volume_mount`, `volume_cache_set`, ...). S3 keys travel only in the `volume_storage_set` request. `AppDriveCard` is the first run\'s Cua Volume page (off by default), drawn over the `app_drive_mount_preview` miniature. `AppDriveSyncInput` feeds the Drive page\'s devices and conflicts.',
-    items: [],
-    prefixes: [
-      'AppStorage',
-      'app_storage_',
-      'AppDriveMount',
-      'app_drive_mount_',
-      'AppDriveS3',
-      'AppDriveStorage',
-      'AppDriveCheck',
-      'AppDriveCache',
-      'AppDriveCard',
-      'AppDriveStepRequest',
-      'AppDriveDevice',
-      'AppDriveConflict',
-      'AppDriveSync',
-      'AppConflictView',
-      'app_drive_sync_',
-      'app_drive_mount_from_json',
-    ],
-    catalog: true,
-    spaces: true,
-  },
-  {
-    slug: 'spaces/agents-app-core',
-    title: 'App core: agents, drive, notifications',
-    description: 'The Agents page (persistent agents, memory, routines, computer access), the Drive page and the notifications the apps post.',
-    intro: '`app_agents_reduce` and `app_agents_view` drive the Agents page from the daemon\'s persistent-agent, drive and routine tools; `app_drive_*` the Drive page; `app_notifications_plan` says which feed entries to post as system notifications (each once, none of the backlog on first run) and `app_notifications_view` draws the list.',
-    items: ['AppLineView', 'AppDriveEntryInput', 'AppSystemNote', 'app_agent_rows', 'app_agent_status_label', 'app_agent_subtitle'],
-    prefixes: ['AppAgent', 'app_agents_', 'AppPersistentAgent', 'AppFile', 'AppOpenFile', 'AppRoutine', 'AppComputerGrant', 'AppAccessAudit', 'AppTab', 'AppDrive', 'app_drive_', 'AppNotification', 'app_notifications_'],
-    catalog: true,
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/cloud',
-    title: 'Your cloud',
-    description: 'The "Connect a cloud" sheet and the New Space wizard\'s "Your cloud": providers with their found mark, Test that creates nothing, Connect, and what a connected cloud runs at what cost.',
-    intro: '`app_cloud_connect_reduce` applies an action and `app_cloud_connect_view` derives the sheet; its `request` is the `cloud_test` or `cloud_connect` call to run. `app_connected_clouds_from_status_json` turns the SDK\'s `cloud_status` into the wizard\'s `clouds`.',
-    items: ['AppConnectedCloud', 'AppCloudOffer', 'app_connected_clouds_from_status_json', 'app_connected_cloud_from_json', 'app_is_cloud_word'],
-    prefixes: ['AppCloudConnect', 'AppCloudProvider', 'AppCloudCheck', 'AppCloudTarget', 'AppCloudField', 'app_cloud_connect_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/drag-trigger',
-    title: 'Window drag trigger',
-    description: 'When dragging a window opens Teleport to Cua: move versus resize, the notch line and the dwell.',
-    intro: '`app_drag_classify` tells a move from a resize by the window\'s frame. `app_drag_trigger_initial` and `app_drag_trigger_apply` run the trigger: the cursor passes a line 5 pt above the notch\'s bottom edge, or rests 0.3 s in the Teleport to Cua box. `app_drag_displays` and `app_drag_portal_displays` give the notch geometry of each display.',
-    items: ['AppStillAnchor', 'AppTriggerPhase'],
-    prefixes: ['AppDrag', 'app_drag_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/experiments',
-    title: 'Experiments',
-    description: 'Settings > Experiments: the switches that hide Cua Volume, your own cloud and sharing until they are turned on.',
-    intro: '`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_settings_choose_experiment` applies a switch and saves the New UI choice ("Use classic UI"). `app_settings_resolve_new_ui` applies the New UI default for the update channel and version. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.',
-    items: ['app_experiments_from_json', 'app_settings_with_storage', 'app_settings_resolve_new_ui', 'app_settings_first_launch_channel', 'app_settings_choose_experiment', 'app_telemetry_experiments_changed', 'app_telemetry_experiments_on'],
-    prefixes: ['AppExperiment', 'app_experiments_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/run-on',
-    title: 'Run on',
-    description: 'The New Space Run on menu: This Mac, your machines that provide Spaces, and connected clouds.',
-    intro: '`app_wizard_placement_options` lists where a new Space can run: This Mac, each machine that provides Spaces (greyed out with why when offline or at its limit), and, with the Your cloud experiment on, each connected cloud.',
-    items: ['app_wizard_placement_options', 'app_space_host', 'AppPlacementOption', 'AppSpaceHost'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/power',
-    title: 'Power button',
-    description: 'The power button on a Space: suspend and resume, or turn off and on.',
-    intro: '`app_power_button` derives the button for a Space from what its provider supports and any power change in flight (`app_creates_is_powering`).',
-    items: ['app_creates_is_powering'],
-    prefixes: ['AppPower', 'app_power_', 'AppSpacePower', 'AppPendingPower'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/notch',
-    title: 'Notch',
-    description: 'The notch switcher: state, events, layout on the screen and motion.',
-    intro: 'The notch is the Space switcher at the top of the screen. `app_notch_reduce` applies an event; `app_notch_layout`, `app_notch_radii` and `app_notch_motion` place and animate it.',
-    items: ['AppScreenFacts', 'AppLogicalRect', 'app_presence_name', 'app_presence_principal_id', 'app_os_icon_svg', 'app_os_icon_system_symbol'],
-    prefixes: ['AppNotch', 'app_notch_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/keyvault',
-    title: 'Keyvault',
-    description: 'The Keyvault broker client and its overview: items, pending requests, grants, rules and audit.',
-    intro: '`KeyvaultClient` talks to the Keyvault broker and returns a `KeyvaultOverview`. The screens derived from it are on [Keyvault screens](/cua-sdk/reference/spaces/app-core/keyvault-screens).',
-    items: ['AppSensitiveOption', 'AppSensitiveGroup', 'app_sensitive_group_sdk', ],
-    prefixes: ['Keyvault', 'Kv', 'kv_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/keyvault-screens',
-    title: 'Keyvault screens',
-    description: 'The Keyvault page, sidebar, the vault list (apps, sites and items with their locks), the unlock prompt and the approval prompt.',
-    intro: 'The `kv_*` functions derive each Keyvault screen from a `KeyvaultOverview`. `kv_vault_view` groups the vault by source app and site, with a lock on each row; `kv_vault_reduce` applies search, selection and open groups; `kv_unlock_prompt` is the "Allow unattended access?" prompt. `kv_approval_open`, `kv_approval_reduce` and `kv_approval_view` drive the approval prompt; the `*_command` functions return the `KvCommand` to send.',
-    items: ['KvAccessRow', 'KvAccessKind', 'KvRecentRow', 'KvDecision', 'KvDecisionTone', 'KvTri', 'KvSelection', 'KvSigningBadge', 'KvTone'],
-    prefixes: ['kv_page', 'KvPage', 'kv_sidebar', 'KvSidebar', 'KvCategory', 'kv_list', 'KvListView', 'kv_vault_', 'KvVault', 'KvLock', 'KvKind', 'KvAppRow', 'kv_unlock_', 'KvUnlockPrompt', 'kv_delete_', 'KvDeleteConfirm', 'kv_lock_', 'kv_live_', 'KvPendingRow', 'kv_approval_', 'KvApproval'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/onboarding-settings',
-    title: 'Onboarding and settings',
-    description: 'First-run onboarding, the settings file and the hotkey label.',
-    intro: '`app_onboarding_reduce` steps through first-run onboarding. `app_settings_load` and `app_settings_save` read and write the apps\' settings file. The animated miniatures on the onboarding cards are on [Onboarding previews](/cua-sdk/reference/spaces/app-core/onboarding-previews).',
-    items: ['app_format_hotkey', 'AppKeyCombo', 'AppSwitcherTheme', 'AppUsageToggle', 'AppModeChoice', 'AppPresentationCard'],
-    prefixes: ['AppOnboarding', 'app_onboarding_', 'AppSettings', 'app_settings_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/onboarding-previews',
-    title: 'Onboarding previews',
-    description: 'The animated miniatures on the onboarding cards: the background computer-use card, the notch and the menu bar.',
-    intro: '`app_driver_preview` and `app_presentation_preview` return the miniatures of the AI agents and presentation cards; the `*_frame` functions give one frame of the loop and the `*_still` functions the frame shown with Reduce Motion. The onboarding flow itself is on [Onboarding and settings](/cua-sdk/reference/spaces/app-core/onboarding-settings).',
-    items: [],
-    prefixes: ['AppPresentation', 'app_presentation_', 'AppMenuPreview', 'AppPreview', 'AppDriver', 'app_driver_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/about',
-    title: 'About, updates and launch',
-    description: 'The About window and its update channel, what the apps do once they launch (the bundled cua install), and the daemon and refresh reports they read.',
-    intro: '`app_about_view` builds the About window from the shell\'s `AppAboutInput`; `app_about_after_launch` and `app_about_restart_daemon` say what to do after an update or when the daemon is from another build. `AppCliInstaller` puts the bundled `cua` on PATH on first launch.',
-    items: ['AppDaemonCheck', 'app_daemon_check_from_json', 'AppRefreshReport', 'app_refresh_report_from_json', 'AppUpdateChannel'],
-    prefixes: ['AppAbout', 'app_about_', 'AppLaunch', 'app_launch_', 'AppCliInstall', 'AppInstallMethod'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/account-app-core',
-    title: 'App core: billing, relay usage and Teams',
-    description: 'The Billing and Relay usage rows in Settings, the out-of-credit and relay allowance notices, and the Teams section.',
-    intro:
-      'The apps take no payment details: the website handles credit and cards. `AppBillingStatus` is what Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space refused for want of credit shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it. `app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does); `app_relay_usage_view` derives the Settings row and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade. Nothing stops at the limit. `app_teams` turns the account\'s `AppTeamsInput` into the Teams rows of Settings: the signed-in state, each team with its people and the role of each.',
-    items: ['AppCreditNotice'],
-    prefixes: ['AppBilling', 'AppRelay', 'app_relay_', 'AppTeam', 'app_teams'],
-    catalog: true,
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/this-machine',
-    title: 'This machine',
-    description: 'The This machine roster entry, its page and the host setup form.',
-    intro: '`app_with_this_machine` puts This machine first in the roster. `app_host_panel` derives its page from `app_host_state`; `app_host_form_reduce` and `app_host_form_view` drive the host setup form, whose `request` goes to `app_host_setup` (Swift: `host.setupRequest(...)`).',
-    items: ['app_with_this_machine', 'AppPermissionRow'],
-    prefixes: ['AppHost', 'app_host_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/window',
-    title: 'Window, menu bar and Settings',
-    description: 'The window chrome, a Space\'s toolbar and sections, the menu bar menu and Settings.',
-    intro: '`app_main_chrome`, `app_menu_bar` and `app_settings_page` give the window chrome, the menu bar menu and the Settings page. `app_space_detail_copy` holds the words of a Space\'s sections. The coding agents\' rows of Settings are on [Settings, Agents](/cua-sdk/reference/spaces/app-core/agent-keys). `app_login_item_launch_plan` decides when the apps turn on launch at login by themselves.',
-    items: [
-      'app_display_name',
-      'app_display_path',
-      'app_format_bytes',
-      'AppFact',
-      'AppFactCopy',
-      'app_delete_failed_text',
-      'AppDetailCopy',
-      'app_space_detail_copy',
-      'AppDetailAction',
-      'AppDetailActionId',
-      'AppDeleteConfirm',
-      'AppSentFileInfo',
-      'app_sent_file',
-      'app_sent_files_from_json',
-      'app_drop_sending_text',
-      'app_drop_sent_text',
-      'AppSignInPhase',
-      'AppTelemetryInput',
-      'app_menu',
-      'AppMenuInput',
-      'app_menu_input_from_json',
-      'app_openable_count',
-    ],
-    prefixes: [
-      'AppChromeInput',
-      'app_chrome_',
-      'AppMainChrome',
-      'app_main_chrome',
-      'AppMenuItem',
-      'app_menu_bar',
-      'AppSettingsInput',
-      'AppSettingsPage',
-      'AppSettingsRow',
-      'AppSettingsSection',
-      'AppSettingsOption',
-      'app_settings_page',
-      'app_settings_input_',
-      'AppLoginItem',
-      'app_login_item_',
-    ],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/devices',
-    title: 'Devices',
-    description: 'Settings > Devices: this device\'s enrollment, the account\'s devices, Recent Access, and the enroll and approval sheets.',
-    intro:
-      '`app_devices_view` derives the Devices page from `app_devices_input` (a `Devices.snapshot`): this device\'s enrollment, the account\'s devices with their buttons, approval prompts that ask for presence, and Recent Access in words. `app_enroll_reduce` / `app_enroll_view` drive the enroll sheet (sign in again, or a one-time code approved elsewhere); `app_approve_reduce` / `app_approve_view` drive the approval sheet, whose `request` goes to `Devices.approve` after Touch ID or the login password; `app_confirm_presence` asks for that confirmation with the system\'s own prompt (Touch ID or the login password on macOS, Windows Hello, polkit on Linux). `app_machine_access_notice` says why a device that is signed in but not enrolled cannot open the account\'s machines, for their greyed-out Connect.',
-    items: ['AppAuditInput', 'AppActivityRow', 'AppBannerTone', 'AppThisDevice', 'AppEnrollmentKind', 'AppApprovalPrompt', 'AppMachineInput', 'AppUnconfirmedMachine', 'app_machine_access_notice', 'AppMachineAccessNotice'],
-    prefixes: ['AppDevice', 'app_devices_', 'AppEnroll', 'app_enroll_', 'AppApprove', 'app_approve_'],
-    modules: ['presence'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/agent-keys',
-    title: 'Settings, Agents',
-    description: 'Settings > Agents: the coding agents\' rows, the provider keys saved in the keychain, and the add or replace sheet.',
-    intro:
-      'The `app_agent_setup*` and `app_agent_settings_*` functions turn `AgentSetup` results into the coding agents\' rows. `app_agent_keys_view` derives the key rows from `app_agent_keys_input_from_json` (the daemon\'s `agent_keys.list` answer: each saved key\'s provider, the variable a run gets it as, its last four characters and when it was added). `app_agent_key_form` drives the add or replace sheet, with `app_agent_key_name_problem` for an Other key\'s variable name; `app_agent_key_remove_confirm` is the confirmation before a key is removed.',
-    items: [],
-    prefixes: ['AppAgentSetup', 'AppAgentSettingsRow', 'app_agent_setup', 'app_agent_settings_', 'AppAgentKey', 'app_agent_key'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/share',
-    title: 'Share sheet',
-    description: 'The Share sheet: who a Space is shared with (viewer or editor) and the share request to run.',
-    intro:
-      '`app_share_view` derives the Share sheet from `AppShareInput` (the Space and its `Space.shares`): one row per person with a role menu, the email field and why sharing is unavailable. `app_share_reduce` applies an action; its `request` goes to `Space.share` or `Space.unshare`, which ask for presence first.',
-    items: [],
-    prefixes: ['AppShare', 'app_share_', 'AppRoleOption'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/machines-app-core',
-    title: 'Machines page',
-    description: 'The Machines page\'s rows: this machine, your machines and your devices, each computer once.',
-    intro:
-      '`app_machines_page_rows` builds the Machines page from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account\'s devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. Every Spaces UI lists these rows.',
-    items: ['AppDeviceIn'],
-    prefixes: ['AppMachinePageRow', 'AppMachinesPageInput', 'app_machines_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-checklist-palette',
-    title: 'Getting started and the command palette',
-    description: 'The getting-started checklist, the command palette\'s ranking and the shared keyboard shortcuts.',
-    intro:
-      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. The host app keeps the one `AppChecklistState`. `app_checklist_observe_from` reads what the app shows (the [Machines page](/cua-sdk/reference/spaces/machines-app-core) rows, the Spaces, the agents) as the same `Observe` action in every UI. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, what the app shows now, or progress merged from another copy) and returns the new state with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
-    items: [],
-    prefixes: ['AppChecklist', 'app_checklist_', 'AppKeybinding', 'app_keybindings', 'AppPaletteEntry', 'app_palette_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/telemetry',
-    title: 'Usage telemetry',
-    description: 'Which anonymous usage events a Spaces app step means, and sending them.',
-    intro:
-      'Each `app_telemetry_*` function takes a reducer step (the state before it and the action) and returns the `AppTelemetrySignal`s it means: first-run pages, Space creates, Settings, Storage, sharing and enrollment, as fixed words only. `app_telemetry_record` sends them on the SDK\'s telemetry client, where every switch and the first-run notice apply. `app_telemetry_start` and `app_telemetry_welcome_left` hold the first events until the first run\'s Welcome page is left, with its usage-data switch deciding. What is sent: [Telemetry and privacy](/cua-sdk/concepts/telemetry).',
-    items: [],
-    prefixes: ['AppTelemetrySignal', 'app_telemetry_'],
-    spaces: true,
-  },
-  {
     slug: 'spaces/devices',
-    title: 'Devices',
+    title: 'This device on the relay',
     description: 'This device as a client of the account on the relay: enroll, approve, rename, revoke and the audit log.',
     intro:
       '`auth.devices(relay_url, name)` returns this device on the relay, its key in the session\'s credential store (shared with the `cua` CLI and daemon). A device lists and reaches the account\'s machines once enrolled: right after a fresh sign-in (a sign-in through `Auth.begin_login` re-registers a device that already has a key), or by a one-time code approved from an enrolled device (`cua devices approve`). A new key of the same machine replaces its old record. Enrollment lasts 30 days, then one approval or a fresh sign-in re-verifies it. Nothing here prompts; gate `approve` behind presence in your UI.',
@@ -1111,25 +668,25 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'spaces/host',
-    title: 'Host and relay',
-    description: 'Unattended host setup and the cua-relay directory client.',
+    title: 'Host, relay and devices',
+    description: 'Unattended host setup, the cua-relay directory client, and this device\'s enrollment on the relay.',
     intro: 'Set this machine up for unattended access, and reach account machines through the relay.',
     items: ['Host', 'Relay'],
     modules: ['host'],
   },
   {
     slug: 'auth',
-    title: 'Auth',
-    description: 'Sign-in and the credential store the SDK, the CLI and the daemon share.',
-    intro: '`cua.auth()` signs in and reads the shared session. Your own cloud and the relay use it.',
+    title: 'Auth and telemetry',
+    description: 'Sign-in, the credential store the SDK, the CLI and the daemon share, and the telemetry switches.',
+    intro: '`cua.auth()` signs in and reads the shared session. Cloud calls use it when no client credentials are configured.',
     items: ['Auth', 'LoginAttempt'],
     modules: ['auth'],
-    python: [['`cua_sandbox.configure()`', `${PY}/configuration#configure`]],
+    python: [['`cua_sandbox.configure()`', `${PY}/runtimes#configure`]],
   },
   {
     slug: 'agents',
-    title: 'Coding agents',
-    description: 'Run coding agents (Claude Code, Codex, Gemini CLI, OpenCode, ...) inside any sandbox.',
+    title: 'Coding agents and setup',
+    description: 'Run coding agents (Claude Code, Codex, Gemini CLI, OpenCode, ...) inside any sandbox, and set them up on this machine.',
     intro: '`sandbox.agents()` (or `guest.agents()`) runs a harness over the Agent Client Protocol: normalized events, follow-ups, interrupts and results. Runs outlive the handle that started them.',
     members: [
       { object: 'Sandbox', title: 'Agents in a sandbox', methods: ['agents'] },
@@ -1156,6 +713,35 @@ export const PAGES: PageSpec[] = [
   },
 ];
 
+/**
+ * Sections rendered on another page: section slug -> the page it joins. The
+ * section keeps its own items, intro and anchors under a `##` heading of its
+ * title, so a module family reads as one page while staying under the page
+ * budget (docs/scripts/page-budget.test.ts).
+ */
+export const MERGED: Record<string, string> = {
+  local: 'cua',
+  'sandbox/lifecycle': 'sandbox',
+  'sandbox/options': 'image',
+  'sandbox/without-spacesd': 'spacesd',
+  'spacesd/shell': 'spacesd',
+  'spacesd/media': 'spacesd/computer',
+  'spaces/create': 'spaces',
+  'spaces/agents': 'spaces',
+  'spaces/windows': 'spaces/space',
+  'spaces/teleport': 'spaces/space',
+  'spaces/cloud': 'spaces/persistent-agents',
+  'spaces/volume-sync': 'spaces/volume',
+  'spaces/devices': 'spaces/host',
+  'agent-setup': 'agents',
+  telemetry: 'auth',
+};
+
+/** The pages that get a file: those no other page absorbs. */
+export function outputPages(pages: PageSpec[]): PageSpec[] {
+  return pages.filter((p) => !MERGED[p.slug]);
+}
+
 /** The two pages every item links into. */
 const ERRORS_SLUG = 'errors';
 const TYPES_SLUG = 'types';
@@ -1179,7 +765,7 @@ const SPACES_SWIFT = path.join(REPO_ROOT, 'libs', 'spaces-app-swift', 'Sources',
 export const SPACES_NOTE =
   'These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.';
 /** Reference pages stay readable and small (docs.cua.ai eager-imports every page). */
-export const MAX_WORDS = 5000;
+export const MAX_WORDS = 8000;
 /** Compiled MDX size drives the docs server's memory: keep each page well under this. */
 export const MAX_BYTES = 60_000;
 /** docs/scripts/page-budget.test.ts: highlighted blocks and Tabs per page. */
@@ -1188,10 +774,10 @@ export const MAX_TABS = 30;
 
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
-  ['Sandboxes', ['cua', 'sandbox', 'image', 'os-image-catalog', 'image-software', 'services', 'local', 'runtime-support']],
+  ['Sandboxes', ['cua', 'sandbox', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
   ['Inside a sandbox', ['spacesd', 'agents']],
   ['Spaces', ['spaces']],
-  ['Account', ['auth', 'agent-setup', 'telemetry']],
+  ['Account', ['auth']],
   ['Errors and types', [ERRORS_SLUG, TYPES_SLUG]],
   ['Language packages', ['python', 'typescript', 'rust']],
   ['Protocol', ['protocol']],
@@ -1747,7 +1333,7 @@ export function itemHeading(item: { kind: ItemKind; name: string }): string {
 }
 
 export function pageRoute(slugPath: string): string {
-  return `${ROUTE}/${slugPath}`;
+  return `${ROUTE}/${MERGED[slugPath] ?? slugPath}`;
 }
 
 /** Name -> route#anchor for every item, plus the error type. */
@@ -2079,14 +1665,17 @@ function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: R
   return out;
 }
 
-function renderObjectPage(p: Placed, rc: RenderContext, version: string): string {
+/** One section's body: intro, Python pointer, header, member sections, items. */
+function renderSection(p: Placed, rc: RenderContext, version: string, heading?: string): string[] {
   const { spec } = p;
   const body: string[] = [...(spec.spaces ? ['<Callout title="Cua Spaces app export">', SPACES_NOTE, '</Callout>', ''] : []), spec.intro, '', ...pythonLine(spec)];
   const header = readHeader(`cua-sdk/${spec.slug}.md`, { version });
   if (header) body.push(header, '');
   for (const m of p.members) {
     const home = rc.links.get(m.object.name);
-    body.push(`## ${m.section.title}`, '', `Methods of [\`${m.object.name}\`](${home ? relLink(home, spec.slug) : '#'}).`, '');
+    // A merged section's heading already names a member section of the same title.
+    if (m.section.title !== heading) body.push(`## ${m.section.title}`, '');
+    body.push(`Methods of [\`${m.object.name}\`](${home ? relLink(home, spec.slug) : '#'}).`, '');
     for (const method of m.methods) {
       body.push(...renderCallable(m.object.name, method, { name: m.object.name, kind: 'object' }, 'method', rc));
     }
@@ -2097,12 +1686,23 @@ function renderObjectPage(p: Placed, rc: RenderContext, version: string): string
     body.push('## All items', '', `${items.length} items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.`, '');
     body.push(...catalogIndex(items, spec.slug, rc), '');
   }
+  return body;
+}
+
+/**
+ * A page: its own section, then each section `MERGED` into it, under a `##`
+ * heading of that section's title.
+ */
+function renderObjectPage(parts: Array<[Placed, RenderContext]>, version: string): string {
+  const [[home, homeRc], ...rest] = parts;
+  const body = renderSection(home, homeRc, version);
+  for (const [p, rc] of rest) body.push(`## ${p.spec.title}`, '', ...renderSection(p, rc, version, p.spec.title));
   const needsCallout = body.some((l) => l.includes('<Callout'));
   return renderPage({
-    title: spec.title,
-    description: spec.description,
+    title: home.spec.title,
+    description: home.spec.description,
     generator: GENERATOR,
-    source: spec.spaces ? SPACES_SOURCE : SOURCE,
+    source: home.spec.spaces ? SPACES_SOURCE : SOURCE,
     version,
     components: needsCallout ? ['Callout', 'Tabs'] : ['Tabs'],
     body: body.join('\n'),
@@ -2333,7 +1933,7 @@ const OTHER_PAGES: Record<string, [title: string, description: string]> = {
  */
 export function navGroups(pages: PageSpec[]): Array<[string, string[]]> {
   const own = new Set(pages.map((p) => p.slug));
-  const known = (s: string) => own.has(s) || s === ERRORS_SLUG || s === TYPES_SLUG || (pages === PAGES && s in OTHER_PAGES);
+  const known = (s: string) => own.has(s) || s === ERRORS_SLUG || s === TYPES_SLUG || (pages.length > 0 && pages.every((p) => PAGES.includes(p)) && s in OTHER_PAGES);
   const listed = new Set(NAV.flatMap(([, slugs]) => slugs));
   const orphans = pages.filter((p) => !p.slug.includes('/') && !listed.has(p.slug));
   if (orphans.length) throw new Error(`pages missing from NAV in cua-sdk.ts: ${orphans.map((p) => p.slug).join(', ')}`);
@@ -2343,7 +1943,7 @@ export function navGroups(pages: PageSpec[]): Array<[string, string[]]> {
 function renderIndex(api: SdkApi, pages: PageSpec[], version: string, spaces?: SdkApi | null): string {
   const specs = new Map(pages.map((p) => [p.slug, p]));
   const body: string[] = [
-    'The Cua SDK in Python, TypeScript, Swift, Kotlin and Rust, all generated from the Rust `cua-sdk` crate. Each page covers one object, with signatures in every language.',
+    'The Cua SDK in Python, TypeScript, Swift, Kotlin and Rust, all generated from the Rust `cua-sdk` crate. Each page covers one module, with signatures in every language.',
     '',
   ];
   if (pages.some((p) => p.spaces)) {
@@ -2467,13 +2067,21 @@ export function renderAll(api: SdkApi, version: string, opts: RenderOptions = {}
       ? { ctx: spacesCtx, api: both, all, langs: SPACES_LANGS, links, examples, used, page, pages, errorVariants }
       : { ctx, api, all, langs: LANGS, links, examples, used, page, pages, errorVariants };
   const files = new Map<string, string>();
-  for (const [slugPath, p] of placed) {
-    files.set(pageFile(slugPath, pages, outputDir), renderObjectPage(p, rcFor(slugPath, p.spec.spaces), version));
+  const outputs = outputPages(pages);
+  for (const out of outputs) {
+    const parts: Array<[Placed, RenderContext]> = [...placed]
+      .filter(([slugPath]) => (MERGED[slugPath] ?? slugPath) === out.slug)
+      .sort(([a], [b]) => Number(a !== out.slug) - Number(b !== out.slug))
+      .map(([slugPath, p]) => [p, rcFor(slugPath, p.spec.spaces)]);
+    files.set(pageFile(out.slug, outputs, outputDir), renderObjectPage(parts, version));
+  }
+  for (const [from, to] of Object.entries(MERGED)) {
+    if (pages.some((p) => p.slug === from) && !outputs.some((p) => p.slug === to)) throw new Error(`MERGED: ${from} joins ${to}, which is not a page`);
   }
   files.set(path.join(outputDir, `${ERRORS_SLUG}.mdx`), renderErrorsPage(api, rcFor(ERRORS_SLUG), version, messages));
   files.set(path.join(outputDir, `${TYPES_SLUG}.mdx`), renderTypesPage(api, rcFor(TYPES_SLUG), version, renames));
-  files.set(path.join(outputDir, 'index.mdx'), renderIndex(api, pages, version, spaces));
-  for (const [file, content] of navFiles(pages, outputDir)) files.set(file, content);
+  files.set(path.join(outputDir, 'index.mdx'), renderIndex(api, outputs, version, spaces));
+  for (const [file, content] of navFiles(outputs, outputDir)) files.set(file, content);
   const unused = [...examples.keys()].filter((k) => !used.has(k));
   if (unused.length) {
     throw new Error(`examples with no matching item or method: ${unused.join(', ')} (scripts/docs-generators/examples/cua-sdk)`);
@@ -2716,20 +2324,38 @@ export function loadApis(): { api: SdkApi; spaces: SdkApi } {
 }
 
 export function loadApi(): SdkApi {
-  return loadApis().api;
+  if (process.env.CUA_SDK_API_JSON) return JSON.parse(fs.readFileSync(process.env.CUA_SDK_API_JSON, 'utf-8')) as SdkApi;
+  const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(CUA_ROOT, 'target');
+  const packages = [...(process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk']), ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen'])];
+  if (packages.length) {
+    console.log(`Building ${packages.filter((p) => p !== '-p').join(', ')} (debug; UniFFI metadata is profile-independent)...`);
+    execFileSync(cargo(), ['build', '--locked', ...packages], { cwd: CUA_ROOT, stdio: 'inherit' });
+  }
+  const bindgen =
+    process.env.CUA_BINDGEN || path.join(target, 'debug', process.platform === 'win32' ? 'cua-bindgen.exe' : 'cua-bindgen');
+  return JSON.parse(
+    execFileSync(bindgen, ['docs', '--library', process.env.CUA_SDK_LIBRARY || path.join(target, 'debug', libraryFile('cua_sdk')), '--namespace', 'cua_sdk'], {
+      cwd: CUA_ROOT,
+      encoding: 'utf-8',
+      maxBuffer: 64 * 1024 * 1024,
+    })
+  );
 }
 
 /** Directories whose generated pages this generator owns (stale ones are removed). */
 function ownedDirs(pages: PageSpec[] = PAGES): string[] {
-  return [REFERENCE_DIR, ...pageFolders(pages).map((f) => path.join(REFERENCE_DIR, f))];
+  // Folders of removed pages too, so their stale files are deleted.
+  const folders = new Set([...pageFolders(pages), 'sandbox', 'spacesd', 'spaces', 'spaces/app-core']);
+  return [REFERENCE_DIR, ...[...folders].map((f) => path.join(REFERENCE_DIR, f))];
 }
 
 function main(): void {
   const checkOnly = isCheckMode();
   console.log('Cua SDK reference (UniFFI)');
-  const { api, spaces } = loadApis();
+  // The Cua Spaces app export (cua_spaces_ffi) is the apps' internals, not
+  // the SDK: it has no reference pages.
+  const api = loadApi();
   const renames = loadRenames();
-  const spacesRenames = loadSpacesRenames();
   const problems = verifyBindingNames(api, loadBindingSources(), renames);
   if (problems.length) {
     console.error(`The rendered names disagree with the committed bindings or the Rust source (${problems.length}):`);
@@ -2737,15 +2363,8 @@ function main(): void {
     console.error('Regenerate the bindings (libs/cua/scripts/generate-uniffi-bindings.mjs) or fix the naming rules in cua-sdk.ts.');
     process.exit(1);
   }
-  const spacesProblems = verifyBindingNames(spaces, loadSpacesBindingSources(), spacesRenames);
-  if (spacesProblems.length) {
-    console.error(`The Cua Spaces app export's names disagree with its Swift binding or the cua-spaces-ffi source (${spacesProblems.length}):`);
-    for (const p of spacesProblems.slice(0, 40)) console.error(`  ${p}`);
-    console.error('Regenerate the Swift binding (node libs/spaces-app-swift/scripts/generate-bindings.mjs) or fix the naming rules in cua-sdk.ts.');
-    process.exit(1);
-  }
   const version = fs.readFileSync(path.join(CUA_ROOT, 'VERSION'), 'utf-8').trim();
-  const files = renderAll(api, version, { renames, spaces, spacesRenames });
+  const files = renderAll(api, version, { renames });
   const pageIssues = pageProblems(files);
   if (pageIssues.length) {
     for (const p of pageIssues) console.error(`  ${p}`);

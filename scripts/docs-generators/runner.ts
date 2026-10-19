@@ -333,7 +333,7 @@ function testGeneratorRouting(config: Config): void {
     config,
     [
       'libs/cua-driver/rust/crates/cua-driver/src/main.rs',
-      'docs/content/docs/cua-driver/reference/cli/daemon.mdx',
+      'docs/content/docs/cua-driver/reference/cli/serve-and-configure.mdx',
       'scripts/docs-generators/cua-driver.ts',
     ],
     ['cua-driver']
@@ -342,7 +342,7 @@ function testGeneratorRouting(config: Config): void {
   for (const file of [
     'scripts/docs-generators/cli-specs/cua-driver-mcp-windows.json',
     'scripts/docs-generators/headers/cua-driver/mcp-tools.md',
-    'docs/content/docs/cua-driver/reference/mcp-tools/click.mdx',
+    'docs/content/docs/cua-driver/reference/mcp-tools/click-and-type.mdx',
     'docs/content/docs/cua-driver/reference/index.mdx',
   ]) {
     assertSelection(config, [file], ['cua-driver']);
@@ -352,7 +352,7 @@ function testGeneratorRouting(config: Config): void {
     [
       'libs/cua-bench/cua_bench/cli/commands/run.py',
       'libs/cua-bench/cua_bench/results.py',
-      'docs/content/docs/cua-bench/reference/cli/run.mdx',
+      'docs/content/docs/cua-bench/reference/cli.mdx',
       'scripts/docs-generators/extract_cb_docs.py',
     ],
     ['cua-bench']
@@ -380,7 +380,7 @@ function testGeneratorRouting(config: Config): void {
     config,
     [
       'libs/cua/crates/cua-cli/src/main.rs',
-      'docs/content/docs/cua-cli/reference/mcp-tools/computer.mdx',
+      'docs/content/docs/cua-cli/reference/mcp-tools.mdx',
       'scripts/docs-generators/cua-cli.ts',
     ],
     ['cua-cli']
@@ -393,7 +393,7 @@ function testGeneratorRouting(config: Config): void {
   );
   assertSelection(config, ['libs/cua/crates/cua-sandbox-core/src/lib.rs'], ['cua-rust']);
   assertSelection(config, ['docs/content/docs/cua-cli/guides/mcp-server.mdx'], []);
-  assertSelection(config, ['docs/content/docs/lume/reference/cli/vms.mdx'], ['lume']);
+  assertSelection(config, ['docs/content/docs/lume/reference/cli.mdx'], ['lume']);
   assertSelection(
     config,
     [
@@ -433,7 +433,7 @@ function testGeneratorRouting(config: Config): void {
     [
       'libs/cua/crates/cua-spaces/src/client/model.rs',
       'scripts/docs-generators/rustdoc-json/src/main.rs',
-      'docs/content/docs/cua-sdk/reference/rust/cua-sandbox-core.mdx',
+      'docs/content/docs/cua-sdk/reference/rust/cua-spacesd-client.mdx',
     ],
     ['cua-rust']
   );

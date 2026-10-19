@@ -120,9 +120,9 @@ const PY_EXAMPLES = path.join(EXAMPLES_DIR, 'cua-sdk', 'python');
 export const SANDBOX_PAGES: PageSpec[] = [
   {
     file: 'sandbox',
-    title: 'Sandbox',
+    title: 'Sandbox, images and services',
     description:
-      'Sandbox, SandboxInfo, the sandbox() helper and the creation options of cua-sandbox.',
+      'Sandbox, the sandbox() helper and its creation options, the Image builder, and the services, tunnels and MCP endpoints of a sandbox.',
     intro:
       'The `Sandbox` class is the entry point of `cua-sandbox`: create, connect to, or reattach a sandbox, then use its interfaces.',
     sections: [
@@ -144,7 +144,7 @@ export const SANDBOX_PAGES: PageSpec[] = [
   },
   {
     file: 'image',
-    title: 'Image',
+    title: 'Images and registries',
     description: 'The Image builder, sidecar containers and registry credentials of cua-sandbox.',
     intro:
       '`Image` is an immutable, chainable description of what a sandbox boots. Builder methods return a new `Image`.',
@@ -155,6 +155,7 @@ export const SANDBOX_PAGES: PageSpec[] = [
         objects: [
           `${SB}.containers.Container`,
           `${SB}.containers.RegistrySecret`,
+          `${SB}.generated.image_models.ImageFileReference`,
         ],
       },
     ],
@@ -236,9 +237,9 @@ export const SANDBOX_PAGES: PageSpec[] = [
   },
   {
     file: 'runtimes',
-    title: 'Runtimes',
+    title: 'Runtimes and configuration',
     description:
-      'Local runtimes (Docker, QEMU, Lume, Hyper-V, Tart, Android emulator) and local support checks.',
+      'Local runtimes (Docker, QEMU, Lume, Hyper-V, Tart, Android emulator), support checks, configuration, sign-in and errors.',
     intro:
       'Local sandboxes run on a runtime the SDK picks for the image. Pass one explicitly to `Sandbox.create(..., runtime=...)` to override it.',
     sections: [
@@ -536,25 +537,45 @@ export function renderObject(doc: PyDoc, opts: { hideInit?: boolean; examples?: 
 }
 
 /** `name` -> `/cua-sdk/reference/python/<page>#<anchor>` for every documented object. */
+/**
+ * Pages rendered as a section of another page (file -> the page it joins),
+ * so the Python reference stays a few pages within the page budget.
+ * `Pool` and the managed pools belonged to Cua Cloud, which has ended; every
+ * call raises, so they have no entry (the module goes in cua-sandbox 0.10.0).
+ */
+export const PY_MERGED: Record<string, string> = { image: 'sandbox', services: 'sandbox', configuration: 'runtimes' };
+
+/** Modules of the ended Cua Cloud pools, left out of the reference. */
+export const ENDED_MODULES = [`${SB}.pool`, `${SB}.pools`, `${SB}.spec`];
+
+/** Whether `cua_sandbox` imports `name` from an ended module. */
+export function isEnded(module: PyModuleDoc, name: string): boolean {
+  const from = (module.imports[name] ?? '').replace(/^\.+/, '').replace(new RegExp(`^${SB}\\.`), '');
+  return ENDED_MODULES.some((m) => {
+    const short = m.slice(SB.length + 1);
+    return name === short || from === short || from.startsWith(`${short}.`);
+  });
+}
+
+/** The file a page is written to. */
+export function pageFileOf(file: string): string {
+  return PY_MERGED[file] ?? file;
+}
+
 export function sandboxAnchors(pages: PageSpec[] = SANDBOX_PAGES): Map<string, string> {
   const anchors = new Map<string, string>();
   for (const page of pages) {
     for (const section of page.sections) {
       for (const obj of section.objects) {
         const name = obj.split('.').at(-1)!;
-        anchors.set(name, `${SANDBOX_ROUTE}/${page.file}#${slug(name)}`);
+        anchors.set(name, `${SANDBOX_ROUTE}/${pageFileOf(page.file)}#${slug(name)}`);
       }
     }
   }
   return anchors;
 }
 
-export function renderSandboxPage(
-  page: PageSpec,
-  docs: Map<string, PyDoc>,
-  version: string,
-  examples?: ExampleSet
-): string {
+function sandboxSectionBody(page: PageSpec, docs: Map<string, PyDoc>, version: string, examples?: ExampleSet): string[] {
   const body: string[] = [escapeMdxText(page.intro), ''];
   const header = readHeader(`cua-sdk/python/${page.file}.md`, { version });
   if (header) body.push(header, '');
@@ -567,11 +588,24 @@ export function renderSandboxPage(
       body.push(...renderObject(doc, { hideInit: section.hideInit, examples }));
     }
   }
+  return body;
+}
+
+/** A page and the pages `PY_MERGED` into it, each under a `##` heading of its title. */
+export function renderSandboxPage(
+  page: PageSpec,
+  docs: Map<string, PyDoc>,
+  version: string,
+  examples?: ExampleSet,
+  merged: PageSpec[] = []
+): string {
+  const body = sandboxSectionBody(page, docs, version, examples);
+  for (const part of merged) body.push(`## ${part.title}`, '', ...sandboxSectionBody(part, docs, version, examples));
   return renderPage({
     title: page.title,
     description: page.description,
     generator: GENERATOR,
-    source: `griffe over libs/python/cua-sandbox/cua_sandbox (${SB}.${page.file === 'sandbox' ? 'sandbox' : page.file})`,
+    source: `griffe over libs/python/cua-sandbox/cua_sandbox (${[page, ...merged].map((p) => `${SB}.${p.file}`).join(', ')})`,
     version: `cua-sandbox ${version}`,
     components: body.some((l) => l.startsWith('<Tabs')) ? ['Tabs'] : [],
     body: body.join('\n'),
@@ -580,7 +614,7 @@ export function renderSandboxPage(
 
 export function renderReexports(module: PyModuleDoc, documented: Set<string>): string {
   const rows = module.all
-    .filter((name) => !documented.has(name))
+    .filter((name) => !documented.has(name) && !isEnded(module, name))
     .map((name) => [name, module.imports[name] ?? module.path ?? '']);
   if (!rows.length) return '';
   const byModule = new Map<string, string[]>();
@@ -610,13 +644,13 @@ export function renderCuaPython(
   const root = modules.get('cua')!;
   const body: string[] = [];
   body.push(
-    'The high-level Python API: `cua_sandbox` (`Sandbox`, `Image`, the computer interfaces) and the helpers the `cua` package adds. It is a thin layer over the [Cua SDK objects](/cua-sdk/reference): the local runtimes and cua-spacesd all go through `cua`, whose generated binding (`cua._native`) those pages document.',
+    'The high-level Python API: `cua_sandbox` (`Sandbox`, `Image`, the computer interfaces) and the helpers the `cua` package adds. It is a thin layer over the [Cua SDK objects](/cua-sdk/reference): the cloud, the local runtimes and cua-spacesd all go through `cua`, whose generated binding (`cua._native`) those pages document.',
     ''
   );
   const header = readHeader('cua-sdk/python/index.md', { version, sandboxVersion });
   if (header) body.push(header, '');
   body.push('## Pages', '', '| Page | Covers |', '| --- | --- |');
-  for (const page of SANDBOX_PAGES) {
+  for (const page of SANDBOX_PAGES.filter((p) => !PY_MERGED[p.file])) {
     body.push(`| [${escapeTableCell(page.title)}](${SANDBOX_ROUTE}/${page.file}) | ${escapeTableCell(page.description)} |`);
   }
   body.push('');
@@ -631,7 +665,7 @@ export function renderCuaPython(
     2,
     0,
     'Without `cua[sandbox]`, `cua.Image` is this helper. With it installed, `cua.Image` is the richer [cua_sandbox Image](' +
-      `${SANDBOX_ROUTE}/image#image).`,
+      `${SANDBOX_ROUTE}/sandbox#image).`,
     ''
   );
   body.push(...image);
@@ -709,9 +743,11 @@ export function buildFiles(
   const set: ExampleSet = { examples, used: new Set() };
 
   const sandboxVersion = readVersion('libs/python/cua-sandbox/cua_sandbox/__init__.py');
-  for (const page of SANDBOX_PAGES) {
-    let content = renderSandboxPage(page, docs, sandboxVersion, set);
-    if (page.file === 'pool') {
+  const homes = SANDBOX_PAGES.filter((p) => !PY_MERGED[p.file]);
+  for (const page of homes) {
+    const merged = SANDBOX_PAGES.filter((p) => PY_MERGED[p.file] === page.file);
+    let content = renderSandboxPage(page, docs, sandboxVersion, set, merged);
+    if (page.file === 'sandbox') {
       const reexports = renderReexports(modules.get(SB)!, new Set(anchors.keys()));
       if (reexports) content = content.replace(/\n$/, `\n\n${reexports}\n`);
     }
@@ -719,7 +755,7 @@ export function buildFiles(
   }
   files.set(
     path.join(SANDBOX_API_DIR, 'meta.json'),
-    metaJson('Python high-level API', SANDBOX_PAGES.map((p) => p.file))
+    metaJson('Python high-level API', homes.map((p) => p.file))
   );
   files.set(
     CUA_PYTHON_PAGE,
@@ -737,7 +773,10 @@ export function assertCoverage(extracted: Extracted): void {
   const root = extracted.modules.find((m) => m.path === SB);
   if (!root) throw new Error('cua_sandbox module was not extracted');
   const documented = new Set(sandboxAnchors().keys());
-  const missing = root.all.filter((n) => !documented.has(n));
+  const ended = (n: string) => isEnded(root, n);
+  const missing = root.all.filter(
+    (n) => !documented.has(n) && !ended(n)
+  );
   if (missing.length) {
     throw new Error(
       `cua_sandbox.__all__ names without a reference entry: ${missing.join(', ')}. Add them to SANDBOX_PAGES in python-sdk.ts.`

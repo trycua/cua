@@ -562,6 +562,89 @@
         "connected"
       ]
     },
+    "ComputerResources": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "sampledAtMs": {
+          "type": "number"
+        },
+        "cpuCount": {
+          "type": "number"
+        },
+        "cpuPercent": {
+          "type": "number"
+        },
+        "loadAverage1m": {
+          "type": "number"
+        },
+        "memoryTotal": {
+          "type": "number"
+        },
+        "memoryUsed": {
+          "type": "number"
+        },
+        "diskTotal": {
+          "type": "number"
+        },
+        "diskFree": {
+          "type": "number"
+        },
+        "spacesCount": {
+          "type": "number"
+        },
+        "spacesRunning": {
+          "type": "number"
+        },
+        "spacesCpuAllocated": {
+          "type": "number"
+        },
+        "spacesMemoryAllocated": {
+          "type": "number"
+        },
+        "spacesMemoryUsed": {
+          "type": "number"
+        },
+        "spacesDiskBytes": {
+          "type": "number"
+        },
+        "spacesDiskExact": {
+          "type": "boolean"
+        },
+        "warning": {
+          "$ref": "#/$defs/DiskWarning"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "online",
+        "sampledAtMs",
+        "cpuCount",
+        "cpuPercent",
+        "loadAverage1m",
+        "memoryTotal",
+        "memoryUsed",
+        "diskTotal",
+        "diskFree",
+        "spacesCount",
+        "spacesRunning",
+        "spacesCpuAllocated",
+        "spacesMemoryAllocated",
+        "spacesMemoryUsed",
+        "spacesDiskBytes",
+        "spacesDiskExact",
+        "warning"
+      ]
+    },
     "DevicesInput": {
       "type": "object",
       "properties": {
@@ -681,6 +764,33 @@
           ]
         }
       }
+    },
+    "DiskWarning": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "enum": [
+            "ok",
+            "low",
+            "critical"
+          ]
+        },
+        "free": {
+          "type": "number"
+        },
+        "total": {
+          "type": "number"
+        },
+        "threshold": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "level",
+        "free",
+        "total",
+        "threshold"
+      ]
     },
     "DriveCheckInput": {
       "type": "object",
@@ -2400,6 +2510,111 @@
         "label"
       ]
     },
+    "SpaceResources": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "powerState": {
+          "enum": [
+            "running",
+            "stopped",
+            "suspended",
+            ""
+          ]
+        },
+        "cpuAllocated": {
+          "type": "number"
+        },
+        "memoryAllocated": {
+          "type": "number"
+        },
+        "diskAllocated": {
+          "type": "number"
+        },
+        "usage": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "cpuCount": {
+              "type": "number"
+            },
+            "cpuPercent": {
+              "type": "number"
+            },
+            "loadAverage1m": {
+              "type": "number"
+            },
+            "memoryUsed": {
+              "type": "number"
+            },
+            "memoryTotal": {
+              "type": "number"
+            },
+            "memoryLimited": {
+              "type": "boolean"
+            },
+            "diskUsed": {
+              "type": "number"
+            },
+            "diskTotal": {
+              "type": "number"
+            },
+            "diskLimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cpuCount",
+            "cpuPercent",
+            "loadAverage1m",
+            "memoryUsed",
+            "memoryTotal",
+            "memoryLimited",
+            "diskUsed",
+            "diskTotal",
+            "diskLimited"
+          ]
+        },
+        "diskOnHost": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "bytes": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "allocated": {
+              "type": "number"
+            },
+            "sharesSpace": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "bytes",
+            "allocated",
+            "sharesSpace"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "powerState",
+        "cpuAllocated",
+        "memoryAllocated",
+        "diskAllocated",
+        "usage",
+        "diskOnHost"
+      ]
+    },
     "SpaceRow": {
       "type": "object",
       "properties": {
@@ -3647,6 +3862,24 @@
         "signedIn"
       ]
     },
+    "WkOnboarding": {
+      "type": "object",
+      "properties": {
+        "completed": {
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": [
+            "client",
+            "host"
+          ]
+        }
+      },
+      "required": [
+        "completed",
+        "mode"
+      ]
+    },
     "WkSession": {
       "type": "object",
       "properties": {
@@ -4746,6 +4979,46 @@
         "softLimitReached",
         "reasons",
         "upgradeUrl"
+      ]
+    },
+    "resources.get": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "number"
+        },
+        "sampledAtMs": {
+          "type": "number"
+        },
+        "thisMac": {
+          "$ref": "#/$defs/ComputerResources"
+        },
+        "spaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SpaceResources"
+          }
+        },
+        "computers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComputerResources"
+          }
+        },
+        "warning": {
+          "$ref": "#/$defs/DiskWarning"
+        }
+      },
+      "required": [
+        "sequence",
+        "sampledAtMs",
+        "thisMac",
+        "spaces",
+        "computers",
+        "warning"
       ]
     },
     "session.completeOnboarding": {
@@ -6151,6 +6424,12 @@
     "notifications.markRead": {
       "type": "null"
     },
+    "onboarding.complete": {
+      "$ref": "#/$defs/WkOnboarding"
+    },
+    "onboarding.get": {
+      "$ref": "#/$defs/WkOnboarding"
+    },
     "relay.usage": {
       "type": [
         "object",
@@ -6234,6 +6513,46 @@
         "softLimitReached",
         "reasons",
         "upgradeUrl"
+      ]
+    },
+    "resources.get": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "number"
+        },
+        "sampledAtMs": {
+          "type": "number"
+        },
+        "thisMac": {
+          "$ref": "#/$defs/ComputerResources"
+        },
+        "spaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SpaceResources"
+          }
+        },
+        "computers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComputerResources"
+          }
+        },
+        "warning": {
+          "$ref": "#/$defs/DiskWarning"
+        }
+      },
+      "required": [
+        "sequence",
+        "sampledAtMs",
+        "thisMac",
+        "spaces",
+        "computers",
+        "warning"
       ]
     },
     "session.get": {

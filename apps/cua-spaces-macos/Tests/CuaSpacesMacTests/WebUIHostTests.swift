@@ -592,10 +592,13 @@ struct WebUIHostTests {
 
     @Test func showWelcomeAgainRestartsTheFirstRun() async throws {
         let (bridge, model) = bridge()
+        var opened = 0
+        model.openOnboarding = { opened += 1 }
         model.onboarding.finish()
         #expect(model.onboarding.completed)
         _ = try await bridge.handle("settings.choose", ["row": "welcome", "option": "show"])
         #expect(!model.onboarding.completed)
+        #expect(opened == 1, "its window opens, even with only Settings up")
     }
 
     @Test func turningNewUIOffClosesItsWindow() {

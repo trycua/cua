@@ -543,7 +543,9 @@ describe("webkit adapter", () => {
     const { win } = webkitHost((req) =>
       req.method === "session.get"
         ? ok({ identity: "ada@example.com", signedIn: true, cloudConfigured: true, signIn: "idle" })
-        : ok({
+        : req.method === "onboarding.get"
+          ? ok({ completed: false, mode: "client" })
+          : ok({
             availability: "ready",
             busy: false,
             error: null,
@@ -558,8 +560,8 @@ describe("webkit adapter", () => {
     );
     const a = createWebkitAdapter(win);
     expect((await a.call("session.get", {})).fleet).toMatchObject({ identity: "ada@example.com", authMode: "user" });
-    // The SwiftUI app's first run is its own window: the page never shows one there.
-    expect((await a.call("session.get", {})).onboarding).toEqual({ completed: true, mode: "client" });
+    // The first run is this page's on the SwiftUI host too (`onboarding.get`).
+    expect((await a.call("session.get", {})).onboarding).toEqual({ completed: false, mode: "client" });
     const kv = await a.call("keyvault.overview", {});
     expect(kv.status).toMatchObject({ unlocked: true, os_protector_available: true });
     expect(kv.items[0]).toMatchObject({ provider_id: "chrome", app_display: "Google Chrome", policy: { unattended: true, ttl_secs: 0 }, updated_ms: 2 });

@@ -142,6 +142,19 @@ export {
   type RelayUsageView,
 } from "./relay-usage";
 export {
+  useResources,
+  hostResources,
+  spaceResources,
+  RESOURCES_HIDDEN_MS,
+  RESOURCES_VISIBLE_MS,
+  type ComputerResources,
+  type DiskOnHost,
+  type DiskWarning,
+  type GuestUsage,
+  type ResourcesSnapshot,
+  type SpaceResources,
+} from "./resources";
+export {
   resetUpsellMemory,
   useQuiet,
   useTrackPlanClick,
@@ -152,3 +165,19 @@ export {
   type UpsellSurface,
 } from "./upsell";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
+export {
+  FIRST_RUN_POLL_MS,
+  TEAMMATES_KEY,
+  UPSELL_DISMISSED_KEY,
+  firstRunTodos,
+  firstRunView,
+  noteTeammates,
+  readFirstRun,
+  resetFirstRunCache,
+  useFirstRun,
+  useFirstRunSaved,
+  writeFirstRun,
+  type FirstRunHook,
+  type FirstRunSaved,
+} from "./first-run";
+export type * from "./contracts/first-run";

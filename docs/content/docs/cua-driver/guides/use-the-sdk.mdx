@@ -216,9 +216,7 @@ try {
   </Tab>
 </Tabs>
 
-Version 0.25 does not expose these typed window methods (`ActionTarget`,
-`ClickPosition`); upgrade the bindings and native library together. Rules the
-example follows:
+Rules the example follows:
 
 - `click` returns `ActionResult` and raises `DriverError.Tool` on refusal. A
   returned action does not prove the UI changed; the second snapshot does.

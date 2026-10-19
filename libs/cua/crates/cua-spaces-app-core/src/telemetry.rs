@@ -209,7 +209,9 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
 /// Anything else: nothing.
 pub fn upsell(surface: &str, action: &str) -> Vec<TelemetrySignal> {
     let ok = match surface {
-        "meter" | "share" | "machine" => matches!(action, "shown" | "click" | "dismiss"),
+        "meter" | "share" | "machine" | "onboarding" => {
+            matches!(action, "shown" | "click" | "dismiss")
+        }
         "plan_card" | "account_menu" => action == "click",
         _ => false,
     };

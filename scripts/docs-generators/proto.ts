@@ -118,9 +118,9 @@ export interface PageSpec {
 const ROUTE = '/cua-sdk/reference/protocol';
 const OUTPUT_DIR = path.join(DOCS_CONTENT, 'cua-sdk', 'reference', 'protocol');
 const GENERATOR = 'pnpm --dir docs docs:generate:cua-proto';
-/** Keeps each page readable (the reference checklist caps pages at 5,000 words). */
-export const MAX_WORDS = 5000;
-export const MAX_BYTES = 60_000;
+/** One page per service family, within the docs page budget (docs/scripts/page-budget.test.ts). */
+export const MAX_WORDS = 12_000;
+export const MAX_BYTES = 100_000;
 const PROTO_DIR = path.join(REPO_ROOT, 'libs', 'cua', 'proto');
 const LIB_RS = path.join(REPO_ROOT, 'libs', 'cua', 'crates', 'cua-proto', 'src', 'lib.rs');
 const VERSION_FILE = path.join(REPO_ROOT, 'libs', 'cua', 'VERSION');
@@ -132,114 +132,54 @@ const VERSION_FILE = path.join(REPO_ROOT, 'libs', 'cua', 'VERSION');
 export const PAGES: PageSpec[] = [
   {
     slug: 'env-system',
-    title: 'System',
-    description: 'cua.env.v1 SystemService: capabilities, init, health, shutdown, viewer tickets and relay attach.',
-    intro: 'The handshake (`GetCapabilities`), session init, health, shutdown, viewer tickets and joining a relay (`AttachRelay`).',
-    files: ['cua/env/v1/system.proto'],
-  },
-  {
-    slug: 'env-diagnose',
-    title: 'Diagnose',
-    description: 'cua.env.v1 Diagnose: the image self-test report `SystemService.Diagnose` streams.',
-    intro: 'The report of the image self-test (`SystemService.Diagnose` / `DiagnoseOnce`): checks, their evidence and the summary.',
-    files: ['cua/env/v1/diagnose.proto'],
-  },
-  {
-    slug: 'env-common',
-    title: 'Shared types and errors',
-    description: 'The cua.env.v1 types every spacesd service shares: ErrorInfo, principals and geometry.',
-    intro: 'Errors (`google.rpc.Status` carrying `ErrorInfo`), principals and geometry, used by every `cua.env.v1` service.',
-    files: ['cua/env/v1/common.proto'],
+    title: 'System, diagnostics and shared types',
+    description:
+      'cua.env.v1 SystemService, the image self-test report, and the types every spacesd service shares: ErrorInfo, principals and geometry.',
+    intro:
+      'The handshake (`GetCapabilities`), session init, health, shutdown, viewer tickets and joining a relay (`AttachRelay`); the report of the image self-test (`SystemService.Diagnose` / `DiagnoseOnce`); and the shared types: errors (`google.rpc.Status` carrying `ErrorInfo`), principals and geometry.',
+    files: ['cua/env/v1/system.proto', 'cua/env/v1/diagnose.proto', 'cua/env/v1/common.proto'],
   },
   {
     slug: 'env-process',
-    title: 'Processes',
-    description: 'cua.env.v1 ProcessService: start, attach to, feed and signal guest processes.',
-    intro: 'Detached, reattachable guest processes with PTY support and bounded scrollback.',
-    files: ['cua/env/v1/process.proto'],
-  },
-  {
-    slug: 'env-filesystem',
-    title: 'Filesystem',
+    title: 'Processes and files',
     description:
-      'cua.env.v1 FilesystemService: stat, list, watch, read, chunked upload and signed URLs.',
-    intro: 'File and directory operations, watchers, chunked transfers and signed HTTP URLs.',
-    files: ['cua/env/v1/filesystem.proto'],
+      'cua.env.v1 ProcessService and FilesystemService: guest processes, and stat, list, watch, read, chunked upload and signed URLs.',
+    intro:
+      'Detached, reattachable guest processes with PTY support and bounded scrollback; file and directory operations, watchers, chunked transfers and signed HTTP URLs.',
+    files: ['cua/env/v1/process.proto', 'cua/env/v1/filesystem.proto'],
   },
   {
     slug: 'env-computer',
-    title: 'Computer and driver',
+    title: 'Computer, windows and accessibility',
     description:
-      'cua.env.v1 ComputerService and DriverService: screenshots, pointer, keyboard, clipboard, displays and Cua Driver tools.',
+      'cua.env.v1 ComputerService, DriverService, WindowsService and AccessibilityService: screenshots, input, clipboard, displays, Cua Driver tools, windows and the accessibility tree.',
     intro:
       'Desktop control. These services need the desktop provider; input goes through Cua Driver, which `DriverService` also exposes tool by tool.',
-    files: ['cua/env/v1/computer.proto', 'cua/env/v1/driver.proto'],
-  },
-  {
-    slug: 'env-windows',
-    title: 'Windows and accessibility',
-    description: 'cua.env.v1 WindowsService and AccessibilityService: list, watch and arrange windows, launch apps, and the accessibility tree.',
-    intro: 'Windows, app launch and the accessibility tree. These services need the desktop provider.',
-    files: ['cua/env/v1/windows.proto', 'cua/env/v1/accessibility.proto'],
+    files: ['cua/env/v1/computer.proto', 'cua/env/v1/driver.proto', 'cua/env/v1/windows.proto', 'cua/env/v1/accessibility.proto'],
   },
   {
     slug: 'env-stream',
-    title: 'Streams and presence',
+    title: 'Streams, teleport, tunnels and host Spaces',
     description:
-      'cua.env.v1 StreamService and PresenceService: media sessions and multiplayer cursors.',
+      'cua.env.v1 StreamService, PresenceService, TeleportService, TunnelService, VolumeService and HostSpacesService.',
     intro:
-      'Media sessions (video and audio over the media wire, see `libs/cua/proto/MEDIA.md`) and presence for shared sessions.',
-    files: ['cua/env/v1/stream.proto', 'cua/env/v1/presence.proto'],
+      'Media sessions (video and audio over the media wire, see `libs/cua/proto/MEDIA.md`) and presence; the receiving side of teleport (sending lives in the cua SDK), TCP port forwards, the reverse-SOCKS hotspot and the guest mount of Cua Volume; and the Spaces a machine set up with `cua host setup --provide-spaces` creates for its owner\'s enrolled devices.',
+    files: [
+      'cua/env/v1/stream.proto',
+      'cua/env/v1/presence.proto',
+      'cua/env/v1/teleport.proto',
+      'cua/env/v1/tunnel.proto',
+      'cua/env/v1/volume.proto',
+      'cua/env/v1/host.proto',
+    ],
   },
   {
-    slug: 'env-teleport-tunnel',
-    title: 'Teleport, tunnels and the volume',
-    description:
-      'cua.env.v1 TeleportService, TunnelService and VolumeService: receiving teleported sessions and files, port forwards, hotspots and the guest mount of Cua Volume.',
+    slug: 'daemon',
+    title: 'Cua daemon',
+    description: 'cua.daemon.v1: the local cua daemon API for sandboxes, local runtimes, Spaces, its identity and the media bridge.',
     intro:
-      'The receiving side of teleport (sending lives in the cua SDK), TCP port forwards, the reverse-SOCKS hotspot, and the guest mount of Cua Volume served by the client.',
-    files: ['cua/env/v1/teleport.proto', 'cua/env/v1/tunnel.proto', 'cua/env/v1/volume.proto'],
-  },
-  {
-    slug: 'env-host-spaces',
-    title: 'Host Spaces',
-    description:
-      'cua.env.v1 HostSpacesService: Spaces a host creates for its owner\'s devices through the relay.',
-    intro:
-      'Spaces a machine set up with `cua host setup --provide-spaces` creates for its owner\'s enrolled devices: settings, capacity, create and delete. The host\'s cua-spacesd forwards each call to its cua daemon.',
-    files: ['cua/env/v1/host.proto'],
-  },
-  {
-    slug: 'daemon-sandboxes',
-    title: 'Daemon: sandboxes',
-    description:
-      'cua.daemon.v1 SandboxService: the local cua daemon API for sandboxes in every location.',
-    intro:
-      'The local `cua daemon` API (a Unix socket on the host, not cua-spacesd): sandbox lifecycle across locations.',
-    files: ['cua/daemon/v1/sandboxes.proto'],
-  },
-  {
-    slug: 'daemon-runtimes',
-    title: 'Daemon: local runtimes',
-    description:
-      'cua.daemon.v1 RuntimeService: the local engines and images the cua daemon orchestrates.',
-    intro:
-      'The local runtimes (gVisor, runc, QEMU, Lume) and images the `cua daemon` orchestrates.',
-    files: ['cua/daemon/v1/runtime.proto'],
-  },
-  {
-    slug: 'daemon-spaces',
-    title: 'Daemon: Spaces',
-    description: 'cua.daemon.v1 SpaceService: Spaces and the hosts that provide them, through the local cua daemon.',
-    intro: 'Spaces through the local `cua daemon`: create, list, power, delete, and the machines that provide Spaces.',
-    files: ['cua/daemon/v1/spaces.proto'],
-  },
-  {
-    slug: 'daemon-service',
-    title: 'Daemon: service',
-    description: 'cua.daemon.v1 DaemonService: the local cua daemon identity and the loopback media bridge for webviews.',
-    intro: 'The `cua daemon` identity (`GetInfo`) and the loopback media bridge for webviews.',
-    files: ['cua/daemon/v1/daemon.proto'],
+      'The local `cua daemon` API (a Unix socket on the host, not cua-spacesd): sandbox lifecycle across locations, the local runtimes and images it orchestrates, Spaces and the machines that provide them, its identity (`GetInfo`) and the loopback media bridge for webviews.',
+    files: ['cua/daemon/v1/sandboxes.proto', 'cua/daemon/v1/runtime.proto', 'cua/daemon/v1/spaces.proto', 'cua/daemon/v1/daemon.proto'],
   },
 ];
 
@@ -620,9 +560,9 @@ class Renderer {
       '## Errors',
       '',
       'Errors are `google.rpc.Status` with typed details: spacesd packs [`ErrorInfo`](' +
-        `${ROUTE}/env-common#errorinfo` +
+        `${ROUTE}/env-system#errorinfo` +
         ') and the daemon packs [`DaemonErrorInfo`](' +
-        `${ROUTE}/daemon-service#daemonerrorinfo` +
+        `${ROUTE}/daemon#daemonerrorinfo` +
         ').',
       ''
     );

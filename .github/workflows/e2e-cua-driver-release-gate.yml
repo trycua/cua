@@ -148,58 +148,79 @@ jobs:
       needs.decide.outputs.run == 'true' && github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Hosted macOS runners queue for an hour or more under load, and the queue
+    # time sits inside the dispatched run, so it counts against the wait below.
+    timeout-minutes: 260
     permissions:
       actions: write
       contents: read
+      pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
       HEAD_REF: ${{ github.event.pull_request.head.ref }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       LANE: e2e-rust-macos.yml
     steps:
       - id: dispatch
-        name: Dispatch the hosted macOS lane on the PR head
+        name: Reuse or dispatch the hosted macOS lane on the PR head
         run: |
           set -euo pipefail
-          started=$(date -u +%FT%TZ)
-          gh workflow run "$LANE" -R "$REPO" --ref "$HEAD_REF" -f source_sha="$HEAD_SHA" -f mode=hosted
-          run_id=""
-          for _ in $(seq 1 30); do
-            sleep 10
-            run_id=$(gh run list -R "$REPO" --workflow "$LANE" --event workflow_dispatch --branch "$HEAD_REF" \
-              --created ">=$started" --json databaseId,headSha \
-              --jq "[.[]|select(.headSha==\"$HEAD_SHA\")][0].databaseId // empty")
-            [[ -z "$run_id" ]] || break
-          done
+          # A green run for this exact SHA wins; otherwise one still queued or
+          # running is adopted (a re-run of this gate, or a gate that gave up
+          # early). Only a SHA with neither gets a new dispatch.
+          find_run() {
+            gh run list -R "$REPO" --workflow "$LANE" --event workflow_dispatch --branch "$HEAD_REF" --limit 50 \
+              --json databaseId,headSha,status,conclusion \
+              --jq "[.[]|select(.headSha==\"$HEAD_SHA\")] | (map(select(.conclusion==\"success\"))[0] // map(select(.status!=\"completed\"))[0]) | .databaseId // empty"
+          }
+          run_id=$(find_run)
+          if [[ -n "$run_id" ]]; then
+            echo "Reusing the hosted macOS run for $HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            gh workflow run "$LANE" -R "$REPO" --ref "$HEAD_REF" -f source_sha="$HEAD_SHA" -f mode=hosted
+            for _ in $(seq 1 30); do
+              sleep 10
+              run_id=$(find_run)
+              [[ -z "$run_id" ]] || break
+            done
+          fi
           if [[ -z "$run_id" ]]; then
             echo "::error::dispatched macOS run for $HEAD_SHA not found (did the branch advance?)"; exit 1
           fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           url="${GITHUB_SERVER_URL}/${REPO}/actions/runs/${run_id}"
-          echo "Dispatched macOS hosted run: $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Hosted macOS run: $url" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Wait for the dispatched run
         env:
           RUN_ID: ${{ steps.dispatch.outputs.run_id }}
         run: |
           set -euo pipefail
-          deadline=$((SECONDS + 100 * 60))
+          deadline=$((SECONDS + 240 * 60))
           while (( SECONDS < deadline )); do
-            read -r status conclusion < <(gh run view "$RUN_ID" -R "$REPO" --json status,conclusion --jq '"\(.status) \(.conclusion // "none")"')
-            if [[ "$status" == completed ]]; then
-              echo "macOS hosted run $RUN_ID: $conclusion" | tee -a "$GITHUB_STEP_SUMMARY"
-              [[ "$conclusion" == success ]] || { echo "::error::macOS hosted lane $conclusion"; exit 1; }
-              exit 0
+            if out=$(gh run view "$RUN_ID" -R "$REPO" --json status,conclusion --jq '"\(.status) \(.conclusion // "none")"'); then
+              read -r status conclusion <<< "$out"
+              if [[ "$status" == completed ]]; then
+                echo "macOS hosted run $RUN_ID: $conclusion" | tee -a "$GITHUB_STEP_SUMMARY"
+                [[ "$conclusion" == success ]] || { echo "::error::macOS hosted lane $conclusion"; exit 1; }
+                exit 0
+              fi
             fi
             sleep 30
           done
           echo "::error::timed out waiting for macOS hosted run $RUN_ID"; exit 1
+      # Only when the PR moved to a new head: a superseding gate run for the
+      # same SHA (for example a label change) adopts the run instead.
       - name: Cancel the dispatched run if this job stops early
         if: cancelled() && steps.dispatch.outputs.run_id != ''
         env:
           RUN_ID: ${{ steps.dispatch.outputs.run_id }}
-        run: gh run cancel "$RUN_ID" -R "$REPO" || true
+        run: |
+          current=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha || echo "$HEAD_SHA")
+          if [[ "$current" != "$HEAD_SHA" ]]; then
+            gh run cancel "$RUN_ID" -R "$REPO" || true
+          fi
 
   browsers:
     name: "gate / standalone browser E2E"

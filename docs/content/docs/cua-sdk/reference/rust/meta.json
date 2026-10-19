@@ -2,10 +2,6 @@
   "title": "Rust crates",
   "pages": [
     "cua-sdk",
-    "cua-spacesd-client",
-    "cua-sandbox-core",
-    "cua-spaces",
-    "cua-spaces-client",
-    "cua-spaces-agents-mcp"
+    "cua-spacesd-client"
   ]
 }

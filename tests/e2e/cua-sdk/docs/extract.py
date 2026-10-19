@@ -60,7 +60,7 @@ BASELINE = REPO / "docs" / "code-block-baseline.json"
 GUIDES = [
     "cua-sdk/guides/agent-frameworks.mdx",
     "cua-sdk/guides/images.mdx",
-    "cua-sdk/reference/sandbox/index.mdx",
+    "cua-sdk/reference/sandbox.mdx",
 ]
 
 FENCE = re.compile(r"^(?P<indent>[ \t]*)(?P<fence>```+|~~~+)(?P<info>.*)$")

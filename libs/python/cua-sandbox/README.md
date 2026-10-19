@@ -171,7 +171,7 @@ Sidecars are addressed by name: the sandbox reaches `db:6379` and a
 sidecar reaches the sandbox at `main`. With sidecars, the service names `main`,
 `sidecars` and `sc` are reserved. Local sidecars need `runtime="runc"`, and
 local VM sandboxes refuse sidecars. See
-[Sidecars](https://cua.ai/docs/cua-sdk/guides/sidecars).
+[Sidecars](https://cua.ai/docs/cua-sdk/guides/services#sidecars).
 
 ## Ephemeral sandbox
 

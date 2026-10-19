@@ -2,10 +2,7 @@
   "title": "Python high-level API",
   "pages": [
     "sandbox",
-    "image",
     "interfaces",
-    "services",
-    "runtimes",
-    "configuration"
+    "runtimes"
   ]
 }

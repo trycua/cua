@@ -1020,8 +1020,9 @@ pub struct NoArgs {}
 pub struct ShareSpace {
     /// Space id or name.
     pub space: SpaceArg,
-    /// Who: an email address (verified by cua.ai) or an account id. Teams
-    /// are not accepted: share with each member.
+    /// Who: an email address (verified by cua.ai) or an account id, or
+    /// `team:<id>` for a whole team. A team always gets `editor` and needs
+    /// the Teams plan; the sharer is a team owner or admin who owns the Space.
     pub who: String,
     /// `viewer` (presence with their own cursor and a view-only stream) or
     /// `editor` (full use; their input is a human session). Default

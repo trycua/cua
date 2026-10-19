@@ -219,6 +219,15 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::app_update("downloaded", s, s).unwrap());
     v.push(events::device_enroll("rekey", Outcome::Ok).unwrap());
     v.push(events::experiment("experiment_off", "your_cloud").unwrap());
+    v.push(events::installer_step("installer_started", s, s, s, &[s]).unwrap());
+    v.push(events::installer_step("installer_failed", s, s, "ps1", &[s, "cli"]).unwrap());
+    v.push(
+        events::installer_step("installer_failed", "cli", "cancelled", "sh", &["host"]).unwrap(),
+    );
+    v.push(events::agent_used_space("space_bash").unwrap());
+    v.push(events::agent_used_space("computer_click").unwrap());
+    assert!(events::installer_step(s, "cli", "network", "sh", &[]).is_none());
+    assert!(events::agent_used_space(s).is_none());
     v
 }
 
@@ -1449,4 +1458,130 @@ fn a_failed_host_space_never_reports_no_error_kind() {
     assert_eq!(e.props["error_kind"], "image_pull_auth");
     let ok = events::host_space_provided("vm", "macos", Outcome::Ok, None);
     assert_eq!(ok.props["error_kind"], "none");
+}
+
+/// `cua_installer_step` is sent by install.sh and install.ps1, which build
+/// the payload themselves. The fixture they are tested against
+/// (`scripts/install/tests/test_install_telemetry.py`) must pass the same
+/// schema check as every other event.
+#[test]
+fn installer_payloads_validate_against_the_declared_schema() {
+    let text = include_str!("../../../../../scripts/install/tests/fixtures/installer-step.json");
+    let doc: Value = serde_json::from_str(text).unwrap();
+    let events = doc["events"].as_array().unwrap();
+    assert_eq!(events.len(), 3);
+    for e in events {
+        let name = e["event"].as_str().unwrap();
+        assert_eq!(name, schema::event::INSTALLER_STEP);
+        let props = e["properties"].as_object().unwrap();
+        schema::validate(name, props).unwrap_or_else(|err| panic!("{e}: {err}"));
+        let id = e["distinct_id"].as_str().unwrap();
+        assert!(id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+    // The builder agrees with the fixture on the event's own properties.
+    let built =
+        events::installer_step("installer_failed", "cli", "checksum", "sh", &["cli"]).unwrap();
+    for (k, v) in &built.props {
+        assert_eq!(&events[1]["properties"][k], v, "{k}");
+    }
+    let built = events::installer_step(
+        "installer_started",
+        "cli",
+        "network",
+        "sh",
+        &["spaces", "cli"],
+    )
+    .unwrap();
+    assert_eq!(built.props["install_stage"], "none");
+    assert_eq!(built.props["error_kind"], "none");
+    assert_eq!(built.props["items"], "cli+spaces");
+}
+
+/// An agent's tool call that reached a Space: one `cua_agent_used_space`
+/// per install per UTC day, only for tools that act inside a Space, never
+/// while telemetry is off and never from inside an agent run's Space.
+#[test]
+fn agent_used_space_is_sent_once_per_day_for_space_tools_only() {
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[]);
+    assert!(matches!(
+        t.capture_agent_used_space_on(20_000, "list_spaces"),
+        Captured::Invalid(_)
+    ));
+    assert!(matches!(
+        t.capture_agent_used_space_on(20_000, "computer_access_grant"),
+        Captured::Invalid(_)
+    ));
+    assert_eq!(
+        t.capture_agent_used_space_on(20_000, "space_bash"),
+        Captured::Queued
+    );
+    assert_eq!(
+        t.capture_agent_used_space_on(20_000, "call_tool"),
+        Captured::AlreadyRecorded
+    );
+    let (t2, _) = ready(h.path(), &[]);
+    assert_eq!(
+        t2.capture_agent_used_space_on(20_000, "upload"),
+        Captured::AlreadyRecorded
+    );
+    assert_eq!(
+        t.capture_agent_used_space_on(20_001, "call_tool"),
+        Captured::Queued
+    );
+    t.flush(Duration::from_secs(1));
+    let used: Vec<Value> = sink
+        .events()
+        .into_iter()
+        .filter(|e| e["event"] == "cua_agent_used_space")
+        .collect();
+    assert_eq!(used.len(), 2);
+    assert_eq!(used[0]["properties"]["tool_group"], "shell");
+    assert_eq!(used[1]["properties"]["tool_group"], "services");
+
+    for env in [
+        &[("DO_NOT_TRACK", "1")][..],
+        &[("CUA_TELEMETRY", "0")][..],
+        &[("CI", "true")][..],
+        &[("CUA_AGENT_RUN_ID", "run-1")][..],
+    ] {
+        let h = tempfile::tempdir().unwrap();
+        let (t, sink) = ready(h.path(), env);
+        assert_eq!(
+            t.capture_agent_used_space_on(20_000, "space_bash"),
+            Captured::Disabled,
+            "{env:?}"
+        );
+        t.flush(Duration::from_secs(1));
+        assert!(sink.events().is_empty(), "{env:?}");
+        assert!(
+            !h.path()
+                .join("telemetry/funnel/agent_used_space_day")
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn space_tool_groups_cover_the_tools_that_act_inside_a_space() {
+    use events::space_tool_group as g;
+    assert_eq!(g("space_bash"), Some("shell"));
+    assert_eq!(g("computer_shell"), Some("shell"));
+    assert_eq!(g("send_file"), Some("files"));
+    assert_eq!(g("computer_file_write"), Some("files"));
+    assert_eq!(g("call_tool"), Some("services"));
+    assert_eq!(g("agent_start"), Some("agents"));
+    assert_eq!(g("computer_screenshot"), Some("computer"));
+    assert_eq!(g("teleport_app"), Some("other"));
+    for admin in [
+        "list_spaces",
+        "create_space",
+        "delete_space",
+        "share_space",
+        "computer_access_list",
+        "volume_ls",
+        "",
+    ] {
+        assert_eq!(g(admin), None, "{admin}");
+    }
 }

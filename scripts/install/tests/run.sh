@@ -158,7 +158,8 @@ inst() {
     done
     [ "${1:-}" = -- ] && shift
     # shellcheck disable=SC2086
-    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" \
+    # Install telemetry may only reach a loopback endpoint here (none is set).
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" CUA_TELEMETRY_FORBID_NETWORK=1 \
         CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 \
         CUA_FAKE_LOG="$home/cua.log" $envs \
         "$sh_bin" "$installer" "$@" </dev/null >"$work/out" 2>&1

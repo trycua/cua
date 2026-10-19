@@ -391,7 +391,14 @@ impl McpServer {
                     ));
                 }
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                self.call_any(name, args).await.to_result()
+                let out = self.call_any(name, args).await;
+                // Only an MCP client (an AI agent) gets here; the app calls
+                // tools through `call`. Anonymous: the tool's kind, once per
+                // install per day (`cua_agent_used_space`).
+                if !out.is_error && cua_telemetry::events::space_tool_group(name).is_some() {
+                    cua_telemetry::global().capture_agent_used_space(name);
+                }
+                out.to_result()
             }
             other => {
                 return Some(error(

@@ -1359,14 +1359,6 @@ async fn setup_with(
                 op: "unattended runsc install (run the plan shown by --dry-run)",
             }),
         };
-        let plan = if kind == BackendKind::Qemu && cua_vmm::host::cua_home().join("qemu").is_dir() {
-            format!(
-                "user-local QEMU at {}",
-                cua_vmm::host::cua_home().join("qemu").display()
-            )
-        } else {
-            plan
-        };
         steps.push(match result {
             Ok(()) => SetupStep {
                 name: c,

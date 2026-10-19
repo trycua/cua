@@ -298,10 +298,21 @@ impl QemuRuntime {
     }
 
     fn accel_for(&self, arch: Arch, kvm: &std::io::Result<()>) -> Result<String> {
+        self.accel_for_with(arch, kvm, host::sudo_available)
+    }
+
+    fn accel_for_with(
+        &self,
+        arch: Arch,
+        kvm: &std::io::Result<()>,
+        sudo: impl Fn() -> bool,
+    ) -> Result<String> {
         if let Some(accel) = &self.cfg.accel {
             return Ok(accel.clone());
         }
-        let accel = host::qemu_accel(host::HostOs::current(), arch, kvm)?;
+        let accel = host::qemu_accel_with(host::HostOs::current(), arch, kvm, sudo, |message| {
+            tracing::warn!("{message}")
+        })?;
         if let Err(e) = kvm
             && accel == "tcg"
             && arch == Arch::host()
@@ -1023,6 +1034,19 @@ pub async fn grant_kvm(
 const PACKAGE_ATTEMPTS: u32 = 3;
 
 pub async fn install_qemu() -> Result<()> {
+    install_qemu_with(
+        QemuPackageManager::detect(),
+        host::sudo_available,
+        async |p, a| host::run(p, a).await,
+    )
+    .await
+}
+
+async fn install_qemu_with(
+    manager: Option<(QemuPackageManager, PathBuf)>,
+    sudo: impl Fn() -> bool,
+    run: impl AsyncFn(&str, &[&str]) -> Result<String>,
+) -> Result<()> {
     match host::HostOs::current() {
         host::HostOs::Macos => {
             let brew = host::which("brew").ok_or_else(|| {
@@ -1032,19 +1056,19 @@ pub async fn install_qemu() -> Result<()> {
                 )
             })?;
             tracing::info!("installing QEMU with Homebrew");
-            host::run(brew, &["install", "qemu"]).await?;
+            run(&brew.to_string_lossy(), &["install", "qemu"]).await?;
         }
         host::HostOs::Linux => {
-            let (manager, program) = QemuPackageManager::detect().ok_or_else(|| {
+            let (manager, program) = manager.ok_or_else(|| {
                 VmmError::missing("QEMU", "no supported package manager found (apt-get/dnf)")
             })?;
-            if host::which("apt-get").is_some() && !host::sudo_available() {
+            if matches!(manager, QemuPackageManager::Apt) && !sudo() {
                 let home = host::cua_home();
                 tracing::info!(
                     "installing user-local QEMU at {}",
                     home.join("qemu").display()
                 );
-                return host::run(
+                return run(
                     "sh",
                     &[
                         "-c",
@@ -1062,7 +1086,7 @@ pub async fn install_qemu() -> Result<()> {
                 let refresh = args.last() == Some(&"update");
                 let mut attempt = 1;
                 loop {
-                    match host::run("sudo", &args).await {
+                    match run("sudo", &args).await {
                         Ok(_) => break,
                         Err(e) if attempt < PACKAGE_ATTEMPTS => {
                             tracing::warn!(
@@ -1620,22 +1644,93 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn install_without_sudo_runs_local_script() {
+        let calls = std::sync::Mutex::new(Vec::new());
+        install_qemu_with(
+            Some((QemuPackageManager::Apt, PathBuf::from("apt-get"))),
+            || false,
+            async |program, args| {
+                calls.lock().unwrap().push((
+                    program.to_string(),
+                    args.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                ));
+                Ok(String::new())
+            },
+        )
+        .await
+        .unwrap();
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "sh");
+        assert_eq!(calls[0].1[1], include_str!("install-local.sh"));
+        assert_eq!(calls[0].1[3], host::cua_home().to_string_lossy());
+        assert!(calls.iter().all(|(program, _)| program != "sudo"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn install_with_sudo_preserves_package_commands() {
+        let calls = std::sync::Mutex::new(Vec::new());
+        install_qemu_with(
+            Some((QemuPackageManager::Apt, PathBuf::from("apt-get"))),
+            || true,
+            async |program, args| {
+                assert_eq!(program, "sudo");
+                calls
+                    .lock()
+                    .unwrap()
+                    .push(args.iter().map(|a| a.to_string()).collect::<Vec<_>>());
+                Ok(String::new())
+            },
+        )
+        .await
+        .unwrap();
+        let expected: Vec<Vec<String>> = QemuPackageManager::Apt
+            .commands("apt-get")
+            .iter()
+            .map(|args| args.iter().map(|a| a.to_string()).collect())
+            .collect();
+        assert_eq!(*calls.lock().unwrap(), expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_installer_fixtures() {
+        let python = std::process::Command::new("python3")
+            .arg("--version")
+            .output();
+        if python.is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+            return;
+        }
+        assert!(
+            std::process::Command::new("python3")
+                .arg(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/install_local.py"
+                ))
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn native_launch_refuses_unopenable_kvm_and_falls_back_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let r = rt(tmp.path());
         let denied = Err(std::io::ErrorKind::PermissionDenied.into());
-        let result = r.accel_for(Arch::host(), &denied);
-        if host::sudo_available() {
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("permission denied")
-            );
-        } else {
-            assert_eq!(result.unwrap(), "tcg");
-        }
+        let error = r
+            .accel_for_with(Arch::host(), &denied, || true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("permission denied"), "{error}");
+        assert!(error.contains("sudo usermod -aG kvm \"$USER\""), "{error}");
+        assert_eq!(
+            r.accel_for_with(Arch::host(), &denied, || false).unwrap(),
+            "tcg"
+        );
         let missing = Err(std::io::ErrorKind::NotFound.into());
         assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
     }

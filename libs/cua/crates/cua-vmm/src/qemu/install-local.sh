@@ -1,9 +1,6 @@
 #!/bin/sh
 set -eu
 home=$1
-for tool in ssh ssh-keygen dpkg-deb realpath; do
-    command -v "$tool" >/dev/null || { echo "user-local QEMU requires $tool on PATH" >&2; exit 1; }
-done
 case $(uname -m) in
     x86_64) system=qemu-system-x86_64; packages='qemu-system-x86 seabios ipxe-qemu ovmf' ;;
     aarch64|arm64) system=qemu-system-aarch64; packages='qemu-system-arm qemu-efi-aarch64' ;;
@@ -12,11 +9,7 @@ esac
 mkdir -p "$home/bin"
 stage=$(mktemp -d "$home/.qemu-XXXXXXXX")
 old=$stage/old
-cleanup() {
-    if [ -d "$old" ] && [ ! -d "$home/qemu" ]; then mv "$old" "$home/qemu"; fi
-    rm -rf "$stage"
-}
-trap cleanup EXIT
+trap 'rm -rf "$stage"' EXIT
 trap 'exit 1' HUP INT TERM
 mkdir -p "$stage/lists/partial" "$stage/cache/archives/partial" "$stage/root"
 set -- -o "Dir::State::Lists=$stage/lists" -o "Dir::Cache=$stage/cache" -o Debug::NoLocking=1

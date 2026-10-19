@@ -310,8 +310,7 @@ async fn overlay_glide_to_target(key: &str, sx: f64, sy: f64, target: Option<[f6
     if !crate::overlay::is_enabled(key) {
         return;
     }
-    let pos = crate::overlay::current_position(key);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
+    if !crate::overlay::is_placed(key) {
         // Snap to target on first use; no animation to wait for.
         crate::overlay::send_command(
             key.to_owned(),

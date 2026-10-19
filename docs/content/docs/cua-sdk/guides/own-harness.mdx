@@ -239,8 +239,10 @@ and saved this `screen.png`:
 ## Connect to a sandbox you already have
 
 To drive a machine you did not create in this program, connect to it instead.
-Pass a sandbox's name (`local:dev`, or a name that is unique), or the address
-and env token of any machine that runs cua-spacesd
+A sandbox created earlier on this machine connects by name:
+`Sandbox.connect("dev")` in Python, `embedded().sandboxes().connect('dev')` in
+TypeScript, `cua.sandboxes().connect("dev".into())` in Rust. Any other machine
+that runs cua-spacesd connects by address and env token
 ([Attach to or run cua-spacesd](/cua-sdk/guides/spacesd)). Connecting never
 creates or deletes anything.
 

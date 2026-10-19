@@ -171,6 +171,21 @@ fn desktop_input_route() -> DriverRoute {
     }
 }
 
+/// niri does not report where tiled windows are, so it takes desktop-scope
+/// points only as pixels of the latest `get_desktop_state` screenshot.
+fn desktop_screenshot_on_niri(driver: &mut McpDriver, session: &str) {
+    if !(platform_linux::wayland::wayland_input_enabled()
+        && platform_linux::wayland::niri::is_session())
+    {
+        return;
+    }
+    let r = driver.call(
+        "get_desktop_state",
+        serde_json::json!({ "session": session }),
+    );
+    assert!(!r.is_error(), "get_desktop_state failed: {}", r.text());
+}
+
 fn start_scope(driver: &mut McpDriver, session: &str, scope: &str) {
     let r = driver.call(
         "start_session",
@@ -235,6 +250,7 @@ fn desktop_scope_windowless_click_lands_on_control() {
             posture.text()
         );
         std::thread::sleep(Duration::from_millis(300));
+        desktop_screenshot_on_niri(&mut driver, &desktop_session);
         driver.start_behavior_recording();
 
         // Retry the window-less desktop click until the counter advances. A
@@ -331,6 +347,45 @@ fn desktop_scope_windowless_scroll_lands_on_control() {
             std::thread::sleep(Duration::from_millis(300));
             snap = ax_snapshot(&mut driver, &window_session, pid, wid);
         };
+        // The fixture's outer scroller keeps every control reachable on a short
+        // window. At niri's 1.5 scale smoke the window is 520 logical px tall
+        // and the target lies below it, so scroll the outer scroller first.
+        let mut target = (x, y);
+        desktop_screenshot_on_niri(&mut driver, &desktop_session);
+        for _ in 0..6 {
+            let Some(bounds) = snap.get("window_bounds").filter(|b| b.is_object()) else {
+                break;
+            };
+            let (bx, by, bw, bh) = (
+                bounds["x"].as_i64().unwrap_or(0),
+                bounds["y"].as_i64().unwrap_or(0),
+                bounds["width"].as_i64().unwrap_or(0),
+                bounds["height"].as_i64().unwrap_or(0),
+            );
+            if target.1 < by + bh - 16 {
+                break;
+            }
+            // The root box's 12 px border at the right edge holds no control
+            // that takes the wheel, so the outer scroller gets it.
+            let outer = driver.call(
+                "scroll",
+                serde_json::json!({
+                    "session": desktop_session, "scope": "desktop",
+                    "x": bx + bw - 6, "y": by + bh / 2,
+                    "direction": "down", "by": "line", "amount": 5
+                }),
+            );
+            assert!(
+                !outer.is_error(),
+                "could not scroll the GTK3 scroll target into view: {}",
+                outer.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+            target = element_center_containing(&snap, "scroll-tall-viewport")
+                .expect("GTK3 scroll target left the AT-SPI tree");
+        }
+        let (x, y) = target;
         let before = marker_value(&snap, "scroll_offset=").unwrap_or(0);
         driver.start_behavior_recording();
         let response = driver.call(

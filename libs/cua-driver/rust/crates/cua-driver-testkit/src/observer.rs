@@ -919,6 +919,11 @@ pub mod macos {
 #[path = "observer_hyprland.rs"]
 mod hyprland;
 
+// niri's transport uses Linux-only peer credentials.
+#[cfg(target_os = "linux")]
+#[path = "observer_niri.rs"]
+mod niri;
+
 #[cfg(target_os = "linux")]
 pub mod linux {
     use std::process::{Command, Stdio};
@@ -944,6 +949,7 @@ pub mod linux {
         X11,
         Sway,
         Hyprland,
+        Niri,
         Gnome,
         CuaCompositor,
         Missing,
@@ -955,6 +961,7 @@ pub mod linux {
         events: Arc<Mutex<Vec<FocusEvent>>>,
         sampler: Option<JoinHandle<()>>,
         hyprland_journal: Option<super::hyprland::Journal>,
+        niri_journal: Option<super::niri::Journal>,
         probe_error: Option<ObserverError>,
     }
 
@@ -970,6 +977,14 @@ pub mod linux {
                     SessionKind::CuaCompositor
                 } else if sway_available() {
                     SessionKind::Sway
+                } else if let Some(niri) = niri_session() {
+                    match niri {
+                        Ok(()) => SessionKind::Niri,
+                        Err(error) => {
+                            probe_error = Some(error);
+                            SessionKind::Missing
+                        }
+                    }
                 } else if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
                     match super::hyprland::probe() {
                         Ok(()) => SessionKind::Hyprland,
@@ -998,6 +1013,7 @@ pub mod linux {
                 events: Arc::new(Mutex::new(Vec::new())),
                 sampler: None,
                 hyprland_journal: None,
+                niri_journal: None,
                 probe_error,
             }
         }
@@ -1018,14 +1034,15 @@ pub mod linux {
                     cursor: true,
                     leaked_input: false,
                 },
-                SessionKind::Sway | SessionKind::Gnome | SessionKind::CuaCompositor => {
-                    ObserverCapabilities {
-                        focus: true,
-                        z_order: true,
-                        cursor: false,
-                        leaked_input: false,
-                    }
-                }
+                SessionKind::Sway
+                | SessionKind::Niri
+                | SessionKind::Gnome
+                | SessionKind::CuaCompositor => ObserverCapabilities {
+                    focus: true,
+                    z_order: true,
+                    cursor: false,
+                    leaked_input: false,
+                },
                 SessionKind::Missing => ObserverCapabilities::default(),
             }
         }
@@ -1038,6 +1055,7 @@ pub mod linux {
                 SessionKind::X11 => x11_snapshot(target),
                 SessionKind::Sway => sway_snapshot(target),
                 SessionKind::Hyprland => super::hyprland::snapshot(target),
+                SessionKind::Niri => super::niri::snapshot(target),
                 SessionKind::Gnome => gnome_snapshot(target),
                 SessionKind::CuaCompositor => cua_compositor_snapshot(target),
                 SessionKind::Missing => Ok(DesktopSnapshot {
@@ -1057,6 +1075,13 @@ pub mod linux {
                 self.hyprland_journal = Some(super::hyprland::Journal::start()?);
                 return Ok(());
             }
+            if self.session == SessionKind::Niri {
+                if self.niri_journal.is_some() {
+                    return Err(ObserverError::new("niri focus journal already active"));
+                }
+                self.niri_journal = Some(super::niri::Journal::start()?);
+                return Ok(());
+            }
             if self.sampler.is_some() {
                 return Err(ObserverError::new("Linux focus journal already active"));
             }
@@ -1073,6 +1098,7 @@ pub mod linux {
                     SessionKind::X11 => x11_focus_identity(),
                     SessionKind::Sway => sway_focus_identity(),
                     SessionKind::Hyprland => super::hyprland::focus_identity(),
+                    SessionKind::Niri => super::niri::focus_identity(),
                     SessionKind::Gnome => gnome_focus_identity(),
                     SessionKind::CuaCompositor => cua_compositor_focus_identity(),
                     SessionKind::Missing => Ok(None),
@@ -1098,6 +1124,9 @@ pub mod linux {
             if let Some(journal) = self.hyprland_journal.take() {
                 return journal.drain();
             }
+            if let Some(journal) = self.niri_journal.take() {
+                return journal.drain();
+            }
             self.stop.store(true, Ordering::Release);
             if let Some(sampler) = self.sampler.take() {
                 sampler
@@ -1121,6 +1150,34 @@ pub mod linux {
 
     pub(crate) fn hyprland_cursor_position() -> Result<(f64, f64), ObserverError> {
         super::hyprland::cursor_position()
+    }
+
+    /// `None` unless `NIRI_SOCKET` belongs to this session's compositor, so an
+    /// unrelated inherited socket leaves the session to the other observers.
+    /// Once niri was recognised, losing it is an error, not another session.
+    fn niri_session() -> Option<Result<(), ObserverError>> {
+        match super::niri::attest() {
+            Ok(false) => None,
+            Ok(true) => Some(super::niri::probe()),
+            Err(error) => Some(Err(error)),
+        }
+    }
+
+    /// Lets the niri observer certify occlusion behind this sentinel window
+    /// while its state file reports fullscreen; `None` clears it.
+    pub(crate) fn niri_register_sentinel(sentinel: Option<(TargetWindow, std::path::PathBuf)>) {
+        super::niri::register_sentinel(sentinel);
+    }
+
+    pub(crate) fn niri_focus(target: TargetWindow) -> Result<(), ObserverError> {
+        super::niri::focus(target)
+    }
+
+    pub(crate) fn niri_wait_for_focus_transfer(
+        from: TargetWindow,
+        to: TargetWindow,
+    ) -> Result<(), ObserverError> {
+        super::niri::wait_for_focus_transfer(from, to, Duration::from_secs(3))
     }
 
     pub(crate) fn hyprland_monitor_regions() -> Result<Vec<(f64, f64, f64, f64)>, ObserverError> {

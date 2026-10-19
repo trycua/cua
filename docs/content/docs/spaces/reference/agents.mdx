@@ -51,7 +51,7 @@ Installs the harness if needed (pinned, checksum-verified), gives it the Space's
 | `env` | `map of string` | `{}` | More environment for the agent, for example `{"HERMES_HOME": "/home/cua/bot"}`. Stored 0600 in the run and redacted from its output; name provider keys in `env_from_host` instead, so their values never pass through the conversation. |
 | `env_from_host` | `string[]` | `[]` | Provider key variables to forward from this server's environment (or from the keys saved in Cua Spaces, Settings → Agents), for example ["ANTHROPIC_API_KEY"]. Names only; values never pass through the conversation. Saved keys the harness reads are added without being named. |
 | `exit_when_idle` | `boolean` | `false` | Stop (resumably) once the prompt is answered. Default false. |
-| `files` | `string[]` | `[]` | Host files attached to the first prompt (absolute paths on this server's machine, at most 8 MiB each). |
+| `files` | `string[]` | `[]` | Host files attached to the first prompt (absolute paths on this server's computer, at most 8 MiB each). |
 | `home` | `string` | none | Run as this persistent agent: its home in the Cua Volume (`agents/<home>/`) is restored into the Space first and saved after every turn, the harness keeps its memory there, and the agent gets the `cua` bridge (notify_user, the drive). Creates the persistent agent (this harness, this Space) when it does not exist yet. Default: a one-off run whose state lives only in the Space. |
 | `label` | `string` | none | A label for listings. |
 | `mcp_servers` | `object[]` | `[]` | Extra MCP servers. The Space's own tools are included unless `sandbox_mcp` is false. |

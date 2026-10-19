@@ -24,7 +24,7 @@ use cua_proto::env::v1::{
 use std::{collections::HashMap, sync::Arc};
 
 /// `cua_sandbox_core::CLOUD_ENDED` (that crate does not build for wasm32).
-const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own machine. \
+const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own computer. \
      See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
 
 /// On wasm32 futures need not be `Send` (single-threaded). On the host this

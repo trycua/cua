@@ -68,7 +68,7 @@ function SpacesPage() {
     <Page>
       <PageHeader
         title="Spaces"
-        description={isLoading ? "Loading Spaces…" : `${plural(spaces.length, "Space")} on ${plural(machines.length, "machine")}, ${running} running`}
+        description={isLoading ? "Loading Spaces…" : `${plural(spaces.length, "Space")} on ${plural(machines.length, "computer")}, ${running} running`}
         actions={
           <Button onClick={newSpace}>
             <PlusIcon /> New Space

@@ -56,7 +56,7 @@ class UnifiedSandboxDocsTests(unittest.TestCase):
     def test_cloud_guide_is_removed_and_the_ended_page_stays(self):
         self.assertFalse((DOCS / "cua-sdk" / "guides" / "cloud.mdx").exists())
         text = page("cua-sdk/guides/cua-cloud-ended")
-        self.assertIn("Cua Cloud has ended; use a local sandbox or your own machine.", text)
+        self.assertIn("Cua Cloud has ended; use a local sandbox or your own computer.", text)
         self.assertFalse((DOCS / "fleets").exists())
 
 

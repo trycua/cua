@@ -280,7 +280,7 @@ struct ViewModelTests {
         let model = makeModel(host: host)
         await model.refresh()
         #expect(model.spaces.contains { $0.id == "this-mac" })
-        #expect(model.sidebar.thisMachine?.name == "This machine")
+        #expect(model.sidebar.thisMachine?.name == "This computer")
         #expect(model.sidebar.thisMachine?.detail == "Set up for access")
         #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.id == "this-mac" })
         model.select("this-mac")

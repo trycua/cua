@@ -104,14 +104,14 @@ pub fn prompt(
     match surface {
         "share" if kind != "teams" => Some(UpsellPrompt {
             surface: "share".into(),
-            text: "Sharing with people you work with? Teams adds team-owned machines, roles and device approval, from $30 a seat.".into(),
+            text: "Sharing with people you work with? Teams adds team-owned computers, roles and device approval, from $30 a seat.".into(),
             cta: link(account_app, "See Teams", BUY_TEAMS_PATH, "app_share"),
             dismiss: "Not now".into(),
         }),
         "machine" if kind == "free" => Some(UpsellPrompt {
             surface: "machine".into(),
             text: format!(
-                "Two machines now. Free includes {} live sessions and {} remote hours a month. Pro makes it {PRO_SESSIONS} and {PRO_HOURS}, for $18 a month.",
+                "Two computers now. Free includes {} live sessions and {} remote hours a month. Pro makes it {PRO_SESSIONS} and {PRO_HOURS}, for $18 a month.",
                 usage.live_sessions_limit.unwrap_or(2),
                 hours(usage.hours_limit.unwrap_or(20.0)),
             ),
@@ -151,7 +151,7 @@ mod tests {
         let p = prompt("share", &usage("free"), APP, &state()).unwrap();
         assert_eq!(
             p.text,
-            "Sharing with people you work with? Teams adds team-owned machines, roles and device approval, from $30 a seat."
+            "Sharing with people you work with? Teams adds team-owned computers, roles and device approval, from $30 a seat."
         );
         assert_eq!(p.cta.url, "https://app.cua.ai/buy/teams?from=app_share");
         assert!(prompt("share", &usage("pro"), APP, &state()).is_some());
@@ -163,7 +163,7 @@ mod tests {
         let p = prompt("machine", &usage("free"), APP, &state()).unwrap();
         assert_eq!(
             p.text,
-            "Two machines now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month."
+            "Two computers now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month."
         );
         assert_eq!(p.cta.label, "Get Pro");
         assert_eq!(p.cta.url, "https://app.cua.ai/buy/pro?from=app_machine");

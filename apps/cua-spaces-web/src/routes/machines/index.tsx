@@ -73,9 +73,9 @@ function MachinesPage() {
   return (
     <Page>
       <PageHeader
-        title="Machines"
+        title="Computers"
         description={
-          isLoading ? "Loading machines…" : machines.length ? machinesSummary(machines.length, online) : "Computers that can run your Spaces."
+          isLoading ? "Loading computers…" : machines.length ? machinesSummary(machines.length, online) : "Computers that can run your Spaces."
         }
         actions={
           <div className="flex items-center gap-2">
@@ -83,13 +83,13 @@ function MachinesPage() {
               Join with a code
             </Button>
             <Button variant="outline" onClick={() => setAdding(true)}>
-              <PlusIcon /> Add a machine
+              <PlusIcon /> Add a computer
             </Button>
           </div>
         }
       />
       {error ? (
-        <EmptyState icon={<ServerIcon />} title="Couldn't load machines">
+        <EmptyState icon={<ServerIcon />} title="Couldn't load computers">
           {error.message}
         </EmptyState>
       ) : isLoading ? (
@@ -97,10 +97,10 @@ function MachinesPage() {
       ) : machines.length === 0 ? (
         <EmptyState
           icon={<ServerIcon />}
-          title="No machines yet"
+          title="No computers yet"
           action={
             <Button onClick={() => setAdding(true)}>
-              <PlusIcon /> Add a machine
+              <PlusIcon /> Add a computer
             </Button>
           }
         >
@@ -109,7 +109,7 @@ function MachinesPage() {
       ) : (
         <div className="grid grid-cols-[minmax(0,340px)_minmax(0,1fr)] items-start gap-6">
           <div>
-            <ul aria-label="Machines" className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
+            <ul aria-label="Computers" className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
               {machines.map((m) => (
                 <li key={m.id}>
                   <MachineRow
@@ -123,7 +123,7 @@ function MachinesPage() {
             </ul>
             {machines.length === 1 ? (
               <p className="mt-3 px-1 text-xs text-muted-foreground">
-                Only this machine so far. Add another to run Spaces on it from here.
+                Only this computer so far. Add another to run Spaces on it from here.
               </p>
             ) : null}
             <UpsellPrompt surface="machine" active={machines.length >= 2 && machines.some((m) => m.via === "relay")} className="mt-3" />
@@ -180,7 +180,7 @@ function MachineRow({ machine: m, spaces, selected, onSelect }: { machine: Machi
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-medium">{m.name}</span>
-          {m.current ? <span className="shrink-0 text-xs text-muted-foreground">(this machine)</span> : null}
+          {m.current ? <span className="shrink-0 text-xs text-muted-foreground">(this computer)</span> : null}
         </div>
         <div className="truncate text-xs text-muted-foreground">{machineSubtitle(m)}</div>
       </div>
@@ -278,7 +278,7 @@ function MachineDetail({
       <Group title="Spaces">
         {spaces.length === 0 ? (
           <p className="px-4 py-3 text-[13px] text-muted-foreground">
-            {m.online ? "No Spaces on this machine." : "No Spaces listed. Spaces show again when the machine is back online."}
+            {m.online ? "No Spaces on this computer." : "No Spaces listed. Spaces show again when the computer is back online."}
           </p>
         ) : (
           spaces.map((s) => (
@@ -326,7 +326,7 @@ function Fact({ label, hint, children }: { label: string; hint?: string; childre
 
 function LoadingState() {
   return (
-    <div aria-busy="true" aria-label="Loading machines" className="grid grid-cols-[minmax(0,340px)_minmax(0,1fr)] items-start gap-6">
+    <div aria-busy="true" aria-label="Loading computers" className="grid grid-cols-[minmax(0,340px)_minmax(0,1fr)] items-start gap-6">
       <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex items-center gap-3 px-3.5 py-3">

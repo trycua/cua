@@ -22867,7 +22867,7 @@ class CuaError:  # type: ignore
         Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
         this.
 
-        Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
         ended guide.
 """
         def __repr__(self):
@@ -22878,7 +22878,7 @@ class CuaError:  # type: ignore
         Fleet's admission refused the request. Cua Cloud has ended, so the SDK
         no longer raises this.
 
-        Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
         ended guide.
 """
         def __repr__(self):
@@ -22995,7 +22995,7 @@ class CuaError:  # type: ignore
         display, a local runtime) is not available.
 
         Fix: Install or start the prerequisite the message names on this
-        machine.
+        computer.
 """
         def __repr__(self):
             return "CuaError.HostCapabilityMissing({})".format(repr(str(self)))
@@ -23015,7 +23015,7 @@ class CuaError:  # type: ignore
         A named cloud pool's template differs from the requested sandbox
         fields. Cua Cloud has ended, so the SDK no longer raises this.
 
-        Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
         ended guide.
 """
         def __repr__(self):
@@ -23027,7 +23027,7 @@ class CuaError:  # type: ignore
         reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
         this.
 
-        Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
         ended guide.
 """
         def __repr__(self):

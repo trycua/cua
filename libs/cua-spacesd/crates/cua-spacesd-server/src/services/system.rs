@@ -555,7 +555,7 @@ fn require_root(caller: &crate::auth::CallerIdentity, what: &str) -> Result<(), 
 /// Why the desktop's features are unsupported for a relayed caller of a
 /// machine that does not share its desktop (it only provides Spaces).
 pub const DESKTOP_NOT_SHARED: &str =
-    "this machine does not share its desktop (it only provides Spaces)";
+    "this computer does not share its desktop (it only provides Spaces)";
 
 /// `features` with every desktop feature ([`crate::provider::DESKTOP_FEATURES`])
 /// unsupported because the desktop is not shared.

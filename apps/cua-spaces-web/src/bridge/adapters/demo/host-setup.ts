@@ -51,7 +51,7 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
     "host.action": async ({ action }) => {
       await wait(stepMs);
       const h = state.host;
-      if (!h.configured) throw new HostError("This machine is not set up for access", "not_configured");
+      if (!h.configured) throw new HostError("This computer is not set up for access", "not_configured");
       switch (action) {
         case "stop-sharing":
           return set({ ...h, sharing: false, clients: [] });

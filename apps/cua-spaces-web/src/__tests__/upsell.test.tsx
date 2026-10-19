@@ -115,7 +115,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(prompt.textContent).toContain("Two machines now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.");
+    expect(prompt.textContent).toContain("Two computers now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.");
     await waitFor(() => expect(features(tracked)).toContain("upsell_machine_shown"));
     fireEvent.click(document.querySelector("[data-upsell=machine] [data-upsell-cta]")!);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_machine"]));
@@ -133,7 +133,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
   it("never during a live session", async () => {
     const { router } = await mountApp("/machines", host(idle({ liveSessions: 1 })));
     await router.load();
-    await waitFor(() => expect(document.querySelector("[data-machine-row], [aria-label=Machines]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[data-machine-row], [aria-label=Computers]")).toBeTruthy());
     await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(document.querySelector("[data-upsell]")).toBeNull();
   });
@@ -141,7 +141,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
   it("never during an agent run", async () => {
     const { router } = await mountApp("/machines", host(idle(), [], [], true));
     await router.load();
-    await waitFor(() => expect(document.querySelector("[aria-label=Machines]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[aria-label=Computers]")).toBeTruthy());
     await act(() => new Promise((r) => setTimeout(r, 80)));
     expect(document.querySelector("[data-upsell]")).toBeNull();
   });
@@ -184,7 +184,7 @@ describe.skipIf(!wasmBuilt)("<UpsellPrompt surface=share>", () => {
     const opened: string[] = [];
     view(idle(), true, opened);
     const note = await screen.findByRole("note");
-    expect(note.textContent).toContain("Sharing with people you work with? Teams adds team-owned machines, roles and device approval, from $30 a seat.");
+    expect(note.textContent).toContain("Sharing with people you work with? Teams adds team-owned computers, roles and device approval, from $30 a seat.");
     fireEvent.click(screen.getByRole("button", { name: "See Teams" }));
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_share"]));
   });

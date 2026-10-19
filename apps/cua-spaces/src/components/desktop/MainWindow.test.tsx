@@ -74,11 +74,11 @@ describe("MainWindow", () => {
     const cloud = await screen.findByRole("listbox", { name: "Cua Cloud" });
     expect(within(cloud).getByRole("option", { name: /aurora/ })).toBeInTheDocument();
     expect(within(screen.getByRole("listbox", { name: "This Mac" })).getByRole("option", { name: /cua-e2e-vm/ })).toBeInTheDocument();
-    expect(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option")).toBeInTheDocument();
+    expect(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option")).toBeInTheDocument();
     // Each row leads with its OS mark (the notch tiles' icon); This machine is this Mac.
     const aurora = within(cloud).getByRole("option", { name: /aurora/ });
     expect(aurora.querySelector("[data-os-icon]")).not.toBeNull();
-    const host = within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option");
+    const host = within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option");
     expect(host.querySelector('[data-os-icon="os-macos"]')).not.toBeNull();
   });
 
@@ -388,13 +388,13 @@ describe("MainWindow", () => {
       "Agents",
       "Teleport",
     ]);
-    fireEvent.click(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option"));
+    fireEvent.click(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option"));
     fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByText("Set up this computer")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeInTheDocument();
     await waitFor(() =>
-      expect(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option")).toHaveAttribute(
+      expect(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option")).toHaveAttribute(
         "aria-selected",
         "true",
       ),
@@ -565,7 +565,7 @@ describe("empty home", () => {
     setup({ listSpaces: async () => [] });
     expect(await screen.findByRole("heading", { name: "No Spaces yet" })).toBeInTheDocument();
     expect(screen.getByText("Choose a system for your first Space.")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "This machine" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "This computer" })).toBeNull();
     expect(screen.getByRole("button", { name: "Linux, About 1 minute · 3.2–7.1 GB of disk" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^macOS, About .+ download$/ })).toBeInTheDocument();
   });

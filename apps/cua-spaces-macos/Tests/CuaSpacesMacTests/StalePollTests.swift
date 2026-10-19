@@ -167,7 +167,7 @@ import Testing
     /// 3-core CI runner when the real 3 s staleness passed between polls).
     @Test func aListTheDaemonRefusesIsNotAStaleConnection() async throws {
         let first = Connection(rows: [Self.row("local:a")])
-        first.refuse(CuaError.Unauthenticated(message: "Relay authentication failed. Sign in again to refresh your machines."))
+        first.refuse(CuaError.Unauthenticated(message: "Relay authentication failed. Sign in again to refresh your computers."))
         let gate = LiveGate<LiveServices>()
         gate.resolve(LiveServices(backend: first))
         let model = makeModel(gate: gate) { first }

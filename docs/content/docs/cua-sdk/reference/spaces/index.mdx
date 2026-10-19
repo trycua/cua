@@ -13,7 +13,7 @@ description: "The Spaces registry: create, add, resolve, delete and remove Space
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).
+`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing computer by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).
 
 ## `Spaces`
 
@@ -161,7 +161,7 @@ import cua
 
 async def main():
     spaces = cua.embedded().spaces()
-    info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")  # a machine running cua-spacesd
+    info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")  # a computer running cua-spacesd
     space = await spaces.space(info.id)
     out = await space.bash("echo hi", None)
     print([info.provider, out.stdout, out.exit_code])
@@ -176,7 +176,7 @@ asyncio.run(main())
 import Cua
 
 let spaces = try Cua.embedded().spaces()
-let info = try await spaces.add(url: "http://10.0.0.5:3211", token: "TOKEN", name: "lab")  // a machine running cua-spacesd
+let info = try await spaces.add(url: "http://10.0.0.5:3211", token: "TOKEN", name: "lab")  // a computer running cua-spacesd
 let space = try await spaces.space(space: info.id)
 let out = try await space.bash(command: "echo hi", timeoutMs: nil)
 print(info.provider, out.stdout, out.exitCode ?? -1)
@@ -190,7 +190,7 @@ import ai.cua.sdk.Cua
 import ai.cua.sdk.CuaConfig
 
 val spaces = Cua.embedded(CuaConfig()).spaces()
-val info = spaces.add("http://10.0.0.5:3211", "TOKEN", "lab") // a machine running cua-spacesd
+val info = spaces.add("http://10.0.0.5:3211", "TOKEN", "lab") // a computer running cua-spacesd
 val space = spaces.space(info.id)
 val out = space.bash("echo hi", null)
 println("${info.provider} ${out.stdout} ${out.exitCode}")

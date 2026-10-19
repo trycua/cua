@@ -1217,7 +1217,7 @@ impl AppCore {
         let parsed = On::parse(on).map_err(msg)?;
         if parsed.is_existing_machine() {
             return Err(format!(
-                "{parsed} names one machine; the default location is local or cloud"
+                "{parsed} names one computer; the default location is local or cloud"
             ));
         }
         let mut settings = self.settings()?;

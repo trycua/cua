@@ -22,9 +22,9 @@ const machine = (over: Partial<Machine>): Machine => ({
 });
 
 describe("machines", () => {
-  it("counts machines in the Machines header in the singular too", () => {
-    expect(machinesSummary(1, 1)).toBe("1 machine, 1 online");
-    expect(machinesSummary(3, 2)).toBe("3 machines, 2 online");
+  it("counts computers in the Computers header in the singular too", () => {
+    expect(machinesSummary(1, 1)).toBe("1 computer, 1 online");
+    expect(machinesSummary(3, 2)).toBe("3 computers, 2 online");
   });
 
   it("reads the OS the host reported", () => {

@@ -1967,7 +1967,7 @@ impl Sandboxes {
             SandboxRef::Relay { .. } => Err(Error::Unsupported {
                 provider: ProviderKind::Direct,
                 op: format!(
-                    "{r}: relay machines are Spaces; open it with the Spaces API or `cua mcp` \
+                    "{r}: relay computers are Spaces; open it with the Spaces API or `cua mcp` \
                      (space {r})"
                 ),
             }),
@@ -4270,7 +4270,7 @@ struct Creating {
 static CREATING: std::sync::Mutex<Vec<Creating>> = std::sync::Mutex::new(Vec::new());
 
 /// Why a cloud sandbox cannot have a GPU.
-pub const FLEET_NO_GPU: &str = "Cua Cloud has no GPU machines yet";
+pub const FLEET_NO_GPU: &str = "Cua Cloud has no GPU computers yet";
 
 /// How long a cancelled create waits for its drop guards' clean-up.
 const DISCARD_SETTLE: Duration = Duration::from_secs(90);

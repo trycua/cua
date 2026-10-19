@@ -200,7 +200,7 @@ async def _lookup(name: str, local: Optional[bool]) -> tuple[str, bool]:
     plain, _, direct = await _refs.resolve(name, local)
     if direct is not None:
         raise Unsupported(
-            f"{name}: a direct machine is not managed by cua-sandbox; connect to it with "
+            f"{name}: a direct computer is not managed by cua-sandbox; connect to it with "
             f"Sandbox.connect({name!r})"
         )
     # A bare name is a local sandbox (an unknown one fails as "not found" in the

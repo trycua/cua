@@ -117,7 +117,7 @@ function SpaceDetailPage() {
             </Button>
           }
         >
-          {error ? error.message : "It may have been deleted, or it runs on a machine this app can't see."}
+          {error ? error.message : "It may have been deleted, or it runs on a computer this app can't see."}
         </EmptyState>
       </Page>
     );

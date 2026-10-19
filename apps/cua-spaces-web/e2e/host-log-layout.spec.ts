@@ -46,7 +46,7 @@ for (const [name, css] of [
   ["the system font", null],
   ["a wider font", WIDE_FONT],
 ] as const) {
-  test(`This machine's long log rows keep what happened in view at 1100 px, in ${name}`, async ({ page }) => {
+  test(`This computer's long log rows keep what happened in view at 1100 px, in ${name}`, async ({ page }) => {
     await page.goto("/machines?bridge=demo&parity");
     await page.waitForFunction(() => window.__cuaParity !== undefined);
     if (css) await page.addStyleTag({ content: css });

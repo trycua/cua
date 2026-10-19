@@ -244,7 +244,7 @@ const TOOLS: &[Tool] = &[
                 "kind",
                 "string",
                 false,
-                "What kind of machine: auto (default; from the image), container or vm",
+                "What kind of computer: auto (default; from the image), container or vm",
             ),
             (
                 "runtime",

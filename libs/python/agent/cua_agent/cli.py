@@ -257,7 +257,7 @@ Examples:
         help=(
             "Computer provider to use (via cua-sandbox): cloud (default, connect to an "
             "existing sandbox by name), lume (local macOS VM), winsandbox (local Windows VM), "
-            "or docker (local Linux container). To control this machine, use cua-driver."
+            "or docker (local Linux container). To control this computer, use cua-driver."
         ),
     )
 

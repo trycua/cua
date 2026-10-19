@@ -100,13 +100,13 @@ enum Command {
     /// Log in to Cua and manage the signed-in session.
     #[command(subcommand)]
     Auth(AuthCmd),
-    /// AI coding agents on this machine: install cua skills and configure the cua MCP server.
+    /// AI coding agents on this computer: install cua skills and configure the cua MCP server.
     #[command(subcommand)]
     Agents(agents::AgentsCmd),
     /// Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop.
     #[command(subcommand)]
     Agent(agent_cmd::AgentCmd),
-    /// Sandboxes: local or an existing machine (direct).
+    /// Sandboxes: local or an existing computer (direct).
     #[command(subcommand, visible_alias = "sb")]
     Sandbox(Box<sandbox::SandboxCmd>),
     /// User defaults (~/.cua/config.toml): where sandboxes run when --on is
@@ -139,7 +139,7 @@ enum Command {
     #[command(
         name = "do-host-consent",
         after_help = "Examples:
-  # Allow `cua do` to act on this machine's desktop
+  # Allow `cua do` to act on this computer's desktop
   cua do-host-consent"
     )]
     DoHostConsent,
@@ -205,10 +205,10 @@ enum Command {
   # CI: fail on warnings, write JUnit XML
   cua doctor local:dev --strict --junit doctor.xml")]
     Doctor(Box<doctor::DoctorCmd>),
-    /// Unattended access to this machine (setup, status, stop, start, remove).
+    /// Unattended access to this computer (setup, status, stop, start, remove).
     #[command(subcommand)]
     Host(host::HostCmd),
-    /// Spaces: registered ones and your machines on the relay.
+    /// Spaces: registered ones and your computers on the relay.
     #[command(subcommand)]
     Spaces(host::SpacesCmd),
     /// Spaces in your own cloud account (AWS, Google Cloud, Modal):
@@ -234,9 +234,9 @@ enum Command {
   cua devices audit"
     )]
     Devices(devices_cmd::DevicesCmd),
-    /// Teams (organizations of your cua.ai account) share machines with
+    /// Teams (organizations of your cua.ai account) share computers with
     /// every member and their agents. Owners and admins invite by email,
-    /// approve member devices and add machines.
+    /// approve member devices and add computers.
     #[command(
         subcommand,
         after_help = "Examples:
@@ -330,7 +330,7 @@ enum AuthCmd {
         #[arg(long)]
         no_browser: bool,
         /// Sign in from another device with a code (for SSH sessions and
-        /// machines without a browser).
+        /// computers without a browser).
         #[arg(long)]
         remote: bool,
         /// Force a flow: `pkce` or `device`.
@@ -500,6 +500,7 @@ enum TrajCmd {
   cua traj ls dev")]
     Ls {
         /// Only sessions of this target (sandbox name or `host`).
+        #[arg(value_name = "TARGET")]
         machine: Option<String>,
     },
     /// Zip, serve on loopback and open the hosted viewer.
@@ -527,7 +528,7 @@ enum TrajCmd {
         #[arg(long, value_name = "DAYS")]
         older_than: Option<i64>,
         /// Only sessions of this target.
-        #[arg(long)]
+        #[arg(long, visible_alias = "computer", value_name = "COMPUTER")]
         machine: Option<String>,
         /// Do not ask for confirmation.
         #[arg(short, long)]
@@ -1545,7 +1546,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 host::run_host(cmd, &home, &tokens, device.as_deref(), None, json, out).await?;
             if tokens.used_ephemeral() && !json {
                 eprintln!(
-                    "Signed in for this command only: this machine keeps no cua.ai session, just its machine token."
+                    "Signed in for this command only: this computer keeps no cua.ai session, only its own access token."
                 );
             }
             Ok(code)

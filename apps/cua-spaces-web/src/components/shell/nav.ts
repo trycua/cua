@@ -16,7 +16,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { to: "/spaces", label: "Spaces", icon: LayoutGridIcon, command: "nav.spaces" },
-  { to: "/machines", label: "Machines", icon: ServerIcon, command: "nav.machines" },
+  { to: "/machines", label: "Computers", icon: ServerIcon, command: "nav.machines" },
   { to: "/agents", label: "Agents", icon: BotIcon, command: "nav.agents" },
   { to: "/keyvault", label: "Keyvault", icon: KeyRoundIcon, command: "nav.keyvault" },
   { to: "/notifications", label: "Notifications", icon: BellIcon },

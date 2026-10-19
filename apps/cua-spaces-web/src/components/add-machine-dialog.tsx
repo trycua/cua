@@ -76,7 +76,7 @@ export function AddMachineDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="top-[8vh] w-[min(600px,calc(100vw-2rem))]" data-add-machine={pairing.phase}>
         <div className="max-h-[84vh] overflow-y-auto px-6 pt-5 pb-4">
-          <DialogTitle className="text-[15px] font-semibold">Add a machine</DialogTitle>
+          <DialogTitle className="text-[15px] font-semibold">Add a computer</DialogTitle>
           <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
             {manualOnly
               ? "Any Mac, Linux or Windows computer you own can run Spaces for you. You set it up on that computer, and it shows up here once it is online."
@@ -85,7 +85,7 @@ export function AddMachineDialog({
 
           {!signedIn ? (
             <Notice>
-              <p>Sign in to add a machine with a link. You can also set it up by hand.</p>
+              <p>Sign in to add a computer with a link. You can also set it up by hand.</p>
               <Button size="sm" className="mt-2" onClick={() => void signIn().catch(fail("Couldn't start sign-in"))}>
                 Sign in
               </Button>
@@ -173,7 +173,7 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
             ? "Your team can use it now."
             : team?.phase === "failed"
               ? `It isn't on your team yet: ${team.error ?? "something went wrong"}`
-              : "It shows in your machines."}
+              : "It shows in your computers."}
         </span>
       </div>
     );
@@ -204,7 +204,7 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
             <div data-pairing-code>
               <div className="mb-1 text-xs font-medium text-muted-foreground">Code</div>
               <CopyField text={code.code} label="Copy code" mono />
-              <p className="mt-1.5 text-xs text-muted-foreground">Already have Cua Spaces there? Open Machines, choose Join with a code and enter it.</p>
+              <p className="mt-1.5 text-xs text-muted-foreground">Already have Cua Spaces there? Open Computers, choose Join with a code and enter it.</p>
             </div>
           ) : null}
           <div>
@@ -293,12 +293,12 @@ function ManualSteps({ guide, open }: { guide: HostSetupGuide; open: boolean }) 
 
       <Step n={2} title="Sign in with the same account">
         <p>
-          Use {identity ? <span className="font-medium text-foreground">{identity}</span> : "the account you use here"}. Machines join the
+          Use {identity ? <span className="font-medium text-foreground">{identity}</span> : "the account you use here"}. Computers join the
           account they are set up with.
         </p>
       </Step>
 
-      <Step n={3} title="Open This machine and choose how to use it">
+      <Step n={3} title="Open This computer and choose how to use it">
         <ul className="mt-1 divide-y overflow-hidden rounded-lg border bg-card">
           {guide.choices.map((c) => (
             <li key={c.id} className="px-3 py-2">
@@ -325,7 +325,7 @@ function ManualSteps({ guide, open }: { guide: HostSetupGuide; open: boolean }) 
       </Step>
 
       <Step n={5} title="Grant permissions if it shares its desktop">
-        <p>On a Mac, This machine lists the System Settings panes to turn on, such as Screen Recording and Accessibility.</p>
+        <p>On a Mac, This computer lists the System Settings panes to turn on, such as Screen Recording and Accessibility.</p>
       </Step>
     </ol>
   );

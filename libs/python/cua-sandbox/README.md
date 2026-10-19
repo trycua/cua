@@ -59,7 +59,7 @@ See the [wire contract](../../cua-driver/docs/mcp-envelope-carrier.md) for limit
 
 ## Any image, locally
 
-Cua Cloud has ended; use a local sandbox or your own machine. Three separate
+Cua Cloud has ended; use a local sandbox or your own computer. Three separate
 choices, each optional:
 
 - `on`: `"local"` (`on="cloud"` and `local=False` raise: Cua Cloud has ended).

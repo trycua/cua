@@ -12,14 +12,14 @@ use crate::model::{
 use serde::{Deserialize, Serialize};
 
 /// Section titles, in order.
-pub const SECTION_ORDER: [&str; 4] = ["Cua Cloud", "This Mac", "Connected", "My machines"];
+pub const SECTION_ORDER: [&str; 4] = ["Cua Cloud", "This Mac", "Connected", "My computers"];
 
 fn section_of(p: Option<SpaceProvider>) -> &'static str {
     match p.unwrap_or(SpaceProvider::Cloud) {
         SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "Connected",
-        SpaceProvider::Relay => "My machines",
+        SpaceProvider::Relay => "My computers",
     }
 }
 
@@ -1494,8 +1494,8 @@ mod tests {
             let mine = view
                 .sections
                 .iter()
-                .find(|s| s.title == "My machines")
-                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
+                .find(|s| s.title == "My computers")
+                .unwrap_or_else(|| panic!("no My computers for {features:?} {error:?}: {view:?}"));
             assert_eq!(
                 mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                 [other.as_str()],
@@ -1785,7 +1785,7 @@ mod tests {
         let mine = v
             .sections
             .iter()
-            .find(|s| s.title == "My machines")
+            .find(|s| s.title == "My computers")
             .unwrap();
         let rows: Vec<(&str, bool)> = mine
             .rows

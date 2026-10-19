@@ -1898,7 +1898,7 @@ impl Broker {
                 f(s);
             }
         };
-        policy::require_first_party(caller, "teleporting from this machine")?;
+        policy::require_first_party(caller, "teleporting from this computer")?;
         {
             let st = self.state.lock().await;
             if Self::settings(&st)?.disabled {

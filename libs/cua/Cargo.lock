@@ -2392,7 +2392,6 @@ dependencies = [
  "cua-contrib",
  "cua-daemon",
  "cua-disk",
- "cua-fleet",
  "cua-home",
  "cua-host",
  "cua-image",

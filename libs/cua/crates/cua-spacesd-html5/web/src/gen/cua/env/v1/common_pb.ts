@@ -401,8 +401,8 @@ export const ErrorInfoSchema: GenMessage<ErrorInfo> = /*@__PURE__*/
   messageDesc(file_cua_env_v1_common, 7);
 
 /**
- * Periodic empty message sent on long-lived server streams so proxies (the
- * Fleet gateway, load balancers) do not time out an idle stream. Clients
+ * Periodic empty message sent on long-lived server streams so proxies (gateways,
+ * load balancers) do not time out an idle stream. Clients
  * ignore it apart from resetting their own liveness timers.
  *
  * @generated from message cua.env.v1.KeepAlive

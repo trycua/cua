@@ -308,9 +308,9 @@ pub async fn call_tool_json(&self, tool: String, arguments_json: Option<String>)
 Cancels a create that is still running: `space` is the create's
 `create_id`, the id the Space will have (`local:<name>`, carried by
 every progress report) or its name. The work in flight stops (an
-image download, a boot, a claim, a relay registration) and what the
-create made is removed (its VM or container and disks, its cloud
-claim, its relay machine); nothing that existed before is touched.
+image download, a boot, a relay registration) and what the
+create made is removed (its VM or container and disks, its relay
+machine); nothing that existed before is touched.
 Finished image downloads stay cached, so the next create resumes.
 Returns once the clean-up is done; the create itself fails with
 `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -1171,7 +1171,7 @@ as sandboxes.
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `image` | `Option<String>` | `None` | Image (default: the canonical Linux image). |
-| `on` | `Option<String>` | `None` | Where: `local` (free) or `cloud` (metered). `None`: the user default (`default.on`, `CUA_DEFAULT_ON`, else `local`). |
+| `on` | `Option<String>` | `None` | Where: `local` (free), a connected cloud account (`aws`, `gcp`, `modal`) or `host:<name>`. `None`: the user default (`default.on`, `CUA_DEFAULT_ON`, else `local`). |
 | `kind` | `Option<String>` | `None` | `auto` (default), `container` or `vm`. |
 | `runtime` | `Option<String>` | `None` | `auto` (default) or an engine the location offers for the kind. |
 | `name` | `Option<String>` | `None` | Name (default `space-<hex>`). |

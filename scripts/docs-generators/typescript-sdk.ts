@@ -307,7 +307,7 @@ export function buildPages(typedocDir: string, version: string): Map<string, str
   for (const m of homes) {
     const lead =
       `${intro(m)} This page covers the hand-written TypeScript layer; ` +
-      'the generated native binding (sandboxes, guest, fleet, spaces objects) is documented per module in the ' +
+      'the generated native binding (sandboxes, guest, spaces objects) is documented per module in the ' +
       '[Cua SDK reference](/cua-sdk/reference).';
     const merged = MODULES.filter((x) => TS_MERGED[x.page] === m.page);
     files.set(

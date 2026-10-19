@@ -416,7 +416,6 @@ fn create_pb(r: CreateRequest) -> pb::CreateSandboxRequest {
             .map(|p| provider_to_pb(p) as i32)
             .unwrap_or_default(),
         image: r.image,
-        pool: r.pool.unwrap_or_default(),
         url: r.url.unwrap_or_default(),
         token: r.token.unwrap_or_default(),
         labels: r.labels.into_iter().collect(),
@@ -429,12 +428,6 @@ fn create_pb(r: CreateRequest) -> pb::CreateSandboxRequest {
         ready_timeout: r.ready_timeout.map(dur),
         env: r.env.into_iter().collect(),
         command: r.command.unwrap_or_default(),
-        fleet_runtime: r.fleet_runtime.unwrap_or_default(),
-        fleet_replicas: r.fleet_replicas.unwrap_or_default(),
-        fleet_ttl_seconds: r.fleet_ttl_seconds.unwrap_or_default(),
-        fleet_warm: r.fleet_warm,
-        fleet_max_pool_size: r.fleet_max_pool_size.unwrap_or_default(),
-        fleet_apply: r.fleet_apply,
         sidecars: r
             .sidecars
             .iter()
@@ -479,13 +472,11 @@ impl DaemonClient {
     }
 
     /// `ListSandboxes`: the known sandboxes of `provider` (all when
-    /// `None`). `include_cloud` is ignored: Cua Cloud has ended (see
-    /// [`crate::Runtime::list_filtered`]).
+    /// `None`).
     #[allow(deprecated)]
     pub async fn list_filtered(
         &self,
         provider: Option<ProviderKind>,
-        include_cloud: bool,
     ) -> Result<crate::runtime::Listing> {
         let r = self
             .sandboxes()
@@ -496,7 +487,6 @@ impl DaemonClient {
                 provider: provider
                     .map(|p| provider_to_pb(p) as i32)
                     .unwrap_or_default(),
-                include_cloud: Some(include_cloud),
             })
             .await
             .map_err(Self::map)?
@@ -509,7 +499,7 @@ impl DaemonClient {
 
     /// `ListSandboxes` of the known sandboxes only.
     pub async fn list(&self, provider: Option<ProviderKind>) -> Result<Vec<SandboxRecord>> {
-        Ok(self.list_filtered(provider, false).await?.sandboxes)
+        Ok(self.list_filtered(provider).await?.sandboxes)
     }
 
     /// `DeleteSandbox`.

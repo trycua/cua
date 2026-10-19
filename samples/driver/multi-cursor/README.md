@@ -1,6 +1,6 @@
 # Multi-cursor background computer-use demo: "National Records System"
 
-A fleet of deliberately **legacy-looking government records terminals** (navy
+A set of deliberately **legacy-looking government records terminals** (navy
 banner, `UNCLASSIFIED // FOR OFFICIAL USE ONLY` strip, function-key bar,
 green-screen records grid, status line): the kind of internal agency app that,
 in the age of AI, has *no* automation integration. cua-driver automates them

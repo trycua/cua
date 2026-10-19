@@ -280,7 +280,6 @@ impl RelayAccess {
             .map_err(|e| Error::InvalidArgument(e.to_string()))?;
         o.gateway = Some(cua_spacesd_client::GatewayAuth {
             bearer: Arc::new(Bearer(self.clone())),
-            claim: None,
         });
         Ok(o)
     }

@@ -110,8 +110,8 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'env',
     title: 'Sandboxes and account',
-    summary: 'Cloud pools and local sandboxes, sign-in, status and cleanup',
-    commands: ['env', 'login', 'status', 'prune'],
+    summary: 'Local sandboxes, status and cleanup',
+    commands: ['env', 'status', 'prune'],
   },
   { slug: 'agent', title: 'cb agent', summary: 'Scaffold custom agents', commands: ['agent'] },
   {

@@ -17,25 +17,20 @@ use std::sync::Arc;
 #[derive(Subcommand, Debug)]
 pub enum HostCmd {
     /// Set this machine up for unattended access: install cua-spacesd as
-    /// a service that joins the cua.ai relay as your account (default) or
-    /// serves on a direct ip:port.
+    /// a service that joins the cua.ai relay as your account.
     #[command(after_help = "Examples:
   # Join the cua.ai relay as your account (shares this desktop)
   cua host setup
   # A spare machine: do not share its desktop, run Spaces for your devices
   cua host setup --profile spare --name \"Mac mini (spare)\"
   cua host setup --no-desktop --provide-spaces
-  # Serve on the LAN instead of the relay
-  cua host setup --direct 0.0.0.0:3211 --name studio-mac
-  # A spare Mac on your tailnet that runs Spaces, without the relay
-  # (prints the command that adds it on your laptop)
-  cua host setup --direct 100.101.102.103:3211 --profile spare
   # Add this machine with a one-time code from the Cua Spaces app
   # (Add a machine) or `cua host pair`: no sign-in needed here
-  cua host setup --pair K7QM-4XPB-2RHD")]
+  cua host setup --pair K7QM-4XPB-2RHD
+  # Self-hosting teams: cua help advanced")]
     Setup {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long, conflicts_with = "direct")]
+        #[arg(long, hide = true, conflicts_with = "direct")]
         relay: Option<String>,
         /// Join with a one-time pairing code (or add-machine link) made in
         /// the Cua Spaces app or with `cua host pair`, instead of signing
@@ -48,7 +43,7 @@ pub enum HostCmd {
         remote: bool,
         /// Serve directly on ip:port with a local env token (LAN /
         /// port-forwarded) instead of joining a relay.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         direct: Option<String>,
         /// Display name (default: the host name).
         #[arg(long)]
@@ -89,7 +84,7 @@ pub enum HostCmd {
         /// public --direct address). By default only loopback, Tailscale
         /// and private LAN addresses may. The direct listener is plaintext
         /// and its token is a shell on this machine: prefer Tailscale.
-        #[arg(long, requires = "direct")]
+        #[arg(long, hide = true, requires = "direct")]
         allow_any_address: bool,
     },
     /// Make a one-time code (with a link and the install command) that adds
@@ -125,7 +120,7 @@ pub enum HostCmd {
         #[arg(long, value_name = "ID", conflicts_with_all = ["team", "name"])]
         revoke: Option<String>,
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Show or change what this machine shares: its own desktop, and
@@ -177,7 +172,7 @@ pub enum HostCmd {
         machine: Option<String>,
         /// Relay URL (default: the one this machine joined, else
         /// $CUA_RELAY_URL / https://relay.cua.ai).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
         /// Do not ask for confirmation.
         #[arg(long)]
@@ -195,7 +190,7 @@ pub enum HostCmd {
         #[arg(long)]
         machine: Option<String>,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Unregister from the relay, uninstall the service and delete the host
@@ -234,7 +229,7 @@ Examples:
     )]
     Ls {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
         /// Do not measure what each Space takes on this computer's disk
         /// (that walk can take a moment with many Spaces).

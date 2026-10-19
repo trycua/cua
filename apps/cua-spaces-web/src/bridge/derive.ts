@@ -567,15 +567,15 @@ export interface HostSetupGuide {
   intro: string;
   /** The ways to set it up (`host::setup_choices`). */
   choices: HostSetupChoice[];
-  /** The setup form with Advanced open (`host.formView`), when the core is loaded. */
+  /** The setup form (`host.formView`), when the core is loaded. */
   form: HostFormView | null;
 }
 
 export function hostSetupGuide(core: CoreClient): HostSetupGuide {
   const panel = hostPanel(core, { configured: false, sharing: false, service: { installed: false, running: false, kind: "process" }, clients: [], permissions: [] });
   const initial = core.tryCall<unknown>("host.formInitial");
-  const state = initial === undefined ? undefined : core.tryCall<unknown>("host.formReduce", { state: initial, action: { type: "toggle-advanced" } });
-  const form = state === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state, identity: null }) ?? null);
+  // As setup shows it: Cua's relay. Self-hosting is under Settings → Advanced.
+  const form = initial === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state: initial, identity: null }) ?? null);
   return { intro: panel.intro ?? FALLBACK_INTRO, choices: panel.setupChoices?.length ? panel.setupChoices : FALLBACK_CHOICES, form };
 }
 

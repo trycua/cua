@@ -139,6 +139,12 @@ extension WebUIBridge {
             guard let usage = try await relay.relayUsage(), usage.metered else { return NSNull() }
             return BridgeValue.encode(usage)
 
+        // Processor, memory and disk for Home and a Space's page: This
+        // Mac's own numbers (`HostResourceSampler`), read on each call. The
+        // daemon's per-Space numbers join them once it serves `resources`.
+        case "resources.get":
+            return HostResourceSampler.shared.sample().snapshot()
+
         // Settings, Storage
         case "storage.get":
             let storage = model.storage

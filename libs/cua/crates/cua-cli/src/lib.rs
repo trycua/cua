@@ -1904,15 +1904,10 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             dry_run,
             components,
         }) => {
-            let mut steps = cua.local().setup(components, dry_run).await?;
+            let steps = cua.local().setup(components.clone(), dry_run).await?;
             let report = cua.local().doctor().await?;
             let optional = runtime_optional(&report.report_json);
-            for step in &mut steps {
-                if optional.contains(&step.name) {
-                    step.status = cua_sdk::RuntimeCheckStatus::NotApplicable;
-                }
-            }
-            return Ok(runtime_setup_output(out, &steps));
+            return Ok(runtime_setup_output(out, steps, &optional, &components));
         }
         Command::Image(cmd) => {
             let local = cua.local();
@@ -2591,7 +2586,7 @@ fn runtime_doctor_output_with(
 ) -> i32 {
     let mut checks = report.checks.clone();
     for check in &mut checks {
-        if optional.contains(&check.name) {
+        if check.status == cua_sdk::RuntimeCheckStatus::Error && optional.contains(&check.name) {
             check.status = cua_sdk::RuntimeCheckStatus::NotApplicable;
         }
     }
@@ -2621,8 +2616,17 @@ fn runtime_doctor_output_with(
     )
 }
 
-fn runtime_setup_output(out: &mut dyn std::io::Write, steps: &[cua_sdk::SetupStep]) -> i32 {
-    for s in steps {
+fn runtime_setup_output(
+    out: &mut dyn std::io::Write,
+    mut steps: Vec<cua_sdk::SetupStep>,
+    optional: &[String],
+    components: &[String],
+) -> i32 {
+    use cua_sdk::RuntimeCheckStatus as S;
+    for s in &mut steps {
+        if s.status == S::Error && optional.contains(&s.name) && !components.contains(&s.name) {
+            s.status = S::NotApplicable;
+        }
         line(out, format!("{:<10} {:?}: {}", s.name, s.status, s.detail));
     }
     i32::from(
@@ -2966,8 +2970,31 @@ mod tests {
                     0
                 );
                 if !json {
-                    assert!(!String::from_utf8(out).unwrap().contains("error"));
+                    let text = String::from_utf8(out).unwrap();
+                    assert!(!text.contains("error"));
+                    assert!(
+                        text.lines()
+                            .any(|l| l.starts_with("lume") && l.contains("installable"))
+                    );
                 }
+            }
+            if ready == B::Container {
+                let steps = || {
+                    vec![cua_sdk::SetupStep {
+                        name: "qemu".into(),
+                        status: cua_sdk::RuntimeCheckStatus::Error,
+                        detail: "install failed".into(),
+                    }]
+                };
+                let mut out = Vec::new();
+                assert_eq!(
+                    super::runtime_setup_output(&mut out, steps(), &optional, &["qemu".into()]),
+                    1
+                );
+                assert_eq!(
+                    super::runtime_setup_output(&mut out, steps(), &optional, &[]),
+                    0
+                );
             }
             r.backends.iter_mut().for_each(|b| b.ready = false);
             let optional = super::runtime_optional_with(
@@ -3024,7 +3051,10 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             let mut out = Vec::new();
-            assert_eq!(super::runtime_setup_output(&mut out, &steps), expected);
+            assert_eq!(
+                super::runtime_setup_output(&mut out, steps, &[], &[]),
+                expected
+            );
             assert!(String::from_utf8(out).unwrap().contains("last"));
         }
     }

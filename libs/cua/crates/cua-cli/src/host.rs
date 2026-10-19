@@ -223,14 +223,23 @@ pub enum SpacesCmd {
     /// Registered Spaces and your machines on the relay.
     #[command(
         visible_alias = "list",
-        after_help = "Examples:
+        after_help = "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it
+uses now (the numbers the Cua Spaces app shows); for another of your
+computers they show what it last reported. Numbers only: no file names.
+
+Examples:
   cua spaces ls
+  cua spaces ls --no-size
   cua spaces ls --json"
     )]
     Ls {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
         #[arg(long)]
         relay: Option<String>,
+        /// Do not measure what each Space takes on this computer's disk
+        /// (that walk can take a moment with many Spaces).
+        #[arg(long)]
+        no_size: bool,
     },
     /// Register a Space after a capabilities handshake with its cua-spacesd
     /// (or, for another URL, an MCP initialize). Re-adding an address
@@ -1436,7 +1445,25 @@ pub async fn run_host(
         }
         HostCmd::Status => {
             let s = host.status().await.map_err(host_err)?;
-            emit(&s, json, out)?;
+            // This Mac's processor, memory and disk, with or without setup.
+            let resources = crate::resources_view::fetch(
+                &cua_spaces::Spaces::builder().home(home).build(),
+                true,
+            )
+            .await;
+            if json {
+                let status =
+                    serde_json::to_value(&s).map_err(|e| CuaError::Internal(e.to_string()))?;
+                line(
+                    out,
+                    crate::resources_view::status_json(status, &resources).to_string(),
+                );
+            } else {
+                render(&s, out);
+                for l in crate::resources_view::this_mac_lines(&resources) {
+                    line(out, l);
+                }
+            }
             if !s.configured {
                 return Ok(1);
             }
@@ -1928,16 +1955,51 @@ fn ls_json(list: &[cua_spaces::SpaceInfo]) -> Vec<serde_json::Value> {
 /// `cua spaces ls` rows: every Space (its id, then its name as the apps
 /// show it), with the Spaces a machine provides indented under it (or,
 /// when that machine is not listed, marked with its name).
+/// [`grouped_lines_with`] for the tests of `resources_view`.
+#[cfg(test)]
+pub(crate) fn grouped_lines_for_tests(
+    list: &[cua_spaces::SpaceInfo],
+    columns: Option<&crate::resources_view::Columns<'_>>,
+) -> Vec<String> {
+    grouped_lines_with(list, columns)
+}
+
+#[cfg(test)]
 fn grouped_lines(list: &[cua_spaces::SpaceInfo]) -> Vec<String> {
+    grouped_lines_with(list, None)
+}
+
+/// [`grouped_lines`] with the CPU, MEMORY and DISK ON THIS MAC columns (and
+/// their header) when `columns` is given.
+fn grouped_lines_with(
+    list: &[cua_spaces::SpaceInfo],
+    columns: Option<&crate::resources_view::Columns<'_>>,
+) -> Vec<String> {
+    use crate::resources_view::{CPU_WIDTH, MEMORY_WIDTH};
     let row = |s: &cua_spaces::SpaceInfo, indent: &str| {
-        let line = format!(
-            "{indent}{:<width$} {:<24} {:<7} {}",
-            s.id,
-            display_name(s),
-            s.provider.as_str(),
-            s.spacesd_version,
-            width = 48usize.saturating_sub(indent.len()),
-        );
+        let width = 48usize.saturating_sub(indent.len());
+        let line = match columns {
+            None => format!(
+                "{indent}{:<width$} {:<24} {:<7} {}",
+                s.id,
+                display_name(s),
+                s.provider.as_str(),
+                s.spacesd_version,
+            ),
+            Some(c) => {
+                let cells = c.cells(s);
+                format!(
+                    "{indent}{:<width$} {:<24} {:<8} {:<9} {:<CPU_WIDTH$} {:<MEMORY_WIDTH$} {}",
+                    s.id,
+                    display_name(s),
+                    s.provider.as_str(),
+                    s.spacesd_version,
+                    cells.cpu,
+                    cells.memory,
+                    cells.disk,
+                )
+            }
+        };
         // A Space turned off says so (`cua spaces start` turns it on), as
         // does a machine the relay cannot reach now (offline, not sharing).
         match (s.power_state.as_str(), s.status.as_str()) {
@@ -1951,6 +2013,9 @@ fn grouped_lines(list: &[cua_spaces::SpaceInfo]) -> Vec<String> {
         }
     };
     let mut out = Vec::new();
+    if columns.is_some() && !list.is_empty() {
+        out.push(crate::resources_view::header(48));
+    }
     for s in list.iter().filter(|s| s.host.is_empty()) {
         // A Space in your cloud names its cloud ("AWS · us-west-2").
         if s.host_name.is_empty() {
@@ -2091,7 +2156,7 @@ pub async fn run_spaces(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
-    let SpacesCmd::Ls { relay } = cmd else {
+    let SpacesCmd::Ls { relay, no_size } = cmd else {
         return Err(CuaError::Internal(
             "only `cua spaces ls` runs over the registry directly".into(),
         ));
@@ -2115,21 +2180,39 @@ pub async fn run_spaces(
         .list()
         .map_err(|e| CuaError::Internal(e.to_string()))?;
     power_from_daemon(&mut list).await;
+    let resources = crate::resources_view::fetch(&spaces, !no_size).await;
+    let columns = crate::resources_view::Columns {
+        resources: &resources,
+        own_machine: spaces.this_relay_machine_id(),
+    };
     if json {
-        line(
-            out,
-            serde_json::json!({ "spaces": ls_json(&list), "relay_error": relay_error }).to_string(),
-        );
+        let mut rows = ls_json(&list);
+        for (row, info) in rows.iter_mut().zip(&list) {
+            columns.annotate(info, row);
+        }
+        let mut body = serde_json::json!({ "spaces": rows, "relay_error": relay_error });
+        if let (Some(o), Some(extra)) = (
+            body.as_object_mut(),
+            crate::resources_view::ls_extras(&resources)
+                .as_object()
+                .cloned(),
+        ) {
+            o.extend(extra);
+        }
+        line(out, body.to_string());
         return Ok(0);
     }
     if list.is_empty() {
         line(out, "No Spaces.");
     }
-    for l in grouped_lines(&list) {
+    for l in grouped_lines_with(&list, Some(&columns)) {
         line(out, l);
     }
     if let Some(e) = relay_error {
         line(out, format!("(relay machines unavailable: {e})"));
+    }
+    if let Some(w) = columns.warning() {
+        line(out, w);
     }
     Ok(0)
 }
@@ -2640,13 +2723,18 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(v["configured"], true);
         assert_eq!(v["mode"], "relay");
+        // This Mac's numbers ride along.
+        assert!(v["resources"]["thisMac"]["memoryTotal"].as_u64().unwrap() > 0);
         let id = v["machineId"].as_str().unwrap().to_string();
 
         // `cua spaces ls` as the owner shows the machine.
         let mut out = Vec::new();
         // No --relay: the relay this machine joined.
         run_spaces(
-            SpacesCmd::Ls { relay: None },
+            SpacesCmd::Ls {
+                relay: None,
+                no_size: false,
+            },
             &home,
             Some(Arc::new(StaticToken("acct".into()))),
             None,
@@ -2658,6 +2746,43 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains(&format!("relay:{id}")), "{text}");
         assert!(text.contains("lab-box") && text.contains("relay"), "{text}");
+        // The new columns, and this machine's own row shows this Mac.
+        assert!(text.starts_with("ID "), "{text}");
+        for column in ["CPU", "MEMORY", "DISK ON THIS MAC"] {
+            assert!(text.lines().next().unwrap().contains(column), "{text}");
+        }
+        let row = text.lines().find(|l| l.contains("lab-box")).unwrap();
+        assert!(row.contains(" busy"), "{row}");
+        assert!(row.contains(" free of "), "{row}");
+
+        // `--json` carries the same numbers.
+        let mut out = Vec::new();
+        run_spaces(
+            SpacesCmd::Ls {
+                relay: None,
+                no_size: true,
+            },
+            &home,
+            Some(Arc::new(StaticToken("acct".into()))),
+            None,
+            true,
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert!(v["thisMac"]["cpuCount"].as_u64().unwrap() >= 1, "{v}");
+        assert!(v["warning"]["level"].as_str().is_some(), "{v}");
+        let own = v["spaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == format!("relay:{id}"))
+            .unwrap();
+        assert!(
+            own["resources"]["memoryTotal"].as_u64().unwrap() > 0,
+            "{own}"
+        );
 
         let mut out = Vec::new();
         run_host(

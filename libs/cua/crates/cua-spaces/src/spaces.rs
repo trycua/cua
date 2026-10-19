@@ -322,6 +322,7 @@ impl SpacesBuilder {
                 hotspots: tokio::sync::Mutex::new(BTreeMap::new()),
                 #[cfg(feature = "spaces-agents")]
                 relay: std::sync::RwLock::new(self.relay),
+                resources: crate::resources::Hub::new(),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 relay_read: tokio::sync::Mutex::new(None),
@@ -530,6 +531,8 @@ pub(crate) struct Inner {
     pub(crate) hotspots: tokio::sync::Mutex<BTreeMap<String, crate::hotspot::Hotspot>>,
     #[cfg(feature = "spaces-agents")]
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
+    /// The resource sampler and its watchers ([`crate::resources`]).
+    pub(crate) resources: Arc<crate::resources::Hub>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
     /// What each relay machine's cua-spacesd said about itself when this

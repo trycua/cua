@@ -70,6 +70,7 @@ TYPES = [
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
     ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
     ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "PlanLink", "PlanCard", "RelayUsageView"]),
+    ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
 ]
 
 # FFI names that read better than the plain prefix.

@@ -576,6 +576,11 @@
           "extractCommand": null
         },
         {
+          "type": "reference",
+          "outputFile": "daemon-resources.mdx",
+          "extractCommand": null
+        },
+        {
           "type": "nav",
           "outputFile": "meta.json",
           "extractCommand": null

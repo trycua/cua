@@ -1983,6 +1983,55 @@ pub fn app_relay_usage_view(usage: AppRelayUsage) -> Option<AppRelayUsageView> {
     core::relay_usage::view(&usage)
 }
 
+/// An SDK record as the app core's (the same JSON, the same names).
+fn core_of<T: serde::Serialize, U: serde::de::DeserializeOwned + Default>(v: &T) -> U {
+    serde_json::to_value(v)
+        .and_then(serde_json::from_value)
+        .unwrap_or_default()
+}
+
+/// Everything the apps draw from one snapshot of what this Mac, its extra
+/// Spaces and your other computers use (`Spaces.resources`, or a snapshot
+/// event of `Spaces.watch_resources`): this Mac's rows and warning, each
+/// extra Space's rows and what it costs this Mac, each other computer's
+/// rows. The words are the core's; no shell formats a number. `now_ms` is
+/// the shell's clock (Unix ms), for how old another computer's numbers are.
+#[uniffi::export]
+pub fn app_resources_view(snapshot: cua_sdk::ResourcesSnapshot, now_ms: u64) -> AppResourcesView {
+    let snapshot: core::resources::ResourcesSnapshot = core_of(&snapshot);
+    core::resources::view(&snapshot, now_ms)
+}
+
+/// This Mac's panel (Processor, Memory, Space for files, what the extra
+/// Spaces use, the warning).
+#[uniffi::export]
+pub fn app_resources_this_mac(computer: cua_sdk::ComputerResources) -> AppThisMacView {
+    core::resources::this_mac_view(&core_of(&computer))
+}
+
+/// One extra Space's panel: what it was given and uses now, and what it
+/// costs this Mac.
+#[uniffi::export]
+pub fn app_resources_space(space: cua_sdk::SpaceResources) -> AppSpaceResourcesView {
+    core::resources::space_view(&core_of(&space))
+}
+
+/// Another of your computers' panel.
+#[uniffi::export]
+pub fn app_resources_computer(
+    computer: cua_sdk::ComputerResources,
+    now_ms: u64,
+) -> AppComputerView {
+    core::resources::computer_view(&core_of(&computer), now_ms)
+}
+
+/// The menu bar's low-disk warning (from a `LowDisk` event or a
+/// snapshot's `warning`); none when the disk is fine.
+#[uniffi::export]
+pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarningView> {
+    core::resources::warning_view(&core_of(&warning))
+}
+
 /// Reads the settings file (defaults when missing or damaged).
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
@@ -2991,5 +3040,143 @@ mod agent_detection_tests {
         )));
         assert!(!s(info("copilot-cli", true, &["path:/h/.copilot"])));
         assert!(!s(info("gemini-cli", false, &[])));
+    }
+}
+
+#[cfg(test)]
+mod resources_tests {
+    use super::*;
+    use cua_spaces::resources as rt;
+
+    const GIB: u64 = 1 << 30;
+
+    fn sdk_snapshot() -> cua_sdk::ResourcesSnapshot {
+        let runtime = rt::Resources {
+            sequence: 2,
+            sampled_at_ms: 1_000_000,
+            this_mac: rt::ComputerResources {
+                id: rt::THIS_MAC.into(),
+                online: true,
+                sampled_at_ms: 1_000_000,
+                cpu_count: 12,
+                cpu_percent: 38.0,
+                memory_total: 64 * GIB,
+                memory_used: 41 * GIB,
+                disk_total: 1024 * GIB,
+                disk_free: 41 * GIB,
+                spaces_count: 1,
+                spaces_running: 1,
+                spaces_cpu_allocated: 4,
+                spaces_memory_allocated: 8 * GIB,
+                spaces_disk_bytes: 31 * GIB,
+                spaces_disk_exact: true,
+                warning: rt::DiskWarning::assess(41 * GIB, 1024 * GIB, 5 * GIB, rt::DiskLevel::Ok),
+                ..Default::default()
+            },
+            spaces: vec![rt::SpaceResources {
+                id: "local:aurora".into(),
+                power_state: "running".into(),
+                cpu_allocated: 4,
+                memory_allocated: 8 * GIB,
+                disk_allocated: 80 * GIB,
+                usage: Some(rt::GuestUsage {
+                    cpu_count: 4,
+                    cpu_percent: 22.0,
+                    memory_used: 3 * GIB + GIB / 10,
+                    memory_total: 8 * GIB,
+                    memory_limited: true,
+                    ..Default::default()
+                }),
+                disk_on_host: Some(rt::DiskOnHost {
+                    bytes: Some(31 * GIB),
+                    allocated: 87 * GIB,
+                    shares_space: true,
+                }),
+            }],
+            computers: vec![rt::ComputerResources {
+                id: "mini".into(),
+                name: "Mac mini".into(),
+                online: true,
+                sampled_at_ms: 1_000_000,
+                cpu_count: 10,
+                cpu_percent: 5.0,
+                memory_total: 32 * GIB,
+                memory_used: 12 * GIB,
+                disk_total: 512 * GIB,
+                disk_free: 300 * GIB,
+                ..Default::default()
+            }],
+            warning: rt::DiskWarning::assess(41 * GIB, 1024 * GIB, 5 * GIB, rt::DiskLevel::Ok),
+        };
+        serde_json::from_value(serde_json::to_value(&runtime).unwrap()).unwrap()
+    }
+
+    /// The SDK's snapshot becomes the app core's without losing a field.
+    #[test]
+    fn the_sdk_snapshot_reaches_the_core_whole() {
+        let sdk = sdk_snapshot();
+        let core: core::resources::ResourcesSnapshot = core_of(&sdk);
+        assert_eq!(core.sequence, 2);
+        assert_eq!(core.this_mac.cpu_count, 12);
+        assert_eq!(core.this_mac.warning.level, core::resources::DiskLevel::Low);
+        assert_eq!(core.spaces[0].usage.unwrap().cpu_percent, 22.0);
+        assert_eq!(core.spaces[0].disk_on_host.unwrap().bytes, Some(31 * GIB));
+        assert_eq!(core.computers[0].name, "Mac mini");
+    }
+
+    /// What Swift draws from `app_resources_view`: the core's rows.
+    #[test]
+    fn the_view_has_the_rows_and_the_warning() {
+        let v = app_resources_view(sdk_snapshot(), 1_000_000);
+        assert_eq!(v.this_mac.rows[0].value, "12 cores \u{b7} 38% busy");
+        assert_eq!(v.spaces[0].rows[1].value, "3.1 of 8 GB");
+        assert_eq!(
+            v.spaces[0].on_this_mac.as_deref(),
+            Some("Uses about 31 GB on this Mac (shares space with other copies)")
+        );
+        assert_eq!(v.computers[0].rows[2].value, "300 GB free of 512 GB");
+        assert!(v.warning.is_some());
+        let w = app_resources_warning(sdk_snapshot().warning).unwrap();
+        assert_eq!(w.button, "See what's using space");
+    }
+
+    /// The CLI and the apps say the same things with the same numbers.
+    #[test]
+    fn the_cli_and_the_apps_use_the_same_words() {
+        let sdk = sdk_snapshot();
+        let v = app_resources_view(sdk.clone(), 1_000_000);
+        let runtime: rt::Resources =
+            serde_json::from_value(serde_json::to_value(&sdk).unwrap()).unwrap();
+        // This Mac.
+        let m = &runtime.this_mac;
+        assert_eq!(
+            v.this_mac.rows[0].value,
+            rt::words::processor(m.cpu_count, Some(m.cpu_percent))
+        );
+        assert_eq!(
+            v.this_mac.rows[1].value,
+            rt::words::memory_in_use(m.memory_used, m.memory_total)
+        );
+        assert_eq!(
+            v.this_mac.rows[2].value,
+            rt::words::disk_free(m.disk_free, m.disk_total)
+        );
+        assert_eq!(v.this_mac.extra_spaces, rt::words::extra_spaces_use(m));
+        assert_eq!(
+            v.this_mac.warning.as_ref().map(|w| w.text.as_str()),
+            rt::words::warning(&runtime.warning)
+        );
+        // A running Space.
+        let s = &runtime.spaces[0];
+        assert_eq!(v.spaces[0].rows[0].value, rt::words::space_cpu(s));
+        assert_eq!(v.spaces[0].rows[1].value, rt::words::space_memory(s));
+        // Another computer.
+        let c = &runtime.computers[0];
+        assert_eq!(v.computers[0].rows[0].value, rt::words::computer_cpu(c));
+        assert_eq!(
+            v.computers[0].rows[1].value,
+            format!("{} in use", rt::words::computer_memory(c))
+        );
+        assert_eq!(v.computers[0].rows[2].value, rt::words::computer_disk(c));
     }
 }

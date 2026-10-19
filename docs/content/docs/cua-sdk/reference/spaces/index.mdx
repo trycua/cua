@@ -61,6 +61,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`persistent_agent_save`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agent_save) | Saves a persistent agent's home into the drive now. |
 | [`persistent_agent_send`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agent_send) | Gives a persistent agent a turn: a follow-up to its idle run, or a new run with its home restored. |
 | [`persistent_agents`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agents) | Every persistent agent. |
+| [`resources`](/cua-sdk/reference/spaces/resources#spacesresources) | What this Mac, its extra Spaces and your other computers use now: processor, memory and disk, as one snapshot (a few seconds old at most). |
 | [`routine_add`](/cua-sdk/reference/spaces/persistent-agents#spacesroutine_add) | Adds a routine. |
 | [`routine_remove`](/cua-sdk/reference/spaces/persistent-agents#spacesroutine_remove) | Deletes a routine. |
 | [`routine_set_enabled`](/cua-sdk/reference/spaces/persistent-agents#spacesroutine_set_enabled) | Turns a routine on or off. |
@@ -90,6 +91,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`volume_sync_status`](/cua-sdk/reference/spaces/volume#spacesvolume_sync_status) | `volume_sync_status`: devices, pending uploads and conflicts. |
 | [`volume_unmount`](/cua-sdk/reference/spaces/volume#spacesvolume_unmount) | `volume_unmount`: turns the mount off; pending uploads land first. |
 | [`volume_write`](/cua-sdk/reference/spaces/volume#spacesvolume_write) | `volume_write`: a new version of a file. |
+| [`watch_resources`](/cua-sdk/reference/spaces/resources#spaceswatch_resources) | The same numbers as events for `listener`: a snapshot first, then an update with only the entries that changed by more than 1 point or 256 MB, and `LowDisk` whenever the warning level changes. |
 
 ### `Spaces.add`
 

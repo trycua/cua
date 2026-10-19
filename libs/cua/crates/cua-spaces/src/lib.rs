@@ -76,6 +76,7 @@ pub mod mesh;
 pub mod operator;
 pub mod registry;
 pub mod relay;
+pub mod resources;
 pub mod routines;
 pub mod services;
 mod space;

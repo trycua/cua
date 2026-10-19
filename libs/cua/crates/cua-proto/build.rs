@@ -26,6 +26,7 @@ const PROTOS: &[&str] = &[
     "cua/env/v1/host.proto",
     "cua/daemon/v1/sandboxes.proto",
     "cua/daemon/v1/spaces.proto",
+    "cua/daemon/v1/resources.proto",
     "cua/daemon/v1/runtime.proto",
     "cua/daemon/v1/daemon.proto",
 ];

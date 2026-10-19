@@ -1038,6 +1038,11 @@ pub mod frame {
             "showMark": v["showMark"],
             "dots": v["dots"].as_array().map(|a| a.iter().map(|d| format!("{}{}", if d["current"] == true { "*" } else { "" }, str_of(&d["label"]))).collect::<Vec<_>>().join(",")).unwrap_or_default(),
             "summary": facts(&v["summary"]),
+            // Done's to-do list: `[x] title ~note -> fix (optional)`.
+            "todos": v["todos"].as_array().map(|a| a.iter().map(|t| Value::String(format!("[{}] {} ~{}{}{}",
+                if t["done"] == true { "x" } else { " " }, str_of(&t["title"]), str_of(&t["note"]),
+                t["action"].as_str().map(|x| format!(" -> {x}")).unwrap_or_default(),
+                if t["optional"] == true { " (optional)" } else { "" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "choices": v["choices"].as_array().map(|a| a.iter().map(|c| Value::String(format!("{}: {}{}", str_of(&c["mode"]), str_of(&c["label"]),
                 if c["preselected"] == true { " (preselected)" } else { "" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "presentations": v["presentations"].as_array().map(|a| a.iter().map(|c| Value::String(format!("{} [{}]{}", str_of(&c["title"]), str_of(&c["id"]),

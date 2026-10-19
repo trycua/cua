@@ -77,10 +77,20 @@ describe.each([
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);
     s = onboardingReduce(core, s, { type: "mode-chosen", mode: "client" }, ctx);
     expect(s.step).toBe("done");
-    const v = onboardingView(core, s, "linux");
+    // Not signed in yet: Done says so, with the fix (the web has no Cua CLI page, so no CLI line).
+    let v = onboardingView(core, s, "linux");
+    expect(v.title).toBe("Almost done");
+    expect(v.lede).toBe("One thing is left. You can finish it now, or later from the system tray.");
+    const required = (view: typeof v) => (view.todos ?? []).filter((t) => !t.optional);
+    expect(required(v).map((t) => [t.id, t.done, t.action ?? null])).toEqual([
+      ["signin", false, "Sign in"],
+      ["agents", true, null],
+    ]);
+    expect(v.summary.map((f) => f.label)).toEqual(["This machine"]);
+    expect(onboardingView(core, s, "windows").summary.map((f) => f.label)).toEqual(["This machine"]);
+    s = onboardingReduce(core, s, { type: "signed-in", identity: "ada@example.com" }, ctx);
+    v = onboardingView(core, s, "linux");
     expect(v.title).toBe("You're all set");
-    expect(v.summary.map((f) => f.label)).toEqual(["Account", "AI agents", "This machine"]);
-    expect(onboardingView(core, s, "windows").summary.map((f) => f.label)).toEqual(["Account", "AI agents", "This machine"]);
     // Where the app stays: the menu bar on a Mac, the tray on Windows and Linux.
     expect(onboardingView(core, s, "macos").lede).toBe("Cua Spaces is in your menu bar.");
     expect(onboardingView(core, s, "windows").lede).toBe("Cua Spaces is in your system tray.");
@@ -120,7 +130,8 @@ describe.each([
     s = onboardingReduce(core, s, { type: "presentation-done" }, { ...mac, menuBar: true });
     s = onboardingReduce(core, s, { type: "mode-chosen", mode: "client" }, { ...mac, menuBar: true });
     v = onboardingView(core, s, "macos");
-    expect(v.summary.map((f) => f.label)).toEqual(["Account", "AI agents", "Shows in", "This machine"]);
+    expect(v.summary.map((f) => f.label)).toEqual(["Shows in", "This machine"]);
+    expect((v.todos ?? []).some((t) => t.id === "cli")).toBe(false);
     expect(v.summary.find((f) => f.label === "Shows in")?.value).toBe("Menu bar only");
   });
 

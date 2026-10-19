@@ -1,6 +1,6 @@
 ---
 title: "Onboarding and settings"
-description: "First-run onboarding, its card miniatures, the settings file and the hotkey label."
+description: "First-run onboarding, the settings file and the hotkey label."
 ---
 
 {/*
@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-`app_onboarding_reduce` steps through first-run onboarding. `app_settings_load` and `app_settings_save` read and write the apps' settings file.
+`app_onboarding_reduce` steps through first-run onboarding. `app_settings_load` and `app_settings_save` read and write the apps' settings file. The animated miniatures on the onboarding cards are on [Onboarding previews](/cua-sdk/reference/spaces/app-core/onboarding-previews).
 
 ## `app_format_hotkey`
 
@@ -99,60 +99,15 @@ AppSwitcherTheme::Glass
 | `label` | `String` |  | Label. |
 | `preselected` | `bool` |  | Highlighted (the installer's preselection, else the first). |
 
-## `AppDriverFrame` record
-
-Returned by [`app_driver_preview_frame`](#app_driver_preview_frame), [`app_driver_preview_still`](#app_driver_preview_still).
+## `AppPresentationCard` record
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `pointer` | [`AppPreviewPoint`](#apppreviewpoint-record) |  | The user's pointer tip. |
-| `pressed` | `bool` |  | The user presses (drawn a little smaller). |
-| `selection` | `f64` |  | How much of the selected line is highlighted, 0 to 1 from its left. |
-| `agent` | [`AppPreviewPoint`](#apppreviewpoint-record) |  | The agent cursor's tip. |
-| `agent_pressed` / `agentPressed` | `bool` |  | The agent presses (drawn a little smaller). |
-| `ripple` | `f64` |  | The click rays, 0 hidden, else 0 to 1 through their burst (they grow out and fade). |
-| `checked` | `Vec<f64>` |  | Each checkbox's tick, 0 to 1. |
-
-## `AppDriverPreview` record
-
-Returned by [`app_driver_preview`](#app_driver_preview).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `width` | `f64` |  | Stage width. |
-| `height` | `f64` |  | Stage height. |
-| `loop_ms` / `loopMs` | `u32` |  | One loop (ms). |
-| `back` | [`AppPreviewWindow`](#apppreviewwindow-record) |  | The window the agent works in (behind). |
-| `front` | [`AppPreviewWindow`](#apppreviewwindow-record) |  | The window the user works in (in front). |
-| `checkboxes` | [`Vec<AppLogicalRect>`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The back window's checkboxes, top to bottom. |
-| `labels` | [`Vec<AppLogicalRect>`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The label bar right of each checkbox. |
-| `lines` | [`Vec<AppLogicalRect>`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The front window's text lines (placeholder bars). |
-| `selected_line` / `selectedLine` | `u32` |  | The line the user selects (an index into `lines`). |
-| `pointer` | [`Vec<AppPreviewPoint>`](#apppreviewpoint-record) |  | The user's pointer outline, tip at the origin (fill black, stroke white). |
-| `agent_pointer` / `agentPointer` | [`Vec<AppPreviewPoint>`](#apppreviewpoint-record) |  | The agent cursor's outline, tip at the origin (fill `agent_fill`, stroke white, a soft glow of `agent_fill`). |
-| `agent_fill` / `agentFill` | `String` |  | The agent cursor's fill. |
-| `agent_rays` / `agentRays` | [`Vec<AppPreviewSegment>`](#apppreviewsegment-record) |  | The click rays, relative to the agent cursor's tip. |
-
-## `AppMenuPreview` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `icon` | [`AppLogicalRect`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The Cua Spaces icon (the tray template). |
-| `highlight` | [`AppLogicalRect`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The status item's highlight while pressed or open. |
-| `clock` | `String` |  | The clock at the menu bar's right end. |
-| `clock_right` / `clockRight` | `f64` |  | Its right edge. |
-| `menu` | [`AppLogicalRect`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The menu. |
-| `radius` | `f64` |  | Its corner radius. |
-| `rows` | [`Vec<AppMenuPreviewRow>`](#appmenupreviewrow-record) |  | The rows, top to bottom (`window.menu_bar` for `SPACES`). |
-| `inset` | `f64` |  | Text and shortcut inset from the menu's edges. |
-| `font_size` / `fontSize` | `f64` |  | The rows' font size. |
-
-## `AppMenuPreviewRow` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `item` | [`AppMenuItem`](/cua-sdk/reference/spaces/app-core/window#appmenuitem-record) |  | The core's item. |
-| `frame` | [`AppLogicalRect`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | Its row on the stage. |
+| `menu_bar` / `menuBar` | `bool` |  | Menu bar only. |
+| `title` | `String` |  | "Notch and menu bar". |
+| `id` | `String` |  | The card's id (`onboarding-notch`, `onboarding-menu-bar`): its accessibility identifier and list key. |
+| `image_label` / `imageLabel` | `String` |  | The miniature's spoken description. |
+| `selected` | `bool` |  | Picked. |
 
 ## `AppOnboardingCheckbox` record
 
@@ -227,6 +182,18 @@ Returned by [`app_onboarding_initial`](#app_onboarding_initial), [`app_onboardin
 | `telemetry` | [`Option<AppTelemetryInput>`](/cua-sdk/reference/spaces/app-core/window#apptelemetryinput-record) |  | The usage-data switch on Welcome: the machine's telemetry setting (Settings' "Share anonymous usage data", `cua telemetry off`), none until the shell read it (then it shows on). |
 | `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments: the Cua Volume page (and its Done line) only while Cua Volume is on. Off until the shell says otherwise. |
 | `run_counted` / `runCounted` | `bool` |  | The run's start was counted (`onboarding_shown`, Welcome shown): when Welcome showed on a machine whose usage notice was already shown, else when Welcome was left. Once per run, however often Welcome shows again (Back). |
+| `revisit` | `bool` |  | A page opened from Done's to-do list: leaving it (Continue, Skip or Back) comes back to Done. |
+
+## `AppOnboardingTodo` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | [`AppOnboardingTodoId`](#apponboardingtodoid-enum) |  | Which. |
+| `title` | `String` |  | "Cua CLI". |
+| `note` | `String` |  | One plain line under it. |
+| `done` | `bool` |  | Set up. |
+| `optional` | `bool` |  | Nice to have: "You're all set" does not wait for it. |
+| `action` | `Option<String>` |  | The fix's button ("Install the Cua CLI"), while not done. |
 
 ## `AppOnboardingView` record
 
@@ -253,68 +220,7 @@ Returned by [`app_onboarding_view`](#app_onboarding_view).
 | `usage` | [`Option<AppUsageToggle>`](#appusagetoggle-record) |  | Welcome's usage-data switch, next to the notice: nothing is sent before the user leaves Welcome, and nothing at all while it is off. |
 | `drive` | [`Option<AppDriveCard>`](/cua-sdk/reference/spaces/volume-app-core#appdrivecard-record) |  | The Cua Volume page's card. |
 | `launch_at_login` / `launchAtLogin` | [`Option<AppOnboardingCheckbox>`](#apponboardingcheckbox-record) |  | Done's "Launch at login" checkbox. |
-
-## `AppPresentationCard` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `menu_bar` / `menuBar` | `bool` |  | Menu bar only. |
-| `title` | `String` |  | "Notch and menu bar". |
-| `id` | `String` |  | The card's id (`onboarding-notch`, `onboarding-menu-bar`): its accessibility identifier and list key. |
-| `image_label` / `imageLabel` | `String` |  | The miniature's spoken description. |
-| `selected` | `bool` |  | Picked. |
-
-## `AppPresentationPreview` record
-
-Returned by [`app_presentation_preview`](#app_presentation_preview).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `menu_bar` / `menuBar` | `bool` |  | The menu bar card (else the notch card). |
-| `width` | `f64` |  | Stage width. |
-| `height` | `f64` |  | Stage height. |
-| `menu_bar_height` / `menuBarHeight` | `f64` |  | The menu bar strip along the top. |
-| `loop_ms` / `loopMs` | `u32` |  | One loop (ms). |
-| `pointer` | [`Vec<AppPreviewPoint>`](#apppreviewpoint-record) |  | The pointer's outline, tip at the origin (fill black, stroke white). |
-| `notch` | [`Option<AppNotchPreview>`](/cua-sdk/reference/spaces/app-core/notch#appnotchpreview-record) |  | The notch card's miniature. |
-| `menu` | [`Option<AppMenuPreview>`](#appmenupreview-record) |  | The menu bar card's miniature. |
-
-## `AppPreviewFrame` record
-
-Returned by [`app_presentation_preview_frame`](#app_presentation_preview_frame), [`app_presentation_preview_still`](#app_presentation_preview_still).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `pointer` | [`AppPreviewPoint`](#apppreviewpoint-record) |  | The pointer's tip. |
-| `pressed` | `bool` |  | The pointer presses (drawn a little smaller). |
-| `hover` | `f64` |  | Notch: the hover cue, 0 to 1 (the closed notch and its tab grow by 1 + (hover_scale - 1) * hover horizontally, about the top centre). |
-| `open` | `f64` |  | Notch: the shape, closed 0 to open 1 (a spring: it can pass 1); menu: the menu's opacity. |
-| `content` | `f64` |  | Notch: the content's fade, 0 to 1 (it also grows from `content_scale`, anchored at the top); menu: the same as `open`. |
-| `tab` | `f64` |  | Notch: the tab, 1 shown to 0 tucked under the notch. |
-| `highlighted` | `Option<u32>` |  | Menu: the row under the pointer (an enabled item), highlighted. |
-| `active` | `bool` |  | Menu: the status item is highlighted (pressed, or its menu open). |
-
-## `AppPreviewPoint` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `x` | `f64` |  | Left. |
-| `y` | `f64` |  | Down. |
-
-## `AppPreviewSegment` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `from` | [`AppPreviewPoint`](#apppreviewpoint-record) |  | Start. |
-| `to` | [`AppPreviewPoint`](#apppreviewpoint-record) |  | End. |
-
-## `AppPreviewWindow` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `frame` | [`AppLogicalRect`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | Its frame on the stage. |
-| `title_bar` / `titleBar` | `f64` |  | The title bar's height (the three window buttons sit in it). |
-| `radius` | `f64` |  | Corner radius. |
+| `todos` | [`Vec<AppOnboardingTodo>`](#apponboardingtodo-record) |  | Done's to-do list: the Cua CLI, the account, an AI agent and Cua Volume, each set up or with its fix. The title says "Almost done" until every one that is not optional is. |
 
 ## `AppSettings` record
 
@@ -371,6 +277,8 @@ Returned by [`app_settings_choose_experiment`](/cua-sdk/reference/spaces/app-cor
 .welcomeShown
 .usageDataToggled(on: Bool)
 .experimentsLoaded(experiments: AppExperiments)
+.todoChosen(id: AppOnboardingTodoId)
+.agentsDetected(configured: [String])
 ```
 
 </Tab>
@@ -403,6 +311,8 @@ AppOnboardingAction::TelemetryLoaded { telemetry: AppTelemetryInput }
 AppOnboardingAction::WelcomeShown
 AppOnboardingAction::UsageDataToggled { on: bool }
 AppOnboardingAction::ExperimentsLoaded { experiments: AppExperiments }
+AppOnboardingAction::TodoChosen { id: AppOnboardingTodoId }
+AppOnboardingAction::AgentsDetected { configured: Vec<String> }
 ```
 
 </Tab>
@@ -436,6 +346,8 @@ AppOnboardingAction::ExperimentsLoaded { experiments: AppExperiments }
 | `WelcomeShown` | Welcome is on screen (each time it shows; after `telemetry-loaded`). On a machine that already showed the usage notice, with usage data on, the run's start counts now rather than when Welcome is left. |
 | `UsageDataToggled` | Welcome's "Share anonymous usage data" switch (not while the environment decides). The shell writes the setting. Fields: `on: bool` |
 | `ExperimentsLoaded` | Settings, Experiments, as the shell read them (at the start, and whenever a switch changes). Any page; turning Cua Volume off on its page moves on. Fields: `experiments: AppExperiments` |
+| `TodoChosen` | A to-do on Done was clicked: its page opens, and leaving it comes back to Done. Cua Volume needs its experiment on first (the shell turns it on and sends `experiments-loaded`). Fields: `id: AppOnboardingTodoId` |
+| `AgentsDetected` | The coding agents that already use cua (set up earlier, from the CLI or Settings), as the shell read them. Any page. Fields: `configured: Vec<String>` |
 
 ## `AppOnboardingMode` enum
 
@@ -507,79 +419,37 @@ AppOnboardingStep::Done
 | `Mode` | Access other machines, or set this one up for unattended access. |
 | `Done` | Done. |
 
-## `app_driver_preview`
-
-The AI agents page's background computer-use card: its miniature (an
-agent clicking in a background window while the user works in front).
+## `AppOnboardingTodoId` enum
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
 
 ```swift
-func appDriverPreview() -> AppDriverPreview
+.cli
+.signin
+.agents
+.volume
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn app_driver_preview() -> AppDriverPreview
+AppOnboardingTodoId::Cli
+AppOnboardingTodoId::Signin
+AppOnboardingTodoId::Agents
+AppOnboardingTodoId::Volume
 ```
 
 </Tab>
 </Tabs>
 
-**Returns** [`AppDriverPreview`](#appdriverpreview-record)
-
-## `app_driver_preview_frame`
-
-The card's miniature `t_ms` into its loop (it wraps).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appDriverPreviewFrame(tMs: UInt32) -> AppDriverFrame
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_driver_preview_frame(t_ms: u32) -> AppDriverFrame
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `t_ms` | `u32` | required |
-
-**Returns** [`AppDriverFrame`](#appdriverframe-record)
-
-## `app_driver_preview_still`
-
-The card's miniature with Reduce Motion: mid-task, still.
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appDriverPreviewStill() -> AppDriverFrame
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_driver_preview_still() -> AppDriverFrame
-```
-
-</Tab>
-</Tabs>
-
-**Returns** [`AppDriverFrame`](#appdriverframe-record)
+| Variant | Description |
+| --- | --- |
+| `Cli` | The Cua CLI. |
+| `Signin` | The Cua account. |
+| `Agents` | A coding agent that uses cua. |
+| `Volume` | Cua Volume (optional). |
 
 ## `app_onboarding_action_from_json`
 
@@ -821,89 +691,6 @@ pub fn app_onboarding_view(state: AppOnboardingState) -> AppOnboardingView
 | `state` | [`AppOnboardingState`](#apponboardingstate-record) | required |
 
 **Returns** [`AppOnboardingView`](#apponboardingview-record)
-
-## `app_presentation_preview`
-
-A presentation card's animated miniature (the notch card, or with
-`menu_bar` the menu bar card).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appPresentationPreview(menuBar: Bool) -> AppPresentationPreview
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_presentation_preview(menu_bar: bool) -> AppPresentationPreview
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `menu_bar` | `bool` | required |
-
-**Returns** [`AppPresentationPreview`](#apppresentationpreview-record)
-
-## `app_presentation_preview_frame`
-
-The miniature `t_ms` into its loop (it wraps).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appPresentationPreviewFrame(menuBar: Bool, tMs: UInt32) -> AppPreviewFrame
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_presentation_preview_frame(menu_bar: bool, t_ms: u32) -> AppPreviewFrame
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `menu_bar` | `bool` | required |
-| `t_ms` | `u32` | required |
-
-**Returns** [`AppPreviewFrame`](#apppreviewframe-record)
-
-## `app_presentation_preview_still`
-
-The miniature with Reduce Motion: expanded, still.
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appPresentationPreviewStill(menuBar: Bool) -> AppPreviewFrame
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_presentation_preview_still(menu_bar: bool) -> AppPreviewFrame
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `menu_bar` | `bool` | required |
-
-**Returns** [`AppPreviewFrame`](#apppreviewframe-record)
 
 ## `app_settings_load`
 

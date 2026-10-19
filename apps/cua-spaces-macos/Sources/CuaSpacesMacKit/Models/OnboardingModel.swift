@@ -344,6 +344,49 @@ public final class OnboardingModel {
 
     // MARK: - Done
 
+    // MARK: - Done
+
+    /// The account now, read from the shared session (the CLI's sign-in
+    /// included). Set by the app.
+    public var readIdentity: (() -> String?)?
+    /// Turns the Cua Volume experiment on (Settings, Experiments) for
+    /// Done's "Turn on".
+    public var onTurnOnVolume: (() -> Void)?
+
+    /// Done shows: read the machine again rather than trusting what this
+    /// run saw. A `cua` from install.sh, a sign-in from `cua auth login`
+    /// while the window was open, and agents set up earlier all count.
+    public func refreshDone() async {
+        if let cli { quietly(.cliPlanned(plan: await cli.plan())) }
+        if let who = readIdentity?(), !who.isEmpty, who != state.identity {
+            quietly(.signedIn(identity: who))
+        }
+        if let agentSetup {
+            let configured = await agentSetup.statuses().filter { $0.installed && $0.cuaConfigured }.map(\.name)
+            if !configured.isEmpty { quietly(.agentsDetected(configured: configured)) }
+        }
+    }
+
+    /// What the machine says, not something the user did on a page: no
+    /// usage event.
+    private func quietly(_ action: AppOnboardingAction) {
+        state = appOnboardingReduce(state: state, action: action)
+    }
+
+    /// A fix on Done's to-do list: its page opens, and leaving it comes
+    /// back to Done. Cua Volume turns its experiment on first.
+    public func fixTodo(_ id: AppOnboardingTodoId) async {
+        if id == .volume, !state.experiments.cuaVolume {
+            onTurnOnVolume?()
+            var x = currentExperiments?() ?? state.experiments
+            x.cuaVolume = true
+            send(.experimentsLoaded(experiments: x))
+            if !state.driveChecked { await checkDrive() }
+        }
+        if id == .cli, state.cliPlan == nil { await planCli() }
+        send(.todoChosen(id: id))
+    }
+
     /// "Start using Cua Spaces".
     public func finish() {
         telemetry?.record(appTelemetryOnboardingFinished(state: state))
@@ -362,8 +405,15 @@ public final class OnboardingModel {
     /// starts from it, as if it had been known from the start.
     public func adoptIdentity(_ identity: String?) {
         host.identity = identity
-        guard !completed, state.step == .welcome, state.identity != identity else { return }
-        state.identity = identity
+        guard !completed, state.identity != identity else { return }
+        // Signed in (from the app or the CLI, one shared session): on any
+        // page, so Done never says "not signed in" for a signed-in Mac. A
+        // sign-out only clears it on Welcome, before the flow asked.
+        if let identity, !identity.isEmpty {
+            quietly(.signedIn(identity: identity))
+        } else if state.step == .welcome {
+            state.identity = identity
+        }
     }
 
     /// Shows the flow again (Settings).

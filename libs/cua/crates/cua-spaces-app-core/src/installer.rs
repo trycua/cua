@@ -120,6 +120,11 @@ pub struct CliInstallPlan {
     pub path_profile: Option<String>,
     /// The line that would be added to `path_profile`.
     pub path_line: Option<String>,
+    /// A working `cua` CLI already on this machine: `target`, else the
+    /// first in the usual install folders or on PATH (a Finder-launched
+    /// app's PATH lacks `~/.local/bin`, so the folders are searched too).
+    #[serde(default)]
+    pub found: Option<String>,
 }
 
 /// What the user agreed to in the CLI step.
@@ -143,6 +148,9 @@ pub struct CliInstaller {
     pub profile: PathBuf,
     /// Symlink rather than copy (stable app location on macOS).
     pub prefer_symlink: bool,
+    /// Other folders a `cua` is usually installed in (Homebrew, a root
+    /// install.sh), searched with PATH for one already there.
+    pub search_dirs: Vec<PathBuf>,
 }
 
 #[cfg(feature = "installer")]
@@ -163,7 +171,38 @@ impl CliInstaller {
             bin_dir: default_bin_dir(&home, local.as_deref()),
             path_env: std::env::var("PATH").unwrap_or_default(),
             profile: profile_for_shell(&home, shell.as_deref(), xdg.as_deref()),
+            search_dirs: known_bin_dirs(&home),
         }
+    }
+
+    /// A working `cua` CLI already here: `target` when it runs as one (its
+    /// `--version` is `installed_version`), else the first in
+    /// [`Self::search_dirs`] or on PATH.
+    async fn find_installed(
+        &self,
+        target: &Path,
+        installed_version: Option<&str>,
+    ) -> Option<String> {
+        if installed_version.is_some_and(is_cua_cli) {
+            return Some(target.display().to_string());
+        }
+        let mut seen = vec![target.to_path_buf()];
+        let dirs = self
+            .search_dirs
+            .iter()
+            .cloned()
+            .chain(std::env::split_paths(&self.path_env));
+        for dir in dirs {
+            let cli = dir.join(cli_file_name());
+            if seen.contains(&cli) || !cli.is_file() {
+                continue;
+            }
+            seen.push(cli.clone());
+            if cli_version(&cli).await.as_deref().is_some_and(is_cua_cli) {
+                return Some(cli.display().to_string());
+            }
+        }
+        None
     }
 
     /// The file the CLI is written to.
@@ -216,7 +255,11 @@ impl CliInstaller {
                 Some(path_line(&self.bin_dir, &self.profile)),
             )
         };
+        let found = self
+            .find_installed(&target, installed_version.as_deref())
+            .await;
         CliInstallPlan {
+            found,
             source: self.bundled.as_ref().map(|p| p.display().to_string()),
             target: target.display().to_string(),
             bin_dir: self.bin_dir.display().to_string(),
@@ -378,6 +421,19 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Where a `cua` is usually installed besides the GUI's own target:
+/// Homebrew and a root install.sh's `/usr/local/bin` (not on Windows).
+pub fn known_bin_dirs(home: &Path) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        return vec![];
+    }
+    vec![
+        home.join(".local").join("bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ]
+}
+
 /// The first `name` on a PATH-style string.
 pub fn first_on_path(path_env: &str, name: &str) -> Option<PathBuf> {
     std::env::split_paths(path_env)
@@ -534,6 +590,7 @@ mod tests {
             path_env: "/usr/bin:/bin".into(),
             profile: profile_for_shell(&home, Some("/bin/zsh"), None),
             prefer_symlink: false,
+            search_dirs: vec![],
         };
         let plan = cli.plan().await;
         assert_eq!(
@@ -568,6 +625,28 @@ mod tests {
         .unwrap();
         let plan = cli.plan().await;
         assert!(plan.installed && !plan.up_to_date, "{plan:?}");
+        assert_eq!(plan.found, None, "an old Python cua-cli is not the cua CLI");
+        // install.sh's own copy (the cua CLI, not the app's): found, so the
+        // app says it is installed even though it would still offer its own.
+        let elsewhere = tmp.path().join("brew/bin");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("cua"), "#!/bin/sh\necho 'cua 0.4.4'\n").unwrap();
+        std::fs::set_permissions(
+            elsewhere.join("cua"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let searching = CliInstaller {
+            search_dirs: vec![elsewhere.clone()],
+            ..cli.clone()
+        };
+        let plan = searching.plan().await;
+        assert_eq!(
+            plan.found,
+            Some(elsewhere.join("cua").display().to_string()),
+            "{plan:?}"
+        );
+        assert!(!plan.up_to_date);
         let done = cli.install(&CliInstallRequest::default()).await.unwrap();
         assert!(done.up_to_date, "{done:?}");
         assert_eq!(done.installed_version.as_deref(), Some("cua 1.2.3"));

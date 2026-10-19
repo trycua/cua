@@ -1129,6 +1129,7 @@ mod tests {
             &initial(None, None),
             &OnboardingAction::CliPlanned {
                 plan: crate::installer::CliInstallPlan {
+                    found: None,
                     source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
                     target: "/Users/alice/.local/bin/cua".into(),
                     ..Default::default()
@@ -1144,6 +1145,7 @@ mod tests {
         assert!(onboarding(&s, &OnboardingAction::CliDone { install: true }).is_empty());
         let installed = OnboardingAction::CliPlanned {
             plan: crate::installer::CliInstallPlan {
+                found: None,
                 source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
                 target: "/Users/alice/.local/bin/cua".into(),
                 up_to_date: true,

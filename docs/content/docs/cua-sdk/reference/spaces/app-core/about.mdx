@@ -310,6 +310,7 @@ Returned by [`AppCliInstaller.install`](#appcliinstallerinstall), [`AppCliInstal
 | `on_path` / `onPath` | `bool` |  | `bin_dir` is already on PATH. |
 | `path_profile` / `pathProfile` | `Option<String>` |  | Shell profile (or "user PATH" on Windows) the PATH change would edit. |
 | `path_line` / `pathLine` | `Option<String>` |  | The line that would be added to `path_profile`. |
+| `found` | `Option<String>` |  | A working `cua` CLI already on this machine: `target`, else the first in the usual install folders or on PATH (a Finder-launched app's PATH lacks `~/.local/bin`, so the folders are searched too). |
 
 ## `AppCliInstallRequest` record
 

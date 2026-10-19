@@ -199,9 +199,10 @@ describe("InstallerFlow", () => {
     expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     click("Continue");
     expect(await screen.findByText("You're all set")).toBeInTheDocument();
-    expect(screen.getByText("/Users/ada/.local/bin/cua")).toBeInTheDocument();
-    expect(screen.getByText("ada@example.com")).toBeInTheDocument();
-    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    // The bundled cua installs silently here: Done lists the account and the agents.
+    expect(screen.getByText("Signed in as ada@example.com.")).toBeInTheDocument();
+    expect(screen.getByText("Claude Code can use Cua.")).toBeInTheDocument();
+    expect(screen.queryByText("Cua CLI")).toBeNull();
     expect(screen.getByText("Menu bar only")).toBeInTheDocument();
     expect(drive.tools()).toEqual(["volume_mount_status", "volume_storage"]);
     // Three static example prompts under a label; each copies on click.
@@ -412,8 +413,11 @@ describe("InstallerFlow", () => {
       />,
     );
     click("Turn on remote access");
-    expect(await screen.findByText("You're all set")).toBeInTheDocument();
-    expect(screen.getByText("Reachable from your other devices")).toBeInTheDocument();
+    // Signed in, no agent yet: honest, with the fix.
+    expect(await screen.findByText("Almost done")).toBeInTheDocument();
+    expect(screen.getByText("Your other devices can reach it")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect an AI agent" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
     expect(screen.queryByText("Grant in System Settings")).toBeNull();
     click("Start using Cua Spaces");
     expect(onDone).toHaveBeenCalledWith("host");

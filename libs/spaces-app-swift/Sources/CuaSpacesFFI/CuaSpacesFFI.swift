@@ -7133,6 +7133,12 @@ public struct AppCliInstallPlan: Equatable, Hashable {
      * The line that would be added to `path_profile`.
      */
     public var pathLine: String?
+    /**
+     * A working `cua` CLI already on this machine: `target`, else the
+     * first in the usual install folders or on PATH (a Finder-launched
+     * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+     */
+    public var found: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7172,7 +7178,12 @@ public struct AppCliInstallPlan: Equatable, Hashable {
          */pathProfile: String?,
         /**
          * The line that would be added to `path_profile`.
-         */pathLine: String?) {
+         */pathLine: String?,
+        /**
+         * A working `cua` CLI already on this machine: `target`, else the
+         * first in the usual install folders or on PATH (a Finder-launched
+         * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+         */found: String?) {
         self.source = source
         self.target = target
         self.binDir = binDir
@@ -7185,6 +7196,7 @@ public struct AppCliInstallPlan: Equatable, Hashable {
         self.onPath = onPath
         self.pathProfile = pathProfile
         self.pathLine = pathLine
+        self.found = found
     }
 
 
@@ -7214,7 +7226,8 @@ public struct FfiConverterTypeAppCliInstallPlan: FfiConverterRustBuffer {
                 shadowedBy: FfiConverterOptionString.read(from: &buf),
                 onPath: FfiConverterBool.read(from: &buf),
                 pathProfile: FfiConverterOptionString.read(from: &buf),
-                pathLine: FfiConverterOptionString.read(from: &buf)
+                pathLine: FfiConverterOptionString.read(from: &buf),
+                found: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -7231,6 +7244,7 @@ public struct FfiConverterTypeAppCliInstallPlan: FfiConverterRustBuffer {
         FfiConverterBool.write(value.onPath, into: &buf)
         FfiConverterOptionString.write(value.pathProfile, into: &buf)
         FfiConverterOptionString.write(value.pathLine, into: &buf)
+        FfiConverterOptionString.write(value.found, into: &buf)
     }
 }
 
@@ -22368,6 +22382,11 @@ public struct AppOnboardingState: Equatable, Hashable {
      * Welcome shows again (Back).
      */
     public var runCounted: Bool
+    /**
+     * A page opened from Done's to-do list: leaving it (Continue, Skip or
+     * Back) comes back to Done.
+     */
+    public var revisit: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -22455,7 +22474,11 @@ public struct AppOnboardingState: Equatable, Hashable {
          * when Welcome showed on a machine whose usage notice was already
          * shown, else when Welcome was left. Once per run, however often
          * Welcome shows again (Back).
-         */runCounted: Bool) {
+         */runCounted: Bool,
+        /**
+         * A page opened from Done's to-do list: leaving it (Continue, Skip or
+         * Back) comes back to Done.
+         */revisit: Bool) {
         self.step = step
         self.cliTarget = cliTarget
         self.cliPlan = cliPlan
@@ -22481,6 +22504,7 @@ public struct AppOnboardingState: Equatable, Hashable {
         self.telemetry = telemetry
         self.experiments = experiments
         self.runCounted = runCounted
+        self.revisit = revisit
     }
 
 
@@ -22523,7 +22547,8 @@ public struct FfiConverterTypeAppOnboardingState: FfiConverterRustBuffer {
                 launchAtLogin: FfiConverterBool.read(from: &buf),
                 telemetry: FfiConverterOptionTypeAppTelemetryInput.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
-                runCounted: FfiConverterBool.read(from: &buf)
+                runCounted: FfiConverterBool.read(from: &buf),
+                revisit: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -22553,6 +22578,7 @@ public struct FfiConverterTypeAppOnboardingState: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppTelemetryInput.write(value.telemetry, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterBool.write(value.runCounted, into: &buf)
+        FfiConverterBool.write(value.revisit, into: &buf)
     }
 }
 
@@ -22569,6 +22595,112 @@ public func FfiConverterTypeAppOnboardingState_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeAppOnboardingState_lower(_ value: AppOnboardingState) -> RustBuffer {
     return FfiConverterTypeAppOnboardingState.lower(value)
+}
+
+
+public struct AppOnboardingTodo: Equatable, Hashable {
+    /**
+     * Which.
+     */
+    public var id: AppOnboardingTodoId
+    /**
+     * "Cua CLI".
+     */
+    public var title: String
+    /**
+     * One plain line under it.
+     */
+    public var note: String
+    /**
+     * Set up.
+     */
+    public var done: Bool
+    /**
+     * Nice to have: "You're all set" does not wait for it.
+     */
+    public var optional: Bool
+    /**
+     * The fix's button ("Install the Cua CLI"), while not done.
+     */
+    public var action: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Which.
+         */id: AppOnboardingTodoId,
+        /**
+         * "Cua CLI".
+         */title: String,
+        /**
+         * One plain line under it.
+         */note: String,
+        /**
+         * Set up.
+         */done: Bool,
+        /**
+         * Nice to have: "You're all set" does not wait for it.
+         */optional: Bool,
+        /**
+         * The fix's button ("Install the Cua CLI"), while not done.
+         */action: String?) {
+        self.id = id
+        self.title = title
+        self.note = note
+        self.done = done
+        self.optional = optional
+        self.action = action
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppOnboardingTodo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppOnboardingTodo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppOnboardingTodo {
+        return
+            try AppOnboardingTodo(
+                id: FfiConverterTypeAppOnboardingTodoId.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                note: FfiConverterString.read(from: &buf),
+                done: FfiConverterBool.read(from: &buf),
+                optional: FfiConverterBool.read(from: &buf),
+                action: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppOnboardingTodo, into buf: inout [UInt8]) {
+        FfiConverterTypeAppOnboardingTodoId.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.note, into: &buf)
+        FfiConverterBool.write(value.done, into: &buf)
+        FfiConverterBool.write(value.optional, into: &buf)
+        FfiConverterOptionString.write(value.action, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppOnboardingTodo_lift(_ buf: RustBuffer) throws -> AppOnboardingTodo {
+    return try FfiConverterTypeAppOnboardingTodo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppOnboardingTodo_lower(_ value: AppOnboardingTodo) -> RustBuffer {
+    return FfiConverterTypeAppOnboardingTodo.lower(value)
 }
 
 
@@ -22655,6 +22787,12 @@ public struct AppOnboardingView: Equatable, Hashable {
      * Done's "Launch at login" checkbox.
      */
     public var launchAtLogin: AppOnboardingCheckbox?
+    /**
+     * Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+     * Volume, each set up or with its fix. The title says "Almost done"
+     * until every one that is not optional is.
+     */
+    public var todos: [AppOnboardingTodo]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -22721,7 +22859,12 @@ public struct AppOnboardingView: Equatable, Hashable {
          */drive: AppDriveCard?,
         /**
          * Done's "Launch at login" checkbox.
-         */launchAtLogin: AppOnboardingCheckbox?) {
+         */launchAtLogin: AppOnboardingCheckbox?,
+        /**
+         * Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+         * Volume, each set up or with its fix. The title says "Almost done"
+         * until every one that is not optional is.
+         */todos: [AppOnboardingTodo]) {
         self.step = step
         self.dots = dots
         self.title = title
@@ -22741,6 +22884,7 @@ public struct AppOnboardingView: Equatable, Hashable {
         self.usage = usage
         self.drive = drive
         self.launchAtLogin = launchAtLogin
+        self.todos = todos
     }
 
 
@@ -22777,7 +22921,8 @@ public struct FfiConverterTypeAppOnboardingView: FfiConverterRustBuffer {
                 noticeLinkUrl: FfiConverterOptionString.read(from: &buf),
                 usage: FfiConverterOptionTypeAppUsageToggle.read(from: &buf),
                 drive: FfiConverterOptionTypeAppDriveCard.read(from: &buf),
-                launchAtLogin: FfiConverterOptionTypeAppOnboardingCheckbox.read(from: &buf)
+                launchAtLogin: FfiConverterOptionTypeAppOnboardingCheckbox.read(from: &buf),
+                todos: FfiConverterSequenceTypeAppOnboardingTodo.read(from: &buf)
         )
     }
 
@@ -22801,6 +22946,7 @@ public struct FfiConverterTypeAppOnboardingView: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppUsageToggle.write(value.usage, into: &buf)
         FfiConverterOptionTypeAppDriveCard.write(value.drive, into: &buf)
         FfiConverterOptionTypeAppOnboardingCheckbox.write(value.launchAtLogin, into: &buf)
+        FfiConverterSequenceTypeAppOnboardingTodo.write(value.todos, into: &buf)
     }
 }
 
@@ -48902,6 +49048,25 @@ public enum AppOnboardingAction: Equatable, Hashable {
          * The switches.
          */experiments: AppExperiments
     )
+    /**
+     * A to-do on Done was clicked: its page opens, and leaving it comes
+     * back to Done. Cua Volume needs its experiment on first (the shell
+     * turns it on and sends `experiments-loaded`).
+     */
+    case todoChosen(
+        /**
+         * Which.
+         */id: AppOnboardingTodoId
+    )
+    /**
+     * The coding agents that already use cua (set up earlier, from the
+     * CLI or Settings), as the shell read them. Any page.
+     */
+    case agentsDetected(
+        /**
+         * Their names.
+         */configured: [String]
+    )
 
 
 
@@ -48993,6 +49158,12 @@ public struct FfiConverterTypeAppOnboardingAction: FfiConverterRustBuffer {
         )
 
         case 26: return .experimentsLoaded(experiments: try FfiConverterTypeAppExperiments.read(from: &buf)
+        )
+
+        case 27: return .todoChosen(id: try FfiConverterTypeAppOnboardingTodoId.read(from: &buf)
+        )
+
+        case 28: return .agentsDetected(configured: try FfiConverterSequenceString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -49127,6 +49298,16 @@ public struct FfiConverterTypeAppOnboardingAction: FfiConverterRustBuffer {
         case let .experimentsLoaded(experiments):
             writeInt(&buf, Int32(26))
             FfiConverterTypeAppExperiments.write(experiments, into: &buf)
+
+
+        case let .todoChosen(id):
+            writeInt(&buf, Int32(27))
+            FfiConverterTypeAppOnboardingTodoId.write(id, into: &buf)
+
+
+        case let .agentsDetected(configured):
+            writeInt(&buf, Int32(28))
+            FfiConverterSequenceString.write(configured, into: &buf)
 
         }
     }
@@ -49353,6 +49534,99 @@ public func FfiConverterTypeAppOnboardingStep_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeAppOnboardingStep_lower(_ value: AppOnboardingStep) -> RustBuffer {
     return FfiConverterTypeAppOnboardingStep.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppOnboardingTodoId: Equatable, Hashable {
+
+    /**
+     * The Cua CLI.
+     */
+    case cli
+    /**
+     * The Cua account.
+     */
+    case signin
+    /**
+     * A coding agent that uses cua.
+     */
+    case agents
+    /**
+     * Cua Volume (optional).
+     */
+    case volume
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppOnboardingTodoId: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppOnboardingTodoId: FfiConverterRustBuffer {
+    typealias SwiftType = AppOnboardingTodoId
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppOnboardingTodoId {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .cli
+
+        case 2: return .signin
+
+        case 3: return .agents
+
+        case 4: return .volume
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppOnboardingTodoId, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .cli:
+            writeInt(&buf, Int32(1))
+
+
+        case .signin:
+            writeInt(&buf, Int32(2))
+
+
+        case .agents:
+            writeInt(&buf, Int32(3))
+
+
+        case .volume:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppOnboardingTodoId_lift(_ buf: RustBuffer) throws -> AppOnboardingTodoId {
+    return try FfiConverterTypeAppOnboardingTodoId.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppOnboardingTodoId_lower(_ value: AppOnboardingTodoId) -> RustBuffer {
+    return FfiConverterTypeAppOnboardingTodoId.lower(value)
 }
 
 
@@ -62194,6 +62468,31 @@ fileprivate struct FfiConverterSequenceTypeAppNotificationInput: FfiConverterRus
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppNotificationInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppOnboardingTodo: FfiConverterRustBuffer {
+    typealias SwiftType = [AppOnboardingTodo]
+
+    public static func write(_ value: [AppOnboardingTodo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppOnboardingTodo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppOnboardingTodo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppOnboardingTodo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppOnboardingTodo.read(from: &buf))
         }
         return seq
     }

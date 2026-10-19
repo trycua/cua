@@ -3,9 +3,12 @@ title: Telemetry and privacy
 description: What the cua SDK, the cua CLI, cua daemon, cua-spacesd and the Cua Spaces app collect, what they never collect, and how to turn it off.
 ---
 
-Cua sends anonymous usage data so we can see which features are used and
-where things break. It never contains your content. You can see every event
-before or after it is sent, and turn it off with one switch.
+Cua collects usage data so we can see which features are used and where
+things break. It's on by default, like in VS Code or Docker Desktop. It
+never contains your content: no files, file paths, names, emails, prompts or
+screen content, only fixed event names and counts. When you're signed in,
+it's linked to your Cua account through a random account ID. You can see
+every event before or after it is sent, and turn it off with one switch.
 
 ## Turn it off
 
@@ -17,7 +20,7 @@ Any of these turns usage telemetry off for every Cua program on the machine
 | `DO_NOT_TRACK=1` | This environment. Wins over everything. |
 | `CUA_TELEMETRY=0` | This environment. `CUA_TELEMETRY=1` turns it back on. |
 | `cua telemetry off` or `cua config set telemetry off` | This machine (`[telemetry] enabled = "off"` in `$CUA_HOME/config.toml`). |
-| Spaces app: "Share anonymous usage data" on the first run's Welcome page, or Settings, Privacy | Same setting as above. |
+| Spaces app: "Share usage data to help improve Cua" on the first run's Welcome page, or Settings, Privacy | Same setting as above. |
 | SDK: `cua.telemetry.disable()` (Python), `telemetrySetEnabled(false)` (TypeScript, Swift, Kotlin) | Same setting as above. |
 
 CI environments (`CI`, `GITHUB_ACTIONS`, `BUILDKITE`, ...) are off by default.
@@ -37,20 +40,47 @@ cua telemetry reset-id    # a new anonymous install id
 Nothing is sent from a machine until the first-run notice has been shown
 there once (in the terminal, or in the Spaces app's onboarding or Settings).
 The process that shows it sends nothing. In the Spaces app the notice is on
-the first run's Welcome page, next to a "Share anonymous usage data" switch:
+the first run's Welcome page, next to a "Share usage data to help improve
+Cua" switch:
 nothing is queued or sent until you leave that page, and if you turn the
 switch off there, nothing is sent at all (the setting is saved for every Cua
 program on the machine).
 
+## Linked to your account when you're signed in
+
+When you're signed in, your usage data is linked to your Cua account so we
+can see where people get stuck, for example if you signed up but never made
+a Space. We see which steps you reached, not what you did in them.
+
+- **A random account ID, not you.** The Cua service gives a signed-in app or
+  CLI an account ID like `acct_3f9c...`: a one-way code made from your
+  account on our servers. It is never your email, your name or your sign-in
+  id. Events then carry that ID instead of the install id, and one PostHog
+  `$identify` joins this install's earlier events to it.
+- **You see it first.** Nothing is linked before the notice has been shown on
+  this machine: the first-run notice says so, and installs that saw the
+  older "anonymous" wording get a one-time notice first ("We've updated how
+  usage data works"), with "Turn off usage data" right there.
+- **Off means off.** With usage data off, nothing is sent and nothing is
+  linked. Signing out, `cua telemetry off` and `cua telemetry reset-id` unlink
+  this machine; after a sign-out it starts again with a new random install id.
+- **`cua telemetry status`** shows whether this machine is linked.
+
+Our own service also records what happens on it, such as a sign-up, a
+checkout or a subscription change, under the same account ID. Those are
+records of our service, not of your computer, so the switch above does not
+change them.
+
 ## How it works
 
-- **Anonymous id.** 128 random bits in `$CUA_HOME/telemetry/install_id`, created
+- **Install id.** 128 random bits in `$CUA_HOME/telemetry/install_id`, created
   on the first event actually sent, never while telemetry is off. It is not
   derived from your machine or account. `reset-id` deletes it.
-- **No person profiles, no location.** Every event sets `$process_person_profile: false`
-  and `$geoip_disable: true`. Like any HTTPS request, the upload reaches
-  PostHog (EU) from your IP address; it is never an event property and is
-  not used for location.
+- **No location.** Every event sets `$geoip_disable: true`. Like any HTTPS
+  request, the upload reaches PostHog (EU) from your IP address; it is never
+  an event property and is not used for location. Events that aren't linked to
+  an account set `$process_person_profile: false`; linked events belong to
+  the account's PostHog person, which never holds a name or an email.
 - **Closed vocabularies.** Every property is one of a fixed list of values, a
   bucket, a boolean or a version. An image reference that is not in the public
   image catalog is sent as `custom`; an app outside the public teleport catalog
@@ -80,9 +110,10 @@ These are the questions the events answer, and nothing else:
   sharing and multiplayer? Do they update?
 - Are they still using Cua a day, a week and a month later?
 
-The activation funnel joins events on the anonymous install id, in order:
-installer started and finished (`cua_installer_step`), app launched
-(`cua_onboarding_step` `app_launched`), first run completed
+The activation funnel joins events on the install id, and on the account ID
+once you sign in, in order: installer started and finished
+(`cua_installer_step`), app launched (`cua_onboarding_step` `app_launched`),
+first run completed
 (`onboarding_completed`), signed in (`signed_in`), first Space created
 (`first_space_created`), first Space ready (`first_space_ready`), first
 teleport (`first_teleport`), first agent run (`first_agent_run`) and an
@@ -94,7 +125,7 @@ are counted: [How events are counted](/cua-sdk/concepts/telemetry-counting).
 
 ## Never collected
 
-File paths, file names, usernames, hostnames, IP addresses, emails, window
+File paths, file names, names, usernames, hostnames, IP addresses, emails, window
 titles, URLs, clipboard, keystrokes or typed text, screenshots, screen or
 accessibility content, prompts, model output, sandbox or Space names, error
 messages, and anything stored in the Keyvault (only consent decisions are

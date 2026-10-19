@@ -1269,6 +1269,11 @@ pub fn doctor_checks(r: &DoctorReport) -> Vec<cua_proto::daemon::v1::RuntimeChec
                             .iter()
                             .any(|kind| r.backend(*kind).is_some_and(|b| b.ready))
                 }
+                BackendKind::Qemu => r.backends.iter().any(|b| {
+                    b.ready
+                        && (b.backend == BackendKind::Container
+                            || (cfg!(target_os = "macos") && b.backend == BackendKind::Managed))
+                }),
                 _ => false,
             };
             let status = if b.ready {
@@ -2005,21 +2010,38 @@ mod tests {
         assert_eq!(checks[2].status, CheckStatus::NotApplicable as i32);
         assert_eq!(checks[3].status, CheckStatus::NotApplicable as i32);
         assert!(checks.iter().all(|c| c.status != CheckStatus::Error as i32));
-        report.host.os = cua_vmm::host::HostOs::Macos;
-        report.backends[3].ready = true;
-        report.container.engine = Some("Docker Desktop".into());
-        assert!(
-            super::doctor_checks(&report)
-                .iter()
-                .all(|c| c.status != CheckStatus::Error as i32)
-        );
-        report.host.os = cua_vmm::host::HostOs::Linux;
+        #[cfg(target_os = "macos")]
+        {
+            report.host.os = cua_vmm::host::HostOs::Macos;
+            report.backends[3].ready = true;
+            report.container.engine = Some("Docker Desktop".into());
+            assert!(
+                super::doctor_checks(&report)
+                    .iter()
+                    .all(|c| c.status != CheckStatus::Error as i32)
+            );
+            report.backends[0].ready = false;
+            report.backends[0].provisionable = false;
+            report.backends[3].ready = false;
+            report.backends[2].ready = true;
+            assert_ne!(
+                super::doctor_checks(&report)[0].status,
+                CheckStatus::Error as i32
+            );
+            report.backends[2].ready = false;
+            report.host.os = cua_vmm::host::HostOs::Linux;
+        }
         report.backends[0].ready = false;
         report.backends[0].provisionable = false;
         report.backends[3].ready = true;
         let checks = super::doctor_checks(&report);
-        assert_eq!(checks[0].status, CheckStatus::Error as i32);
+        assert_ne!(checks[0].status, CheckStatus::Error as i32);
         assert_eq!(checks[3].status, CheckStatus::Ok as i32);
+        report.backends[3].ready = false;
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Error as i32
+        );
         report.backends[0].detail = "permission denied opening /dev/kvm".into();
         assert_eq!(
             super::doctor_checks(&report)[0].status,

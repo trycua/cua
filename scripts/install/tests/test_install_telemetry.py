@@ -145,11 +145,15 @@ class InstallTelemetry(unittest.TestCase):
     def test_deferred_runtime_failure_sends_failed_not_completed(self):
         self.check_runtime_completion(1)
 
-    def check_runtime_completion(self, doctor_status):
+    def test_healthy_docker_host_without_qemu_sends_completed(self):
+        self.check_runtime_completion(0, docker=True)
+
+    def check_runtime_completion(self, doctor_status, docker=False):
         cli = self.home / "cua"
         cli.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "cua {VERSION}"; fi\nif [ "$*" = "runtime doctor" ]; then echo "doctor status {doctor_status}"; exit {doctor_status}; fi\nexit 0\n')
         cli.chmod(0o755)
-        for name in ("qemu-img", f"qemu-system-{os.uname().machine}"):
+        names = ("docker",) if docker else ("qemu-img", f"qemu-system-{os.uname().machine}")
+        for name in names:
             binary = self.home / name
             binary.write_text("#!/bin/sh\nexit 0\n")
             binary.chmod(0o755)
@@ -164,6 +168,12 @@ class InstallTelemetry(unittest.TestCase):
                  CUA_INSTALL_MANIFEST_URL=self.manifest,
                  CUA_TELEMETRY_FORBID_NETWORK="1",
                  CUA_TELEMETRY_ENDPOINT=f"{self.base}/batch/", CUA_POSTHOG_KEY="phc_test")
+        if docker:
+            self.assertFalse((self.home / "qemu-img").exists())
+            script.write_text(script.read_text().replace(
+                'main "$@"',
+                'have() { case "$1" in qemu-img|qemu-system-*) return 1;; *) command -v "$1" >/dev/null 2>&1;; esac; }\nmain "$@"',
+            ))
         p = subprocess.run(["sh", str(script), "--yes", "--no-onboarding", "--select", "spaces"],
                            env=e, capture_output=True, text=True, timeout=120)
         self.assertEqual(p.returncode, doctor_status, p.stdout + p.stderr)

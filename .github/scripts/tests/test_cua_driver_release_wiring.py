@@ -396,8 +396,8 @@ fi
             workflow.count('"$BINARY_URL" -o cua-driver-release.tar.gz'),
             1,
         )
-        self.assertIn("actions/upload-artifact@v4", workflow)
-        self.assertIn("actions/download-artifact@v4", workflow)
+        self.assertRegex(workflow, r"actions/upload-artifact@[0-9a-f]{40} # v4")
+        self.assertRegex(workflow, r"actions/download-artifact@[0-9a-f]{40} # v4")
         self.assertIn("cua-driver-release-${{ steps.pick.outputs.version }}", workflow)
         self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
         self.assertIn('CUA_TELEMETRY_ENABLED: "false"', workflow)

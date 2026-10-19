@@ -170,6 +170,24 @@ uv run pre-commit install
 Mypy is configured but is not currently a pre-commit gate. Rust, TypeScript,
 Swift, and documentation checks remain component-owned.
 
+An optional pre-push hook (lefthook) checks what you are about to push: no push
+to `main`, no history from another repository, no unusually large push, no
+likely secrets or tailnet hostnames in the new commits, and no unpinned GitHub
+Actions. Install it with:
+
+```bash
+brew install lefthook gitleaks
+scripts/hooks/install.sh
+```
+
+Use the script, not `lefthook install`. If `core.hooksPath` is set (agent and
+dev machines point it at a shared directory of push guards), `lefthook install
+--force` rewrites the hooks in that shared directory and removes the guards.
+The script never does that: it adds a pre-push hook to this repo's own hooks
+directory, which the shared dispatcher runs after its own checks. Never run
+`lefthook install --force` or `--reset-hooks-path` on a machine with a global
+`core.hooksPath`.
+
 ## Desktop Behavior Changes
 
 cua-driver behavior must be verified through the canonical Rust harnesses. A

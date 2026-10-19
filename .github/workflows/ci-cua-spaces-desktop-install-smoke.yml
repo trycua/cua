@@ -107,7 +107,7 @@ jobs:
           Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*Cua*' } | ForEach-Object { throw "uninstall registry key remains: $($_.DisplayName)" }
           Write-Host 'uninstall clean'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: gh-windows
@@ -185,7 +185,7 @@ jobs:
           sleep 2
           ./launch.sh appimage /tmp/app.AppImage --no-sandbox
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: gh-linux

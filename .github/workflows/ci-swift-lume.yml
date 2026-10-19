@@ -24,7 +24,7 @@ jobs:
     name: Test
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: uname -a
       - run: sudo xcode-select -s /Applications/Xcode_16.3.app # Swift 6.1
       - run: swift test
@@ -33,7 +33,7 @@ jobs:
     name: Release build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: uname -a
       - run: sudo xcode-select -s /Applications/Xcode_16.3.app # Swift 6.1
       - run: swift build --configuration release

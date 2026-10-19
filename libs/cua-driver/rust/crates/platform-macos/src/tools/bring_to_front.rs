@@ -216,6 +216,9 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
 fn already_front(observation: ExactWindowObservation, pid: i32, window_id: u32) -> bool {
     observation.exact_postcondition(pid, window_id)
         && observation.exact_window_frontmost_ordinary(window_id)
+        && observation
+            .workspace_frontmost_pid
+            .is_none_or(|front| front == pid)
 }
 
 fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
@@ -639,6 +642,20 @@ mod tests {
         ));
         assert!(!already_front(
             observation(Some(42), Some(false), Some(7), Some(7), true),
+            42,
+            7
+        ));
+    }
+
+    #[test]
+    fn a_window_server_front_that_appkit_does_not_share_still_activates() {
+        assert!(!already_front(
+            observation(Some(515), Some(true), Some(7), Some(7), true),
+            42,
+            7
+        ));
+        assert!(already_front(
+            observation(None, Some(true), Some(7), Some(7), true),
             42,
             7
         ));

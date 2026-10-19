@@ -582,6 +582,11 @@ unsafe fn item_is_save(item: AXUIElementRef) -> bool {
             == 0.0
 }
 
+/// How long a disabled item gets to enable after its window becomes key, and
+/// how often it is re-read.
+const ENABLE_WAIT: Duration = Duration::from_millis(600);
+const ENABLE_POLL: Duration = Duration::from_millis(40);
+
 /// AppKit resolves document menus against its key/main window, not the ID
 /// supplied by a caller. Unknown or sibling context must fail before lookup.
 fn require_menu_window(
@@ -665,6 +670,18 @@ unsafe fn invoke_path_in_background(
     set_messaging_timeout(target);
     let is_save = item_is_save(target);
     let result = (|| {
+        // Preserve enablement priming for an already-bound document. The
+        // context check above prevents this from switching to a sibling after
+        // resolving that sibling's menu; the check below revalidates dispatch.
+        if copy_bool_attr(target, "AXEnabled") == Some(false)
+            && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
+        {
+            let mut waited = Duration::ZERO;
+            while waited < ENABLE_WAIT && copy_bool_attr(target, "AXEnabled") == Some(false) {
+                std::thread::sleep(ENABLE_POLL);
+                waited += ENABLE_POLL;
+            }
+        }
         if copy_bool_attr(target, "AXEnabled") == Some(false) {
             return Err(BackgroundPressError::Disabled {
                 message: format!(

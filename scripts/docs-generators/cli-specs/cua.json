@@ -9628,12 +9628,24 @@
    "subcommands": [
     {
      "abstract": "Registered Spaces and your machines on the relay",
-     "after_help": "Examples:\n  cua spaces ls\n  cua spaces ls --json",
+     "after_help": "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it\nuses now (the numbers the Cua Spaces app shows); for another of your\ncomputers they show what it last reported. Numbers only: no file names.\n\nExamples:\n  cua spaces ls\n  cua spaces ls --no-size\n  cua spaces ls --json",
      "aliases": [
       "list"
      ],
      "arguments": [],
-     "flags": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Do not measure what each Space takes on this computer's disk (that walk can take a moment with many Spaces)",
+       "hidden": false,
+       "name": "no-size",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
      "hidden": false,
      "hidden_aliases": [],
      "name": "ls",

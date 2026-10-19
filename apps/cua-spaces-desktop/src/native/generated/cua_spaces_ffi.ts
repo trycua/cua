@@ -10,12 +10,12 @@
 import nativeModule from "./cua_spaces_ffi-ffi";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSpacesFfiDecodedFrameSink, type UniffiVTableCallbackInterfaceCuaSpacesFfiPcmSink, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportApproval, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportRunListener, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportWindowDragListener,
 } from "./cua_spaces_ffi-ffi";
-import { type AgentInfo, type AgentSetupOutcome, type CuaLike, type DevicesLike, type DevicesSnapshot, type HostLike, type HostStatus, type MediaEvent, type MediaOpenOptions, type MediaSessionLike, type SandboxLike, type SpaceLike, type SpaceSendFileReport, type SpacesHost, type SpacesdClientLike, type TeleportItem, type TeleportManifest, CuaError,
+import { type AgentInfo, type AgentSetupOutcome, type ComputerResources, type CuaLike, type DevicesLike, type DevicesSnapshot, type DiskWarning, type HostLike, type HostStatus, type MediaEvent, type MediaOpenOptions, type MediaSessionLike, type ResourcesSnapshot, type SandboxLike, type SpaceLike, type SpaceResources, type SpaceSendFileReport, type SpacesHost, type SpacesdClientLike, type TeleportItem, type TeleportManifest, CuaError,
 } from "./cua_sdk";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterFloat64, FfiConverterInt16, FfiConverterInt32, FfiConverterInt64, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTypeNameSymbol,
 } from "@ubjs/core";
 import uniffiCuaSdkModule from "./cua_sdk";
-const { FfiConverterTypeAgentInfo, FfiConverterTypeAgentSetupOutcome, FfiConverterTypeCua, FfiConverterTypeCuaError, FfiConverterTypeDevices, FfiConverterTypeDevicesSnapshot, FfiConverterTypeHost, FfiConverterTypeHostStatus, FfiConverterTypeMediaEvent, FfiConverterTypeMediaOpenOptions, FfiConverterTypeMediaSession, FfiConverterTypeSandbox, FfiConverterTypeSpace, FfiConverterTypeSpaceSendFileReport, FfiConverterTypeSpacesHost, FfiConverterTypeSpacesdClient, FfiConverterTypeTeleportItem, FfiConverterTypeTeleportManifest } = uniffiCuaSdkModule.converters;
+const { FfiConverterTypeAgentInfo, FfiConverterTypeAgentSetupOutcome, FfiConverterTypeComputerResources, FfiConverterTypeCua, FfiConverterTypeCuaError, FfiConverterTypeDevices, FfiConverterTypeDevicesSnapshot, FfiConverterTypeDiskWarning, FfiConverterTypeHost, FfiConverterTypeHostStatus, FfiConverterTypeMediaEvent, FfiConverterTypeMediaOpenOptions, FfiConverterTypeMediaSession, FfiConverterTypeResourcesSnapshot, FfiConverterTypeSandbox, FfiConverterTypeSpace, FfiConverterTypeSpaceResources, FfiConverterTypeSpaceSendFileReport, FfiConverterTypeSpacesHost, FfiConverterTypeSpacesdClient, FfiConverterTypeTeleportItem, FfiConverterTypeTeleportManifest } = uniffiCuaSdkModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -3662,6 +3662,116 @@ export function appRelayUsageView(usage: AppRelayUsage): AppRelayUsageView | und
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_relay_usage_view(
         FfiConverterTypeAppRelayUsage.lower(usage, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Another of your computers' panel.
+ */
+export function appResourcesComputer(computer: ComputerResources, nowMs: bigint): AppComputerView {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppComputerView.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_resources_computer(
+        FfiConverterTypeComputerResources.lower(computer, nativeModule().rustbuffer_alloc),
+        FfiConverterUInt64.lower(nowMs, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * One extra Space's panel: what it was given and uses now, and what it
+ * costs this Mac.
+ */
+export function appResourcesSpace(space: SpaceResources): AppSpaceResourcesView {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppSpaceResourcesView.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_resources_space(
+        FfiConverterTypeSpaceResources.lower(space, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * This Mac's panel (Processor, Memory, Space for files, what the extra
+ * Spaces use, the warning).
+ */
+export function appResourcesThisMac(computer: ComputerResources): AppThisMacView {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppThisMacView.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_resources_this_mac(
+        FfiConverterTypeComputerResources.lower(computer, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Everything the apps draw from one snapshot of what this Mac, its extra
+ * Spaces and your other computers use (`Spaces.resources`, or a snapshot
+ * event of `Spaces.watch_resources`): this Mac's rows and warning, each
+ * extra Space's rows and what it costs this Mac, each other computer's
+ * rows. The words are the core's; no shell formats a number. `now_ms` is
+ * the shell's clock (Unix ms), for how old another computer's numbers are.
+ */
+export function appResourcesView(snapshot: ResourcesSnapshot, nowMs: bigint): AppResourcesView {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppResourcesView.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_resources_view(
+        FfiConverterTypeResourcesSnapshot.lower(snapshot, nativeModule().rustbuffer_alloc),
+        FfiConverterUInt64.lower(nowMs, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The menu bar's low-disk warning (from a `LowDisk` event or a
+ * snapshot's `warning`); none when the disk is fine.
+ */
+export function appResourcesWarning(warning: DiskWarning): AppWarningView | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeAppWarningView.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_resources_warning(
+        FfiConverterTypeDiskWarning.lower(warning, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -13991,6 +14101,524 @@ const FfiConverterTypeAppCloudPricing = (() => {
     return new FFIConverter();
 })();
 
+export enum AppDiskLevel {
+    /**
+     * Plenty.
+     */
+    Ok = "ok",
+    /**
+     * Under 50 GB or 15% of the volume, whichever line is higher (never
+     * above 100 GB).
+     */
+    Low = "low",
+    /**
+     * Under the floor where creating a Space already fails.
+     */
+    Critical = "critical"
+}
+
+const FfiConverterTypeAppDiskLevel = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = AppDiskLevel;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return AppDiskLevel.Ok;
+                case 2: return AppDiskLevel.Low;
+                case 3: return AppDiskLevel.Critical;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case AppDiskLevel.Ok: return ordinalConverter.write(1, into);
+                case AppDiskLevel.Low: return ordinalConverter.write(2, into);
+                case AppDiskLevel.Critical: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type AppDiskWarning = {
+    /**
+     * How low it is.
+     */
+    level: AppDiskLevel,
+    /**
+     * Free bytes on the volume that holds Spaces.
+     */
+    free: bigint,
+    /**
+     * Size of that volume.
+     */
+    total: bigint,
+    /**
+     * The line that was crossed (0 when ok).
+     */
+    threshold: bigint
+}
+
+/**
+ * Generated factory for {@link AppDiskWarning} record objects.
+ */
+export const AppDiskWarning = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppDiskWarning, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppDiskWarning>,
+    });
+})();
+
+const FfiConverterTypeAppDiskWarning = (() => {
+    type TypeName = AppDiskWarning;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                level: FfiConverterTypeAppDiskLevel.read(from),
+                free: FfiConverterUInt64.read(from),
+                total: FfiConverterUInt64.read(from),
+                threshold: FfiConverterUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeAppDiskLevel.write(value.level, into);
+            FfiConverterUInt64.write(value.free, into);
+            FfiConverterUInt64.write(value.total, into);
+            FfiConverterUInt64.write(value.threshold, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeAppDiskLevel.allocationSize(value.level) +
+             FfiConverterUInt64.allocationSize(value.free) +
+             FfiConverterUInt64.allocationSize(value.total) +
+             FfiConverterUInt64.allocationSize(value.threshold);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppComputerResources = {
+    /**
+     * `this-mac`, or the relay machine id.
+     */
+    id: string,
+    /**
+     * Display name (empty for this Mac).
+     */
+    name: string,
+    /**
+     * Reachable now.
+     */
+    online: boolean,
+    /**
+     * When the computer measured this, Unix ms.
+     */
+    sampledAtMs: bigint,
+    /**
+     * Processor cores.
+     */
+    cpuCount: number,
+    /**
+     * Busy now, 0 to 100.
+     */
+    cpuPercent: number,
+    /**
+     * 1-minute load average.
+     */
+    loadAverage1m: number,
+    /**
+     * Memory size, bytes.
+     */
+    memoryTotal: bigint,
+    /**
+     * Memory in use, bytes.
+     */
+    memoryUsed: bigint,
+    /**
+     * Size of the volume that holds Spaces, bytes.
+     */
+    diskTotal: bigint,
+    /**
+     * Free bytes on it.
+     */
+    diskFree: bigint,
+    /**
+     * Extra Spaces on it.
+     */
+    spacesCount: number,
+    /**
+     * Of those, running.
+     */
+    spacesRunning: number,
+    /**
+     * Cores given to the running ones.
+     */
+    spacesCpuAllocated: number,
+    /**
+     * Memory given to the running ones, bytes.
+     */
+    spacesMemoryAllocated: bigint,
+    /**
+     * Memory the running guests report in use, bytes.
+     */
+    spacesMemoryUsed: bigint,
+    /**
+     * Bytes all its extra Spaces take on it.
+     */
+    spacesDiskBytes: bigint,
+    /**
+     * False when some Space's disk could only be estimated.
+     */
+    spacesDiskExact: boolean,
+    /**
+     * The low-disk signal.
+     */
+    warning: AppDiskWarning
+}
+
+/**
+ * Generated factory for {@link AppComputerResources} record objects.
+ */
+export const AppComputerResources = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppComputerResources, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppComputerResources>,
+    });
+})();
+
+const FfiConverterTypeAppComputerResources = (() => {
+    type TypeName = AppComputerResources;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                online: FfiConverterBool.read(from),
+                sampledAtMs: FfiConverterUInt64.read(from),
+                cpuCount: FfiConverterUInt32.read(from),
+                cpuPercent: FfiConverterFloat64.read(from),
+                loadAverage1m: FfiConverterFloat64.read(from),
+                memoryTotal: FfiConverterUInt64.read(from),
+                memoryUsed: FfiConverterUInt64.read(from),
+                diskTotal: FfiConverterUInt64.read(from),
+                diskFree: FfiConverterUInt64.read(from),
+                spacesCount: FfiConverterUInt32.read(from),
+                spacesRunning: FfiConverterUInt32.read(from),
+                spacesCpuAllocated: FfiConverterUInt32.read(from),
+                spacesMemoryAllocated: FfiConverterUInt64.read(from),
+                spacesMemoryUsed: FfiConverterUInt64.read(from),
+                spacesDiskBytes: FfiConverterUInt64.read(from),
+                spacesDiskExact: FfiConverterBool.read(from),
+                warning: FfiConverterTypeAppDiskWarning.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterBool.write(value.online, into);
+            FfiConverterUInt64.write(value.sampledAtMs, into);
+            FfiConverterUInt32.write(value.cpuCount, into);
+            FfiConverterFloat64.write(value.cpuPercent, into);
+            FfiConverterFloat64.write(value.loadAverage1m, into);
+            FfiConverterUInt64.write(value.memoryTotal, into);
+            FfiConverterUInt64.write(value.memoryUsed, into);
+            FfiConverterUInt64.write(value.diskTotal, into);
+            FfiConverterUInt64.write(value.diskFree, into);
+            FfiConverterUInt32.write(value.spacesCount, into);
+            FfiConverterUInt32.write(value.spacesRunning, into);
+            FfiConverterUInt32.write(value.spacesCpuAllocated, into);
+            FfiConverterUInt64.write(value.spacesMemoryAllocated, into);
+            FfiConverterUInt64.write(value.spacesMemoryUsed, into);
+            FfiConverterUInt64.write(value.spacesDiskBytes, into);
+            FfiConverterBool.write(value.spacesDiskExact, into);
+            FfiConverterTypeAppDiskWarning.write(value.warning, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterBool.allocationSize(value.online) +
+             FfiConverterUInt64.allocationSize(value.sampledAtMs) +
+             FfiConverterUInt32.allocationSize(value.cpuCount) +
+             FfiConverterFloat64.allocationSize(value.cpuPercent) +
+             FfiConverterFloat64.allocationSize(value.loadAverage1m) +
+             FfiConverterUInt64.allocationSize(value.memoryTotal) +
+             FfiConverterUInt64.allocationSize(value.memoryUsed) +
+             FfiConverterUInt64.allocationSize(value.diskTotal) +
+             FfiConverterUInt64.allocationSize(value.diskFree) +
+             FfiConverterUInt32.allocationSize(value.spacesCount) +
+             FfiConverterUInt32.allocationSize(value.spacesRunning) +
+             FfiConverterUInt32.allocationSize(value.spacesCpuAllocated) +
+             FfiConverterUInt64.allocationSize(value.spacesMemoryAllocated) +
+             FfiConverterUInt64.allocationSize(value.spacesMemoryUsed) +
+             FfiConverterUInt64.allocationSize(value.spacesDiskBytes) +
+             FfiConverterBool.allocationSize(value.spacesDiskExact) +
+             FfiConverterTypeAppDiskWarning.allocationSize(value.warning);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum AppResourceTone {
+    /**
+     * Nothing to say.
+     */
+    Normal = "normal",
+    /**
+     * Running low.
+     */
+    Warning = "warning",
+    /**
+     * Out.
+     */
+    Critical = "critical"
+}
+
+const FfiConverterTypeAppResourceTone = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = AppResourceTone;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return AppResourceTone.Normal;
+                case 2: return AppResourceTone.Warning;
+                case 3: return AppResourceTone.Critical;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case AppResourceTone.Normal: return ordinalConverter.write(1, into);
+                case AppResourceTone.Warning: return ordinalConverter.write(2, into);
+                case AppResourceTone.Critical: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type AppResourceRow = {
+    /**
+     * "Processor", "Memory" or "Space for files".
+     */
+    label: string,
+    /**
+     * The numbers in words.
+     */
+    value: string,
+    /**
+     * How full the small bar is, 0 to 1; none for a row with no bar.
+     */
+    fraction?: number,
+    /**
+     * How to colour it.
+     */
+    tone: AppResourceTone
+}
+
+/**
+ * Generated factory for {@link AppResourceRow} record objects.
+ */
+export const AppResourceRow = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppResourceRow, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppResourceRow>,
+    });
+})();
+
+const FfiConverterTypeAppResourceRow = (() => {
+    type TypeName = AppResourceRow;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                label: FfiConverterString.read(from),
+                value: FfiConverterString.read(from),
+                fraction: FfiConverterOptionalFloat64.read(from),
+                tone: FfiConverterTypeAppResourceTone.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.label, into);
+            FfiConverterString.write(value.value, into);
+            FfiConverterOptionalFloat64.write(value.fraction, into);
+            FfiConverterTypeAppResourceTone.write(value.tone, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.label) +
+             FfiConverterString.allocationSize(value.value) +
+             FfiConverterOptionalFloat64.allocationSize(value.fraction) +
+             FfiConverterTypeAppResourceTone.allocationSize(value.tone);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppWarningView = {
+    /**
+     * The sentence.
+     */
+    text: string,
+    /**
+     * The button ("See what's using space").
+     */
+    button: string,
+    /**
+     * Under the floor where creating a Space already fails.
+     */
+    critical: boolean
+}
+
+/**
+ * Generated factory for {@link AppWarningView} record objects.
+ */
+export const AppWarningView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppWarningView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppWarningView>,
+    });
+})();
+
+const FfiConverterTypeAppWarningView = (() => {
+    type TypeName = AppWarningView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                text: FfiConverterString.read(from),
+                button: FfiConverterString.read(from),
+                critical: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.text, into);
+            FfiConverterString.write(value.button, into);
+            FfiConverterBool.write(value.critical, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.text) +
+             FfiConverterString.allocationSize(value.button) +
+             FfiConverterBool.allocationSize(value.critical);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppComputerView = {
+    /**
+     * The computer's id.
+     */
+    id: string,
+    /**
+     * Its name.
+     */
+    name: string,
+    /**
+     * Reachable now.
+     */
+    online: boolean,
+    /**
+     * "Offline, as of 5 min ago" or "Updated 2 min ago"; none when the
+     * numbers are a moment old.
+     */
+    age?: string,
+    /**
+     * Processor, Memory, Space for files.
+     */
+    rows: Array<AppResourceRow>,
+    /**
+     * "Its extra Spaces use: ..." (see [`ThisMacView::extra_spaces`]).
+     */
+    extraSpaces?: string,
+    /**
+     * The warning, when its disk is low.
+     */
+    warning?: AppWarningView
+}
+
+/**
+ * Generated factory for {@link AppComputerView} record objects.
+ */
+export const AppComputerView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppComputerView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppComputerView>,
+    });
+})();
+
+const FfiConverterTypeAppComputerView = (() => {
+    type TypeName = AppComputerView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                online: FfiConverterBool.read(from),
+                age: FfiConverterOptionalString.read(from),
+                rows: FfiConverterSequenceTypeAppResourceRow.read(from),
+                extraSpaces: FfiConverterOptionalString.read(from),
+                warning: FfiConverterOptionalTypeAppWarningView.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterBool.write(value.online, into);
+            FfiConverterOptionalString.write(value.age, into);
+            FfiConverterSequenceTypeAppResourceRow.write(value.rows, into);
+            FfiConverterOptionalString.write(value.extraSpaces, into);
+            FfiConverterOptionalTypeAppWarningView.write(value.warning, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterBool.allocationSize(value.online) +
+             FfiConverterOptionalString.allocationSize(value.age) +
+             FfiConverterSequenceTypeAppResourceRow.allocationSize(value.rows) +
+             FfiConverterOptionalString.allocationSize(value.extraSpaces) +
+             FfiConverterOptionalTypeAppWarningView.allocationSize(value.warning);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppConflictView = {
     /**
      * The file (what Resolve sends).
@@ -17300,6 +17928,62 @@ const FfiConverterTypeAppDevicesView = (() => {
              FfiConverterSequenceTypeAppActivityRow.allocationSize(value.recent) +
              FfiConverterSequenceTypeAppUnconfirmedMachine.allocationSize(value.unconfirmedMachines) +
              FfiConverterTypeAppDevicesLabels.allocationSize(value.labels);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppDiskOnHost = {
+    /**
+     * Bytes only this Space holds; none when they could not be measured.
+     */
+    bytes?: bigint,
+    /**
+     * Blocks its files occupy, clones counted in full.
+     */
+    allocated: bigint,
+    /**
+     * Part of it is shared with other copies.
+     */
+    sharesSpace: boolean
+}
+
+/**
+ * Generated factory for {@link AppDiskOnHost} record objects.
+ */
+export const AppDiskOnHost = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppDiskOnHost, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppDiskOnHost>,
+    });
+})();
+
+const FfiConverterTypeAppDiskOnHost = (() => {
+    type TypeName = AppDiskOnHost;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                bytes: FfiConverterOptionalUInt64.read(from),
+                allocated: FfiConverterUInt64.read(from),
+                sharesSpace: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalUInt64.write(value.bytes, into);
+            FfiConverterUInt64.write(value.allocated, into);
+            FfiConverterBool.write(value.sharesSpace, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalUInt64.allocationSize(value.bytes) +
+             FfiConverterUInt64.allocationSize(value.allocated) +
+             FfiConverterBool.allocationSize(value.sharesSpace);
 
         }
     };
@@ -21356,6 +22040,104 @@ const FfiConverterTypeAppGpuRow = (() => {
              FfiConverterOptionalString.allocationSize(value.reason) +
              FfiConverterString.allocationSize(value.learnMoreLabel) +
              FfiConverterOptionalString.allocationSize(value.learnMoreUrl);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppGuestUsage = {
+    /**
+     * Cores the guest sees.
+     */
+    cpuCount: number,
+    /**
+     * Busy now, 0 to 100.
+     */
+    cpuPercent: number,
+    /**
+     * 1-minute load average.
+     */
+    loadAverage1m: number,
+    /**
+     * Memory in use, bytes.
+     */
+    memoryUsed: bigint,
+    /**
+     * Memory size, bytes.
+     */
+    memoryTotal: bigint,
+    /**
+     * `memory_total` is the guest's own limit.
+     */
+    memoryLimited: boolean,
+    /**
+     * Disk in use, bytes.
+     */
+    diskUsed: bigint,
+    /**
+     * Disk size, bytes.
+     */
+    diskTotal: bigint,
+    /**
+     * `disk_total` is the guest's own disk.
+     */
+    diskLimited: boolean
+}
+
+/**
+ * Generated factory for {@link AppGuestUsage} record objects.
+ */
+export const AppGuestUsage = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppGuestUsage, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppGuestUsage>,
+    });
+})();
+
+const FfiConverterTypeAppGuestUsage = (() => {
+    type TypeName = AppGuestUsage;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                cpuCount: FfiConverterUInt32.read(from),
+                cpuPercent: FfiConverterFloat64.read(from),
+                loadAverage1m: FfiConverterFloat64.read(from),
+                memoryUsed: FfiConverterUInt64.read(from),
+                memoryTotal: FfiConverterUInt64.read(from),
+                memoryLimited: FfiConverterBool.read(from),
+                diskUsed: FfiConverterUInt64.read(from),
+                diskTotal: FfiConverterUInt64.read(from),
+                diskLimited: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.cpuCount, into);
+            FfiConverterFloat64.write(value.cpuPercent, into);
+            FfiConverterFloat64.write(value.loadAverage1m, into);
+            FfiConverterUInt64.write(value.memoryUsed, into);
+            FfiConverterUInt64.write(value.memoryTotal, into);
+            FfiConverterBool.write(value.memoryLimited, into);
+            FfiConverterUInt64.write(value.diskUsed, into);
+            FfiConverterUInt64.write(value.diskTotal, into);
+            FfiConverterBool.write(value.diskLimited, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt32.allocationSize(value.cpuCount) +
+             FfiConverterFloat64.allocationSize(value.cpuPercent) +
+             FfiConverterFloat64.allocationSize(value.loadAverage1m) +
+             FfiConverterUInt64.allocationSize(value.memoryUsed) +
+             FfiConverterUInt64.allocationSize(value.memoryTotal) +
+             FfiConverterBool.allocationSize(value.memoryLimited) +
+             FfiConverterUInt64.allocationSize(value.diskUsed) +
+             FfiConverterUInt64.allocationSize(value.diskTotal) +
+             FfiConverterBool.allocationSize(value.diskLimited);
 
         }
     };
@@ -31975,6 +32757,366 @@ const FfiConverterTypeAppResourceEditView = (() => {
     return new FFIConverter();
 })();
 
+export type AppSpaceResources = {
+    /**
+     * `local:<name>`.
+     */
+    id: string,
+    /**
+     * `running`, `stopped`, `suspended`, or empty when unknown.
+     */
+    powerState: string,
+    /**
+     * Cores given to it (0: unknown).
+     */
+    cpuAllocated: number,
+    /**
+     * Memory given to it, bytes (0: unknown).
+     */
+    memoryAllocated: bigint,
+    /**
+     * Its disk's size limit, bytes (0: unknown).
+     */
+    diskAllocated: bigint,
+    /**
+     * The guest's own numbers; none while it is off or unreachable.
+     */
+    usage?: AppGuestUsage,
+    /**
+     * What it costs this Mac; none for a container.
+     */
+    diskOnHost?: AppDiskOnHost
+}
+
+/**
+ * Generated factory for {@link AppSpaceResources} record objects.
+ */
+export const AppSpaceResources = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppSpaceResources, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppSpaceResources>,
+    });
+})();
+
+const FfiConverterTypeAppSpaceResources = (() => {
+    type TypeName = AppSpaceResources;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                powerState: FfiConverterString.read(from),
+                cpuAllocated: FfiConverterUInt32.read(from),
+                memoryAllocated: FfiConverterUInt64.read(from),
+                diskAllocated: FfiConverterUInt64.read(from),
+                usage: FfiConverterOptionalTypeAppGuestUsage.read(from),
+                diskOnHost: FfiConverterOptionalTypeAppDiskOnHost.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.powerState, into);
+            FfiConverterUInt32.write(value.cpuAllocated, into);
+            FfiConverterUInt64.write(value.memoryAllocated, into);
+            FfiConverterUInt64.write(value.diskAllocated, into);
+            FfiConverterOptionalTypeAppGuestUsage.write(value.usage, into);
+            FfiConverterOptionalTypeAppDiskOnHost.write(value.diskOnHost, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.powerState) +
+             FfiConverterUInt32.allocationSize(value.cpuAllocated) +
+             FfiConverterUInt64.allocationSize(value.memoryAllocated) +
+             FfiConverterUInt64.allocationSize(value.diskAllocated) +
+             FfiConverterOptionalTypeAppGuestUsage.allocationSize(value.usage) +
+             FfiConverterOptionalTypeAppDiskOnHost.allocationSize(value.diskOnHost);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppResourcesSnapshot = {
+    /**
+     * Grows by one per sample.
+     */
+    sequence: bigint,
+    /**
+     * Unix ms.
+     */
+    sampledAtMs: bigint,
+    /**
+     * This Mac.
+     */
+    thisMac: AppComputerResources,
+    /**
+     * Extra Spaces on this Mac.
+     */
+    spaces: Array<AppSpaceResources>,
+    /**
+     * Your other computers.
+     */
+    computers: Array<AppComputerResources>,
+    /**
+     * This Mac's low-disk signal, for the menu bar.
+     */
+    warning: AppDiskWarning
+}
+
+/**
+ * Generated factory for {@link AppResourcesSnapshot} record objects.
+ */
+export const AppResourcesSnapshot = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppResourcesSnapshot, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppResourcesSnapshot>,
+    });
+})();
+
+const FfiConverterTypeAppResourcesSnapshot = (() => {
+    type TypeName = AppResourcesSnapshot;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                sequence: FfiConverterUInt64.read(from),
+                sampledAtMs: FfiConverterUInt64.read(from),
+                thisMac: FfiConverterTypeAppComputerResources.read(from),
+                spaces: FfiConverterSequenceTypeAppSpaceResources.read(from),
+                computers: FfiConverterSequenceTypeAppComputerResources.read(from),
+                warning: FfiConverterTypeAppDiskWarning.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt64.write(value.sequence, into);
+            FfiConverterUInt64.write(value.sampledAtMs, into);
+            FfiConverterTypeAppComputerResources.write(value.thisMac, into);
+            FfiConverterSequenceTypeAppSpaceResources.write(value.spaces, into);
+            FfiConverterSequenceTypeAppComputerResources.write(value.computers, into);
+            FfiConverterTypeAppDiskWarning.write(value.warning, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt64.allocationSize(value.sequence) +
+             FfiConverterUInt64.allocationSize(value.sampledAtMs) +
+             FfiConverterTypeAppComputerResources.allocationSize(value.thisMac) +
+             FfiConverterSequenceTypeAppSpaceResources.allocationSize(value.spaces) +
+             FfiConverterSequenceTypeAppComputerResources.allocationSize(value.computers) +
+             FfiConverterTypeAppDiskWarning.allocationSize(value.warning);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppThisMacView = {
+    /**
+     * "This Mac".
+     */
+    title: string,
+    /**
+     * Processor, Memory, Space for files.
+     */
+    rows: Array<AppResourceRow>,
+    /**
+     * "Your extra Spaces use: 6 cores, 12 GB of memory, about 25 GB for
+     * files." None when there are no extra Spaces.
+     */
+    extraSpaces?: string,
+    /**
+     * The warning, when the disk is low.
+     */
+    warning?: AppWarningView
+}
+
+/**
+ * Generated factory for {@link AppThisMacView} record objects.
+ */
+export const AppThisMacView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppThisMacView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppThisMacView>,
+    });
+})();
+
+const FfiConverterTypeAppThisMacView = (() => {
+    type TypeName = AppThisMacView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                title: FfiConverterString.read(from),
+                rows: FfiConverterSequenceTypeAppResourceRow.read(from),
+                extraSpaces: FfiConverterOptionalString.read(from),
+                warning: FfiConverterOptionalTypeAppWarningView.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.title, into);
+            FfiConverterSequenceTypeAppResourceRow.write(value.rows, into);
+            FfiConverterOptionalString.write(value.extraSpaces, into);
+            FfiConverterOptionalTypeAppWarningView.write(value.warning, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.title) +
+             FfiConverterSequenceTypeAppResourceRow.allocationSize(value.rows) +
+             FfiConverterOptionalString.allocationSize(value.extraSpaces) +
+             FfiConverterOptionalTypeAppWarningView.allocationSize(value.warning);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppSpaceResourcesView = {
+    /**
+     * The Space's id.
+     */
+    id: string,
+    /**
+     * Processor, Memory, Space for files: what it was given and, while it
+     * runs, what it uses now.
+     */
+    rows: Array<AppResourceRow>,
+    /**
+     * What it costs this Mac, not what the guest sees: "Uses about 31 GB
+     * on this Mac (shares space with other copies)". None for a container.
+     */
+    onThisMac?: string,
+    /**
+     * The Space is off: "Stopped · uses about 6 GB on this Mac".
+     */
+    offLine?: string,
+    /**
+     * Whether the numbers are live (the Space runs and answered).
+     */
+    live: boolean
+}
+
+/**
+ * Generated factory for {@link AppSpaceResourcesView} record objects.
+ */
+export const AppSpaceResourcesView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppSpaceResourcesView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppSpaceResourcesView>,
+    });
+})();
+
+const FfiConverterTypeAppSpaceResourcesView = (() => {
+    type TypeName = AppSpaceResourcesView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                rows: FfiConverterSequenceTypeAppResourceRow.read(from),
+                onThisMac: FfiConverterOptionalString.read(from),
+                offLine: FfiConverterOptionalString.read(from),
+                live: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterSequenceTypeAppResourceRow.write(value.rows, into);
+            FfiConverterOptionalString.write(value.onThisMac, into);
+            FfiConverterOptionalString.write(value.offLine, into);
+            FfiConverterBool.write(value.live, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterSequenceTypeAppResourceRow.allocationSize(value.rows) +
+             FfiConverterOptionalString.allocationSize(value.onThisMac) +
+             FfiConverterOptionalString.allocationSize(value.offLine) +
+             FfiConverterBool.allocationSize(value.live);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppResourcesView = {
+    /**
+     * This Mac.
+     */
+    thisMac: AppThisMacView,
+    /**
+     * Each extra Space.
+     */
+    spaces: Array<AppSpaceResourcesView>,
+    /**
+     * Each other computer.
+     */
+    computers: Array<AppComputerView>,
+    /**
+     * The menu bar's warning: none when the disk is fine.
+     */
+    warning?: AppWarningView
+}
+
+/**
+ * Generated factory for {@link AppResourcesView} record objects.
+ */
+export const AppResourcesView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppResourcesView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppResourcesView>,
+    });
+})();
+
+const FfiConverterTypeAppResourcesView = (() => {
+    type TypeName = AppResourcesView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                thisMac: FfiConverterTypeAppThisMacView.read(from),
+                spaces: FfiConverterSequenceTypeAppSpaceResourcesView.read(from),
+                computers: FfiConverterSequenceTypeAppComputerView.read(from),
+                warning: FfiConverterOptionalTypeAppWarningView.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeAppThisMacView.write(value.thisMac, into);
+            FfiConverterSequenceTypeAppSpaceResourcesView.write(value.spaces, into);
+            FfiConverterSequenceTypeAppComputerView.write(value.computers, into);
+            FfiConverterOptionalTypeAppWarningView.write(value.warning, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeAppThisMacView.allocationSize(value.thisMac) +
+             FfiConverterSequenceTypeAppSpaceResourcesView.allocationSize(value.spaces) +
+             FfiConverterSequenceTypeAppComputerView.allocationSize(value.computers) +
+             FfiConverterOptionalTypeAppWarningView.allocationSize(value.warning);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppReviewDomain = {
     /**
      * The site (`github.com`).
@@ -35481,6 +36623,18 @@ const FfiConverterTypeAppSpaceRow = (() => {
 
 export type AppSpaceUsage = {
     /**
+     * Cores the guest sees (0 from a guest that does not report it).
+     */
+    cpuCount: number,
+    /**
+     * Busy now, 0 to 100.
+     */
+    cpuPercent: number,
+    /**
+     * 1-minute load average.
+     */
+    loadAverage1m: number,
+    /**
      * Memory in use, bytes.
      */
     memoryUsed: bigint,
@@ -35527,6 +36681,9 @@ const FfiConverterTypeAppSpaceUsage = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
+                cpuCount: FfiConverterUInt32.read(from),
+                cpuPercent: FfiConverterFloat64.read(from),
+                loadAverage1m: FfiConverterFloat64.read(from),
                 memoryUsed: FfiConverterUInt64.read(from),
                 memoryTotal: FfiConverterUInt64.read(from),
                 memoryLimited: FfiConverterBool.read(from),
@@ -35536,6 +36693,9 @@ const FfiConverterTypeAppSpaceUsage = (() => {
             };
         }
         write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.cpuCount, into);
+            FfiConverterFloat64.write(value.cpuPercent, into);
+            FfiConverterFloat64.write(value.loadAverage1m, into);
             FfiConverterUInt64.write(value.memoryUsed, into);
             FfiConverterUInt64.write(value.memoryTotal, into);
             FfiConverterBool.write(value.memoryLimited, into);
@@ -35544,7 +36704,10 @@ const FfiConverterTypeAppSpaceUsage = (() => {
             FfiConverterBool.write(value.diskLimited, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterUInt64.allocationSize(value.memoryUsed) +
+            return FfiConverterUInt32.allocationSize(value.cpuCount) +
+             FfiConverterFloat64.allocationSize(value.cpuPercent) +
+             FfiConverterFloat64.allocationSize(value.loadAverage1m) +
+             FfiConverterUInt64.allocationSize(value.memoryUsed) +
              FfiConverterUInt64.allocationSize(value.memoryTotal) +
              FfiConverterBool.allocationSize(value.memoryLimited) +
              FfiConverterUInt64.allocationSize(value.diskUsed) +
@@ -59992,6 +61155,15 @@ const FfiConverterSequenceTypeAppCloudCheckRow = new FfiConverterArray(FfiConver
 // FfiConverter for AppCloudConnectRequest | undefined
 const FfiConverterOptionalTypeAppCloudConnectRequest = new FfiConverterOptional(FfiConverterTypeAppCloudConnectRequest);
 
+// FfiConverter for number | undefined
+const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
+
+// FfiConverter for Array<AppResourceRow>
+const FfiConverterSequenceTypeAppResourceRow = new FfiConverterArray(FfiConverterTypeAppResourceRow);
+
+// FfiConverter for AppWarningView | undefined
+const FfiConverterOptionalTypeAppWarningView = new FfiConverterOptional(FfiConverterTypeAppWarningView);
+
 // FfiConverter for Array<AppCloudOffer>
 const FfiConverterSequenceTypeAppCloudOffer = new FfiConverterArray(FfiConverterTypeAppCloudOffer);
 
@@ -60012,9 +61184,6 @@ const FfiConverterSequenceTypeAppPlatformSize = new FfiConverterArray(FfiConvert
 
 // FfiConverter for AppImageSizes | undefined
 const FfiConverterOptionalTypeAppImageSizes = new FfiConverterOptional(FfiConverterTypeAppImageSizes);
-
-// FfiConverter for number | undefined
-const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
 
 // FfiConverter for Array<AppPendingCreate>
 const FfiConverterSequenceTypeAppPendingCreate = new FfiConverterArray(FfiConverterTypeAppPendingCreate);
@@ -60339,6 +61508,24 @@ const FfiConverterOptionalTypeAppRelayAllowanceNotice = new FfiConverterOptional
 
 // FfiConverter for Array<AppRemoteWindow>
 const FfiConverterSequenceTypeAppRemoteWindow = new FfiConverterArray(FfiConverterTypeAppRemoteWindow);
+
+// FfiConverter for AppGuestUsage | undefined
+const FfiConverterOptionalTypeAppGuestUsage = new FfiConverterOptional(FfiConverterTypeAppGuestUsage);
+
+// FfiConverter for AppDiskOnHost | undefined
+const FfiConverterOptionalTypeAppDiskOnHost = new FfiConverterOptional(FfiConverterTypeAppDiskOnHost);
+
+// FfiConverter for Array<AppSpaceResources>
+const FfiConverterSequenceTypeAppSpaceResources = new FfiConverterArray(FfiConverterTypeAppSpaceResources);
+
+// FfiConverter for Array<AppComputerResources>
+const FfiConverterSequenceTypeAppComputerResources = new FfiConverterArray(FfiConverterTypeAppComputerResources);
+
+// FfiConverter for Array<AppSpaceResourcesView>
+const FfiConverterSequenceTypeAppSpaceResourcesView = new FfiConverterArray(FfiConverterTypeAppSpaceResourcesView);
+
+// FfiConverter for Array<AppComputerView>
+const FfiConverterSequenceTypeAppComputerView = new FfiConverterArray(FfiConverterTypeAppComputerView);
 
 // FfiConverter for Array<AppReviewToggle>
 const FfiConverterSequenceTypeAppReviewToggle = new FfiConverterArray(FfiConverterTypeAppReviewToggle);
@@ -61244,6 +62431,21 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_relay_usage_view() !== 38605) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_relay_usage_view");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_resources_computer() !== 3991) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_resources_computer");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_resources_space() !== 24195) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_resources_space");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_resources_this_mac() !== 29209) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_resources_this_mac");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_resources_view() !== 22202) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_resources_view");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_resources_warning() !== 3548) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_resources_warning");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_review_remember() !== 9631) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_review_remember");
     }
@@ -61807,6 +63009,8 @@ export default Object.freeze({
     FfiConverterTypeAppCloudProviderRow,
     FfiConverterTypeAppCloudTargetArgs,
     FfiConverterTypeAppComputerGrantInput,
+    FfiConverterTypeAppComputerResources,
+    FfiConverterTypeAppComputerView,
     FfiConverterTypeAppConflictView,
     FfiConverterTypeAppConnectedCloud,
     FfiConverterTypeAppConsentItem,
@@ -61833,6 +63037,9 @@ export default Object.freeze({
     FfiConverterTypeAppDevicesInput,
     FfiConverterTypeAppDevicesLabels,
     FfiConverterTypeAppDevicesView,
+    FfiConverterTypeAppDiskLevel,
+    FfiConverterTypeAppDiskOnHost,
+    FfiConverterTypeAppDiskWarning,
     FfiConverterTypeAppDragDisplay,
     FfiConverterTypeAppDragKind,
     FfiConverterTypeAppDragOverlayEffect,
@@ -61882,6 +63089,7 @@ export default Object.freeze({
     FfiConverterTypeAppFileView,
     FfiConverterTypeAppGpuChoice,
     FfiConverterTypeAppGpuRow,
+    FfiConverterTypeAppGuestUsage,
     FfiConverterTypeAppHostAccess,
     FfiConverterTypeAppHostAccessRow,
     FfiConverterTypeAppHostAccount,
@@ -62023,6 +63231,10 @@ export default Object.freeze({
     FfiConverterTypeAppResourceEdit,
     FfiConverterTypeAppResourceEditView,
     FfiConverterTypeAppResourceField,
+    FfiConverterTypeAppResourceRow,
+    FfiConverterTypeAppResourceTone,
+    FfiConverterTypeAppResourcesSnapshot,
+    FfiConverterTypeAppResourcesView,
     FfiConverterTypeAppReviewChoice,
     FfiConverterTypeAppReviewDomain,
     FfiConverterTypeAppReviewPassword,
@@ -62069,6 +63281,8 @@ export default Object.freeze({
     FfiConverterTypeAppSpacePower,
     FfiConverterTypeAppSpaceProgress,
     FfiConverterTypeAppSpaceProvider,
+    FfiConverterTypeAppSpaceResources,
+    FfiConverterTypeAppSpaceResourcesView,
     FfiConverterTypeAppSpaceRow,
     FfiConverterTypeAppSpaceSdkRef,
     FfiConverterTypeAppSpaceStatus,
@@ -62112,6 +63326,7 @@ export default Object.freeze({
     FfiConverterTypeAppTeleportRunPhase,
     FfiConverterTypeAppTeleportRunReport,
     FfiConverterTypeAppThisDevice,
+    FfiConverterTypeAppThisMacView,
     FfiConverterTypeAppThumbnailPolicy,
     FfiConverterTypeAppThumbnailScene,
     FfiConverterTypeAppTile,
@@ -62125,6 +63340,7 @@ export default Object.freeze({
     FfiConverterTypeAppUsageToggle,
     FfiConverterTypeAppVaultPassword,
     FfiConverterTypeAppVaultSource,
+    FfiConverterTypeAppWarningView,
     FfiConverterTypeAppWindowMode,
     FfiConverterTypeAppWizardAction,
     FfiConverterTypeAppWizardEnv,

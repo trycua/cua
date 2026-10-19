@@ -47,7 +47,7 @@ commands; they must finish without prompts. Then confirm the daemon's grants:
 
 Expect `accessibility: true`, `screen_recording: true`, and
 `source.attribution: "driver-daemon"`. `unknown` means no app-owned daemon
-answered: start it with `open -n -g -a CuaDriver --args serve`.
+answered: run `cua-driver permissions grant`, which starts it.
 
 Run an agent inside the VM with the usual
 [`mcp-config`](/cua-driver/guides/connect-your-agent), or from the host over

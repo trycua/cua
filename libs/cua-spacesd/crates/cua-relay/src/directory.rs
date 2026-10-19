@@ -175,6 +175,11 @@ pub struct MachinePatch {
     /// Sharing switch.
     #[serde(default)]
     pub sharing: Option<bool>,
+    /// Meta keys to set, merged into [`MachineRecord::meta`]: an empty
+    /// value removes the key. The merged result is checked with
+    /// [`clean_meta`].
+    #[serde(default)]
+    pub meta: Option<BTreeMap<String, String>>,
 }
 
 /// The directory.
@@ -455,6 +460,17 @@ impl Directory {
         let mut records = self.records.lock().expect("directory");
         let mut next = records.clone();
         let record = next.get_mut(id).ok_or(DirectoryError::NotFound)?;
+        if let Some(meta) = &patch.meta {
+            let mut merged = record.meta.clone();
+            for (k, v) in meta {
+                if v.is_empty() {
+                    merged.remove(k);
+                } else {
+                    merged.insert(k.clone(), v.clone());
+                }
+            }
+            record.meta = clean_meta(merged)?;
+        }
         if let Some(name) = &patch.name {
             let name = clean_name(name);
             if name.is_empty() {
@@ -587,6 +603,62 @@ mod tests {
         ] {
             assert!(matches!(clean_meta(bad), Err(DirectoryError::Invalid(_))));
         }
+    }
+
+    #[test]
+    fn a_patch_merges_meta_removes_empty_values_and_checks_the_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dir.json");
+        let d = Directory::open(path.clone(), 32).unwrap();
+        let who = who("acct", None);
+        d.register(&who, "machine-0001", Some("n"), None, true)
+            .unwrap();
+        d.set_meta(
+            "machine-0001",
+            BTreeMap::from([("cua.host.os".to_string(), "macos".to_string())]),
+        )
+        .unwrap();
+        let patch = |meta: &[(&str, &str)]| MachinePatch {
+            meta: Some(
+                meta.iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+        // New keys join what is there.
+        let r = d
+            .update("machine-0001", &patch(&[("cua.res", "{\"v\":1}")]))
+            .unwrap();
+        assert_eq!(r.meta.len(), 2);
+        assert_eq!(r.meta["cua.host.os"], "macos");
+        assert_eq!(r.meta["cua.res"], "{\"v\":1}");
+        // A later value replaces the earlier one; the other key stays.
+        let r = d
+            .update("machine-0001", &patch(&[("cua.res", "{\"v\":2}")]))
+            .unwrap();
+        assert_eq!(r.meta["cua.res"], "{\"v\":2}");
+        assert_eq!(r.meta["cua.host.os"], "macos");
+        // An empty value removes the key.
+        let r = d
+            .update("machine-0001", &patch(&[("cua.res", "")]))
+            .unwrap();
+        assert!(!r.meta.contains_key("cua.res"));
+        assert_eq!(r.meta["cua.host.os"], "macos");
+        // Bad meta changes nothing.
+        assert!(matches!(
+            d.update("machine-0001", &patch(&[("Bad Key", "x")])),
+            Err(DirectoryError::Invalid(_))
+        ));
+        assert!(matches!(
+            d.update("machine-0001", &patch(&[("cua.res", &"x".repeat(257))])),
+            Err(DirectoryError::Invalid(_))
+        ));
+        let again = Directory::open(path, 32).unwrap();
+        assert_eq!(again.get("machine-0001").unwrap().meta, r.meta);
+        // A patch without meta leaves it alone.
+        let r = d.update("machine-0001", &MachinePatch::default()).unwrap();
+        assert_eq!(r.meta, again.get("machine-0001").unwrap().meta);
     }
 
     #[test]

@@ -44,6 +44,7 @@ pub mod keyvault_cmd;
 mod mcp;
 mod persistent_cmd;
 mod providers;
+mod resources_view;
 pub mod sandbox;
 mod shell;
 mod skills;
@@ -1519,7 +1520,10 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 }
             ) {
                 let rest = Cli {
-                    command: Command::Spaces(host::SpacesCmd::Ls { relay: None }),
+                    command: Command::Spaces(host::SpacesCmd::Ls {
+                        relay: None,
+                        no_size: false,
+                    }),
                     ..cli
                 };
                 host::turn_off_provided_spaces(&home, || open(&rest, false)).await;
@@ -1601,7 +1605,10 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     | host::SpacesCmd::Start { .. }
             );
             let rest = Cli {
-                command: Command::Spaces(host::SpacesCmd::Ls { relay: None }),
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    no_size: false,
+                }),
                 ..cli
             };
             let cua = open(&rest, false).await?;
@@ -1627,7 +1634,10 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         Command::Cloud(cmd) => {
             let rest = Cli {
-                command: Command::Spaces(host::SpacesCmd::Ls { relay: None }),
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    no_size: false,
+                }),
                 ..cli
             };
             let cua = open(&rest, false).await?;

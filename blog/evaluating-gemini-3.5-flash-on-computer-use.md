@@ -105,7 +105,7 @@ cua-driver --version
 **macOS**
 
 ```bash
-open -n -g -a CuaDriver --args serve
+cua-driver permissions grant
 ```
 
 **Linux (pre-release)**

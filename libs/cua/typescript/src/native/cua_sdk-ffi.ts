@@ -443,6 +443,26 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_clone_resourceslistener": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_free_resourceslistener": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_clone_resourceswatch": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_free_resourceswatch": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_clone_sandbox": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -560,6 +580,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_init_callback_vtable_framesink": {
       args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaSdkFrameSink"))],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener": {
+      args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaSdkResourcesListener"))],
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
@@ -1458,6 +1483,21 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_method_resourceslistener_on_event": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_method_resourceswatch_set_visible": {
+      args: [FfiType.Handle, FfiType.Int8],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_method_resourceswatch_stop": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_method_sandbox_agents": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -2168,6 +2208,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_resources": {
+      args: [FfiType.Handle, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_routine_add": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2327,6 +2372,11 @@ const DEFINITIONS = {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_watch_resources": {
+      args: [FfiType.Handle, FfiType.Int8, FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
     },
     "uniffi_cua_sdk_fn_method_spacesdclient_agents": {
       args: [FfiType.Handle],
@@ -3488,6 +3538,21 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_resourceslistener_on_event": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_resourceswatch_set_visible": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_resourceswatch_stop": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_sandbox_agents": {
       args: [],
       ret: FfiType.UInt16,
@@ -4198,6 +4263,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_resources": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_routine_add": {
       args: [],
       ret: FfiType.UInt16,
@@ -4354,6 +4424,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_volume_write": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_watch_resources": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4678,6 +4753,22 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
+    "CallbackInterfaceCuaSdkResourcesListenerMethod0": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.VoidPointer,
+      hasRustCallStatus: true,
+      outReturn: true,
+    },
+    "CallbackInterfaceCloneCuaSdk_ResourcesListener": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceFreeCuaSdk_ResourcesListener": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
     "CallbackInterfaceCuaSdkSpaceCreateListenerMethod0": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.VoidPointer,
@@ -4726,6 +4817,11 @@ const DEFINITIONS = {
       { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaSdk_FrameSink") },
       { name: "on_frame", type: FfiType.Callback("CallbackInterfaceCuaSdkFrameSinkMethod0") },
       { name: "on_event", type: FfiType.Callback("CallbackInterfaceCuaSdkFrameSinkMethod1") },
+    ],
+    "VTableCallbackInterfaceCuaSdkResourcesListener": [
+      { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaSdk_ResourcesListener") },
+      { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaSdk_ResourcesListener") },
+      { name: "on_event", type: FfiType.Callback("CallbackInterfaceCuaSdkResourcesListenerMethod0") },
     ],
     "VTableCallbackInterfaceCuaSdkSpaceCreateListener": [
       { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaSdk_SpaceCreateListener") },
@@ -4825,6 +4921,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_free_presenceview(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_relay(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_free_relay(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_clone_resourceslistener(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_sdk_fn_free_resourceslistener(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_clone_resourceswatch(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_sdk_fn_free_resourceswatch(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_sandbox(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_free_sandbox(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_sandboxes(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -4849,6 +4949,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_free_teleportapprover(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_init_callback_vtable_audiosink(vtable: UniffiVTableCallbackInterfaceCuaSdkAudioSink): void;
     uniffi_cua_sdk_fn_init_callback_vtable_framesink(vtable: UniffiVTableCallbackInterfaceCuaSdkFrameSink): void;
+    uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener(vtable: UniffiVTableCallbackInterfaceCuaSdkResourcesListener): void;
     uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener(vtable: UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener): void;
     uniffi_cua_sdk_fn_init_callback_vtable_teleportapprover(vtable: UniffiVTableCallbackInterfaceCuaSdkTeleportApprover): void;
     uniffi_cua_sdk_fn_func_agent_event_category(kind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -5028,6 +5129,9 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_relay_start_sharing(uniffiSelf: bigint, machineId: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_relay_stop_sharing(uniffiSelf: bigint, machineId: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_relay_url(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_method_resourceslistener_on_event(uniffiSelf: bigint, event: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_method_resourceswatch_set_visible(uniffiSelf: bigint, visible: number, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_method_resourceswatch_stop(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_sandbox_agents(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_sandbox_delete(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_sandbox_forward(uniffiSelf: bigint, port: number): bigint;
@@ -5170,6 +5274,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_relay_unregister(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_remove(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_resolve(uniffiSelf: bigint, space: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_resources(uniffiSelf: bigint, visible: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_routine_add(uniffiSelf: bigint, agent: Uint8Array, title: Uint8Array, prompt: Uint8Array, everyMinutes: Uint8Array, dailyAt: Uint8Array, weeklyOn: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_routine_remove(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_routine_set_enabled(uniffiSelf: bigint, id: Uint8Array, enabled: number): bigint;
@@ -5202,6 +5307,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_volume_sync_status(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_unmount(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_write(uniffiSelf: bigint, path: Uint8Array, content: Uint8Array, ifEtag: Uint8Array, createOnly: number, view: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_watch_resources(uniffiSelf: bigint, visible: number, listener: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_spacesdclient_agents(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spacesdclient_attach(uniffiSelf: bigint, pid: Uint8Array, tag: Uint8Array, replay: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spacesdclient_call_json(uniffiSelf: bigint, method: Uint8Array, requestJson: Uint8Array): bigint;
@@ -5434,6 +5540,9 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_relay_start_sharing(): number;
     uniffi_cua_sdk_checksum_method_relay_stop_sharing(): number;
     uniffi_cua_sdk_checksum_method_relay_url(): number;
+    uniffi_cua_sdk_checksum_method_resourceslistener_on_event(): number;
+    uniffi_cua_sdk_checksum_method_resourceswatch_set_visible(): number;
+    uniffi_cua_sdk_checksum_method_resourceswatch_stop(): number;
     uniffi_cua_sdk_checksum_method_sandbox_agents(): number;
     uniffi_cua_sdk_checksum_method_sandbox_delete(): number;
     uniffi_cua_sdk_checksum_method_sandbox_forward(): number;
@@ -5576,6 +5685,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_relay_unregister(): number;
     uniffi_cua_sdk_checksum_method_spaces_remove(): number;
     uniffi_cua_sdk_checksum_method_spaces_resolve(): number;
+    uniffi_cua_sdk_checksum_method_spaces_resources(): number;
     uniffi_cua_sdk_checksum_method_spaces_routine_add(): number;
     uniffi_cua_sdk_checksum_method_spaces_routine_remove(): number;
     uniffi_cua_sdk_checksum_method_spaces_routine_set_enabled(): number;
@@ -5608,6 +5718,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_volume_sync_status(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_unmount(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_write(): number;
+    uniffi_cua_sdk_checksum_method_spaces_watch_resources(): number;
     uniffi_cua_sdk_checksum_method_spacesdclient_agents(): number;
     uniffi_cua_sdk_checksum_method_spacesdclient_attach(): number;
     uniffi_cua_sdk_checksum_method_spacesdclient_call_json(): number;
@@ -5709,6 +5820,14 @@ export type UniffiVTableCallbackInterfaceCuaSdkFrameSink = {
   uniffi_clone: UniffiCallbackInterfaceCloneCuaSdkFrameSink;
   on_frame: UniffiCallbackInterfaceCuaSdkFrameSinkMethod0;
   on_event: UniffiCallbackInterfaceCuaSdkFrameSinkMethod1;
+};
+type UniffiCallbackInterfaceCuaSdkResourcesListenerMethod0 = (uniffiHandle: bigint, event: Uint8Array) => UniffiResult<void>;
+type UniffiCallbackInterfaceCloneCuaSdkResourcesListener = (handle: bigint) => UniffiResult<void>;
+type UniffiCallbackInterfaceFreeCuaSdkResourcesListener = (handle: bigint) => void;
+export type UniffiVTableCallbackInterfaceCuaSdkResourcesListener = {
+  uniffi_free: UniffiCallbackInterfaceFreeCuaSdkResourcesListener;
+  uniffi_clone: UniffiCallbackInterfaceCloneCuaSdkResourcesListener;
+  on_event: UniffiCallbackInterfaceCuaSdkResourcesListenerMethod0;
 };
 type UniffiCallbackInterfaceCuaSdkSpaceCreateListenerMethod0 = (uniffiHandle: bigint, progress: Uint8Array) => UniffiResult<void>;
 type UniffiCallbackInterfaceCloneCuaSdkSpaceCreateListener = (handle: bigint) => UniffiResult<void>;

@@ -266,6 +266,8 @@ without touching it.
 | [`CallSpaceTool`](#spaceservicecallspacetool) | [`CallSpaceToolRequest`](#callspacetoolrequest) | [`CallSpaceToolResponse`](#callspacetoolresponse) | unary |
 | [`ListHosts`](#spaceservicelisthosts) | [`ListHostsRequest`](#listhostsrequest) | [`ListHostsResponse`](#listhostsresponse) | unary |
 | [`GetSpaceThumbnail`](#spaceservicegetspacethumbnail) | [`GetSpaceThumbnailRequest`](#getspacethumbnailrequest) | [`GetSpaceThumbnailResponse`](#getspacethumbnailresponse) | unary |
+| [`GetResources`](#spaceservicegetresources) | [`GetResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#getresourcesrequest) | [`GetResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#getresourcesresponse) | unary |
+| [`WatchResources`](#spaceservicewatchresources) | [`WatchResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesrequest) | [`WatchResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesresponse) | server stream |
 
 ### SpaceService.AddSpace
 
@@ -397,6 +399,29 @@ the cached image when it is younger than `max_age`, else a fresh
 capture through cua-spacesd (the cached one again, with its older
 `captured_at`, when the capture fails). Asking keeps the daemon
 refreshing running Spaces' thumbnails in the background for a while.
+
+### SpaceService.GetResources
+
+`/cua.daemon.v1.SpaceService/GetResources`, unary: [`GetResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#getresourcesrequest) to [`GetResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#getresourcesresponse).
+
+What this computer, its extra Spaces and your other computers use now:
+processor, memory and disk, as one snapshot. The daemon's single
+sampler measures it; a snapshot a few seconds old is returned as it is.
+With `visible`, the call also says a window shows the numbers for the
+next 30 seconds, so the sampler runs every 10 seconds (every 5 minutes
+otherwise). Numbers only: no names, paths or processes.
+
+### SpaceService.WatchResources
+
+`/cua.daemon.v1.SpaceService/WatchResources`, server stream: [`WatchResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesrequest) to [`WatchResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesresponse).
+
+The same numbers as a stream: one snapshot first, then an update with
+only the entries that changed by more than 1 point or 256 MB, and a
+`low_disk` event whenever the free-disk warning level changes
+(including back to `ok`). A hidden watcher (`visible` false) is
+sampled every 5 minutes and still hears `low_disk`, for the menu bar.
+Cancel the stream to stop; call again with the other `visible` to
+switch.
 
 ## DaemonService
 

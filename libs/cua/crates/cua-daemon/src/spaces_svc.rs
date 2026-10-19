@@ -516,6 +516,52 @@ mod imp {
                 captured_at: Some(crate::convert::ts(t.captured_at)),
             })
         }
+
+        async fn get_resources(
+            &self,
+            req: tonic::Request<pb::GetResourcesRequest>,
+        ) -> R<pb::GetResourcesResponse> {
+            let snapshot = self
+                .spaces()
+                .resources(req.into_inner().visible)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::GetResourcesResponse {
+                snapshot: Some((&snapshot).into()),
+            })
+        }
+
+        type WatchResourcesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchResourcesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_resources(
+            &self,
+            req: tonic::Request<pb::WatchResourcesRequest>,
+        ) -> R<Self::WatchResourcesStream> {
+            let mut watch = self.spaces().watch_resources(req.into_inner().visible);
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            // The watch is the interest: it ends with the stream, so the
+            // sampler stops when the last reader is gone.
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        event = watch.next() => {
+                            let Some(event) = event else { break };
+                            if tx.send(Ok((&event).into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        _ = tx.closed() => break,
+                    }
+                }
+            });
+            ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        }
     }
 }
 
@@ -624,6 +670,27 @@ mod imp {
             &self,
             _: tonic::Request<pb::GetSpaceThumbnailRequest>,
         ) -> R<pb::GetSpaceThumbnailResponse> {
+            off()
+        }
+        async fn get_resources(
+            &self,
+            _: tonic::Request<pb::GetResourcesRequest>,
+        ) -> R<pb::GetResourcesResponse> {
+            off()
+        }
+
+        type WatchResourcesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchResourcesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_resources(
+            &self,
+            _: tonic::Request<pb::WatchResourcesRequest>,
+        ) -> R<Self::WatchResourcesStream> {
             off()
         }
     }

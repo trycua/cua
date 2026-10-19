@@ -1600,7 +1600,10 @@ struct ParityTests {
             let rows = try appSpaceRowsFromJson(json: text([c["row"]!]))
             let space = appRowsToSpaces(rows: rows, nowMs: Int64(f["now"] as! Int))[0]
             let usage = (c["usage"] as? [String: Any]).map { u in
-                AppSpaceUsage(memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
+                AppSpaceUsage(cpuCount: (u["cpuCount"] as? NSNumber)?.uint32Value ?? 0,
+                              cpuPercent: (u["cpuPercent"] as? NSNumber)?.doubleValue ?? 0,
+                              loadAverage1m: (u["loadAverage1m"] as? NSNumber)?.doubleValue ?? 0,
+                              memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
                               memoryTotal: (u["memoryTotal"] as! NSNumber).uint64Value,
                               memoryLimited: u["memoryLimited"] as! Bool,
                               diskUsed: (u["diskUsed"] as! NSNumber).uint64Value,

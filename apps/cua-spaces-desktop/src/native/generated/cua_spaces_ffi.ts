@@ -12621,7 +12621,13 @@ export type AppCliInstallPlan = {
     /**
      * The line that would be added to `path_profile`.
      */
-    pathLine?: string
+    pathLine?: string,
+    /**
+     * A working `cua` CLI already on this machine: `target`, else the
+     * first in the usual install folders or on PATH (a Finder-launched
+     * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+     */
+    found?: string
 }
 
 /**
@@ -12656,7 +12662,8 @@ const FfiConverterTypeAppCliInstallPlan = (() => {
                 shadowedBy: FfiConverterOptionalString.read(from),
                 onPath: FfiConverterBool.read(from),
                 pathProfile: FfiConverterOptionalString.read(from),
-                pathLine: FfiConverterOptionalString.read(from)
+                pathLine: FfiConverterOptionalString.read(from),
+                found: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -12672,6 +12679,7 @@ const FfiConverterTypeAppCliInstallPlan = (() => {
             FfiConverterBool.write(value.onPath, into);
             FfiConverterOptionalString.write(value.pathProfile, into);
             FfiConverterOptionalString.write(value.pathLine, into);
+            FfiConverterOptionalString.write(value.found, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.source) +
@@ -12685,7 +12693,8 @@ const FfiConverterTypeAppCliInstallPlan = (() => {
              FfiConverterOptionalString.allocationSize(value.shadowedBy) +
              FfiConverterBool.allocationSize(value.onPath) +
              FfiConverterOptionalString.allocationSize(value.pathProfile) +
-             FfiConverterOptionalString.allocationSize(value.pathLine);
+             FfiConverterOptionalString.allocationSize(value.pathLine) +
+             FfiConverterOptionalString.allocationSize(value.found);
 
         }
     };
@@ -28198,7 +28207,12 @@ export type AppOnboardingState = {
      * shown, else when Welcome was left. Once per run, however often
      * Welcome shows again (Back).
      */
-    runCounted: boolean
+    runCounted: boolean,
+    /**
+     * A page opened from Done's to-do list: leaving it (Continue, Skip or
+     * Back) comes back to Done.
+     */
+    revisit: boolean
 }
 
 /**
@@ -28246,7 +28260,8 @@ const FfiConverterTypeAppOnboardingState = (() => {
                 launchAtLogin: FfiConverterBool.read(from),
                 telemetry: FfiConverterOptionalTypeAppTelemetryInput.read(from),
                 experiments: FfiConverterTypeAppExperiments.read(from),
-                runCounted: FfiConverterBool.read(from)
+                runCounted: FfiConverterBool.read(from),
+                revisit: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -28275,6 +28290,7 @@ const FfiConverterTypeAppOnboardingState = (() => {
             FfiConverterOptionalTypeAppTelemetryInput.write(value.telemetry, into);
             FfiConverterTypeAppExperiments.write(value.experiments, into);
             FfiConverterBool.write(value.runCounted, into);
+            FfiConverterBool.write(value.revisit, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppOnboardingStep.allocationSize(value.step) +
@@ -28301,7 +28317,132 @@ const FfiConverterTypeAppOnboardingState = (() => {
              FfiConverterBool.allocationSize(value.launchAtLogin) +
              FfiConverterOptionalTypeAppTelemetryInput.allocationSize(value.telemetry) +
              FfiConverterTypeAppExperiments.allocationSize(value.experiments) +
-             FfiConverterBool.allocationSize(value.runCounted);
+             FfiConverterBool.allocationSize(value.runCounted) +
+             FfiConverterBool.allocationSize(value.revisit);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum AppOnboardingTodoId {
+    /**
+     * The Cua CLI.
+     */
+    Cli = "cli",
+    /**
+     * The Cua account.
+     */
+    Signin = "signin",
+    /**
+     * A coding agent that uses cua.
+     */
+    Agents = "agents",
+    /**
+     * Cua Volume (optional).
+     */
+    Volume = "volume"
+}
+
+const FfiConverterTypeAppOnboardingTodoId = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = AppOnboardingTodoId;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return AppOnboardingTodoId.Cli;
+                case 2: return AppOnboardingTodoId.Signin;
+                case 3: return AppOnboardingTodoId.Agents;
+                case 4: return AppOnboardingTodoId.Volume;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case AppOnboardingTodoId.Cli: return ordinalConverter.write(1, into);
+                case AppOnboardingTodoId.Signin: return ordinalConverter.write(2, into);
+                case AppOnboardingTodoId.Agents: return ordinalConverter.write(3, into);
+                case AppOnboardingTodoId.Volume: return ordinalConverter.write(4, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type AppOnboardingTodo = {
+    /**
+     * Which.
+     */
+    id: AppOnboardingTodoId,
+    /**
+     * "Cua CLI".
+     */
+    title: string,
+    /**
+     * One plain line under it.
+     */
+    note: string,
+    /**
+     * Set up.
+     */
+    done: boolean,
+    /**
+     * Nice to have: "You're all set" does not wait for it.
+     */
+    optional: boolean,
+    /**
+     * The fix's button ("Install the Cua CLI"), while not done.
+     */
+    action?: string
+}
+
+/**
+ * Generated factory for {@link AppOnboardingTodo} record objects.
+ */
+export const AppOnboardingTodo = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppOnboardingTodo, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppOnboardingTodo>,
+    });
+})();
+
+const FfiConverterTypeAppOnboardingTodo = (() => {
+    type TypeName = AppOnboardingTodo;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterTypeAppOnboardingTodoId.read(from),
+                title: FfiConverterString.read(from),
+                note: FfiConverterString.read(from),
+                done: FfiConverterBool.read(from),
+                optional: FfiConverterBool.read(from),
+                action: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeAppOnboardingTodoId.write(value.id, into);
+            FfiConverterString.write(value.title, into);
+            FfiConverterString.write(value.note, into);
+            FfiConverterBool.write(value.done, into);
+            FfiConverterBool.write(value.optional, into);
+            FfiConverterOptionalString.write(value.action, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeAppOnboardingTodoId.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.title) +
+             FfiConverterString.allocationSize(value.note) +
+             FfiConverterBool.allocationSize(value.done) +
+             FfiConverterBool.allocationSize(value.optional) +
+             FfiConverterOptionalString.allocationSize(value.action);
 
         }
     };
@@ -28580,7 +28721,13 @@ export type AppOnboardingView = {
     /**
      * Done's "Launch at login" checkbox.
      */
-    launchAtLogin?: AppOnboardingCheckbox
+    launchAtLogin?: AppOnboardingCheckbox,
+    /**
+     * Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+     * Volume, each set up or with its fix. The title says "Almost done"
+     * until every one that is not optional is.
+     */
+    todos: Array<AppOnboardingTodo>
 }
 
 /**
@@ -28622,7 +28769,8 @@ const FfiConverterTypeAppOnboardingView = (() => {
                 noticeLinkUrl: FfiConverterOptionalString.read(from),
                 usage: FfiConverterOptionalTypeAppUsageToggle.read(from),
                 drive: FfiConverterOptionalTypeAppDriveCard.read(from),
-                launchAtLogin: FfiConverterOptionalTypeAppOnboardingCheckbox.read(from)
+                launchAtLogin: FfiConverterOptionalTypeAppOnboardingCheckbox.read(from),
+                todos: FfiConverterSequenceTypeAppOnboardingTodo.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -28645,6 +28793,7 @@ const FfiConverterTypeAppOnboardingView = (() => {
             FfiConverterOptionalTypeAppUsageToggle.write(value.usage, into);
             FfiConverterOptionalTypeAppDriveCard.write(value.drive, into);
             FfiConverterOptionalTypeAppOnboardingCheckbox.write(value.launchAtLogin, into);
+            FfiConverterSequenceTypeAppOnboardingTodo.write(value.todos, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppOnboardingStep.allocationSize(value.step) +
@@ -28665,7 +28814,8 @@ const FfiConverterTypeAppOnboardingView = (() => {
              FfiConverterOptionalString.allocationSize(value.noticeLinkUrl) +
              FfiConverterOptionalTypeAppUsageToggle.allocationSize(value.usage) +
              FfiConverterOptionalTypeAppDriveCard.allocationSize(value.drive) +
-             FfiConverterOptionalTypeAppOnboardingCheckbox.allocationSize(value.launchAtLogin);
+             FfiConverterOptionalTypeAppOnboardingCheckbox.allocationSize(value.launchAtLogin) +
+             FfiConverterSequenceTypeAppOnboardingTodo.allocationSize(value.todos);
 
         }
     };
@@ -50438,7 +50588,9 @@ export enum AppOnboardingAction_Tags {
     TelemetryLoaded = "TelemetryLoaded",
     WelcomeShown = "WelcomeShown",
     UsageDataToggled = "UsageDataToggled",
-    ExperimentsLoaded = "ExperimentsLoaded"
+    ExperimentsLoaded = "ExperimentsLoaded",
+    TodoChosen = "TodoChosen",
+    AgentsDetected = "AgentsDetected"
 }
 export const AppOnboardingAction = (() => {
 
@@ -51292,6 +51444,77 @@ inner: {experiments: AppExperiments }): ExperimentsLoaded_ {
 
     }
 
+    type TodoChosen__interface = {
+        tag: AppOnboardingAction_Tags.TodoChosen;
+        inner:
+Readonly<{id: AppOnboardingTodoId}>
+    };
+    /**
+     * A to-do on Done was clicked: its page opens, and leaving it comes
+     * back to Done. Cua Volume needs its experiment on first (the shell
+     * turns it on and sends `experiments-loaded`).
+     */
+    class TodoChosen_ extends UniffiEnum implements TodoChosen__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppOnboardingAction";
+        readonly tag = AppOnboardingAction_Tags.TodoChosen;
+        readonly inner:
+Readonly<{id: AppOnboardingTodoId}>;
+        constructor(
+inner: {id: AppOnboardingTodoId }) {
+            super("AppOnboardingAction", "TodoChosen");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {id: AppOnboardingTodoId }): TodoChosen_ {
+            return new TodoChosen_(inner);
+        }
+
+        static instanceOf(obj: any): obj is TodoChosen_ {
+            return obj.tag === AppOnboardingAction_Tags.TodoChosen;
+        }
+
+    }
+
+    type AgentsDetected__interface = {
+        tag: AppOnboardingAction_Tags.AgentsDetected;
+        inner:
+Readonly<{configured: Array<string>}>
+    };
+    /**
+     * The coding agents that already use cua (set up earlier, from the
+     * CLI or Settings), as the shell read them. Any page.
+     */
+    class AgentsDetected_ extends UniffiEnum implements AgentsDetected__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppOnboardingAction";
+        readonly tag = AppOnboardingAction_Tags.AgentsDetected;
+        readonly inner:
+Readonly<{configured: Array<string>}>;
+        constructor(
+inner: {configured: Array<string> }) {
+            super("AppOnboardingAction", "AgentsDetected");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {configured: Array<string> }): AgentsDetected_ {
+            return new AgentsDetected_(inner);
+        }
+
+        static instanceOf(obj: any): obj is AgentsDetected_ {
+            return obj.tag === AppOnboardingAction_Tags.AgentsDetected;
+        }
+
+    }
+
     function instanceOf(obj: any): obj is AppOnboardingAction {
         return obj[uniffiTypeNameSymbol] === "AppOnboardingAction";
     }
@@ -51323,12 +51546,14 @@ inner: {experiments: AppExperiments }): ExperimentsLoaded_ {
   TelemetryLoaded: TelemetryLoaded_,
   WelcomeShown: WelcomeShown_,
   UsageDataToggled: UsageDataToggled_,
-  ExperimentsLoaded: ExperimentsLoaded_
+  ExperimentsLoaded: ExperimentsLoaded_,
+  TodoChosen: TodoChosen_,
+  AgentsDetected: AgentsDetected_
     });
 
 })();
 export type AppOnboardingAction = InstanceType<
-    typeof AppOnboardingAction['Start' | 'CliInstalled' | 'CliPlanned' | 'CliDone' | 'CliInstallFailed' | 'PresentationPicked' | 'PresentationDone' | 'SignedIn' | 'SigninDone' | 'AgentsDone' | 'ModeChosen' | 'DriveChecked' | 'DriveToggled' | 'DriveContinue' | 'DriveMounted' | 'DriveFailed' | 'DriveStorageLoaded' | 'StorageChosen' | 'DriveStorage' | 'DriveStorageSaved' | 'LaunchAtLoginToggled' | 'Back' | 'TelemetryLoaded' | 'WelcomeShown' | 'UsageDataToggled' | 'ExperimentsLoaded']
+    typeof AppOnboardingAction['Start' | 'CliInstalled' | 'CliPlanned' | 'CliDone' | 'CliInstallFailed' | 'PresentationPicked' | 'PresentationDone' | 'SignedIn' | 'SigninDone' | 'AgentsDone' | 'ModeChosen' | 'DriveChecked' | 'DriveToggled' | 'DriveContinue' | 'DriveMounted' | 'DriveFailed' | 'DriveStorageLoaded' | 'StorageChosen' | 'DriveStorage' | 'DriveStorageSaved' | 'LaunchAtLoginToggled' | 'Back' | 'TelemetryLoaded' | 'WelcomeShown' | 'UsageDataToggled' | 'ExperimentsLoaded' | 'TodoChosen' | 'AgentsDetected']
 >;
 
 // FfiConverter for enum AppOnboardingAction
@@ -51364,6 +51589,8 @@ const FfiConverterTypeAppOnboardingAction = (() => {
                 case 24: return new AppOnboardingAction.WelcomeShown();
                 case 25: return new AppOnboardingAction.UsageDataToggled({on: FfiConverterBool.read(from) });
                 case 26: return new AppOnboardingAction.ExperimentsLoaded({experiments: FfiConverterTypeAppExperiments.read(from) });
+                case 27: return new AppOnboardingAction.TodoChosen({id: FfiConverterTypeAppOnboardingTodoId.read(from) });
+                case 28: return new AppOnboardingAction.AgentsDetected({configured: FfiConverterSequenceString.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -51515,6 +51742,18 @@ const FfiConverterTypeAppOnboardingAction = (() => {
                     FfiConverterTypeAppExperiments.write(inner.experiments, into);
                     return;
                 }
+                case AppOnboardingAction_Tags.TodoChosen: {
+                    ordinalConverter.write(27, into);
+                    const inner = value.inner;
+                    FfiConverterTypeAppOnboardingTodoId.write(inner.id, into);
+                    return;
+                }
+                case AppOnboardingAction_Tags.AgentsDetected: {
+                    ordinalConverter.write(28, into);
+                    const inner = value.inner;
+                    FfiConverterSequenceString.write(inner.configured, into);
+                    return;
+                }
                 default:
                     // Throwing from here means that AppOnboardingAction_Tags hasn't matched an ordinal.
                     throw new UniffiInternalError.UnexpectedEnumCase();
@@ -51660,6 +51899,18 @@ const FfiConverterTypeAppOnboardingAction = (() => {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(26);
                     size += FfiConverterTypeAppExperiments.allocationSize(inner.experiments);
+                    return size;
+                }
+                case AppOnboardingAction_Tags.TodoChosen: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(27);
+                    size += FfiConverterTypeAppOnboardingTodoId.allocationSize(inner.id);
+                    return size;
+                }
+                case AppOnboardingAction_Tags.AgentsDetected: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(28);
+                    size += FfiConverterSequenceString.allocationSize(inner.configured);
                     return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
@@ -60050,6 +60301,9 @@ const FfiConverterOptionalTypeAppDriveCard = new FfiConverterOptional(FfiConvert
 // FfiConverter for AppOnboardingCheckbox | undefined
 const FfiConverterOptionalTypeAppOnboardingCheckbox = new FfiConverterOptional(FfiConverterTypeAppOnboardingCheckbox);
 
+// FfiConverter for Array<AppOnboardingTodo>
+const FfiConverterSequenceTypeAppOnboardingTodo = new FfiConverterArray(FfiConverterTypeAppOnboardingTodo);
+
 // FfiConverter for Array<AppPickerTile>
 const FfiConverterSequenceTypeAppPickerTile = new FfiConverterArray(FfiConverterTypeAppPickerTile);
 
@@ -61741,6 +61995,8 @@ export default Object.freeze({
     FfiConverterTypeAppOnboardingMode,
     FfiConverterTypeAppOnboardingState,
     FfiConverterTypeAppOnboardingStep,
+    FfiConverterTypeAppOnboardingTodo,
+    FfiConverterTypeAppOnboardingTodoId,
     FfiConverterTypeAppOnboardingView,
     FfiConverterTypeAppOpenApp,
     FfiConverterTypeAppOpenFileInput,

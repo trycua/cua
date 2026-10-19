@@ -7134,7 +7134,9 @@ public struct AppCliInstallPlan: Equatable, Hashable {
      */
     public var pathLine: String?
     /**
-     * A working `cua` CLI already on this machine.
+     * A working `cua` CLI already on this machine: `target`, else the
+     * first in the usual install folders or on PATH (a Finder-launched
+     * app's PATH lacks `~/.local/bin`, so the folders are searched too).
      */
     public var found: String?
 
@@ -7178,7 +7180,9 @@ public struct AppCliInstallPlan: Equatable, Hashable {
          * The line that would be added to `path_profile`.
          */pathLine: String?,
         /**
-         * A working `cua` CLI already on this machine.
+         * A working `cua` CLI already on this machine: `target`, else the
+         * first in the usual install folders or on PATH (a Finder-launched
+         * app's PATH lacks `~/.local/bin`, so the folders are searched too).
          */found: String?) {
         self.source = source
         self.target = target
@@ -22379,7 +22383,8 @@ public struct AppOnboardingState: Equatable, Hashable {
      */
     public var runCounted: Bool
     /**
-     * A page opened from Done's to-do list: leaving it comes back to Done.
+     * A page opened from Done's to-do list: leaving it (Continue, Skip or
+     * Back) comes back to Done.
      */
     public var revisit: Bool
 
@@ -22471,7 +22476,8 @@ public struct AppOnboardingState: Equatable, Hashable {
          * Welcome shows again (Back).
          */runCounted: Bool,
         /**
-         * A page opened from Done's to-do list: leaving it comes back to Done.
+         * A page opened from Done's to-do list: leaving it (Continue, Skip or
+         * Back) comes back to Done.
          */revisit: Bool) {
         self.step = step
         self.cliTarget = cliTarget
@@ -22614,7 +22620,7 @@ public struct AppOnboardingTodo: Equatable, Hashable {
      */
     public var optional: Bool
     /**
-     * The fix's button, while not done.
+     * The fix's button ("Install the Cua CLI"), while not done.
      */
     public var action: String?
 
@@ -22637,7 +22643,7 @@ public struct AppOnboardingTodo: Equatable, Hashable {
          * Nice to have: "You're all set" does not wait for it.
          */optional: Bool,
         /**
-         * The fix's button, while not done.
+         * The fix's button ("Install the Cua CLI"), while not done.
          */action: String?) {
         self.id = id
         self.title = title
@@ -22782,7 +22788,9 @@ public struct AppOnboardingView: Equatable, Hashable {
      */
     public var launchAtLogin: AppOnboardingCheckbox?
     /**
-     * Done's to-do list.
+     * Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+     * Volume, each set up or with its fix. The title says "Almost done"
+     * until every one that is not optional is.
      */
     public var todos: [AppOnboardingTodo]
 
@@ -22853,7 +22861,9 @@ public struct AppOnboardingView: Equatable, Hashable {
          * Done's "Launch at login" checkbox.
          */launchAtLogin: AppOnboardingCheckbox?,
         /**
-         * Done's to-do list.
+         * Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+         * Volume, each set up or with its fix. The title says "Almost done"
+         * until every one that is not optional is.
          */todos: [AppOnboardingTodo]) {
         self.step = step
         self.dots = dots
@@ -49040,7 +49050,8 @@ public enum AppOnboardingAction: Equatable, Hashable {
     )
     /**
      * A to-do on Done was clicked: its page opens, and leaving it comes
-     * back to Done.
+     * back to Done. Cua Volume needs its experiment on first (the shell
+     * turns it on and sends `experiments-loaded`).
      */
     case todoChosen(
         /**
@@ -49048,7 +49059,8 @@ public enum AppOnboardingAction: Equatable, Hashable {
          */id: AppOnboardingTodoId
     )
     /**
-     * The coding agents that already use cua, as the shell read them.
+     * The coding agents that already use cua (set up earlier, from the
+     * CLI or Settings), as the shell read them. Any page.
      */
     case agentsDetected(
         /**

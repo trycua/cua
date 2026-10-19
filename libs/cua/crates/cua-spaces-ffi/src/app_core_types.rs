@@ -5598,7 +5598,8 @@ pub struct AppOnboardingState {
     /// shown, else when Welcome was left. Once per run, however often
     /// Welcome shows again (Back).
     pub run_counted: bool,
-    /// A page opened from Done's to-do list: leaving it comes back to Done.
+    /// A page opened from Done's to-do list: leaving it (Continue, Skip or
+    /// Back) comes back to Done.
     pub revisit: bool,
 }
 
@@ -5731,12 +5732,14 @@ pub enum AppOnboardingAction {
         experiments: AppExperiments,
     },
     /// A to-do on Done was clicked: its page opens, and leaving it comes
-    /// back to Done.
+    /// back to Done. Cua Volume needs its experiment on first (the shell
+    /// turns it on and sends `experiments-loaded`).
     TodoChosen {
         /// Which.
         id: AppOnboardingTodoId,
     },
-    /// The coding agents that already use cua, as the shell read them.
+    /// The coding agents that already use cua (set up earlier, from the
+    /// CLI or Settings), as the shell read them. Any page.
     AgentsDetected {
         /// Their names.
         configured: Vec<String>,
@@ -5757,7 +5760,8 @@ pub enum AppOnboardingTodoId {
     Volume,
 }
 
-/// One line of Done's to-do list.
+/// One line of Done's to-do list: what is set up, and a one-click fix for
+/// what is not.
 pub type AppOnboardingTodo = core::onboarding::OnboardingTodo;
 #[uniffi::remote(Record)]
 pub struct AppOnboardingTodo {
@@ -5771,7 +5775,7 @@ pub struct AppOnboardingTodo {
     pub done: bool,
     /// Nice to have: "You're all set" does not wait for it.
     pub optional: bool,
-    /// The fix's button, while not done.
+    /// The fix's button ("Install the Cua CLI"), while not done.
     pub action: Option<String>,
 }
 
@@ -5862,7 +5866,9 @@ pub struct AppOnboardingView {
     pub drive: Option<AppDriveCard>,
     /// Done's "Launch at login" checkbox.
     pub launch_at_login: Option<AppOnboardingCheckbox>,
-    /// Done's to-do list.
+    /// Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+    /// Volume, each set up or with its fix. The title says "Almost done"
+    /// until every one that is not optional is.
     pub todos: Vec<AppOnboardingTodo>,
 }
 
@@ -7542,7 +7548,9 @@ pub struct AppCliInstallPlan {
     pub path_profile: Option<String>,
     /// The line that would be added to `path_profile`.
     pub path_line: Option<String>,
-    /// A working `cua` CLI already on this machine.
+    /// A working `cua` CLI already on this machine: `target`, else the
+    /// first in the usual install folders or on PATH (a Finder-launched
+    /// app's PATH lacks `~/.local/bin`, so the folders are searched too).
     pub found: Option<String>,
 }
 

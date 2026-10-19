@@ -34,7 +34,7 @@ impl Presence for KeyvaultPresence {
 
 #[cfg(feature = "s3")]
 mod s3 {
-    use cua_volume::s3::{CredentialSource, S3Credentials, TokenSource};
+    use cua_volume::s3::{CredentialSource, S3Credentials};
     use cua_volume::{Error, Result};
 
     /// Static keys read on first use from the credential store (`drive-keys`,

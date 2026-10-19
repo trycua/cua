@@ -203,12 +203,12 @@ fn focused_textedit_window_title() -> String {
 /// Open a second TextEdit document. TextEdit focuses the new document, so the
 /// first one becomes an unfocused sibling of a frontmost app.
 fn open_sibling_document(text: &str) {
-    osascript(&format!(
-        r#"tell application id "{TEXTEDIT_BUNDLE}" to make new document with properties {{text:"{text}"}}"#
+    let sibling_title = osascript(&format!(
+        r#"tell application id "{TEXTEDIT_BUNDLE}" to get name of (make new document with properties {{text:"{text}"}})"#
     ));
     ensure_frontmost(TEXTEDIT_BUNDLE);
     let deadline = Instant::now() + Duration::from_secs(5);
-    while focused_textedit_window_title() != "Untitled 2" {
+    while focused_textedit_window_title() != sibling_title {
         assert!(
             Instant::now() < deadline,
             "the sibling document never took the keyboard focus; focused window is {:?}",

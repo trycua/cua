@@ -558,7 +558,12 @@ fn set_remote_debugging(
                 }
                 Some(_) if !handle.enable_attempted => {
                     let index = node.element_index.expect("actionable checkbox index");
-                    if let Err(error) = crate::atspi::perform_action(pid, index) {
+                    // A toggle that failed after it was sent may have
+                    // switched remote debugging: read it back like a success,
+                    // so a rollback knows what to restore.
+                    if let Err(error) =
+                        crate::atspi::action_sent(crate::atspi::perform_action(pid, index))
+                    {
                         return Err(handle.abort(refusal(
                             BrowserRefusalCode::BrowserWrongTargetRefused,
                             format!("the exact checkbox action failed: {error}"),

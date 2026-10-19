@@ -238,7 +238,9 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
                 "the exact remote-debugging consent prompt exposed no semantic cancel action",
             )
         })?;
-        crate::atspi::perform_action(pid, index).map_err(|error| {
+        // A cancel that failed after it was sent may have dismissed the
+        // prompt: the next pass reads that back instead of refusing.
+        crate::atspi::action_sent(crate::atspi::perform_action(pid, index)).map_err(|error| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("the exact browser consent cancel action failed: {error}"),
@@ -326,8 +328,10 @@ pub async fn handle(
         saw_prompt |= prompt_present;
         match exact_allow_button(&tree.nodes, &tree.bounds)? {
             Some(index) if accessibility_action_at.is_none() => {
+                // Like an accepted action, one that failed after it was sent
+                // is read back from the prompt below.
                 consent_action(&request.action, deadline, move || {
-                    crate::atspi::perform_action(pid, index)
+                    crate::atspi::action_sent(crate::atspi::perform_action(pid, index))
                 })
                 .await?;
                 accessibility_action_at = Some(Instant::now());

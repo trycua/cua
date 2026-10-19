@@ -117,6 +117,26 @@ pub fn find_uefi_with(arch: Arch, qemu_bin: &Path, exists: impl Fn(&Path) -> boo
     None
 }
 
+/// Windows ARM needs Secure Boot code and a Microsoft-enrolled persistent store.
+/// Search only known matching pairs; never pair arbitrary firmware halves.
+pub fn find_windows_arm(qemu_bin: &Path) -> Option<Uefi> {
+    let real = std::fs::canonicalize(qemu_bin).unwrap_or_else(|_| qemu_bin.into());
+    let prefix = real.parent()?.parent()?;
+    [
+        prefix.join("share/AAVMF"),
+        PathBuf::from("/usr/share/AAVMF"),
+    ]
+    .into_iter()
+    .find_map(|dir| {
+        let code = dir.join("AAVMF_CODE.secboot.fd");
+        let vars = dir.join("AAVMF_VARS.ms.fd");
+        (code.is_file() && vars.is_file()).then_some(Uefi {
+            code,
+            vars_template: Some(vars),
+        })
+    })
+}
+
 /// Find UEFI firmware on the real filesystem.
 pub fn find_uefi(arch: Arch, qemu_bin: &Path) -> Option<Uefi> {
     // Resolve symlinks: Homebrew's /opt/homebrew/bin/qemu-system-* links into

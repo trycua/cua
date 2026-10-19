@@ -364,9 +364,22 @@ impl QemuRuntime {
             return Ok(Firmware::Bios);
         }
         let bin = self.binary(arch).await?;
-        let fw = firmware::find_uefi(arch, &bin).ok_or_else(|| {
+        let windows_arm = os == GuestOs::Windows && arch == Arch::Aarch64;
+        let fw = (if windows_arm {
+            firmware::find_windows_arm(&bin)
+        } else {
+            firmware::find_uefi(arch, &bin)
+        })
+        .ok_or_else(|| {
             VmmError::missing(
-                format!("UEFI firmware for {arch}"),
+                format!(
+                    "UEFI firmware for {arch}{}",
+                    if windows_arm {
+                        " (Secure Boot CODE and Microsoft-enrolled VARS required)"
+                    } else {
+                        ""
+                    }
+                ),
                 format!(
                     "install edk2 (Homebrew qemu ships it; {})",
                     QemuPackageManager::linux_hint()
@@ -410,7 +423,19 @@ impl QemuRuntime {
         let res: Result<QemuState> = async {
             match backing {
                 Some(b) => img::create_overlay(b, &disk).await?,
-                None => img::create_blank(&disk, spec_like.disk_size_gb.unwrap_or(32)).await?,
+                None => {
+                    img::create_blank(
+                        &disk,
+                        spec_like.disk_size_gb.unwrap_or(
+                            if spec_like.os == GuestOs::Windows && arch == Arch::Aarch64 {
+                                64
+                            } else {
+                                32
+                            },
+                        ),
+                    )
+                    .await?
+                }
             }
             if let Some(gb) = spec_like.disk_size_gb {
                 img::grow_to(&disk, gb).await?;
@@ -488,6 +513,7 @@ impl QemuRuntime {
                     }
                 }
                 st.pid = None;
+                self.wait_tpm(st).await?;
                 self.launch_once(st, spec, loadvm, true).await
             }
             r => r,
@@ -501,8 +527,56 @@ impl QemuRuntime {
         loadvm: Option<String>,
         force_tcg: bool,
     ) -> Result<()> {
+        let windows_arm = st.os == GuestOs::Windows && st.arch == Arch::Aarch64;
+        if windows_arm && (spec.memory_mb < 4096 || spec.cpus < 2) {
+            return Err(VmmError::invalid(
+                "Windows ARM requires at least 4096 MiB memory and 2 CPUs",
+            ));
+        }
+        if loadvm.is_some() {
+            self.check_snapshot_support(st, true)?;
+        }
+        if windows_arm && (spec.gpu.is_some() || st.gpu.is_some()) {
+            return Err(VmmError::invalid(
+                "Windows ARM requires ramfb; virgl is unsupported",
+            ));
+        }
         let bin = self.binary(st.arch).await?;
         let dir = self.dir(&st.name);
+        let tpm_dir = dir.join("tpm");
+        let swtpm = if spec.tpm || tpm_dir.exists() {
+            if !cfg!(unix) {
+                return Err(VmmError::invalid("TPM requires a Unix host"));
+            }
+            let bin = host::which("swtpm").ok_or_else(|| {
+                VmmError::invalid(
+                    "swtpm is not available: install swtpm with TPM 2.0 support and add it to PATH",
+                )
+            })?;
+            self.wait_tpm(st).await?;
+            let socket = tpm_dir.join("swtpm.sock");
+            if socket.as_os_str().len() > 103 {
+                return Err(VmmError::invalid(
+                    "TPM socket path is too long; use a shorter runtime root",
+                ));
+            }
+            #[cfg(unix)]
+            if socket.exists() {
+                if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+                    return Err(VmmError::invalid("TPM socket is already in use"));
+                }
+                std::fs::remove_file(&socket)?;
+            }
+            std::fs::create_dir_all(&tpm_dir)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&tpm_dir, std::fs::Permissions::from_mode(0o700))?;
+            }
+            Some(bin)
+        } else {
+            None
+        };
         let mut guest_ports: Vec<u16> = spec.ports.clone();
         if st.ssh.is_some() && !guest_ports.contains(&22) {
             guest_ports.push(22);
@@ -561,6 +635,7 @@ impl QemuRuntime {
             disk_format: st.disk_format.clone(),
             seed_iso: st.seed_iso.clone(),
             install_iso: st.install_iso.clone(),
+            tpm_socket: swtpm.as_ref().map(|_| tpm_dir.join("swtpm.sock")),
             firmware: st.firmware.clone(),
             forwards: st.ports.iter().map(|(g, h)| (*h, *g)).collect(),
             restrict_network: st.restrict_network,
@@ -589,10 +664,20 @@ impl QemuRuntime {
         {
             let out = tokio::process::Command::new("/bin/sh")
                 .arg("-c")
-                .arg("\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!")
+                .arg(if swtpm.is_some() {
+                    "( /bin/sh -c \"$CUA_TPM_SCRIPT\" \"$0\" \"$@\" ) &"
+                } else {
+                    "\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!"
+                })
                 .arg(&bin)
                 .args(&argv)
                 .env("CUA_QEMU_LOG", &log_path)
+                .env("CUA_TPM_SCRIPT", include_str!("tpm.sh"))
+                .env("CUA_SWTPM", swtpm.as_deref().unwrap_or(Path::new("")))
+                .env("CUA_TPM_DIR", &tpm_dir)
+                .env("CUA_TPM_SOCKET", tpm_dir.join("swtpm.sock"))
+                .env("CUA_TPM_PID", dir.join("swtpm.pid"))
+                .env("CUA_TPM_LOG", dir.join("swtpm.log"))
                 .output()
                 .await?;
             let pid = String::from_utf8_lossy(&out.stdout)
@@ -702,6 +787,8 @@ impl QemuRuntime {
     /// Restore an internal snapshot taken by [`Runtime::checkpoint`] on a
     /// running instance (in place, RAM included).
     pub async fn restore(&self, name: &str, snapshot: &str) -> Result<()> {
+        let st = self.load(name)?;
+        self.check_snapshot_support(&st, true)?;
         let mut q = self.qmp(name).await?;
         q.loadvm(snapshot).await?;
         let mut st = self.load(name)?;
@@ -797,10 +884,50 @@ impl QemuRuntime {
         !host::pid_alive(pid)
     }
 
+    fn check_snapshot_support(&self, st: &QemuState, live: bool) -> Result<()> {
+        if self.dir(&st.name).join("tpm").exists() {
+            return Err(VmmError::invalid(
+                "TPM instances do not support fork, checkpoint or restore",
+            ));
+        }
+        if live && st.os == GuestOs::Windows && st.arch == Arch::Aarch64 {
+            return Err(VmmError::invalid(
+                "Windows ARM NVMe live checkpoint/restore is unsupported; stop the VM first",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn wait_tpm(&self, st: &QemuState) -> Result<()> {
+        let pidfile = self.dir(&st.name).join("swtpm.pid");
+        if let Ok(pid) = std::fs::read_to_string(&pidfile) {
+            let pid = pid
+                .trim()
+                .parse()
+                .map_err(|_| VmmError::invalid("invalid swtpm pidfile"))?;
+            // Normally the supervisor reaps the helper; also recover a stale launch.
+            if !Self::wait_exit(pid, Duration::from_secs(2)).await {
+                host::signal(pid, "TERM");
+                if !Self::wait_exit(pid, Duration::from_secs(3)).await {
+                    return Err(VmmError::invalid("swtpm did not stop"));
+                }
+            }
+            // Socket removal precedes pidfile removal in the supervisor.
+            for _ in 0..20 {
+                if !pidfile.exists() {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            let _ = std::fs::remove_file(pidfile);
+        }
+        Ok(())
+    }
+
     async fn force_stop(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
         let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) else {
             st.pid = None;
-            return Ok(());
+            return self.wait_tpm(st).await;
         };
         if !graceful.is_zero() {
             if let Ok(mut q) = self.qmp(&st.name).await {
@@ -808,7 +935,7 @@ impl QemuRuntime {
             }
             if Self::wait_exit(pid, graceful).await {
                 st.pid = None;
-                return Ok(());
+                return self.wait_tpm(st).await;
             }
         }
         if let Ok(mut q) = self.qmp(&st.name).await {
@@ -819,7 +946,7 @@ impl QemuRuntime {
             Self::wait_exit(pid, Duration::from_secs(5)).await;
         }
         st.pid = None;
-        Ok(())
+        self.wait_tpm(st).await
     }
 }
 
@@ -1152,6 +1279,14 @@ impl Runtime for QemuRuntime {
             _ => spec,
         };
         validate_name(&spec.name)?;
+        if spec.os == GuestOs::Windows
+            && spec.effective_arch() == Arch::Aarch64
+            && (spec.memory_mb < 4096 || spec.cpus < 2)
+        {
+            return Err(VmmError::invalid(
+                "Windows ARM requires at least 4096 MiB memory and 2 CPUs",
+            ));
+        }
         crate::types::reject_sidecars(BackendKind::Qemu, spec)?;
         crate::cloudinit::check_guest_support(spec)?;
         let mut st = {
@@ -1182,7 +1317,7 @@ impl Runtime for QemuRuntime {
                                 .extension()
                                 .is_some_and(|e| e.eq_ignore_ascii_case("iso")) =>
                         {
-                            (None, Some(path.clone()))
+                            (None, Some(std::fs::canonicalize(path)?))
                         }
                         other => (
                             Some(
@@ -1208,6 +1343,11 @@ impl Runtime for QemuRuntime {
             }
         };
 
+        let mut effective_spec = spec.clone();
+        effective_spec.os = st.os;
+        effective_spec.arch = Some(st.arch);
+        let spec = &effective_spec;
+        crate::cloudinit::check_guest_support(spec)?;
         if !Self::is_running(&st) {
             // Linux guests always get SSH access: the caller's, the one this
             // instance already has, or a managed per-instance key.
@@ -1292,6 +1432,7 @@ impl Runtime for QemuRuntime {
             None => (source, None),
         };
         let mut src = self.load(src_name)?;
+        self.check_snapshot_support(&src, snapshot.is_some())?;
         if Self::is_running(&src) {
             return Err(VmmError::invalid(format!(
                 "'{src_name}' is running; stop it (or checkpoint it) before forking"
@@ -1348,6 +1489,7 @@ impl Runtime for QemuRuntime {
         validate_name(checkpoint)?;
         let _g = self.lock.lock().await;
         let mut st = self.load(name)?;
+        self.check_snapshot_support(&st, Self::is_running(&st))?;
         if Self::is_running(&st) {
             // Live: internal snapshot of RAM + devices + disks inside the
             // instance's qcow2. Restore with `restore()`, or fork `name@ckpt`
@@ -1463,6 +1605,9 @@ impl Runtime for QemuRuntime {
             .map(|s| Arc::new(SshExec::from_endpoint(s)) as Arc<dyn GuestExec>))
     }
 }
+
+#[cfg(all(test, unix))]
+mod tpm_tests;
 
 #[cfg(test)]
 mod tests {

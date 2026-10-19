@@ -1,0 +1,28 @@
+Support Windows ARM ISO installs with inbox QEMU devices and optional TPM
+
+Refs CUA-1882
+
+Before: ARM Windows used AHCI, virtio graphics/network and virtio-scsi installation media; no software TPM.
+After: Windows ARM uses ramfb, NVMe, USB network and USB installation media, with XHCI emitted before its explicitly bound devices. Other guests retain baseline argv, including Linux virgl. TPM is opt-in and persists beside the instance; a detached Unix supervisor waits for readiness and reaps swtpm after QEMU exits. Stop and retry wait for cleanup. TPM instances reject disk-only fork/checkpoint/restore; Windows ARM rejects live NVMe snapshots but permits stopped disk copies without TPM.
+
+User-supplied ISO paths are canonicalized before instance creation, including uppercase extensions. Windows ARM requires explicit OS/architecture, 4 GiB RAM, two CPUs, persistent Secure Boot firmware with Microsoft-enrolled variables, and defaults to a 64-GiB blank disk. Firmware is discovered as a matching AAVMF pair under the QEMU installation prefix or /usr/share/AAVMF. SSH/user-data and virgl are rejected for this guest.
+
+Validation:
+- Ran cargo test -p cua-vmm through sandbox Bash: 208 passed, 3 failed, 1 ignored (unit suite; integration suites not reached).
+- Failures: lume::ssh::tests::{separates_stderr_and_keeps_the_exit_code, streams_stdout_before_the_command_ends} report mktemp template errors; qemu::tests::missing_instance_and_bad_names fails its Existing-start expectation. No success claimed for the full suite.
+- New argv golden/device tests and supervisor tests pass. Five pre-change full-vector fixtures cover Windows x86, Linux ARM/x86 and Linux virgl ARM/x86. New Windows ARM full-vector fixture checks USB ordering. Supervisor tests cover readiness, detached handshake, timeout, helper failure, QEMU failure/exit and forced termination. Defaults, old JSON, seed rejection, minimum resources and missing uppercase ISO are tested.
+- No Mac/HVF acceptance test was possible here. Supplied spike validated QEMU 10.1.2 and swtpm/libtpms 0.10.1 built from source on M4; this implementation has no version gate. USB networking was not bound in WinPE and remains unverified in the installed OS.
+- Still required on Mac: use QEMU discovered by host::which, verify setup display/input, NVMe, TPM, secure firmware, installed networking, installation and restart. Check guest shutdown and kill -9 cleanup. Automatic swtpm data-channel-exit behavior and NVMe migration support were not independently verified; retain the supervisor and conservatively reject live NVMe snapshots.
+
+Per-file production-line budget (added / removed / net; tests and fixtures excluded):
+- src/qemu/args.rs: 53 / 23 / +30 (estimate 42 / 22 / +20)
+- src/qemu/mod.rs: 150 / 8 / +142 (estimate 128 / 54 / +74)
+- src/types.rs: 4 / 0 / +4 (estimate 6 / 0 / +6)
+- src/cloudinit.rs: 8 / 0 / +8 (additional seed-rejection requirement)
+- src/qemu/firmware.rs: 20 / 0 / +20 (additional Secure Boot requirement)
+- src/qemu/tpm.sh: 25 / 0 / +25 (supervisor)
+- src/host.rs: 0 / 0 / 0
+- Total: 260 / 31 / +229 versus estimated 176 / 76 / +100.
+- src/qemu/tpm_tests.rs, tests/argv/*.json and in-module tests: test-only, excluded. pr.txt: acceptance notes, excluded.
+
+Budget rationale: retained lifecycle safety instead of assuming unverified swtpm auto-exit. Shared snapshot guards, reused host discovery and existing launch plumbing, compressed the shell supervisor, and removed duplicate validation/restore checks. Additional USB ordering, persisted-guest checks, resource/seed guards and secure firmware discovery cannot be removed without dropping requested behavior. No dependencies or unrelated refactors.

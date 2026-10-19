@@ -215,6 +215,9 @@ pub struct StartSpec {
     pub arch: Option<Arch>,
     pub cpus: u32,
     pub memory_mb: u64,
+    /// Enable a persistent software TPM 2.0 (QEMU, Unix only).
+    #[serde(default)]
+    pub tpm: bool,
     /// Boot firmware (VM backends). `None` = the backend decides.
     #[serde(default)]
     pub firmware: Option<BootFirmware>,
@@ -427,6 +430,7 @@ impl StartSpec {
             firmware: None,
             cpus: 2,
             memory_mb: 2048,
+            tpm: false,
             disk_size_gb: None,
             ports: Vec::new(),
             env: BTreeMap::new(),

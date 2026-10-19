@@ -173,7 +173,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
-          git add libs/cua/crates/cua-contrib/matrix/ledger docs/content/docs/cua-sdk/guides/contrib-providers.mdx
+          git add libs/cua/crates/cua-contrib/matrix/ledger docs/content/docs/cua-sdk/guides/local-runtimes.mdx
           git commit -m "docs(cua-contrib): measured support matrix from the nightly doctor lanes"
           git push --force origin "$branch"
           gh pr view "$branch" >/dev/null 2>&1 || gh pr create --head "$branch" \

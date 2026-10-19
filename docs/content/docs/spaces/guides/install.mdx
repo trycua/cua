@@ -1,6 +1,6 @@
 ---
 title: Install
-description: 'Install the Cua Spaces app and the cua CLI on macOS, Windows or Linux, and what the first-run screens ask.'
+description: 'Install the Cua Spaces app and the cua CLI on macOS, Windows or Linux, what the first-run screens ask, and how the app keeps itself up to date.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -57,18 +57,17 @@ At a console the installer shows a checklist first. Add `--cli-only`
 
 ## First run
 
-The first time you open the app, it walks you through a few screens. You can
-skip most of them and change every choice later in **Settings**.
+The first time you open the app, it walks you through a short setup. The
+[Quickstart](/spaces/quickstart) shows each step.
 
-| Screen | What it does |
+| Step | What it does |
 |---|---|
-| Welcome | Starts the setup. |
-| Command line | Installs the `cua` command and adds it to your PATH. It shows only when the command is missing or out of date. |
-| Where should Cua Spaces show up? | Chooses how the app appears, for example the notch and menu bar, or the menu bar only. |
-| Sign in | Signs you in to reach your computers from other devices. You can skip it. |
-| AI agents | Gives your coding agents the `cua` skills and MCP server. See [Connect your agent](/spaces/guides/connect-your-agent). |
-| This machine | Chooses between reaching other machines, and setting this one up for [unattended access](/spaces/guides/unattended-access). |
-| You're all set | Offers a first Space and three prompts to try with your agent. |
+| A shared Space for every agent | Connects your agent: Claude Code, Codex, Hermes, OpenClaw or another one. See [Connect your agent](/spaces/guides/connect-your-agent). |
+| Checking your setup | Signs you in to Cua and asks for the two settings your agent needs: to control this computer and to see its screen. Then this computer is your first Space. |
+| Try your first request | A request to copy into your agent. It works right away. |
+| Give your agent its own Space | Optional: a fresh Linux or macOS computer inside this one, away from your files. |
+
+If you stop before every step is done, Home keeps a **Finish setting up** list.
 
 Cua Spaces launches at login by default, so the Spaces this computer provides
 and your persistent agents come back after a restart. Turn it off in **Settings,
@@ -79,7 +78,7 @@ General**.
 The supported package is the **.deb** on Ubuntu 24.04. It is sandboxed and
 installs the confirmation prompt the Keyvault needs. `sudo apt remove cua-spaces`
 turns off what the app set up (see
-[Unattended access](/spaces/guides/unattended-access#check-pause-remove)).
+[Check, pause or remove](/spaces/guides/add-a-computer#check-pause-or-remove)).
 
 The **AppImage** is a portable build, not a supported one. It cannot use the
 browser sandbox (it starts with `--no-sandbox`), and without the system's
@@ -91,8 +90,52 @@ For Linux Spaces created on this computer, the `cua` CLI uses Docker (gVisor
 access to `/dev/kvm` to run same-architecture guests quickly. Run
 `cua runtime doctor` to see what this computer has.
 
+## Updates
+
+Cua Spaces checks for new versions and downloads them in the background on
+macOS, Windows and Linux. The settings are in **Settings, About**, which also
+shows your version.
+
+The app checks when it starts and again every few hours. When a new version is
+ready, **Update ready** appears at the bottom of the sidebar, with **Restart to
+update** and a **What's new** link to the release notes. Nothing restarts until
+you click. If an agent is still working, the app asks first.
+
+In **Settings, About**:
+
+- **Check for and download updates automatically** turns the background checks on
+  or off. With it off, press **Check Now** to check by hand.
+- **Install a downloaded update when Cua Spaces quits** installs a downloaded
+  update when you quit the app. It needs automatic checks.
+- **Last check** says when the app last looked.
+
+On macOS, every update is the same notarized disk image as the download on the
+release page, and the app installs it only when its signature matches the key
+built into the app. Windows and Linux update through their own updater.
+
+### Stable or Beta
+
+**Update to:** picks the channel.
+
+- **Stable**: tested releases.
+- **Beta**: releases and prereleases, with new features sooner and rough edges.
+
+Going back to Stable from a newer beta keeps the version you have until a newer
+stable release is out.
+
+### After an update
+
+The first time the new version opens, it refreshes what Cua installed into your
+AI agents, the way `cua agents update` does: the Cua skill folders and the Cua
+MCP entries in Claude Code, Cursor and the other agents you set up. A skill
+folder you edited is left as you left it. It also restarts the Cua daemon when
+the app started it, so the daemon runs the new version too.
+
+This happens without any window. If something fails, the app shows one notice
+with what to run.
+
 ## Next
 
 - [Quickstart](/spaces/quickstart): connect an agent and run a first task.
-- [Plans](/spaces/guides/plans): what Free, Pro and Teams include.
-- [Updates](/spaces/guides/updates): how the app keeps itself current.
+- [Plans and Teams](/spaces/guides/teams): what Free, Pro and Teams include.
+- [Troubleshoot](/spaces/guides/troubleshoot): when a Space won't create, update first, then retry.

@@ -1,21 +1,26 @@
 ---
-title: Troubleshoot a failed create
-description: 'Fix a Space that does not create: the common causes (disk, container engine, virtualization, the two-VM limit, Local Network), how to retry, and how to ask for help.'
+title: Troubleshoot
+description: 'Fix a Space that does not create (disk, container engine, virtualization, the two-VM limit, Local Network), find help for agents and computers that will not connect, and ask for help.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
+Most problems are a Space that won't create, or an agent or computer that won't
+connect. This page covers a failed create in detail and points to the fix for the
+rest.
+
+## A Space won't create
+
 When a Space can't be created, Cua Spaces shows **Couldn't create this Space**
-with the reason, a **Try again** button and a **Remove from list** button. This
-page explains the usual reasons and what to do about each.
+with the reason, a **Try again** button and a **Remove from list** button.
 
 {/* VIDEO: Fix a Space that fails to create: read the reason, retry, and send a report (about 45 seconds) */}
 
-## Try these first
+### Try these first
 
 1. Press **Try again**. A retry reuses the image that already downloaded, so it
    is usually much faster than the first attempt.
-2. Update Cua Spaces to the latest version. See [Updates](/spaces/guides/updates).
+2. Update Cua Spaces to the latest version. See [Updates](/spaces/guides/install#updates) in Install.
 3. Run the checks in a terminal:
 
 ```bash test="cli-shape" id="cua-doctor-host"
@@ -23,7 +28,7 @@ cua runtime doctor     # which container engines and VM runtimes this computer h
 cua doctor             # host checks in one report
 ```
 
-## Find your reason
+### Find your reason
 
 Match the reason the app shows to the rows below. The word in parentheses is the
 fixed name Cua uses for the cause. See [Create failure kinds](/cua-sdk/concepts/telemetry-error-kinds)
@@ -40,14 +45,14 @@ for the full list.
 | macOS blocked the connection to the new VM (`local_network`) | Open **System Settings, Privacy & Security, Local Network**, turn on Cua Spaces, then try again. |
 | "The Cua daemon isn't running. Start Cua, or run `cua daemon start`." | Open Cua Spaces, or run `cua daemon start`. |
 
-## Creating on another machine
+### Creating on another computer
 
-To create a Space on one of your other machines, that machine must be online,
+To create a Space on one of your other computers, that computer must be online,
 provide Spaces, and be set up for your account. If the create fails with a name
 such as `ambiguous_host` or `host_capability_missing`, see the
-[troubleshooting table](/spaces/guides/host-spaces-on-your-spare-mac#troubleshooting).
+[spare Mac errors](/spaces/guides/add-a-computer#spare-mac-errors).
 
-## Stop a create that is stuck
+### Stop a create that is stuck
 
 Press **Cancel** in the toolbar of a Space that is being created. Cua Spaces
 removes the partial Space and keeps the finished image layers, so the next
@@ -72,6 +77,16 @@ system, and the Cua Spaces version from **Settings, About**.
   Reports are private: they go to Cua support by email, never to a public issue.
   Remove anything you don't want to share before you send.
 </Callout>
+
+## Other problems
+
+| What you see | Where to look |
+|---|---|
+| The agent has no `cua` tools, or can't reach a Space | [If it doesn't work](/spaces/guides/connect-your-agent#if-it-doesnt-work) in Connect your agent |
+| A computer never appears, or shows **Offline** | [If it doesn't work](/spaces/guides/add-a-computer#if-it-doesnt-work) in Add a computer |
+| An error name such as `capability_missing` or `permission_denied` | [Errors](/spaces/reference/errors) in the Spaces reference |
+| You want Cua Spaces gone, or a clean reinstall | [Uninstall Cua Spaces](/spaces/guides/uninstall), then [Install](/spaces/guides/install) |
+| Something else | Email support@trycua.com as described above |
 
 ## Next
 

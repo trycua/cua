@@ -168,7 +168,7 @@
         "libs/images/sandbox-images.json",
         "libs/images/bench/*/lock.json",
         "docs/content/docs/cua-sdk/quickstart.mdx",
-        "docs/content/docs/start-here/sandbox-images.mdx",
+        "docs/content/docs/cua-sdk/guides/images.mdx",
         "scripts/docs-generators/sandbox.test.ts",
         "scripts/docs-generators/headers/cua-sdk/runtime-support.md",
         "scripts/docs-generators/headers/cua-sdk/os-image-catalog.md",

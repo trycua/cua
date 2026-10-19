@@ -8,7 +8,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 A persistent agent is a harness with a name, a Space to work in, and a home in
 the [Cua Volume](/spaces/guides/cua-volume) at `agents/<name>/`. The harness keeps
 its memory in that home, so the agent remembers across runs, across a Space
-being deleted and created again, and across machines.
+being deleted and created again, and across computers.
 
 ```bash test="cli-shape" id="persistent-create"
 cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
@@ -72,7 +72,7 @@ cua agent resume ada
 | Space | Pause | Resume |
 |-------|-------|--------|
 | Local | Suspends the Space. | Resumes it. |
-| Your own machine or an added address | Only the agent pauses. | Only the agent resumes. |
+| Your own computer or an added address | Only the agent pauses. | Only the agent resumes. |
 
 ## What the agent gets
 
@@ -85,11 +85,11 @@ over the Space's own connection (no token enters the Space).
 | `volume_ls`, `volume_read`, `volume_write` | The drive, as `agent:<name>`: its home, `public/` (read) and its Space's folder. |
 | `volume_request_access` | Asks you for more; you approve in the app. |
 | `computer_list`, `computer_list_tools`, `computer_call` | Your computers you allowed this agent to use. |
-| `request_site_login` | [Sign in to a site](/spaces/guides/site-login) with a password from your Keyvault, after you approve. The agent never sees it. |
+| `request_site_login` | [Sign in to a site](/spaces/guides/keyvault#let-an-agent-sign-in-to-a-site) with a password from your Keyvault, after you approve. The agent never sees it. |
 
 ## Access to your computers
 
-`cua host setup` makes a machine a Space for your whole account. A persistent
+`cua host setup` makes a computer a Space for your whole account. A persistent
 agent reaches it only if you allow that agent by name. Allowing asks for Touch
 ID or your passphrase; revoking takes effect on the agent's next call; every
 grant, use and refusal is audited.

@@ -1,13 +1,15 @@
 ---
 title: Cua Volume
-description: 'One versioned drive per account, shared by every Space and agent: agent memory and outputs that outlive any Space, with default access rules, grants you approve, and an audit log.'
+description: 'One versioned drive per account, shared by every Space and agent: agent memory and outputs that outlive any Space, with default access rules, grants you approve, and an audit log. Also how to send a one-off file into a Space.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 
 Cua Volume keeps what outlives a Space: a persistent agent's memory, its
 outputs, and files the user shares with every Space. A Space's own disk goes
-away when the Space is deleted; the drive does not.
+away when the Space is deleted; the drive does not. To copy a one-off file into
+one Space instead, see [Send a file into a Space](#send-a-file-into-a-space).
 
 ## Layout
 
@@ -24,7 +26,7 @@ still reach the old content.
 
 | Principal | `public/` | `agents/<self>/` | `agents/<other>/` | `spaces/<this>/` | `spaces/<other>/` |
 |-----------|-----------|------------------|-------------------|------------------|-------------------|
-| You (app, CLI, agents on your machine) | rw | rw | rw | rw | rw |
+| You (app, CLI, agents on your computer) | rw | rw | rw | rw | rw |
 | Agent A in Space S | r | rw | none | rw | none |
 | Space S, no agent | r | none | none | rw | none |
 
@@ -103,12 +105,6 @@ that it does not verify.
 
 ## Show it in Finder
 
-<Callout type="info">
-Cua Volume is becoming **Cua Volume**. The mounted volume already carries the
-new name; the `cua volume` commands and `drive_*` tools keep their names for
-now.
-</Callout>
-
 The drive can appear as a volume named **Cua Volume**, so any app opens its
 files in place. It is off until you turn it on in Cua (Settings > Storage)
 or from a terminal:
@@ -178,7 +174,7 @@ the full set of numbers, including 1 GB rows and sync latency.
 Every Space mounts the same volume, so a program in the guest reads and
 writes it like any folder. The guest sees only that Space's view (the
 Space's row in the table above, or its agent's), and it never holds keys:
-your machine serves the view over the Space's own connection and applies the
+your computer serves the view over the Space's own connection and applies the
 access rules, the audit log and the secret scanner there.
 
 | Guest | How it mounts | Where |
@@ -201,7 +197,7 @@ not need to reconnect the Space:
   so no dead mount is left behind.
 - When it starts, the daemon unmounts anything a previous daemon left at the
   mount path (a crash, a force-quit) before it does anything else.
-- Your machine notices the connection closed, or that the new daemon reports
+- Your computer notices the connection closed, or that the new daemon reports
   the volume detached, and mounts the volume again, then restarts the hotspot
   if one was on. It retries with a growing wait (2 s, then 4 s, up to a
   minute) while the daemon is still coming up, and keeps a persistent agent's
@@ -210,11 +206,65 @@ not need to reconnect the Space:
   is `soft`, interruptible and times out in seconds, and the system marks it
   dead and unmounts it (`deadtimeout`).
 
+## Send a file into a Space
+
+To copy a one-off file or folder into one Space, without keeping it on the
+volume, use `send_file`. It puts the file in the Space user's `~/Downloads` (or a
+subfolder). Every file is verified by SHA-256 before it is published, and a
+transfer that does not land is an error.
+
+- For a folder, `.gitignore`, `.ignore` and a root `.dockerignore` are honored
+  (`respect_ignore_files`).
+- Nothing already in the Space is replaced by default. A file of the same name is
+  kept and the new copy lands as `name (1).ext` (`conflict: "rename"`). Pass
+  `conflict: "skip"` to keep only the existing file, or `conflict: "overwrite"`
+  to replace it.
+
+From [the examples in other languages](/spaces/guides/create-a-space-with-the-sdk#examples-in-other-languages):
+
+<Tabs items={['TypeScript', 'Rust', 'Swift']}>
+  <Tab value="TypeScript">
+    ```ts test="excerpt" id="ts-send-file" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-send-file"
+    const report = await this.space.sendFile(localPath, {
+      targetDirectory: subdir,
+      respectIgnoreFiles: true,
+      conflict: "rename",
+    })
+    if (!report.verified) throw new Error(`send_file of ${localPath} was not verified`)
+    ```
+  </Tab>
+  <Tab value="Rust">
+    ```rust test="excerpt" id="rs-send-file" source="samples/openkoalabot-example-tauri/src-tauri/core/src/files.rs#rs-send-file"
+    let report: SendFileReport = space
+        .send_file(
+            path,
+            SendFileOptions {
+                subdir: subdir.to_string(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="excerpt" id="sw-send-file" source="samples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Scenario/ScenarioRunner.swift#sw-send-file"
+    let report = try await handle().sendFile(
+        localPath: file.path,
+        options: SpaceSendFileOptions(targetDirectory: step["subdir"] as? String,
+                                      respectIgnoreFiles: true, conflict: "overwrite"))
+    ```
+  </Tab>
+</Tabs>
+
+Python: `await space.send_file(path, cua.SpaceSendFileOptions(target_directory="inbox"))`.
+Agents use the MCP tool `send_file` ([what your agent can do](/spaces/guides/connect-your-agent#what-your-agent-can-do)).
+The options are in the [`send_file` reference](/spaces/reference/commands-and-files#send_file).
+
 ## Sync across devices
 
-Two machines using the same bucket see each other's changes within
+Two computers using the same bucket see each other's changes within
 seconds. Each change is also written to a small change log in the bucket
-itself (`.cua-feed/`), and every machine checks it with a single listing
+itself (`.cua-feed/`), and every computer checks it with a single listing
 request, twice a second while things change, backing off to every 5 seconds
 when idle. No Cua service is involved; it works with your own S3, R2 or
 MinIO bucket.
@@ -226,7 +276,7 @@ at p95 for a 1 KiB file, and shows in the other's mounted volume 2 ms to
 0.34 s). While nothing changes, the check backs off, so the first change
 after a quiet period can take up to 5 seconds.
 
-When two machines change the same file, the write that reaches the bucket
+When two computers change the same file, the write that reaches the bucket
 last becomes the current version, and the other one is kept next to it as
 `name (conflict from <machine> <date>).ext`. Both stay in the file's
 history. Nothing is dropped silently.
@@ -237,7 +287,7 @@ cua volume status --json
 
 <Callout type="info">
 Keep the change log small with a bucket lifecycle rule that expires
-noncurrent versions under `.cua-feed/` after a day. Each machine already
+noncurrent versions under `.cua-feed/` after a day. Each computer already
 deletes feed entries older than a day.
 </Callout>
 
@@ -274,8 +324,8 @@ page. Nothing shows while the files stay on this Mac with no other device.
 
 **Volume page.** Status, not a file browser: Finder is. Open in Finder
 shows the volume, mounting it first when it is not mounted. Devices lists every
-machine on the bucket, this one with its pending uploads and last sync.
-Conflicts lists files two machines wrote at once: Open shows the other
+computer on the bucket, this one with its pending uploads and last sync.
+Conflicts lists files two computers wrote at once: Open shows the other
 copy in Finder, Resolve clears the entry and keeps both files.
 
 ![The Volume page with two devices and a conflict](/img/spaces/spaces-volume-page.png)
@@ -284,7 +334,7 @@ copy in Finder, Resolve clears the entry and keeps both files.
 
 | Backend | Where | Set up |
 |---------|-------|--------|
-| `fs` (default) | `~/.cua/volume/data` on this machine | Nothing |
+| `fs` (default) | `~/.cua/volume/data` on this computer | Nothing |
 | `s3` | Any S3-compatible bucket with versioning on (AWS S3, R2, MinIO) | `cua volume config set` and `cua volume config set-keys` |
 
 ```bash test="cli-shape" id="cua-volume-config"

@@ -11,15 +11,26 @@ const docs = path.resolve(__dirname, '..');
 const repo = path.resolve(docs, '..');
 const content = path.join(docs, 'content/docs');
 
-// In sidebar order: Cua Spaces first, then the products it builds on, then the
-// developer tools (SDK, CLI, Bench).
+// In sidebar order: Cua Spaces (the product), Cua Driver, then one More tools
+// group (the CLI, the SDK, Lume and Cua Bench).
 const PRODUCTS: Array<[string, string]> = [
   ['spaces', 'Cua Spaces'],
   ['cua-driver', 'Cua Driver'],
-  ['lume', 'Lume'],
-  ['cua-sdk', 'Cua SDK'],
   ['cua-cli', 'Cua CLI'],
+  ['cua-sdk', 'Cua SDK'],
+  ['lume', 'Lume'],
   ['cua-bench', 'Cua Bench'],
+];
+// The root meta.json: the products in order, with the More tools separator.
+const ROOT_ORDER = [
+  'index',
+  'spaces',
+  'cua-driver',
+  '---More tools---',
+  'cua-cli',
+  'cua-sdk',
+  'lume',
+  'cua-bench',
 ];
 // Sections in their only allowed order; `examples` and `concepts` are optional.
 const SECTIONS = ['index', 'quickstart', 'guides', 'examples', 'concepts', 'reference'];
@@ -30,9 +41,6 @@ const SECTION_TITLES: Record<string, string> = {
   concepts: 'Concepts',
   reference: 'Reference',
 };
-// The one non-product section: end-to-end walkthroughs for the Cua Driver, Lume,
-// SDK and Bench products, listed first. Spaces walkthroughs live in Spaces.
-const START_HERE: [string, string] = ['start-here', 'Start here'];
 // The docs home is the designed landing; its frontmatter feeds it.
 // Each example: a title, a page, alt text and its media (an image, or a
 // video with its poster); the description is optional.
@@ -68,12 +76,12 @@ function slugs(): Set<string> {
   );
 }
 
-test('the root lists Start here, then the products in order', () => {
-  assert.deepEqual(meta('').pages, [
-    'index',
-    START_HERE[0],
-    ...PRODUCTS.map(([dir]) => dir),
-  ]);
+test('the root lists the products in order, with the CLI, SDK, Lume and Bench under More tools', () => {
+  assert.deepEqual(meta('').pages, ROOT_ORDER);
+  assert.deepEqual(
+    ROOT_ORDER.filter((page) => page !== 'index' && !page.startsWith('---')),
+    PRODUCTS.map(([dir]) => dir)
+  );
   const stray = readdirSync(content).filter(
     (name) =>
       name.endsWith('.mdx') && !ROOT_PAGES.has(name)
@@ -82,30 +90,7 @@ test('the root lists Start here, then the products in order', () => {
   const dirs = readdirSync(content).filter((name) =>
     statSync(path.join(content, name)).isDirectory()
   );
-  assert.deepEqual(
-    dirs.sort(),
-    [START_HERE[0], ...PRODUCTS.map(([dir]) => dir)].sort()
-  );
-});
-
-test('Start here is a flat list of walkthroughs', () => {
-  const [dir, title] = START_HERE;
-  const m = meta(dir);
-  assert.equal(m.title, title);
-  assert.notEqual(m.root, true, `${dir} lives in the main sidebar, not its own tab`);
-  const pages = m.pages ?? [];
-  // Its Overview is the docs home (index.mdx), so it has no index of its own.
-  assert.ok(!pages.includes('index'), `${dir} has no index: its Overview is the docs home`);
-  assert.equal(pages[0], 'sandbox-images', `${dir}/meta.json opens with Sandbox images`);
-  const files = readdirSync(path.join(content, dir)).filter((name) => name !== 'meta.json');
-  for (const name of files) {
-    assert.ok(name.endsWith('.mdx'), `${dir}/${name}: Start here has no subfolders`);
-  }
-  assert.deepEqual(
-    files.map((name) => name.replace(/\.mdx$/, '')).sort(),
-    [...pages].sort(),
-    `${dir}/meta.json lists exactly its pages`
-  );
+  assert.deepEqual(dirs.sort(), PRODUCTS.map(([dir]) => dir).sort());
 });
 
 test('the docs home features its examples with real pages and media', () => {

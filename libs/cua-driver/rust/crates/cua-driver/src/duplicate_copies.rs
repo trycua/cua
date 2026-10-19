@@ -834,14 +834,22 @@ identifier:                 com.trycua.driver
 
     #[test]
     fn run_program_returns_stdout_only_for_a_zero_exit_within_the_timeout() {
-        let ok = run_program("/bin/echo", &["hi"], Duration::from_secs(5));
+        // `/bin/sh` is the only absolute path every host has, including the
+        // Nix build sandbox, which has no `/bin/echo` or `/usr/bin/false`. Only
+        // shell builtins run here, so a missing tool cannot fake a `None`.
+        let sh = "/bin/sh";
+        let ok = run_program(sh, &["-c", "echo hi"], Duration::from_secs(5));
         assert_eq!(ok.as_deref(), Some("hi\n"));
         assert_eq!(
-            run_program("/usr/bin/false", &[], Duration::from_secs(5)),
+            run_program(sh, &["-c", "echo hi; exit 1"], Duration::from_secs(5)),
             None
         );
         assert_eq!(
-            run_program("/bin/sleep", &["5"], Duration::from_millis(100)),
+            run_program(
+                sh,
+                &["-c", "while :; do :; done"],
+                Duration::from_millis(100)
+            ),
             None
         );
     }

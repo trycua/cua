@@ -23,8 +23,8 @@
 //!
 //! [`WindowDragTracker`] is that state machine over any [`WindowSource`], so
 //! it is tested with fixture window lists. [`WindowDragMonitor`] runs it on
-//! the real machine: macOS today (a listen-only `CGEventTap`, which needs
-//! the Accessibility permission). Linux and Windows return
+//! the real machine: macOS today (a listen-only `CGEventTap` for the left
+//! mouse button, which needs no permission: only keyboard taps do). Linux and Windows return
 //! [`UxError::Unsupported`]: Wayland does not let a client observe other
 //! apps' windows or the global pointer, and the X11 and Windows backends are
 //! not built yet.
@@ -437,26 +437,21 @@ pub fn supported() -> bool {
     cfg!(target_os = "macos")
 }
 
-/// Whether this process may observe global mouse events (macOS
-/// Accessibility). `false` elsewhere.
+/// Whether this process may observe global mouse events. On macOS a
+/// listen-only tap on the left mouse button needs no permission (only
+/// keyboard taps need Input Monitoring or Accessibility), so this is `true`
+/// there; `false` elsewhere.
 pub fn permission_granted() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        super::window_macos::ax_trusted()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        false
-    }
+    cfg!(target_os = "macos")
 }
 
-/// Asks for the permission (opens System Settings on macOS). Returns the
-/// state after asking.
+/// Kept for callers that offer a button: nothing to ask on macOS (see
+/// [`permission_granted`]), so it never prompts and returns the state.
 pub fn request_permission() -> Result<bool, UxError> {
     guard()?;
     #[cfg(target_os = "macos")]
     {
-        Ok(super::window_macos::request_ax_trust())
+        Ok(true)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -514,20 +509,12 @@ pub struct WindowDragMonitor {
 }
 
 impl WindowDragMonitor {
-    /// Starts watching; `on_event` runs on the monitor thread. Fails with
-    /// `PermissionDenied` without the Accessibility permission (macOS) and
-    /// `Unsupported` elsewhere.
+    /// Starts watching; `on_event` runs on the monitor thread. Fails when
+    /// macOS refuses the event tap, and with `Unsupported` elsewhere.
     pub fn start(on_event: Box<dyn Fn(WindowDragEvent) + Send + 'static>) -> Result<Self, UxError> {
         guard()?;
         #[cfg(target_os = "macos")]
         {
-            if !super::window_macos::ax_trusted() {
-                return Err(UxError::PermissionDenied(
-                    "window-drag detection needs the Accessibility permission \
-                     (System Settings, Privacy & Security, Accessibility)"
-                        .into(),
-                ));
-            }
             Ok(Self {
                 inner: super::window_macos::Monitor::start(on_event)?,
             })

@@ -19,6 +19,10 @@
 # Contents/Library/LaunchAgents), then signs it ad hoc as
 # com.trycua.spaces.macos.
 #
+# A release build strips every binary it ships (local symbols from the SDK
+# dylib, all but the dynamic ones from the executables) after writing their
+# dSYMs to <out-dir>/dSYMs, which crash reports symbolicate against.
+#
 #   scripts/build-app.sh [debug|release] [out-dir]
 #
 # CUA_APP_ARCHS="arm64 x86_64" builds each architecture and joins them with
@@ -139,14 +143,35 @@ cp "$spacesd" "$helper_app/Contents/MacOS/cua-spacesd"
 chmod 0755 "$helper_app/Contents/MacOS/cua-spacesd"
 cp "$here/Support/AppIcon.icns" "$helper_app/Contents/Resources/AppIcon.icns"
 cp "$here/Support/Helper/com.trycua.spaces.helper.plist" "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist"
-# Nested code first: the daemon keeps a signature of its own (the release's
-# Developer ID one, or ad hoc for a local build), then the helper bundle.
-codesign -v "$helper_app/Contents/MacOS/cua-spacesd" 2>/dev/null ||
-  codesign -s - -f -i com.trycua.cua-env-driver "$helper_app/Contents/MacOS/cua-spacesd"
+[ -x "$cli" ] && cp "$cli" "$app/Contents/MacOS/cua"
+
+# Release: symbols go to dSYMs, not into the download (about 30-40% of each
+# binary). Executables keep only what dynamic linking needs; the dylib keeps
+# its exported (global) symbols, which the app links against.
+if [ "$config" = release ]; then
+  syms="$out/dSYMs"
+  rm -rf "$syms"
+  mkdir -p "$syms"
+  for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" \
+    "$helper_app/Contents/MacOS/Cua Spaces Helper" "$helper_app/Contents/MacOS/cua-spacesd"; do
+    [ -f "$f" ] || continue
+    # A prebuilt binary (cua-spacesd) has no debug map: its dSYM still
+    # carries the symbol table, which is what symbolication needs.
+    dsymutil "$f" -o "$syms/$(basename "$f").dSYM" 2>/dev/null
+    case "$f" in
+      *.dylib) strip -x "$f" 2>/dev/null ;;
+      *) strip "$f" 2>/dev/null ;;
+    esac
+  done
+fi
+
+# Nested code first: the daemon gets a signature of its own (ad hoc here;
+# build-release.sh signs it with the release identity), then the helper
+# bundle.
+codesign -s - -f -i com.trycua.cua-env-driver "$helper_app/Contents/MacOS/cua-spacesd"
 codesign -s - -f -i com.trycua.spaces.helper "$helper_app"
 
 if [ -x "$cli" ]; then
-  cp "$cli" "$app/Contents/MacOS/cua"
   codesign -s - -f -i com.trycua.cua "$app/Contents/MacOS/cua"
 else
   echo "note: no cua CLI at $cli (cargo build --release -p cua-spaces-cli); the app will not install one" >&2

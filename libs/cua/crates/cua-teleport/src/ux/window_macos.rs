@@ -12,7 +12,6 @@ use std::ffi::c_void;
 use std::sync::Mutex;
 
 use core_foundation::base::{CFType, TCFType};
-use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::number::CFNumber;
 use core_foundation::runloop::CFRunLoop;
@@ -36,11 +35,10 @@ use super::window::{
     thumbnail_rgba,
 };
 
-#[link(name = "ApplicationServices", kind = "framework")]
+#[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
-    fn AXIsProcessTrusted() -> u8;
-    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
-    static kAXTrustedCheckOptionPrompt: CFStringRef;
+    /// Whether this process may capture the screen. Never prompts.
+    fn CGPreflightScreenCaptureAccess() -> bool;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -59,21 +57,6 @@ unsafe extern "C" {
         windows: core_foundation::array::CFArrayRef,
     ) -> core_foundation::array::CFArrayRef;
     fn CGSWindowIsOrderedIn(cid: i32, wid: u32, out: *mut u8) -> i32;
-}
-
-pub fn ax_trusted() -> bool {
-    unsafe { AXIsProcessTrusted() != 0 }
-}
-
-pub fn request_ax_trust() -> bool {
-    unsafe {
-        let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
-        let options = CFDictionary::from_CFType_pairs(&[(
-            key.as_CFType(),
-            CFBoolean::true_value().as_CFType(),
-        )]);
-        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) != 0
-    }
 }
 
 fn num(dict: &CFDictionary<CFString, CFType>, key: CFStringRef) -> Option<CFNumber> {
@@ -241,7 +224,17 @@ pub fn display_union() -> Option<Rect> {
 /// only), downscaled and PNG-encoded in memory. Captured at the display's
 /// nominal (1x) resolution: a preview is at most a few hundred pixels wide,
 /// and the Retina capture was four times the pixels to copy and drop.
+///
+/// Only when this process already has Screen Recording: the app never asks
+/// for it itself (a capture without it makes macOS prompt). In Cua Spaces,
+/// macOS files the host service's Screen Recording (Cua Spaces Helper, a
+/// login item inside the app) under the app, so once the service is
+/// allowed this preview works too.
 pub fn capture(window_id: u32, max_width: usize) -> Option<Vec<u8>> {
+    // SAFETY: no arguments, no preconditions.
+    if !unsafe { CGPreflightScreenCaptureAccess() } {
+        return None;
+    }
     let null_rect = CGRect::new(
         &CGPoint::new(f64::INFINITY, f64::INFINITY),
         &CGSize::new(0.0, 0.0),

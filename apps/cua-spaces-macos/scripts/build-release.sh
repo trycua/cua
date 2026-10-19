@@ -157,6 +157,13 @@ helper_app="$app/Contents/Library/LoginItems/Cua Spaces Helper.app"
   { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $short" "$helper_app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$helper_app/Contents/Info.plist"
+# The symbols build-app.sh took out of the binaries, for symbolicating crash
+# reports (the release workflow keeps them as an artifact; not shipped).
+if [ -d "$out/dSYMs" ]; then
+  rm -f "$out/cua-spaces-$version-dSYMs.zip"
+  (cd "$out" && ditto -c -k --keepParent dSYMs "cua-spaces-$version-dSYMs.zip")
+  rm -rf "$out/dSYMs"
+fi
 for key in SUFeedURL SUPublicEDKey; do
   /usr/libexec/PlistBuddy -c "Print :$key" "$plist" >/dev/null 2>&1 || { echo "Info.plist has no $key" >&2; exit 1; }
 done

@@ -44,6 +44,8 @@ futures-util = "0.3"
 uuid = { workspace = true }
 base64 = { workspace = true }
 sha2 = "0.10"
+# Tabs of a bound target keep the order the browser reported them in.
+indexmap = "2"
 url = "2.5"
 chacha20poly1305 = { workspace = true }
 hkdf = { workspace = true }

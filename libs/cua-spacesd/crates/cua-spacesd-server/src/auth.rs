@@ -440,8 +440,9 @@ impl Auth {
     }
 
     /// Checks the token in `authorization` **or** `x-cua-env-authorization`
-    /// (the Fleet gateway consumes and strips `authorization`, so the SDK
-    /// sends the env token in the alternate header through `/api/svc`).
+    /// (a gateway in front of the daemon may consume and strip
+    /// `authorization`, so the SDK sends the env token in the alternate header
+    /// when it goes through one).
     /// Always true with no token.
     pub fn check_headers(&self, headers: &http::HeaderMap) -> bool {
         match self.authenticate_external(headers) {

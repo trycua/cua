@@ -1405,7 +1405,8 @@ mod tests {
 pub struct CreateSpaceOptions {
     /// Image (default: the canonical Linux image).
     pub image: Option<String>,
-    /// Where: `local` (free) or `cloud` (metered). Unset: the user default.
+    /// Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+    /// `modal`) or `host:<name>`. Unset: the user default.
     pub on: Option<String>,
     /// `auto` (default), `container` or `vm`.
     pub kind: Option<String>,

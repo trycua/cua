@@ -31788,8 +31788,9 @@ data class SpaceCreateOptions (
     var `image`: kotlin.String? = null
     ,
     /**
-     * Where: `local` (free) or `cloud` (metered). `None`: the user default
-     * (`default.on`, `CUA_DEFAULT_ON`, else `local`).
+     * Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+     * `modal`) or `host:<name>`. `None`: the user default (`default.on`,
+     * `CUA_DEFAULT_ON`, else `local`).
      */
     var `on`: kotlin.String? = null
     ,

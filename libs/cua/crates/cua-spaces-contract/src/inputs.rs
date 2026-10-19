@@ -92,7 +92,7 @@ pub enum SpaceKind {
     Auto,
     /// A container (gVisor, or runc locally).
     Container,
-    /// A virtual machine (QEMU or Lume locally, KubeVirt in the cloud).
+    /// A virtual machine (QEMU or Lume locally, or one in your own cloud account).
     Vm,
 }
 
@@ -114,8 +114,9 @@ pub struct CreateSpace {
     /// (`ghcr.io/trycua/linux:24.04`), whose variant follows the kind.
     #[serde(default)]
     pub image: Option<String>,
-    /// Where it runs: `local` (this machine, free), `cloud` (Cua cloud,
-    /// metered), or `host:<machine>`: one of the user's own machines that
+    /// Where it runs: `local` (this machine, free), `aws`, `gcp` or `modal`
+    /// (your own cloud account, connected with `cloud_connect` and billed
+    /// there), or `host:<machine>`: one of the user's own machines that
     /// provides Spaces (`cua host setup --provide-spaces` on it), named by
     /// id or by words from its name ("host:spare mac mini" matches "Mac
     /// mini (spare)" or `dillons-mac-mini`). Default: the user's default
@@ -130,8 +131,8 @@ pub struct CreateSpace {
     pub kind: Option<SpaceKind>,
     /// Which engine. Default `auto`: the safest one for the location and
     /// kind. Local: `gvisor` or `runc` (containers), `qemu` or `lume`
-    /// (VMs). Cloud: `gvisor` (containers), `kubevirt` (VMs). Anything
-    /// else fails with `invalid_placement`, listing the valid values.
+    /// (VMs). Anything else fails with `invalid_placement`, listing the
+    /// valid values.
     #[serde(default)]
     pub runtime: Option<String>,
     /// Name. Default: a generated `space-<hex>`.

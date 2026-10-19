@@ -382,7 +382,6 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   async cloudAvailable(): Promise<boolean> {
-    if (this.env.FLEETS_TOKEN !== undefined || this.env.CUA_CLIENT_ID !== undefined) return true;
     return (await bounded(PROBE_SECONDS, () => this.cua.auth().status().loggedIn)) ?? false;
   }
 

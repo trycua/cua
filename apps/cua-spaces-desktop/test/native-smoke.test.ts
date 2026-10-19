@@ -51,7 +51,7 @@ describe.skipIf(!built)("the native layer in Node", () => {
   });
 
   it("lists no Spaces in an empty cua home, with no daemon", async () => {
-    const cua = native.Cua.auto(native.CuaConfig.create({ fleetFromEnv: false, fleetFromSession: false, spacesHome: path.join(home, ".cua") }));
+    const cua = native.Cua.auto(native.CuaConfig.create({ spacesHome: path.join(home, ".cua") }));
     expect(cua.mode()).toBe(native.CuaMode.Embedded);
     expect(await cua.spaces().list()).toEqual([]);
   });

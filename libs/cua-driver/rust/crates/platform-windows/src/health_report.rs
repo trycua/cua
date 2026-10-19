@@ -210,7 +210,7 @@ fn arch_label() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
+    use cua_driver_core::health_report::HealthReportTool;
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
 

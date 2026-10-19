@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for cua-spacesd in the logged-in GUI session (Aqua), so
+  desktop capture and accessibility run with the user's TCC grants.
+  Install to ~/Library/LaunchAgents/ (install.sh does this) and load with
+  `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.trycua.spacesd.plist`.
+  The token is read from ~/.cua/spacesd/token (CUA_ENV_TOKEN_FILE).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trycua.spacesd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PREFIX__/bin/cua-spacesd</string>
+    <string>serve</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CUA_ENV_TOKEN_FILE</key>
+    <string>__HOME__/.cua/spacesd/token</string>
+    <key>CUA_ENV_LOG</key>
+    <string>info</string>
+  </dict>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/cua-spacesd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/cua-spacesd.log</string>
+</dict>
+</plist>

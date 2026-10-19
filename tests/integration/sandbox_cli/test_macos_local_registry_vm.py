@@ -2,7 +2,7 @@
 
     cua sb launch ghcr.io/trycua/macos-tahoe-cua@sha256:... --local --json
     # parse name from JSON output, connect with SDK, run assertions
-    cua sb delete <name> --local
+    cua sb delete --force <name> --local
 
 Mirrors tests/integration/sandbox_sdk/test_macos_local_registry_vm.py but exercises the
 CLI launch path. The registry ref is passed to Image.from_registry(), which
@@ -52,7 +52,7 @@ async def test_macos_local_registry_vm():
             screenshot = await sb.screenshot()
             assert screenshot[:4] == b"\x89PNG"
     finally:
-        _cua("sb", "delete", name, "--local")
+        _cua("sb", "delete", "--force", name, "--local")
 
 
 async def main():
@@ -70,7 +70,7 @@ async def main():
             with open("/tmp/cli_macos_local_registry_vm.png", "wb") as f:
                 f.write(screenshot)
     finally:
-        _cua("sb", "delete", name, "--local")
+        _cua("sb", "delete", "--force", name, "--local")
 
 
 if __name__ == "__main__":

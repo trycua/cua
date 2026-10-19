@@ -22,14 +22,14 @@ for item in items:
 
 ## Rules
 
-1. **Python loops over items** — never the agent
-2. **Two agents per item** — creator does work, auditor verifies independently
-3. **One submit tool per agent** — no get_next, no submit_results, no update_and_submit
-4. **Auditor uses a checklist** — returns `[{item, passed: bool}]`, never a score
-5. **Python calculates scores** — from checklist bools, never ask agent for a number
-6. **Session continuation on retry** — pass `session_id` so creator keeps context
-7. **Pre-boot sandbox in Python** — agents never waste turns on setup
-8. **Action-script prompts** — numbered steps with exact tool calls, not open-ended
+1. **Python loops over items**: never the agent
+2. **Two agents per item**: creator does work, auditor verifies independently
+3. **One submit tool per agent**: no get_next, no submit_results, no update_and_submit
+4. **Auditor uses a checklist**: returns `[{item, passed: bool}]`, never a score
+5. **Python calculates scores**: from checklist bools, never ask agent for a number
+6. **Session continuation on retry**: pass `session_id` so creator keeps context
+7. **Pre-boot sandbox in Python**: agents never waste turns on setup
+8. **Action-script prompts**: numbered steps with exact tool calls, not open-ended
 
 ## Anti-Patterns
 

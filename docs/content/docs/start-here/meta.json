@@ -1,0 +1,11 @@
+{
+  "title": "Start here",
+  "icon": "GraduationCap",
+  "pages": [
+    "sandbox-images",
+    "drive-your-first-app",
+    "create-a-local-macos-sandbox",
+    "run-in-github-actions",
+    "your-first-cua-bench-task"
+  ]
+}

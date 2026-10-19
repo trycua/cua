@@ -80,13 +80,14 @@ DOM query, not from a platform accessibility API, and the schema's existing
 enums have no value for "live DOM query". `provenance["ax_tree_method"]`
 states exactly what it is.
 
-## Honest limitations: the `simulated` provider
+## Honest limitations: the retired `simulated` provider
 
-The bundled task envs declare `provider: "native"` (a Docker/QEMU desktop).
-For CI-friendly, GPU-free generation this module can override that to
-cua-bench's own `simulated` (Playwright) provider -- the same provider
-cua-bench's own test suite uses. Two real consequences, both handled and
-disclosed rather than papered over:
+The bundled task envs declare `provider: "native"`, and since cua-bench 0.3
+that is where they run (a real sandbox, the local Linux container by
+default). Earlier data from this module was generated on cua-bench's
+`simulated` (Playwright) provider, removed in 0.3 (a request for it now runs
+on the Linux container). Two consequences it had, kept here for the data it
+produced:
 
 **1. Window sizing.** That provider renders its window-content iframe about
 150px tall regardless of the height the env's own `launch_window(...)` asked
@@ -715,10 +716,10 @@ async def record_episode(
     env_dir: str | Path,
     task_index: int,
     out_dir: Path | None = None,
-    provider: str | None = "simulated",
+    provider: str | None = None,
     split: str = "train",
     capture_screenshots: bool = True,
-    fit_layout: bool = True,
+    fit_layout: bool = False,
 ) -> RecordedEpisode:
     """Drives ONE real episode of ONE real `cua-bench` task env and records
     every real oracle action with the real live state it was taken from.
@@ -729,11 +730,10 @@ async def record_episode(
     call, so each real action is captured exactly once, with the real
     screenshot and the real DOM state as they were *immediately before* it.
 
-    `provider=None` leaves the env's own declared provider (`native`) alone;
-    the default `"simulated"` swaps in cua-bench's own Playwright provider
-    (see the module docstring's honest-limitation note). `fit_layout` applies
-    `fit_window_layout` after setup, which that provider needs for the pages
-    to be rendered at their own requested size at all.
+    `provider=None` (the default) leaves the env's own declared provider
+    (`native`) alone: the episode runs in a real sandbox. `fit_layout` applies
+    `fit_window_layout`, which only mattered on cua-bench's retired
+    `simulated` provider.
     """
     from cua_bench.core import make
 
@@ -911,14 +911,14 @@ async def generate_dataset(
     dataset_dir: str | Path,
     out_dir: Path,
     env_names: tuple[str, ...] = ENV_NAMES,
-    provider: str | None = "simulated",
+    provider: str | None = None,
     split: str = "train",
     max_options: int = 10,
     modality_available: tuple[str, ...] = ("multimodal", "text"),
     seed: int = 0,
     require_oracle_success: bool = False,
     capture_screenshots: bool = True,
-    fit_layout: bool = True,
+    fit_layout: bool = False,
 ) -> dict[str, list[CuaTask]]:
     """Rolls out every real parameterization of every requested real
     `cua-bench-basic` env and returns `{"train": [...], "val": [...],

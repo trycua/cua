@@ -51,6 +51,10 @@ use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolR
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_MINIMIZE};
 
+#[path = "support/foreground_text_oracle.rs"]
+mod foreground_text_oracle;
+use foreground_text_oracle::{ascii_escape, normalize_line_endings, stable_text};
+
 // ── harness launcher ─────────────────────────────────────────────────────────
 
 fn harness_exe() -> PathBuf {
@@ -532,8 +536,7 @@ fn harness_wpf_counter_invoke() {
                 driver.call(
                     "click",
                     serde_json::json!({
-                        "pid": pid as i64, "window_id": wid, "element_index": idx,
-                        "snapshot_id": pre.snapshot_id(),
+                        "pid": pid as i64, "window_id": wid, "element_token": pre.element_token(idx),
                         "delivery_mode": "background"
                     }),
                 )
@@ -607,8 +610,7 @@ fn harness_wpf_minimized_element_click_refuses_without_side_effects() {
                     serde_json::json!({
                         "pid": pid as i64,
                         "window_id": wid,
-                        "element_index": idx,
-                        "snapshot_id": ready.snapshot_id(),
+                        "element_token": ready.element_token(idx),
                         "delivery_mode": "background"
                     }),
                 )
@@ -809,8 +811,7 @@ fn harness_wpf_type_text() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "element_token": snap.element_token(idx),
                     "text": "harness-typed",
                     "delivery_mode": "foreground"
                 }),
@@ -852,6 +853,151 @@ fn harness_wpf_type_text() {
 
 #[test]
 #[ignore]
+fn harness_wpf_type_text_foreground_single_line_application_state() {
+    const TEXT: &str = "FOREGROUND-SINGLE-19 \u{4e2d}\u{6587} 12345 \u{1f642}";
+
+    let mut case = native_foreground_case(
+        "wpf",
+        "type_text",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+    );
+    case.cell_id.push_str("-single-line-state");
+    let cell_id = case.cell_id.clone();
+
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("create isolated WPF state directory");
+        let state_path = state_dir.path().join("fixture-state.json");
+        let mut driver = McpDriver::spawn_named(&cell_id)
+            .expect("required source-built Windows driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("WPF main window not found");
+        assert_eq!(stable_text(&state_path, "txt-input"), "");
+
+        let snap = snapshot(&mut driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.tree_text(), "txt-input")
+            .expect("txt-input not in WPF snapshot");
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_token": snap.element_token(idx),
+                "text": TEXT,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "foreground type_text failed: {}",
+            response.text()
+        );
+        assert_eq!(response.structured()["route"], "global_input");
+        assert_eq!(stable_text(&state_path, "txt-input"), TEXT);
+        assert_eq!(stable_text(&state_path, "txt-deferred-input"), "");
+
+        drop(driver);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_type_text_multiline_application_state() {
+    const TEXT: &str = concat!(
+        "\n",
+        "CUA-MULTILINE-START\n",
+        "ASCII-LF-A-31\nASCII-LF-B-47\n",
+        "ASCII-CRLF-A-52\r\nASCII-CRLF-B-68\n",
+        "ASCII-CR-A-13\rASCII-CR-B-24\n",
+        "\u{8f66}\u{6b21} G7391\r\n",
+        "\u{4e2d}\u{6587} 12345\n",
+        "EMPTY-A-17\n\n\nEMPTY-B-29\n",
+        "EMOJI-A \u{1f642} 123\r\n",
+        "EMOJI-B \u{1f680} 456\n",
+        "CUA-MULTILINE-END\n"
+    );
+
+    let mut case = native_foreground_case(
+        "wpf",
+        "type_text",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+    );
+    case.cell_id.push_str("-multiline");
+    let cell_id = case.cell_id.clone();
+
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("create isolated WPF state directory");
+        let state_path = state_dir.path().join("fixture-state.json");
+        let mut driver = McpDriver::spawn_named(&cell_id)
+            .expect("required source-built Windows driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("WPF main window not found");
+        assert_eq!(
+            stable_text(&state_path, "txt-multiline-input"),
+            "",
+            "multiline fixture must start blank"
+        );
+
+        let snap = snapshot(&mut driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.tree_text(), "txt-multiline-input")
+            .expect("txt-multiline-input not in WPF snapshot");
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_token": snap.element_token(idx),
+                "text": TEXT,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "WPF foreground multiline type_text failed: {}",
+            response.text()
+        );
+        assert_eq!(
+            response.structured()["route"],
+            "global_input",
+            "foreground multiline input must use SendInput: {}",
+            response.structured()
+        );
+
+        let actual = stable_text(&state_path, "txt-multiline-input");
+        assert_eq!(
+            normalize_line_endings(&actual),
+            normalize_line_endings(TEXT),
+            "WPF app-owned multiline state differs; actual={} expected={}",
+            ascii_escape(&actual),
+            ascii_escape(TEXT)
+        );
+        assert_eq!(
+            stable_text(&state_path, "txt-deferred-input"),
+            "",
+            "foreground multiline input leaked to the startup-focused decoy"
+        );
+
+        drop(driver);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_set_value() {
     execute_case(
         background_case("set_value", DriverRoute::UiaValue),
@@ -865,8 +1011,7 @@ fn harness_wpf_set_value() {
                     driver.call(
                         "set_value",
                         serde_json::json!({
-                            "pid": pid as i64, "window_id": wid, "element_index": idx,
-                            "snapshot_id": snap.snapshot_id(),
+                            "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                             "value": "via-uia-setvalue"
                         }),
                     )
@@ -909,8 +1054,7 @@ fn harness_wpf_deferred_type_text_requires_fresh_snapshot_before_retry() {
                             serde_json::json!({
                                 "pid": pid as i64,
                                 "window_id": wid,
-                                "element_index": idx,
-                                "snapshot_id": snap.snapshot_id(),
+                                "element_token": snap.element_token(idx),
                                 "text": "deferred-once",
                                 "delivery_mode": "background"
                             }),
@@ -981,8 +1125,7 @@ fn harness_wpf_right_click() {
             let resp = driver.call(
                 "right_click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1025,8 +1168,7 @@ fn harness_wpf_double_click() {
             let resp = driver.call(
                 "double_click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1162,8 +1304,7 @@ fn harness_wpf_scroll() {
                     serde_json::json!({
                         "pid": pid as i64,
                         "window_id": wid,
-                        "element_index": idx,
-                        "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(idx),
                         "delivery_mode": "foreground"
                     }),
                 );
@@ -1222,8 +1363,7 @@ fn harness_wpf_modal_messagebox() {
             let open = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1284,8 +1424,7 @@ fn harness_wpf_modal_messagebox() {
             let dismiss = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": modal_wid, "element_index": cancel_idx,
-                    "snapshot_id": modal_snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": modal_wid, "element_token": modal_snap.element_token(cancel_idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1317,8 +1456,7 @@ fn harness_wpf_owned_popup() {
             let open = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1377,8 +1515,7 @@ fn harness_wpf_layered_popup_capture() {
             let open = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1593,8 +1730,7 @@ fn harness_wpf_slider_increase_large() {
                 let resp = driver.call(
                     "click",
                     serde_json::json!({
-                        "pid": pid as i64, "window_id": wid, "element_index": idx,
-                        "snapshot_id": snap.snapshot_id()
+                        "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx)
                     }),
                 );
                 println!("invoke IncreaseLarge #{i}: {}", resp.text());
@@ -1645,8 +1781,7 @@ fn harness_wpf_checkbox_toggle() {
             let resp = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1685,8 +1820,7 @@ fn harness_wpf_radio_select() {
             let response = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1724,8 +1858,7 @@ fn harness_wpf_combo_select() {
             let expand = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(combo_idx),
                     "action": "expand", "delivery_mode": "background"
                 }),
             );
@@ -1738,8 +1871,7 @@ fn harness_wpf_combo_select() {
             let select = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": item_idx,
-                    "snapshot_id": snap2.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap2.element_token(item_idx),
                     "delivery_mode": "background"
                 }),
             );
@@ -1777,8 +1909,7 @@ fn harness_wpf_listbox_select() {
             let response = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
             );
@@ -1820,8 +1951,7 @@ fn harness_wpf_modified_click_preserves_selection() {
             let select_apple = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": apple,
-                    "snapshot_id": first.snapshot_id(), "delivery_mode": "foreground"
+                    "pid": pid as i64, "window_id": wid, "element_token": first.element_token(apple), "delivery_mode": "foreground"
                 }),
             );
             assert!(
@@ -1837,8 +1967,7 @@ fn harness_wpf_modified_click_preserves_selection() {
             let refused_background = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": banana,
-                    "snapshot_id": second.snapshot_id(), "modifier": ["ctrl"]
+                    "pid": pid as i64, "window_id": wid, "element_token": second.element_token(banana), "modifier": ["ctrl"]
                 }),
             );
             assert!(
@@ -1864,8 +1993,7 @@ fn harness_wpf_modified_click_preserves_selection() {
             let add_banana = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": banana,
-                    "snapshot_id": after_refusal.snapshot_id(), "delivery_mode": "foreground",
+                    "pid": pid as i64, "window_id": wid, "element_token": after_refusal.element_token(banana), "delivery_mode": "foreground",
                     "modifier": ["ctrl"]
                 }),
             );

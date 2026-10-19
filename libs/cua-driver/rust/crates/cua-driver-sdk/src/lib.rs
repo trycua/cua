@@ -28,6 +28,7 @@ use thiserror::Error;
 mod abi;
 mod activity_observer;
 mod authorization_host;
+mod cursor_motion;
 mod embedded;
 pub mod remote;
 pub mod remote_foreign;
@@ -43,6 +44,7 @@ pub use authorization_host::{
     DriverAuthorizationAction, DriverAuthorizationDecision, DriverAuthorizationHost,
     DriverAuthorizationHostError, DriverAuthorizationRequest,
 };
+pub use cursor_motion::*;
 pub use embedded::*;
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
 pub use remote_mcp::{
@@ -755,8 +757,15 @@ macro_rules! define_native_window_methods {
 
             pub async fn get_window_state(
                 &self,
-                input: GetWindowStateInput,
+                mut input: GetWindowStateInput,
             ) -> Result<WindowStateOutput, DriverError> {
+                // The typed snapshot is read by programs, not budgeted
+                // against a model context: keep the full response (both tree
+                // representations, platform walk limits) unless the caller
+                // picks a leaner shape.
+                if input.tree_format.is_none() && input.full_output.is_none() {
+                    input.full_output = Some(true);
+                }
                 self.invoke_typed(GetWindowStateInput::TOOL_NAME, input)
                     .await?
                     .window_state_success()
@@ -2089,7 +2098,7 @@ mod tests {
 
     #[tokio::test]
     async fn activity_observer_receives_only_content_free_authorization_metadata() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let observer = Arc::new(RecordingActivityObserver::default());
         let driver = CuaDriver::create_configured_with_activity_observer(
             ConfiguredDriverOptions {
@@ -2184,7 +2193,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn host_tool_inspection_does_not_acquire_runtime_ownership() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let inventory = CuaDriver::inspect_host_tools(DriverHostOptions {
             cursor: cursor_overlay::CursorConfig {
                 enabled: false,
@@ -2208,7 +2217,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_runtime_owns_tools_without_daemon_ipc_and_shuts_down_idempotently() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         assert_eq!(driver.execution_mode(), DriverExecutionMode::Embedded);
         assert!(driver.socket_path().is_empty());
@@ -2239,7 +2248,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_host_listing_spans_its_runtime_without_exposing_owner_keys() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         let public = format!("host-listing-{}", uuid::Uuid::new_v4());
         driver
@@ -2247,6 +2256,7 @@ mod tests {
                 session: Some(public.clone()),
                 capture_scope: None,
                 cursor_theme: None,
+                cursor_motion: None,
             })
             .await
             .unwrap();
@@ -2280,7 +2290,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_drains_an_already_admitted_call() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::try_create_for_host(DriverHostOptions {
             cursor: cursor_overlay::CursorConfig {
                 enabled: false,
@@ -2334,7 +2344,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_runtime_enforces_authorization_before_platform_dispatch() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         let result = driver
             .call_tool(
@@ -2362,7 +2372,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_runtimes_have_independent_sessions_and_shutdown() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let hook_baseline = cua_driver_core::session::session_end_hook_count();
         let first = configured_standard_driver();
         let second = CuaDriver::create_configured(ConfiguredDriverOptions {
@@ -2535,7 +2545,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_session_idle_ttl_reaches_the_lifecycle_contract() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = configured_standard_driver();
         let session = driver
             .create_trusted_session(TrustedSessionOptions {
@@ -2574,7 +2584,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorization_expiry_in_one_runtime_does_not_affect_another() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let expiring = CuaDriver::create_configured(ConfiguredDriverOptions {
             claude_code_compatibility: false,
             authorization: RuntimeAuthorizationOptions {
@@ -2630,7 +2640,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn native_session_close_can_race_with_invoke_without_invalidating_the_handle() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = configured_standard_driver();
 
         for iteration in 0..64 {
@@ -2676,7 +2686,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_session_is_bound_in_memory_and_rejects_public_id_substitution() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create_configured(ConfiguredDriverOptions {
             claude_code_compatibility: false,
             authorization: RuntimeAuthorizationOptions {
@@ -3082,6 +3092,7 @@ mod tests {
                 session: Some("run-2".into()),
                 capture_scope: Some(cua_driver_contract::CaptureScope::Auto),
                 cursor_theme: None,
+                cursor_motion: None,
             })
             .await
             .unwrap();
@@ -3282,7 +3293,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn direct_macos_runtime_reports_cursor_overlay_facility_unavailable() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         // This test is about the unavailable host-owned cursor facility, not
         // protected input admission. Use an explicitly acknowledged
         // unrestricted runtime so the call reaches that platform invariant.

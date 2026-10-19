@@ -7,7 +7,6 @@
 //! clicks refused before any input was dispatched.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;

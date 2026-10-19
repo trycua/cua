@@ -1,134 +1,92 @@
 # Documentation Generators
 
-This directory contains auto-documentation generators for the Cua libraries. These generators ensure that documentation stays synchronized with source code.
+Generators that keep reference pages in `docs/content/docs` in sync with source code.
 
-## Architecture
+## Layout
 
-```
+```text
 scripts/docs-generators/
-├── config.json         # Central configuration for all generators
-├── runner.ts           # Main orchestrator that runs generators
-├── cua-driver.ts       # cua-driver (Rust) generator
-├── lume.ts             # Lume (Swift) generator
-├── sandbox.ts          # Sandbox package/image fact generator
-├── cua-cli.ts          # Cua CLI (TypeScript) generator (planned)
-├── mcp-server.ts       # MCP Server (Python) generator (planned)
-├── python-sdk.ts       # Python SDK generator (planned)
-├── typescript-sdk.ts   # TypeScript SDK generator (planned)
-└── README.md           # This file
+├── config.json                 # Libraries, source paths, output paths, generator scripts
+├── runner.ts                   # Orchestrator (generate, --check, --list, --library)
+├── cua-driver.ts               # cua-driver (Rust): CLI + MCP tools
+├── lume.ts                     # Lume (Swift): CLI + HTTP API
+├── sandbox.ts                  # Sandbox package and image facts (sandbox-facts.json)
+├── prose-style.ts              # Prose style checks for generated pages
+├── generate-changelog.ts       # Changelog pages
+├── lib/mdx.ts                  # Shared helpers: escaping, banner, meta.json, drift sync
+├── cua-sdk.ts                  # Cua SDK object pages (UniFFI metadata), index, Errors, Types
+├── python-sdk.ts               # Python high-level API (griffe): cua, cua-sandbox
+├── extract_python_docs.py      # Static griffe extractor (pinned in requirements.txt)
+├── typescript-sdk.ts           # @trycua/cua hand-written layer (typedoc + plugin-markdown)
+├── rust-crates.ts              # Rust crates (rustdoc JSON, pinned nightly in rustdoc-json/)
+├── proto.ts                    # gRPC protocol (buf FileDescriptorSet)
+├── headers/<product>/<page>.md # Curated prose a generator places under a page's intro
+└── examples/<product>/...      # Tested example programs a generator embeds
 ```
 
-## Quick Start
+## Usage
+
+Run from `docs/`:
 
 ```bash
-# Generate all documentation
-npm run docs:generate
-
-# Check for drift (CI mode)
-npm run docs:check
-
-# List all configured generators
-npm run docs:list
-
-# Generate specific library docs
-npx tsx scripts/docs-generators/runner.ts --library lume
+pnpm docs:generate                   # all enabled generators
+pnpm docs:check                      # drift check (CI mode)
+pnpm docs:list                       # configured generators
+pnpm docs:generate:lume              # one library (also: sandbox, cua-driver, python, cua-sdk-ts)
 ```
 
-## How It Works
+## How it works
 
-1. **config.json** defines all libraries that need documentation generation:
-   - Source paths to watch
-   - Output paths for generated docs
-   - Generator scripts to run
-   - Build commands (if needed)
+1. `config.json` lists each library: source paths to watch, output path, generator script,
+   build command if needed, and `enabled`.
+2. `runner.ts` reads it, detects changed files in CI, runs the matching generators and
+   reports drift.
+3. Each generator extracts metadata from source (for example `dump-docs` JSON from the
+   Rust and Swift CLIs) and writes MDX.
 
-2. **runner.ts** orchestrates generation:
-   - Reads config.json
-   - Detects changed files (in CI)
-   - Runs appropriate generators
-   - Reports success/failure
+CI: `.github/workflows/ci-check-docs.yml` runs the drift check;
+`cd-cua-driver-docs.yml` regenerates the cua-driver pages.
 
-3. **Library-specific generators** (e.g., `lume.ts`):
-   - Extract metadata from source code
-   - Generate MDX documentation
-   - Handle language-specific concerns
+## Status
 
-## Adding a New Library
+| Generator | Output |
+| --- | --- |
+| cua-driver | `cua-driver/reference` |
+| lume | `lume/reference` |
+| cua-cli | `cua-cli/reference` |
+| cua-sdk | `cua-sdk/reference`: `index`, one page per object, `errors`, `types`, `meta.json` |
+| sandbox | `cua-sdk/reference/{os-image-catalog,runtime-support}.mdx` |
+| cua-sdk-python | `cua-sdk/reference/python` |
+| cua-sdk-ts | `cua-sdk/reference/typescript` |
+| cua-rust | `cua-sdk/reference/rust` |
+| cua-proto | `cua-sdk/reference/protocol` |
 
-1. **Add configuration** to `config.json`:
+The Python generator runs griffe through `uv run --no-project` (Python 3.12); the
+TypeScript generator needs `npm ci --ignore-scripts` in `libs/cua/typescript`.
+Docs are generated for the latest source only; the version is stamped in each page banner.
 
-   ```json
-   {
-     "generators": {
-       "my-library": {
-         "name": "My Library",
-         "language": "python",
-         "sourcePath": "libs/my-library/src",
-         "docsOutputPath": "docs/content/docs/cua/reference/my-library",
-         "generatorScript": "scripts/docs-generators/my-library.ts",
-         "watchPaths": ["libs/my-library/src/**/*.py"],
-         "enabled": true
-       }
-     }
-   }
-   ```
+## Curated headers and examples
 
-2. **Create generator script** (e.g., `my-library.ts`):
+Reference pages hold only generated content. Facts the source cannot carry
+(install lines, topology tables, one-line contracts) live in
+`headers/<product>/<page>.md`; the generator that owns the page inserts the
+header under its intro and fills `{{version}}`. Keep headers to a few lines
+or one table; explanations belong in guides.
 
-   ```typescript
-   #!/usr/bin/env npx tsx
-   // Follow the pattern in lume.ts
-   ```
+Examples are programs under `examples/<product>/`, named after what they show
+(`Sandboxes.create.py`, `SpacesdClient.run.ts`, `canonical_image.py`). The first
+line declares how CI runs it, in the docs code-block policy's terms:
 
-3. **Update CI workflow** if needed (paths are usually auto-detected from config)
-
-## Extraction Methods
-
-Different libraries use different extraction methods:
-
-| Language   | Method                   | Description                        |
-| ---------- | ------------------------ | ---------------------------------- |
-| Rust       | `dump-docs`              | Built-in command that outputs JSON |
-| Swift      | `dump-docs`              | Built-in command that outputs JSON |
-| TypeScript | `yargs-parse`            | Parse yargs CLI definitions        |
-| Python     | `argparse-introspection` | Introspect argparse commands       |
-| Python     | `sphinx-autodoc`         | Generate from docstrings           |
-| TypeScript | `typedoc`                | Generate from TSDoc comments       |
-
-## CI Integration
-
-The `.github/workflows/docs-sync-check.yml` workflow:
-
-1. Detects which libraries have changes
-2. Only runs generators for changed libraries
-3. Fails if documentation is out of sync
-4. Provides helpful fix instructions
-
-## Generator Status
-
-| Generator               | Status         | Notes                     |
-| ----------------------- | -------------- | ------------------------- |
-| cua-driver              | ✅ Implemented | CLI + MCP tools           |
-| lume                    | ✅ Implemented | CLI + HTTP API            |
-| sandbox                 | ✅ Implemented | Package + image facts     |
-| cua-cli                 | ⏸️ Planned     | Needs yargs introspection |
-| mcp-server              | ⏸️ Planned     | Needs MCP tool extraction |
-| computer-sdk-python     | ⏸️ Planned     | Needs Sphinx/pydoc        |
-| computer-sdk-typescript | ⏸️ Planned     | Needs TypeDoc             |
-| agent-sdk-python        | ⏸️ Planned     | Needs Sphinx/pydoc        |
-| agent-sdk-typescript    | ⏸️ Planned     | Needs TypeDoc             |
-
-## Development
-
-To test generators locally:
-
-```bash
-# Run with verbose output
-DEBUG=1 npx tsx scripts/docs-generators/runner.ts
-
-# Generate only one library
-npx tsx scripts/docs-generators/runner.ts --library lume
-
-# Check without modifying files
-npx tsx scripts/docs-generators/runner.ts --check
+```python skip="pseudo"
+# docs: test="docs" prelude="spacesd,spacesd-vars"
 ```
+
+The generator embeds the file under that item as a `test=` block with a
+stable id, so the docs-blocks suite (`tests/e2e/cua-sdk/run.py --lanes docs`)
+runs it from the page. An example whose target does not exist fails the
+generator.
+
+## Adding a library
+
+Add an entry to `config.json` (`name`, `language`, `sourcePath`, `docsOutputPath`,
+`generatorScript`, `watchPaths`, `enabled`), then write the generator following `lume.ts`.

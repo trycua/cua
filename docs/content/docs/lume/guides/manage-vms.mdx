@@ -1,0 +1,138 @@
+---
+title: Manage VMs
+description: 'Run, attach to, share folders with, store, clone, resize and remove Lume VMs, change SIP, and update Lume.'
+---
+
+## Inspect
+
+```bash test="cli-shape,lume" id="lume-ls"
+lume ls
+```
+
+```bash test="cli-shape" id="lume-get-macos-tahoe"
+lume get macos-tahoe
+```
+
+`get` shows state, IP address, display, resources and SSH availability.
+States: `stopped`, `running`, `provisioning`, and `provisioning (stale)` (an
+operation died; check the logs and delete the VM).
+
+## Run, attach, stop
+
+```bash test="cli-shape" id="lume-run-macos-tahoe"
+lume run macos-tahoe                        # native viewer, attached to this terminal
+lume run macos-tahoe --detach               # background; logs in ~/Library/Logs/lume/
+lume run macos-tahoe --display vnc          # Screen Sharing instead
+lume run macos-tahoe --display none         # no viewer (alias --no-display)
+lume run macos-tahoe --display none --vnc disabled   # no VNC server at all
+```
+
+```bash test="cli-shape" id="lume-attach-macos-tahoe"
+lume attach macos-tahoe                     # reopen a viewer (--display native|vnc)
+lume restart macos-tahoe                    # graceful, over SSH
+lume shutdown macos-tahoe                   # graceful, over SSH
+lume stop macos-tahoe                       # immediate
+```
+
+- Closing the native window hides it; the guest keeps running.
+- Every display mode starts a VNC server unless `--vnc disabled`, which also
+  turns off clipboard shortcuts in the native viewer and conflicts with
+  `--display vnc`, `--vnc-port` and `--vnc-password`.
+- Drop files or folders from Finder onto the native viewer to copy them over
+  SSH to `/Users/lume/Desktop` (existing names are never overwritten).
+- One `lume run` process owns a VM. "Auxiliary storage is locked" means another
+  one still runs: `lume stop` it first.
+
+## Share a folder
+
+```bash test="cli-shape" id="lume-run-macos-tahoe-5"
+lume run macos-tahoe --shared-dir ~/Projects
+lume run macos-tahoe --shared-dir ~/Projects:ro
+```
+
+It appears at `/Volumes/My Shared Files`. The native viewer's **Share Folder**
+adds one while the guest runs, for that run only.
+
+## Store VMs elsewhere
+
+```bash test="cli-shape" id="lume-config-storage-add"
+lume config storage add external /Volumes/External/lume
+lume config storage list
+lume config storage default external
+lume run macos-tahoe --storage external
+```
+
+The default store is `~/.lume`. Run Lume as the user who owns it: `sudo lume`
+looks in root's home and cannot see your VMs.
+
+## Clone and delete
+
+```bash test="cli-shape" id="lume-clone-macos-tahoe-macos-tahoe-backu"
+lume clone macos-tahoe macos-tahoe-backup
+lume delete macos-tahoe-backup
+```
+
+`clone` copies `disk.img` and `nvram.bin` together; never copy one without the
+other. Disks are sparse, so host usage grows as the guest writes.
+
+## Grow a disk
+
+```bash test="cli-shape" id="lume-set-macos-tahoe"
+lume stop macos-tahoe
+lume set macos-tahoe --disk-size 120GB --dry-run   # validate only
+lume set macos-tahoe --disk-size 120GB             # add --keep-backup to keep the rollback copy
+lume run --no-display macos-tahoe
+lume ssh macos-tahoe 'diskutil info / | grep "Container Total Space"'
+```
+
+Increase only, on a stopped VM with the standard layout, no FileVault, and a
+host macOS at least as new as the guest. `--no-backup` removes automatic
+rollback. Linux guests: Lume grows the image; grow the partition and
+filesystem in the guest. [How it works](/lume/concepts/how-lume-works#disk-growth).
+
+## Change SIP
+
+The VM must be macOS, stopped, with a working admin account and Remote Login
+(true for unattended VMs). Install the Recovery VNC driver once:
+
+```bash skip="host-install"
+python3 -m pip install --user vncdotool
+```
+
+```bash test="cli-shape" id="lume-sip-off-macos-tahoe"
+lume sip off macos-tahoe
+lume sip on macos-tahoe --admin-user admin --admin-password-stdin
+printf '%s\n' "$LUME_ADMIN_PASSWORD" | \
+  lume sip off macos-tahoe --admin-user admin --admin-password-stdin --yes
+```
+
+A successful run ends with `System Integrity Protection status: disabled.` (or
+`enabled.`) from a normal boot and leaves the VM stopped. Recovery input accepts
+admin passwords of lowercase letters, digits and hyphens. For many SIP-disabled
+VMs, change a seed once and `lume clone` it.
+[How it works](/lume/concepts/how-lume-works#sip).
+
+## Update Lume
+
+```bash test="cli-shape" id="lume-check-update"
+lume check-update
+lume update --apply
+lume channel set stable     # or nightly; takes effect on the next update
+```
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/lume/install.sh | bash -s -- --channel nightly
+curl -fsSL https://cua.ai/lume/install.sh | \
+  LUME_VERSION=nightly-lume-v0.5.4-nightly.20260812.123456789 bash   # pin one nightly
+```
+
+Stable is the default. A pinned nightly does not change the saved channel.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Auxiliary storage is locked | Another `lume run` owns the VM: `lume stop <vm>`. |
+| `sudo lume` cannot find a VM | Run as the user who created it. |
+| SSH unavailable | Check `lume get <vm>` shows `running` with an IP; unattended VMs use `lume` / `lume`. |
+| Sequoia shows an Accessibility step on first boot | Known ([#2155](https://github.com/trycua/cua/issues/2155)); Tahoe is the verified preset. |

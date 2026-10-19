@@ -79,6 +79,16 @@ async fn resume_trusted_connection(
     bind_trusted_connection(sdk, record.options, record.transport_session)
 }
 
+fn reap_finished_connections(connection_tasks: &mut tokio::task::JoinSet<()>) {
+    while let Some(result) = connection_tasks.try_join_next() {
+        if let Err(error) = result {
+            if error.is_panic() {
+                tracing::warn!("service connection task panicked: {error}");
+            }
+        }
+    }
+}
+
 async fn take_trusted_resume_record(
     registry: &TrustedResumeRegistry,
     credential: &str,
@@ -618,6 +628,8 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
 static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Only the macOS first-launch gate sets it; elsewhere it stays false.
+#[cfg(target_os = "macos")]
 /// Mark whether the macOS first-launch gate is still waiting for TCC grants.
 /// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
 /// are rejected before execution until fresh child-process probes confirm grants.
@@ -998,6 +1010,7 @@ pub async fn run_serve(
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
+                reap_finished_connections(&mut connection_tasks);
                 if let Err(error) = authenticate_unix_peer(&stream) {
                     tracing::warn!("service connection rejected before request parsing: {error}");
                     continue;
@@ -2990,6 +3003,42 @@ mod trusted_resume_tests {
             .await
             .expect_err("consumed credential must not replay");
         assert!(replay.contains("unavailable or already used"));
+    }
+}
+
+#[cfg(test)]
+mod connection_reaping_tests {
+    use super::reap_finished_connections;
+
+    #[tokio::test]
+    async fn finished_connection_tasks_are_released() {
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..8 {
+            tasks.spawn(async {});
+        }
+        let live = tokio::sync::Notify::new();
+        let live = std::sync::Arc::new(live);
+        let waiter = live.clone();
+        tasks.spawn(async move { waiter.notified().await });
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+
+        reap_finished_connections(&mut tasks);
+
+        assert_eq!(tasks.len(), 1, "only the still-running connection remains");
+        live.notify_one();
+    }
+
+    #[tokio::test]
+    async fn a_panicked_connection_task_is_reaped_without_panicking_the_daemon() {
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(async { panic!("connection task panic") });
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        reap_finished_connections(&mut tasks);
+        assert!(tasks.is_empty());
     }
 }
 

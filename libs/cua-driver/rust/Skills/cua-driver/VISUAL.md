@@ -121,5 +121,5 @@ An external chooser, including a `jev-use` recipe, receives a bounded table of
 opaque action IDs rather than open-ended Driver tool access. The caller keeps
 provider setup and credentials outside Driver, validates one returned ID, and
 dispatches the complete prebuilt action unchanged. See [Use jev-use with visual
-regions](https://cua.ai/docs/how-to-guides/driver/use-jev-use-with-visual-regions);
+regions](https://cua.ai/docs/cua-driver/guides/visual-regions);
 do not add provider SDK logic or credentials to this skill.

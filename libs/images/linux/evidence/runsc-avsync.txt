@@ -1,0 +1,1 @@
+4 flash/beep pairs, skew ms [0.3, 0.4, 0.8, 0.7]

@@ -39,7 +39,7 @@ def test_public_image_template_carries_no_pull_secret():
     """A public image must not be forced into the allowlist branch."""
     request = FleetCloudTransport(image=Image.windows(), name="demo")._template_request()
     template = request.spec.vm_template
-    assert template.container_disk_image == PUBLIC_ECR
+    assert template.container_disk_image == "ghcr.io/trycua/windows:2022"
     assert not getattr(template, "image_pull_secret", None)
 
 

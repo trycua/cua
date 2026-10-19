@@ -100,10 +100,24 @@ class TestConcurrentLocalVMsDoNotCollide:
 
         from cua_sandbox.runtime.qemu import _find_free_vnc_display
 
-        with socket.socket() as taken:
-            taken.bind(("", 5900))
+        # Occupy a display the test picks itself instead of assuming host port
+        # 5900 is free (a real VNC server or VM on this host would break that).
+        taken = None
+        for display in range(200, 1200):
+            candidate = socket.socket()
+            try:
+                candidate.bind(("", 5900 + display))
+            except OSError:
+                candidate.close()
+                continue
+            taken = candidate
+            break
+        assert taken is not None, "no free VNC-range port to occupy"
+        with taken:
             taken.listen(1)
-            assert _find_free_vnc_display(0) != 0
+            found = _find_free_vnc_display(display)
+            assert found != display
+            assert found > display
 
     def test_efivars_is_per_vm_not_shared(self):
         """Every session disk lives in one directory; a shared efivars.fd would
@@ -166,13 +180,15 @@ class TestLayerExecutorKnowsTheGuestOS:
 @pytest.mark.parametrize(
     "image, expected_kind",
     [
-        (Image.linux(), "vm"),
+        # The canonical Linux image: the resolver picks the variant per backend.
+        (Image.linux(), None),
+        (Image.linux(kind="vm"), "vm"),
         (Image.linux(kind="container"), "container"),
         (Image.windows(), "vm"),
     ],
 )
 def test_to_dict_reports_the_real_kind(image, expected_kind):
-    """The guide printed 'kind': 'container' for Image.linux(), which is a VM."""
+    """to_dict() reports the kind the image was asked for (None: resolved later)."""
     assert image.to_dict()["kind"] == expected_kind
 
 
@@ -248,7 +264,7 @@ class TestLocalRuntimeSelection:
         from cua_sandbox.sandbox import _auto_runtime
 
         monkeypatch.setattr(compat, "_has_qemu", lambda: True)
-        assert isinstance(_auto_runtime(Image.linux()), QEMUBaremetalRuntime)
+        assert isinstance(_auto_runtime(Image.linux(kind="vm")), QEMUBaremetalRuntime)
 
     def test_a_linux_container_still_goes_to_docker(self):
         from cua_sandbox.runtime.docker import DockerRuntime
@@ -267,7 +283,7 @@ class TestLocalRuntimeSelection:
         from cua_sandbox.sandbox import _auto_runtime
 
         monkeypatch.setattr(compat, "_has_qemu", lambda: True)
-        vm = _auto_runtime(Image.linux())
+        vm = _auto_runtime(Image.linux(kind="vm"))
         container = _auto_runtime(Image.linux(kind="container"))
 
         assert isinstance(container, DockerRuntime)
@@ -282,7 +298,7 @@ class TestLocalRuntimeSelection:
 
         monkeypatch.setattr(compat, "_has_qemu", lambda: False)
         with _pytest.raises(RuntimeError, match="needs QEMU"):
-            _auto_runtime(Image.linux())
+            _auto_runtime(Image.linux(kind="vm"))
 
     def test_a_disk_path_still_reaches_bare_metal_qemu(self):
         from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime

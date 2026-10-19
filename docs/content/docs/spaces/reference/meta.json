@@ -1,0 +1,19 @@
+{
+  "title": "Reference",
+  "pages": [
+    "index",
+    "lifecycle",
+    "commands-and-files",
+    "streams-and-display",
+    "services",
+    "agents",
+    "persistent-agents",
+    "teleport",
+    "keyvault",
+    "hotspot",
+    "volume",
+    "sharing",
+    "cloud",
+    "errors"
+  ]
+}

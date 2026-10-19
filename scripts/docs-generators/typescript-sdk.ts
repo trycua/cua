@@ -1,772 +1,339 @@
 #!/usr/bin/env npx tsx
 
 /**
- * TypeScript SDK Documentation Generator
+ * TypeScript reference generator: typedoc + typedoc-plugin-markdown over the
+ * hand-written layer of `@trycua/cua` (libs/cua/typescript/src). The UniFFI
+ * glue under `src/native/` is excluded; the UniFFI reference documents it.
  *
- * Generates MDX API reference documentation from TypeScript source code.
- * Uses regex-based parsing to extract exports and JSDoc comments (no TS compiler dependency).
+ * typedoc renders Markdown into a temporary directory; a post-pass then turns
+ * each module into an MDX page under reference/cua-sdk/typescript/ with
+ * frontmatter, the AUTO-GENERATED banner, site routes for cross-page links,
+ * and an explicit meta.json.
  *
  * Usage:
- *   npx tsx scripts/docs-generators/typescript-sdk.ts              # Generate all
- *   npx tsx scripts/docs-generators/typescript-sdk.ts --sdk=cuabot  # Generate specific
- *   npx tsx scripts/docs-generators/typescript-sdk.ts --check       # Check for drift (CI mode)
+ *   pnpm --dir docs docs:generate:cua-sdk-ts
+ *   pnpm --dir docs docs:check:cua-sdk-ts
+ *
+ * Needs `npm ci` in libs/cua/typescript (the package's own type dependencies)
+ * and `pnpm --dir docs install` (typedoc and typedoc-plugin-markdown, pinned).
  */
 
 import * as fs from 'fs';
+import { createRequire } from 'module';
+import * as os from 'os';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import {
+  DOCS_CONTENT,
+  REPO_ROOT,
+  finish,
+  isCheckMode,
+  metaJson,
+  readHeader,
+  renderPage,
+  slug,
+  syncFiles,
+} from './lib/mdx';
 
-// ============================================================================
-// Types
-// ============================================================================
+const PACKAGE_DIR = path.join(REPO_ROOT, 'libs', 'cua', 'typescript');
+const SOURCE_DIR = path.join(PACKAGE_DIR, 'src');
+const OUTPUT_DIR = path.join(DOCS_CONTENT, 'cua-sdk', 'reference', 'typescript');
+const ROUTE = '/cua-sdk/reference/typescript';
 
-interface ExtractedClass {
-  name: string;
+/** One page per public entry point (the package.json `exports`). */
+export const MODULES: Array<{
+  entry: string;
+  /** typedoc-plugin-markdown's file for the module (outputFileStrategy=modules). */
+  typedocFile: string;
+  page: string;
+  title: string;
+  importPath: string;
   description: string;
-  constructorSig: string | null;
-  constructorParams: ParamInfo[];
-  methods: MethodInfo[];
-  properties: PropInfo[];
-}
-
-interface ExtractedInterface {
-  name: string;
-  description: string;
-  properties: PropInfo[];
-}
-
-interface ExtractedFunction {
-  name: string;
-  description: string;
-  signature: string;
-  params: ParamInfo[];
-  returnType: string;
-  isAsync: boolean;
-}
-
-interface ExtractedConst {
-  name: string;
-  type: string;
-  description: string;
-}
-
-interface MethodInfo {
-  name: string;
-  description: string;
-  signature: string;
-  params: ParamInfo[];
-  returnType: string;
-  isAsync: boolean;
-}
-
-interface ParamInfo {
-  name: string;
-  type: string;
-  description: string;
-  defaultValue: string | null;
-  isOptional: boolean;
-}
-
-interface PropInfo {
-  name: string;
-  type: string;
-  description: string;
-  isOptional: boolean;
-}
-
-interface ModuleDoc {
-  name: string;
-  description: string;
-  classes: ExtractedClass[];
-  interfaces: ExtractedInterface[];
-  functions: ExtractedFunction[];
-  constants: ExtractedConst[];
-}
-
-interface SDKConfig {
-  packageDir: string;
-  packageName: string;
-  outputPath: string;
-  displayName: string;
-  description: string;
-  outputDir: string;
-  tagPrefix: string;
-  docsBaseDir?: string;
-  hrefBase?: string;
-  pageTitle?: string;
-  includeFiles?: string[];
-  installCommand?: string;
-}
-
-// ============================================================================
-// Configuration
-// ============================================================================
-
-const ROOT_DIR = path.resolve(__dirname, '../..');
-
-const SDK_CONFIGS: Record<string, SDKConfig> = {
-  cuabot: {
-    packageDir: 'libs/cuabot/src',
-    packageName: 'cuabot',
-    outputPath: 'docs/content/docs/cuabot/reference/index.mdx',
-    displayName: 'Cua-Bot',
-    description: 'TypeScript API reference for the Cua-Bot sandboxed agent framework',
-    outputDir: 'reference',
-    tagPrefix: 'cuabot-v',
-    docsBaseDir: 'docs/content/docs/cuabot',
-    hrefBase: '/cuabot',
-    pageTitle: 'API Reference',
-    includeFiles: ['client.ts', 'settings.ts'],
-    installCommand: 'npm install -g cuabot',
+}> = [
+  {
+    entry: 'index.ts',
+    typedocFile: 'index-1.md',
+    page: 'index',
+    title: 'TypeScript additions',
+    importPath: '@trycua/cua',
+    description:
+      'The hand-written helpers of @trycua/cua: embedded, connect, Image, probes, sidecars, specs and MCP.',
   },
-};
+  {
+    entry: 'spaces/index.ts',
+    typedocFile: 'spaces.md',
+    page: 'spaces',
+    title: 'Spaces (TypeScript)',
+    importPath: '@trycua/cua/spaces',
+    description:
+      'The @trycua/cua/spaces helpers: threads, events, teleport approvals and typed errors.',
+  },
+  {
+    entry: 'spaces/transport/index.ts',
+    typedocFile: 'spaces/transport.md',
+    page: 'spaces-transport',
+    title: 'Spaces transport (TypeScript)',
+    importPath: '@trycua/cua/spaces/transport',
+    description: 'MCP-over-HTTP and Tauri transports for Spaces in webviews and browsers.',
+  },
+  {
+    entry: 'spaces/host.ts',
+    typedocFile: 'spaces/host.md',
+    page: 'spaces-host',
+    title: 'Spaces host (TypeScript)',
+    importPath: '@trycua/cua/spaces/host',
+    description: 'The @trycua/cua/spaces/host helpers for hosting a Space from Node.',
+  },
+];
 
-// ============================================================================
-// Main
-// ============================================================================
-
-async function main() {
-  const args = process.argv.slice(2);
-  const checkOnly = args.includes('--check') || args.includes('--check-only');
-  const sdkArg = args.find((a) => a.startsWith('--sdk='));
-  const targetSdk = sdkArg?.split('=')[1];
-
-  console.log('📦 TypeScript SDK Documentation Generator');
-  console.log('==========================================\n');
-
-  let hasErrors = false;
-
-  for (const [sdkName, config] of Object.entries(SDK_CONFIGS)) {
-    if (targetSdk && targetSdk !== sdkName) continue;
-
-    console.log(`📖 Processing ${config.displayName}...`);
-
-    const packagePath = path.join(ROOT_DIR, config.packageDir);
-    if (!fs.existsSync(packagePath)) {
-      console.error(`   ❌ Package not found: ${config.packageDir}`);
-      hasErrors = true;
-      continue;
-    }
-
-    const modules = extractDocs(packagePath, config);
-    console.log(
-      `   Found ${modules.reduce((n, m) => n + m.classes.length, 0)} classes, ` +
-        `${modules.reduce((n, m) => n + m.functions.length, 0)} functions, ` +
-        `${modules.reduce((n, m) => n + m.interfaces.length, 0)} interfaces`
-    );
-
-    const mdx = generateMDX(modules, config);
-
-    const outputPath = path.join(ROOT_DIR, config.outputPath);
-    const outputDir = path.dirname(outputPath);
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    if (checkOnly) {
-      // Check mode: compare with existing file
-      if (fs.existsSync(outputPath)) {
-        const existing = fs.readFileSync(outputPath, 'utf-8');
-        if (existing !== mdx) {
-          console.error(`   ❌ ${path.basename(outputPath)} is out of sync with source code`);
-          hasErrors = true;
-        } else {
-          console.log(`   ✅ ${path.basename(outputPath)} is up to date`);
-        }
-      } else {
-        console.error(`   ❌ ${path.basename(outputPath)} does not exist (needs generation)`);
-        hasErrors = true;
-      }
-    } else {
-      // Generate mode: write file
-      fs.writeFileSync(outputPath, mdx);
-      console.log(`   ✅ Generated ${path.relative(ROOT_DIR, outputPath)}`);
-    }
-  }
-
-  if (hasErrors) {
-    if (checkOnly) {
-      console.error(
-        "\n💡 Run 'npx tsx scripts/docs-generators/typescript-sdk.ts' to update documentation"
-      );
-    }
-    process.exit(1);
-  }
-  console.log('\n✅ TypeScript SDK documentation generation complete!');
-}
-
-// ============================================================================
-// Regex-based Extraction
-// ============================================================================
-
-function extractDocs(packagePath: string, config: SDKConfig): ModuleDoc[] {
-  const fileNames = config.includeFiles
-    ? config.includeFiles
-    : fs.readdirSync(packagePath).filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'));
-
-  const modules: ModuleDoc[] = [];
-
-  for (const fileName of fileNames) {
-    const filePath = path.join(packagePath, fileName);
-    if (!fs.existsSync(filePath)) continue;
-    const source = fs.readFileSync(filePath, 'utf-8');
-    const moduleName = path.basename(fileName, '.ts');
-
-    const mod: ModuleDoc = {
-      name: moduleName,
-      description: extractFileDescription(source),
-      classes: extractClasses(source),
-      interfaces: extractInterfaces(source),
-      functions: extractFunctions(source),
-      constants: extractConstants(source),
-    };
-
-    if (
-      mod.classes.length > 0 ||
-      mod.interfaces.length > 0 ||
-      mod.functions.length > 0 ||
-      mod.constants.length > 0
-    ) {
-      modules.push(mod);
-    }
-  }
-
-  return modules;
-}
-
-function extractFileDescription(source: string): string {
-  const match = source.match(/^\/\*\*\s*\n([\s\S]*?)\*\//);
-  if (!match) return '';
-  return match[1]
-    .split('\n')
-    .map((l) => l.replace(/^\s*\*\s?/, '').trim())
-    .filter(Boolean)
-    .join('\n');
-}
-
-/**
- * Get the JSDoc comment immediately preceding a position in source.
- */
-function getJSDocBefore(source: string, pos: number): string {
-  const before = source.substring(0, pos);
-  const match = before.match(/\/\*\*([\s\S]*?)\*\/\s*$/);
-  if (!match) return '';
-  return match[1]
-    .split('\n')
-    .map((l) => l.replace(/^\s*\*\s?/, ''))
-    .filter((l) => !l.startsWith('@'))
-    .join('\n')
-    .trim();
-}
-
-function extractClasses(source: string): ExtractedClass[] {
-  const classes: ExtractedClass[] = [];
-  const classRegex = /export\s+class\s+(\w+)(?:\s+extends\s+[\w.]+)?\s*\{/g;
-
-  let match;
-  while ((match = classRegex.exec(source)) !== null) {
-    const name = match[1];
-    const description = getJSDocBefore(source, match.index);
-    const classBodyStart = match.index + match[0].length;
-    const classBody = extractBraceBlock(source, classBodyStart - 1);
-
-    const cls: ExtractedClass = {
-      name,
-      description,
-      constructorSig: null,
-      constructorParams: [],
-      methods: [],
-      properties: [],
-    };
-
-    // Extract constructor
-    const ctorMatch = classBody.match(/constructor\s*\(([\s\S]*?)\)\s*\{/);
-    if (ctorMatch) {
-      cls.constructorParams = parseParams(ctorMatch[1]);
-      cls.constructorSig = `constructor(${ctorMatch[1].trim()})`;
-    }
-
-    // Extract methods (async or not, excluding private)
-    const methodRegex =
-      /(\/\*\*[\s\S]*?\*\/\s*)?(async\s+)?(\w+)\s*\(([\s\S]*?)\)\s*:\s*([\w<>\[\]|, ]+)\s*\{/g;
-    let mMatch;
-    while ((mMatch = methodRegex.exec(classBody)) !== null) {
-      const methodName = mMatch[3];
-      if (methodName === 'constructor' || methodName.startsWith('_') || methodName === 'private')
-        continue;
-
-      const isAsync = !!mMatch[2];
-      const params = parseParams(mMatch[4]);
-      const returnType = mMatch[5].trim();
-      const jsdoc = mMatch[1] ? parseJSDocBlock(mMatch[1]) : '';
-
-      // Get param descriptions from JSDoc
-      if (mMatch[1]) {
-        const paramDescs = parseJSDocParams(mMatch[1]);
-        for (const p of params) {
-          if (paramDescs[p.name]) p.description = paramDescs[p.name];
-        }
-      }
-
-      cls.methods.push({
-        name: methodName,
-        description: jsdoc,
-        signature: `${isAsync ? 'async ' : ''}${methodName}(${params.map((p) => formatParam(p)).join(', ')}): ${returnType}`,
-        params: params.filter((p) => p.name !== 'this'),
-        returnType,
-        isAsync,
-      });
-    }
-
-    classes.push(cls);
-  }
-
-  return classes;
-}
-
-function extractInterfaces(source: string): ExtractedInterface[] {
-  const interfaces: ExtractedInterface[] = [];
-  const ifaceRegex = /export\s+interface\s+(\w+)\s*\{/g;
-
-  let match;
-  while ((match = ifaceRegex.exec(source)) !== null) {
-    const name = match[1];
-    const description = getJSDocBefore(source, match.index);
-    const bodyStart = match.index + match[0].length;
-    const body = extractBraceBlock(source, bodyStart - 1);
-
-    const properties: PropInfo[] = [];
-    const propRegex = /(\w+)(\?)?\s*:\s*([^;\n]+)/g;
-    let pMatch;
-    while ((pMatch = propRegex.exec(body)) !== null) {
-      properties.push({
-        name: pMatch[1],
-        type: pMatch[3].trim().replace(/;$/, ''),
-        description: '',
-        isOptional: !!pMatch[2],
-      });
-    }
-
-    interfaces.push({ name, description, properties });
-  }
-
-  return interfaces;
-}
-
-function extractFunctions(source: string): ExtractedFunction[] {
-  const functions: ExtractedFunction[] = [];
-  const fnRegex =
-    /export\s+(async\s+)?function\s+(\w+)\s*\(([\s\S]*?)\)\s*:\s*([\w<>\[\]|, {}:]+)\s*\{/g;
-
-  let match;
-  while ((match = fnRegex.exec(source)) !== null) {
-    const isAsync = !!match[1];
-    const name = match[2];
-    if (name.startsWith('_')) continue;
-
-    const params = parseParams(match[3]);
-    const returnType = match[4].trim();
-    const description = getJSDocBefore(source, match.index);
-
-    // Get param descriptions from JSDoc
-    const jsdocBlock = source.substring(Math.max(0, match.index - 500), match.index);
-    const jsdocMatch = jsdocBlock.match(/\/\*\*([\s\S]*?)\*\/\s*$/);
-    if (jsdocMatch) {
-      const paramDescs = parseJSDocParams(jsdocMatch[0]);
-      for (const p of params) {
-        if (paramDescs[p.name]) p.description = paramDescs[p.name];
-      }
-    }
-
-    functions.push({
-      name,
-      description,
-      signature: `${isAsync ? 'async ' : ''}function ${name}(${params.map((p) => formatParam(p)).join(', ')}): ${returnType}`,
-      params,
-      returnType,
-      isAsync,
-    });
-  }
-
-  return functions;
-}
-
-function extractConstants(source: string): ExtractedConst[] {
-  const constants: ExtractedConst[] = [];
-  const constRegex = /export\s+const\s+(\w+)(?:\s*:\s*([^=]+))?\s*=/g;
-
-  let match;
-  while ((match = constRegex.exec(source)) !== null) {
-    const name = match[1];
-    if (name.startsWith('_')) continue;
-    const type = match[2]?.trim() || 'const';
-    const description = getJSDocBefore(source, match.index);
-    constants.push({ name, type, description });
-  }
-
-  return constants;
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function extractBraceBlock(source: string, openBracePos: number): string {
-  let depth = 0;
-  let start = openBracePos;
-  for (let i = openBracePos; i < source.length; i++) {
-    if (source[i] === '{') depth++;
-    else if (source[i] === '}') {
-      depth--;
-      if (depth === 0) return source.substring(start + 1, i);
-    }
-  }
-  return source.substring(start + 1);
-}
-
-function parseParams(paramStr: string): ParamInfo[] {
-  if (!paramStr.trim()) return [];
-
-  const params: ParamInfo[] = [];
-  let depth = 0;
-  let current = '';
-
-  for (const char of paramStr) {
-    if (char === '(' || char === '<' || char === '{' || char === '[') depth++;
-    else if (char === ')' || char === '>' || char === '}' || char === ']') depth--;
-
-    if (char === ',' && depth === 0) {
-      const p = parseSingleParam(current.trim());
-      if (p) params.push(p);
-      current = '';
-    } else {
-      current += char;
-    }
-  }
-  if (current.trim()) {
-    const p = parseSingleParam(current.trim());
-    if (p) params.push(p);
-  }
-
-  return params;
-}
-
-function parseSingleParam(param: string): ParamInfo | null {
-  if (!param) return null;
-
-  // Match: name?: type = default
-  const match = param.match(/^(\w+)(\?)?\s*(?::\s*([\s\S]+?))?(?:\s*=\s*([\s\S]+))?$/);
-  if (!match) return null;
-
+/** Options passed to typedoc (and typedoc-plugin-markdown). */
+export function typedocOptions(outDir: string, plugin: string): Record<string, unknown> {
   return {
-    name: match[1],
-    type: match[3]?.trim().replace(/\s*=\s*[\s\S]*$/, '') || 'any',
-    description: '',
-    defaultValue: match[4]?.trim() || null,
-    isOptional: !!match[2] || !!match[4],
+    tsconfig: path.join(PACKAGE_DIR, 'tsconfig.json'),
+    entryPoints: MODULES.map((m) => path.join(SOURCE_DIR, m.entry)),
+    plugin: [plugin],
+    out: outDir,
+    readme: 'none',
+    outputFileStrategy: 'modules',
+    entryFileName: 'index',
+    hidePageHeader: true,
+    hideBreadcrumbs: true,
+    parametersFormat: 'table',
+    interfacePropertiesFormat: 'table',
+    classPropertiesFormat: 'table',
+    typeDeclarationFormat: 'table',
+    enumMembersFormat: 'table',
+    propertyMembersFormat: 'table',
+    typeAliasPropertiesFormat: 'table',
+    sanitizeComments: true,
+    useCodeBlocks: true,
+    excludePrivate: true,
+    excludeProtected: true,
+    excludeInternal: true,
+    excludeExternals: true,
+    sort: ['kind', 'alphabetical'],
+    logLevel: 'Error',
   };
 }
 
-function formatParam(p: ParamInfo): string {
-  const opt = p.isOptional && !p.defaultValue ? '?' : '';
-  const def = p.defaultValue ? ` = ${p.defaultValue}` : '';
-  return `${p.name}${opt}: ${p.type}${def}`;
-}
-
-function parseJSDocBlock(block: string): string {
-  return block
-    .replace(/^\/\*\*\s*/, '')
-    .replace(/\s*\*\/\s*$/, '')
-    .split('\n')
-    .map((l) => l.replace(/^\s*\*\s?/, ''))
-    .filter((l) => !l.startsWith('@'))
-    .join('\n')
-    .trim();
-}
-
-function parseJSDocParams(block: string): Record<string, string> {
-  const params: Record<string, string> = {};
-  const lines = block.split('\n');
-  for (const line of lines) {
-    const match = line.match(/@param\s+(\w+)\s+(.*)/);
-    if (match) params[match[1]] = match[2].trim();
+async function runTypedoc(outDir: string): Promise<void> {
+  const docsRequire = createRequire(path.join(REPO_ROOT, 'docs', 'package.json'));
+  const td = await import(docsRequire.resolve('typedoc'));
+  const plugin = docsRequire.resolve('typedoc-plugin-markdown');
+  if (!fs.existsSync(path.join(PACKAGE_DIR, 'node_modules'))) {
+    throw new Error(
+      'libs/cua/typescript/node_modules is missing: run `npm ci --ignore-scripts` there first.'
+    );
   }
-  return params;
-}
-
-// ============================================================================
-// Version Discovery
-// ============================================================================
-
-interface VersionInfo {
-  version: string;
-  href: string;
-  isCurrent: boolean;
-}
-
-function getLatestReleasedVersion(config: SDKConfig, fallback: string): string {
-  try {
-    const output = execSync(`git tag | grep "^${config.tagPrefix}" | sort -V | tail -1`, {
-      encoding: 'utf-8',
-      cwd: ROOT_DIR,
-    }).trim();
-    if (output) return output.replace(config.tagPrefix, '');
-  } catch {
-    // fall through
-  }
-  return fallback;
-}
-
-function discoverVersions(config: SDKConfig, currentVersion: string): VersionInfo[] {
-  const baseDir = config.docsBaseDir
-    ? path.join(ROOT_DIR, config.docsBaseDir)
-    : path.join(ROOT_DIR, 'docs/content/docs/cuabot');
-  const docsDir = path.join(baseDir, config.outputDir);
-  const hrefBase = config.hrefBase ?? '/cuabot';
-  const versions: VersionInfo[] = [];
-
-  const currentMM = currentVersion.split('.').slice(0, 2).join('.');
-  versions.push({ version: currentMM, href: `${hrefBase}/${config.outputDir}`, isCurrent: true });
-
-  if (fs.existsSync(docsDir)) {
-    for (const entry of fs.readdirSync(docsDir, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith('v')) {
-        const v = entry.name.substring(1);
-        if (v === currentMM) continue;
-        versions.push({
-          version: v,
-          href: `${hrefBase}/${config.outputDir}/${entry.name}/api`,
-          isCurrent: false,
-        });
-      }
+  const app = await td.Application.bootstrapWithPlugins(typedocOptions(outDir, plugin));
+  const isHandWritten = (file: string) =>
+    file.startsWith(SOURCE_DIR + path.sep) &&
+    !file.startsWith(path.join(SOURCE_DIR, 'native') + path.sep);
+  app.converter.on(td.Converter.EVENT_RESOLVE_BEGIN, (context: any) => {
+    const project = context.project;
+    // Drop the UniFFI glue re-exported from src/native, and members inherited
+    // from outside the package (Error.stack and friends).
+    for (const reflection of Object.values(project.reflections) as any[]) {
+      if (!project.reflections[reflection.id]) continue; // already removed with a parent
+      if (!reflection.kindOf(td.ReflectionKind.SomeExport | td.ReflectionKind.SomeMember)) continue;
+      const file: string = reflection.sources?.[0]?.fullFileName ?? '';
+      if (!file || !isHandWritten(path.resolve(file))) project.removeReflection(reflection);
     }
-  }
-
-  versions.sort((a, b) => {
-    const pa = a.version.split('.').map(Number);
-    const pb = b.version.split('.').map(Number);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
-    }
-    return 0;
   });
-
-  return versions;
+  app.converter.on(td.Converter.EVENT_RESOLVE_END, (context: any) => {
+    // Sources were only needed for the filter; the pages do not show paths.
+    for (const reflection of Object.values(context.project.reflections) as any[]) {
+      delete reflection.sources;
+    }
+  });
+  const project = await app.convert();
+  if (!project) throw new Error('typedoc could not convert @trycua/cua');
+  await app.generateOutputs(project);
 }
 
-function getPackageVersion(config: SDKConfig): string {
-  const pkgJsonPath = path.join(ROOT_DIR, path.dirname(config.packageDir), 'package.json');
-  try {
-    return JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8')).version || '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
+/** typedoc output file (relative, posix) -> site route. */
+function routeFor(file: string): string | undefined {
+  const m = MODULES.find((mod) => mod.typedocFile === file);
+  if (!m) return undefined;
+  return m.page === 'index' ? ROUTE : `${ROUTE}/${m.page}`;
 }
 
-// ============================================================================
-// MDX Generation
-// ============================================================================
-
-function escapeMDX(text: string): string {
-  if (!text) return text;
-  return text
-    .replace(/\{/g, '\\{')
-    .replace(/\}/g, '\\}')
-    .replace(/<(?!\/?(?:Callout|Tab|Tabs|VersionHeader|div|span|a|code|pre|br|hr)\b)/g, '&lt;');
+/**
+ * Post-pass over one typedoc Markdown file: drop the H1 (the page title comes
+ * from frontmatter), rewrite `.md` links to site routes, and normalise
+ * whitespace.
+ */
+export function postProcess(markdown: string, file: string): string {
+  const dir = path.posix.dirname(file);
+  let out = markdown.replace(/^# .*\n+/, '');
+  out = out.replace(/\]\(([^)\s]+?\.md)(#[^)\s]*)?\)/g, (whole, target: string, hash = '') => {
+    const resolved = path.posix.normalize(path.posix.join(dir, target));
+    const route = routeFor(resolved);
+    return route ? `](${route}${hash})` : whole;
+  });
+  // typedoc escapes `_` inside words; harmless, but keep identifiers readable.
+  out = out.replace(/([A-Za-z0-9])\\_(?=[A-Za-z0-9])/g, '$1_');
+  out = dropTableColumn(out, 'Defined in');
+  return (
+    out
+      .replace(/[ \t]+$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim() + '\n'
+  );
 }
 
-function generateMDX(modules: ModuleDoc[], config: SDKConfig): string {
-  const lines: string[] = [];
-  const pkgVersion = getPackageVersion(config);
-  const releasedVersion = getLatestReleasedVersion(config, pkgVersion);
-  const pageTitle = config.pageTitle ?? `${config.displayName} API Reference`;
-
-  // Frontmatter
-  lines.push('---');
-  lines.push(`title: ${pageTitle}`);
-  lines.push(`description: ${config.description}`);
-  lines.push('---');
-  lines.push('');
-  lines.push(`{/*`);
-  lines.push(`  AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY`);
-  lines.push(`  Generated by: npx tsx scripts/docs-generators/typescript-sdk.ts`);
-  lines.push(`  Source: ${config.packageDir}`);
-  lines.push(`  Version: ${releasedVersion}`);
-  lines.push(`*/}`);
-  lines.push('');
-
-  // Imports
-  lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
-  lines.push("import { VersionHeader } from '@/components/version-selector';");
-  lines.push('');
-
-  // Version header
-  const versions = discoverVersions(config, releasedVersion);
-  const currentMM = releasedVersion.split('.').slice(0, 2).join('.');
-  lines.push('<VersionHeader');
-  lines.push(`  versions={${JSON.stringify(versions)}}`);
-  lines.push(`  currentVersion="${currentMM}"`);
-  lines.push(`  fullVersion="${releasedVersion}"`);
-  lines.push(`  packageName="${config.packageName}"`);
-  if (config.installCommand) {
-    lines.push(`  installCommand="${config.installCommand}"`);
+/** The anchors a page defines: heading slugs (with rehype-slug's `-N` for repeats) and `<a id>`s. */
+export function pageAnchors(markdown: string): Set<string> {
+  const anchors = new Set<string>();
+  const counts = new Map<string, number>();
+  let fence = false;
+  for (const line of markdown.split('\n')) {
+    if (/^\s*```/.test(line)) fence = !fence;
+    if (fence) continue;
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    if (heading) {
+      const text = heading[1]
+        .replace(/`/g, '')
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/\\/g, '');
+      const base = slug(text);
+      const n = counts.get(base) ?? 0;
+      counts.set(base, n + 1);
+      anchors.add(n === 0 ? base : `${base}-${n}`);
+    }
+    for (const m of line.matchAll(/<a id="([^"]+)"><\/a>/g)) anchors.add(m[1]);
   }
-  lines.push('/>');
-  lines.push('');
+  return anchors;
+}
 
-  for (const mod of modules) {
-    lines.push('---');
-    lines.push('');
-    lines.push(`## ${mod.name}`);
-    lines.push('');
-    if (mod.description) {
-      lines.push(escapeMDX(mod.description));
-      lines.push('');
-    }
+/**
+ * typedoc-plugin-markdown numbers anchors of merged declarations (`#x-1`)
+ * differently from rehype-slug; point every fragment link at an anchor the
+ * target page really has, or drop the link and keep its text.
+ */
+export function fixFragments(pages: Map<string, string>): Map<string, string> {
+  const anchors = new Map([...pages].map(([route, body]) => [route, pageAnchors(body)]));
+  const out = new Map<string, string>();
+  const route = ROUTE.replace(/[/]/g, '\\/');
+  const link = new RegExp(`\\[([^\\]]*)\\]\\(((?:${route}[^)#\\s]*)?)#([^)\\s]+)\\)`, 'g');
+  for (const [route, body] of pages) {
+    out.set(
+      route,
+      body.replace(link, (whole, text: string, target: string, frag: string) => {
+        const page = anchors.get(target || route);
+        if (!page || page.has(frag)) return whole;
+        const base = frag.replace(/-\d+$/, '');
+        return page.has(base) ? `[${text}](${target}#${base})` : text;
+      })
+    );
+  }
+  return out;
+}
 
-    // Interfaces
-    for (const iface of mod.interfaces) {
-      lines.push(`### ${iface.name}`);
-      lines.push('');
-      if (iface.description) {
-        lines.push(escapeMDX(iface.description));
-        lines.push('');
-      }
-      lines.push('```typescript');
-      lines.push(`interface ${iface.name} {`);
-      for (const prop of iface.properties) {
-        const opt = prop.isOptional ? '?' : '';
-        lines.push(`  ${prop.name}${opt}: ${prop.type};`);
-      }
-      lines.push('}');
-      lines.push('```');
-      lines.push('');
-      if (iface.properties.length > 0) {
-        lines.push('| Property | Type | Description |');
-        lines.push('|----------|------|-------------|');
-        for (const prop of iface.properties) {
-          const opt = prop.isOptional ? ' *(optional)*' : '';
-          lines.push(
-            `| \`${prop.name}\` | \`${escapeMDX(prop.type)}\` | ${opt}${escapeMDX(prop.description)} |`
-          );
-        }
-        lines.push('');
-      }
-    }
-
-    // Constants
-    for (const c of mod.constants) {
-      lines.push(`### ${c.name}`);
-      lines.push('');
-      lines.push('```typescript');
-      lines.push(`const ${c.name}: ${escapeMDX(c.type)}`);
-      lines.push('```');
-      lines.push('');
-      if (c.description) {
-        lines.push(escapeMDX(c.description));
-        lines.push('');
-      }
-    }
-
-    // Classes
-    for (const cls of mod.classes) {
-      lines.push(`### ${cls.name}`);
-      lines.push('');
-      if (cls.description) {
-        lines.push(escapeMDX(cls.description));
-        lines.push('');
-      }
-
-      if (cls.constructorSig) {
-        lines.push('#### Constructor');
-        lines.push('');
-        lines.push('```typescript');
-        lines.push(
-          `new ${cls.name}(${cls.constructorParams.map((p) => formatParam(p)).join(', ')})`
-        );
-        lines.push('```');
-        lines.push('');
-        if (cls.constructorParams.length > 0) {
-          lines.push(...generateParamsTable(cls.constructorParams));
-        }
-      }
-
-      if (cls.methods.length > 0) {
-        lines.push('#### Methods');
-        lines.push('');
-        for (const method of cls.methods) {
-          lines.push(`##### ${cls.name}.${method.name}`);
-          lines.push('');
-          lines.push('```typescript');
-          lines.push(method.signature);
-          lines.push('```');
-          lines.push('');
-          if (method.description) {
-            lines.push(escapeMDX(method.description));
-            lines.push('');
-          }
-          if (method.params.length > 0) {
-            lines.push(...generateParamsTable(method.params));
-          }
-          if (
-            method.returnType &&
-            method.returnType !== 'void' &&
-            method.returnType !== 'Promise<void>'
-          ) {
-            lines.push(`**Returns:** \`${escapeMDX(method.returnType)}\``);
-            lines.push('');
-          }
-        }
-      }
-    }
-
-    // Functions
-    for (const fn of mod.functions) {
-      lines.push(`### ${fn.name}`);
-      lines.push('');
-      lines.push('```typescript');
-      lines.push(fn.signature);
-      lines.push('```');
-      lines.push('');
-      if (fn.description) {
-        lines.push(escapeMDX(fn.description));
-        lines.push('');
-      }
-      if (fn.params.length > 0) {
-        lines.push(...generateParamsTable(fn.params));
-      }
-      if (fn.returnType && fn.returnType !== 'void') {
-        lines.push(`**Returns:** \`${escapeMDX(fn.returnType)}\``);
-        lines.push('');
-      }
+/** Splits a Markdown table row into cells, honouring `\|` escapes. */
+function splitRow(row: string): string[] {
+  const cells: string[] = [];
+  let cell = '';
+  const inner = row.trim().replace(/^\|/, '').replace(/\|$/, '');
+  for (let i = 0; i < inner.length; i += 1) {
+    if (inner[i] === '\\' && inner[i + 1] === '|') {
+      cell += '\\|';
+      i += 1;
+    } else if (inner[i] === '|') {
+      cells.push(cell);
+      cell = '';
+    } else {
+      cell += inner[i];
     }
   }
+  cells.push(cell);
+  return cells.map((c) => c.trim());
+}
 
+/**
+ * Removes the column titled `header` from every Markdown table (sources are
+ * stripped, so typedoc-plugin-markdown leaves it empty).
+ */
+export function dropTableColumn(markdown: string, header: string): string {
+  const lines = markdown.split('\n');
+  let drop = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.trimStart().startsWith('|')) {
+      drop = -1;
+      continue;
+    }
+    const cells = splitRow(line);
+    if (drop === -1 && lines[i + 1]?.trimStart().startsWith('| --')) {
+      drop = cells.indexOf(header);
+      if (drop === -1) {
+        drop = -2; // a table without the column: leave it alone
+        continue;
+      }
+    }
+    if (drop < 0) continue;
+    cells.splice(drop, 1);
+    lines[i] = `| ${cells.join(' | ')} |`;
+  }
   return lines.join('\n');
 }
 
-function generateParamsTable(params: ParamInfo[]): string[] {
-  const lines: string[] = [];
-  lines.push('**Parameters:**');
-  lines.push('');
-  lines.push('| Name | Type | Description |');
-  lines.push('|------|------|-------------|');
-  for (const p of params) {
-    const def = p.defaultValue ? ` (default: \`${p.defaultValue}\`)` : '';
-    const opt = p.isOptional ? ' *(optional)*' : '';
-    lines.push(
-      `| \`${p.name}\` | \`${escapeMDX(p.type)}\` | ${escapeMDX(p.description)}${opt}${def} |`
+export function buildPages(typedocDir: string, version: string): Map<string, string> {
+  const bodies = new Map<string, string>();
+  for (const m of MODULES) {
+    const source = path.join(typedocDir, ...m.typedocFile.split('/'));
+    if (!fs.existsSync(source)) throw new Error(`typedoc produced no ${m.typedocFile}`);
+    bodies.set(
+      routeFor(m.typedocFile)!,
+      postProcess(fs.readFileSync(source, 'utf-8'), m.typedocFile)
     );
   }
-  lines.push('');
-  return lines;
+  const fixed = fixFragments(bodies);
+  const files = new Map<string, string>();
+  for (const m of MODULES) {
+    const intro =
+      `Import from \`${m.importPath}\`. This page covers the hand-written TypeScript layer; ` +
+      'the generated native binding (sandboxes, guest, fleet, spaces objects) is documented per object in the ' +
+      '[Cua SDK reference](/cua-sdk/reference).';
+    const header = readHeader(`cua-sdk/typescript/${m.page}.md`, { version });
+    files.set(
+      path.join(OUTPUT_DIR, `${m.page}.mdx`),
+      renderPage({
+        title: m.title,
+        description: m.description,
+        generator: 'pnpm --dir docs docs:generate:cua-sdk-ts',
+        source: `typedoc + typedoc-plugin-markdown over libs/cua/typescript/src/${m.entry}`,
+        version: `@trycua/cua ${version}`,
+        body: [intro, header, fixed.get(routeFor(m.typedocFile)!)].filter(Boolean).join('\n\n'),
+      })
+    );
+  }
+  files.set(
+    path.join(OUTPUT_DIR, 'meta.json'),
+    metaJson(
+      'TypeScript additions',
+      MODULES.map((m) => m.page).filter((p) => p !== 'index')
+    )
+  );
+  return files;
 }
 
-// ============================================================================
-// Run
-// ============================================================================
+async function main(): Promise<void> {
+  const checkOnly = isCheckMode();
+  const version = JSON.parse(fs.readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf-8'))
+    .version as string;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cua-typedoc-'));
+  try {
+    await runTypedoc(tmp);
+    const drift = syncFiles(buildPages(tmp, version), checkOnly, [OUTPUT_DIR], 'pnpm --dir docs docs:generate:cua-sdk-ts');
+    finish('TypeScript', drift, checkOnly, 'pnpm --dir docs docs:generate:cua-sdk-ts');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
 
-main().catch((error) => {
-  console.error('Error:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('Error:', error);
+    process.exit(1);
+  });
+}

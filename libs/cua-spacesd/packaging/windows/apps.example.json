@@ -1,0 +1,14 @@
+[
+  {
+    "app_id": "test-pad-1",
+    "name": "Test Pad One",
+    "path": "cua-spacesd-test-pad.exe",
+    "args": ["--title", "Test-Pad-One"]
+  },
+  {
+    "app_id": "test-pad-2",
+    "name": "Test Pad Two",
+    "path": "cua-spacesd-test-pad.exe",
+    "args": ["--title", "Test-Pad-Two"]
+  }
+]

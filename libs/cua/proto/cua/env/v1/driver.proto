@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "google/protobuf/duration.proto";
+
+// Passthrough to the full cua-driver tool registry.
+//
+// Every cua-driver tool is reachable here without new protos. The same
+// registry is exposed to agents as streamable-HTTP MCP at `/mcp` on the same
+// port. Arguments and structured results are JSON text so that tool schemas
+// evolve with the cua-driver contract, not with this package.
+service DriverService {
+  // Lists the tools the linked cua-driver registry exposes on this platform.
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+  // Invokes one tool.
+  rpc CallTool(CallToolRequest) returns (CallToolResponse);
+}
+
+// Request for `DriverService.ListTools`.
+message ListToolsRequest {}
+
+// A tool description, mirroring the MCP tool shape.
+message ToolInfo {
+  // Tool name, for example "click" or "get_window_state".
+  string name = 1;
+  // Human-readable description.
+  string description = 2;
+  // JSON Schema of the arguments object, as JSON text.
+  string input_schema_json = 3;
+  // JSON Schema of the structured result, as JSON text. Empty when the tool
+  // declares none.
+  string output_schema_json = 4;
+  // True if the tool does not modify guest state.
+  bool read_only = 5;
+  // True if the tool may perform destructive changes.
+  bool destructive = 6;
+}
+
+// Response for `DriverService.ListTools`.
+message ListToolsResponse {
+  // Available tools.
+  repeated ToolInfo tools = 1;
+  // cua-driver contract version the registry implements.
+  string contract_version = 2;
+}
+
+// Request for `DriverService.CallTool`.
+message CallToolRequest {
+  // Tool name.
+  string name = 1;
+  // Arguments object as JSON text. Empty means `{}`.
+  string arguments_json = 2;
+  // Abort the call after this long. Unset means the tool's own default.
+  google.protobuf.Duration timeout = 3;
+}
+
+// An image produced by a tool.
+message ToolImage {
+  // Encoded bytes.
+  bytes data = 1;
+  // Media type, for example "image/png".
+  string mime_type = 2;
+}
+
+// One part of a tool result, mirroring MCP content parts.
+message ToolContent {
+  // The part.
+  oneof content {
+    // Text.
+    string text = 1;
+    // An image.
+    ToolImage image = 2;
+    // JSON text.
+    string json = 3;
+  }
+}
+
+// Response for `DriverService.CallTool`. Tool-level failures are reported
+// with `is_error`, not as gRPC errors; gRPC errors mean the call could not be
+// dispatched (unknown tool, invalid JSON, timeout).
+message CallToolResponse {
+  // Result parts in order.
+  repeated ToolContent content = 1;
+  // Structured result as JSON text, when the tool declares an output schema.
+  string structured_json = 2;
+  // True if the tool reported a failure.
+  bool is_error = 3;
+}

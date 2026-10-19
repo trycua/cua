@@ -1,0 +1,96 @@
+{
+  "schema": "cua.transcript.jsonui/2",
+  "cast": "claude-tool-error",
+  "instant": "read-failed",
+  "source": {
+    "cli": "claude",
+    "cliVersion": "2.1.278 (Claude Code)",
+    "layoutProfile": "claude-code/2.x",
+    "frameTimeMs": 12483,
+    "alternateScreen": true,
+    "unsupportedSequences": 0
+  },
+  "elements": [
+    {
+      "type": "rawText",
+      "provenance": "unrecognised",
+      "region": {
+        "firstRow": 0,
+        "lastRow": 5
+      },
+      "lines": [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        ""
+      ]
+    },
+    {
+      "type": "userMessage",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 6,
+        "lastRow": 6
+      },
+      "text": "Read the file ./definitely-not-here.txt and tell me exactly what happened."
+    },
+    {
+      "type": "toolCall",
+      "provenance": "inferred",
+      "region": {
+        "firstRow": 8,
+        "lastRow": 8
+      },
+      "name": "Read",
+      "argumentSummary": "1 file",
+      "status": "unknown",
+      "statusProvenance": "inferred",
+      "resultLines": [],
+      "collapsed": false
+    },
+    {
+      "type": "agentMessage",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 10,
+        "lastRow": 12
+      },
+      "markdown": "I tried to read /private/tmp/cua-cast-sandbox/definitely-not-here.txt and the read failed: \"File\ndoes not exist.\" Nothing was created or changed. If you meant a file elsewhere or under a\ndifferent name, tell me and I'll look.",
+      "text": "I tried to read /private/tmp/cua-cast-sandbox/definitely-not-here.txt and the read failed: \"File\ndoes not exist.\" Nothing was created or changed. If you meant a file elsewhere or under a\ndifferent name, tell me and I'll look."
+    },
+    {
+      "type": "turnBoundary",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 14,
+        "lastRow": 14
+      },
+      "kind": "completed",
+      "text": "✻ Cooked for 3s · done 6:00 PM"
+    },
+    {
+      "type": "composer",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 30,
+        "lastRow": 32
+      },
+      "content": "list the files in this directory",
+      "placeholder": null,
+      "cursorIsInside": true
+    },
+    {
+      "type": "modeIndicator",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 33,
+        "lastRow": 33
+      },
+      "mode": "accept_edits",
+      "rawText": "⏵⏵ accept edits on (shift+tab to cycle) · ← for agents",
+      "hint": "shift+tab to cycle"
+    }
+  ]
+}

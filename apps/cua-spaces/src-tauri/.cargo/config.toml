@@ -1,0 +1,7 @@
+# Processes cargo starts here (tests, `cargo run`, `tauri dev`) never send
+# telemetry: usage telemetry is off and non-loopback sends are refused.
+# Release builds are unaffected.
+[env]
+CUA_TELEMETRY = "0"
+CUA_TELEMETRY_FORBID_NETWORK = "1"
+CUA_TELEMETRY_SYNTHETIC = "1"

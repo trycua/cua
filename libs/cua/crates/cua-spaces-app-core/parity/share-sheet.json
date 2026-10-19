@@ -1,0 +1,35 @@
+{
+  "name": "share-sheet",
+  "about": "The Share sheet of a local Space: not shared yet, an invalid entry, sharing bob as an editor (the daemon asks for presence), bob connected, changing him to a viewer, a declined presence prompt, removing him, and the sheet signed out and for a driver too old to share.",
+  "input": {
+    "spaceId": "local:studio",
+    "spaceName": "studio",
+    "shares": [],
+    "signedIn": true,
+    "shareable": true
+  },
+  "steps": [
+    { "step": "open, only you" },
+    { "step": "a partial email", "action": { "type": "set-who", "who": "bob@" } },
+    { "step": "share is ignored while invalid", "action": { "type": "submit" } },
+    { "step": "a full email", "action": { "type": "set-who", "who": " Bob@Example.com " } },
+    { "step": "as an editor", "action": { "type": "set-role", "role": "editor" } },
+    { "step": "share (presence, then the relay)", "action": { "type": "submit" } },
+    {
+      "step": "shared",
+      "action": { "type": "done" },
+      "input": { "shares": [{ "who": "bob@example.com", "role": "editor", "connected": false }] }
+    },
+    {
+      "step": "bob connected",
+      "input": { "shares": [{ "who": "bob@example.com", "role": "editor", "connected": true }] }
+    },
+    { "step": "change bob to viewer", "action": { "type": "change-role", "who": "bob@example.com", "role": "viewer" } },
+    { "step": "presence declined", "action": { "type": "failed", "error": "not shared: you declined" } },
+    { "step": "remove bob", "action": { "type": "remove", "who": "bob@example.com" } },
+    { "step": "removed", "action": { "type": "done" }, "input": { "shares": [] } },
+    { "step": "a team is refused", "action": { "type": "set-who", "who": "team:design" } },
+    { "step": "signed out", "input": { "signedIn": false }, "action": { "type": "set-who", "who": "carol@example.com" } },
+    { "step": "an old driver", "input": { "signedIn": true, "shareable": false } }
+  ]
+}

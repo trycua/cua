@@ -15,16 +15,40 @@
 //! loaded only from the dyld shared cache is not visible this way; such targets
 //! fall back to the honest "not driver-verified" background result.
 
-/// A UI toolkit known to derive click locations from the hardware pointer.
+/// A UI toolkit that background (PID-routed) mouse events cannot reach at the
+/// requested point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PointerReadingToolkit {
+    /// Tk derives click locations from the hardware pointer.
     Tk,
+    /// LibreOffice's macOS VCL plug-in (`libvclplug_osxlo.dylib`) drops
+    /// PID-routed mouse events: a background click or right-click on a Calc
+    /// cell leaves the selection where it was (VM check, 8 Oct 2026), and
+    /// the AX press its cells accept does not select them either.
+    Vcl,
 }
 
 impl PointerReadingToolkit {
     pub fn name(self) -> &'static str {
         match self {
             Self::Tk => "tk",
+            Self::Vcl => "libreoffice-vcl",
+        }
+    }
+
+    /// Why background delivery cannot reach this toolkit, as a clause that
+    /// follows "its <name> toolkit".
+    pub fn why(self) -> &'static str {
+        match self {
+            Self::Tk => {
+                "derives click locations from the hardware pointer, and background delivery \
+                 never moves the pointer, so the click would land wherever the pointer \
+                 currently is"
+            }
+            Self::Vcl => {
+                "ignores background (PID-routed) mouse events, so the click would not reach \
+                 the target and the selection would stay where it is"
+            }
         }
     }
 }
@@ -40,6 +64,10 @@ pub fn classify_image_path(path: &str) -> Option<PointerReadingToolkit> {
     }
     let file = path.rsplit('/').next().unwrap_or(path);
     let lower = file.to_ascii_lowercase();
+    // LibreOffice's macOS VCL plug-in: `libvclplug_osxlo.dylib`.
+    if lower.starts_with("libvclplug_osx") && lower.ends_with(".dylib") {
+        return Some(PointerReadingToolkit::Vcl);
+    }
     if lower.starts_with("_tkinter") && lower.ends_with(".so") {
         return Some(PointerReadingToolkit::Tk);
     }
@@ -205,6 +233,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn classifies_the_libreoffice_vcl_plugin() {
+        assert_eq!(
+            classify_image_path(
+                "/Applications/LibreOffice.app/Contents/Frameworks/libvclplug_osxlo.dylib"
+            ),
+            Some(PointerReadingToolkit::Vcl)
+        );
+        for path in [
+            "/Applications/LibreOffice.app/Contents/Frameworks/libvcllo.dylib",
+            "/Applications/LibreOffice.app/Contents/Frameworks/libvclplug_osxlo.dylib.bak",
+        ] {
+            assert_eq!(classify_image_path(path), None, "{path}");
+        }
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn kernel_region_structure_matches_proc_info_layout() {
@@ -221,10 +265,14 @@ mod tests {
         assert!(walk_regions(std::process::id() as i32, PROC_PIDREGIONPATHINFO).is_some());
     }
 
-    /// Loads `_tkinter` without creating any window, so this never touches the
-    /// desktop. Skips when the host Python lacks Tk support.
+    /// Loads `_tkinter` without creating any window. Skips when the host
+    /// Python lacks Tk support. Ignored under plain `cargo test`: on a Mac
+    /// without the Command Line Tools, `/usr/bin/python3` is a stub that opens
+    /// the developer-tools install dialog. The macOS canonical runner's native
+    /// lane, which provisions Python for the Tk rows, selects it.
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "host desktop: spawns the host python3, which can open the Command Line Tools installer; run by scripts/ci/macos/run-rust-e2e.sh"]
     fn detect_finds_tk_in_a_python_process_that_imported_tkinter() {
         use std::io::BufRead;
         let spawned = std::process::Command::new("python3")

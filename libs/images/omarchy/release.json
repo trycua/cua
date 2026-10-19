@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "repo": "ghcr.io/trycua/omarchy",
+  "arches": ["amd64"],
+  "series": "edge",
+  "tag": "build-{stamp}",
+  "vars": {
+    "record_ledger": "false"
+  },
+  "steps": [
+    {
+      "id": "spacesd/{arch}", "phase": "prepare", "per_arch": true,
+      "description": "cua-spacesd for the image (cached in dist/; CI downloads it)",
+      "unless_exists": "{root}/libs/images/linux/dist/{arch}/cua-spacesd",
+      "run": ["{root}/libs/images/linux/build-spacesd-linux.sh", "{arch}"],
+      "produces": ["{root}/libs/images/linux/dist/{arch}/cua-spacesd"]
+    },
+    {
+      "id": "build/{arch}", "phase": "build", "per_arch": true, "requires": ["docker"],
+      "run": ["{cua}", "images", "build", "{dir}", "--platform", "linux/{arch}", "--tag", "{tag}",
+              "--outputs", "rootfs,disk", "--out", "{out}", "--build-arg", "CUA_SPACESD_SOURCE=local"],
+      "produces": ["{out}/{name}/{arch}/disk.img"]
+    },
+    {
+      "id": "doctor/{arch}/qemu", "phase": "gate", "per_arch": true, "requires": ["accel-{arch}"],
+      "run": ["{root}/scripts/images/image-doctor-lane.sh", "--lane", "qemu", "--disk", "{out}/{name}/{arch}/disk.img",
+              "--arch", "{arch}", "--timeout", "600", "--out", "{evidence}/doctor/{arch}-qemu"]
+    },
+    {
+      "id": "doctor/{arch}/qemu-claim-secrets", "phase": "gate", "per_arch": true, "requires": ["accel-{arch}"],
+      "run": ["{root}/scripts/images/image-doctor-lane.sh", "--lane", "qemu", "--disk", "{out}/{name}/{arch}/disk.img",
+              "--arch", "{arch}", "--claim-secrets", "--timeout", "600", "--out", "{evidence}/doctor/{arch}-qemu-claim-secrets"]
+    },
+    {
+      "id": "e2e/{arch}", "phase": "gate", "per_arch": true, "requires": ["accel-{arch}"],
+      "description": "the cua CLI and both cua-driver MCPs drive Hyprland; the 12 fps floor fits software-rendered Hyprland on a GPU-less KVM runner (13-16 fps under load)",
+      "env": { "CUA_E2E_OMARCHY": "1" },
+      "run": ["python3", "{root}/tests/e2e/omarchy/omarchy_e2e.py", "--disk", "{out}/{name}/{arch}/disk.img",
+              "--cua", "{cua}", "--evidence", "{evidence}/e2e", "--min-fps", "12"]
+    },
+    {
+      "id": "versions/{arch}", "phase": "stage", "per_arch": true, "requires": ["docker"],
+      "run": ["docker", "run", "--rm", "--entrypoint", "cat", "{repo}:docker-{tag}-{arch}", "/etc/cua-image/omarchy-versions"],
+      "stdout": "{evidence}/omarchy-versions-{arch}.txt"
+    },
+    {
+      "id": "content/{arch}", "phase": "stage", "per_arch": true, "requires": ["docker"],
+      "description": "what the daily run compares with the promoted edge",
+      "run": ["{root}/scripts/images/content-digest.sh", "--rootfs", "{repo}:docker-{tag}-{arch}",
+              "--tree", "libs/images/omarchy", "--tree", "libs/images/common", "--tree", "libs/images/linux/files",
+              "--tree", "libs/cua-spacesd", "--tree", "libs/cua-driver/rust", "--out", "{evidence}/content-{arch}.txt"],
+      "stdout": "{evidence}/content-digest-{arch}",
+      "produces": ["{evidence}/content-digest-{arch}"]
+    },
+    {
+      "id": "save/{arch}", "phase": "stage", "per_arch": true,
+      "run": ["{root}/scripts/images/release-save.sh", "--arch", "{arch}", "--disk", "{out}/{name}/{arch}/disk.img",
+              "--artifacts", "{artifacts}", "--evidence", "{evidence}"],
+      "produces": ["{artifacts}/{arch}/disk/disk.img", "{evidence}/artifacts-{arch}.sha256"]
+    },
+    {
+      "id": "push/{arch}", "phase": "push", "per_arch": true,
+      "run": ["{root}/scripts/images/release-push.sh", "--image-dir", "{dir}", "--repo", "{repo}", "--tag", "{tag}",
+              "--arch", "{arch}", "--no-rootfs", "--artifacts", "{artifacts}", "--evidence", "{evidence}",
+              "--out", "{out}/pack", "--cua", "{cua}"],
+      "produces": ["{evidence}/pushed-{arch}/pushed.json"]
+    },
+    {
+      "id": "attest", "phase": "push",
+      "description": "attach every doctor report to the disk it checked (and the ledger with record_ledger=true)",
+      "env": { "ATTEST_DIR": "{evidence}" },
+      "run": ["{root}/scripts/images/attest-doctor-reports.sh", "attest", "{run_url}", "{record_ledger}"],
+      "produces": ["{evidence}/attested.json"]
+    },
+    {
+      "id": "publish", "phase": "publish",
+      "run": ["{root}/scripts/images/release-publish.sh", "--image-dir", "{dir}", "--repo", "{repo}", "--tag", "{tag}",
+              "--series", "{series}", "--stamp", "{stamp}", "--arches", "{arches}", "--evidence", "{evidence}",
+              "--cua", "{cua}", "--run-url", "{run_url}"],
+      "produces": ["{evidence}/pins.json"]
+    },
+    {
+      "id": "verify", "phase": "verify",
+      "run": ["{root}/scripts/images/verify-pins.sh", "--pins", "{evidence}/pins.json", "--evidence", "{evidence}", "--arches", "{arches}"]
+    },
+    {
+      "id": "promote", "phase": "promote",
+      "run": ["{cua}", "images", "promote", "{evidence}/pins.json"]
+    },
+    {
+      "id": "catalog",
+      "phase": "promote",
+      "description": "move the catalog digests of the promoted tags and record their sizes (commit libs/images/sandbox-images.json)",
+      "run": [
+        "python3",
+        "{root}/scripts/images/record-image-sizes.py",
+        "--refresh-digest",
+        "--ref",
+        "{repo}:{series}",
+        "--ref",
+        "{repo}:{series}-disk"
+      ]
+    }
+  ]
+}

@@ -32,7 +32,7 @@ struct Sip: AsyncParsableCommand {
                 --admin-user alice --admin-password-stdin
             """)
 
-    enum State: String, ExpressibleByArgument, Sendable { case on, off }
+    enum State: String, CaseIterable, ExpressibleByArgument, Sendable { case on, off }
 
     @Argument(help: "Desired SIP state: on or off") var state: State
 

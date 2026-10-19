@@ -1,0 +1,17 @@
+[Unit]
+Description=Cua Driver (Omarchy cua-driver-bin) daemon for the Hyprland session
+# Omarchy's own cua-driver: `cua-driver mcp` and `cua-driver call` reach this
+# daemon over its socket. Input goes through the cua-hyprland-plugin seats.
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+Environment=CUA_DRIVER_RS_ENABLE_WAYLAND=1
+ExecStart=/usr/bin/cua-driver serve
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

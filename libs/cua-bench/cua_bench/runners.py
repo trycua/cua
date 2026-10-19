@@ -6,6 +6,7 @@ interactive environments, using the core gym interface (make, reset, step, evalu
 
 import asyncio
 import fnmatch
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -82,7 +83,7 @@ async def run_single_task(
         task_index: Task variant index (default: 0)
         split: Dataset split (default: "train")
         agent_fn: Optional agent function that takes (screenshot, task_config)
-                  and returns an Action. If None and oracle=False, returns after setup.
+                  and returns an Action. Required when oracle=False; otherwise the run fails closed after setup.
         max_steps: Maximum steps per task (default: 100)
         oracle: Run oracle/solver mode (default: False)
 
@@ -99,7 +100,13 @@ async def run_single_task(
 
         result = await run_single_task(Path("./task"), agent_fn=my_agent)
     """
+    if type(max_steps) is not int or max_steps < 1:
+        raise ValueError("max_steps must be a positive integer")
+
     env = None
+    step_count = 0
+    outcome = None
+
     try:
         # Create environment using gym interface
         env = make(str(env_path), split=split)
@@ -108,16 +115,13 @@ async def run_single_task(
         # Reset environment
         screenshot, task_cfg = await env.reset(task_id=task_index)
 
-        step_count = 0
-        reward = 0.0
-
         if oracle:
             # Run oracle solver
             if env.solve_task_fn is not None:
                 await env.solve()
                 step_count = env.step_count
             else:
-                return TaskResult(
+                outcome = TaskResult(
                     task_path=str(env_path),
                     variant_id=task_index,
                     success=False,
@@ -125,6 +129,7 @@ async def run_single_task(
                     steps=0,
                     error="No solve_task_fn defined for oracle mode",
                 )
+                return outcome
         elif agent_fn is not None:
             # Run agent
             done = False
@@ -134,39 +139,55 @@ async def run_single_task(
                 step_count += 1
                 done = isinstance(action, DoneAction)
 
-        # Evaluate
-        if env.evaluate_task_fn is not None:
-            result = await env.evaluate()
-            if isinstance(result, (int, float)):
-                reward = float(result)
-            elif isinstance(result, list) and len(result) > 0:
-                reward = float(result[0])
-            elif isinstance(result, dict) and "reward" in result:
-                reward = float(result["reward"])
+        if not oracle and agent_fn is None:
+            raise ValueError("No agent_fn supplied; task was not executed")
 
-        return TaskResult(
+        # Evaluate
+        if env.evaluate_task_fn is None:
+            raise ValueError("Task has no evaluator")
+        result = await env.evaluate()
+        if isinstance(result, dict) and "reward" in result:
+            values = [result["reward"]]
+        elif isinstance(result, list) and result:
+            values = result
+        else:
+            values = [result]
+        for value in values:
+            if not isinstance(value, (int, float)):
+                raise ValueError("Evaluator reward must be numeric")
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError("Evaluator reward must be finite and within [0, 1]")
+        reward = float(values[0])
+
+        outcome = TaskResult(
             task_path=str(env_path),
             variant_id=task_index,
             success=reward >= 0.5,  # Common threshold
             reward=reward,
             steps=step_count,
         )
+        return outcome
 
     except Exception as e:
-        return TaskResult(
+        outcome = TaskResult(
             task_path=str(env_path),
             variant_id=task_index,
             success=False,
             reward=0.0,
-            steps=0,
+            steps=step_count,
             error=str(e),
         )
+        return outcome
     finally:
         if env is not None:
             try:
                 await env.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                if outcome is not None:
+                    outcome.success = False
+                    outcome.reward = 0.0
+                    detail = f"Environment cleanup failed: {close_error}"
+                    outcome.error = f"{outcome.error}; {detail}" if outcome.error else detail
 
 
 async def run_benchmark(
@@ -222,6 +243,13 @@ async def run_benchmark(
             max_parallel=4,
         )
     """
+    if type(max_parallel) is not int or max_parallel < 1:
+        raise ValueError("max_parallel must be a positive integer")
+    if max_variants is not None and (type(max_variants) is not int or max_variants < 1):
+        raise ValueError("max_variants must be a positive integer or None")
+    if type(max_steps) is not int or max_steps < 1:
+        raise ValueError("max_steps must be a positive integer")
+
     start_time = time.time()
 
     # Validate dataset path
@@ -249,16 +277,26 @@ async def run_benchmark(
     # Expand tasks to (task_path, variant_id) tuples
     task_variants: List[Tuple[Path, int]] = []
     for task_path in tasks:
+        env = None
         try:
             env = make(str(task_path), split=split)
             if env.tasks_config_fn:
                 variant_count = len(env.tasks_config_fn())
             else:
                 variant_count = 1
-        except Exception:
-            variant_count = 1
-
-        if max_variants:
+        except Exception as exc:
+            raise RuntimeError(f"Unable to discover variants for {task_path}") from exc
+        finally:
+            if env is not None:
+                try:
+                    await env.close()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Unable to close discovery environment for {task_path}"
+                    ) from exc
+        if variant_count < 1:
+            raise ValueError(f"Invalid variant count for {task_path}: {variant_count!r}")
+        if max_variants is not None:
             variant_count = min(variant_count, max_variants)
 
         for variant_id in range(variant_count):

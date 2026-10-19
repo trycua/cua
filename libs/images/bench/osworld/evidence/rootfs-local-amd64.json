@@ -1,0 +1,79 @@
+{
+  "id": "osworld",
+  "variant": "rootfs",
+  "where": "local",
+  "arch": "amd64",
+  "image": "cua-e2e-local/bench-osworld:docker-local-amd64",
+  "child": null,
+  "container_runtime": "auto (gVisor when available)",
+  "pinned_ref": null,
+  "doctor": "pass",
+  "seconds": 21.1,
+  "ok": true,
+  "checks": [
+    {
+      "check": "ready",
+      "status": "pass",
+      "detail": "after 4s"
+    },
+    {
+      "check": "server",
+      "status": "pass",
+      "detail": "GET /screenshot on :5000 -> 200",
+      "seconds": 2.34
+    },
+    {
+      "check": "spacesd",
+      "status": "pass",
+      "detail": "GetCapabilities: arch, bootTime, displayServer, displays, features, hostname, limits, machineSealPublicKey, os, protocolRevision, protocolVersion, runtime, runtimeDetail, sideChannels, version",
+      "seconds": 0.18
+    },
+    {
+      "check": "screen",
+      "status": "pass",
+      "detail": "1920x1080 (want 1920x1080), color variety 0.522",
+      "seconds": 2.67
+    },
+    {
+      "check": "input",
+      "status": "pass",
+      "detail": {
+        "ok": true,
+        "changed_fraction": 0.381
+      },
+      "seconds": 4.42
+    },
+    {
+      "check": "bench.server_screenshot",
+      "status": "pass",
+      "detail": "200, 1666338 bytes"
+    },
+    {
+      "check": "bench.server_execute",
+      "status": "pass",
+      "detail": {
+        "error": "",
+        "output": "user\n:0\n",
+        "returncode": 0,
+        "status": "success"
+      }
+    },
+    {
+      "check": "bench.server_accessibility",
+      "status": "pass",
+      "detail": "200, 143672 chars"
+    },
+    {
+      "check": "bench.server_screen_size",
+      "status": "pass",
+      "detail": "{\n  \"height\": 1080,\n  \"width\": 1920\n}\n"
+    },
+    {
+      "check": "doctor",
+      "status": "pass",
+      "detail": "rc=0 (report in rootfs-local-amd64-doctor.json); all checks pass",
+      "seconds": 3.1
+    }
+  ],
+  "date": "2026-10-03T22:20:00Z"
+}

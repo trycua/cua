@@ -23,6 +23,7 @@ fn spawn_unrestricted_with_overlay() -> Option<RawDriver> {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: draws the agent-cursor overlay window on the real display; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn concurrent_multi_driver_isolation() {
     //! Two cua-driver processes running simultaneously with different declared
     //! sessions. Each process must retain its own session-owned cursor state.
@@ -146,6 +147,7 @@ fn concurrent_multi_driver_isolation() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: draws the agent-cursor overlay window on the real display; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn session_owned_cursor_state_is_independent() {
     let Some(mut driver) = spawn_unrestricted_with_overlay() else {
         return;
@@ -171,11 +173,29 @@ fn session_owned_cursor_state_is_independent() {
     driver.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"tools/call",
         "params":{"name":"set_agent_cursor_motion","arguments":{
-            "session":"agent1","spring":0.7
+            "session":"agent1","spring":0.7,"style":"dc-magnetic","timing":"fitts",
+            "effects":{"ripple":false}
         }}
     }));
     let motion = driver.recv();
     assert!(!motion["result"]["isError"].as_bool().unwrap_or(false));
+    let echoed = &motion["result"]["structuredContent"]["motion"];
+    assert_eq!(echoed["style"], "magnetic");
+    assert_eq!(echoed["timing"], "fitts");
+    assert_eq!(echoed["effects"]["ripple"], false);
+    assert_eq!(echoed["effects"]["magnet"], true);
+
+    driver.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":40,"method":"tools/call",
+        "params":{"name":"set_agent_cursor_motion","arguments":{
+            "session":"agent1","style":"zigzag"
+        }}
+    }));
+    let rejected = driver.recv();
+    assert!(
+        rejected["result"]["isError"].as_bool().unwrap_or(false),
+        "unknown style was accepted: {rejected:?}"
+    );
 
     driver.send(&serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"tools/call",
@@ -200,11 +220,18 @@ fn session_owned_cursor_state_is_independent() {
         assert_eq!(state["session"].as_str(), Some(session));
         assert_eq!(state["enabled"].as_bool(), Some(expected_enabled));
         assert_eq!(state["theme"]["id"].as_str(), Some("cua.default"));
+        let expected_style = if session == "agent1" {
+            "magnetic"
+        } else {
+            "signature_arc"
+        };
+        assert_eq!(state["motion"]["style"].as_str(), Some(expected_style));
     }
 }
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: draws the agent-cursor overlay window on the real display; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn overlay_move_cursor_stays_alive() {
     //! Verify that calling move_cursor with the overlay enabled does not crash the process.
     //! The overlay renders to a transparent NSWindow on the main thread; the MCP server

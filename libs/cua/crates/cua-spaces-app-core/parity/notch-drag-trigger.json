@@ -1,0 +1,205 @@
+{
+  "name": "notch-drag-trigger",
+  "about": "When a dragged window opens the notch's drop surface, on a 14-inch MacBook Pro and a 1920 display without a notch to its right: the trigger geometry per display (the SwiftUI notch and the Tauri portal), a title-bar move that rests in the Teleport to Cua box for the dwell, stays expanded over the tiles, collapses when it leaves, crosses the line 5 pt above the notch bottom and drops; a Chrome left-edge resize that shows nothing; and a drag whose frames arrive late, expanding at the external display's menu-bar line, then cancelled.",
+  "screens": [
+    {
+      "name": "mbp14",
+      "facts": {
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "width": 1512,
+          "height": 982
+        },
+        "visibleFrame": {
+          "x": 0,
+          "y": 0,
+          "width": 1512,
+          "height": 945
+        },
+        "safeAreaTop": 32,
+        "auxLeftWidth": 662,
+        "auxRightWidth": 662
+      }
+    },
+    {
+      "name": "external 1920",
+      "facts": {
+        "frame": {
+          "x": 1512,
+          "y": -98,
+          "width": 1920,
+          "height": 1080
+        },
+        "visibleFrame": {
+          "x": 1512,
+          "y": -98,
+          "width": 1920,
+          "height": 1055
+        },
+        "safeAreaTop": 0,
+        "auxLeftWidth": null,
+        "auxRightWidth": null
+      }
+    }
+  ],
+  "events": [
+    {
+      "type": "start",
+      "windowId": 7,
+      "appName": "Google Chrome",
+      "x": 700,
+      "y": 500,
+      "tMs": 0,
+      "startFrame": {
+        "x": 400,
+        "y": 300,
+        "width": 800,
+        "height": 600
+      },
+      "frame": {
+        "x": 440,
+        "y": 260,
+        "width": 800,
+        "height": 600
+      }
+    },
+    {
+      "type": "cursor",
+      "x": 756,
+      "y": 40,
+      "tMs": 100
+    },
+    {
+      "type": "cursor",
+      "x": 757,
+      "y": 41,
+      "tMs": 250
+    },
+    {
+      "type": "tick",
+      "tMs": 399
+    },
+    {
+      "type": "tick",
+      "tMs": 400
+    },
+    {
+      "type": "cursor",
+      "x": 500,
+      "y": 150,
+      "tMs": 500
+    },
+    {
+      "type": "cursor",
+      "x": 500,
+      "y": 260,
+      "tMs": 600
+    },
+    {
+      "type": "cursor",
+      "x": 756,
+      "y": 28,
+      "tMs": 650
+    },
+    {
+      "type": "cursor",
+      "x": 756,
+      "y": 26,
+      "tMs": 700
+    },
+    {
+      "type": "end",
+      "x": 756,
+      "y": 90,
+      "tMs": 800
+    },
+    {
+      "type": "start",
+      "windowId": 7,
+      "appName": "Google Chrome",
+      "x": 380,
+      "y": 200,
+      "tMs": 1000,
+      "startFrame": {
+        "x": 400,
+        "y": 300,
+        "width": 800,
+        "height": 600
+      },
+      "frame": {
+        "x": 380,
+        "y": 300,
+        "width": 820,
+        "height": 600
+      }
+    },
+    {
+      "type": "cursor",
+      "x": 756,
+      "y": 5,
+      "tMs": 1100
+    },
+    {
+      "type": "tick",
+      "tMs": 1500
+    },
+    {
+      "type": "end",
+      "x": 756,
+      "y": 5,
+      "tMs": 1600
+    },
+    {
+      "type": "start",
+      "windowId": 7,
+      "appName": "Google Chrome",
+      "x": 2000,
+      "y": 500,
+      "tMs": 2000,
+      "startFrame": {
+        "x": 1800,
+        "y": 300,
+        "width": 800,
+        "height": 600
+      },
+      "frame": null
+    },
+    {
+      "type": "cursor",
+      "x": 2472,
+      "y": 10,
+      "tMs": 2050
+    },
+    {
+      "type": "frame",
+      "frame": {
+        "x": 1840,
+        "y": 250,
+        "width": 802,
+        "height": 599
+      }
+    },
+    {
+      "type": "cursor",
+      "x": 2472,
+      "y": 20,
+      "tMs": 2100
+    },
+    {
+      "type": "cursor",
+      "x": 2472,
+      "y": 19,
+      "tMs": 2150
+    },
+    {
+      "type": "cursor",
+      "x": 2472,
+      "y": 150,
+      "tMs": 2200
+    },
+    {
+      "type": "cancel"
+    }
+  ]
+}

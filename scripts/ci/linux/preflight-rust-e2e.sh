@@ -71,15 +71,32 @@ fi
 source_sha="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 if [[ "${source_sha}" =~ ^[0-9a-f]{40}$ ]]; then
   pass "checked-out source SHA: ${source_sha}"
+  if [[ -n "${CUA_E2E_SOURCE_SHA:-}" && "${CUA_E2E_SOURCE_SHA,,}" != "${source_sha}" ]]; then
+    fail 'CUA_E2E_SOURCE_SHA differs from the checkout; sync exact source before testing'
+  fi
+elif [[ "${CUA_E2E_SOURCE_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  # No checkout here (inside a Cua sandbox): the driver's embedded build
+  # identity is checked against CUA_E2E_SOURCE_SHA below instead.
+  source_sha="${CUA_E2E_SOURCE_SHA,,}"
+  pass "source SHA from CUA_E2E_SOURCE_SHA (no checkout): ${source_sha}"
 else
-  fail 'checked-out source SHA unavailable'
-fi
-if [[ -n "${CUA_E2E_SOURCE_SHA:-}" && "${CUA_E2E_SOURCE_SHA,,}" != "${source_sha}" ]]; then
-  fail 'CUA_E2E_SOURCE_SHA differs from the checkout; sync exact source before testing'
+  fail 'checked-out source SHA unavailable (set CUA_E2E_SOURCE_SHA when running without a checkout)'
 fi
 if [[ -x "${DRIVER_BIN}" ]]; then
   if version="$("${DRIVER_BIN}" --version 2>&1)"; then
-    pass "driver version: ${version} (${DRIVER_BIN}); source identity not yet verified"
+    pass "driver version: ${version} (${DRIVER_BIN})"
+    # Source identity: the git sha the driver embedded at build time.
+    driver_sha=""
+    if command -v jq >/dev/null 2>&1; then
+      driver_sha="$("${DRIVER_BIN}" doctor --json 2>/dev/null | jq -r '.build.git_sha // empty' 2>/dev/null || true)"
+    fi
+    if [[ -z "${driver_sha}" ]]; then
+      warn 'driver reports no build identity; source identity unverified'
+    elif [[ -n "${source_sha}" && "${driver_sha}" == "${source_sha}" ]]; then
+      pass "driver built from the source under test: ${driver_sha}"
+    else
+      fail "stale driver: built from ${driver_sha}, source under test is ${source_sha:-unknown}"
+    fi
   else
     fail "source driver cannot run --version: ${DRIVER_BIN}"
   fi

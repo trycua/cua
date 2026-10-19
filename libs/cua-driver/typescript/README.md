@@ -110,7 +110,7 @@ retry. Refresh stale tokens from the same exact window.
 Window IDs are `bigint`; do not convert them to `number`.
 
 See the [migration guide](../docs/native-window-sdk-migration.md) for input and
-return-type changes, and the [complete Python and TypeScript examples](https://cua.ai/docs/how-to-guides/driver/use-sdk-in-process)
+return-type changes, and the [complete Python and TypeScript examples](https://cua.ai/docs/cua-driver/guides/use-the-sdk)
 for discovery, token selection, verification, and shutdown.
 
 ## Authorization integrations
@@ -127,7 +127,7 @@ content-free action, refusal, grant, and session events. The observer cannot
 change authorization or tool results. Use
 `createConfiguredWithHostIntegrations` when the application needs both.
 
-See the [SDK reference](https://cua.ai/docs/reference/cua-driver/sdk-reference)
+See the [SDK reference](https://cua.ai/docs/cua-driver/guides/use-the-sdk#constructors)
 for complete examples and the callback trust rules.
 
 `CuaDriver.connect(socketPath)` remains available while existing applications

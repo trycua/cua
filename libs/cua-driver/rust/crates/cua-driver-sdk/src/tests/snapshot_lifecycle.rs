@@ -1,7 +1,7 @@
 use super::{CuaDriver, DriverHostOptions};
-use cua_driver_core::element_cache::{register_runtime_cache, ElementCacheCore, SnapshotPayload};
-use cua_driver_core::element_token::{token_for, ResolvedElement, STALE_TOKEN_ERROR};
+use cua_driver_core::element_token::{token_for, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
+use cua_driver_core::snapshot_store::{register_runtime_store, SnapshotPayload, SnapshotStore};
 use cua_driver_core::tool::{
     current_dispatch_runtime_scope, with_runtime_scope, Tool, ToolDef, ToolRegistry,
 };
@@ -25,22 +25,22 @@ impl SnapshotPayload for ProbePayload {
 }
 
 fn resolve<S: SnapshotPayload>(
-    cache: &ElementCacheCore<S>,
+    cache: &SnapshotStore<S>,
     pid: i32,
     token: &str,
 ) -> Result<(u64, usize), String> {
     cache
-        .resolve_element_args(pid, None, Some(token), None, None, "click")
+        .resolve(pid, &serde_json::json!({ "element_token": token }))
         .map(|result| match result {
             ResolvedElement::Element {
-                window_id: Some(window),
+                window_id: window,
                 element_index,
                 ..
             } => (window, element_index),
             _ => panic!("expected element"),
         })
         .map_err(|error| {
-            error.structured_content.unwrap()["refusal"]["message"]
+            error.structured_content.unwrap()["refusal"]["code"]
                 .as_str()
                 .unwrap()
                 .to_owned()
@@ -53,7 +53,7 @@ struct CaptureProbe {
     native_finished: Notify,
     release: Mutex<Option<mpsc::Receiver<()>>>,
     published: Mutex<Option<(String, String)>>,
-    cache: Mutex<Option<Arc<ElementCacheCore<ProbePayload>>>>,
+    cache: Mutex<Option<Arc<SnapshotStore<ProbePayload>>>>,
 }
 
 struct ReleaseNative(Option<mpsc::Sender<()>>);
@@ -81,7 +81,7 @@ thread_local! {
 struct CaptureTool {
     def: ToolDef,
     probe: Arc<CaptureProbe>,
-    cache: Arc<ElementCacheCore<ProbePayload>>,
+    cache: Arc<SnapshotStore<ProbePayload>>,
 }
 
 #[async_trait::async_trait]
@@ -112,8 +112,8 @@ impl Tool for CaptureTool {
 
 fn register_capture_probe(registry: &mut ToolRegistry) {
     let probe = NEXT_PROBE.with(|probe| probe.borrow_mut().take().unwrap());
-    let cache = Arc::new(ElementCacheCore::new());
-    register_runtime_cache(&cache);
+    let cache = Arc::new(SnapshotStore::new());
+    register_runtime_store(&cache);
     *probe.cache.lock().unwrap() = Some(cache.clone());
     registry.register(Box::new(CaptureTool {
         def: ToolDef {
@@ -177,7 +177,7 @@ async fn wait_for_closed_admission(driver: &CuaDriver) {
 
 #[tokio::test]
 async fn sdk_shutdown_drains_snapshot_publication_and_retires_the_result() {
-    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
     let (driver, probe, release) = capture_driver();
     let caller = driver.clone();
     let action =
@@ -220,12 +220,12 @@ async fn sdk_shutdown_drains_snapshot_publication_and_retires_the_result() {
         "closed runtime admitted another publisher"
     );
     assert!(!result.is_error);
-    assert_eq!(resolution, Err(STALE_TOKEN_ERROR.to_owned()));
+    assert_eq!(resolution, Err("stale_element_token".to_owned()));
 }
 
 #[tokio::test]
 async fn sdk_cancelled_capture_does_not_publish_after_shutdown() {
-    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
     let (driver, probe, release) = capture_driver();
     let caller = driver.clone();
     let action =
@@ -274,8 +274,8 @@ mod native {
     use crate::DriverBackend;
     use core_foundation::base::{CFGetRetainCount, CFRetain, CFTypeRef, TCFType};
     use core_foundation::string::CFString;
-    use cua_driver_core::element_cache::current_runtime_cache;
-    use platform_macos::ax::cache::{CachedSnapshot, ElementCache};
+    use cua_driver_core::snapshot_store::current_runtime_store;
+    use platform_macos::ax::snapshot::{AxSnapshot, Snapshots};
 
     thread_local! {
         static NEXT_STATE: RefCell<Option<(usize, u32, Option<String>)>> = const { RefCell::new(None) };
@@ -283,7 +283,7 @@ mod native {
 
     struct NativeStateTool {
         def: ToolDef,
-        cache: Arc<ElementCache>,
+        cache: Arc<Snapshots>,
         token: String,
     }
 
@@ -304,7 +304,7 @@ mod native {
 
     fn register_native_state(registry: &mut ToolRegistry) {
         let cache =
-            current_runtime_cache::<CachedSnapshot>().expect("built-in native cache registered");
+            current_runtime_store::<AxSnapshot>().expect("built-in native cache registered");
         let token = NEXT_STATE.with(|next| {
             let mut next = next.borrow_mut();
             let (ptr, windows, oldest) = next.as_mut().unwrap();
@@ -313,7 +313,7 @@ mod native {
                 let id = cache.publish(
                     731_348,
                     u64::from(window),
-                    CachedSnapshot {
+                    AxSnapshot {
                         elements: vec![*ptr],
                     },
                 );
@@ -350,14 +350,14 @@ mod native {
     }
 
     fn resolve_native(token: &str) -> Result<(u64, usize), String> {
-        let cache = current_runtime_cache::<CachedSnapshot>()
-            .ok_or_else(|| STALE_TOKEN_ERROR.to_owned())?;
+        let cache = current_runtime_store::<AxSnapshot>()
+            .ok_or_else(|| "stale_element_token".to_owned())?;
         resolve(&cache, 731_348, token)
     }
 
     #[tokio::test]
     async fn sdk_shutdown_releases_native_snapshot_while_closed_handle_is_retained() {
-        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let value = CFString::new("sdk-snapshot-shutdown-native-retain-accounting");
         let ptr = value.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
@@ -369,7 +369,7 @@ mod native {
         drop(driver);
         let retained_after_destroy = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         drop(serial);
-        assert_eq!(retired, Err(STALE_TOKEN_ERROR.to_owned()));
+        assert_eq!(retired, Err("stale_element_token".to_owned()));
         assert_eq!(
             retained_after_destroy, base,
             "destroy must balance the native retain"
@@ -382,7 +382,7 @@ mod native {
 
     #[tokio::test]
     async fn sdk_destroying_one_runtime_preserves_other_native_snapshot() {
-        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let first = CFString::new("sdk-first-runtime-native-snapshot-isolation");
         let second = CFString::new("sdk-second-runtime-native-snapshot-isolation");
         let first_ptr = first.as_concrete_TypeRef() as usize;
@@ -411,7 +411,7 @@ mod native {
 
     #[tokio::test]
     async fn sdk_token_eviction_releases_the_corresponding_native_snapshot() {
-        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let value = CFString::new("sdk-snapshot-eviction-native-retain-accounting");
         let ptr = value.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
@@ -423,7 +423,7 @@ mod native {
         drop(driver);
         let retained_after_destroy = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         drop(serial);
-        assert_eq!(retired, Err(STALE_TOKEN_ERROR.to_owned()));
+        assert_eq!(retired, Err("stale_element_token".to_owned()));
         assert_eq!(retained_after_destroy, base);
         assert_eq!(
             retained_after_eviction,

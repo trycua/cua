@@ -807,7 +807,7 @@ fn invoke_operation(
                     "click",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index),
                         "delivery_mode": mode
                     }),
                 ),
@@ -825,7 +825,7 @@ fn invoke_operation(
                     "type_text",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index),
                         "text": text, "delivery_mode": mode
                     }),
                 ),
@@ -846,7 +846,7 @@ fn invoke_operation(
                     "set_value",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index),
                         "value": value
                     }),
                 ),
@@ -946,8 +946,8 @@ fn invoke_operation(
                 args["x"] = serde_json::json!(x + width / 2.0);
                 args["y"] = serde_json::json!(y + height / 2.0);
             } else {
-                args["element_index"] = serde_json::json!(element_index(&pre, target));
-                args["snapshot_id"] = serde_json::json!(pre.snapshot_id());
+                args["element_token"] =
+                    serde_json::json!(pre.element_token(element_index(&pre, target)));
             }
             let response = driver.call("scroll", args);
             if expect_refusal {
@@ -1008,7 +1008,7 @@ fn invoke_operation(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": window_id,
-                    "element_index": index, "snapshot_id": pre.snapshot_id(),
+                    "element_token": pre.element_token(index),
                     "delivery_mode": mode
                 }),
             );

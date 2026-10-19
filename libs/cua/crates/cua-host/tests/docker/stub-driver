@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stands in for cua-spacesd: records its command line and idles.
+echo "$@" > /tmp/stub-driver.args
+exec sleep 100000

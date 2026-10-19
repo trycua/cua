@@ -1,0 +1,17 @@
+[package]
+name = "cua-hotspot"
+description = "Hotspot (reverse-SOCKS egress) tunnel protocol shared by cua-spacesd and the cua SDK: the frame codec and the egress peer that dials targets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+futures-util = { workspace = true, features = ["sink"] }
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

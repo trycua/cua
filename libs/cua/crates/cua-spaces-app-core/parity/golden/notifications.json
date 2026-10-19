@@ -1,0 +1,74 @@
+{
+  "flow": "notifications",
+  "frames": [
+    {
+      "step": "first poll",
+      "view": {
+        "empty": "No notifications.",
+        "markAll": null,
+        "post": [],
+        "rows": [
+          "ada: Done. | 2h ago | - | - | off"
+        ],
+        "seenMs": 1789990000000,
+        "title": "Notifications",
+        "unread": 0
+      }
+    },
+    {
+      "step": "a turn ended",
+      "view": {
+        "empty": "No notifications.",
+        "markAll": "Mark all read",
+        "post": [
+          "n2 | ada | Your research is ready."
+        ],
+        "rows": [
+          "ada: Your research is ready. | 1m ago | - | - | on",
+          "ada: Done. | 2h ago | - | - | off"
+        ],
+        "seenMs": 1790000000000,
+        "title": "Notifications",
+        "unread": 1
+      }
+    },
+    {
+      "step": "the same feed again",
+      "view": {
+        "empty": "No notifications.",
+        "markAll": "Mark all read",
+        "post": [],
+        "rows": [
+          "ada: Your research is ready. | 1m ago | - | - | on",
+          "ada: Done. | 2h ago | - | - | off"
+        ],
+        "seenMs": 1790000000000,
+        "title": "Notifications",
+        "unread": 1
+      }
+    },
+    {
+      "step": "a burst",
+      "view": {
+        "empty": "No notifications.",
+        "markAll": "Mark all read",
+        "post": [
+          "n6 | ada | Filed the issue.",
+          "n5 | bob ran into a problem | ",
+          "n4 | bob asks to sign in | Approve or deny it in Cua.",
+          "more-1790000040000 | Cua | 1 more from your agents"
+        ],
+        "rows": [
+          "ada: Filed the issue. | just now | - | - | on",
+          "bob ran into a problem | just now | - | - | on",
+          "bob asks to sign in: Approve or deny it in Cua. | just now | - | - | on",
+          "Heads up: The build broke. | just now | - | - | on",
+          "ada: Your research is ready. | 1m ago | - | - | on"
+        ],
+        "seenMs": 1790000040000,
+        "title": "Notifications",
+        "unread": 5
+      }
+    }
+  ]
+}

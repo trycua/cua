@@ -26,6 +26,7 @@ VM_NAME = os.environ.get("CUA_TEST_CLOUD_VM_NAME", "steady-bluebird")
 skip_no_key = pytest.mark.skipif(not API_KEY, reason="CUA_API_KEY not set")
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize(
     "auth_environment",
     [
@@ -34,7 +35,9 @@ skip_no_key = pytest.mark.skipif(not API_KEY, reason="CUA_API_KEY not set")
     ],
     ids=["workload-token", "client-credentials"],
 )
-async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(monkeypatch, auth_environment):
+async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(
+    monkeypatch, tmp_path, auth_environment
+):
     routes = []
     monkeypatch.setattr(_config, "_global_config", _config._Config())
     for variable in ("FLEETS_TOKEN", "CUA_CLIENT_ID", "CUA_CLIENT_SECRET"):
@@ -43,7 +46,18 @@ async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(monkeypatch, 
         monkeypatch.setenv(variable, value)
 
     async def reject_fleet_apply(cls, image, **kwargs):
-        raise AssertionError("Fleet-routed images must demand an explicit pool, not apply one")
+        raise AssertionError("Fleet-routed images claim from the managed pool, never apply one")
+
+    async def managed_acquire(image, **kwargs):
+        routes.append(("managed", {"name": kwargs["name"]}))
+        return SimpleNamespace(
+            name=kwargs["name"],
+            claim_name=kwargs["name"],
+            pool_name="cua-auto-abc",
+            _claim_handle=SimpleNamespace(state_fields=lambda: {"managed": True}),
+            telemetry_enabled=False,
+            _ephemeral=False,
+        )
 
     class LegacyTransport:
         def __init__(self, **kwargs):
@@ -56,27 +70,40 @@ async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(monkeypatch, 
         async def disconnect(self):
             return None
 
+    from cua_sandbox import _autopool, sandbox_state
+
+    monkeypatch.setattr(sandbox_state, "SANDBOX_STATE_DIR", tmp_path)
     monkeypatch.setattr(Pool, "apply", classmethod(reject_fleet_apply))
+    monkeypatch.setattr(_autopool, "acquire", managed_acquire)
     monkeypatch.setattr(
         sandbox_module, "_make_transport", lambda **kwargs: LegacyTransport(**kwargs)
     )
 
-    with pytest.raises(ValueError, match="Pool.apply"):
-        await Sandbox.create(Image.from_registry("example:latest"), name="fleet-demo")
-    with pytest.raises(ValueError, match="Pool.apply"):
-        await Sandbox.create(Image.linux(), name="linux-demo")
+    await Sandbox.create(
+        Image.from_registry("example:latest"),
+        name="fleet-demo",
+        telemetry_enabled=False,
+        local=False,
+    )
+    await Sandbox.create(Image.linux(), name="linux-demo", telemetry_enabled=False, local=False)
     legacy_sandbox = await Sandbox.create(
-        Image.from_registry("example:latest"), name="legacy-demo", api_key="sk-explicit"
+        Image.from_registry("example:latest"),
+        name="legacy-demo",
+        api_key="sk-explicit",
+        local=False,
     )
     await legacy_sandbox.disconnect()
 
     assert Sandbox._uses_fleet(None)
     assert not Sandbox._uses_fleet("sk-explicit")
     assert [(route, values["name"]) for route, values in routes] == [
+        ("managed", "fleet-demo"),
+        ("managed", "linux-demo"),
         ("legacy", "legacy-demo"),
     ]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize("legacy_source", ["configured", "environment", "credentials"])
 async def test_registry_image_uses_legacy_auth_when_fleet_auth_is_unavailable(
     monkeypatch, legacy_source
@@ -117,13 +144,16 @@ async def test_registry_image_uses_legacy_auth_when_fleet_auth_is_unavailable(
         sandbox_module, "_make_transport", lambda **kwargs: LegacyTransport(**kwargs)
     )
 
-    sandbox = await Sandbox.create(Image.from_registry("example:latest"), name="legacy-demo")
+    sandbox = await Sandbox.create(
+        Image.from_registry("example:latest"), name="legacy-demo", local=False
+    )
     await sandbox.disconnect()
 
     assert not Sandbox._uses_fleet(None)
     assert [route["name"] for route in routes] == ["legacy-demo"]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_ephemeral_registry_image_uses_legacy_auth_selector(monkeypatch):
     monkeypatch.setattr(_config, "_global_config", _config._Config(api_key="sk-configured"))
     for variable in ("FLEETS_TOKEN", "CUA_CLIENT_ID", "CUA_CLIENT_SECRET"):
@@ -139,7 +169,9 @@ async def test_ephemeral_registry_image_uses_legacy_auth_selector(monkeypatch):
     monkeypatch.setattr(Sandbox, "create", create)
     monkeypatch.setattr(Sandbox, "_create", create_legacy)
 
-    async with Sandbox.ephemeral(Image.from_registry("example:latest"), name="legacy-demo"):
+    async with Sandbox.ephemeral(
+        Image.from_registry("example:latest"), name="legacy-demo", local=False
+    ):
         pass
 
     create.assert_not_awaited()
@@ -147,7 +179,10 @@ async def test_ephemeral_registry_image_uses_legacy_auth_selector(monkeypatch):
     legacy_sandbox.destroy.assert_awaited_once()
 
 
-async def test_cloud_local_creation_never_routes_to_fleet(monkeypatch):
+async def test_cloud_local_creation_never_routes_to_fleet(monkeypatch, tmp_path):
+    # The named local sandbox writes a state file; keep it in this test's
+    # own CUA_HOME (the autouse conftest one too, but never rely on it).
+    monkeypatch.setenv("CUA_HOME", str(tmp_path))
     calls = []
 
     class Runtime:
@@ -167,6 +202,7 @@ async def test_cloud_local_creation_never_routes_to_fleet(monkeypatch):
     await sandbox.disconnect()
 
     assert calls[0][2] == "local-demo"
+    assert (tmp_path / "sandboxes" / "local-demo.json").exists()
 
 
 @skip_no_key
@@ -218,17 +254,19 @@ async def test_cloud_environment():
     await sb.disconnect()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_cloud_no_api_key_errors():
-    """Connecting with no API key gives a clear error."""
+    """Connecting with no credentials names every way to get them."""
     old = os.environ.pop("CUA_API_KEY", None)
     try:
-        with pytest.raises(ValueError, match="No CUA API key found"):
+        with pytest.raises(ValueError, match="Fleet credentials missing: run `cua auth login`"):
             await Sandbox.connect("anything")
     finally:
         if old:
             os.environ["CUA_API_KEY"] = old
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_cloud_no_image_no_name_errors():
     """Creating without an image raises a clear error."""
     with pytest.raises((ValueError, TypeError)):
@@ -238,7 +276,7 @@ async def test_cloud_no_image_no_name_errors():
 @skip_no_key
 async def test_cloud_ephemeral_linux():
     """Create an ephemeral cloud Linux VM, use it, and destroy on exit."""
-    async with Sandbox.ephemeral(Image.linux(), api_key=API_KEY) as sb:
+    async with Sandbox.ephemeral(Image.linux(), api_key=API_KEY, local=False) as sb:
         assert sb.name is not None
         screenshot = await sb.screenshot()
         assert screenshot[:4] == b"\x89PNG"
@@ -251,7 +289,7 @@ async def test_cloud_ephemeral_linux():
 @skip_no_key
 async def test_cloud_ephemeral_android():
     """Create an ephemeral Android cloud VM, verify screenshot and display URL."""
-    async with Sandbox.ephemeral(Image.android("14"), api_key=API_KEY) as sb:
+    async with Sandbox.ephemeral(Image.android("14"), api_key=API_KEY, local=False) as sb:
         assert sb.name is not None
         screenshot = await sb.screenshot()
         assert screenshot[:4] == b"\x89PNG"
@@ -273,6 +311,7 @@ async def test_cloud_invalid_api_key_errors():
         await sb.disconnect()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_backed_create_persists_claim_pool_mapping(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 
@@ -294,11 +333,12 @@ async def test_pool_backed_create_persists_claim_pool_mapping(monkeypatch, tmp_p
 
     monkeypatch.setattr(Pool, "get", classmethod(get_pool))
 
-    await Sandbox.create(pool="cua-cli-wif-smoke", name="wif-smoke-123")
+    await Sandbox.create(pool="cua-cli-wif-smoke", name="wif-smoke-123", local=False)
 
     assert sandbox_state.load("wif-smoke-123")["pool_name"] == "cua-cli-wif-smoke"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_backed_connect_loads_claim_pool_mapping(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 
@@ -326,6 +366,7 @@ async def test_pool_backed_connect_loads_claim_pool_mapping(monkeypatch, tmp_pat
     assert created[0]["pool_name"] == "cua-cli-wif-smoke"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_backed_delete_removes_mapping_only_after_success(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 
@@ -347,6 +388,7 @@ async def test_pool_backed_delete_removes_mapping_only_after_success(monkeypatch
     assert sandbox_state.load("wif-smoke-123") is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 async def test_pool_backed_delete_keeps_mapping_when_claim_delete_fails(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 

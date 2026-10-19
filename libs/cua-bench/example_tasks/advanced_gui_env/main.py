@@ -5,20 +5,7 @@ import cua_bench as cb
 def load():
     return [
         cb.Task(
-            description="Test folder serving with webtop provider on macOS",
-            metadata={"use_folder": True},
-            computer={
-                "provider": "simulated",
-                "setup_config": {
-                    "os_type": "win7",
-                    "width": 1280,
-                    "height": 800,
-                    "background": "#f0f0f0",
-                },
-            },
-        ),
-        cb.Task(
-            description="Test folder serving with computer provider on Linux",
+            description="Test folder serving on Linux",
             metadata={"use_folder": True},
             computer={
                 "provider": "native",
@@ -31,20 +18,7 @@ def load():
             },
         ),
         cb.Task(
-            description="Test inline HTML serving with webtop provider on macOS",
-            metadata={"use_folder": False},
-            computer={
-                "provider": "simulated",
-                "setup_config": {
-                    "os_type": "macos",
-                    "width": 1280,
-                    "height": 800,
-                    "background": "#f0f0f0",
-                },
-            },
-        ),
-        cb.Task(
-            description="Test inline HTML serving with computer provider on Linux",
+            description="Test inline HTML serving on Linux",
             metadata={"use_folder": False},
             computer={
                 "provider": "native",

@@ -15,6 +15,8 @@ windows-app = []
 [dependencies]
 # PNG decode + resize for the screenshot-based maze line-diff verification.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Reads element_token from get_window_state's structured output.
+serde_json = "1"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

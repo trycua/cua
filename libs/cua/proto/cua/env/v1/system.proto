@@ -1,0 +1,485 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/common.proto";
+import "cua/env/v1/diagnose.proto";
+import "cua/env/v1/stream.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Discovery, bootstrap and lifecycle of the spacesd itself.
+//
+// `GetCapabilities` is the probe the SDK uses to decide whether a sandbox has
+// cua-spacesd at all (`sb.spacesd()`), and which features it may rely on.
+service SystemService {
+  // Returns version, platform and the feature list. Cheap; safe to poll.
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+  // Configures the driver after boot or claim. Idempotent: repeating the
+  // same request is a no-op, and later calls overwrite earlier values.
+  rpc Init(InitRequest) returns (InitResponse);
+  // Liveness and per-component health. The same information in reduced form
+  // is served unauthenticated as plain HTTP `GET /health` (204 when healthy).
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // A point-in-time sample of guest resource usage.
+  rpc Metrics(MetricsRequest) returns (MetricsResponse);
+  // Stops or restarts the driver, or powers off or reboots the guest.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  // Runs the image self-test (the checks of `cua-spacesd doctor`) and
+  // streams each check as it finishes, then the report. Requires the token
+  // even in bootstrap modes: the report names paths, versions and units.
+  rpc Diagnose(DiagnoseRequest) returns (stream DiagnoseResponse);
+  // `Diagnose` as one unary call returning only the final report, for
+  // clients that cannot read server streams.
+  rpc DiagnoseOnce(DiagnoseOnceRequest) returns (DiagnoseOnceResponse);
+  // Mints a viewer ticket: a scoped, expiring credential for the web viewer
+  // served at `/viewer` on this port. It authorizes only the calls a viewer
+  // makes (streaming, and clipboard and files when granted) and is safe in
+  // a URL fragment. Viewer tickets cannot mint viewer tickets.
+  rpc CreateViewerTicket(CreateViewerTicketRequest) returns (CreateViewerTicketResponse);
+  // Makes this running driver reachable through a `cua-relay` as a machine
+  // of the owner's account, without restarting it (what `cua-spacesd join`
+  // does at start). Callers then authenticate with relay-signed
+  // assertions: the owner, accounts the relay shares the machine with, and
+  // view-only accounts that may only watch. Only the root-token holder may
+  // call it (never a relay caller or a viewer ticket). Feature
+  // `relay_attach`.
+  rpc AttachRelay(AttachRelayRequest) returns (AttachRelayResponse);
+  // Leaves the relay attached with `AttachRelay` and stops accepting relay
+  // assertions. Root-token holder only.
+  rpc DetachRelay(DetachRelayRequest) returns (DetachRelayResponse);
+}
+
+// Request for `SystemService.GetCapabilities`.
+message GetCapabilitiesRequest {}
+
+// Response for `SystemService.GetCapabilities`.
+message GetCapabilitiesResponse {
+  // cua-spacesd release version (semver), for example "0.3.1".
+  string version = 1;
+  // Major contract version. Always 1 for package `cua.env.v1`.
+  uint32 protocol_version = 2;
+  // Additive revision within the major version. Incremented whenever an RPC,
+  // field or enum value is added, so clients can reason about optional
+  // surface without probing.
+  uint32 protocol_revision = 3;
+  // Guest operating system.
+  OperatingSystem os = 4;
+  // How the guest is hosted.
+  Runtime runtime = 5;
+  // Free-form runtime detail (for example "runsc 20260901" or
+  // "kubevirt 1.4 / qemu 9.1").
+  string runtime_detail = 6;
+  // Guest CPU architecture.
+  Architecture arch = 7;
+  // The graphical session type, or `DISPLAY_SERVER_NONE` when headless.
+  DisplayServer display_server = 8;
+  // Displays attached to the guest desktop. Empty when headless.
+  repeated Display displays = 9;
+  // Every feature the driver knows about, supported or not. Unsupported
+  // features carry a `limitation`. See `Feature` for canonical names.
+  repeated Feature features = 10;
+  // Guest hostname.
+  string hostname = 11;
+  // True once `Init` has succeeded at least once since the driver started.
+  bool initialized = 12;
+  // When the guest booted.
+  google.protobuf.Timestamp boot_time = 13;
+  // Where the media and tunnel sockets are served.
+  SideChannels side_channels = 14;
+  // Server-enforced size limits clients must respect.
+  Limits limits = 15;
+  // This guest's long-term X25519 public key for sealed delivery (S1):
+  // Keyvault site-login and teleport bundle payloads sealed to it cross a
+  // relay as ciphertext. Generated on first start, 0600. Empty from a
+  // guest image that predates this (older images): callers must refuse to
+  // deliver such secrets over a relay: path unless the user explicitly
+  // opts in per delivery. 32 bytes when present.
+  bytes machine_seal_public_key = 16;
+}
+
+// Guest operating system description.
+message OperatingSystem {
+  // OS family.
+  OsFamily family = 1;
+  // Distribution or product name, for example "Ubuntu" or "macOS".
+  string name = 2;
+  // Version string, for example "24.04" or "15.4".
+  string version = 3;
+  // Kernel release, for example "6.8.0-45-generic" or "Darwin 24.4.0".
+  string kernel = 4;
+  // The full product string, for example "Ubuntu 24.04.3 LTS",
+  // "macOS 26.5.2 (25F84)" or "Windows Server 2022 Datacenter 10.0.20348".
+  // Empty from older drivers: use `name` and `version`.
+  string pretty_name = 5;
+}
+
+// Operating system family.
+enum OsFamily {
+  // Not reported.
+  OS_FAMILY_UNSPECIFIED = 0;
+  // Linux.
+  OS_FAMILY_LINUX = 1;
+  // macOS.
+  OS_FAMILY_MACOS = 2;
+  // Windows.
+  OS_FAMILY_WINDOWS = 3;
+}
+
+// How the guest is hosted.
+enum Runtime {
+  // Not reported.
+  RUNTIME_UNSPECIFIED = 0;
+  // Could not be determined.
+  RUNTIME_UNKNOWN = 1;
+  // A KubeVirt virtual machine (Fleet).
+  RUNTIME_KUBEVIRT = 2;
+  // A gVisor (runsc) sandboxed container.
+  RUNTIME_GVISOR = 3;
+  // A Lume (Apple Virtualization.framework) virtual machine.
+  RUNTIME_LUME = 4;
+  // A QEMU virtual machine outside KubeVirt.
+  RUNTIME_QEMU = 5;
+  // A plain container (runc or equivalent).
+  RUNTIME_CONTAINER = 6;
+  // Bare metal or an unmanaged host (for example a laptop joined through the
+  // relay).
+  RUNTIME_BARE = 7;
+  // A Hyper-V virtual machine.
+  RUNTIME_HYPERV = 8;
+}
+
+// CPU architecture.
+enum Architecture {
+  // Not reported.
+  ARCHITECTURE_UNSPECIFIED = 0;
+  // x86-64 / amd64.
+  ARCHITECTURE_X86_64 = 1;
+  // AArch64 / arm64.
+  ARCHITECTURE_ARM64 = 2;
+}
+
+// Graphical session type.
+enum DisplayServer {
+  // Not reported.
+  DISPLAY_SERVER_UNSPECIFIED = 0;
+  // No graphical session.
+  DISPLAY_SERVER_NONE = 1;
+  // X11 (including Xvfb).
+  DISPLAY_SERVER_X11 = 2;
+  // Wayland.
+  DISPLAY_SERVER_WAYLAND = 3;
+  // macOS Quartz / WindowServer.
+  DISPLAY_SERVER_QUARTZ = 4;
+  // Windows desktop window manager.
+  DISPLAY_SERVER_WIN32 = 5;
+}
+
+// One capability and whether this guest supports it.
+//
+// Canonical names (lowercase, dot-separated, stable forever):
+// "a11y", "background_input", "desktop_stream", "window_stream", "h264_hw",
+// "h264_sw", "quic_media", "pty", "fs_watch", "clipboard.text",
+// "clipboard.files", "presence", "windows", "launch_app", "driver",
+// "tunnel.forward", "hotspot", "teleport.<provider>" (for example
+// "teleport.firefox"), "audio.desktop" (desktop audio capture),
+// "audio.per_app" (per-application audio capture; when unsupported, per-app
+// requests fall back to desktop audio and `limitation` says so),
+// "audio.uplink" (client audio into a guest virtual source), "audio.opus",
+// "presence.cursor_shape" (server-computed cursor shapes; attributes
+// "hit_test", "system" and "probe" name the backends, "probe" is "off" when
+// `PresenceSettings.cursor_probe` is disabled), and "experimental.<name>"
+// for experimental fields.
+message Feature {
+  // Canonical feature name.
+  string name = 1;
+  // True if the feature works on this guest.
+  bool supported = 2;
+  // When unsupported or degraded: why, in one sentence a user can act on
+  // (for example "AT-SPI bus not running; start the session with
+  // dbus-run-session"). Empty when fully supported.
+  string limitation = 3;
+  // Feature-specific details (for example {"encoder": "vaapi"} for
+  // "h264_hw", {"isolation": "runc"} for a container runtime).
+  map<string, string> attributes = 4;
+}
+
+// Where the non-gRPC sockets live, relative to the gRPC endpoint.
+message SideChannels {
+  // HTTP path of the media WebSocket, normally "/media".
+  string media_ws_path = 1;
+  // UDP port of the direct QUIC media listener, 0 when disabled. Normally
+  // the gRPC port plus one (3212).
+  uint32 media_quic_port = 2;
+  // HTTP path of the TCP-over-WebSocket tunnel, normally "/tunnel".
+  string tunnel_ws_path = 3;
+  // HTTP path of the signed-URL file route, normally "/files".
+  string files_http_path = 4;
+  // HTTP path of the streamable-HTTP MCP endpoint exposing the cua-driver
+  // tool registry, normally "/mcp". Empty when disabled.
+  string mcp_http_path = 5;
+}
+
+// Server-enforced limits.
+message Limits {
+  // Largest `bytes` payload accepted in one chunk message (upload chunks,
+  // stdin chunks, receive-files chunks). Normally 4 MiB.
+  uint32 max_chunk_bytes = 1;
+  // Largest encoded gRPC message accepted or sent. Normally 8 MiB.
+  uint32 max_message_bytes = 2;
+  // Recommended chunk size for bulk transfer. Normally 1 MiB.
+  uint32 preferred_chunk_bytes = 3;
+  // Default per-process scrollback ring size in bytes.
+  uint64 default_scrollback_bytes = 4;
+}
+
+// Request for `SystemService.Init`.
+message InitRequest {
+  // Access token to install. If the driver has no token yet (first claim),
+  // the call must arrive over an already-authenticated channel such as the
+  // Fleet gateway or loopback. If a token is configured, the call must be
+  // authenticated with it, and a different value here rotates it. Empty
+  // leaves the token unchanged.
+  string token = 1;
+  // Environment variables added to every process started afterwards. Keys
+  // present here replace earlier values; an empty value unsets the key.
+  map<string, string> env = 2;
+  // Default OS user for processes and file operations. Empty keeps the
+  // current default (the driver's own user).
+  string default_user = 3;
+  // Default working directory for processes. Empty keeps the user's home.
+  string default_workdir = 4;
+  // PEM-encoded CA certificates appended to the guest trust store.
+  bytes ca_bundle = 5;
+  // Caller's wall clock. When set and the guest clock is off by more than
+  // one second, the driver steps the guest clock (VMs resumed from snapshot
+  // drift).
+  google.protobuf.Timestamp now = 6;
+  // Opaque labels recorded for diagnostics (for example sandbox name,
+  // claim id).
+  map<string, string> labels = 7;
+  // Who may open an audio uplink (`StreamService.OpenMedia` with
+  // `audio.uplink.enabled`). Unset leaves the current setting; the initial
+  // setting is disabled.
+  AudioUplinkAccess audio_uplink = 8;
+  // Presence settings of this Space. Unset leaves the current settings.
+  PresenceSettings presence = 9;
+}
+
+// Per-Space presence settings.
+message PresenceSettings {
+  // Whether the server may read the real cursor shape at a participant's
+  // position by briefly moving the guest pointer there while it is idle (no
+  // injected input or agent action recently) and restoring it exactly. Gives
+  // app-specific shapes the accessibility hit-test cannot infer; hover
+  // states may flash under the probe. Unset leaves the current setting; the
+  // initial setting is enabled.
+  optional bool cursor_probe = 1;
+}
+
+// Per-principal permission for audio uplink.
+message AudioUplinkAccess {
+  // Access mode.
+  AudioUplinkMode mode = 1;
+  // With `AUDIO_UPLINK_MODE_ALLOWLIST`: `Principal.id` values allowed to
+  // open an uplink.
+  repeated string principal_ids = 2;
+}
+
+// Audio uplink access mode.
+enum AudioUplinkMode {
+  // Not set. Keeps the current mode.
+  AUDIO_UPLINK_MODE_UNSPECIFIED = 0;
+  // No uplinks. The initial mode.
+  AUDIO_UPLINK_MODE_DISABLED = 1;
+  // Only principals in `principal_ids`.
+  AUDIO_UPLINK_MODE_ALLOWLIST = 2;
+  // Any authenticated caller.
+  AUDIO_UPLINK_MODE_ANY = 3;
+}
+
+// Response for `SystemService.Init`.
+message InitResponse {
+  // True if this call installed or rotated the token.
+  bool token_changed = 1;
+  // True if the guest clock was stepped.
+  bool clock_adjusted = 2;
+}
+
+// Request for `SystemService.Health`.
+message HealthRequest {}
+
+// Response for `SystemService.Health`.
+message HealthResponse {
+  // Overall status, the worst of all components.
+  HealthStatus status = 1;
+  // Per-subsystem status (for example "capture", "a11y", "encoder",
+  // "filesystem").
+  repeated ComponentHealth components = 2;
+  // Time since the driver process started.
+  google.protobuf.Duration uptime = 3;
+}
+
+// Health of one subsystem.
+message ComponentHealth {
+  // Subsystem name.
+  string name = 1;
+  // Its status.
+  HealthStatus status = 2;
+  // Why it is not serving, when applicable.
+  string detail = 3;
+}
+
+// Health status.
+enum HealthStatus {
+  // Not reported.
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  // Fully operational.
+  HEALTH_STATUS_SERVING = 1;
+  // Operational with reduced function (see component details).
+  HEALTH_STATUS_DEGRADED = 2;
+  // Not operational.
+  HEALTH_STATUS_NOT_SERVING = 3;
+}
+
+// Request for `SystemService.Metrics`.
+message MetricsRequest {
+  // Path whose filesystem is reported in `disk_*`. Empty means the default
+  // working directory's filesystem.
+  string disk_path = 1;
+}
+
+// Response for `SystemService.Metrics`.
+message MetricsResponse {
+  // When the sample was taken.
+  google.protobuf.Timestamp sampled_at = 1;
+  // Logical CPUs visible to the guest.
+  uint32 cpu_count = 2;
+  // CPU utilisation across all CPUs, 0 to 100.
+  double cpu_percent = 3;
+  // 1-minute load average (0 on Windows).
+  double load_average_1m = 4;
+  // Total guest memory in bytes.
+  uint64 memory_total_bytes = 5;
+  // Used guest memory in bytes (excluding reclaimable cache).
+  uint64 memory_used_bytes = 6;
+  // Total bytes of the filesystem named by `disk_path`.
+  uint64 disk_total_bytes = 7;
+  // Used bytes of that filesystem.
+  uint64 disk_used_bytes = 8;
+  // Processes currently managed by `ProcessService`.
+  uint32 managed_process_count = 9;
+  // Open media sessions.
+  uint32 media_session_count = 10;
+  // Bytes received on all guest network interfaces since boot.
+  uint64 network_rx_bytes = 11;
+  // Bytes sent on all guest network interfaces since boot.
+  uint64 network_tx_bytes = 12;
+  // `memory_total_bytes` is the guest's own limit: a virtual machine's
+  // memory or a container's cgroup memory limit. False when it is only the
+  // host's memory (a container without a limit, bare metal).
+  bool memory_limited = 13;
+  // `disk_total_bytes` is the guest's own disk: a virtual machine's disk or
+  // a filesystem with a quota. False when it is the host's (a container's
+  // overlay, bare metal).
+  bool disk_limited = 14;
+}
+
+// Request for `SystemService.Shutdown`.
+message ShutdownRequest {
+  // What to stop.
+  ShutdownMode mode = 1;
+  // How long to wait for in-flight RPCs and managed processes before
+  // forcing. Unset means 5 seconds.
+  google.protobuf.Duration grace_period = 2;
+  // Reason recorded in the driver log.
+  string reason = 3;
+}
+
+// What `SystemService.Shutdown` stops.
+enum ShutdownMode {
+  // Not set. Rejected with INVALID_ARGUMENT, to avoid accidental power-off.
+  SHUTDOWN_MODE_UNSPECIFIED = 0;
+  // Exit the driver. The service manager may restart it.
+  SHUTDOWN_MODE_DRIVER_EXIT = 1;
+  // Restart the driver in place (re-exec).
+  SHUTDOWN_MODE_DRIVER_RESTART = 2;
+  // Power off the guest.
+  SHUTDOWN_MODE_GUEST_POWEROFF = 3;
+  // Reboot the guest.
+  SHUTDOWN_MODE_GUEST_REBOOT = 4;
+}
+
+// Response for `SystemService.Shutdown`. Sent before the shutdown begins.
+message ShutdownResponse {}
+
+// Request for `SystemService.CreateViewerTicket`.
+message CreateViewerTicketRequest {
+  // Lifetime. Unset means 1 hour; the maximum is 24 hours. Rotating the
+  // root token revokes every viewer ticket.
+  google.protobuf.Duration ttl = 1;
+  // Highest session policy the viewer may open media with. Unset means
+  // `SESSION_POLICY_ALLOW_ACTIVATION` (a full interactive viewer).
+  SessionPolicy policy = 2;
+  // Allow `ComputerService.GetClipboard` and `SetClipboard`.
+  bool clipboard = 3;
+  // Guest directory the viewer may read and write through
+  // `FilesystemService` (drag-and-drop uploads and folder sharing). Empty
+  // means no file access. `~` is the desktop user's home.
+  string files_root = 4;
+  // Allow a microphone uplink track (still subject to
+  // `InitRequest.audio_uplink`).
+  bool audio_uplink = 5;
+  // Who is viewing, shown to other participants. The id is prefixed with
+  // `viewer:` by the server.
+  Principal principal = 6;
+}
+
+// Response for `SystemService.CreateViewerTicket`.
+message CreateViewerTicketResponse {
+  // The ticket. The viewer sends it as `x-cua-env-authorization: Bearer
+  // <ticket>` (or `authorization`).
+  string ticket = 1;
+  // When it expires.
+  google.protobuf.Timestamp expires_at = 2;
+  // Path of the viewer page with the ticket in the fragment, relative to
+  // this port: `/viewer/#ticket=<ticket>`. Fragments never reach servers
+  // or proxies.
+  string viewer_path = 3;
+  // `files_root` resolved to an absolute guest path (empty without file
+  // access).
+  string files_root = 4;
+}
+
+// Request for `SystemService.AttachRelay`.
+message AttachRelayRequest {
+  // Relay base URL (`wss://relay.cua.ai`, `ws://relay:8080`, `https://...`).
+  string relay_url = 1;
+  // The machine token the relay issued when the owner registered this
+  // machine (`POST /v1/machines`). Kept in memory only.
+  string machine_token = 2;
+  // The machine id the owner registered (`[a-z0-9-]{8,64}`).
+  string machine_id = 3;
+  // The relay's signing keys (JWKS JSON) from the registration, pinned: the
+  // join handshake must present one of them.
+  string relay_jwks_json = 4;
+  // The owning account id.
+  string owner = 5;
+  // The owner's email (informational).
+  string owner_email = 6;
+}
+
+// Response for `SystemService.AttachRelay`.
+message AttachRelayResponse {
+  // The machine id this driver joined as.
+  string machine_id = 1;
+}
+
+// Request for `SystemService.DetachRelay`.
+message DetachRelayRequest {}
+
+// Response for `SystemService.DetachRelay`.
+message DetachRelayResponse {
+  // False when no relay was attached.
+  bool detached = 1;
+}

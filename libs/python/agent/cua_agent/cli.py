@@ -20,7 +20,7 @@ try:
     import sys
     import time
     from pathlib import Path
-    from typing import Any, Dict, List
+    from typing import Any, Dict, List, Optional
 
     import dotenv
 
@@ -224,6 +224,13 @@ async def chat_loop(
                 print_colored(f"Total cost: ${total_cost:.2f}", dim=True)
 
 
+def _open_computer(provider: str, name: str, api_key: Optional[str]):
+    """Return an async context manager yielding a cua-sandbox computer for ``provider``."""
+    from cua_agent.computers.sandbox import open_sandbox
+
+    return open_sandbox(provider, name=name, api_key=api_key)
+
+
 async def main():
     """Main CLI function."""
     parser = argparse.ArgumentParser(
@@ -247,7 +254,11 @@ Examples:
         "--provider",
         choices=["cloud", "lume", "winsandbox", "docker"],
         default="cloud",
-        help="Computer provider to use: cloud (default), lume, winsandbox, or docker",
+        help=(
+            "Computer provider to use (via cua-sandbox): cloud (default, connect to an "
+            "existing sandbox by name), lume (local macOS VM), winsandbox (local Windows VM), "
+            "or docker (local Linux container). To control this machine, use cua-driver."
+        ),
     )
 
     parser.add_argument(
@@ -358,32 +369,27 @@ Examples:
 
     # Import here to avoid import errors if dependencies are missing
     try:
-        from computer import Computer
         from cua_agent import ComputerAgent
     except ImportError as e:
         print_colored(f"❌ Import error: {e}", Colors.RED, bold=True)
-        print_colored("Make sure agent and computer libraries are installed.", Colors.YELLOW)
+        print_colored(
+            "Make sure agent and sandbox libraries are installed (pip install 'cua-agent[computer]').",
+            Colors.YELLOW,
+        )
         sys.exit(1)
 
-    # Resolve provider -> os_type, provider_type, api key requirement
-    provider_map = {
-        "cloud": ("linux", "cloud", True),
-        "lume": ("macos", "lume", False),
-        "winsandbox": ("windows", "winsandbox", False),
-        "docker": ("linux", "docker", False),
-    }
-    os_type, provider_type, needs_api_key = provider_map[args.provider]
-
-    computer_kwargs = {
-        "os_type": os_type,
-        "provider_type": provider_type,
-        "name": container_name,
-    }
-    if needs_api_key:
-        computer_kwargs["api_key"] = cua_api_key  # type: ignore
+    try:
+        computer_cm = _open_computer(args.provider, container_name, cua_api_key)
+    except ImportError as e:
+        print_colored(f"❌ Import error: {e}", Colors.RED, bold=True)
+        print_colored(
+            "cua-sandbox is required to drive a computer: pip install 'cua-agent[computer]'",
+            Colors.YELLOW,
+        )
+        sys.exit(1)
 
     # Create computer instance
-    async with Computer(**computer_kwargs) as computer:  # type: ignore
+    async with computer_cm as computer:
 
         # Create agent
         agent_kwargs = {
@@ -433,7 +439,7 @@ Examples:
 
             # Take a fresh screenshot FIRST
             try:
-                img_bytes = await computer.interface.screenshot()
+                img_bytes = await computer.screenshot()
             except Exception as e:
                 print_colored(f"❌ Failed to take screenshot: {e}", Colors.RED, bold=True)
                 sys.exit(1)

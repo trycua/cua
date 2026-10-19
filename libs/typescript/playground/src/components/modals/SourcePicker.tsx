@@ -34,7 +34,7 @@ export function SourcePicker({ onSelect, hasCloud }: SourcePickerProps) {
       source: 'custom',
       icon: <Globe className="h-6 w-6" />,
       title: 'Custom URL',
-      description: 'Connect to any computer-server endpoint',
+      description: 'Connect to any agent endpoint',
     },
   ];
 

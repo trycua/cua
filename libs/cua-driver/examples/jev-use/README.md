@@ -169,8 +169,9 @@ until the step budget runs out.
 #### Measure accuracy at larger candidate sets
 
 The task-mode harnesses show only a few controls, so each step offers 4 to 7
-candidates. `CUA_APPKIT_TASK_DENSITY` or `CUA_GTK3_TASK_DENSITY` set to `12` or
-`24`, together with the task-state variable, adds benign distractor controls
+candidates. `CUA_APPKIT_TASK_DENSITY`, `CUA_WPF_TASK_DENSITY`,
+`CUA_WINUI3_TASK_DENSITY`, or `CUA_GTK3_TASK_DENSITY` set to `12` or `24`,
+together with the task-state variable, adds benign distractor controls
 (toolbar-style buttons, labeled text fields, checkboxes, and radio groups, some
 close to a task control such as "Save draft" or "Note title") before the task
 controls, which fills the set to about 12 or to the 24-candidate cap.
@@ -190,6 +191,13 @@ uv run --frozen python measure_native.py replay --provider s1 --reps 5 \
   --cap-order depth_first --cap-order relevance --order element --order shuffled \
   --out /tmp/jev-native-replay --group-by density,cap_order,order,bucket
 ```
+
+`fixtures/native/` has density 12 and 24 captures for all four harnesses
+(`appkit`, `wpf`, `winui3`, and `gtk3`). Measured live with Cua Driver 0.30.4
+on macOS, Windows, and Linux, with both the Python and TypeScript runners,
+TypeSafe Jev and Cua-S1 chose correctly in all 1,680 decisions at about 4,
+12, and 24 candidates. The per-harness tables are in the
+[RFC 4268 decision record](../../../../rfcs/4268-jev-use-native-candidates.md).
 
 #### Choose with Cua-S1
 

@@ -94,7 +94,7 @@ bounded runtime can declare `kind: existing_profile` in its manifest. Cua
 Driver does not render its own authorization modal or banner.
 
 See the hosted [permission mode
-reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
+reference](https://cua.ai/docs/cua-driver/guides/permissions).
 
 ## Repository Layout
 
@@ -112,6 +112,28 @@ reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
 
 Start with `rust/README.md`, `rust/crates/cua-driver-e2e/tests/README.md`, and
 `tests/fixtures/README.md` when changing driver behavior or tests.
+
+The canonical GUI runners execute the complete Rust harness catalog:
+
+```text
+Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
+Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
+Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
+Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg
+Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
+macOS:             scripts/ci/macos/run-rust-e2e.sh
+```
+
+The Sway runner creates a controlled stock-wlroots session; Nix owns the Linux
+source/package gate and the optional nested `cua-compositor` session. GNOME,
+KDE, real Xorg, Windows, and macOS use an existing graphical login (Windows:
+an interactive console or RDP session; macOS: a logged-in session with
+Accessibility and Screen Recording). See
+[`docs/test-harnesses-guide.md`](docs/test-harnesses-guide.md) and, for macOS in
+Lume, [`tests/runners/macos-lume/README.md`](tests/runners/macos-lume/README.md).
+Keep build artifacts, VM logs, and local verification journals out of git
+unless they become a stable fixture or contributor doc.
 
 The contract-first SDK architecture is documented in
 [`contract/README.md`](contract/README.md). The Rust contract crate generates

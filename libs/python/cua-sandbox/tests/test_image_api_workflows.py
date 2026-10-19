@@ -38,7 +38,7 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     admission = next(
         step
         for step in workflow["jobs"]["validate"]["steps"]
-        if step["name"] == "Validate CRD API-server admission"
+        if step.get("name") == "Validate CRD API-server admission"
     )["run"]
     assert "go install sigs.k8s.io/kind@v0.26.0" in commands
     assert "kind create cluster --name cua-image-api" in admission
@@ -61,8 +61,8 @@ def test_image_api_cd_publishes_only_versioned_artifacts() -> None:
 def test_image_api_cd_binds_manual_publication_to_the_release_tag_commit() -> None:
     workflow = yaml.safe_load(CD_WORKFLOW.read_text())
     steps = workflow["jobs"]["publish"]["steps"]
-    checkout = next(step for step in steps if step["name"] == "Checkout repository")
-    version = next(step for step in steps if step["name"] == "Determine version")["run"]
+    checkout = next(step for step in steps if step.get("name") == "Checkout repository")
+    version = next(step for step in steps if step.get("name") == "Determine version")["run"]
 
     assert checkout.get("with", {}).get("fetch-depth") == 0
     assert 'VERSION="${MANUAL_VERSION}"' in version
@@ -72,15 +72,19 @@ def test_image_api_cd_binds_manual_publication_to_the_release_tag_commit() -> No
     assert 'TAG_COMMIT="$(git rev-list -n 1 "${RELEASE_TAG}")"' in version
     assert 'CHECKED_OUT_COMMIT="$(git rev-parse HEAD)"' in version
     assert 'if [[ "${TAG_COMMIT}" != "${CHECKED_OUT_COMMIT}" ]]; then' in version
-    assert 'echo "release_tag=${RELEASE_TAG}" >>"${GITHUB_OUTPUT}"' in version
-    assert 'echo "commit=${TAG_COMMIT}" >>"${GITHUB_OUTPUT}"' in version
+    # The outputs are written as one grouped redirect to $GITHUB_OUTPUT.
+    outputs = version[version.rindex("{\n") : version.rindex('} >>"${GITHUB_OUTPUT}"')]
+    assert 'echo "release_tag=${RELEASE_TAG}"' in outputs
+    assert 'echo "commit=${TAG_COMMIT}"' in outputs
 
 
 def test_image_api_cd_authenticates_and_rejects_existing_artifacts_before_push() -> None:
     workflow = yaml.safe_load(CD_WORKFLOW.read_text())
     steps = workflow["jobs"]["publish"]["steps"]
-    authenticate = next(step for step in steps if step["name"] == "Authenticate to GHCR")["run"]
-    publish = next(step for step in steps if step["name"] == "Publish Image API artifact")["run"]
+    authenticate = next(step for step in steps if step.get("name") == "Authenticate to GHCR")["run"]
+    publish = next(step for step in steps if step.get("name") == "Publish Image API artifact")[
+        "run"
+    ]
 
     assert "docker login ghcr.io" in authenticate
     assert 'echo "${{ github.token }}"' in authenticate
@@ -97,7 +101,7 @@ def test_image_api_cd_uses_an_exact_immutable_artifact_destination_and_metadata(
     publish = next(
         step
         for step in workflow["jobs"]["publish"]["steps"]
-        if step["name"] == "Publish Image API artifact"
+        if step.get("name") == "Publish Image API artifact"
     )
     commands = publish["run"]
     destination_match = re.search(
@@ -106,7 +110,15 @@ def test_image_api_cd_uses_an_exact_immutable_artifact_destination_and_metadata(
 
     assert destination_match is not None
     destination = destination_match.group("destination")
-    assert re.fullmatch(r"oci://ghcr\.io/trycua/cua-image-api:v\$\{VERSION\}", destination)
+    assert re.fullmatch(r"oci://ghcr\.io/trycua/\$\{PACKAGE\}:v\$\{VERSION\}", destination)
+    # trycua/cua publishes the real package; any other repository (the staging
+    # fork) gets a separate -staging package, never the real one.
+    assert re.search(r"^PACKAGE=cua-image-api$", commands, re.MULTILINE)
+    assert re.search(
+        r'^\[ "\$GITHUB_REPOSITORY" = trycua/cua \] \|\| PACKAGE=cua-image-api-staging$',
+        commands,
+        re.MULTILINE,
+    )
 
     tokens = shlex.split(commands)
     flux_push = tokens.index("flux")
@@ -135,7 +147,7 @@ def test_image_api_cd_fails_closed_unless_the_manifest_is_confirmed_missing() ->
     publish = next(
         step
         for step in workflow["jobs"]["publish"]["steps"]
-        if step["name"] == "Publish Image API artifact"
+        if step.get("name") == "Publish Image API artifact"
     )["run"]
 
     assert 'MANIFEST_OUTPUT="$(docker manifest inspect "${ARTIFACT_REFERENCE}" 2>&1)"' in publish
@@ -151,7 +163,9 @@ def test_image_api_cd_fails_closed_unless_the_manifest_is_confirmed_missing() ->
 def test_image_api_cd_passes_manual_version_through_the_environment() -> None:
     workflow = yaml.safe_load(CD_WORKFLOW.read_text())
     publish = workflow["jobs"]["publish"]
-    version = next(step for step in publish["steps"] if step["name"] == "Determine version")["run"]
+    version = next(step for step in publish["steps"] if step.get("name") == "Determine version")[
+        "run"
+    ]
 
     assert publish.get("env", {}).get("MANUAL_VERSION") == "${{ inputs.version }}"
     assert 'VERSION="${MANUAL_VERSION}"' in version

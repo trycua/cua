@@ -1,0 +1,106 @@
+---
+title: Add a machine
+description: 'Connect another Mac, Windows or Linux computer you own to Cua Spaces with a link, a code or one command, so your agents and your other devices can use it.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A machine is a computer you own that runs Spaces for you. Once it is added, it
+shows up in **Machines** on all your devices, your agents can create Spaces on
+it, and you can open its desktop from anywhere. Cua doesn't rent machines: add a
+Mac on your desk, a spare box in the office, or a VM in your own cloud account.
+
+{/* VIDEO: Add a second computer to Cua Spaces with a link and open it from your Mac (about 45 seconds) */}
+
+## Add a machine from the app
+
+You need Cua Spaces on the computer you are adding, or its install command.
+
+1. In Cua Spaces, open **Machines** and press **Add a machine**. You can also
+   find it in the Getting Started checklist and the command palette.
+2. If you belong to a team, choose who the machine is for next to **Add it for**:
+   **Just me** or the team. See [Team machines](/spaces/guides/teams/machines).
+3. On the other computer, do one of these:
+   - Open the link.
+   - Scan the QR code with its camera.
+   - Run the install command in its terminal. Choose **macOS / Linux** or
+     **Windows (preview)** in the dialog to get the right command.
+4. If Cua Spaces is already on that computer, open **Machines** there, press
+   **Join with a code** and paste the code. The app asks before it joins.
+5. Watch the dialog. It says "Waiting for the computer..." and then "Added", and
+   the machine appears in your list.
+
+The link and code work once and expire after a short time. The dialog shows how
+long is left. Press **Revoke link** to cancel one you no longer need, or **Make
+a new link** if it expired.
+
+<Callout type="warn">
+  Only use a code you made yourself. Joining adds the computer to the account
+  that made the code, and that account can then reach it.
+</Callout>
+
+## Add a machine by hand
+
+If you can't use the link, set the computer up yourself:
+
+1. Install Cua Spaces on it. See [Install](/spaces/guides/install).
+2. Sign in with the same account you use here. A machine joins the account it is
+   set up with.
+3. Open **This machine**, choose how to use it, and press **Set up for access**.
+
+Or run this in a terminal on that computer:
+
+```bash test="cli-shape" id="cua-host-setup-add"
+cua host setup
+```
+
+It signs you in to cua.ai for that one command if needed, and installs a
+background service that joins the relay. See
+[Set up unattended access](/spaces/guides/unattended-access) for the options. To
+use a spare machine only to run Spaces, see
+[Host Spaces on a spare Mac](/spaces/guides/host-spaces-on-your-spare-mac).
+
+## What each system needs
+
+| System | Before the machine is reachable |
+|---|---|
+| macOS | Grant cua-spacesd **Screen Recording** and **Accessibility** in System Settings. Setup can't do it for you. |
+| Windows | Stay signed in and unlocked. After a restart, sign in once. |
+| Linux | Setup installs the `cua-spacesd-host` systemd service. |
+
+## Reach it from your other devices
+
+A device reaches your machines through the cua.ai relay only after it is enrolled
+once with a second factor, so a stolen account session alone is not enough.
+Signing in on your own computer enrolls it. A brand-new device on an account that
+already has an enrolled device needs an approval from one of them. Open
+**Settings, Devices** to enroll or approve. The full steps are in
+[Set up unattended access](/spaces/guides/unattended-access#reach-it-from-your-devices).
+
+## Stop sharing or remove a machine
+
+On the machine, run:
+
+```bash test="cli-shape" id="cua-host-stop-remove"
+cua host stop       # disconnect everyone and refuse new connections
+cua host remove     # unregister, uninstall the service, delete ~/.cua/host
+```
+
+An owner or admin can remove a team machine at
+[app.cua.ai/machines](https://app.cua.ai/machines). Removing a machine doesn't
+delete anything on it.
+
+## If it doesn't work
+
+| What you see | What to do |
+|---|---|
+| "That code didn't work" | A code works once and expires. Make a new link in **Add a machine**. |
+| "This device isn't enrolled yet, so it can't make a link." | Enroll this device in **Settings, Devices**, or use `cua host setup` on the other computer. |
+| The machine never appears | On that computer, run `cua host status`. It shows the service state and any missing permission. |
+| The machine shows **Offline** | The computer is off, asleep or disconnected. Wake it or reconnect it, then run `cua host status` on it. |
+
+## Next
+
+- [Connect your agent](/spaces/guides/connect-your-agent): let an agent use the new machine.
+- [Create a Space](/spaces/guides/add-a-space): run a Space on it.
+- [Teams](/spaces/guides/teams): share machines with your team.

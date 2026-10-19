@@ -764,10 +764,9 @@ fn action_target_args(
     });
     let object = args.as_object_mut().expect("action arguments object");
     if addressing == "ax" {
-        object.insert("element_index".to_owned(), serde_json::json!(index));
         object.insert(
-            "snapshot_id".to_owned(),
-            serde_json::json!(state.snapshot_id()),
+            "element_token".to_owned(),
+            serde_json::json!(state.element_token(index)),
         );
     } else {
         let origin = window_origin(fixture, state);
@@ -862,6 +861,10 @@ fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
         max_depth: None,
         max_dimension: None,
         max_image_dimension: None,
+        tree_format: None,
+        since: None,
+        verbose: None,
+        full_output: None,
     }
 }
 
@@ -1651,9 +1654,12 @@ fn shared_case_with_native_hyprland(
             ("electron", "type_text" | "type_submit" | "editor_save", Targeting::Ax) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
-            ("electron", "scroll", _) | (_, "drag", Targeting::Px) => {
-                vec![RefusalCode::BackgroundUnavailable]
-            }
+            // Electron scroll is delivered in the background through
+            // accessibility (reveal scroll), including inner scrollers.
+            // The shared drag cell is a pointer-event drag, which the
+            // background window-routed drag delivers (CUA-1207). Electron
+            // takes it from the app's main process, which holds the button
+            // that a window-routed press cannot.
             _ => Vec::new(),
         }
     } else if cfg!(target_os = "linux")

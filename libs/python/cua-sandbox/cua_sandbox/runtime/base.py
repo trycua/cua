@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from cua_sandbox.image import Image
 
@@ -35,7 +35,7 @@ class RuntimeInfo:
     qmp_port: Optional[int] = None  # Set when QMP transport should be used
     environment: Optional[str] = None  # OS type hint for QMP transport
     agent_type: Optional[str] = None  # e.g. "osworld" for OSWorld Flask server
-    guest_server_port: int = 8000  # Port the guest server listens on
+    guest_server_port: int = 3211  # Port the guest agent (cua-spacesd) listens on
     # guest port -> host port for each Image.expose() port that was forwarded.
     # Empty when the runtime cannot forward extra ports.
     exposed_ports: Optional[dict] = None
@@ -48,6 +48,12 @@ class RuntimeInfo:
     grpc_port: Optional[int] = (
         None  # Set when gRPC transport should be used (emulator gRPC service)
     )
+    # The cua SDK's sandbox handle, when the runtime runs on the SDK (cua-vmm).
+    native: Any = None
+    # How long the first interface call waits for cua-spacesd to answer.
+    env_ready_timeout: Optional[float] = None
+    # spacesd token, when the runtime configured one.
+    env_token: Optional[str] = None
 
 
 class Runtime(ABC):
@@ -63,7 +69,12 @@ class Runtime(ABC):
 
     @abstractmethod
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
-        """Wait until the computer-server inside is reachable."""
+        """Wait until the sandbox is ready.
+
+        Daemon-agnostic: "ready" is the runtime's own notion (instance
+        running, plus any probe the caller declared), never a specific
+        guest agent.
+        """
 
     async def suspend(self, name: str) -> None:
         """Suspend (pause/save state of) a running VM."""

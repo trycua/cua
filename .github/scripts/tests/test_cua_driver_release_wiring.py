@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -261,7 +262,7 @@ fi
         self.assertIn("missing from Screen & System Audio Recording", cli)
         self.assertIn("add {app_path}", cli)
 
-        limits = self.read("docs/content/docs/reference/cua-driver/limits.mdx")
+        limits = self.read("docs/content/docs/cua-driver/guides/troubleshoot.mdx")
         self.assertIn("without this grant it returns the tree only (no PNG)", limits)
 
     def test_release_please_owns_driver_and_lume(self) -> None:
@@ -445,12 +446,56 @@ fi
         self.assertIn('"path": "python/pyproject.toml"', config)
         self.assertIn('"path": "python/src/cua_driver/__init__.py"', config)
         self.assertIn('"path": "typescript/package.json"', config)
+        driver_files = json.loads(config)["packages"]["libs/cua-driver"]["extra-files"]
         self.assertEqual(
-            config.count('"path": "typescript/package-lock.json"'), 2
+            [entry["path"] for entry in driver_files].count("typescript/package-lock.json"), 2
         )
         self.assertNotIn('"path": "scripts/_install-rust.sh"', config)
         self.assertNotIn('"path": "scripts/install.ps1"', config)
         self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)
+
+    def test_release_please_bumps_the_spacesd_lockfiles(self) -> None:
+        """cua-spacesd and its e2e workspaces lock the driver and spacesd
+        crates by path: each release PR must bump them there too, or every
+        --locked build of those workspaces fails until they are re-locked."""
+        import tomllib
+
+        packages = json.loads(self.read("release-please-config.json"))["packages"]
+        workspaces = {
+            "libs/cua-driver": REPO_ROOT / "libs/cua-driver/rust",
+            "libs/cua-spacesd": REPO_ROOT / "libs/cua-spacesd/crates",
+        }
+        lockfiles = [
+            "libs/cua-spacesd/Cargo.lock",
+            "libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+            "libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+        ]
+        for package, root in workspaces.items():
+            crates = set()
+            for manifest in root.rglob("Cargo.toml"):
+                if "target" in manifest.parts:
+                    continue
+                crate = tomllib.loads(manifest.read_text()).get("package", {})
+                if crate.get("version") == {"workspace": True}:
+                    crates.add(crate["name"])
+            entries = {
+                (entry["path"], entry.get("jsonpath"))
+                for entry in packages[package]["extra-files"]
+                if isinstance(entry, dict)
+            }
+            for lockfile in lockfiles:
+                locked = tomllib.loads(self.read(lockfile))["package"]
+                for crate in locked:
+                    if "source" in crate or crate["name"] not in crates:
+                        continue
+                    with self.subTest(package=package, lockfile=lockfile, crate=crate["name"]):
+                        self.assertIn(
+                            (
+                                f"/{lockfile}",
+                                f"$.package[?(@.name.value=='{crate['name']}')].version",
+                            ),
+                            entries,
+                        )
 
     def test_driver_installer_version_advances_only_after_publication(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
@@ -539,6 +584,68 @@ fi
         powershell = self.read("libs/cua-driver/scripts/install.ps1")
         self.assertIn('$CursorThemeRequiredFrom = [version]"0.12.7"', powershell)
         self.assertIn("[version]$version -ge $CursorThemeRequiredFrom", powershell)
+
+    def run_release_installer_path_block(
+        self, user_shell: str, *, no_modify_path: str = "0"
+    ) -> tuple[str, str | None, str]:
+        shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        snippets = [
+            re.search(r"^log\(\) .*$", shell, re.M),
+            re.search(r"^print_path_hint\(\) \{$.*?^\}$", shell, re.M | re.S),
+            re.search(r'^if \[\[ ":\$PATH:" .*?^fi$', shell, re.M | re.S),
+        ]
+        self.assertTrue(all(snippets))
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "home dir"
+            home.mkdir()
+            bin_dir = str(home / "cua bin")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'BIN_DIR="{bin_dir}"\nBIN_LINK="$BIN_DIR/cua-driver"\n'
+                    + "\n".join(snippet.group(0) for snippet in snippets),
+                ],
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "SHELL": user_shell,
+                    "NO_MODIFY_PATH": no_modify_path,
+                },
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            bashrc = home / ".bashrc"
+            bashrc_text = bashrc.read_text() if bashrc.exists() else None
+            return result.stdout, bashrc_text, bin_dir
+
+    def test_release_installer_always_prints_an_actionable_path_hint(self) -> None:
+        posix_export = 'export PATH="{bin_dir}:$PATH"'
+        quoted_run = '"{bin_dir}/cua-driver" --version'
+        cases = {
+            "/bin/bash": (posix_export, "  " + quoted_run),
+            "/opt/homebrew/bin/fish": ('fish_add_path "{bin_dir}"', "  " + quoted_run),
+            "/usr/local/bin/nu": (
+                '$env.PATH = ($env.PATH | prepend "{bin_dir}")',
+                "  ^" + quoted_run,
+            ),
+            "": (posix_export, "  " + quoted_run),
+        }
+        for user_shell, expected_lines in cases.items():
+            for no_modify_path in ("0", "1"):
+                with self.subTest(shell=user_shell, no_modify_path=no_modify_path):
+                    stdout, bashrc, bin_dir = self.run_release_installer_path_block(
+                        user_shell, no_modify_path=no_modify_path
+                    )
+                    for expected in expected_lines:
+                        self.assertIn(expected.format(bin_dir=bin_dir) + "\n", stdout)
+                    if user_shell == "":
+                        self.assertIn("POSIX-compatible shells:", stdout)
+                    if user_shell == "/bin/bash" and no_modify_path == "0":
+                        self.assertIn(f'export PATH="{bin_dir}:$PATH"', bashrc)
+                    else:
+                        self.assertIsNone(bashrc)
 
     def test_windows_installer_elevates_autostart_binary_without_command_string(
         self,
@@ -885,6 +992,7 @@ fi
 
         windows = self.read(".github/workflows/e2e-rust-windows.yml")
         self.assertIn('name: "Windows / installer and update smoke"', windows)
+        self.assertIn("update-apply-windows-e2e.ps1", windows)
         self.assertIn("install-local.ps1 -NoAutoStart -NoPathUpdate", windows)
         self.assertIn('CUA_DRIVER_LOCAL_HOME = Join-Path $env:RUNNER_TEMP', windows)
 
@@ -997,7 +1105,7 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 58)
+        self.assertEqual(len(expected["baseTools"]), 61)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
             {"darwin": 35, "linux": 39, "win32": 35},
@@ -1025,7 +1133,9 @@ fi
         self.assertIn("workflow_call:\n", workflow)
         self.assertIn("Installer compatibility summary", workflow)
         self.assertIn("ubuntu-latest, macos-26, windows-latest", workflow)
-        self.assertIn("repos/$GITHUB_REPOSITORY/releases?per_page=100", workflow)
+        # Versions come from the repository the installers download from.
+        self.assertIn("RELEASE_REPOSITORY: trycua/cua", workflow)
+        self.assertIn("repos/$RELEASE_REPOSITORY/releases?per_page=100", workflow)
         self.assertIn("libs/cua-driver/scripts/install.sh", workflow)
         self.assertIn("libs/cua-driver/scripts/install.ps1", workflow)
         self.assertIn("-NoAutoStart", workflow)
@@ -1050,6 +1160,19 @@ fi
             'if [[ "$INSTALLER_CERTIFICATION_RESULT" != "success" ]]',
             release_metadata,
         )
+
+    def test_installer_compatibility_never_cancels_a_superseded_caller(
+        self,
+    ) -> None:
+        # A cancelled call fails the caller's required `validate` check, and
+        # a failed duplicate on the same head commit blocks the merge.
+        for path in (
+            ".github/workflows/ci-cua-driver-installer-compat.yml",
+            ".github/workflows/ci-release-metadata.yml",
+        ):
+            workflow = self.read(path)
+            self.assertNotIn("\nconcurrency:", workflow, path)
+            self.assertNotIn("cancel-in-progress: true", workflow, path)
 
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")

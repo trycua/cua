@@ -6,12 +6,21 @@ Implements the computer_use action interface for comprehensive browser control.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Optional, Union
+from typing import Any, Optional, Protocol, Union
 
 from .base import BaseComputerTool, register_tool
 
-if TYPE_CHECKING:
-    from computer.interface import GenericComputerInterface
+
+class PlaywrightInterface(Protocol):
+    """Anything exposing ``playwright_exec(command, params)`` for browser control.
+
+    The legacy computer-server ``/playwright_exec`` endpoint was removed together
+    with cua-computer; callers must now supply their own implementation.
+    TODO(cua-sdk): back this with the cua-spacesd once it exposes browser control.
+    """
+
+    async def playwright_exec(self, command: str, params: dict) -> Any: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +32,12 @@ class BrowserTool(BaseComputerTool):
     Implements a comprehensive computer_use action interface for browser control.
     """
 
-    def __init__(self, interface: "GenericComputerInterface", cfg: Optional[dict] = None):
+    def __init__(self, interface: "PlaywrightInterface", cfg: Optional[dict] = None):
         """
         Initialize the BrowserTool.
 
         Args:
-            interface: A GenericComputerInterface instance that provides playwright_exec
+            interface: An object that provides ``playwright_exec``
             cfg: Optional configuration dictionary
         """
         self.interface = interface

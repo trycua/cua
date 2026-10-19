@@ -181,7 +181,22 @@ pub fn seed_position(target_x: f64, target_y: f64, frame: Option<ScreenFrame>) -
 pub fn keyed_config(template: &CursorConfig, key: &str) -> CursorConfig {
     let mut config = template.clone();
     config.cursor_id = key.to_owned();
+    // A saved default changed after launch reaches sessions created from now on.
+    crate::motion_defaults::active().apply(&mut config.motion);
     config
+}
+
+/// Tell each cursor whether another agent cursor is on screen with it, so the
+/// minimal badge can name them apart. Call once per tick, before advancing.
+pub fn update_peer_presence<'a>(cores: impl Iterator<Item = &'a mut RenderStateCore>) {
+    let mut cores: Vec<&mut RenderStateCore> = cores.collect();
+    let shown = cores
+        .iter()
+        .filter(|core| core.is_revealed() && !core.pinned_target_off_workspace)
+        .count();
+    for core in cores.iter_mut() {
+        core.peer_cursors_visible = shown >= 2;
+    }
 }
 
 /// The keyed render collection plus per-platform state `P` (screen geometry,
@@ -206,9 +221,11 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
     /// own `cursor_id`.
     pub fn new(template: CursorConfig, platform: P) -> Self {
         let mut cursors = CursorMap::new();
+        let mut default_config = template.clone();
+        crate::motion_defaults::active().apply(&mut default_config.motion);
         cursors.insert(
             DEFAULT_CURSOR_KEY.to_owned(),
-            S::from_config(template.clone()),
+            S::from_config(default_config),
         );
         Self {
             cursors,
@@ -303,7 +320,7 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
             return false;
         };
         let core = cursor.core_mut();
-        if !(core.cfg.enabled && core.pos.0 < -50.0) {
+        if !(core.cfg.enabled && !crate::render_state::is_placed(core.pos)) {
             return false;
         }
         core.pos = seed_position(target_x, target_y, frame);
@@ -312,6 +329,7 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
 
     /// Advance every cursor; returns the keys whose planned path just ended.
     pub fn tick_all(&mut self, dt: f64) -> Vec<CursorKey> {
+        update_peer_presence(self.cursors.values_mut().map(S::core_mut));
         let mut arrived = Vec::new();
         for (key, cursor) in self.cursors.iter_mut() {
             if cursor.tick(dt) {
@@ -340,6 +358,30 @@ mod tests {
     use super::*;
     use crate::ReducedMotion;
 
+    #[test]
+    fn cursors_know_when_another_agent_cursor_is_on_screen() {
+        let mut map = Map::new(CursorConfig::default(), ());
+        placed(&mut map, "a");
+        map.apply_msg(move_msg("a", 100.0, 100.0));
+        map.tick_all(0.016);
+        assert!(!map.cursors["a"].peer_cursors_visible, "one cursor alone");
+
+        placed(&mut map, "b");
+        map.apply_msg(move_msg("b", 400.0, 300.0));
+        map.tick_all(0.016);
+        map.tick_all(0.016);
+        assert!(map.cursors["a"].peer_cursors_visible);
+        assert!(map.cursors["b"].peer_cursors_visible);
+        assert!(
+            !map.cursors[DEFAULT_CURSOR_KEY].is_revealed(),
+            "the unplaced default cursor does not count"
+        );
+
+        map.remove("b".to_owned());
+        map.tick_all(0.016);
+        assert!(!map.cursors["a"].peer_cursors_visible);
+    }
+
     type Map = RenderMap<RenderStateCore>;
 
     fn map() -> Map {
@@ -355,6 +397,7 @@ mod tests {
                 x,
                 y,
                 end_heading_radians: 0.0,
+                target: None,
             },
         })
     }
@@ -368,7 +411,9 @@ mod tests {
     fn settle(core: &mut RenderStateCore) {
         for _ in 0..2000 {
             core.tick_motion(1.0 / 60.0);
-            if core.path.is_none() && core.spring.is_none() && core.click_t.is_none() {
+            if !core.needs_frame_tick()
+                || (core.trajectory.is_none() && core.click_t.is_none() && core.click_age.is_none())
+            {
                 break;
             }
         }
@@ -533,6 +578,10 @@ mod tests {
         map.cursors["sessA"].pos = (30.0, 30.0);
         assert!(!map.seed_start_if_sentinel("sessA", 80.0, 80.0, frame));
         assert_eq!(map.cursors["sessA"].pos, (30.0, 30.0));
+        // A cursor placed on a monitor left of the layout origin is no sentinel.
+        map.cursors["sessA"].pos = (-2220.0, 980.0);
+        assert!(!map.seed_start_if_sentinel("sessA", 80.0, 80.0, frame));
+        assert_eq!(map.cursors["sessA"].pos, (-2220.0, 980.0));
 
         map.cursor_mut("disabled").unwrap().cfg.enabled = false;
         assert!(!map.seed_start_if_sentinel("disabled", 80.0, 80.0, frame));
@@ -692,11 +741,15 @@ mod tests {
         let mut map = map();
         let core = placed(&mut map, DEFAULT_CURSOR_KEY);
         core.visual.reduced_motion = ReducedMotion::On;
+        // Longer than the move plus its 1.6 s navigate cue, so the opaque
+        // delay is still running once every animation has finished.
+        core.motion.idle_hide_ms = 2500.0;
         core.apply_command_base(
             OverlayCommand::MoveTo {
                 x: 250.0,
                 y: 150.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
             false,
             false,
@@ -712,7 +765,7 @@ mod tests {
 
         let wait = map.idle_fade_wait().expect("idle fade deadline");
         let core = &mut map.cursors[DEFAULT_CURSOR_KEY];
-        assert!(wait > Duration::ZERO && wait <= Duration::from_millis(500));
+        assert!(wait > Duration::ZERO && wait <= Duration::from_millis(2500));
         // Wake just past the deadline, as a parked loop's timeout does.
         core.tick_motion(wait.as_secs_f64() + 0.001);
         assert!(core.idle_fade_in_progress());

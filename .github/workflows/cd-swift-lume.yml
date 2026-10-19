@@ -59,6 +59,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
   APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
   INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
   CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}

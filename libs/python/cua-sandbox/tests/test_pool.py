@@ -376,6 +376,7 @@ async def test_fleet_client_manages_signed_service_urls(monkeypatch) -> None:
     assert calls[2][1].id == created.id
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_reconcile_creates_pool_referencing_a_template(monkeypatch):
     client = FakeFleetClient()
@@ -393,6 +394,7 @@ async def test_reconcile_creates_pool_referencing_a_template(monkeypatch):
     assert request.spec.replicas == 1
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_pool_delete_deletes_resource_and_closes_client(monkeypatch):
     client = FakeFleetClient()
@@ -404,6 +406,7 @@ async def test_pool_delete_deletes_resource_and_closes_client(monkeypatch):
     assert client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_template_reconcile_creates_template_from_registry_image(monkeypatch):
     client = FakeFleetClient()
@@ -427,6 +430,7 @@ async def test_template_reconcile_creates_template_from_registry_image(monkeypat
     ]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_template_reconcile_closes_temporary_client_when_reconciliation_fails(monkeypatch):
     client = FakeFleetClient(reconcile_error=RuntimeError("reconcile failed"))
@@ -438,6 +442,7 @@ async def test_template_reconcile_closes_temporary_client_when_reconciliation_fa
     assert client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize("invalid_value", [None, {}, "not-a-request", pool_request()])
 @pytest.mark.asyncio
 async def test_template_reconcile_rejects_non_request(invalid_value):
@@ -445,6 +450,7 @@ async def test_template_reconcile_rejects_non_request(invalid_value):
         await Template.reconcile(invalid_value)
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_sync_template_reconcile_matches_async_facade(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
@@ -455,6 +461,7 @@ def test_sync_template_reconcile_matches_async_facade(monkeypatch):
     assert client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_reconcile_closes_temporary_client_when_reconciliation_fails(monkeypatch):
     client = FakeFleetClient(reconcile_error=RuntimeError("reconcile failed"))
@@ -466,6 +473,7 @@ async def test_reconcile_closes_temporary_client_when_reconciliation_fails(monke
     assert client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_reconcile_updates_existing_pool_idempotently(monkeypatch):
     existing = fleet_pool()
@@ -480,6 +488,7 @@ async def test_reconcile_updates_existing_pool_idempotently(monkeypatch):
     assert client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_claim_releases_claim_and_client_after_block_exception(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -499,6 +508,7 @@ async def test_claim_releases_claim_and_client_after_block_exception(monkeypatch
     assert claim_client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_claim_preserves_block_exception_when_release_fails(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -515,6 +525,7 @@ async def test_claim_preserves_block_exception_when_release_fails(monkeypatch):
     assert claim_client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_claim_raises_release_failure_without_block_exception(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -530,6 +541,7 @@ async def test_claim_raises_release_failure_without_block_exception(monkeypatch)
     assert claim_client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.parametrize("invalid_value", [None, {}, "not-a-request"])
 @pytest.mark.asyncio
 async def test_reconcile_rejects_non_request(invalid_value):
@@ -537,6 +549,7 @@ async def test_reconcile_rejects_non_request(invalid_value):
         await Pool.reconcile(invalid_value)
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_sync_pool_delete_matches_async_facade(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
@@ -547,6 +560,7 @@ def test_sync_pool_delete_matches_async_facade(monkeypatch):
     assert client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_sync_pool_matches_blocking_context_manager(monkeypatch):
     reconcile_client = FakeFleetClient()
     claim_client = FakeFleetClient()
@@ -568,6 +582,7 @@ def test_sync_pool_matches_blocking_context_manager(monkeypatch):
     assert claim_client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_reconcile_preserves_replicas_and_template_reference(monkeypatch):
     client = FakeFleetClient()
@@ -580,6 +595,7 @@ async def test_reconcile_preserves_replicas_and_template_reference(monkeypatch):
     assert request.spec.sandbox_template_ref.name == "workspace"
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_template_reconcile_preserves_named_services(monkeypatch):
     client = FakeFleetClient()
@@ -599,6 +615,7 @@ async def test_template_reconcile_preserves_named_services(monkeypatch):
     ]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_reconcile_forwards_native_create_pool_request_unchanged(monkeypatch):
     client = FakeFleetClient()
@@ -610,6 +627,7 @@ async def test_reconcile_forwards_native_create_pool_request_unchanged(monkeypat
     assert client.reconciled == [request]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_template_reconcile_forwards_native_request_unchanged(monkeypatch):
     client = FakeFleetClient()
@@ -641,6 +659,7 @@ async def test_template_reconcile_forwards_native_request_unchanged(monkeypatch)
     assert client.reconciled_templates == [request]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_claim_exposes_named_service_requests(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -663,6 +682,7 @@ async def test_claim_exposes_named_service_requests(monkeypatch):
     assert request.body == b'{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_claim_manages_signed_service_urls(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -692,6 +712,7 @@ async def test_claim_manages_signed_service_urls(monkeypatch):
     assert claim_client.signed_url_revocations == [created]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_claim_forwards_native_claim_spec_unchanged(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -715,6 +736,7 @@ async def test_claim_forwards_native_claim_spec_unchanged(monkeypatch):
     assert request.spec is spec
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_claim_without_spec_uses_operator_default(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -733,6 +755,7 @@ async def test_claim_without_spec_uses_operator_default(monkeypatch):
     assert claim_client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_pool_get_fetches_without_reconciling(monkeypatch):
     client = FakeFleetClient()
@@ -745,6 +768,7 @@ async def test_pool_get_fetches_without_reconciling(monkeypatch):
     assert client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_create_claim_returns_a_serializable_lease(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -766,11 +790,12 @@ async def test_create_claim_returns_a_serializable_lease(monkeypatch):
         "namespace": "foo",
         "pool": "foo",
         "claim": "claim-1",
-        "service": "server",
+        "service": "env",
     }
     assert _ClaimHandle.from_dict(lease.to_dict()).to_dict() == lease.to_dict()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_create_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -789,6 +814,7 @@ async def test_create_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch)
     assert spec.lifecycle is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_create_claim_rejects_ttl_alongside_an_explicit_spec(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -800,6 +826,7 @@ async def test_create_claim_rejects_ttl_alongside_an_explicit_spec(monkeypatch):
         await pool.create_claim(spec=SimpleNamespace(), ttl_seconds_after_created=1800)
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_pool_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch):
     reconcile_client = FakeFleetClient()
@@ -943,6 +970,7 @@ async def test_fleet_client_renew_claim_delegates_when_supported():
     assert calls == [("claim", "2026-01-01T00:10:00Z")]
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_named_claim_retry_reattaches_without_creating(monkeypatch):
     client = FakeFleetClient()
@@ -959,10 +987,11 @@ async def test_named_claim_retry_reattaches_without_creating(monkeypatch):
 
     assert client.claims == []
     assert sandbox.claim_name == "claim-1"
-    assert sandbox.to_dict()["service"] == "server"
+    assert sandbox.to_dict()["service"] == "env"
     await sandbox.close()
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_named_claim_reattach_failure_does_not_release_existing_claim(monkeypatch):
     client = FakeFleetClient()
@@ -987,6 +1016,7 @@ async def test_named_claim_reattach_failure_does_not_release_existing_claim(monk
     assert client.closed is True
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_new_claim_acquisition_failure_releases_created_claim(monkeypatch):
     client = FakeFleetClient()
@@ -1010,79 +1040,75 @@ async def test_new_claim_acquisition_failure_releases_created_claim(monkeypatch)
     assert client.closed is True
 
 
+class _AppliedResources:
+    """What the Python Fleet client reads back after ``Fleet.apply``."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def get_pool(self, name: str) -> object:
+        return fleet_pool(name)
+
+    async def get_template(self, namespace: str, name: str) -> object:
+        return fleet_template(name)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _capture_native_apply(monkeypatch) -> list:
+    """``Pool.apply`` writes only through the SDK's ``Fleet.apply``: capture
+    the native (name, spec, options) it hands over."""
+    seen: list = []
+
+    async def native_apply(name, spec, options):
+        seen.append((name, spec, options))
+
+    monkeypatch.setattr("cua_sandbox.pool._native_apply", native_apply)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", _AppliedResources)
+    return seen
+
+
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
-async def test_pool_apply_delegates_to_template_and_pool_reconcile(monkeypatch):
-    template_requests = []
-    pool_requests = []
-    reconcile_order = []
+async def test_pool_apply_goes_through_the_one_native_writer(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
 
-    async def reconcile_template(cls, request):
-        reconcile_order.append("template")
-        template_requests.append(request)
-        return Template(fleet_template(request.name))
-
-    async def reconcile_pool(cls, request):
-        reconcile_order.append("pool")
-        pool_requests.append(request)
-        return Pool(fleet_pool(request.namespace))
-
-    monkeypatch.setattr(Template, "reconcile", classmethod(reconcile_template))
-    monkeypatch.setattr(Pool, "reconcile", classmethod(reconcile_pool))
-
-    pool = await Pool.apply(
-        Image.from_registry("registry.example/workspace:latest"),
-        name="workspace",
-        cpu=4,
-        memory_mb=4096,
-    )
-
-    assert reconcile_order == ["pool", "template"]
-    assert len(template_requests) == 1
-    assert len(pool_requests) == 1
-    assert pool.name == pool_requests[0].namespace == template_requests[0].name
-
-
-@pytest.mark.asyncio
-async def test_pool_apply_delete_removes_owned_pool_and_template(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(3)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    pool = await Pool.apply(
-        Image.from_registry("registry.example/workspace:latest"),
-        name="workspace",
-    )
-    await pool.delete()
-
-    assert clients[2].deleted_pools == ["workspace"]
-    assert clients[2].deleted_templates == ["workspace"]
-
-
-@pytest.mark.asyncio
-async def test_pool_apply_rolls_back_pool_when_template_reconcile_fails(monkeypatch):
-    clients = [
-        FakeFleetClient(),
-        FakeFleetClient(reconcile_error=RuntimeError("template failed")),
-        FakeFleetClient(),
-    ]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    with pytest.raises(RuntimeError, match="template failed"):
-        await Pool.apply(
+    with pytest.warns(DeprecationWarning):
+        pool = await Pool.apply(
             Image.from_registry("registry.example/workspace:latest"),
             name="workspace",
+            cpu=4,
+            memory_mb=4096,
         )
 
-    assert clients[2].deleted_pools == ["workspace"]
-    assert clients[2].deleted_templates == []
+    [(name, spec, options)] = seen
+    assert name == pool.name == "workspace"
+    assert (spec.image, spec.cpu, spec.memory_mb) == ("registry.example/workspace:latest", 4, 4096)
+    assert options.replicas == 1
+    assert pool._owned_template is not None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
-async def test_pool_apply_forwards_autoscaling_to_the_pool_request(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_delete_removes_owned_pool_and_template(monkeypatch):
+    _capture_native_apply(monkeypatch)
+    pool = await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+    )
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+    await pool.delete()
+
+    assert client.deleted_pools == ["workspace"]
+    assert client.deleted_templates == ["workspace"]
+
+
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
+@pytest.mark.asyncio
+async def test_pool_apply_forwards_autoscaling_to_the_pool_options(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
     autoscaling = WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10)
 
     await Pool.apply(
@@ -1091,23 +1117,26 @@ async def test_pool_apply_forwards_autoscaling_to_the_pool_request(monkeypatch):
         autoscaling=autoscaling,
     )
 
-    assert clients[0].reconciled[0].spec.autoscaling == autoscaling
+    options = seen[0][2]
+    assert (options.min_pool_size, options.replicas, options.max_pool_size) == (0, 2, 10)
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
-async def test_pool_apply_without_autoscaling_leaves_the_pool_spec_static(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_without_autoscaling_leaves_the_pool_static(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
 
     await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
         name="workspace",
     )
 
-    assert clients[0].reconciled[0].spec.autoscaling is None
+    options = seen[0][2]
+    assert options.min_pool_size is None and options.max_pool_size is None
+    assert options.warm is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_pool_apply_requires_an_explicit_name():
     image = Image.from_registry("registry.example/workspace:latest")
@@ -1120,10 +1149,76 @@ async def test_pool_apply_requires_an_explicit_name():
         await Pool.apply(image, name=None)
 
 
+async def _applied_runtime(monkeypatch, image, **kwargs):
+    seen = _capture_native_apply(monkeypatch)
+    await Pool.apply(image, name="workspace", **kwargs)
+    return {"gvisor": RuntimeKind.GVISOR, "kubevirt": RuntimeKind.KUBEVIRT}[seen[0][2].runtime]
+
+
+DESKTOP = "ghcr.io/trycua/cua-desktop-linux"
+
+
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reference", "kind", "runtime", "expected"),
+    [
+        # Defaults from the image kind.
+        (f"{DESKTOP}:docker-latest", "container", None, RuntimeKind.GVISOR),
+        (f"{DESKTOP}:latest", "vm", None, RuntimeKind.KUBEVIRT),
+        # An unresolved kind follows the image's manifest (tests/_image_fixtures.py).
+        (f"{DESKTOP}:docker-latest", None, None, RuntimeKind.GVISOR),
+        ("registry.example/workspace:latest", None, None, RuntimeKind.KUBEVIRT),
+        # Explicit runtimes win; an unreadable manifest sends them unchecked.
+        ("public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-1", None, "gvisor", RuntimeKind.GVISOR),
+        (f"{DESKTOP}:latest", "container", "kubevirt", RuntimeKind.KUBEVIRT),
+    ],
+)
+async def test_pool_apply_sets_the_template_runtime(
+    monkeypatch, reference, kind, runtime, expected
+):
+    image = Image.from_registry(reference, kind=kind)
+    assert await _applied_runtime(monkeypatch, image, runtime=runtime) == expected
+
+
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reference", "runtime", "hint"),
+    [
+        (f"{DESKTOP}:latest", "gvisor", "containerDisk"),
+        (f"{DESKTOP}:docker-latest", "kubevirt", "container rootfs"),
+    ],
+)
+async def test_pool_apply_refuses_a_crossed_runtime_before_creating_anything(
+    monkeypatch, reference, runtime, hint
+):
+    import cua
+
+    def no_client():
+        raise AssertionError("no Fleet call for an invalid runtime/image pairing")
+
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", no_client)
+    with pytest.raises(cua.CuaError.InvalidArgument, match=hint):
+        await Pool.apply(Image.from_registry(reference), name="workspace", runtime=runtime)
+    with pytest.raises(ValueError, match="kubevirt"):
+        await Pool.apply(Image.from_registry(reference), name="workspace", runtime="firecracker")
+
+
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
+def test_sync_pool_apply_forwards_the_runtime(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
+    SyncPool.apply(
+        Image.from_registry("public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-1"),
+        name="workspace",
+        runtime="gvisor",
+    )
+    assert seen[0][2].runtime == "gvisor"
+
+
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    seen = _capture_native_apply(monkeypatch)
     autoscaling = WarmPoolAutoscaling(min_pool_size=1, initial_pool_size=1, max_pool_size=5)
 
     pool = SyncPool.apply(
@@ -1133,14 +1228,14 @@ def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
     )
 
     assert pool.name == "workspace"
-    assert clients[0].reconciled[0].spec.autoscaling == autoscaling
+    options = seen[0][2]
+    assert (options.min_pool_size, options.replicas, options.max_pool_size) == (1, 1, 5)
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
-async def test_pool_apply_forwards_creation_ttl_to_the_pool_request(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_forwards_creation_ttl_to_the_pool_options(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
 
     await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
@@ -1148,23 +1243,23 @@ async def test_pool_apply_forwards_creation_ttl_to_the_pool_request(monkeypatch)
         ttl_seconds_after_created=86400,
     )
 
-    assert clients[0].reconciled[0].spec.ttl_seconds_after_created == 86400
+    assert seen[0][2].pool_ttl_seconds == 86400
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_pool_apply_without_creation_ttl_leaves_the_pool_unreaped(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    seen = _capture_native_apply(monkeypatch)
 
     await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
         name="workspace",
     )
 
-    assert clients[0].reconciled[0].spec.ttl_seconds_after_created is None
+    assert seen[0][2].pool_ttl_seconds is None
 
 
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_pool_apply_rejects_invalid_creation_ttl(monkeypatch):
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", FakeFleetClient)
@@ -1177,16 +1272,19 @@ async def test_pool_apply_rejects_invalid_creation_ttl(monkeypatch):
         )
 
 
-def _forbidden(operation: str) -> SdkError.Status:
-    return SdkError.Status(operation=operation, status=403, body="k8s request is not allowed")
-
-
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
-async def test_pool_apply_maps_forbidden_pool_reconcile_to_access_denied(monkeypatch):
-    clients = [FakeFleetClient(reconcile_error=_forbidden("create pool"))]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_maps_a_taken_name_to_access_denied(monkeypatch):
+    import cua
 
+    class _Fleet:
+        async def apply(self, name, spec, options):
+            raise cua.CuaError.Fleet(
+                "Fleet denied create pool on pool namespace 'workspace' (HTTP 403). Pool "
+                "names are globally unique across accounts"
+            )
+
+    monkeypatch.setattr("cua_sandbox.pool.native_fleet", lambda: _Fleet())
     with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
         await Pool.apply(
             Image.from_registry("registry.example/workspace:latest"),
@@ -1194,76 +1292,10 @@ async def test_pool_apply_maps_forbidden_pool_reconcile_to_access_denied(monkeyp
         )
 
     assert "'workspace'" in str(error.value)
-    assert isinstance(error.value.__cause__, SdkError.Status)
-
-
-@pytest.mark.asyncio
-async def test_pool_apply_maps_forbidden_template_reconcile_and_still_rolls_back(monkeypatch):
-    clients = [
-        FakeFleetClient(),
-        FakeFleetClient(reconcile_error=_forbidden("update template")),
-        FakeFleetClient(),
-    ]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    with pytest.raises(PoolAccessDeniedError, match="globally unique"):
-        await Pool.apply(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="workspace",
-        )
-
-    assert clients[2].deleted_pools == ["workspace"]
-
-
-@pytest.mark.asyncio
-async def test_pool_apply_canonicalizes_native_pool_access_denied(monkeypatch):
-    upstream = getattr(SdkError, "PoolAccessDenied", None)
-    if upstream is None:
-        pytest.skip("installed cua-fleet predates SdkError.PoolAccessDenied")
-
-    native = upstream(
-        operation="create pool",
-        namespace="workspace",
-        status=403,
-        body="k8s request is not allowed",
-    )
-    clients = [FakeFleetClient(reconcile_error=native)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
-        await Pool.apply(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="workspace",
-        )
-
-    assert error.value is native
-    assert "Fleet denied create pool on pool namespace 'workspace'" in str(error.value)
     assert "https://discord.gg/mVnXXpdE85" in str(error.value)
 
 
-@pytest.mark.asyncio
-async def test_pool_apply_rollback_failure_does_not_mask_template_error(monkeypatch):
-    class DeleteDeniedClient(FakeFleetClient):
-        async def delete_pool(self, pool: object) -> None:
-            raise _forbidden("delete pool")
-
-    clients = [
-        FakeFleetClient(),
-        FakeFleetClient(reconcile_error=_forbidden("update template")),
-        DeleteDeniedClient(),
-    ]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    with pytest.raises(PoolAccessDeniedError, match="update template"):
-        await Pool.apply(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="workspace",
-        )
-
-
+@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
 async def test_close_after_disconnect_reopens_client_for_release(monkeypatch):
     claim_client = FakeFleetClient()

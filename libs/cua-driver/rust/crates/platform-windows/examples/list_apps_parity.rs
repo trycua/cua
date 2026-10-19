@@ -12,11 +12,13 @@
 //! the `active` assertion is skipped because no window owns foreground.
 //! In an interactive session at least one app should be marked active.
 //!
-//! Hard 8-second timeout on the round-trip — list_apps does Start-Menu
-//! + WinRT PackageManager scans which take ~300ms on a stock Win11 image
+//! Hard 8-second timeout on the round-trip — list_apps does Start-Menu +
+//! WinRT PackageManager scans which take ~300ms on a stock Win11 image
 //! and several seconds on machines with many installed apps.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

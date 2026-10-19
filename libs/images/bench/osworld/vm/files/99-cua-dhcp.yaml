@@ -1,0 +1,13 @@
+# DHCP on whatever NIC the hypervisor presents (enp1s0 under KubeVirt,
+# ens3/enp0s3 under plain QEMU). Without it the guest never gets a lease on Fleet.
+network:
+  version: 2
+  ethernets:
+    all-en:
+      match: {name: "en*"}
+      dhcp4: true
+      dhcp-identifier: mac
+    all-eth:
+      match: {name: "eth*"}
+      dhcp4: true
+      dhcp-identifier: mac

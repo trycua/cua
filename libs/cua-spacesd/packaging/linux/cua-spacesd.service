@@ -1,0 +1,42 @@
+# systemd unit for cua-spacesd inside a Linux guest.
+#
+# The token comes from /run/cua/env-token (written by cloud-init, the Lume
+# setup share or the Fleet template) or from CUA_ENV_TOKEN in
+# /etc/cua/spacesd.env. With a token the driver listens on 0.0.0.0:3211;
+# without one it refuses any non-loopback bind.
+#
+# Settings follow e2b envd: the daemon must survive memory pressure caused
+# by user workloads, so it is never OOM-killed first and has a memory floor,
+# and user processes it starts land in delegated child cgroups.
+[Unit]
+Description=cua-spacesd (cua.env.v1 on :3211)
+Documentation=https://github.com/trycua/cua/tree/main/libs/cua-spacesd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The older env files are still read (later files win: spacesd.env last).
+EnvironmentFile=-/etc/cua/env-driver.env
+EnvironmentFile=-/etc/cua/guestd.env
+EnvironmentFile=-/etc/cua/spacesd.env
+ExecStart=/usr/local/bin/cua-spacesd serve --allow-guest-power
+Restart=always
+RestartSec=1
+# Never the OOM killer's first choice; keep 64 MiB reserved for the daemon.
+OOMScoreAdjust=-1000
+MemoryMin=64M
+# Let the driver create child cgroups for the processes it starts.
+Delegate=yes
+KillMode=mixed
+TimeoutStopSec=10
+LimitNOFILE=1048576
+StateDirectory=cua/spacesd
+Environment=CUA_ENV_DATA_DIR=/var/lib/cua/spacesd
+Environment=CUA_ENV_LOG=info
+
+[Install]
+WantedBy=multi-user.target
+# The older unit names, kept for one release.
+Alias=cua-env-driver.service
+Alias=cua-guestd.service

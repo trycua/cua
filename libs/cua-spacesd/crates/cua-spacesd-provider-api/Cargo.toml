@@ -1,0 +1,13 @@
+[package]
+name = "cua-spacesd-provider-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-media-protocol = { path = "../../../cua/crates/cua-media-protocol" }
+serde_json.workspace = true
+thiserror = "2"

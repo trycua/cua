@@ -1,0 +1,43 @@
+---
+title: Cua Cloud (Fleets) has ended
+description: Cua Cloud and Cua Fleets stopped on 16 October 2026. What changed, what happened to your data, and where to run sandboxes now.
+---
+
+Cua Cloud, including Cua Fleets (pools, claims, warm replicas and the Terraform
+provider), stopped on Friday 16 October 2026. Remaining customer data was
+deleted then. The Fleets pages that used to be here have been removed.
+
+## What still works
+
+The same SDK calls, images and `cua` CLI commands run anywhere else:
+
+| Where | How | Guide |
+| --- | --- | --- |
+| This machine | `Sandbox.create(...)` (the default), `cua sb create` | [Set up local runtimes](/cua-sdk/guides/local-runtimes) |
+| Your own AWS, Google Cloud or Modal account | `on="aws"`, `on="gcp"`, `on="modal"`; `--on aws` in the CLI | [Use your own cloud](/cua-sdk/guides/your-cloud) |
+| A machine you run, shared with your team and agents | Cua Spaces | [Cua Spaces](/spaces) |
+
+## In your code
+
+`on="cloud"`, `local=False`, `--on cloud`, `Cua.fleet()` and `cua fleet` are
+deprecated in `cua` 0.4.2 and `cua-sandbox` 0.9.1. They fail with this message:
+
+```text output
+Cua Cloud has ended; use a local sandbox or your own machine. See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended
+```
+
+They are removed in `cua` 0.5.0. The same goes for `cua images` listings of
+cloud images, `cua pools`, `--pool`, `FLEETS_TOKEN` and cloud suspend, resume
+and extend-lease.
+
+Replace `on="cloud"` with a local runtime or your own cloud. Sidecars,
+services, secrets and images work the same way there:
+[Sidecars](/cua-sdk/guides/sidecars), [Services](/cua-sdk/guides/services),
+[Secrets](/cua-sdk/guides/secrets), [Images](/cua-sdk/guides/images).
+
+Fleet pool names, claim TTLs and warm-replica settings have no replacement.
+Your own cloud gives each sandbox a time limit and cleans up after it
+([Time limits and cleanup](/cua-sdk/guides/your-cloud#time-limits-and-cleanup)).
+
+Questions: [GitHub issues](https://github.com/trycua/cua/issues) or
+[Discord](https://discord.com/invite/mVnXXpdE85).

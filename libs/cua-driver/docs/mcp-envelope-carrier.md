@@ -3,7 +3,7 @@
 This opt-in candidate implements the [accepted RFC 2512 transport addendum](../../../rfcs/2512-mcp-envelope-carrier.md).
 It is not a released SDK feature or a qualification of an existing Fleet image.
 The extension carries the canonical Driver envelopes through an existing MCP
-transport. It does not replace computer-server, add agent tools, or open a port.
+transport. It does not replace cua-spacesd, add agent tools, or open a port.
 
 ## Runtime ownership and opt-in
 
@@ -96,7 +96,7 @@ cargo test -p cua-driver --bin cua-driver proxy --locked
 
 Before image enablement, separately prove the generated SDK carrier, real
 Linux/Windows guest effects, concurrent session isolation, cancellation,
-replacement, computer-server compatibility, and owned-resource cleanup. A
+replacement, cua-spacesd compatibility, and owned-resource cleanup. A
 successful wrapper handshake or these headless tests do not prove desktop
 behavior. Keep existing images and connection defaults unchanged until that
 qualification and the separate rollout approval are complete.

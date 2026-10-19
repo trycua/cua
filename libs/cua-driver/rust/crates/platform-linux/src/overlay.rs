@@ -89,6 +89,20 @@ fn arrival_fire(key: &CursorKey) {
     }
 }
 
+/// Arrival hook for the native Wayland renderer (`wayland::overlay`), which
+/// fires once the frame at the glide target is committed.
+#[cfg(target_os = "linux")]
+pub(crate) fn fire_arrival(key: &CursorKey) {
+    arrival_fire(key);
+}
+
+/// Unblock every waiting pointer action; the renderer that would have fired
+/// their arrivals is gone.
+#[cfg(target_os = "linux")]
+pub(crate) fn release_arrivals() {
+    release_all_arrivals();
+}
+
 fn arrival_cancel(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
@@ -120,8 +134,8 @@ fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
     !wayland_display_present
 }
 
-/// Set while the X11 owner thread is running its render loop over a mapped
-/// overlay window; only then can a desktop capture ask it to hide.
+/// Set while the X11 owner thread is running its render loop; only then can a
+/// desktop capture ask it to hide a visible overlay.
 static X11_OVERLAY_LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether an X11 overlay window exists that a desktop capture must hide.
@@ -321,6 +335,12 @@ pub fn init(cfg: CursorConfig) {
                         reduced_motion: selection.reduced_motion,
                     },
                 ),
+                CursorEvent::KeyCombo { session, keys } => {
+                    (session, OverlayCommand::ShowKeyCombo(keys))
+                }
+                CursorEvent::SelectMotion { session, motion } => {
+                    (session, OverlayCommand::ApplyMotion(motion))
+                }
             };
             send_command_for(session, cmd);
         },
@@ -331,15 +351,23 @@ pub fn send_command(cmd: OverlayCommand) {
     send_command_for("default".to_owned(), cmd);
 }
 
+/// Whether commands for `key` reach a renderer: not the empty no-cursor key,
+/// and not a human-origin session, whose client draws the human's own cursor
+/// (see `cua_driver_core::agent_cursor`).
+pub(crate) fn draws_cursor(key: &str) -> bool {
+    !key.is_empty() && !cua_driver_core::agent_cursor::overlay_suppressed(key)
+}
+
 pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     let _ = try_send_command_for(key, cmd);
 }
 
-/// Dispatch to exactly one Linux overlay backend. The result reports only
-/// whether the X11 owner accepted the command and can fire `ARRIVAL_TX`; the
-/// Wayland backends do not currently publish arrival notifications.
+/// Dispatch to exactly one Linux overlay backend. The result reports whether
+/// a renderer that fires `ARRIVAL_TX` accepted the command: the X11 owner or
+/// the native layer-shell overlay. The shell-helper backends publish no
+/// arrivals.
 fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
-    if key.is_empty() {
+    if !draws_cursor(&key) {
         return false;
     }
     let msg = OverlayMsg::Cmd(KeyedOverlayCommand {
@@ -359,12 +387,103 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         );
     }
     #[cfg(target_os = "linux")]
-    {
-        if native_wayland {
-            dispatch_wayland_overlay_message(&msg);
+    let layer_shell_queued = native_wayland
+        && dispatch_wayland_overlay_message(&msg) == WaylandOverlayBackend::LayerShell;
+    #[cfg(not(target_os = "linux"))]
+    let layer_shell_queued = false;
+    x11_queued || layer_shell_queued
+}
+
+/// How long a pointer action waits for the native Wayland glide to arrive
+/// before acting anyway. The layer-shell renderer connects lazily and paints
+/// in software, so its first glide can lag the planned duration; a renderer
+/// that failed mid-glide must not stall input.
+#[cfg(target_os = "linux")]
+fn wayland_arrival_budget(glide_duration_ms: f64) -> Duration {
+    let glide = if glide_duration_ms.is_finite() {
+        glide_duration_ms.clamp(0.0, 5_000.0)
+    } else {
+        0.0
+    };
+    Duration::from_millis(glide as u64 + 3_000)
+}
+
+/// The GNOME Shell helper draws a single compositor cursor, so the shared
+/// single-surface rules decide what reaches it: the session that drew last
+/// owns it, only that session's end hides it, and it hides after the shared
+/// agent idle timeout (the helper has no idle fade of its own).
+#[cfg(target_os = "linux")]
+static SHELL_HELPER_SURFACE: Mutex<Option<cua_driver_core::agent_cursor::SharedCursorSurface>> =
+    Mutex::new(None);
+#[cfg(target_os = "linux")]
+static SHELL_HELPER_IDLE: std::sync::Condvar = std::sync::Condvar::new();
+
+/// Apply one overlay message to the shell-helper surface. Returns whether it
+/// reaches the helper: `true` draws a command, or hides for `Remove`.
+#[cfg(target_os = "linux")]
+fn shell_helper_surface_event(msg: &OverlayMsg, now: Instant) -> bool {
+    use cua_driver_core::agent_cursor::{SharedCursorSurface, SharedSurfaceAction};
+    let mut guard = SHELL_HELPER_SURFACE.lock().unwrap();
+    let surface = guard.get_or_insert_with(SharedCursorSurface::new);
+    let reach = match msg {
+        OverlayMsg::Cmd(command) => matches!(
+            surface.on_command(&command.key, now),
+            SharedSurfaceAction::Draw { .. }
+        ),
+        OverlayMsg::Remove(key) => surface.on_session_end(key) == SharedSurfaceAction::Hide,
+        OverlayMsg::Revive(key) => {
+            surface.on_session_revive(key);
+            false
         }
+        OverlayMsg::Wake => false,
+    };
+    drop(guard);
+    if reach && matches!(msg, OverlayMsg::Cmd(_)) {
+        start_shell_helper_idle_watch();
+        SHELL_HELPER_IDLE.notify_all();
     }
-    x11_queued
+    reach
+}
+
+/// Hide the shell-helper cursor once its owner has been idle for the shared
+/// agent idle timeout. One parked thread, started on the first draw.
+#[cfg(target_os = "linux")]
+fn start_shell_helper_idle_watch() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        let spawned = std::thread::Builder::new()
+            .name("cua-shell-cursor-idle".into())
+            .spawn(|| {
+                use cua_driver_core::agent_cursor::{
+                    SharedSurfaceAction, AGENT_CURSOR_IDLE_TIMEOUT,
+                };
+                let mut guard = SHELL_HELPER_SURFACE.lock().unwrap();
+                loop {
+                    let deadline = guard
+                        .as_ref()
+                        .and_then(|surface| surface.idle_deadline(AGENT_CURSOR_IDLE_TIMEOUT));
+                    guard = match deadline {
+                        None => SHELL_HELPER_IDLE.wait(guard).unwrap(),
+                        Some(deadline) => {
+                            let wait = deadline.saturating_duration_since(Instant::now());
+                            SHELL_HELPER_IDLE.wait_timeout(guard, wait).unwrap().0
+                        }
+                    };
+                    let hide = guard.as_mut().is_some_and(|surface| {
+                        surface.poll_idle(Instant::now(), AGENT_CURSOR_IDLE_TIMEOUT)
+                            == SharedSurfaceAction::Hide
+                    });
+                    if hide {
+                        drop(guard);
+                        crate::wayland::shell_helper::hide_cursor();
+                        guard = SHELL_HELPER_SURFACE.lock().unwrap();
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            tracing::warn!("overlay: shell-helper idle watch did not start: {error}");
+        }
+    });
 }
 
 #[cfg(target_os = "linux")]
@@ -373,12 +492,12 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> WaylandOverlayBackend {
     match backend {
         WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
             let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
-            match msg {
-                OverlayMsg::Cmd(command) => {
+            if shell_helper_surface_event(msg, Instant::now()) {
+                if let OverlayMsg::Cmd(command) = msg {
                     dispatch_shell_helper_command(&command.key, &command.cmd, semantic);
+                } else {
+                    crate::wayland::shell_helper::hide_cursor();
                 }
-                OverlayMsg::Remove(_) => crate::wayland::shell_helper::hide_cursor(),
-                OverlayMsg::Revive(_) | OverlayMsg::Wake => {}
             }
         }
         WaylandOverlayBackend::LayerShell if !crate::wayland::overlay::forward(msg) => {
@@ -408,6 +527,17 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
             delivery,
             target,
         } if semantic => {
+            // The GNOME helper paints its own single-cursor badge. Under the
+            // minimal badge it gets only foreground moments; under `off`, no
+            // chips at all.
+            let (delivery, target) = match cursor_overlay::badge_mode::active() {
+                cursor_overlay::BadgeMode::Verbose => (*delivery, *target),
+                cursor_overlay::BadgeMode::Minimal => (
+                    delivery.filter(|value| *value == cursor_overlay::DeliveryModifier::Foreground),
+                    None,
+                ),
+                cursor_overlay::BadgeMode::Off => (None, None),
+            };
             crate::wayland::shell_helper::set_cursor_state(
                 action.as_str(),
                 delivery.as_ref().map_or("", |value| value.as_str()),
@@ -419,8 +549,12 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
             crate::wayland::shell_helper::set_cursor_state(action.as_str(), "", "", false);
         }
         OverlayCommand::SetSessionLabel(label) if semantic => {
+            // The helper has no hover reveal and draws one cursor, so the
+            // minimal badge never shows the name there.
+            let shown = cursor_overlay::badge_mode::active() == cursor_overlay::BadgeMode::Verbose;
             crate::wayland::shell_helper::set_session_label(
                 cursor_overlay::sanitize_session_label(label)
+                    .filter(|_| shown)
                     .as_deref()
                     .unwrap_or(""),
             );
@@ -455,12 +589,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| {
-                    rs.core.cfg.enabled
-                        && rs.core.visible
-                        && rs.core.idle_alpha >= 0.004
-                        && rs.core.pos.0 >= -100.0
-                })
+                .map(|rs| rs.core.cfg.enabled && rs.core.is_revealed())
         })
         .unwrap_or(false)
 }
@@ -478,7 +607,7 @@ pub fn current_position_for(key: &str) -> (f64, f64) {
                 .and_then(|m| m.cursors.get(key))
                 .map(|rs| rs.core.pos)
         })
-        .unwrap_or((-200.0, -200.0))
+        .unwrap_or(cursor_overlay::render_state::UNPLACED_POS)
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
@@ -529,16 +658,30 @@ pub async fn animate_cursor_to(x: f64, y: f64) {
 }
 
 pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
-    if key.is_empty() {
+    animate_cursor_to_target_for(key, x, y, None).await;
+}
+
+/// [`animate_cursor_to_for`] with the targeted element's screen rect
+/// `[x, y, width, height]` in the same space as `x`/`y`, so motion styles can
+/// use Fitts timing and highlight the target. `None` for pixel actions.
+pub async fn animate_cursor_to_target_for(
+    key: CursorKey,
+    x: f64,
+    y: f64,
+    target: Option<[f64; 4]>,
+) {
+    if !draws_cursor(&key) {
         return;
     }
     seed_start_if_sentinel(&key, x, y);
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0 => true,
-            _ => false,
-        }
+        matches!(
+            guard.as_ref().and_then(|m| m.cursors.get(&key)),
+            Some(rs) if rs.core.cfg.enabled
+                && rs.core.visible
+                && cursor_overlay::render_state::is_placed(rs.core.pos)
+        )
     };
     if !should_animate {
         return;
@@ -553,6 +696,7 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
             x,
             y,
             end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target,
         },
     ) {
         // A full or disconnected channel cannot ever produce an arrival. Drop
@@ -561,6 +705,15 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
         return;
     }
 
+    #[cfg(target_os = "linux")]
+    if crate::wayland::is_wayland() {
+        let budget = wayland_arrival_budget(current_motion_for(&key).glide_duration_ms);
+        if tokio::time::timeout(budget, rx).await.is_err() {
+            tracing::debug!(key = %key, "overlay: Wayland glide arrival timed out");
+            arrival_cancel(&key);
+        }
+        return;
+    }
     if ARRIVAL_DEGRADED.load(std::sync::atomic::Ordering::Relaxed) {
         // The renderer already failed to report one arrival. Keep the glide
         // fire-and-forget until it proves itself again rather than charging
@@ -598,12 +751,14 @@ pub fn remove_cursor(key: CursorKey) {
     if key.is_empty() {
         return;
     }
-    let msg = OverlayMsg::Remove(key);
+    let msg = OverlayMsg::Remove(key.clone());
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(msg.clone());
     }
     #[cfg(target_os = "linux")]
     if crate::wayland::is_wayland() {
+        // The Wayland renderer drops the cursor without an arrival.
+        arrival_cancel(&key);
         dispatch_wayland_overlay_message(&msg);
     }
 }
@@ -711,6 +866,18 @@ impl RenderEntry for RenderState {
     // sentinel cursor is quiescent, so an idle MCP server parks on bounded
     // maintenance waits instead of repainting X11 cursor tiles at 60 fps,
     // while a revealed cursor with resting motion keeps its float bob alive.
+}
+
+/// Trail and glow are wide translucent washes. Without a compositing manager
+/// the server cannot blend them, and software-compositing them would mean a
+/// root read of every effect rect each frame, so they are disabled there.
+/// `software_only` windows are 24-bit for the session, so a compositor that
+/// appears later still cannot show translucency through them.
+#[cfg(target_os = "linux")]
+fn set_x11_effects_capable(map: &mut RenderMap, capable: bool) {
+    for rs in map.cursors.values_mut() {
+        rs.core.effects_capable = capable;
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -975,12 +1142,12 @@ fn clear_x11_overlay_input_shape(
 }
 
 #[cfg(target_os = "linux")]
-fn map_x11_overlay_with_empty_input(
+fn prepare_x11_overlay_with_empty_input(
     conn: &impl x11rb::connection::Connection,
     win: u32,
 ) -> anyhow::Result<()> {
     use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
-    use x11rb::protocol::xproto::{ClipOrdering, ConnectionExt as XprotoConnectionExt};
+    use x11rb::protocol::xproto::ClipOrdering;
 
     // Check both safety-critical shapes before mapping. If either request is
     // rejected, the full-root overlay must remain unmapped rather than falling
@@ -996,7 +1163,6 @@ fn map_x11_overlay_with_empty_input(
         &[],
     )?
     .check()?;
-    conn.map_window(win)?.check()?;
     conn.flush()?;
     Ok(())
 }
@@ -1149,7 +1315,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     // Set window title (identifies our overlay, matches Windows convention).
     // `Cua.` namespace mirrors the Windows class-name + install-path
-    // convention; was `TropeCUA.` (leaked codename from an early C# ref).
+    // convention.
     let title = format!("Cua.AgentCursorOverlay.{}", cfg.cursor_id);
     conn.change_property8(
         PropMode::REPLACE,
@@ -1160,13 +1326,15 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     )
     .ok();
 
-    // Start with empty input AND bounding regions before mapping. The empty
+    // Start with empty input AND bounding regions while unmapped. The empty
     // input region makes the window click-through. The empty bounding region
     // prevents a zero-filled full-screen window from appearing opaque black on
     // bare/non-composited X servers before the first cursor command paints a
     // real visible shape. ShapeMask with a None pixmap would reset either
     // region to the full window; an empty rectangle list expresses emptiness.
-    if let Err(e) = map_x11_overlay_with_empty_input(&conn, win) {
+    // An empty bounding shape alone does not protect root captures while
+    // GNOME starts compositing; keep the idle window unmapped until paint.
+    if let Err(e) = prepare_x11_overlay_with_empty_input(&conn, win) {
         tracing::warn!(
             "X11 overlay: cannot establish click-through input shape; overlay remains unmapped: {e}"
         );
@@ -1192,6 +1360,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         root,
         depth,
         gc_id,
+        mapped: std::cell::Cell::new(false),
     };
 
     // Render at ~60 Hz only while pixels can change. Quiescent cursors use
@@ -1205,16 +1374,19 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let mut maintenance_deadline = last_tick + X11_EVENT_POLL_INTERVAL;
     let mut last_pinned: Option<u64> = None;
     let mut last_compositor_poll = last_tick;
-    // Constructed after the geometry query and the window map, so the cache can
+    // Constructed after the geometry query and window setup, so the cache can
     // never be primed against a placeholder geometry. This window has painted
     // nothing yet and its bounding shape is still empty, so its first root read
     // sees no pixels of ours. (A previous overlay instance torn down moments
     // earlier can still be on screen; that resolves itself as soon as the
     // cursor vacates the rect and its owner repaints.)
-    let mut backdrop = X11BackdropCache::default();
-    // Startup probe result; a property of the server, not of the compositor,
-    // so it is never re-sampled when a compositing manager comes or goes.
-    backdrop.readback_untrusted = readback_untrusted;
+    let mut backdrop = X11BackdropCache {
+        // Startup probe result; a property of the server, not of the
+        // compositor, so it is never re-sampled when a compositing manager
+        // comes or goes.
+        readback_untrusted,
+        ..X11BackdropCache::default()
+    };
     if readback_untrusted {
         tracing::warn!(
             "X11 overlay: root reads cannot see this window's own pixels; \
@@ -1349,6 +1521,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                     maintenance_timeout,
                     frame_tick_needed,
                 );
+                set_x11_effects_capable(map, compositor_present && !software_only);
                 let mut hover_changed = false;
                 for rs in map.cursors.values_mut() {
                     hover_changed |= rs.core.update_session_badge_hover(hardware_pointer);
@@ -1404,7 +1577,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         if let Some(generation) = crate::overlay_capture::CAPTURE_HOLD.unanswered_request() {
             use crate::overlay_capture::{HiddenOverlay, HoldAnswer};
             let answer = if overlay_shaped {
-                match blank_x11_overlay_shape(&conn, win, true) {
+                match blank_x11_overlay_shape(&conn, &paint_target, true) {
                     Ok(()) => {
                         overlay_shaped = false;
                         HoldAnswer::Hidden(HiddenOverlay {
@@ -1448,8 +1621,13 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         {
             repaint_after_capture = false;
             let tiles = {
-                let guard = RENDER.lock().unwrap();
-                guard.as_ref().map(render_x11_tiles)
+                let mut guard = RENDER.lock().unwrap();
+                guard.as_mut().map(|map| {
+                    // A cursor created since the tick above must not paint
+                    // translucent effects for one frame on bare X11.
+                    set_x11_effects_capable(map, compositor_present && !software_only);
+                    render_x11_tiles(map)
+                })
             };
 
             if let Some(tiles) = tiles {
@@ -1683,7 +1861,7 @@ struct X11PaintTile {
     pixmap: tiny_skia::Pixmap,
 }
 
-/// Loop-constant X11 handles the paint path needs. Bundled so the per-frame
+/// Owner-thread X11 handles and mapping state. Bundled so the per-frame
 /// paint entry point keeps a reviewable argument list as the compositing
 /// inputs grow.
 #[cfg(target_os = "linux")]
@@ -1692,6 +1870,7 @@ struct X11PaintTarget {
     root: u32,
     depth: u8,
     gc_id: u32,
+    mapped: std::cell::Cell<bool>,
 }
 
 /// One rect of screen the overlay painted over: the desktop pixels that were
@@ -2165,7 +2344,23 @@ fn cursor_tile_bounds(
     screen_width: u32,
     screen_height: u32,
 ) -> Option<X11TileBounds> {
-    if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
+    cursor_tile_bounds_with_effects(core, screen_width, screen_height, core.effect_bounds())
+}
+
+/// The cursor tile grown to cover this frame's motion effects (trail, glow,
+/// magnet target glow, click ripple), which `paint_cursor` draws into the same
+/// pixmap and which can reach far past the 128 px cursor tile. Stale effect
+/// pixels need no explicit clear: every paint SETs the bounding shape to the
+/// current frame's visible runs, so whatever an effect covered last frame is
+/// clipped away as soon as it shrinks or ends.
+#[cfg(target_os = "linux")]
+fn cursor_tile_bounds_with_effects(
+    core: &RenderStateCore,
+    screen_width: u32,
+    screen_height: u32,
+    effect: Option<[f64; 4]>,
+) -> Option<X11TileBounds> {
+    if !core.is_revealed() {
         return None;
     }
 
@@ -2180,6 +2375,28 @@ fn cursor_tile_bounds(
     let top = (core.pos.1 - X11_CURSOR_TILE_MARGIN).floor() as i32;
     let right = (core.pos.0 + horizontal_margin).ceil() as i32;
     let bottom = (core.pos.1 + X11_CURSOR_TILE_MARGIN).ceil() as i32;
+    let (left, top, right, bottom) = match effect {
+        Some([x, y, w, h])
+            if x.is_finite()
+                && y.is_finite()
+                && w.is_finite()
+                && h.is_finite()
+                && w > 0.0
+                && h > 0.0 =>
+        {
+            // Clamp before the cast so an off-screen effect cannot saturate
+            // into a bogus union.
+            let clamp_x = |v: f64| v.clamp(0.0, f64::from(screen_width));
+            let clamp_y = |v: f64| v.clamp(0.0, f64::from(screen_height));
+            (
+                left.min(clamp_x(x.floor()) as i32),
+                top.min(clamp_y(y.floor()) as i32),
+                right.max(clamp_x((x + w).ceil()) as i32),
+                bottom.max(clamp_y((y + h).ceil()) as i32),
+            )
+        }
+        _ => (left, top, right, bottom),
+    };
 
     let left = left.clamp(0, screen_width);
     let top = top.clamp(0, screen_height);
@@ -2477,17 +2694,20 @@ fn composite_x11_tiles(
 #[cfg(target_os = "linux")]
 fn blank_x11_overlay_shape(
     conn: &impl x11rb::connection::Connection,
-    win: u32,
+    target: &X11PaintTarget,
     checked_requests: bool,
 ) -> anyhow::Result<()> {
     use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
-    use x11rb::protocol::xproto::ClipOrdering;
+    use x11rb::protocol::xproto::{ClipOrdering, ConnectionExt as XprotoConnectionExt};
+
+    conn.unmap_window(target.win)?.check()?;
+    target.mapped.set(false);
 
     let cookie = conn.shape_rectangles(
         SO::SET,
         SK::BOUNDING,
         ClipOrdering::UNSORTED,
-        win,
+        target.win,
         0,
         0,
         &[],
@@ -2548,7 +2768,7 @@ fn paint_x11_tiles(
             // would recontaminate the region we are waiting on and bake our own
             // cursor into the first save-under.
             if backdrop.take_resync_blanking() {
-                blank_x11_overlay_shape(conn, target.win, checked_requests)?;
+                blank_x11_overlay_shape(conn, target, checked_requests)?;
             }
             return Ok(X11PaintOutcome::Deferred);
         }
@@ -2631,6 +2851,20 @@ fn paint_x11_tiles(
     )?;
     if checked_requests {
         shape_cookie.check()?;
+    }
+
+    // Keep empty frames unmapped: some compositors capture a newly mapped
+    // full-root window as black even when its bounding shape is empty.
+    // Map after shaping and before upload, since an unmapped window need not
+    // retain pixels. Only transitions need a mapping request or round trip.
+    let should_map = !visible_shape.is_empty();
+    if should_map != target.mapped.get() {
+        if should_map {
+            conn.map_window(target.win)?.check()?;
+        } else {
+            conn.unmap_window(target.win)?.check()?;
+        }
+        target.mapped.set(should_map);
     }
 
     // Phase D — upload. A composited buffer covers the whole tile rect; pixels
@@ -2809,6 +3043,42 @@ fn bgra_and_visible_shape(
 mod tests {
     use super::*;
 
+    /// A human-origin session (a Cua Spaces viewer's relayed input) never
+    /// reaches the X11, layer-shell or shell-helper renderers, including the
+    /// Wayland glide; an agent's session does. The rule itself lives in
+    /// `cua_driver_core::agent_cursor`.
+    #[test]
+    fn human_origin_sessions_draw_no_agent_cursor() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        let human = "overlay-test-human-origin-session";
+        assert!(draws_cursor(human));
+        set_input_origin(human, InputOrigin::Human);
+        assert!(!draws_cursor(human));
+        assert!(!try_send_command_for(
+            human.to_owned(),
+            OverlayCommand::SetEnabled(true)
+        ));
+        assert!(draws_cursor("overlay-test-agent-session"));
+        assert!(!draws_cursor(""));
+        set_input_origin(human, InputOrigin::Agent);
+        assert!(draws_cursor(human));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wayland_arrival_wait_is_bounded_above_the_glide() {
+        use super::wayland_arrival_budget;
+        assert_eq!(wayland_arrival_budget(0.0), Duration::from_secs(3));
+        assert_eq!(wayland_arrival_budget(400.0), Duration::from_millis(3_400));
+        // Hostile motion settings cannot turn the wait into a stall.
+        assert_eq!(
+            wayland_arrival_budget(f64::INFINITY),
+            Duration::from_secs(3)
+        );
+        assert_eq!(wayland_arrival_budget(1.0e12), Duration::from_secs(8));
+        assert_eq!(wayland_arrival_budget(-5.0), Duration::from_secs(3));
+    }
+
     #[test]
     fn wayland_display_does_not_start_legacy_x11_overlay() {
         assert!(!should_start_x11_overlay(true));
@@ -2886,8 +3156,8 @@ mod tests {
         use x11rb::protocol::randr::ConnectionExt as RandrConnectionExt;
         use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK};
         use x11rb::protocol::xproto::{
-            AtomEnum, ConnectionExt as XprotoConnectionExt, CreateWindowAux, EventMask, MapState,
-            Window, WindowClass,
+            AtomEnum, ConnectionExt as XprotoConnectionExt, CreateWindowAux, EventMask,
+            ImageFormat, MapState, Window, WindowClass,
         };
 
         fn find_named_window(
@@ -2929,7 +3199,15 @@ mod tests {
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
                 let shape = conn.shape_get_rectangles(overlay, SK::BOUNDING)?.reply()?;
-                if shape.rectangles.is_empty() == should_be_empty {
+                let attributes = conn.get_window_attributes(overlay)?.reply()?;
+                let expected_map_state = if should_be_empty {
+                    MapState::UNMAPPED
+                } else {
+                    MapState::VIEWABLE
+                };
+                if shape.rectangles.is_empty() == should_be_empty
+                    && attributes.map_state == expected_map_state
+                {
                     return Ok(());
                 }
                 std::thread::sleep(Duration::from_millis(10));
@@ -2943,11 +3221,13 @@ mod tests {
             overlay: Window,
             target: Window,
             phase: &str,
+            expected_map_state: MapState,
         ) -> anyhow::Result<()> {
             let attributes = conn.get_window_attributes(overlay)?.reply()?;
             anyhow::ensure!(
-                attributes.map_state == MapState::VIEWABLE,
-                "overlay was not mapped during {phase}"
+                attributes.map_state == expected_map_state,
+                "unexpected overlay map state during {phase}: {:?}",
+                attributes.map_state
             );
             let input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
             anyhow::ensure!(
@@ -3008,11 +3288,22 @@ mod tests {
             0,
             WindowClass::INPUT_OUTPUT,
             root_visual,
-            &CreateWindowAux::new().event_mask(EventMask::BUTTON_PRESS),
+            &CreateWindowAux::new()
+                .background_pixel(0x33cc66)
+                .event_mask(EventMask::BUTTON_PRESS),
         )?
         .check()?;
         conn.map_window(target)?.check()?;
         conn.flush()?;
+
+        let desktop_before = conn
+            .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, 32, 32, u32::MAX)?
+            .reply()?
+            .data;
+        anyhow::ensure!(
+            desktop_before.iter().any(|byte| *byte != 0),
+            "fixture desktop must not be black"
+        );
 
         let cursor_id = "issue-1819-live-shape-probe";
         let cfg = CursorConfig {
@@ -3025,7 +3316,22 @@ mod tests {
         let title = format!("Cua.AgentCursorOverlay.{cursor_id}");
         let overlay = find_named_window(&conn, root, title.as_bytes())?;
         wait_for_bounding_shape(&conn, overlay, true, "daemon startup")?;
-        assert_click_through(&conn, root, overlay, target, "daemon startup")?;
+        let desktop_after = conn
+            .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, 32, 32, u32::MAX)?
+            .reply()?
+            .data;
+        assert_eq!(
+            desktop_after, desktop_before,
+            "idle overlay changed root capture pixels"
+        );
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "daemon startup",
+            MapState::UNMAPPED,
+        )?;
 
         send_command(OverlayCommand::SetEnabled(true));
         send_command(OverlayCommand::SnapTo {
@@ -3034,20 +3340,42 @@ mod tests {
             heading_radians: None,
         });
         wait_for_bounding_shape(&conn, overlay, false, "cursor show")?;
-        assert_click_through(&conn, root, overlay, target, "cursor show")?;
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "cursor show",
+            MapState::VIEWABLE,
+        )?;
 
         send_command(OverlayCommand::MoveTo {
             x: 240.0,
             y: 240.0,
             end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target: None,
         });
         wait_for_cursor_move_from(160.0, 160.0, "cursor move")?;
         wait_for_bounding_shape(&conn, overlay, false, "cursor move")?;
-        assert_click_through(&conn, root, overlay, target, "cursor move")?;
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "cursor move",
+            MapState::VIEWABLE,
+        )?;
 
         send_command(OverlayCommand::SetEnabled(false));
         wait_for_bounding_shape(&conn, overlay, true, "cursor hide")?;
-        assert_click_through(&conn, root, overlay, target, "cursor hide")?;
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "cursor hide",
+            MapState::UNMAPPED,
+        )?;
 
         send_command(OverlayCommand::SetEnabled(true));
         send_command(OverlayCommand::SnapTo {
@@ -3091,7 +3419,14 @@ mod tests {
             geometry.width, geometry.height
         );
         wait_for_bounding_shape(&conn, overlay, false, "RandR repair")?;
-        assert_click_through(&conn, root, overlay, target, "RandR repair")?;
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "RandR repair",
+            MapState::VIEWABLE,
+        )?;
         Ok(())
     }
 
@@ -3353,7 +3688,8 @@ mod tests {
         assert_x11_button_press_target(&conn, root, overlay)?;
 
         conn.unmap_window(overlay)?.check()?;
-        map_x11_overlay_with_empty_input(&conn, overlay)?;
+        prepare_x11_overlay_with_empty_input(&conn, overlay)?;
+        conn.map_window(overlay)?.check()?;
         let click_through_input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
         assert!(
             click_through_input.rectangles.is_empty(),
@@ -3411,7 +3747,7 @@ mod tests {
 
         let missing_window = conn.generate_id()?;
         assert!(
-            map_x11_overlay_with_empty_input(&conn, missing_window).is_err(),
+            prepare_x11_overlay_with_empty_input(&conn, missing_window).is_err(),
             "a rejected input-shape request must abort before mapping"
         );
         assert!(
@@ -3838,12 +4174,15 @@ mod tests {
         // The public animate path seeds a newly created cursor near its target
         // before sending MoveTo; mirror that valid on-screen starting state.
         cursor.core.pos = (100.0, 100.0);
-        cursor.core.motion.idle_hide_ms = 500.0;
+        // Longer than the move plus its 1.6 s navigate cue, so the opaque
+        // delay is still running once every animation has finished.
+        cursor.core.motion.idle_hide_ms = 2500.0;
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         cursor.apply_command(OverlayCommand::MoveTo {
             x: 250.0,
             y: 150.0,
             end_heading_radians: 0.0,
+            target: None,
         });
 
         for _ in 0..1200 {
@@ -3855,9 +4194,8 @@ mod tests {
 
         assert!(
             !cursor.needs_frame_tick(),
-            "cursor did not quiesce: path={}, spring={}, click={}, idle_secs={:.3}, idle_alpha={:.3}, pos={:?}",
-            cursor.core.path.is_some(),
-            cursor.core.spring.is_some(),
+            "cursor did not quiesce: moving={}, click={}, idle_secs={:.3}, idle_alpha={:.3}, pos={:?}",
+            cursor.core.trajectory.is_some(),
             cursor.core.click_t.is_some(),
             cursor.core.idle_secs,
             cursor.core.idle_alpha,
@@ -3929,6 +4267,7 @@ mod tests {
                 x: 250.0,
                 y: 150.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
         }))
         .unwrap();
@@ -3939,9 +4278,9 @@ mod tests {
         assert!(had_msg);
         assert_eq!(map.cursors["default"].core.idle_secs, 0.08);
         let other = &map.cursors["other"].core;
-        assert!(other.path.is_some());
+        assert!(other.trajectory.is_some());
         assert_eq!(other.pos, (20.0, 20.0));
-        assert_eq!(other.dist, 0.0);
+        assert_eq!(other.motion_t, 0.0);
     }
 
     #[test]
@@ -3979,11 +4318,12 @@ mod tests {
                 x: 80.0,
                 y: 80.0,
                 end_heading_radians: 0.0,
+                target: None,
             });
-            let old_path_len = cursor.core.path.as_ref().unwrap().length.max(1.0);
-            // The old path would finish on the next 16 ms tick if active-frame
+            let old_arrival = cursor.core.trajectory.as_ref().unwrap().arrival_t;
+            // The old move would arrive on the next 16 ms tick if active-frame
             // wakes were globally changed to tick before applying commands.
-            cursor.core.dist = old_path_len - 0.001;
+            cursor.core.motion_t = old_arrival - 0.001;
         }
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -3993,6 +4333,7 @@ mod tests {
                 x: 250.0,
                 y: 150.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
         }))
         .unwrap();
@@ -4002,9 +4343,9 @@ mod tests {
         assert!(arrived.is_empty());
         assert!(had_msg);
         let cursor = &map.cursors["default"].core;
-        let replacement_path_len = cursor.path.as_ref().unwrap().length.max(1.0);
-        assert!(cursor.dist > 0.0);
-        assert!(cursor.dist < replacement_path_len);
+        let replacement = cursor.trajectory.as_ref().unwrap();
+        assert!(cursor.motion_t > 0.0);
+        assert!(cursor.motion_t < replacement.arrival_t);
     }
 
     #[test]
@@ -4077,6 +4418,7 @@ mod tests {
         map.platform.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         cursor.apply_command(OverlayCommand::SetSessionLabel("research-run".to_owned()));
 
         let tiles = render_x11_tiles(&map);
@@ -4096,6 +4438,7 @@ mod tests {
         map.platform.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         cursor.apply_command(OverlayCommand::BeginAction {
             action: CursorAction::Click,
             delivery: Some(cursor_overlay::DeliveryModifier::Foreground),
@@ -4107,6 +4450,27 @@ mod tests {
         assert_eq!(tiles.len(), 1);
         assert_eq!(tiles[0].bounds.width, 208);
         assert_eq!(tiles[0].bounds.height, 128);
+    }
+
+    #[test]
+    fn minimal_badge_keeps_a_lone_resting_cursor_tile_compact() {
+        let mut map = default_render_map();
+        map.platform.scr_w = 7680;
+        map.platform.scr_h = 2160;
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Minimal);
+        cursor.apply_command(OverlayCommand::SetSessionLabel("research-run".to_owned()));
+        cursor.apply_command(OverlayCommand::BeginAction {
+            action: CursorAction::Click,
+            delivery: Some(cursor_overlay::DeliveryModifier::Background),
+            target: Some(cursor_overlay::TargetModifier::Pixel),
+        });
+
+        let tiles = render_x11_tiles(&map);
+
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0].bounds.width, 128, "no name and no chips");
     }
 
     #[test]
@@ -4131,6 +4495,81 @@ mod tests {
 
         map.cursors.get_mut("default").unwrap().core.visible = false;
         assert!(render_x11_tiles(&map).is_empty());
+    }
+
+    #[test]
+    fn effect_rect_expands_the_cursor_tile_and_clamps_to_screen() {
+        let mut map = default_render_map();
+        map.platform.scr_w = 1920;
+        map.platform.scr_h = 1080;
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (1000.0, 500.0);
+
+        // A comet trail stretching back up-left of the cursor.
+        let trail = cursor_tile_bounds_with_effects(
+            &cursor.core,
+            1920,
+            1080,
+            Some([700.5, 300.25, 320.0, 210.0]),
+        )
+        .unwrap();
+        assert_eq!(
+            trail,
+            X11TileBounds {
+                x: 700,
+                y: 300,
+                width: 364,
+                height: 264,
+            }
+        );
+
+        // An effect running off the screen edge is clipped to the root.
+        let clipped = cursor_tile_bounds_with_effects(
+            &cursor.core,
+            1920,
+            1080,
+            Some([-50.0, 400.0, 2100.0, 900.0]),
+        )
+        .unwrap();
+        assert_eq!(
+            clipped,
+            X11TileBounds {
+                x: 0,
+                y: 400,
+                width: 1920,
+                height: 680,
+            }
+        );
+
+        // Degenerate or non-finite effect rects leave the cursor tile alone.
+        for bogus in [[f64::NAN, 0.0, 10.0, 10.0], [990.0, 490.0, 0.0, 0.0]] {
+            assert_eq!(
+                cursor_tile_bounds_with_effects(&cursor.core, 1920, 1080, Some(bogus)),
+                cursor_tile_bounds_with_effects(&cursor.core, 1920, 1080, None)
+            );
+        }
+
+        // Effects never reveal a hidden cursor.
+        cursor.core.visible = false;
+        assert!(cursor_tile_bounds_with_effects(
+            &cursor.core,
+            1920,
+            1080,
+            Some([0.0, 0.0, 100.0, 100.0])
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn effects_capability_follows_the_compositor_for_every_cursor() {
+        let mut map = default_render_map();
+        let other = map.state_for_key("other");
+        map.cursors.insert("other".to_owned(), other);
+
+        set_x11_effects_capable(&mut map, false);
+        assert!(map.cursors.values().all(|rs| !rs.core.effects_capable));
+        set_x11_effects_capable(&mut map, true);
+        assert!(map.cursors.values().all(|rs| rs.core.effects_capable));
     }
 
     #[test]
@@ -4377,8 +4816,10 @@ mod tests {
     #[test]
     fn untrusted_readback_serves_the_save_under_on_mismatch() {
         let tile = tile_bounds(0, 0, 4, 1);
-        let mut cache = X11BackdropCache::default();
-        cache.readback_untrusted = true;
+        let mut cache = X11BackdropCache {
+            readback_untrusted: true,
+            ..X11BackdropCache::default()
+        };
         let now = Instant::now();
         cache.record_frame(
             now,
@@ -4918,3 +5359,46 @@ mod tests {
 
 #[cfg(not(target_os = "linux"))]
 fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<OverlayMsg>) {}
+
+#[cfg(all(test, target_os = "linux"))]
+mod shell_helper_surface_tests {
+    use super::*;
+
+    fn cmd(key: &str) -> OverlayMsg {
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: key.to_owned(),
+            cmd: OverlayCommand::SnapTo {
+                x: 10.0,
+                y: 10.0,
+                heading_radians: None,
+            },
+        })
+    }
+
+    /// The GNOME Shell helper has one cursor: another session ending must not
+    /// hide the agent that is drawing, and a late command from an ended
+    /// session must not take the cursor back.
+    #[test]
+    fn only_the_drawing_session_ending_hides_the_shell_helper_cursor() {
+        let now = Instant::now();
+        let a = "shell-surface-test-a";
+        let b = "shell-surface-test-b";
+        assert!(shell_helper_surface_event(&cmd(a), now));
+        assert!(!shell_helper_surface_event(
+            &OverlayMsg::Remove(b.to_owned()),
+            now
+        ));
+        assert!(!shell_helper_surface_event(&cmd(b), now));
+        assert!(shell_helper_surface_event(&cmd(a), now));
+        assert!(shell_helper_surface_event(
+            &OverlayMsg::Remove(a.to_owned()),
+            now
+        ));
+        assert!(!shell_helper_surface_event(&cmd(a), now));
+        assert!(!shell_helper_surface_event(
+            &OverlayMsg::Revive(b.to_owned()),
+            now
+        ));
+        assert!(shell_helper_surface_event(&cmd(b), now));
+    }
+}

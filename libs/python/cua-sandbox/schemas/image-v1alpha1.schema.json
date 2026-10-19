@@ -150,9 +150,22 @@
               "maxItems": 128,
               "type": "array"
             },
+            "from": {
+              "description": "Registry base image (kind container): layers are built on top of it and the result is an OCI rootfs.",
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "fromPullSecret": {
+              "description": "A cua-registry-* pull Secret in this namespace for a private base image.",
+              "maxLength": 253,
+              "pattern": "^cua-registry-[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
             "kind": {
               "enum": [
-                "vm"
+                "vm",
+                "container"
               ],
               "type": "string"
             },

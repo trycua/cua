@@ -1,0 +1,88 @@
+---
+title: Quickstart
+description: 'Install Cua Spaces, connect your AI agent, and ask it to work on a computer you can watch. About five minutes.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+In about five minutes you install Cua Spaces, connect your AI coding agent, and
+ask it to run a task in a Space while you watch.
+
+{/* VIDEO: Install Cua Spaces, connect an agent and watch it work in a Space (about 60 seconds) */}
+
+## Before you start
+
+- A Mac (macOS 26 or later), a Windows PC (preview) or a Linux PC (Ubuntu 24.04).
+- An AI coding agent, such as Claude Code, Codex or Cursor. See the
+  [supported agents](/cua-cli/guides/mcp-server#supported-agents).
+- Enough room for a first Space. A Linux Space needs a container engine such as
+  Docker running on this computer. A macOS Space needs an Apple silicon Mac and
+  about 50 GB of free disk, and its first image is a large download, so a Linux
+  Space is the faster way to see it work.
+
+You don't need an account to start. Sign in later to reach your computers from
+other devices.
+
+## 1. Install Cua Spaces
+
+<Tabs items={['macOS and Linux', 'Windows (preview)']}>
+  <Tab value="macOS and Linux">
+    ```bash skip="host-install"
+    curl -fsSL https://cua.ai/install.sh | sh
+    ```
+  </Tab>
+  <Tab value="Windows (preview)">
+    ```powershell skip="host-install"
+    irm https://cua.ai/install.ps1 | iex
+    ```
+  </Tab>
+</Tabs>
+
+The command installs the `cua` command and the app. You can also download the
+app from the [download page](https://cua.ai/download). [Install](/spaces/guides/install)
+has the details for each system.
+
+## 2. Connect your agent
+
+Open Cua Spaces. The app walks you through a few first-run screens.
+
+1. On **Sign in**, sign in or skip.
+2. On **AI agents**, tick the agents you use and press **Set up**. When you see
+   "Your AI agents are set up", press **Continue**. The app gave each agent the
+   `cua` skills and MCP server.
+3. On **This machine**, keep **Access other machines** and continue. Pick the
+   other option only for a computer you want to reach from elsewhere.
+
+If your agent was already running, start a new session so it loads the new
+tools. To connect an agent later, see [Connect your agent](/spaces/guides/connect-your-agent).
+
+## 3. Create your first Space
+
+On the last screen, choose **Create** next to a system. Cua Spaces shows the
+download progress, and the Space appears in your list when it is ready. You can
+also create one later with **New Space**.
+
+## 4. Ask your agent to use it
+
+The last screen has a **Try asking your agent** list. Press a prompt to copy it,
+then paste it into your agent:
+
+- "Open a Linux Space and run my test suite in it"
+- "Use my Space's browser to finish the checkout test and show me"
+- "Share this Space with a teammate as a viewer"
+
+Open the Space from Cua Spaces to watch the agent work. You can take over at any
+time by using the desktop yourself.
+
+<Callout type="info">
+  A Space that fails to create shows the reason and a **Try again** button. See
+  [Troubleshoot a failed create](/spaces/guides/troubleshoot-create).
+</Callout>
+
+## Next
+
+- [Add a machine](/spaces/guides/add-a-machine): use another computer you own.
+- [Share a Space](/spaces/guides/share-a-space): let a teammate watch or work in it.
+- [Plans](/spaces/guides/plans): what Free, Pro and Teams include.
+- Using code instead? [Create a Space with the Cua SDK](/spaces/guides/create-a-space-with-the-sdk).

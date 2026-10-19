@@ -159,9 +159,7 @@ fn role_for_selector(sel: &str) -> Option<String> {
     let s = sel.trim();
     // Trim trailing [attr=...] or .class / #id qualifiers — we filter on
     // role only here (the macOS backend has richer JS-side filtering).
-    let tag_end = s
-        .find(|c: char| c == '[' || c == '.' || c == '#')
-        .unwrap_or(s.len());
+    let tag_end = s.find(['[', '.', '#']).unwrap_or(s.len());
     let tag = &s[..tag_end];
     let role = match tag.to_ascii_lowercase().as_str() {
         "a" => "link",

@@ -1,3 +1,4 @@
+import { docModules } from '@/lib/doc-modules.generated';
 import { getApiVersions, source } from '@/lib/source';
 import { getMDXComponents } from '@/mdx-components';
 import { buttonVariants } from 'fumadocs-ui/components/ui/button';
@@ -42,7 +43,10 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   const npm = page.data.npm;
   const github = page.data.github;
 
-  const MDXContent = page.data.body;
+  // Compile only this page (see scripts/gen-doc-modules.mjs).
+  const loadPage = docModules[page.path];
+  if (!loadPage) notFound();
+  const { default: MDXContent, toc } = await loadPage();
 
   // Platform icons component
   const PlatformIcons = () => {
@@ -184,7 +188,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
 
   return (
     <DocsPage
-      toc={page.data.toc}
+      toc={toc}
       tableOfContent={{ header: tocHeader(), footer: tocFooter() }}
       full={page.data.full}
     >

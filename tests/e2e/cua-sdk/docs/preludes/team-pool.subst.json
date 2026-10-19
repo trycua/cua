@@ -1,0 +1,5 @@
+{
+  "$comment": "The pool name a page shows, replaced by CUA_POOL_NAME (a fixture name on PRs, a per-run cua-e2e-* name in the nightly fleet lane).",
+  "\"my-team-desktop\"": "CUA_POOL_NAME",
+  "'my-team-desktop'": "CUA_POOL_NAME"
+}

@@ -4,9 +4,16 @@
 # Makes a Lume macOS VM fully cua-compatible
 #
 # This script runs ON the VM itself (not the host).
-# It installs cua-computer-server, cua-agent, Playwright, noVNC (web-based VNC
-# proxying to lume's built-in VNC on the host), supervisor, and configures the
-# VM for headless CUA operation (auto-login, disable sleep, LaunchAgent).
+# It installs cua-spacesd (the in-sandbox daemon: gRPC + gRPC-Web on port
+# 3211), noVNC (web-based VNC proxying to lume's built-in VNC on the host),
+# supervisor, and configures the VM for headless CUA operation (auto-login,
+# disable sleep, LaunchAgent).
+#
+# cua-spacesd comes from the release tarball (placeholder until the macOS
+# artifact is published; same naming as libs/cua-spacesd/packaging/install.sh):
+#   https://github.com/trycua/cua/releases/download/cua-spacesd-v${VERSION}/cua-spacesd-${ARCH}-apple-darwin.tar.gz
+# Its token is read from $CUA_ENV_TOKEN at setup time or generated into
+# ~/.cua-env/env-token (mode 0600).
 #
 # In Lume VMs, the display is provided by the Virtualization Framework and
 # exposed through lume's built-in VNC server on the host. macOS Screen Sharing
@@ -33,7 +40,7 @@
 #   the tunnel instead of trying to reach the VM IP directly.
 #
 # Note: The default lume ssh timeout is 60s, which is too short for this script
-# (Homebrew + Xcode CLT + pip installs can take 5-10 minutes). Use --timeout 600
+# (Homebrew + Xcode CLT installs can take 5-10 minutes). Use --timeout 600
 # or --timeout 0 (unlimited) when running via lume ssh.
 #
 # Prerequisites:
@@ -59,9 +66,10 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 AUTO_YES=false
-CUA_SERVER_PORT=8443
+CUA_ENV_PORT="${CUA_ENV_PORT:-3211}"
+CUA_SPACESD_VERSION="${CUA_SPACESD_VERSION:-${CUA_GUESTD_VERSION:-${CUA_ENV_DRIVER_VERSION:-0.1.0}}}"
 VM_PASSWORD="${VM_PASSWORD:-lume}"
-CUA_DIR="$HOME/.cua-server"
+CUA_DIR="$HOME/.cua-env"
 NOVNC_PORT=6080
 HOST_VNC_PORT="${HOST_VNC_PORT:-}"
 VNC_PASSWORD="${VNC_PASSWORD:-}"
@@ -73,7 +81,7 @@ while [ "$#" -gt 0 ]; do
             AUTO_YES=true
             ;;
         --port)
-            CUA_SERVER_PORT="$2"
+            CUA_ENV_PORT="$2"
             shift
             ;;
         --host-vnc-port)
@@ -91,13 +99,15 @@ while [ "$#" -gt 0 ]; do
             echo ""
             echo "Options:"
             echo "  --yes, -y                  Non-interactive mode (accept all prompts)"
-            echo "  --port PORT                CUA computer server port (default: 8443)"
+            echo "  --port PORT                cua-spacesd port (default: 3211)"
             echo "  --host-vnc-port PORT       (deprecated) Lume auto-generates VNC ports"
             echo "  --vnc-password PWD         (deprecated) Lume auto-generates VNC passwords"
             echo "  --help                     Show this help message"
             echo ""
             echo "Environment variables:"
             echo "  VM_PASSWORD                VM user password (default: lume)"
+            echo "  CUA_ENV_TOKEN              cua-spacesd token (default: generated)"
+            echo "  CUA_SPACESD_VERSION     cua-spacesd release (default: 0.1.0)"
             echo "  HOST_VNC_PORT              (deprecated) Lume auto-generates VNC ports"
             echo "  VNC_PASSWORD               (deprecated) Lume auto-generates VNC passwords"
             exit 0
@@ -247,48 +257,54 @@ install_system_deps() {
 }
 
 # ============================================
-# Phase 4: CUA Server + Agent
+# Phase 4: cua-spacesd
 # ============================================
 
-setup_cua_server() {
-    print_phase "Phase 4: CUA Computer Server & Agent"
+setup_spacesd() {
+    print_phase "Phase 4: cua-spacesd"
 
     ensure_brew
     export PATH="/opt/homebrew/opt/python@3.13/bin:$PATH"
 
-    if ! confirm "Install cua-computer-server and cua-agent?"; then
-        echo -e "${YELLOW}Skipping CUA server setup.${NC}"
+    if ! confirm "Install cua-spacesd $CUA_SPACESD_VERSION?"; then
+        echo -e "${YELLOW}Skipping cua-spacesd setup.${NC}"
         return 1
     fi
 
-    mkdir -p "$CUA_DIR"
+    mkdir -p "$CUA_DIR/bin"
+    chmod 700 "$CUA_DIR"
 
-    # Create venv if needed
-    if [ ! -d "$CUA_DIR/venv" ]; then
-        echo "Creating Python 3.13 virtual environment..."
-        /opt/homebrew/opt/python@3.13/bin/python3.13 -m venv "$CUA_DIR/venv"
+    local arch
+    case "$(uname -m)" in
+        arm64|aarch64) arch=aarch64 ;;
+        x86_64) arch=x86_64 ;;
+        *) echo -e "${RED}Unsupported architecture $(uname -m)${NC}"; return 1 ;;
+    esac
+    local url="https://github.com/trycua/cua/releases/download/cua-spacesd-v${CUA_SPACESD_VERSION}/cua-spacesd-${arch}-apple-darwin.tar.gz"
+    echo "Downloading $url..."
+    curl -fsSL "$url" | tar -xz -C "$CUA_DIR/bin" cua-spacesd
+    chmod 755 "$CUA_DIR/bin/cua-spacesd"
+    # The older binary names, kept for one release.
+    ln -sfn cua-spacesd "$CUA_DIR/bin/cua-guestd"
+    ln -sfn cua-spacesd "$CUA_DIR/bin/cua-env-driver"
+
+    # Token: honour CUA_ENV_TOKEN, else keep an existing one, else generate.
+    local token_file="$CUA_DIR/env-token"
+    if [ -n "${CUA_ENV_TOKEN:-}" ]; then
+        (umask 077; printf '%s' "$CUA_ENV_TOKEN" > "$token_file")
+    elif [ ! -s "$token_file" ]; then
+        (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$token_file")
     fi
 
-    echo "Installing cua-computer-server..."
-    source "$CUA_DIR/venv/bin/activate"
-    pip install --upgrade pip
-    pip install "cua-computer-server[vnc]"
+    # websockify (for noVNC) lives in a small venv
+    if [ ! -d "$CUA_DIR/venv" ]; then
+        echo "Creating Python 3.13 virtual environment for websockify..."
+        /opt/homebrew/opt/python@3.13/bin/python3.13 -m venv "$CUA_DIR/venv"
+    fi
+    "$CUA_DIR/venv/bin/pip" install --upgrade pip websockify
 
-    echo "Installing cua-agent..."
-    pip install 'cua-agent[all]'
-
-    # Playwright + Firefox (non-blocking)
-    echo "Installing Playwright and Firefox browser..."
-    pip install playwright && playwright install firefox || \
-        echo -e "${YELLOW}Playwright install failed (non-blocking, BrowserTool may not work)${NC}"
-
-    # Install websockify for noVNC and vncdotool for VNC backend
-    echo "Installing websockify and vncdotool..."
-    pip install websockify vncdotool
-
-    deactivate
-
-    echo -e "${GREEN}CUA server and agent installed${NC}"
+    echo -e "${GREEN}cua-spacesd installed at $CUA_DIR/bin/cua-spacesd${NC}"
+    echo "  Token: $token_file"
 }
 
 # ============================================
@@ -397,123 +413,54 @@ EOF
 create_startup_script() {
     print_phase "Phase 6: Startup Script & LaunchAgent"
 
-    if ! confirm "Create CUA server startup script and LaunchAgent?"; then
+    if ! confirm "Create cua-spacesd startup script and LaunchAgent?"; then
         echo -e "${YELLOW}Skipping LaunchAgent setup.${NC}"
         return 1
     fi
 
-    local STARTUP_SCRIPT="$CUA_DIR/start_server.sh"
+    local STARTUP_SCRIPT="$CUA_DIR/start_spacesd.sh"
 
     cat > "$STARTUP_SCRIPT" <<'SCRIPT_EOF'
 #!/bin/bash
-
-LOG_FILE="$HOME/.cua-server/server.log"
-echo "=== CUA Server startup at $(date) ===" >> "$LOG_FILE"
+# Start cua-spacesd in the Aqua session. The token reaches it through the
+# environment (never argv). No package upgrades happen at start.
+LOG_FILE="$HOME/.cua-env/spacesd.log"
+echo "=== cua-spacesd startup at $(date) ===" >> "$LOG_FILE"
 
 # Wait for window server
 sleep 10
 
-cd "$HOME/.cua-server"
-source venv/bin/activate
-
-export DISPLAY=:0
-
-# Auto-detect host gateway IP for VNC backend
-GATEWAY_IP=$(route get default 2>/dev/null | grep gateway | awk '{print $2}')
-if [ -z "$GATEWAY_IP" ]; then
-    GATEWAY_IP="192.168.64.1"
+if [ -z "${CUA_ENV_TOKEN:-}" ]; then
+    CUA_ENV_TOKEN="$(tr -d '\r\n' < "$HOME/.cua-env/env-token" 2>/dev/null)"
 fi
-
-# Read VNC config — check multiple sources in priority order:
-# 1. Local vnc.env (written by host via lume ssh, or cached from VirtioFS)
-# 2. VirtioFS lume-config mount (may be blocked by macOS TCC in LaunchAgents)
-LUME_VNC_PORT=""
-LUME_VNC_PASSWORD=""
-LOCAL_VNC_ENV="$HOME/.vnc.env"
-
-# Source 1: local vnc.env (most reliable — not subject to TCC restrictions)
-if [ -s "$LOCAL_VNC_ENV" ]; then
-    eval "$(cat "$LOCAL_VNC_ENV")"
-    LUME_VNC_PORT="${VNC_PORT:-}"
-    LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
-    echo "Read VNC config from local vnc.env: port=$LUME_VNC_PORT" >> "$LOG_FILE"
+if [ -z "$CUA_ENV_TOKEN" ]; then
+    echo "no cua-spacesd token (CUA_ENV_TOKEN or ~/.cua-env/env-token); refusing to start" >> "$LOG_FILE"
+    exit 1
 fi
+export CUA_ENV_TOKEN
 
-# Source 2: VirtioFS lume-config (fallback — may need sudo due to TCC)
-if [ -z "$LUME_VNC_PORT" ]; then
-    LUME_CONFIG_MOUNT="/tmp/lume-config"
-    LUME_CONFIG="$LUME_CONFIG_MOUNT/vnc.env"
-    mkdir -p "$LUME_CONFIG_MOUNT" 2>/dev/null
-    if mount | grep -q "lume-config"; then
-        echo "lume-config already mounted" >> "$LOG_FILE"
-    elif mount_virtiofs lume-config "$LUME_CONFIG_MOUNT" 2>/dev/null; then
-        echo "Mounted lume-config VirtioFS share" >> "$LOG_FILE"
-    else
-        echo "lume-config VirtioFS not available" >> "$LOG_FILE"
-    fi
-
-    # Try reading vnc.env (wait up to 10s for it to appear)
-    for i in $(seq 1 10); do
-        # Try direct read first, then sudo (TCC may block direct access)
-        VNC_ENV_CONTENT=""
-        if VNC_ENV_CONTENT=$(cat "$LUME_CONFIG" 2>/dev/null) && [ -n "$VNC_ENV_CONTENT" ]; then
-            true
-        elif VNC_ENV_CONTENT=$(sudo -n cat "$LUME_CONFIG" 2>/dev/null) && [ -n "$VNC_ENV_CONTENT" ]; then
-            true
-        fi
-        if [ -n "$VNC_ENV_CONTENT" ]; then
-            eval "$VNC_ENV_CONTENT"
-            LUME_VNC_PORT="${VNC_PORT:-}"
-            LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
-            echo "Read VNC config from VirtioFS: port=$LUME_VNC_PORT" >> "$LOG_FILE"
-            # Cache locally for future restarts
-            echo "$VNC_ENV_CONTENT" > "$LOCAL_VNC_ENV"
-            break
-        fi
-        sleep 1
-    done
-fi
-
-if [ -z "$LUME_VNC_PORT" ]; then
-    echo "WARNING: No VNC config found in ~/.vnc.env or VirtioFS. VNC backend may not work." >> "$LOG_FILE"
-    echo "Lume should auto-deliver VNC config via SSH. Check that the VM was started with 'lume run'." >> "$LOG_FILE"
-fi
-
-# Set VNC backend env vars — prefer discovered values
-export CUA_BACKEND=vnc
-export CUA_VNC_HOST="$GATEWAY_IP"
-export CUA_VNC_PORT="${LUME_VNC_PORT:-5900}"
-export CUA_VNC_PASSWORD="${LUME_VNC_PASSWORD:-}"
-
-# Update packages
-echo "Updating cua-agent..." >> "$LOG_FILE"
-pip install --upgrade --no-input "cua-agent[all]" >> "$LOG_FILE" 2>&1 || true
-
-echo "Updating cua-computer-server..." >> "$LOG_FILE"
-pip install --upgrade --no-input "cua-computer-server[vnc]" >> "$LOG_FILE" 2>&1 || true
-
-# Ensure Playwright Firefox
-echo "Ensuring Playwright Firefox..." >> "$LOG_FILE"
-pip install --upgrade --no-input playwright >> "$LOG_FILE" 2>&1 || true
-playwright install firefox >> "$LOG_FILE" 2>&1 || true
-
-# Start server with VNC backend pointing at lume's VNC on the host
-echo "Starting CUA computer server (vnc backend) on port __PORT__..." >> "$LOG_FILE"
-echo "  VNC target: $CUA_VNC_HOST:$CUA_VNC_PORT" >> "$LOG_FILE"
-python -m computer_server --port __PORT__ >> "$LOG_FILE" 2>&1
+exec "$HOME/.cua-env/bin/cua-spacesd" --listen "0.0.0.0:__PORT__" >> "$LOG_FILE" 2>&1
 SCRIPT_EOF
 
-    # Stamp the server port
-    sed -i '' "s/__PORT__/$CUA_SERVER_PORT/g" "$STARTUP_SCRIPT"
+    sed -i '' "s/__PORT__/$CUA_ENV_PORT/g" "$STARTUP_SCRIPT"
     chmod +x "$STARTUP_SCRIPT"
 
-    # Create LaunchAgent
-    local SERVICE_NAME="com.trycua.computer_server"
+    # Create LaunchAgent (replaces the legacy com.trycua.computer_server agent)
+    local SERVICE_NAME="com.trycua.spacesd"
     local PLIST_PATH="$USER_HOME/Library/LaunchAgents/$SERVICE_NAME.plist"
+    local LEGACY_PLIST="$USER_HOME/Library/LaunchAgents/com.trycua.computer_server.plist"
 
     mkdir -p "$USER_HOME/Library/LaunchAgents"
 
-    # Unload existing
+    # Older agents: computer-server, cua-env-driver (com.trycua.env_driver)
+    # and cua-guestd (com.trycua.guestd).
+    for legacy in "$LEGACY_PLIST" "$USER_HOME/Library/LaunchAgents/com.trycua.env_driver.plist" \
+        "$USER_HOME/Library/LaunchAgents/com.trycua.guestd.plist"; do
+        if [ -f "$legacy" ]; then
+            launchctl unload "$legacy" 2>/dev/null || true
+            rm -f "$legacy"
+        fi
+    done
     launchctl unload "$PLIST_PATH" 2>/dev/null || true
 
     cat > "$PLIST_PATH" <<EOF
@@ -530,19 +477,15 @@ SCRIPT_EOF
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/opt/homebrew/opt/python@3.13/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>$USER_HOME</string>
-        <key>DISPLAY</key>
-        <string>:0</string>
-        <key>CUA_BACKEND</key>
-        <string>vnc</string>
     </dict>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>$CUA_DIR/start_server.sh</string>
+        <string>$STARTUP_SCRIPT</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -552,10 +495,10 @@ SCRIPT_EOF
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/tmp/computer_server.log</string>
+    <string>/tmp/cua-spacesd.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/computer_server.error.log</string>
+    <string>/tmp/cua-spacesd.error.log</string>
 
     <key>ProcessType</key>
     <string>Interactive</string>
@@ -567,10 +510,12 @@ SCRIPT_EOF
 EOF
 
     chmod 644 "$PLIST_PATH"
-    touch /tmp/computer_server.log /tmp/computer_server.error.log
+    touch /tmp/cua-spacesd.log /tmp/cua-spacesd.error.log
 
     echo -e "${GREEN}Startup script and LaunchAgent created${NC}"
-    echo "LaunchAgent will start CUA server on port $CUA_SERVER_PORT at login"
+    echo "LaunchAgent will start cua-spacesd on port $CUA_ENV_PORT at login"
+    echo "Grant $CUA_DIR/bin/cua-spacesd Screen Recording and Accessibility in"
+    echo "System Settings > Privacy & Security for capture and input to work."
 }
 
 # ============================================
@@ -615,8 +560,11 @@ configure_system() {
     python3 << PYEOF
 password = "$VM_PASSWORD"
 key = bytes.fromhex("7d895223d2bcddeaa3b91f")
-padded_len = ((len(password) + 11) // 12) * 12
-padded = password + "\x00" * (padded_len - len(password))
+# Pad the PLAINTEXT with NULs, then XOR the whole buffer: the padding must
+# become key bytes on the wire so loginwindow's decoder terminates there.
+# Always pad by at least one byte — a password whose length is already a
+# multiple of 12 still needs a terminator, so it gets a full extra block.
+padded = password + "\x00" * (12 - len(password) % 12)
 result = bytearray()
 for i, char in enumerate(padded.encode("utf-8")):
     result.append(char ^ key[i % len(key)])
@@ -691,29 +639,11 @@ verify() {
         echo -e "  ${RED}✗${NC} Python 3.13"
     fi
 
-    # CUA server
-    if [ -f "$CUA_DIR/venv/bin/python" ]; then
-        local server_ver
-        server_ver=$("$CUA_DIR/venv/bin/pip" show cua-computer-server 2>/dev/null | grep Version | awk '{print $2}')
-        echo -e "  ${GREEN}✓${NC} cua-computer-server ${server_ver:-unknown}"
+    # cua-spacesd
+    if [ -x "$CUA_DIR/bin/cua-spacesd" ]; then
+        echo -e "  ${GREEN}✓${NC} cua-spacesd $("$CUA_DIR/bin/cua-spacesd" --version 2>/dev/null || echo "$CUA_SPACESD_VERSION")"
     else
-        echo -e "  ${RED}✗${NC} cua-computer-server"
-    fi
-
-    # Agent
-    if [ -f "$CUA_DIR/venv/bin/python" ]; then
-        local agent_ver
-        agent_ver=$("$CUA_DIR/venv/bin/pip" show cua-agent 2>/dev/null | grep Version | awk '{print $2}')
-        echo -e "  ${GREEN}✓${NC} cua-agent ${agent_ver:-unknown}"
-    else
-        echo -e "  ${RED}✗${NC} cua-agent"
-    fi
-
-    # Playwright
-    if "$CUA_DIR/venv/bin/python" -c "import playwright" 2>/dev/null; then
-        echo -e "  ${GREEN}✓${NC} Playwright + Firefox"
-    else
-        echo -e "  ${YELLOW}~${NC} Playwright (may not be installed)"
+        echo -e "  ${RED}✗${NC} cua-spacesd"
     fi
 
     # noVNC / websockify
@@ -733,9 +663,9 @@ verify() {
     fi
 
     # LaunchAgent
-    local PLIST="$USER_HOME/Library/LaunchAgents/com.trycua.computer_server.plist"
+    local PLIST="$USER_HOME/Library/LaunchAgents/com.trycua.spacesd.plist"
     if [ -f "$PLIST" ]; then
-        echo -e "  ${GREEN}✓${NC} LaunchAgent (port $CUA_SERVER_PORT)"
+        echo -e "  ${GREEN}✓${NC} LaunchAgent (port $CUA_ENV_PORT)"
     else
         echo -e "  ${RED}✗${NC} LaunchAgent"
     fi
@@ -746,17 +676,17 @@ verify() {
     echo -e "${GREEN}========================================${NC}"
     echo ""
     echo "Services:"
-    echo "  CUA server:  port $CUA_SERVER_PORT (starts at login via LaunchAgent)"
+    echo "  cua-spacesd: port $CUA_ENV_PORT (starts at login via LaunchAgent; token in $CUA_DIR/env-token)"
     echo "  noVNC:       port $NOVNC_PORT -> lume VNC (auto-configured via ~/.vnc.env)"
     echo ""
     echo "VNC config is auto-delivered by lume. Just run:"
     echo "  lume run <vm-name>"
     echo ""
-    echo "To start CUA server now (from the host):"
-    echo "  lume ssh <vm-name> 'launchctl load ~/Library/LaunchAgents/com.trycua.computer_server.plist'"
+    echo "To start cua-spacesd now (from the host):"
+    echo "  lume ssh <vm-name> 'launchctl load ~/Library/LaunchAgents/com.trycua.spacesd.plist'"
     echo ""
-    echo "To test from the host:"
-    echo "  curl http://<vm-ip>:$CUA_SERVER_PORT/status"
+    echo "To test from the host (any HTTP status means the daemon is up):"
+    echo "  curl -i http://<vm-ip>:$CUA_ENV_PORT/health"
     echo ""
     echo "To access noVNC from the host network:"
     echo "  http://<vm-ip>:$NOVNC_PORT/vnc.html"
@@ -785,7 +715,7 @@ echo ""
 install_homebrew
 install_python
 install_system_deps
-setup_cua_server
+setup_spacesd
 setup_novnc
 create_startup_script
 configure_system

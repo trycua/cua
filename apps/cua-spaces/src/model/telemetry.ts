@@ -43,7 +43,7 @@ export type TelemetrySignal =
       mountMethod: string;
       outcome: string;
     }
-  | { type: "share"; action: string; role: string; outcome: string }
+  | { type: "share"; action: string; role: string; outcome: string; errorKind: string; failedStage: string }
   | { type: "app-update"; action: string; channel: string; trigger: string }
   | { type: "device-enroll"; method: string; outcome: string }
   | { type: "experiment"; action: "experiment_on" | "experiment_off"; experiment: string }

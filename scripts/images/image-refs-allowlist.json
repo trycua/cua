@@ -253,7 +253,6 @@
     "ghcr.io/trycua/cua-desktop-linux:test": {
       "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
       "paths": [
-        "libs/cua/crates/cua-cli/tests/sandbox_do.rs",
         "libs/cua/crates/cua-sdk/tests/refs.rs",
         "libs/cua/crates/cua-sdk/tests/topologies.rs"
       ]
@@ -264,12 +263,6 @@
         "libs/cua/crates/cua-fleet/tests/size_limits.rs",
         "libs/cua/crates/cua-fleet/tests/spec.rs",
         "libs/python/cua-sandbox/tests/test_pool_spec.py"
-      ]
-    },
-    "ghcr.io/trycua/cua-e2e-x:1": {
-      "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
-      "paths": [
-        "libs/cua/crates/cua-cli/src/pools.rs"
       ]
     },
     "ghcr.io/trycua/cua-plain-ubuntu-server:existing": {
@@ -644,7 +637,6 @@
         "libs/cua/bench/streaming/results/baseline-macos-arm64.json",
         "libs/cua/bench/streaming/results/baseline-macos-arm64.md",
         "libs/cua/crates/cua-cli/src/image_build.rs",
-        "libs/cua/crates/cua-cli/tests/sandbox_do.rs",
         "libs/cua/crates/cua-fleet/src/runtime.rs",
         "libs/cua/crates/cua-fleet/tests/claim_secrets.rs",
         "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",

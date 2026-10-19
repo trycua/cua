@@ -149,6 +149,22 @@ A bad configuration fails startup instead of falling back to `standard`. A
 user policy file works the same way: set `CUA_DRIVER_POLICY_FILE` in the
 plist's `EnvironmentVariables`, the unit, or the User environment.
 
+### Allow a brief foreground step (macOS)
+
+Some actions can't finish in the background. Today that means a drag that
+starts a macOS drag-and-drop session in a native window, such as reordering a
+list, because macOS follows the real pointer for those. By default the driver
+refuses them with `background_unavailable`.
+
+To let the driver finish them, set `CUA_DRIVER_ALLOW_BRIEF_FOREGROUND=1` in
+the daemon's environment (the plist's `EnvironmentVariables`). Then only that
+one step runs in the foreground: the window comes forward and the pointer moves
+for the drag, and afterwards the previous frontmost app and the pointer go
+back. The result carries a `foreground_step` object that says whether both were
+restored, and the daemon log records the step. A call that passes
+`delivery_mode: "background"` explicitly is never escalated. Leave the
+variable unset on a Mac someone is using.
+
 ## Update
 
 ```bash test="cli-shape" id="cua-driver-check-update"

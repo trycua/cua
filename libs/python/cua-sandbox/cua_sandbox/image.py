@@ -269,9 +269,9 @@ class Image:
     def windows(cls, version: str = "2022", kind: str = "vm", tier: Optional[str] = None) -> Image:
         """Windows: the canonical ``ghcr.io/trycua/windows:2022`` containerDisk.
 
-        Other versions, including ``"11"``, have no canonical image: on Fleet
-        they are unsupported, and locally they are installed from a downloaded
-        evaluation ISO. ``tier="slim"`` names ``2022-slim`` once published.
+        Other versions, including ``"11"``, have no canonical image: they are
+        installed from a downloaded evaluation ISO. ``tier="slim"`` names
+        ``2022-slim`` once published.
         """
         ref = _tier_ref("windows", version, tier)
         return cls(os_type="windows", distro="windows", version=version, kind=kind, _registry=ref)
@@ -320,8 +320,8 @@ class Image:
         handed BIOS and will not boot. kind is resolved after pull when omitted.
         agent_type names the guest control server the disk already runs, the
         same hint as ``from_file``: ``"osworld"`` selects the OSWorld Flask
-        server on port 5000 instead of the computer-server on 8000, both for
-        local QEMU and for Fleet pools.
+        server on port 5000 instead of the computer-server on 8000, for local
+        QEMU.
         """
         return cls(
             os_type=os_type,
@@ -729,7 +729,7 @@ class Image:
 
 
 def cloud_registry_image(image: Image) -> Optional[str]:
-    """The registry reference an image runs from, local or on Fleet.
+    """The registry reference an image runs from.
 
     An explicit ``Image.from_registry(...)`` reference always wins; the
     built-in descriptors (``Image.linux()``, ``Image.windows()`` for 2022,

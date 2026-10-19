@@ -1,17 +1,19 @@
-"""Real generated Driver binding over a synthetic MCP/Fleet carrier."""
+"""Real generated Driver binding over a synthetic MCP carrier (cua-spacesd's ``/mcp``)."""
 
 import asyncio
 
 import pytest
 
-from .test_driver_mcp import McpTransport, sandbox
+from ._driver_env_support import McpTransport, sandbox
+from ._driver_env_support import records as _records_fixture
 from .test_typed_driver_native import sdk as _sdk_fixture
 
+records = _records_fixture
 sdk = _sdk_fixture
 
 
 @pytest.mark.parametrize("sse", [False, True])
-async def test_actual_generated_driver_and_typed_records_over_mcp(sdk, sse):
+async def test_actual_generated_driver_and_typed_records_over_mcp(sdk, records, sse):
     transport = McpTransport(sse=sse)
     transport.response_data["result"] = {
         "content": [{"type": "text", "text": "typed-mcp-fixture"}],
@@ -19,7 +21,7 @@ async def test_actual_generated_driver_and_typed_records_over_mcp(sdk, sse):
     }
     sb = await sandbox(transport)
     try:
-        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        async with sb.driver.connect() as driver:
             assert type(driver) is sdk.CuaDriver
             result = await driver.get_screen_size(sdk.GetScreenSizeInput(session=None))
             assert result.text == "typed-mcp-fixture"
@@ -45,11 +47,11 @@ async def test_actual_generated_driver_and_typed_records_over_mcp(sdk, sse):
         await sb.disconnect()
 
 
-async def test_actual_driver_refuses_noncanonical_metadata(sdk):
+async def test_actual_driver_refuses_noncanonical_metadata(sdk, records):
     transport = McpTransport()
     sb = await sandbox(transport)
     try:
-        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        async with sb.driver.connect() as driver:
             # Metadata still uses the canonical envelope instead of disguising
             # an ordinary MCP tools/list result as generated Driver metadata.
             transport.response_data["result"] = {"not": "driver metadata"}
@@ -59,11 +61,11 @@ async def test_actual_driver_refuses_noncanonical_metadata(sdk):
         await sb.disconnect()
 
 
-async def test_actual_driver_does_not_gain_trusted_session_binding(sdk):
+async def test_actual_driver_does_not_gain_trusted_session_binding(sdk, records):
     transport = McpTransport()
     sb = await sandbox(transport)
     try:
-        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        async with sb.driver.connect() as driver:
             options = sdk.TrustedSessionOptions(
                 public_session="another-session",
                 mode=sdk.SessionPermissionMode.STANDARD,
@@ -80,12 +82,12 @@ async def test_actual_driver_does_not_gain_trusted_session_binding(sdk):
         await sb.disconnect()
 
 
-async def test_actual_native_future_cancellation_reaches_mcp_receiver(sdk):
+async def test_actual_native_future_cancellation_reaches_mcp_receiver(sdk, records):
     transport = McpTransport()
     transport.exchange_wait = asyncio.Event()
     sb = await sandbox(transport)
     try:
-        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        async with sb.driver.connect() as driver:
             task = asyncio.create_task(driver.get_screen_size(sdk.GetScreenSizeInput(session=None)))
             await asyncio.wait_for(transport.exchange_started.wait(), 2)
             task.cancel()
@@ -119,13 +121,15 @@ async def test_actual_native_future_cancellation_reaches_mcp_receiver(sdk):
 
 
 @pytest.mark.parametrize("finish", ["cancel", "close"])
-async def test_shared_native_teardown_drains_pending_response_before_session_close(sdk, finish):
+async def test_shared_native_teardown_drains_pending_response_before_session_close(
+    sdk, records, finish
+):
     transport = McpTransport()
     transport.exchange_wait = asyncio.Event()
     transport.cancel_releases_exchange = False
     sb = await sandbox(transport)
     try:
-        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        async with sb.driver.connect() as driver:
             task = asyncio.create_task(driver.get_screen_size(sdk.GetScreenSizeInput(session=None)))
             await asyncio.wait_for(transport.exchange_started.wait(), 2)
             if finish == "cancel":
@@ -156,11 +160,11 @@ async def test_shared_native_teardown_drains_pending_response_before_session_clo
         await sb.disconnect()
 
 
-async def test_shared_native_sandbox_rejects_use_from_another_event_loop(sdk):
+async def test_shared_native_sandbox_rejects_use_from_another_event_loop(sdk, records):
     transport = McpTransport()
     sb = await sandbox(transport)
     try:
-        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        async with sb.driver.connect() as driver:
 
             def other_loop():
                 async def get_session():
@@ -176,13 +180,13 @@ async def test_shared_native_sandbox_rejects_use_from_another_event_loop(sdk):
         await sb.disconnect()
 
 
-async def test_shared_native_drain_timeout_is_bounded_and_does_not_abort(sdk, caplog):
+async def test_shared_native_drain_timeout_is_bounded_and_does_not_abort(sdk, records, caplog):
     transport = McpTransport()
     transport.exchange_wait = asyncio.Event()
     transport.cancel_releases_exchange = False
     sb = await sandbox(transport)
     try:
-        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        async with sb.driver.connect() as driver:
             task = asyncio.create_task(driver.get_screen_size(sdk.GetScreenSizeInput(session=None)))
             await asyncio.wait_for(transport.exchange_started.wait(), 2)
             await asyncio.wait_for(sb.driver.close(), 5)

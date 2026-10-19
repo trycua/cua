@@ -142,7 +142,6 @@ jobs:
           --ignore=tests/live
           --ignore=tests/test_runtime.py
           --ignore=tests/test_snapshots.py
-          --ignore=tests/test_windows_cloud.py
           --ignore=tests/test_windows_timing.py
           --deselect tests/test_oci.py::TestLiveRegistry
 

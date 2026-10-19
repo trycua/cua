@@ -103,7 +103,7 @@ class NativeQEMURuntime(NativeRuntime):
         if disk and not has_build_work(image):
             return f"disk:{disk}"
         if ref is not None and not disk and not has_build_work(image):
-            # The SDK pulls the pinned containerDisk (the disk Fleet boots).
+            # The SDK pulls the pinned containerDisk.
             return f"vm:{ref}"
         session = await create_session_disk(image, name, base_disk=Path(disk) if disk else None)
         if "sessions" in str(session):

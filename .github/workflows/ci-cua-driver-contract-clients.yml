@@ -344,7 +344,6 @@ jobs:
           PYTHONPATH=libs/python/cua-sandbox:libs/cua-driver/python/src \
             python -m pytest \
               libs/python/cua-sandbox/tests/test_typed_driver_native.py \
-              libs/python/cua-sandbox/tests/test_typed_driver.py \
               libs/python/cua-sandbox/tests/test_driver_mcp.py \
               libs/python/cua-sandbox/tests/test_driver_mcp_shared.py \
               libs/python/cua-sandbox/tests/test_driver_mcp_native.py \

@@ -103,9 +103,9 @@ def windows(
 
 Windows: the canonical `ghcr.io/trycua/windows:2022` containerDisk.
 
-Other versions, including `"11"`, have no canonical image: on Fleet
-they are unsupported, and locally they are installed from a downloaded
-evaluation ISO. `tier="slim"` names `2022-slim` once published.
+Other versions, including `"11"`, have no canonical image: they are
+installed from a downloaded evaluation ISO. `tier="slim"` names
+`2022-slim` once published.
 
 #### Image.omarchy
 
@@ -157,8 +157,8 @@ so a Windows containerDisk pulled from a registry must say so or it is
 handed BIOS and will not boot. kind is resolved after pull when omitted.
 agent_type names the guest control server the disk already runs, the
 same hint as `from_file`: `"osworld"` selects the OSWorld Flask
-server on port 5000 instead of the computer-server on 8000, both for
-local QEMU and for Fleet pools.
+server on port 5000 instead of the computer-server on 8000, for local
+QEMU.
 
 #### Image.from_file
 

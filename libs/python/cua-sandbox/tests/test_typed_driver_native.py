@@ -5,11 +5,13 @@ import json
 import os
 from pathlib import Path
 
-import httpx
 import pytest
-from cua_sandbox.sandbox import Sandbox
 
-from .test_typed_driver import Transport
+from ._driver_env_support import McpTransport
+from ._driver_env_support import sandbox as mcp_sandbox
+from ._driver_env_support import records as _records_fixture
+
+records = _records_fixture
 
 
 @pytest.fixture
@@ -29,82 +31,46 @@ def refusal():
     return json.loads(fixture.read_text())["result"]
 
 
-class NativeTransport(Transport):
-    def __init__(self, result=None):
-        super().__init__()
-        self.exchange_timeouts = []
-        self.result = (
-            result
-            if result is not None
-            else {
-                "content": [{"type": "text", "text": "typed-fleet-fixture"}],
-                "isError": False,
-            }
-        )
-
-    async def request_service(
-        self,
-        name,
-        *,
-        method,
-        path,
-        json_body=None,
-        body=None,
-        headers=None,
-        timeout=None,
-        max_response_bytes=None,
-    ):
-        response = await super().request_service(
-            name,
-            method=method,
-            path=path,
-            json_body=json_body,
-            body=body,
-            headers=headers,
-            timeout=timeout,
-            max_response_bytes=max_response_bytes,
-        )
-        if path.endswith("/exchange"):
-            self.exchange_timeouts.append(timeout)
-            return httpx.Response(
-                200,
-                json=dict(
-                    envelope_version=1,
-                    request_id=json_body["request_id"],
-                    ok=True,
-                    result=self.result,
-                    completion_known=True,
-                ),
-            )
-        return response
+def native_transport(result=None):
+    """A synthetic MCP receiver whose ``exchange`` answers with ``result``."""
+    transport = McpTransport()
+    transport.response_data["result"] = (
+        result
+        if result is not None
+        else {"content": [{"type": "text", "text": "typed-env-fixture"}], "isError": False}
+    )
+    return transport
 
 
-async def test_real_canonical_driver_uses_fleet_callback_and_disconnects(sdk):
+def envelope_of(transport):
+    """The typed envelope of the last JSON-RPC request the receiver saw."""
+    return transport.events[-1][3]["params"]["envelope"]
 
-    transport = NativeTransport()
-    sandbox = Sandbox(transport, _telemetry_enabled=False)
-    await sandbox._connect()
+
+async def test_real_canonical_driver_uses_the_env_callback_and_disconnects(sdk, records):
+    transport = native_transport()
+    sb = await mcp_sandbox(transport)
     try:
-        async with sandbox.driver.connect() as driver:
+        async with sb.driver.connect() as driver:
             assert isinstance(driver, sdk.CuaDriver)
             result = await driver.get_screen_size(sdk.GetScreenSizeInput(session=None))
-            assert result.text == "typed-fleet-fixture"
-            request = transport.events[-1][3]
+            assert result.text == "typed-env-fixture"
+            request = envelope_of(transport)
             assert request["name"] == "get_screen_size"
             assert request["arguments"] == {}
             assert request["deadline_unix_ms"] > 0
-            session = sandbox.driver.session_name(driver)
+            session = sb.driver.session_name(driver)
             await driver.get_agent_cursor_state(sdk.GetAgentCursorStateInput(session=session))
-            assert transport.events[-1][3]["arguments"] == {"session": "session-1"}
-            await sandbox.disconnect()
-            assert transport.events[-2][1] == "DELETE"
-            assert transport.events[-1] == "disconnect"
+            assert envelope_of(transport)["arguments"] == {"session": "session-1"}
+            await sb.disconnect()
+            assert not transport.sessions
+            assert transport.events[-1][1] == "DELETE"
             before = len(transport.events)
             with pytest.raises(sdk.DriverError.Remote, match="closed"):
                 await driver.get_screen_size(sdk.GetScreenSizeInput(session=None))
             assert len(transport.events) == before
     finally:
-        await sandbox.disconnect()
+        await sb.disconnect()
 
 
 @pytest.mark.parametrize(
@@ -114,12 +80,11 @@ async def test_real_canonical_driver_uses_fleet_callback_and_disconnects(sdk):
         ("DESKTOP", {"display_id": "primary"}, {"kind": "desktop", "display_id": "primary"}),
     ],
 )
-async def test_real_canonical_action_target_serializes_over_fleet(
-    sdk, refusal, variant, fields, expected
+async def test_real_canonical_action_target_serializes_over_the_env_carrier(
+    sdk, records, refusal, variant, fields, expected
 ):
-    transport = NativeTransport(result=refusal)
-    sandbox = Sandbox(transport, _telemetry_enabled=False)
-    await sandbox._connect()
+    transport = native_transport(result=refusal)
+    sandbox = await mcp_sandbox(transport)
     try:
         async with sandbox.driver.connect() as driver:
             with pytest.raises(sdk.DriverError.Tool) as error:
@@ -135,7 +100,7 @@ async def test_real_canonical_action_target_serializes_over_fleet(
                 )
             assert error.value.tool == "click"
             assert error.value.error_code == "foreground_required"
-            request = transport.events[-1][3]
+            request = envelope_of(transport)
             assert request["name"] == "click"
             assert request["arguments"] == {
                 "x": 12.5,
@@ -148,10 +113,9 @@ async def test_real_canonical_action_target_serializes_over_fleet(
         await sandbox.disconnect()
 
 
-async def test_real_canonical_tool_result_preserves_structured_refusal(sdk, refusal):
-    transport = NativeTransport(result=refusal)
-    sandbox = Sandbox(transport, _telemetry_enabled=False)
-    await sandbox._connect()
+async def test_real_canonical_tool_result_preserves_structured_refusal(sdk, records, refusal):
+    transport = native_transport(result=refusal)
+    sandbox = await mcp_sandbox(transport)
     try:
         async with sandbox.driver.connect() as driver:
             result = await driver.get_screen_size(sdk.GetScreenSizeInput(session=None))
@@ -177,7 +141,7 @@ def verification_input(sdk):
                 element=sdk.ElementPredicate(
                     selector=sdk.ElementSelector(role="textbox", label_contains="Message"),
                     exists=True,
-                    value_equals="typed-fleet-fixture",
+                    value_equals="typed-env-fixture",
                     enabled=True,
                     selected=False,
                 ),
@@ -190,21 +154,19 @@ def verification_input(sdk):
     )
 
 
-async def test_real_canonical_verify_state_serializes_over_fleet(refusal, verification_input):
-    transport = NativeTransport(result=refusal)
-    sandbox = Sandbox(transport, _telemetry_enabled=False)
-    await sandbox._connect()
+async def test_real_canonical_verify_state_serializes_over_the_env_carrier(
+    records, refusal, verification_input
+):
+    transport = native_transport(result=refusal)
+    sandbox = await mcp_sandbox(transport)
     try:
         async with sandbox.driver.connect() as driver:
             verification_input.session = sandbox.driver.session_name(driver)
             await driver.verify_state(verification_input)
-            name, method, path, request, headers = transport.events[-1]
-            assert (name, method, path) == (
-                "driver",
-                "POST",
-                "/v1/connections/connection-1/exchange",
-            )
-            assert headers == {"X-Cua-Driver-Generation": "generation-1"}
+            name, method, path, rpc, headers = transport.events[-1]
+            assert (name, method, path) == ("mcp", "POST", "/mcp")
+            assert rpc["method"] == "cua/driver/v1/exchange"
+            request = rpc["params"]["envelope"]
             assert request["name"] == "verify_state"
             assert request["arguments"] == {
                 "pid": 42,
@@ -215,7 +177,7 @@ async def test_real_canonical_verify_state_serializes_over_fleet(refusal, verifi
                         "element": {
                             "selector": {"role": "textbox", "label_contains": "Message"},
                             "exists": True,
-                            "value_equals": "typed-fleet-fixture",
+                            "value_equals": "typed-env-fixture",
                             "enabled": True,
                             "selected": False,
                         }
@@ -228,14 +190,16 @@ async def test_real_canonical_verify_state_serializes_over_fleet(refusal, verifi
             }
             assert request["deadline_unix_ms"] > 0
             assert len(transport.exchange_timeouts) == 1
-            assert 0 < transport.exchange_timeouts[0] <= 120
+            # The binding bounds the exchange by the request deadline (120 s by
+            # default) plus its own margin.
+            assert 0 < transport.exchange_timeouts[0] <= 125
     finally:
         await sandbox.disconnect()
 
 
 @pytest.mark.parametrize("status", ["satisfied", "unsatisfied", "unknown"])
 async def test_real_canonical_verify_state_preserves_structured_outcome(
-    sdk, verification_input, status
+    sdk, records, verification_input, status
 ):
     # Synthetic service results qualify the bridge, not live AX observations.
     stable = status == "satisfied"
@@ -261,9 +225,8 @@ async def test_real_canonical_verify_state_preserves_structured_outcome(
         "structuredContent": structured,
         "isError": False,
     }
-    transport = NativeTransport(result=wire_result)
-    sandbox = Sandbox(transport, _telemetry_enabled=False)
-    await sandbox._connect()
+    transport = native_transport(result=wire_result)
+    sandbox = await mcp_sandbox(transport)
     try:
         async with sandbox.driver.connect() as driver:
             result = await driver.verify_state(verification_input)
@@ -299,11 +262,10 @@ async def test_real_canonical_verify_state_preserves_structured_outcome(
 
 
 async def test_real_canonical_verify_state_after_disconnect_does_not_exchange(
-    sdk, verification_input
+    sdk, records, verification_input
 ):
-    transport = NativeTransport()
-    sandbox = Sandbox(transport, _telemetry_enabled=False)
-    await sandbox._connect()
+    transport = native_transport()
+    sandbox = await mcp_sandbox(transport)
     try:
         async with sandbox.driver.connect() as driver:
             await sandbox.disconnect()

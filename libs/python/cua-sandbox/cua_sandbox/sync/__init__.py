@@ -21,11 +21,6 @@ from cua_sandbox.image import Image
 from cua_sandbox.pool import Pool as _AsyncPool
 from cua_sandbox.pool import Template as _AsyncTemplate
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
-from fleet_sdk import (
-    ClaimSpec,
-    CreatePoolRequest,
-    CreateTemplateRequest,
-)
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -89,18 +84,15 @@ class Template:
         return self._async_template.name
 
     @classmethod
-    def reconcile(cls, request: CreateTemplateRequest) -> "Template":
-        """Synchronously create or update a Fleet sandbox template."""
+    def reconcile(cls, request: Any) -> "Template":
+        """Always raises :class:`~cua_sandbox._ended.CloudEnded`: Cua Cloud has
+        ended."""
         return cls(_run(_AsyncTemplate.reconcile(request)))
 
 
 class Pool:
-    """Blocking facade for :class:`cua_sandbox.Pool`.
-
-    ``Pool.reconcile`` and ``pool.claim`` use the same Fleet lifecycle as the
-    async API, but yield synchronous sandbox interface methods for scripts and
-    notebooks.
-    """
+    """Blocking facade for :class:`cua_sandbox.Pool`. Cua Cloud has ended, so
+    every call raises :class:`~cua_sandbox._ended.CloudEnded`."""
 
     def __init__(self, async_pool: _AsyncPool) -> None:
         self._async_pool = async_pool
@@ -110,43 +102,36 @@ class Pool:
         return self._async_pool.name
 
     @classmethod
-    def reconcile(cls, request: CreatePoolRequest) -> "Pool":
-        """Synchronously create or update a Fleet pool."""
+    def reconcile(cls, request: Any) -> "Pool":
         return cls(_run(_AsyncPool.reconcile(request)))
 
     @classmethod
     def get(cls, name: str) -> "Pool":
-        """Synchronously fetch an existing Fleet pool without changing it."""
         return cls(_run(_AsyncPool.get(name)))
 
     @classmethod
     def apply(cls, *args: Any, **kwargs: Any) -> "Pool":
-        """Synchronously apply a Fleet pool: ``Pool.apply(name, spec, options)``
-        (the deprecated ``Pool.apply(image, name=..., ...)`` form works too;
-        see ``cua_sandbox.Pool.apply``)."""
         return cls(_run(_AsyncPool.apply(*args, **kwargs)))
 
     @staticmethod
     def export(name: str, *, terraform: bool = False) -> Any:
-        """Synchronously read a pool back (see ``cua_sandbox.Pool.export``)."""
         return _run(_AsyncPool.export(name, terraform=terraform))
 
     def delete(self) -> None:
-        """Synchronously delete this Fleet pool."""
         _run(self._async_pool.delete())
 
     @contextmanager
     def claim(
         self,
         *,
-        spec: ClaimSpec | None = None,
+        spec: Any = None,
         name: str | None = None,
         service: str = ENV_SERVICE,
         time_to_start: float | None = None,
         ttl_seconds_after_created: int | None = None,
         claim_token: str | None = None,
     ) -> Iterator[_SyncProxy]:
-        """Synchronously claim a sandbox and release it on exit."""
+        """Always raises :class:`~cua_sandbox._ended.CloudEnded`."""
         context = self._async_pool.claim(
             spec=spec,
             name=name,
@@ -169,8 +154,7 @@ class Sandbox:
     """Blocking facade for :class:`cua_sandbox.Sandbox` factories.
 
     Each method takes the same arguments as its async counterpart and returns
-    sync-wrapped sandboxes. Managed Fleet claims keep renewing in the
-    background between calls, exactly as with the async API.
+    sync-wrapped sandboxes.
     """
 
     @staticmethod
@@ -234,14 +218,13 @@ def sandbox(
 
     Mirrors :func:`cua_sandbox.sandbox`: an ephemeral sandbox (the default when
     ``image`` is given) is destroyed on exit, anything else is disconnected.
-    Fleet registry images come from the account's managed pool (see
-    :meth:`cua_sandbox.Sandbox.create` for ``on``/``local``, ``kind``,
-    ``runtime``, ``warm``, ``max_pool_size``, ``claim_ttl`` and ``progress``).
+    See :meth:`cua_sandbox.Sandbox.create` for ``on``/``local``, ``kind`` and
+    ``runtime``.
     """
     from cua_sandbox import _placement
     from cua_sandbox.sandbox import _cloud_only_args, _place_new
 
-    engine, hint = None, None
+    engine = None
     if image is not None and not (url or http_url or ws_url):
         place, image = _place_new(
             image,
@@ -259,7 +242,6 @@ def sandbox(
             ),
         )
         local, engine, runtime = place.local, place.runtime, place.legacy_runtime
-        hint = place.cloud_default_hint()
     elif on is not None:
         local = _placement.resolve(on=on, local=local).local
     sb = _run(
@@ -274,12 +256,7 @@ def sandbox(
             runtime=runtime,
             name=name,
             ephemeral=ephemeral,
-            warm=warm,
-            max_pool_size=max_pool_size,
-            claim_ttl=claim_ttl,
-            progress=progress,
             engine=engine,
-            hint=hint,
         )
     )
     proxy = _SyncProxy(sb)

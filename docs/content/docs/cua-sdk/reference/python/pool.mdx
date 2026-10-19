@@ -21,26 +21,17 @@ Pools and `CloudOptions` belonged to Cua Cloud, which has ended. Every call here
 ```python
 class Pool
 
-Pool(
-    resource: Any,
-    *,
-    owned_template: Any = None,
-    agent_type: str | None = None,
-)
+Pool(*args: Any, **kwargs: Any)
 ```
 
-A Fleet warm pool that can provide durable Sandbox claims.
-
-| Attribute | Type | Description |
-| --- | --- | --- |
-| `name` | `str` |  |
-| `resource` | `Any` |  |
+A warm pool on Cua Cloud, which has ended. Every call raises
+`cua_sandbox._ended.CloudEnded`.
 
 #### Pool.reconcile
 
 ```python
 @classmethod
-async def reconcile(request: CreatePoolRequest) -> 'Pool'
+async def reconcile(request: Any) -> 'Pool'
 ```
 
 #### Pool.get
@@ -57,33 +48,12 @@ async def get(name: str) -> 'Pool'
 async def apply(*args: Any, **kwargs: Any) -> 'Pool'
 ```
 
-Reconcile a Fleet pool: `Pool.apply(name, spec, options)`.
-
-`spec` (`cua_sandbox.SandboxSpec`) is what the pool's
-sandboxes run and `options` (`cua_sandbox.PoolOptions`) how
-the pool keeps capacity for them. The pool, its namespace and its
-template share `name`, which is globally unique on Fleet. This is
-the SDK's one pool writer (`Fleet.apply`): the image is pinned to
-the variant the runtime runs, a new pool is rolled back if its
-template fails, and a runtime the image cannot run on raises
-`cua.CuaError.InvalidArgument` before anything is created.
-
-The old form `Pool.apply(image, *, name=..., replicas=..., cpu=...,
-memory_mb=..., services=..., autoscaling=..., ttl_seconds_after_created=...,
-runtime=...)` still works and is converted to the new one, with a
-`DeprecationWarning`.
-
 #### Pool.export
 
 ```python
 @staticmethod
 async def export(name: str, *, terraform: bool = False) -> 'PoolExport | str'
 ```
-
-Read pool `name` back as the shared model (a `PoolExport`
-whose `spec` / `options` are the native records), or with
-`terraform=True` the equivalent Terraform `fleets_pool` block
-(attributes the provider lacks yet are commented).
 
 #### Pool.check
 
@@ -92,10 +62,6 @@ whose `spec` / `options` are the native records), or with
 async def check(name: str, spec: SandboxSpec) -> None
 ```
 
-Raise `cua_sandbox.PoolSpecMismatch` (with a readable diff)
-when the set fields of `spec` differ from pool `name`'s
-template.
-
 #### Pool.apply_template
 
 ```python
@@ -103,27 +69,21 @@ template.
 async def apply_template(name: str, spec: SandboxSpec) -> None
 ```
 
-Lay the set fields of `spec` over pool `name`'s template and
-write it (the pool's capacity is kept; a no-op when nothing
-differs).
-
 #### Pool.delete
 
 ```python
 async def delete() -> None
 ```
 
-Delete this Fleet pool.
-
 #### Pool.create_claim
 
 ```python
 async def create_claim(
     *,
-    spec: ClaimSpec | None = None,
+    spec: Any = None,
     name: str | None = None,
     ttl_seconds_after_created: int | None = None,
-) -> _ClaimHandle
+) -> Any
 ```
 
 #### Pool.claim
@@ -131,45 +91,32 @@ async def create_claim(
 ```python
 def claim(
     *,
-    spec: ClaimSpec | None = None,
+    spec: Any = None,
     name: str | None = None,
     service: str = ENV_SERVICE,
     time_to_start: float | None = None,
     ttl_seconds_after_created: int | None = None,
     agent_type: str | None = None,
     claim_token: str | None = None,
-) -> _ClaimResult[Sandbox]
+) -> Any
 ```
-
-Claim a sandbox. `agent_type="osworld"` selects the OSWorld transport
-for pools fetched with `Pool.get` (pools from `Pool.apply` remember it).
-
-`claim_token` (see `generate_claim_token`) is delivered into the
-sandbox at `/run/cua/env-token` through the claim's Secret; the pool's
-spec must set `claim_secrets=True`. The claim waits (at most 90 s
-after it binds) until the sandbox has it, else it is released and
-`cua_sandbox.ClaimSecretsNotDelivered` is raised.
 
 ### Template
 
 ```python
 class Template
 
-Template(resource: Any)
+Template(*args: Any, **kwargs: Any)
 ```
 
-A reconciled Fleet sandbox template.
-
-| Attribute | Type | Description |
-| --- | --- | --- |
-| `name` | `str` |  |
-| `resource` | `Any` |  |
+A sandbox template on Cua Cloud, which has ended. Every call raises
+`cua_sandbox._ended.CloudEnded`.
 
 #### Template.reconcile
 
 ```python
 @classmethod
-async def reconcile(request: CreateTemplateRequest) -> 'Template'
+async def reconcile(request: Any) -> 'Template'
 ```
 
 ## Managed pools (cua_sandbox.pools)
@@ -184,39 +131,26 @@ away in the next minor release.
 ### list_pools
 
 ```python
-async def list_pools(cfg: Optional[AutoPoolConfig] = None) -> list[ManagedPoolInfo]
+async def list_pools(*args: Any, **kwargs: Any) -> list[ManagedPoolInfo]
 ```
-
-This account's managed pools (`cua-auto-*` and legacy `cua-eph-*`).
 
 ### list_claims
 
 ```python
-async def list_claims(cfg: Optional[AutoPoolConfig] = None) -> list[ClaimInfo]
+async def list_claims(*args: Any, **kwargs: Any) -> list[ClaimInfo]
 ```
-
-Claims in every pool this account can see (managed and explicit).
 
 ### gc
 
 ```python
-async def gc(
-    idle_after: Optional[Duration] = None,
-    cfg: Optional[AutoPoolConfig] = None,
-) -> GcReport
+async def gc(*args: Any, **kwargs: Any) -> GcReport
 ```
-
-Delete idle managed pools and stuck managed claims now.
 
 ### gc_pools
 
 ```python
-async def gc_pools(names: list[str], idle_after: Duration = 0) -> GcReport
+async def gc_pools(*args: Any, **kwargs: Any) -> GcReport
 ```
-
-Delete the named managed pools once they have no claims and have been
-idle for `idle_after` (default: now). Pools with live claims are kept.
-Tests use this to remove exactly the pools they created.
 
 ### is_managed_pool_name
 
@@ -320,21 +254,18 @@ SandboxSpec(
 )
 ```
 
-What a sandbox runs. Unset fields keep Fleet's defaults (and are not
-compared against a named pool's template).
+What a sandbox in a pool ran. Pools belonged to Cua Cloud, which has
+ended; this data class is kept so existing imports keep working.
 
-* `image`: an `cua_sandbox.Image` (`Image.from_registry(ref,
-  secret=...)` carries its registry secret) or a registry reference.
+* `image`: an `cua_sandbox.Image` or a registry reference.
 * `command` / `args`: argv replacing the image ENTRYPOINT / CMD.
 * `env`: plain environment variables (not secrets).
 * `services`: named guest ports, `{"mcp": 8765}`.
-* `wait_for`: `tcp("mcp")` / `http("mcp", "/health")`: a replica
-  binds a claim only once it passes.
+* `wait_for`: `tcp("mcp")` / `http("mcp", "/health")`.
 * `cpu` / `memory_mb` (or `memory="4GB"`).
 * `sidecars`: `cua_sandbox.Container` (or image strings).
-* `registry_secret`: a `cua_sandbox.RegistrySecret`, stored as
-  the pool's `cua-registry-*` pull Secret; `registry_secret_name`
-  references an existing one.
+* `registry_secret`: a `cua_sandbox.RegistrySecret`;
+  `registry_secret_name` references an existing one.
 * `process_mode`: `"Legacy"` or `"Run"`.
 * `claim_secrets`: claims may carry a per-claim env token.
 
@@ -356,22 +287,6 @@ compared against a named pool's template).
 | `process_mode` | `Optional[str]` |  |
 | `claim_secrets` | `bool` |  |
 
-#### SandboxSpec.reference
-
-```python
-def reference() -> str
-```
-
-The image's registry reference (`""` when unset).
-
-#### SandboxSpec.native
-
-```python
-def native() -> Any
-```
-
-The `cua.SandboxSpec` record.
-
 ### PoolOptions
 
 ```python
@@ -390,15 +305,16 @@ PoolOptions(
 )
 ```
 
-How a pool keeps capacity for a `SandboxSpec`. Unset fields keep
-Fleet's defaults.
+How a pool kept capacity for a `SandboxSpec`. Pools belonged to
+Cua Cloud, which has ended; this data class is kept so existing imports
+keep working.
 
-* `runtime`: `"gvisor"` or `"kubevirt"` (unset: from the image).
-* `replicas`: size of a pool without autoscaling (default 1).
-* `warm`: keep one sandbox ready (`minPoolSize: 1`).
+* `runtime`: `"gvisor"` or `"kubevirt"`.
+* `replicas`: size of a pool without autoscaling.
+* `warm`: keep one sandbox ready.
 * `min_pool_size` / `max_pool_size`: autoscaling floor / ceiling.
 * `idle_ttl`: delete the pool after this long without claims.
-* `ttl_policy`: `"Retain"` or `"Cascade"` (what TTL expiry deletes).
+* `ttl_policy`: `"Retain"` or `"Cascade"`.
 * `pool_ttl`: pool creation-age TTL.
 * `claim_ttl`: default TTL of claims made on the pool.
 
@@ -415,14 +331,6 @@ Durations are seconds or a `timedelta`.
 | `ttl_policy` | `Optional[str]` |  |
 | `pool_ttl` | `Seconds` |  |
 | `claim_ttl` | `Seconds` |  |
-
-#### PoolOptions.native
-
-```python
-def native() -> Any
-```
-
-The `cua.PoolOptions` record.
 
 ### PoolExport
 
@@ -448,8 +356,7 @@ A pool read back as the shared model (`Pool.export`).
 def generate_claim_token() -> str
 ```
 
-A fresh per-claim env token (64 hex characters) for
-`pool.claim(claim_token=...)`.
+A fresh per-claim env token (64 hex characters).
 
 ## Errors
 
@@ -460,9 +367,8 @@ class PoolSpecMismatch(InvalidArgument)
 ```
 
 A named cloud pool's template differs from the sandbox fields given
-with it. The message holds a readable diff; pass
-`CloudOptions(pool=..., apply=True)` to update the pool's template
-instead, or omit the fields to use the pool as it is.
+with it. Pools belonged to Cua Cloud, which has ended; nothing raises this
+any more.
 
 ### ClaimSecretsNotDelivered
 
@@ -471,7 +377,8 @@ class ClaimSecretsNotDelivered(TimeoutError)
 ```
 
 A claim bound, but its per-claim secrets (the env token) never reached
-the sandbox within the bounded wait (90 s); the claim was released.
+the sandbox. Claims belonged to Cua Cloud, which has ended; nothing raises
+this any more.
 
 ### PoolAccessDeniedError
 
@@ -479,12 +386,5 @@ the sandbox within the bounded wait (90 s); the claim was released.
 class PoolAccessDeniedError(PermissionError)
 ```
 
-Fleet refused a pool or template operation for this credential.
-
-## Re-exported names
-
-`cua_sandbox` also re-exports these names from other packages; see their own documentation.
-
-| Module | Names |
-| --- | --- |
-| `fleet_sdk` | `ClaimSpec`, `CreatePoolRequest`, `CreatePoolRequestBuilder`, `CreateTemplateRequest`, `CreateTemplateRequestBuilder`, `Firmware`, `OsGymSandboxTemplateSpec`, `OsGymSandboxTemplateSpecBuilder`, `OsGymSandboxWarmPoolSpec`, `OsGymSandboxWarmPoolSpecBuilder`, `RuntimeKind`, `SandboxService`, `SandboxServiceBuilder`, `SandboxTemplateRef`, `SandboxTemplateRefBuilder`, `ServiceProtocol`, `TemplateResource`, `VmTemplate`, `VmTemplateBuilder`, `WarmPoolAutoscaling`, `WarmPoolAutoscalingBuilder` |
+A pool or template operation was refused for this credential. Pools
+belonged to Cua Cloud, which has ended; nothing raises this any more.

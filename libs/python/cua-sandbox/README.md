@@ -24,7 +24,7 @@ Driver SDK:
 pip install 'cua-sandbox[driver]'
 ```
 
-The `driver` extra pins `cua-driver==0.27.0`, which provides the typed-window API
+The `driver` extra pins `cua-driver==0.28.2`, which provides the typed-window API
 and the remote channel bridge. It requires that version to be published for your
 platform.
 
@@ -40,17 +40,14 @@ async def observe_guest(sb):
 
 ### Carriers
 
-`sb.driver.connect()` picks one carrier and never falls back to another:
+`sb.driver.connect()` rides **cua-spacesd**: the typed-envelope MCP extension
+on the spacesd's `/mcp`, sent through the cua SDK's env client with the
+sandbox's own endpoint and credentials. It works for direct
+(`Sandbox.connect(url=...)`) and local sandboxes. Explicit form:
+`connect(service="env", transport="mcp")`. Named Driver services were a Cua
+Cloud feature and are gone.
 
-- **cua-spacesd** (default): the typed-envelope MCP extension on the
-  spacesd's `/mcp`, sent through the cua SDK's env client with the sandbox's
-  own endpoint and credentials. Works for direct (`Sandbox.connect(url=...)`)
-  and local sandboxes. Explicit form: `connect(service="env", transport="mcp")`.
-- **`driver` service**: images that publish their own private envelope
-  HTTP receiver; explicit form: `connect(service="driver")`.
-- **Named MCP service**: `connect(service="mcp", transport="mcp")`.
-
-MCP selection initializes the session and verifies
+The connection initializes the session and verifies
 `capabilities.experimental["ai.cua.driver.envelopes"].version == 1` before
 opening a receiver, so a tools-only endpoint fails before any desktop action.
 The connection keeps the receiver's generation, host-selected permissions and
@@ -127,8 +124,7 @@ img = Image.from_registry("ghcr.io/acme/app:1", secret=RegistrySecret.from_env()
 ```
 
 Layers (`apt_install`, `pip_install`, `uv_install`, `run`, `copy`, `env`) apply
-at boot locally; with `local=False` they build remotely on the registry image as
-base, cached by content. See
+at boot, built on the registry image as base and cached by content. See
 [Build an image](https://cua.ai/docs/cua-sdk/guides/images) and
 [private registries](https://cua.ai/docs/cua-sdk/guides/private-registries).
 

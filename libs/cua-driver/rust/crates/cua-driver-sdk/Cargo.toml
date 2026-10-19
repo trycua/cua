@@ -29,7 +29,7 @@ platform-macos = { path = "../platform-macos" }
 core-foundation = "0.10"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-platform-windows = { path = "../platform-windows" }
+platform-windows = { path = "../platform-windows", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 platform-linux = { path = "../platform-linux" }
@@ -39,6 +39,8 @@ oo7 = { version = "=0.6.0", default-features = false, features = ["async-std", "
 
 [features]
 default = []
+# Rego policies on Windows (forwarded by cua-driver's default "rego" feature).
+rego = ["platform-windows/rego"]
 portal-input = ["platform-linux/portal-input"]
 portal-capture = ["platform-linux/portal-capture"]
 portal-libei = ["portal-input", "portal-capture"]

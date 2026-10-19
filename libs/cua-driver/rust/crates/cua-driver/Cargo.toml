@@ -17,7 +17,9 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-cua-driver-core = { path = "../cua-driver-core" }
+# The Rego policy engine (regorus) is opt-in through the default "rego" feature, so the
+# ComputerUse product build can drop it (YAML policy stays available).
+cua-driver-core = { path = "../cua-driver-core", default-features = false, features = ["yaml"] }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cua-driver-sdk = { path = "../cua-driver-sdk" }
 cursor-overlay = { path = "../cursor-overlay" }
@@ -65,7 +67,7 @@ libc = "0.2"
 platform-macos = { path = "../platform-macos" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-platform-windows = { path = "../platform-windows" }
+platform-windows = { path = "../platform-windows", default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -76,7 +78,13 @@ windows = { version = "0.61", features = [
 platform-linux = { path = "../platform-linux" }
 
 [features]
-default = []
+default = ["rego"]
+# Rego policies (regorus; on Windows MSVC this also requires the Spectre-mitigated libraries).
+rego = ["cua-driver-core/rego", "platform-windows/rego", "cua-driver-sdk/rego"]
+# ComputerUse product build (embedded by ComputerUseHost): no release check, update/install verbs,
+# telemetry, skills/extension/perception installers or autostart; check_for_update and the extension
+# host tools are not registered. Build with: --no-default-features --features computeruse
+computeruse = []
 # Local review builds may replace the production extension trust root with an
 # explicitly supplied Ed25519 public key. The build script rejects release
 # profiles and missing/invalid overrides; ordinary artifacts never enable it.

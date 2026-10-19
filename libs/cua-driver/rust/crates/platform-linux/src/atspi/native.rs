@@ -1079,6 +1079,38 @@ fn correlate_hyprland_frame(
     Some(frame.ordinal)
 }
 
+/// A niri window as a correlation client: its title and size. Tiled windows
+/// have a size but no placement; an unknown size (0x0) never matches.
+fn niri_client(window: &crate::wayland::niri::Window) -> (String, u32, u32) {
+    let (width, height) = window.size.unwrap_or((0, 0));
+    (window.title.clone(), width, height)
+}
+
+/// [`correlate_hyprland_frame`] for niri, which also keeps the single-root
+/// shortcut, but only while niri shows the process exactly one window: the
+/// requested one.
+fn correlate_niri_frame(
+    frames: &[HyprlandFrame],
+    clients: &[(&str, u32, u32)],
+    target: usize,
+    roots: usize,
+) -> Option<usize> {
+    if roots == 1 && clients.len() == 1 && target == 0 {
+        return Some(0);
+    }
+    correlate_hyprland_frame(frames, clients, target)
+}
+
+/// Whether a toolkit frame's Window extents are niri's window size, give or
+/// take a pixel of rounding. An unknown frame or window never fits.
+fn niri_frame_fits(frame: Option<(i32, i32, i32, i32)>, window: Option<(u32, u32)>) -> bool {
+    let (Some((_, _, width, height)), Some((window_width, window_height))) = (frame, window) else {
+        return false;
+    };
+    (i64::from(width) - i64::from(window_width)).abs() <= 1
+        && (i64::from(height) - i64::from(window_height)).abs() <= 1
+}
+
 #[cfg(test)]
 mod hyprland_frame_tests {
     use super::*;
@@ -1151,6 +1183,73 @@ mod hyprland_frame_tests {
     }
 
     #[test]
+    fn niri_binds_only_the_window_a_lone_root_belongs_to() {
+        // niri lists A and B for the process; only B's root is exported yet.
+        let mut b = frame("B");
+        b.browser_root = false;
+        b.size = None;
+        let clients = [("A", 800, 600), ("B", 800, 600)];
+        assert_eq!(correlate_niri_frame(&[b], &clients, 0, 1), None);
+        let mut b = frame("B");
+        b.browser_root = false;
+        assert_eq!(correlate_niri_frame(&[b], &clients, 1, 1), Some(7));
+        // With one window for the process, its lone root is that window's,
+        // whatever the toolkit names it.
+        assert_eq!(
+            correlate_niri_frame(&[frame("untitled")], &[("A", 800, 600)], 0, 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn niri_frames_publish_only_when_the_toolkit_frame_is_the_window() {
+        // Measured in the nested niri lane: GTK 3's frame with client-side
+        // decorations includes a 26 px shadow on every side of a 940x780
+        // window, which put every element 26 px right and below its pixels.
+        assert!(!niri_frame_fits(Some((0, 0, 992, 832)), Some((940, 780))));
+        // With niri's prefer-no-csd the frame is the window.
+        assert!(niri_frame_fits(Some((0, 0, 940, 780)), Some((940, 780))));
+        // A pixel of rounding (fractional scale) and nothing more.
+        assert!(niri_frame_fits(Some((0, 0, 627, 519)), Some((626, 520))));
+        assert!(!niri_frame_fits(Some((0, 0, 942, 780)), Some((940, 780))));
+        // An unknown frame or an unplaced window proves nothing.
+        assert!(!niri_frame_fits(None, Some((940, 780))));
+        assert!(!niri_frame_fits(Some((0, 0, 940, 780)), None));
+    }
+
+    #[test]
+    fn niri_binds_a_tiled_chromium_root_by_size() {
+        // niri reports no position for tiled windows, but their size still
+        // identifies the BrowserRootView whose title carries the profile.
+        let tiled = |id, title: &str, size| crate::wayland::niri::Window {
+            id,
+            pid: Some(42),
+            title: title.into(),
+            app_id: "chromium".into(),
+            workspace: Some(1),
+            focused: false,
+            focus_rank: 0,
+            on_screen: true,
+            size: Some(size),
+            placement: Err(crate::wayland::niri::Unplaced::Tiled),
+        };
+        let owned = [
+            niri_client(&tiled(1, "Page - Google Chrome", (800, 600))),
+            niri_client(&tiled(2, "Other - Google Chrome", (640, 480))),
+        ];
+        let clients = owned
+            .iter()
+            .map(|(title, width, height)| (title.as_str(), *width, *height))
+            .collect::<Vec<_>>();
+        let mut other = frame("Other - Google Chrome - Cua Test");
+        other.ordinal = 8;
+        other.size = Some((640, 480));
+        let frames = [frame("Page - Google Chrome - Cua Test"), other];
+        assert_eq!(correlate_niri_frame(&frames, &clients, 0, 2), Some(7));
+        assert_eq!(correlate_niri_frame(&frames, &clients, 1, 2), Some(8));
+    }
+
+    #[test]
     fn preserves_exact_non_chromium_matching() {
         let mut candidate = frame("Editor");
         candidate.browser_root = false;
@@ -1176,10 +1275,32 @@ async fn resolve_window_frame(
     xid: u64,
     seeds: &[RawObjectRef],
 ) -> Option<usize> {
-    if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
-        let windows = crate::wayland::hyprland::list_windows().ok()?;
-        let owned: Vec<_> = windows.iter().filter(|window| window.pid == pid).collect();
-        let target = owned.iter().position(|window| window.address == xid)?;
+    let hyprland = crate::wayland::is_wayland() && crate::wayland::hyprland::is_session();
+    // Before the single-root shortcut: niri may list a window whose root is
+    // not exported yet, and the one root then belongs to another window.
+    let niri = !hyprland && crate::wayland::is_wayland() && crate::wayland::niri::is_session();
+    if hyprland || niri {
+        let (owned, target): (Vec<(String, u32, u32)>, usize) = if hyprland {
+            let windows = crate::wayland::hyprland::list_windows().ok()?;
+            let owned: Vec<_> = windows.iter().filter(|window| window.pid == pid).collect();
+            let target = owned.iter().position(|window| window.address == xid)?;
+            let owned = owned
+                .iter()
+                .map(|window| (window.title.clone(), window.width, window.height))
+                .collect();
+            (owned, target)
+        } else {
+            // An X11 client's niri pid is xwayland-satellite's, so it never
+            // matches and its walk stays unscoped.
+            let windows = crate::wayland::niri::list_windows().ok()?;
+            let owned: Vec<_> = windows
+                .iter()
+                .filter(|window| window.pid == Some(pid))
+                .collect();
+            let target = owned.iter().position(|window| window.id == xid)?;
+            let owned = owned.iter().map(|window| niri_client(window)).collect();
+            (owned, target)
+        };
         let chromium = std::fs::read_link(format!("/proc/{pid}/exe"))
             .ok()
             .and_then(|path| {
@@ -1225,9 +1346,13 @@ async fn resolve_window_frame(
         }
         let clients = owned
             .iter()
-            .map(|window| (window.title.as_str(), window.width, window.height))
+            .map(|(title, width, height)| (title.as_str(), *width, *height))
             .collect::<Vec<_>>();
-        return correlate_hyprland_frame(&frames, &clients, target);
+        return if niri {
+            correlate_niri_frame(&frames, &clients, target, seeds.len())
+        } else {
+            correlate_hyprland_frame(&frames, &clients, target)
+        };
     }
     if seeds.len() == 1 {
         // One top-level: the caller's window is the only thing this
@@ -3690,6 +3815,11 @@ pub fn element_bounds_ref(
             "web-content bounds need the document origin; re-walk"
         ));
     }
+    if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+        return Err(anyhow!(
+            "niri element bounds need the window's frame size check; re-walk"
+        ));
+    }
     let offset = window_to_screen_offset(pid, xid, None);
     let coord = if offset.is_some() {
         CoordType::Window
@@ -5849,16 +5979,24 @@ fn screen_answer_overrides_window(
     !native_origin_attested && screen_extents_trusted(raw, display)
 }
 
-/// True only when the Hyprland compositor identifies this exact client
-/// (nonzero address `xid` AND `pid`) as native Wayland, not XWayland. Missing,
-/// mismatched, or unreported clients fail closed, so `Screen` extents keep
-/// winning, which is correct for XWayland GTK and LibreOffice. Performs
-/// blocking compositor IPC: async callers must use `bounded_blocking`.
+/// True only when the compositor identifies this exact client (nonzero
+/// window id `xid` AND `pid`) as native Wayland, not XWayland, with an origin.
+/// Hyprland reports XWayland per client; under niri an X11 client belongs to
+/// xwayland-satellite's pid, so a matching pid on a placed niri window is a
+/// native client. Missing, mismatched, or unreported clients fail closed, so
+/// `Screen` extents keep winning, which is correct for XWayland GTK and
+/// LibreOffice. Performs blocking compositor IPC: async callers must use
+/// `bounded_blocking`.
 fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
     xid != 0
         && crate::wayland::is_wayland()
-        && crate::wayland::hyprland::is_session()
-        && crate::wayland::hyprland::native_client_attested(xid, pid)
+        && if crate::wayland::hyprland::is_session() {
+            crate::wayland::hyprland::native_client_attested(xid, pid)
+        } else {
+            crate::wayland::niri::is_session()
+                && crate::wayland::niri::window_for_id(xid)
+                    .is_ok_and(|window| window.pid == Some(pid) && window.placement.is_ok())
+        }
 }
 
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
@@ -5975,6 +6113,17 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
                 crate::wayland::hyprland::window_for_pid(pid)
             }?;
             return (window.pid == pid).then_some((window.x, window.y));
+        }
+        if crate::wayland::niri::is_session() {
+            // Only a placed floating niri window has an origin. A tiled one
+            // has none, and no observed or default origin may stand in.
+            let window = if xid != 0 {
+                crate::wayland::niri::window_for_id(xid).ok()
+            } else {
+                crate::wayland::niri::window_for_pid(pid)
+            }?;
+            let placed = window.placement.ok()?;
+            return (window.pid == Some(pid)).then_some((placed.rect.x, placed.rect.y));
         }
         // Native Wayland: clients can't query a window's screen origin, and
         // AT-SPI CoordType::Screen collapses to (0,0) on Mutter. The bundled
@@ -6297,7 +6446,7 @@ async fn element_bounds_for_visited(
             .await
             .flatten();
     if crate::wayland::is_wayland()
-        && crate::wayland::hyprland::is_session()
+        && (crate::wayland::hyprland::is_session() || crate::wayland::niri::is_session())
         && (offset.is_none() || scoped_frame.is_none())
     {
         return (Vec::new(), true);
@@ -6360,7 +6509,7 @@ async fn element_bounds_for_visited(
     // title-bar offset). Normalize that frame to the compositor window origin
     // before adding the screen offset. Native GTK reports (0,0), so this is a
     // no-op there.
-    let window_frame_origin = if offset.is_some() {
+    let window_frame_extents = if offset.is_some() {
         let frame = visited.iter().find(|node| {
             scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
                 && node.has_component
@@ -6374,7 +6523,7 @@ async fn element_bounds_for_visited(
                 Some(Ok(proxies)) => match call(proxies.component()).await {
                     Some(Ok(component)) => {
                         match call(component.get_extents(CoordType::Window)).await {
-                            Some(Ok((x, y, _, _))) => Some((x, y)),
+                            Some(Ok(extents)) => Some(extents),
                             _ => None,
                         }
                     }
@@ -6388,6 +6537,33 @@ async fn element_bounds_for_visited(
     } else {
         None
     };
+    let window_frame_origin = window_frame_extents.map(|(x, y, _, _)| (x, y));
+    // niri's origin is its window geometry. A toolkit's Window extents start
+    // there only when its frame is that size: GTK 3 measures from its
+    // client-side shadow, Chromium from its resize margins, and where the
+    // window starts inside such a frame is not on the bus. Publish no frames
+    // rather than shifted ones.
+    if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+        let window = bounded_blocking(move || {
+            if xid != 0 {
+                crate::wayland::niri::window_for_id(xid).ok()
+            } else {
+                crate::wayland::niri::window_for_pid(pid)
+            }
+        })
+        .await
+        .flatten();
+        let window_size = window
+            .and_then(|window| window.placement.ok())
+            .map(|placed| (placed.rect.width, placed.rect.height));
+        if !niri_frame_fits(window_frame_extents, window_size) {
+            dlog!(
+                "element bounds: niri window {xid} is {window_size:?} but its accessible frame \
+                 is {window_frame_extents:?}; publishing no frames"
+            );
+            return (Vec::new(), true);
+        }
+    }
     // Add compositor decorations and the embedded document origin for web
     // descendants only. Electron commonly contributes zero for both; WebKitGTK
     // under Sway needs the sum.

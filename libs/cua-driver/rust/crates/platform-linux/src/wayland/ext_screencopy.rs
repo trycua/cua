@@ -4,8 +4,9 @@
 //! on wlroots compositors (sway, labwc) but is missing from compositors
 //! that don't speak wlroots protocols (GNOME mutter, KDE Plasma <6.2).
 //! The staging `ext-image-copy-capture-v1` protocol replaces wlr-screencopy
-//! across the ecosystem — sway 1.10+, labwc 0.8+, niri 0.1.6+, hyprland
-//! 0.45+, KDE Plasma 6.2+, GNOME mutter 47+ all implement it.
+//! across the ecosystem — sway 1.10+, labwc 0.8+, hyprland 0.45+, KDE
+//! Plasma 6.2+, GNOME mutter 47+ all implement it. niri (26.04) does not; it
+//! keeps wlr-screencopy.
 //!
 //! This module captures the FIRST `wl_output` advertised by the compositor
 //! via the chain:

@@ -84,7 +84,7 @@ ashpd = { version = "0.13", default-features = false, features = ["async-io", "s
 # zbus is pulled transitively via ashpd + atspi but declared directly so
 # the portal-probe path in wayland::portal_screenshot can talk to the
 # session bus without going through ashpd's higher-level builders.
-zbus = { version = "5", default-features = false, features = ["tokio"] }
+zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
 # Parse `file://` URIs returned by org.freedesktop.portal.Screenshot.
 # ashpd re-exports `url` transitively; declared explicitly so ashpd
 # version bumps cannot silently break the resolver.
@@ -114,16 +114,16 @@ calloop = { version = "0.14", optional = true }
 # re-exports this same major version; pinning explicitly prevents
 # duplicate-crate hazards.
 enumflags2 = { version = "0.7", optional = true }
-# Keymap fallback path for libei keyboard input when the EIS server does
-# NOT advertise `ei_text` (libei < 1.6, i.e. older GNOME / KDE Plasma 6.0).
-# Mirrors the reis `type-text.rs` example's keycode reverse-mapping.
-xkbcommon = { version = "0.9", optional = true }
 # Bounded MPSC command/reply channel for the persistent virtual-pointer
 # owner thread. EventQueue<State> is !Send, so the persistent device must
 # live on its own thread; crossbeam gives us a Send sender and synchronous
 # reply channels that preserve the "tool call blocks until compositor
 # roundtripped" contract the X11 path provides.
 crossbeam-channel = "0.5"
+# Resolves text against the compositor's XKB keymap: niri text input and the
+# libei keymap fallback when the EIS server does NOT advertise `ei_text`
+# (libei < 1.6, i.e. older GNOME / KDE Plasma 6.0).
+xkbcommon = "0.9"
 # Resolve `$XDG_STATE_HOME` (with platform fallback) for persisting the
 # ScreenCast and RemoteDesktop `restore_token`s so users see the consent
 # dialog only once per install, not once per process.
@@ -142,7 +142,6 @@ portal-input = [
     "dep:reis",
     "dep:calloop",
     "dep:enumflags2",
-    "dep:xkbcommon",
 ]
 # PipeWire-backed per-window ScreenCast capture keeps its newer system-header
 # requirement and remains enabled by Nix/modern desktop builds.

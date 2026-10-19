@@ -9,6 +9,7 @@
 //! available, window-scoped screenshots use output crops only for visible,
 //! compositor-attested surfaces and return a typed identity error otherwise.
 
+mod compositor_peer;
 pub mod ext_screencopy;
 pub mod ext_toplevel;
 pub mod hyprland;
@@ -16,6 +17,8 @@ pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
 pub mod kwin_helper;
+pub mod niri;
+pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub mod overlay;
 pub mod persistent_vptr;
 pub(crate) mod portal;
@@ -92,7 +95,6 @@ fn bind_foreground_target(pid: u32, window_id: u64) -> ForegroundTargetGuard {
     ForegroundTargetGuard(previous)
 }
 
-#[cfg(feature = "portal-input")]
 fn current_foreground_target() -> Option<(u32, u64)> {
     CURRENT_FOREGROUND_TARGET.with(std::cell::Cell::get)
 }
@@ -394,6 +396,8 @@ struct State {
     // button press at the output centre (over the just-activated window).
     vptr_manager: Option<ZwlrVirtualPointerManagerV1>,
     output: Option<WlOutput>,
+    /// wl_output v4 name of `output`, the output screencopy copies.
+    output_name: Option<String>,
     // Logical (post-transform) output size: virtual-pointer absolute motion
     // maps onto the output's logical box, so rotated outputs swap axes.
     output_w: u32,
@@ -404,6 +408,141 @@ struct State {
     scrcopy_manager: Option<ZwlrScreencopyManagerV1>,
     shm: Option<WlShm>,
     capture: CaptureState,
+    /// Whether the pending [`bounded_roundtrip`] was answered.
+    synced: bool,
+}
+
+impl Syncs for State {
+    fn synced(&mut self) -> &mut bool {
+        &mut self.synced
+    }
+}
+
+impl Dispatch<wayland_client::protocol::wl_callback::WlCallback, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &wayland_client::protocol::wl_callback::WlCallback,
+        event: wayland_client::protocol::wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_callback::Event::Done { .. } = event {
+            state.synced = true;
+        }
+    }
+}
+
+// ── Bounded Wayland waits (niri) ─────────────────────────────────────────────
+
+/// How long one round trip with niri may take.
+const NIRI_ROUNDTRIP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+/// A niri pointer action's deadline when its worker serves no tool call
+/// with one (see [`crate::input::action`]).
+const NIRI_POINTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+/// How long releasing held buttons may take once an action is over, even
+/// past its deadline.
+const NIRI_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// niri did not answer a bounded round trip in time; its connection may
+/// still work.
+#[derive(Debug)]
+struct RoundTripTimedOut;
+
+impl std::fmt::Display for RoundTripTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("niri did not answer a Wayland round trip in time")
+    }
+}
+
+impl std::error::Error for RoundTripTimedOut {}
+
+/// A dispatch state that records when its `wl_display.sync` is answered.
+trait Syncs {
+    fn synced(&mut self) -> &mut bool;
+}
+
+/// Send `wl_display.sync` and dispatch until niri answers or `deadline`
+/// (at most [`NIRI_ROUNDTRIP_TIMEOUT`] away) passes. `EventQueue::roundtrip`
+/// blocks until the compositor answers, so a stalled niri would hang the
+/// call and leave a pressed button held.
+fn bounded_roundtrip<D>(
+    connection: &Connection,
+    queue: &mut wayland_client::EventQueue<D>,
+    state: &mut D,
+    deadline: std::time::Instant,
+) -> anyhow::Result<()>
+where
+    D: Syncs + Dispatch<wayland_client::protocol::wl_callback::WlCallback, ()> + 'static,
+{
+    use anyhow::Context as _;
+    use std::os::fd::AsRawFd as _;
+    let deadline = deadline.min(std::time::Instant::now() + NIRI_ROUNDTRIP_TIMEOUT);
+    *state.synced() = false;
+    connection.display().sync(&queue.handle(), ());
+    loop {
+        queue
+            .dispatch_pending(state)
+            .context("niri Wayland dispatch failed")?;
+        if *state.synced() {
+            return Ok(());
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(RoundTripTimedOut.into());
+        }
+        queue.flush().context("niri Wayland flush failed")?;
+        let Some(guard) = queue.prepare_read() else {
+            continue;
+        };
+        let mut pfd = libc::pollfd {
+            fd: guard.connection_fd().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let timeout = remaining.as_millis().clamp(1, i32::MAX as u128) as i32;
+        // SAFETY: one valid pollfd that outlives the call.
+        let ready = unsafe { libc::poll(&mut pfd, 1, timeout) };
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error).context("poll on niri's Wayland socket failed");
+        }
+        if ready == 0 {
+            continue;
+        }
+        match guard.read() {
+            Ok(_) => {}
+            Err(wayland_client::backend::WaylandError::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error).context("niri Wayland read failed"),
+        }
+    }
+}
+
+/// A round trip bounded by `deadline` on niri; elsewhere the blocking one
+/// other compositors have always used.
+fn sync_by(
+    connection: &Connection,
+    queue: &mut wayland_client::EventQueue<State>,
+    state: &mut State,
+    deadline: Option<std::time::Instant>,
+) -> anyhow::Result<()> {
+    match deadline {
+        Some(deadline) => bounded_roundtrip(connection, queue, state, deadline),
+        None => queue.roundtrip(state).map(drop).map_err(Into::into),
+    }
+}
+
+/// The Wayland connection for capture or pointer input: on niri, a socket
+/// connected within a deadline and proven to reach the recognised niri.
+fn wayland_connection(niri: bool) -> anyhow::Result<Connection> {
+    if niri {
+        return Ok(Connection::from_socket(niri::attested_wayland_socket()?)?);
+    }
+    Ok(Connection::connect_to_env()?)
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
@@ -474,12 +613,18 @@ impl Dispatch<WlSeat, ()> for State {
 impl Dispatch<WlOutput, ()> for State {
     fn event(
         state: &mut Self,
-        _: &WlOutput,
+        output: &WlOutput,
         event: wl_output::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wl_output::Event::Name { name } = &event {
+            if state.output.as_ref() == Some(output) {
+                state.output_name = Some(name.clone());
+            }
+            return;
+        }
         // Remember the output resolution so `click` can aim at its centre.
         // Modes are reported in the panel's native orientation; the geometry
         // transform turns them into the logical frame input coordinates use.
@@ -769,14 +914,26 @@ fn capture_via_grim() -> anyhow::Result<Vec<u8>> {
 /// request a copy, wait for Ready, swap channels, encode PNG. Returns an error
 /// if any global is missing or the compositor flags the capture as failed.
 fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
-    let conn = Connection::connect_to_env()?;
+    screencopy_first_output().map(|(png, _)| png)
+}
+
+/// [`capture_via_screencopy`], plus the wl_output v4 name of the copied
+/// output when the compositor reports one.
+fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
+    // The whole copy, connection included, waits at most this long.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // On niri every round trip is bounded by it as well, so a stalled niri
+    // ends the capture at the deadline instead of hanging it.
+    let niri = is_wayland() && niri::is_session();
+    let bounded = niri.then_some(deadline);
+    let conn = wayland_connection(niri)?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
     conn.display().get_registry(&qh, ());
 
     let mut state = State::default();
-    queue.roundtrip(&mut state)?;
-    queue.roundtrip(&mut state)?; // outputs report their Mode
+    sync_by(&conn, &mut queue, &mut state, bounded)?;
+    sync_by(&conn, &mut queue, &mut state, bounded)?; // outputs report their Mode
 
     let manager = state
         .scrcopy_manager
@@ -793,7 +950,6 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
 
     let frame = manager.capture_output(0, &output, &qh, ());
     // Drain Buffer / Flags events; spin until Ready or Failed (or timeout).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut buffer: Option<WlBuffer> = None;
     let mut pool: Option<WlShmPool> = None;
     let mut mmap_ptr: *mut libc::c_void = std::ptr::null_mut();
@@ -801,7 +957,10 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
     let mut fd: i32 = -1;
 
     loop {
-        queue.roundtrip(&mut state)?;
+        if let Err(error) = sync_by(&conn, &mut queue, &mut state, bounded) {
+            cleanup_mmap(mmap_ptr, mmap_len, fd);
+            return Err(error);
+        }
         if state.capture.failed {
             anyhow::bail!("compositor signalled screencopy failure");
         }
@@ -891,10 +1050,15 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
         p.destroy();
     }
     frame.destroy();
-    let _ = queue.roundtrip(&mut state);
+    let _ = sync_by(
+        &conn,
+        &mut queue,
+        &mut state,
+        niri.then(|| std::time::Instant::now() + NIRI_CLEANUP_TIMEOUT),
+    );
     cleanup_mmap(mmap_ptr, mmap_len, fd);
 
-    result
+    result.map(|png| (png, state.output_name.take()))
 }
 
 /// Allocate an anonymous shared-memory file of `size` bytes and mmap it RW.
@@ -970,7 +1134,7 @@ pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
 #[derive(Debug)]
 pub struct SurfaceIdentityUnproven {
     window_id: u64,
-    reason: &'static str,
+    reason: std::borrow::Cow<'static, str>,
 }
 
 impl std::fmt::Display for SurfaceIdentityUnproven {
@@ -997,8 +1161,15 @@ struct WaylandWindowCrop {
     height: u32,
 }
 
-fn surface_identity_unproven(window_id: u64, reason: &'static str) -> anyhow::Error {
-    SurfaceIdentityUnproven { window_id, reason }.into()
+fn surface_identity_unproven(
+    window_id: u64,
+    reason: impl Into<std::borrow::Cow<'static, str>>,
+) -> anyhow::Error {
+    SurfaceIdentityUnproven {
+        window_id,
+        reason: reason.into(),
+    }
+    .into()
 }
 
 fn attested_wayland_crop(
@@ -1110,6 +1281,9 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
             )
         });
     }
+    if is_wayland() && niri::is_session() {
+        return niri_window_capture(xid, pid);
+    }
     if is_wayland() {
         // A GNOME helper with API 9+ snapshots the window's own actor, so a
         // covering window never shows. It is then the only GNOME route: a
@@ -1134,6 +1308,68 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
         screenshot_display_dispatch,
         crate::capture::screenshot_window_bytes,
     )
+}
+
+/// A niri display capture: only the attested wlroots screencopy, oriented by
+/// the copied output's own transform. grim, ext-image-copy and the portal
+/// are not tied to the attested compositor or orient differently, so niri
+/// never falls back to them.
+fn niri_display_capture() -> anyhow::Result<niri::DisplayCapture> {
+    niri::refuse_if_locked()?;
+    // Read the transforms on both sides of the copy: a change in between
+    // would orient the buffer with a transform it was not taken in.
+    let before = niri::output_transforms()?;
+    let (png, output) = screencopy_first_output()?;
+    let output = output.ok_or_else(|| {
+        anyhow::anyhow!("niri capture needs the wl_output name (wl_output v4) of the copied output")
+    })?;
+    let transform = niri::output_transforms()?
+        .get(&output)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("niri reports no enabled output {output:?}"))?;
+    if before.get(&output) != Some(&transform) {
+        anyhow::bail!("the transform of niri output {output:?} changed during capture");
+    }
+    let png = orient_png_for_niri_transform(png, transform)?;
+    let size = image::ImageReader::new(std::io::Cursor::new(&png))
+        .with_guessed_format()?
+        .into_dimensions()?;
+    Ok(niri::DisplayCapture {
+        png,
+        output,
+        transform,
+        size,
+    })
+}
+
+/// niri has no per-toplevel capture protocol: crop a settled display capture
+/// to a placed, unoverlapped floating window and scale it to the window's
+/// logical size, the window-local coordinate frame input uses. A tiled
+/// window refuses: niri does not report where it is.
+fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    let (png, plan) = niri::capture_window(xid, pid, niri_display_capture)
+        .map_err(|reason| surface_identity_unproven(xid, format!("niri: {reason}")))?;
+    let pixels = plan.pixels;
+    let crop = crop_png_to_rect(
+        &png,
+        pixels.x,
+        pixels.y,
+        pixels.width,
+        pixels.height,
+        &format!("niri window {xid}"),
+    )?;
+    let image = image::load_from_memory_with_format(&crop, image::ImageFormat::Png)?;
+    if (image.width(), image.height()) == (plan.width, plan.height) {
+        return Ok(crop);
+    }
+    let image = image.resize_exact(
+        plan.width,
+        plan.height,
+        image::imageops::FilterType::Triangle,
+    );
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png)?;
+    Ok(out.into_inner())
 }
 
 fn crop_png_to_rect(
@@ -1175,6 +1411,9 @@ fn crop_png_to_rect(
 ///    first use per session.
 /// 5. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
+    if is_wayland() && niri::is_session() {
+        return niri_display_capture().map(|capture| capture.png);
+    }
     if is_wayland() && hyprland::is_session() {
         // The desktop action frame spans every powered output. The cascade
         // below copies only the first output, so a multi-monitor layout is
@@ -1197,17 +1436,17 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         }
         // Tier 2: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
-            Ok(bytes) => return orient_hyprland_display_png(bytes),
+            Ok(bytes) => return orient_display_png(bytes),
             Err(e) => {
                 tracing::debug!(
                     "wlroots screencopy unavailable ({e}); trying ext-image-copy-capture-v1"
                 );
             }
         }
-        // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+, niri,
+        // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
-            Ok(bytes) => return orient_hyprland_display_png(bytes),
+            Ok(bytes) => return orient_display_png(bytes),
             Err(e) => {
                 tracing::debug!(
                     "ext-image-copy-capture-v1 unavailable ({e}); trying xdg-desktop-portal"
@@ -1258,13 +1497,31 @@ fn rotate_png_for_output_transform(png: Vec<u8>, transform: u32) -> anyhow::Resu
 }
 
 /// Full-display screencopy returns the output buffer in the panel's native
-/// orientation. On Hyprland, turn it into the logical desktop frame so the
-/// screenshot matches what the user sees and what desktop-scope input uses.
-fn orient_hyprland_display_png(png: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+/// orientation. On Hyprland, turn it into the logical desktop frame
+/// so the screenshot matches what the user sees and what desktop-scope input
+/// uses.
+fn orient_display_png(png: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     if !hyprland::is_session() {
         return Ok(png);
     }
     rotate_png_for_output_transform(png, hyprland::single_output_transform()?)
+}
+
+/// niri output transforms: rotations as on Hyprland, plus the two pure
+/// flips. A nested niri forces `Flipped180` (a vertical flip) on its winit
+/// output, so its screencopy buffer is upside down. Flips combined with a
+/// quarter turn are refused rather than guessed.
+fn orient_png_for_niri_transform(png: Vec<u8>, transform: u32) -> anyhow::Result<Vec<u8>> {
+    let flip: fn(&image::DynamicImage) -> image::DynamicImage = match transform {
+        0..=3 => return rotate_png_for_output_transform(png, transform),
+        4 => image::DynamicImage::fliph,
+        6 => image::DynamicImage::flipv,
+        other => anyhow::bail!("niri output transform {other} is not supported for capture"),
+    };
+    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
+    let mut out = Vec::new();
+    flip(&img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    Ok(out)
 }
 
 fn checked_shell_helper_capture(
@@ -1307,10 +1564,22 @@ fn is_no_vptr(err: &anyhow::Error) -> bool {
 /// KDE/GNOME input recovery flows.
 fn with_libei_fallback<T>(
     f: impl FnOnce() -> anyhow::Result<T>,
+    fallback: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    libei_recovery(is_wayland() && niri::is_session(), f, fallback)
+}
+
+/// [`with_libei_fallback`] for a session known to be (or not be) niri.
+/// libei finds its own EIS socket or portal, which nothing ties to the
+/// attested niri, so under niri the failure is refused instead.
+fn libei_recovery<T>(
+    on_niri: bool,
+    f: impl FnOnce() -> anyhow::Result<T>,
     #[allow(unused_variables)] fallback: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     match f() {
         Ok(v) => Ok(v),
+        Err(e) if on_niri && is_no_vptr(&e) => Err(niri_refuses_libei(e.to_string())),
         Err(e) if is_no_vptr(&e) => {
             #[cfg(feature = "portal-input")]
             {
@@ -1344,9 +1613,74 @@ pub struct VptrSession {
     /// coordinates; [`VptrSession::abs`] converts them for `motion_absolute`.
     pub origin_x: i32,
     pub origin_y: i32,
+    /// On niri, the deadline every round trip is bounded by.
+    deadline: Option<std::time::Instant>,
+    /// Buttons pressed and not released yet: dropping the session releases
+    /// them, whatever stopped the action.
+    held: Vec<u32>,
+    /// Destroyed by [`VptrSession::finish`], or handed on by
+    /// [`VptrSession::keep`].
+    done: bool,
 }
 
 impl VptrSession {
+    /// Wait until the compositor has handled every request sent so far.
+    fn sync(&mut self) -> anyhow::Result<()> {
+        sync_by(&self.conn, &mut self.queue, &mut self.state, self.deadline)
+    }
+
+    /// Send pointer events, unless the tool call this action serves is over
+    /// (see [`crate::input::action`]), then wait for the compositor.
+    fn send(&mut self, events: impl FnOnce(&ZwlrVirtualPointerV1)) -> anyhow::Result<()> {
+        let (conn, vptr) = (&self.conn, &self.vptr);
+        crate::input::action::admit(|| {
+            events(vptr);
+            vptr.frame();
+            conn.flush()
+        })??;
+        self.sync()
+    }
+
+    fn motion(&mut self, px: u32, py: u32) -> anyhow::Result<()> {
+        let (w, h) = (self.output_w, self.output_h);
+        self.send(|vptr| vptr.motion_absolute(event_time_ms(), px, py, w, h))
+    }
+
+    fn press(&mut self, button: u32) -> anyhow::Result<()> {
+        let (conn, vptr) = (&self.conn, &self.vptr);
+        crate::input::action::admit(|| {
+            vptr.button(event_time_ms(), button, ButtonState::Pressed);
+            vptr.frame();
+            conn.flush()
+        })??;
+        self.held.push(button);
+        self.sync()
+    }
+
+    /// Release `button`. Cleanup: it goes out even once the call is over.
+    fn release(&mut self, button: u32) -> anyhow::Result<()> {
+        self.held.retain(|held| *held != button);
+        self.vptr
+            .button(event_time_ms(), button, ButtonState::Released);
+        self.vptr.frame();
+        self.sync()
+    }
+
+    /// Destroy the virtual pointer once the action is complete.
+    fn finish(mut self) -> anyhow::Result<()> {
+        self.done = true;
+        self.vptr.destroy();
+        self.sync()
+    }
+
+    /// Hand the connection and the virtual pointer, with its pressed
+    /// buttons, to an owner that keeps them across calls.
+    fn keep(mut self) -> (Connection, ZwlrVirtualPointerV1) {
+        self.done = true;
+        self.held.clear();
+        (self.conn.clone(), self.vptr.clone())
+    }
+
     /// Layout point -> clamped `motion_absolute` coordinates.
     pub fn abs(&self, x: i32, y: i32) -> (u32, u32) {
         pointer_abs(
@@ -1376,6 +1710,13 @@ pub(crate) fn pointer_abs(
     )
 }
 
+/// Whether `motion_absolute` reaches layout point `(x, y)` itself rather
+/// than a point [`pointer_abs`] clamped it to.
+fn pointer_reaches(origin_x: i32, origin_y: i32, w: u32, h: u32, x: i32, y: i32) -> bool {
+    let (px, py) = pointer_abs(origin_x, origin_y, w, h, x, y);
+    (origin_x + px as i32, origin_y + py as i32) == (x, y)
+}
+
 /// How one desktop-scope action is addressed: desktop-frame points (from
 /// `get_desktop_state`) convert to layout coordinates, and the virtual pointer
 /// is sized, from a single compositor snapshot. Other compositors keep the
@@ -1383,16 +1724,29 @@ pub(crate) fn pointer_abs(
 #[derive(Clone, Debug, Default)]
 pub struct DesktopInputSpace {
     snapshot: Option<hyprland::DesktopSnapshot>,
+    /// The `get_desktop_state` capture the points come from, when named.
+    capture: Option<String>,
 }
 
 impl DesktopInputSpace {
     pub fn current() -> anyhow::Result<Self> {
         let snapshot = if is_wayland() && hyprland::is_session() {
             Some(hyprland::desktop_snapshot()?)
+        } else if is_wayland() && niri::is_session() {
+            Some(niri::desktop_snapshot()?)
         } else {
             None
         };
-        Ok(Self { snapshot })
+        Ok(Self {
+            snapshot,
+            capture: None,
+        })
+    }
+
+    /// Name the `get_desktop_state` capture the action's points come from.
+    pub fn with_capture(mut self, capture_id: Option<String>) -> Self {
+        self.capture = capture_id;
+        self
     }
 
     /// Layout coordinates of a desktop-frame point.
@@ -1428,15 +1782,33 @@ impl VptrSession {
     /// from the keyboard) never got the wheel or the button that followed.
     /// Approaching from the next pixel always moves the pointer.
     fn point_at(&mut self, px: u32, py: u32) -> anyhow::Result<()> {
-        let (w, h) = (self.output_w, self.output_h);
-        self.vptr
-            .motion_absolute(event_time_ms(), approach_pixel(px, w), py, w, h);
-        self.vptr.frame();
-        self.queue.roundtrip(&mut self.state)?;
-        self.vptr.motion_absolute(event_time_ms(), px, py, w, h);
-        self.vptr.frame();
-        self.queue.roundtrip(&mut self.state)?;
-        Ok(())
+        self.motion(approach_pixel(px, self.output_w), py)?;
+        self.motion(px, py)
+    }
+}
+
+impl Drop for VptrSession {
+    /// An action that stopped early still releases what it pressed, on a
+    /// short deadline of its own on niri.
+    fn drop(&mut self) {
+        if self.done {
+            return;
+        }
+        for button in std::mem::take(&mut self.held) {
+            self.vptr
+                .button(event_time_ms(), button, ButtonState::Released);
+            self.vptr.frame();
+        }
+        self.vptr.destroy();
+        let _ = match self.deadline {
+            Some(_) => bounded_roundtrip(
+                &self.conn,
+                &mut self.queue,
+                &mut self.state,
+                std::time::Instant::now() + NIRI_CLEANUP_TIMEOUT,
+            ),
+            None => self.conn.flush().map_err(Into::into),
+        };
     }
 }
 
@@ -1455,6 +1827,11 @@ fn approach_pixel(px: u32, extent: u32) -> u32 {
 /// and the virtual pointer both read this, so a desktop screenshot pixel and a
 /// pointer coordinate always share one frame.
 pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
+    if niri::is_session() {
+        return Some(
+            niri::desktop_snapshot().map(|snapshot| (snapshot.frame.width, snapshot.frame.height)),
+        );
+    }
     hyprland::is_session()
         .then(|| hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
 }
@@ -1472,6 +1849,8 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
 fn virtual_pointer_space(output_mode: (u32, u32)) -> anyhow::Result<(i32, i32, u32, u32)> {
     let layout = if hyprland::is_session() {
         hyprland::pointer_space()?
+    } else if is_wayland() && niri::is_session() {
+        Some(niri::pointer_space()?)
     } else {
         None
     };
@@ -1502,15 +1881,23 @@ fn open_vptr_session_in(
     activate_window_id: Option<u64>,
     snapshot: Option<&hyprland::DesktopSnapshot>,
 ) -> anyhow::Result<VptrSession> {
-    let conn = Connection::connect_to_env()?;
+    // A niri window is activated by the pointer gate, once the action is
+    // admitted; its id never reaches the foreign-toplevel match below.
+    let niri = is_wayland() && niri::is_session();
+    let deadline = niri.then(|| {
+        crate::input::action::current().map_or_else(
+            || std::time::Instant::now() + NIRI_POINTER_TIMEOUT,
+            |action| action.deadline(),
+        )
+    });
+    let conn = wayland_connection(niri)?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
     conn.display().get_registry(&qh, ());
 
     let mut state = State::default();
-    queue.roundtrip(&mut state)?;
-    for _ in 0..4 {
-        queue.roundtrip(&mut state)?;
+    for _ in 0..5 {
+        sync_by(&conn, &mut queue, &mut state, deadline)?;
     }
 
     // Evaluate the virtual-pointer / NO_VPTR_MARKER path FIRST: on compositors
@@ -1545,7 +1932,7 @@ fn open_vptr_session_in(
 
     // foreign-toplevel is only needed to activate a specific window before
     // synthesising input; require it only when a caller actually asks for that.
-    if activate_window_id.is_some() && state.manager.is_none() {
+    if activate_window_id.is_some() && !niri && state.manager.is_none() {
         anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
     }
 
@@ -1553,11 +1940,11 @@ fn open_vptr_session_in(
         anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input")
     })?;
 
-    if let Some(id) = activate_window_id {
+    if let Some(id) = activate_window_id.filter(|_| !niri) {
         let handle = matching_handle(&state, id)
             .ok_or_else(|| anyhow::anyhow!("no native Wayland toplevel for window_id {id}"))?;
         handle.activate(&seat);
-        queue.roundtrip(&mut state)?;
+        sync_by(&conn, &mut queue, &mut state, deadline)?;
     }
 
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
@@ -1577,6 +1964,9 @@ fn open_vptr_session_in(
         output_h,
         origin_x,
         origin_y,
+        deadline,
+        held: Vec::new(),
+        done: false,
     })
 }
 
@@ -1608,6 +1998,11 @@ pub fn activate_window_for_input_target(
             return Ok(());
         }
         anyhow::bail!("foreground_unavailable: exact-address Hyprland activation is not implemented; refusing title-based activation");
+    }
+    if is_wayland() && niri::is_session() {
+        // A niri id never enters the foreign-toplevel title route: focus the
+        // exact window and read the focus back.
+        return niri::activate(window_id, target_pid);
     }
     if is_inject_mode() {
         let pid = target_pid.ok_or_else(|| {
@@ -1677,6 +2072,9 @@ pub fn with_target_foreground<T>(
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let _target_guard = bind_foreground_target(pid, window_id);
+    if is_wayland() && niri::is_session() {
+        return niri::with_focused_window(pid, window_id, body);
+    }
     if let Some(window) = sway_ipc::window_for_id(window_id) {
         if window.pid != pid {
             anyhow::bail!(
@@ -1753,6 +2151,23 @@ fn event_time_ms() -> u32 {
         .clamp(1, u32::MAX as u128) as u32
 }
 
+/// On niri, restore the prior focus after window-addressed pointer input,
+/// as `click` does. The pointer gate in `body` focuses the target only once
+/// the input is admitted, so a refusal changes nothing. Other compositors
+/// run `body` as before: their double clicks, scrolls and drags activate the
+/// target and leave it focused.
+pub fn restoring_niri_focus<T>(
+    pid: u32,
+    window_id: u64,
+    body: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if is_wayland() && niri::is_session() {
+        let _target_guard = bind_foreground_target(pid, window_id);
+        return niri::with_focus_restored(pid, window_id, body);
+    }
+    body()
+}
+
 /// Click a native Wayland toplevel identified by its `window_id` (the
 /// foreign-toplevel protocol id from `list_windows`) at output-relative
 /// `(x, y)`, with `button` (1/2/3 = left/middle/right) emitted `count` times.
@@ -1812,9 +2227,160 @@ pub fn click_desktop(
     }
     let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
-        || click_vptr(None, x, y, count, button, space.snapshot.as_ref()),
+        || click_vptr(None, x, y, count, button, Some(space)),
         || libei_click(x, y, count, button),
     )
+}
+
+/// Recheck an admitted niri pointer action right before an event that acts
+/// on the target: the first motion, the first press, and each wheel tick. niri
+/// sends no event when outputs change, so the pointer space is reread too.
+fn niri_gate_holds(gate: &mut Option<niri::PointerGate>, sess: &VptrSession) -> anyhow::Result<()> {
+    let Some(gate) = gate else {
+        return Ok(());
+    };
+    // niri answers the query only after it has handled what it received
+    // before, so a window that closed by then is in the history read next.
+    let space = (sess.origin_x, sess.origin_y, sess.output_w, sess.output_h);
+    let current = gate.pointer_space().map_err(niri::input_unavailable)?;
+    gate.confirm()?;
+    pointer_space_holds(space, current)
+}
+
+/// The niri pointer space now, read on an attested connection, or `None`
+/// off niri.
+fn niri_pointer_space_now() -> anyhow::Result<Option<(i32, i32, u32, u32)>> {
+    if !(is_wayland() && niri::is_session()) {
+        return Ok(None);
+    }
+    niri::pointer_space()
+        .map(Some)
+        .map_err(niri::input_unavailable)
+}
+
+/// Refuse when the compositor's pointer space no longer matches the extent
+/// the session scales `motion_absolute` by: every motion would land elsewhere.
+fn pointer_space_holds(
+    session: (i32, i32, u32, u32),
+    current: (i32, i32, u32, u32),
+) -> anyhow::Result<()> {
+    let current = select_virtual_pointer_space((1, 1), Some(current));
+    anyhow::ensure!(
+        session == current,
+        "foreground_unavailable: the niri pointer space changed from {session:?} to {current:?}; take a new screenshot"
+    );
+    Ok(())
+}
+
+/// Deliver the `count` events of one gesture, the presses of a click train
+/// or the ticks of a scroll, rechecking right before each one. `between`
+/// separates two events (a pause, and any motion that re-aims the pointer)
+/// and runs before the recheck, so nothing waits between the check and the
+/// event. A first press can close its target or open another window over
+/// the point, so the next press would reach whatever is there now: it stops
+/// instead. A refusal after an event landed says how many did, without the
+/// `foreground_unavailable` prefix that would report no effect.
+fn gated_events<S>(
+    sess: &mut S,
+    count: u32,
+    (gesture, events): (&str, &str),
+    mut between: impl FnMut(&mut S) -> anyhow::Result<()>,
+    mut recheck: impl FnMut(&S) -> anyhow::Result<()>,
+    mut deliver: impl FnMut(&mut S, u32) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let count = count.max(1);
+    for i in 0..count {
+        if i > 0 {
+            between(sess)?;
+        }
+        if let Err(refusal) = recheck(sess) {
+            if i == 0 {
+                return Err(refusal);
+            }
+            anyhow::bail!("{gesture} stopped after {i} of {count} {events}: {refusal}");
+        }
+        deliver(sess, i)?;
+    }
+    Ok(())
+}
+
+/// Move a pressed button through `path`, rechecking right before each motion.
+/// The layout or the pointer space can change while the button is held (an
+/// output rescaled by the press), and the rest of the path would then land
+/// elsewhere: a refusal releases the button where the pointer is and says how
+/// far the drag got. The press went out, so it never reads as no effect.
+fn held_motions<S>(
+    sess: &mut S,
+    path: impl ExactSizeIterator<Item = (u32, u32)>,
+    mut recheck: impl FnMut(&S) -> anyhow::Result<()>,
+    mut motion: impl FnMut(&mut S, (u32, u32)) -> anyhow::Result<()>,
+    release: impl FnOnce(&mut S) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let total = path.len();
+    for (i, point) in path.enumerate() {
+        if let Err(refusal) = recheck(sess) {
+            match release(sess) {
+                Ok(()) => anyhow::bail!(
+                    "drag stopped after {i} of {total} motions, and the button was released: {refusal}"
+                ),
+                Err(error) => anyhow::bail!(
+                    "drag stopped after {i} of {total} motions, and releasing the button failed ({error:#}): {refusal}"
+                ),
+            }
+        }
+        motion(sess, point)?;
+    }
+    Ok(())
+}
+
+/// The legacy wlroots route sends a click at `(0, 0)` to the output centre.
+/// On Hyprland and niri callers address the global layout, where `(0, 0)` is
+/// a real point (a window or bar at the top-left corner).
+fn centres_origin_click(x: i32, y: i32, layout_addressed: bool) -> bool {
+    x == 0 && y == 0 && !layout_addressed
+}
+
+/// On niri, window-addressed pointer input waits for the layout to settle,
+/// proves each layout point lands on the target window and then activates it
+/// (see [`niri::gate_pointer`]). Desktop-scope input names no window: its
+/// points are pixels of the latest `get_desktop_state` screenshot, admitted
+/// while that screenshot's frame holds (see [`niri::desktop_gate`]). Confirm
+/// the returned gate right before sending the first event.
+fn niri_pointer_gate(
+    window_id: Option<u64>,
+    desktop: Option<&DesktopInputSpace>,
+    sess: &VptrSession,
+    points: &[(i32, i32)],
+) -> anyhow::Result<Option<niri::PointerGate>> {
+    if !(is_wayland() && niri::is_session()) {
+        return Ok(None);
+    }
+    niri::refuse_if_locked().map_err(niri::input_unavailable)?;
+    // `motion_absolute` clamps into the pointer space: a point it would move
+    // lands somewhere other than where it was aimed.
+    for &(x, y) in points {
+        if !pointer_reaches(
+            sess.origin_x,
+            sess.origin_y,
+            sess.output_w,
+            sess.output_h,
+            x,
+            y,
+        ) {
+            anyhow::bail!(
+                "foreground_unavailable: point ({x}, {y}) is outside the niri pointer space"
+            );
+        }
+    }
+    let gate = match (window_id, desktop) {
+        (Some(id), _) => niri::gate_pointer(id, points, true)?,
+        (None, Some(desktop)) => niri::desktop_gate(points, desktop.capture.as_deref())?,
+        (None, None) => match current_foreground_target() {
+            Some((_, id)) => niri::gate_pointer(id, points, false)?,
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(gate))
 }
 
 /// wlroots virtual-pointer implementation of [`click`]. Falls back to libei via
@@ -1825,44 +2391,48 @@ fn click_vptr(
     y: i32,
     count: u32,
     button: u8,
-    snapshot: Option<&hyprland::DesktopSnapshot>,
+    desktop: Option<&DesktopInputSpace>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session_in(window_id, snapshot)?;
+    let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
-    let (px, py) = if x == 0 && y == 0 && !hyprland::is_session() {
+    let centre = centres_origin_click(x, y, hyprland::is_session() || niri::is_session());
+    let (px, py) = if centre {
         (w / 2, h / 2)
     } else {
         sess.abs(x, y)
     };
+    let aimed = if centre {
+        (sess.origin_x + px as i32, sess.origin_y + py as i32)
+    } else {
+        (x, y)
+    };
+    let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[aimed])?;
     let btn = evdev_pointer_button(button);
-    for i in 0..count.max(1) {
-        if i > 0 {
+    niri_gate_holds(&mut gate, &sess)?;
+    sess.point_at(px, py)?;
+    std::thread::sleep(std::time::Duration::from_millis(15));
+    gated_events(
+        &mut sess,
+        count,
+        ("click", "presses"),
+        |sess| {
             std::thread::sleep(std::time::Duration::from_millis(80));
-        }
-        if i == 0 {
-            sess.point_at(px, py)?;
-        } else {
-            sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
-            sess.vptr.frame();
-            sess.queue.roundtrip(&mut sess.state)?;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(15));
-        sess.vptr.button(event_time_ms(), btn, ButtonState::Pressed);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        sess.vptr
-            .button(event_time_ms(), btn, ButtonState::Released);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
-    }
+            sess.motion(px, py)?;
+            std::thread::sleep(std::time::Duration::from_millis(15));
+            Ok(())
+        },
+        |sess| niri_gate_holds(&mut gate, sess),
+        |sess, _| {
+            sess.press(btn)?;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            sess.release(btn)
+        },
+    )?;
     // Keep the synthetic-cursor registry in sync with the warp we just
     // performed so a subsequent `get_cursor_position` reflects reality.
     record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
-    sess.vptr.destroy();
-    sess.queue.roundtrip(&mut sess.state)?;
-    Ok(())
+    sess.finish()
 }
 
 /// Synthesize a vertical or horizontal scroll on the activated toplevel. Each
@@ -1875,10 +2445,15 @@ pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()
 
 /// Translate window-local screenshot coordinates into compositor output
 /// coordinates when the active compositor exposes the target geometry.
-pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> (i32, i32) {
-    window_geometry(window_id)
+/// On niri a window without a reported place (a tiled one) refuses: passing
+/// `(x, y)` through would aim window-local coordinates at the layout origin.
+pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
+    if is_wayland() && niri::is_session() {
+        return niri::aim(window_id, x, y);
+    }
+    Ok(window_geometry(window_id)
         .map(|(window_x, window_y, _, _)| (window_x.saturating_add(x), window_y.saturating_add(y)))
-        .unwrap_or((x, y))
+        .unwrap_or((x, y)))
 }
 
 /// Resolve geometry through stable title/app identity when a foreign-toplevel
@@ -1889,6 +2464,17 @@ pub fn window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
         // Do not fall back to title, app-id, X11, or another compositor when
         // an explicit native Hyprland address is missing.
         return hyprland::window_for_address(window_id).map(|w| (w.x, w.y, w.width, w.height));
+    }
+    if is_wayland() && niri::is_session() {
+        // Only a placed floating niri window has geometry. A tiled one has
+        // none, and no title or app-id match may supply it.
+        let placed = niri::window_for_id(window_id).ok()?.placement.ok()?;
+        return Some((
+            placed.rect.x,
+            placed.rect.y,
+            placed.rect.width,
+            placed.rect.height,
+        ));
     }
     if let Some(window) = sway_ipc::window_for_id(window_id) {
         return Some((window.x, window.y, window.width, window.height));
@@ -1989,15 +2575,7 @@ pub fn scroll_desktop(
     let (x, y) = space.input_layout(x, y)?;
     let direction = direction.to_string();
     with_libei_fallback(
-        || {
-            scroll_vptr(
-                None,
-                Some((x, y)),
-                &direction,
-                amount,
-                space.snapshot.as_ref(),
-            )
-        },
+        || scroll_vptr(None, Some((x, y)), &direction, amount, Some(space)),
         || {
             libei_wait_scroll_ready()?;
             libei_move_absolute(x, y)?;
@@ -2012,11 +2590,21 @@ fn scroll_vptr(
     point: Option<(i32, i32)>,
     direction: &str,
     amount: u32,
-    snapshot: Option<&hyprland::DesktopSnapshot>,
+    desktop: Option<&DesktopInputSpace>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session_in(window_id, snapshot)?;
+    // A niri window scroll without a point aims at the window's centre, so
+    // the wheel provably reaches the window rather than whatever is under the
+    // pointer.
+    let point = match (point, window_id) {
+        (None, Some(id)) if is_wayland() && niri::is_session() => Some(niri_window_centre(id)?),
+        (point, _) => point,
+    };
+    let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
+    let mut gate = None;
     if let Some((x, y)) = point {
         let (px, py) = sess.abs(x, y);
+        gate = niri_pointer_gate(window_id, desktop, &sess, &[(x, y)])?;
+        niri_gate_holds(&mut gate, &sess)?;
         sess.point_at(px, py)?;
         record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
         std::thread::sleep(std::time::Duration::from_millis(15));
@@ -2031,18 +2619,33 @@ fn scroll_vptr(
     // axis_discrete: `value` is logical units (the wayland-rs wrapper
     // converts to wl_fixed internally); `discrete` is the tick count.
     let value: f64 = (sign as f64) * 10.0;
-    for i in 0..amount.max(1) {
-        if i > 0 {
+    gated_events(
+        &mut sess,
+        amount,
+        ("scroll", "ticks"),
+        |_| {
             std::thread::sleep(std::time::Duration::from_millis(25));
-        }
-        sess.vptr.axis_source(AxisSource::Wheel);
-        sess.vptr.axis_discrete(event_time_ms(), axis, value, sign);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
-    }
-    sess.vptr.destroy();
-    sess.queue.roundtrip(&mut sess.state)?;
-    Ok(())
+            Ok(())
+        },
+        |sess| niri_gate_holds(&mut gate, sess),
+        |sess, _| {
+            sess.send(|vptr| {
+                vptr.axis_source(AxisSource::Wheel);
+                vptr.axis_discrete(event_time_ms(), axis, value, sign);
+            })
+        },
+    )?;
+    sess.finish()
+}
+
+fn niri_window_centre(window_id: u64) -> anyhow::Result<(i32, i32)> {
+    let (_, _, width, height) = window_geometry(window_id).ok_or_else(|| {
+        anyhow::anyhow!(
+            "foreground_unavailable: niri reports no on-screen place for window {window_id}; \
+             pass a point inside a floating window"
+        )
+    })?;
+    niri::aim(window_id, (width / 2) as i32, (height / 2) as i32)
 }
 
 /// Last cursor position the agent warped to via `move_cursor_absolute`.
@@ -2090,7 +2693,7 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
 pub fn move_cursor_desktop(space: &DesktopInputSpace, x: i32, y: i32) -> anyhow::Result<()> {
     let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
-        || move_cursor_absolute_vptr(None, x, y, space.snapshot.as_ref()),
+        || move_cursor_absolute_vptr(None, x, y, Some(space)),
         || libei_move_absolute(x, y),
     )
 }
@@ -2100,18 +2703,15 @@ fn move_cursor_absolute_vptr(
     window_id: Option<u64>,
     x: i32,
     y: i32,
-    snapshot: Option<&hyprland::DesktopSnapshot>,
+    desktop: Option<&DesktopInputSpace>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session_in(window_id, snapshot)?;
-    let (w, h) = (sess.output_w, sess.output_h);
+    let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
     let (px, py) = sess.abs(x, y);
-    sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
-    sess.vptr.frame();
-    sess.queue.roundtrip(&mut sess.state)?;
+    let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[(x, y)])?;
+    niri_gate_holds(&mut gate, &sess)?;
+    sess.motion(px, py)?;
     record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
-    sess.vptr.destroy();
-    sess.queue.roundtrip(&mut sess.state)?;
-    Ok(())
+    sess.finish()
 }
 
 /// Press-drag-release on a native Wayland toplevel. Emits one button press at
@@ -2163,23 +2763,39 @@ pub fn drag_desktop(
     let (from_x, from_y) = space.input_layout(from_x, from_y)?;
     let (to_x, to_y) = space.input_layout(to_x, to_y)?;
     with_libei_fallback(
-        || {
-            drag_vptr(
-                None,
-                from_x,
-                from_y,
-                to_x,
-                to_y,
-                steps,
-                button,
-                space.snapshot.as_ref(),
-            )
-        },
+        || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button, Some(space)),
         || {
             libei_wait_pointer_ready()?;
             libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
         },
     )
+}
+
+/// The most intermediate motions a drag sends: the `steps` maximum the drag
+/// tools advertise.
+const MAX_DRAG_STEPS: u32 = 200;
+
+/// A drag's motions after its press: `steps` points from `from` toward `to`,
+/// each aimed through `aim`, then `end`. `steps` is clamped to
+/// `1..=MAX_DRAG_STEPS`, and each point is computed only when it is sent.
+fn drag_path(
+    from: (i32, i32),
+    to: (i32, i32),
+    steps: u32,
+    end: (u32, u32),
+    mut aim: impl FnMut(i32, i32) -> (u32, u32),
+) -> impl ExactSizeIterator<Item = (u32, u32)> {
+    let n = steps.clamp(1, MAX_DRAG_STEPS) as usize;
+    (1..n + 2).map(move |s| {
+        if s > n {
+            return end;
+        }
+        let t = s as f64 / n as f64;
+        // In i64, the distance between any two i32 points cannot overflow.
+        let x = (f64::from(from.0) + (i64::from(to.0) - i64::from(from.0)) as f64 * t).round();
+        let y = (f64::from(from.1) + (i64::from(to.1) - i64::from(from.1)) as f64 * t).round();
+        aim(x as i32, y as i32)
+    })
 }
 
 /// wlroots virtual-pointer implementation of [`drag`].
@@ -2192,47 +2808,42 @@ fn drag_vptr(
     to_y: i32,
     steps: u32,
     button: u8,
-    snapshot: Option<&hyprland::DesktopSnapshot>,
+    desktop: Option<&DesktopInputSpace>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session_in(window_id, snapshot)?;
+    let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
     let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
     let clamp_xy = |x: i32, y: i32| pointer_abs(origin_x, origin_y, w, h, x, y);
     let (fx, fy) = clamp_xy(from_x, from_y);
-    sess.vptr.motion_absolute(event_time_ms(), fx, fy, w, h);
-    sess.vptr.frame();
-    sess.queue.roundtrip(&mut sess.state)?;
-    std::thread::sleep(std::time::Duration::from_millis(15));
-    sess.vptr.button(event_time_ms(), btn, ButtonState::Pressed);
-    sess.vptr.frame();
-    sess.queue.roundtrip(&mut sess.state)?;
-    let n = steps.max(1);
-    for s in 1..=n {
-        let t = s as f64 / n as f64;
-        let ix = (from_x as f64 + (to_x - from_x) as f64 * t).round() as i32;
-        let iy = (from_y as f64 + (to_y - from_y) as f64 * t).round() as i32;
-        let (cx, cy) = clamp_xy(ix, iy);
-        sess.vptr.motion_absolute(event_time_ms(), cx, cy, w, h);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
-        std::thread::sleep(std::time::Duration::from_millis(8));
-    }
     let (tx, ty) = clamp_xy(to_x, to_y);
-    sess.vptr.motion_absolute(event_time_ms(), tx, ty, w, h);
-    sess.vptr.frame();
-    sess.queue.roundtrip(&mut sess.state)?;
-    sess.vptr
-        .button(event_time_ms(), btn, ButtonState::Released);
-    sess.vptr.frame();
+    let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[(from_x, from_y), (to_x, to_y)])?;
+    if let Some(gate) = &gate {
+        gate.drag_start(from_x, from_y)?;
+    }
+    niri_gate_holds(&mut gate, &sess)?;
+    sess.motion(fx, fy)?;
+    std::thread::sleep(std::time::Duration::from_millis(15));
+    niri_gate_holds(&mut gate, &sess)?;
+    sess.press(btn)?;
+    let path = drag_path((from_x, from_y), (to_x, to_y), steps, (tx, ty), clamp_xy);
+    held_motions(
+        &mut sess,
+        path,
+        |sess| niri_gate_holds(&mut gate, sess),
+        |sess, (x, y)| {
+            sess.motion(x, y)?;
+            std::thread::sleep(std::time::Duration::from_millis(8));
+            Ok(())
+        },
+        |sess| sess.release(btn),
+    )?;
     // Sync the synthetic-cursor registry with the drag endpoint so a
     // subsequent `get_cursor_position` reports where we left the pointer.
     record_synth_cursor(origin_x + tx as i32, origin_y + ty as i32);
-    sess.queue.roundtrip(&mut sess.state)?;
-    sess.vptr.destroy();
-    sess.queue.roundtrip(&mut sess.state)?;
-    Ok(())
+    sess.release(btn)?;
+    sess.finish()
 }
 
 /// Type Unicode text into the focused Wayland surface via `wtype` (the
@@ -2241,21 +2852,22 @@ fn drag_vptr(
 /// backend's XSendEvent typing and the capture slice's shell-out to `grim`.
 /// foreign-toplevel exposes no pid and Wayland delivers keys to the *focused*
 /// surface, so this is window_id-free; pair it with `click`/`activate` to put
-/// the intended window in focus first.
+/// the intended window in focus first. Under niri, text goes out on niri's
+/// own keymap instead (see [`niri::keyboard`]).
 pub fn type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
     activate_window_for_input(window_id)?;
+    if is_wayland() && niri::is_session() {
+        return niri::keyboard::type_text(Some(window_id), text);
+    }
     // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
     // seat (notably sway), the compositor needs the first virtual-keyboard event
     // to wire up keyboard routing, and that first key is dropped. Sacrificing a
     // modifier tap (no character) absorbs the drop so the real text lands intact;
     // it's harmless where routing is already live (labwc).
-    let result = std::process::Command::new("wtype")
-        .args(["-k", "Shift_L", "--"])
-        .arg(text)
-        .output();
+    let result = wtype_output(&["-k", "Shift_L", "--", text]);
     match result {
         Ok(out) if out.status.success() => Ok(()),
         // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
@@ -2275,15 +2887,16 @@ pub fn type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
 
 /// Type into a surface whose exact Sway container is already held focused by
 /// the caller. This avoids re-resolving a title that can change mid-sequence
-/// (for example after opening a Chromium tab).
+/// (for example after opening a Chromium tab). Under niri, text goes out on
+/// niri's own keymap and stops if focus leaves the window that had it.
 pub fn type_text_focused(text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
-    let result = std::process::Command::new("wtype")
-        .args(["-k", "Shift_L", "--"])
-        .arg(text)
-        .output();
+    if is_wayland() && niri::is_session() {
+        return niri::keyboard::type_text(niri_expected_window(), text);
+    }
+    let result = wtype_output(&["-k", "Shift_L", "--", text]);
     match result {
         Ok(out) if out.status.success() => Ok(()),
         other => with_wtype_libei_fallback(
@@ -2302,11 +2915,21 @@ pub fn type_text_focused(text: &str) -> anyhow::Result<()> {
 /// process after the text has landed.
 pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
     let keysym = key_to_keysym(key);
-    let result = std::process::Command::new("wtype")
-        .args(["-k", "Shift_L", "-s", "30"])
-        .arg(text)
-        .args(["-s", "50", "-k", &keysym])
-        .output();
+    if is_wayland() && niri::is_session() {
+        niri::keyboard::type_text(niri_expected_window(), text)?;
+        return niri::keyboard::press(niri_expected_window(), &[], &keysym);
+    }
+    let result = wtype_output(&[
+        "-k",
+        "Shift_L",
+        "-s",
+        "30",
+        text,
+        "-s",
+        "50",
+        "-k",
+        keysym.as_str(),
+    ]);
     match result {
         Ok(out) if out.status.success() => Ok(()),
         other => with_wtype_libei_fallback(
@@ -2324,12 +2947,13 @@ pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
 pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
     activate_window_for_input(window_id)?;
     let keysym = key_to_keysym(key);
+    if is_wayland() && niri::is_session() {
+        return niri::keyboard::press(Some(window_id), &[], &keysym);
+    }
     // Keep the sacrificial modifier and requested key in one virtual-keyboard
     // lifetime. Starting a second wtype process creates a fresh protocol object,
     // causing headless seats to drop the requested key as their first event.
-    let result = std::process::Command::new("wtype")
-        .args(["-k", "Shift_L", "-k", &keysym])
-        .output();
+    let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
     match result {
         Ok(out) if out.status.success() => Ok(()),
         other => with_wtype_libei_fallback(
@@ -2350,9 +2974,10 @@ pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
         return inject_press_key(pid, window_id, key);
     }
     let keysym = key_to_keysym(key);
-    let result = std::process::Command::new("wtype")
-        .args(["-k", "Shift_L", "-k", &keysym])
-        .output();
+    if is_wayland() && niri::is_session() {
+        return niri::keyboard::press(niri_expected_window(), &[], &keysym);
+    }
+    let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
     match result {
         Ok(out) if out.status.success() => Ok(()),
         other => with_wtype_libei_fallback(
@@ -2373,12 +2998,15 @@ pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
 pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
     activate_window_for_input(window_id)?;
     let (mods, final_key) = partition_modifiers(keys)?;
+    if is_wayland() && niri::is_session() {
+        return niri::keyboard::press(Some(window_id), &mods, &chord_keysym(&final_key));
+    }
     if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
         return Ok(());
     }
     let keysym = key_to_keysym(&final_key);
     let args = wtype_hotkey_args(&mods, &keysym);
-    let result = std::process::Command::new("wtype").args(&args).output();
+    let result = wtype_output(&args);
     match result {
         Ok(out) if out.status.success() => Ok(()),
         other => {
@@ -2413,12 +3041,15 @@ pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
         return inject_hotkey(pid, window_id, keys);
     }
     let (mods, final_key) = partition_modifiers(keys)?;
+    if is_wayland() && niri::is_session() {
+        return niri::keyboard::press(niri_expected_window(), &mods, &chord_keysym(&final_key));
+    }
     if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
         return Ok(());
     }
     let keysym = key_to_keysym(&final_key);
     let args = wtype_hotkey_args(&mods, &keysym);
-    let result = std::process::Command::new("wtype").args(&args).output();
+    let result = wtype_output(&args);
     match result {
         Ok(out) if out.status.success() => Ok(()),
         other => {
@@ -2443,6 +3074,11 @@ pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
             }
         }
     }
+}
+
+/// Run `wtype` with `args`.
+fn wtype_output<S: AsRef<std::ffi::OsStr>>(args: &[S]) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("wtype").args(args).output()
 }
 
 fn wtype_hotkey_args(mods: &[String], keysym: &str) -> Vec<String> {
@@ -2491,6 +3127,23 @@ fn partition_modifiers(keys: &[String]) -> anyhow::Result<(Vec<String>, String)>
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("hotkey requires at least one non-modifier key"))?;
     Ok((mods, final_key))
+}
+
+/// The niri window focused keyboard input must reach: the target an outer
+/// [`with_target_foreground`] focused, or `None` for desktop-scoped input
+/// into whatever has focus.
+fn niri_expected_window() -> Option<u64> {
+    current_foreground_target().map(|(_, window_id)| window_id)
+}
+
+/// The keysym of a chord's final key. A letter names its key whatever its
+/// case, as the virtual-keyboard chord route reads it: `ctrl+A` is `ctrl+a`,
+/// and Shift is held only when asked for.
+fn chord_keysym(key: &str) -> String {
+    match key.as_bytes() {
+        [letter] if letter.is_ascii_alphabetic() => key.to_ascii_lowercase(),
+        _ => key_to_keysym(key),
+    }
 }
 
 /// Map cua key names to X keysym names that `wtype -k` understands. Unknown
@@ -2561,6 +3214,15 @@ fn with_wtype_libei_fallback(
             Err(e) => anyhow::bail!("wtype unavailable: {e}"),
         }
     }
+}
+
+/// Under niri, input goes only to the attested compositor: a failed
+/// attested route is refused, keeping its detail, rather than recovered.
+fn niri_refuses_libei(detail: String) -> anyhow::Error {
+    anyhow::anyhow!(
+        "foreground_unavailable: {}; under niri the libei/portal fallback is refused because it is not attested",
+        detail.trim_end()
+    )
 }
 
 // Stubs for the no-feature build: the dispatch seams never call these (the
@@ -3473,6 +4135,33 @@ fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     windows
 }
 
+/// A niri window as a listing entry. Only a placed floating window has
+/// geometry; any other window lists as 0x0 at the origin, so no caller can
+/// mistake it for a real rectangle.
+fn niri_window_info(window: niri::Window) -> WindowInfo {
+    let (x, y, width, height) = window.placement.map_or((0, 0, 0, 0), |placed| {
+        (
+            placed.rect.x,
+            placed.rect.y,
+            placed.rect.width,
+            placed.rect.height,
+        )
+    });
+    WindowInfo {
+        xid: window.id,
+        pid: window.pid,
+        app_name: window.app_id,
+        title: window.title,
+        is_on_screen: window.on_screen,
+        // niri reports no stacking order; focus recency is not one.
+        z_index: None,
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
 fn apply_pid_filter(mut windows: Vec<WindowInfo>, filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if let Some(pid) = filter_pid {
         windows.retain(|window| window.pid == Some(pid));
@@ -3507,6 +4196,21 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                 )),
                 Err(error) => {
                     tracing::warn!("Hyprland window enumeration unavailable: {error:#}");
+                    Vec::new()
+                }
+            };
+        }
+        if niri::is_session() {
+            // niri IPC attests PIDs and its own window ids. Once niri is
+            // recognised, an IPC failure must not fall back to the
+            // foreign-toplevel title join, which loses that id namespace.
+            return match niri::list_windows() {
+                Ok(windows) => listed_windows(apply_pid_filter(
+                    windows.into_iter().map(niri_window_info).collect(),
+                    filter_pid,
+                )),
+                Err(error) => {
+                    tracing::warn!("niri window enumeration unavailable: {error:#}");
                     Vec::new()
                 }
             };
@@ -3709,7 +4413,7 @@ pub struct WaylandManagers {
     pub virtual_pointer: bool,
     pub wl_shm: bool,
     /// Staging `ext-image-copy-capture-v1` manager — sway 1.10+, labwc
-    /// 0.8+, niri, KDE 6.2+, GNOME mutter 47+.
+    /// 0.8+, KDE 6.2+, GNOME mutter 47+.
     pub ext_image_copy_capture: bool,
     /// Companion `ext-output-image-capture-source-v1` source manager —
     /// required to capture a `wl_output` via the staging protocol.
@@ -3795,7 +4499,9 @@ const _BTN_LEFT_ALIAS: u32 = BTN_LEFT;
 
 #[cfg(test)]
 mod output_transform_tests {
-    use super::{logical_output_size, rotate_png_for_output_transform};
+    use super::{
+        logical_output_size, orient_png_for_niri_transform, rotate_png_for_output_transform,
+    };
 
     #[test]
     fn logical_output_size_swaps_axes_for_quarter_turns() {
@@ -3846,10 +4552,278 @@ mod output_transform_tests {
         );
         assert!(rotate_png_for_output_transform(two_pixel_png(), 5).is_err());
     }
+
+    #[test]
+    fn niri_capture_undoes_flipped_output_transforms() {
+        // Native frame: red above blue, as a nested niri's Flipped180 winit
+        // output delivers an upright window with red at its top.
+        let mut img = image::RgbaImage::new(2, 2);
+        let (red, blue) = (image::Rgba([255, 0, 0, 255]), image::Rgba([0, 0, 255, 255]));
+        img.put_pixel(0, 0, red);
+        img.put_pixel(1, 1, blue);
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let flipped180 = decode(&orient_png_for_niri_transform(png.clone(), 6).unwrap());
+        assert_eq!(
+            (*flipped180.get_pixel(0, 1), *flipped180.get_pixel(1, 0)),
+            (red, blue)
+        );
+        let flipped = decode(&orient_png_for_niri_transform(png.clone(), 4).unwrap());
+        assert_eq!(
+            (*flipped.get_pixel(1, 0), *flipped.get_pixel(0, 1)),
+            (red, blue)
+        );
+        assert_eq!(orient_png_for_niri_transform(png.clone(), 0).unwrap(), png);
+        assert_eq!(
+            orient_png_for_niri_transform(png, 5)
+                .unwrap_err()
+                .to_string(),
+            "niri output transform 5 is not supported for capture"
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    /// A point past the pointer space is clamped onto another pixel; the
+    /// niri gate must see that rather than admit the clamped point.
+    #[test]
+    fn layout_addressed_origin_clicks_stay_at_the_origin() {
+        assert!(super::centres_origin_click(0, 0, false));
+        assert!(!super::centres_origin_click(0, 0, true));
+        assert!(!super::centres_origin_click(0, 1, false));
+    }
+
+    #[test]
+    fn clamped_points_are_not_reached() {
+        // The lane's 1280x720 logical output at scale 1.5.
+        assert!(super::pointer_reaches(0, 0, 1280, 720, 100, 719));
+        assert!(!super::pointer_reaches(0, 0, 1280, 720, 100, 750));
+        assert!(!super::pointer_reaches(0, 0, 1280, 720, -1, 10));
+        assert!(super::pointer_reaches(-100, 0, 2773, 1080, -100, 0));
+    }
+
+    #[test]
+    fn niri_never_recovers_input_through_libei() {
+        let pointed: anyhow::Result<()> = super::libei_recovery(
+            true,
+            || anyhow::bail!("{}: none bound", super::NO_VPTR_MARKER),
+            || panic!("libei must not run under niri"),
+        );
+        assert_eq!(
+            pointed.unwrap_err().to_string(),
+            format!(
+                "foreground_unavailable: {}: none bound; under niri the libei/portal fallback is refused because it is not attested",
+                super::NO_VPTR_MARKER
+            )
+        );
+    }
+
+    #[test]
+    fn niri_focused_keyboard_input_expects_the_held_foreground_window() {
+        assert_eq!(super::niri_expected_window(), None);
+        {
+            let _held = super::bind_foreground_target(7, 42);
+            assert_eq!(super::niri_expected_window(), Some(42));
+        }
+        assert_eq!(super::niri_expected_window(), None);
+    }
+
+    #[test]
+    fn a_chord_letter_names_its_key_in_either_case() {
+        assert_eq!(super::chord_keysym("A"), "a");
+        assert_eq!(super::chord_keysym("enter"), "Return");
+        assert_eq!(super::chord_keysym("F5"), "F5");
+    }
+
+    #[test]
+    fn a_niri_that_stops_answering_ends_the_round_trip_at_its_deadline() {
+        // A compositor end that reads nothing and answers nothing.
+        let (client, _server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let connection = super::Connection::from_socket(client).unwrap();
+        let mut queue = connection.new_event_queue::<super::State>();
+        let mut state = super::State::default();
+        let started = std::time::Instant::now();
+        let stalled = super::bounded_roundtrip(
+            &connection,
+            &mut queue,
+            &mut state,
+            started + std::time::Duration::from_millis(200),
+        )
+        .unwrap_err();
+        assert_eq!(
+            stalled.to_string(),
+            "niri did not answer a Wayland round trip in time"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_gesture_stops_at_the_first_refused_event_and_reports_the_partial_effect() {
+        // The first press of a double click closes the target window, which
+        // uncovers another one under the point: the second press must not
+        // reach it, and the error must not read as "nothing was delivered".
+        let mut target_open = true;
+        let mut delivered = 0;
+        let stopped = super::gated_events(
+            &mut target_open,
+            2,
+            ("click", "presses"),
+            |_| Ok(()),
+            |open| {
+                anyhow::ensure!(*open, "foreground_unavailable: layout changed");
+                Ok(())
+            },
+            |open, _| {
+                delivered += 1;
+                *open = false;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(delivered, 1);
+        assert_eq!(
+            stopped.to_string(),
+            "click stopped after 1 of 2 presses: foreground_unavailable: layout changed"
+        );
+        assert_eq!(crate::input::foreground::error_code(&stopped), None);
+
+        // A refusal before the first event still means no effect.
+        let mut delivered = 0;
+        let refused = super::gated_events(
+            &mut (),
+            5,
+            ("scroll", "ticks"),
+            |_| Ok(()),
+            |_| anyhow::bail!("foreground_unavailable: layout changed"),
+            |_, _| {
+                delivered += 1;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(delivered, 0);
+        assert_eq!(
+            crate::input::foreground::error_code(&refused),
+            Some(crate::input::foreground::CODE_UNAVAILABLE)
+        );
+    }
+
+    #[test]
+    fn a_target_that_closes_while_the_pointer_re_aims_gets_no_further_press() {
+        // The first press makes the target close itself a moment later,
+        // while the pause and motion before the second press run: the check
+        // must see that, not the state from before the gap.
+        let mut target_open = true;
+        let mut presses = 0;
+        let stopped = super::gated_events(
+            &mut target_open,
+            3,
+            ("click", "presses"),
+            |open| {
+                *open = false;
+                Ok(())
+            },
+            |open| {
+                anyhow::ensure!(*open, "foreground_unavailable: niri window 7 closed");
+                Ok(())
+            },
+            |_, _| {
+                presses += 1;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(presses, 1);
+        assert_eq!(
+            stopped.to_string(),
+            "click stopped after 1 of 3 presses: foreground_unavailable: niri window 7 closed"
+        );
+    }
+
+    #[test]
+    fn a_drag_sends_at_most_the_advertised_steps_and_ends_on_its_endpoint() {
+        // `steps` comes from the caller, after the button is already down.
+        let path = super::drag_path((0, 0), (100, 50), u32::MAX, (100, 50), |x, y| {
+            (x as u32, y as u32)
+        });
+        assert_eq!(path.len(), 201);
+        let points: Vec<_> = path.collect();
+        assert_eq!(points[99], (50, 25));
+        assert_eq!(points.last(), Some(&(100, 50)));
+        let path = super::drag_path((0, 0), (10, 0), 0, (10, 0), |x, y| (x as u32, y as u32));
+        assert_eq!(path.collect::<Vec<_>>(), [(10, 0), (10, 0)]);
+    }
+
+    #[test]
+    fn a_drag_between_opposite_coordinate_extremes_aims_every_point() {
+        // The path is interpolated after the press, so its arithmetic must
+        // not overflow for any pair of points the caller can pass.
+        let (min, max) = (i32::MIN, i32::MAX);
+        let mut aimed = Vec::new();
+        let path = super::drag_path((min, max), (max, min), 2, (0, 0), |x, y| {
+            aimed.push((x, y));
+            (0, 0)
+        });
+        assert_eq!(path.count(), 3);
+        assert_eq!(aimed, [(-1, -1), (max, min)]);
+    }
+
+    #[test]
+    fn a_drag_whose_layout_changes_mid_path_releases_and_reports_how_far_it_got() {
+        // The press rescales the output: the remaining motions would land
+        // elsewhere, so the drag releases the button instead of finishing.
+        #[derive(Default)]
+        struct Held {
+            moved: Vec<(u32, u32)>,
+            released: bool,
+        }
+        let mut held = Held::default();
+        let stopped = super::held_motions(
+            &mut held,
+            [(10, 10), (20, 10), (30, 10)].into_iter(),
+            |held| {
+                anyhow::ensure!(
+                    held.moved.len() < 2,
+                    "foreground_unavailable: the niri pointer space changed"
+                );
+                Ok(())
+            },
+            |held, point| {
+                held.moved.push(point);
+                Ok(())
+            },
+            |held| {
+                held.released = true;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(held.moved, [(10, 10), (20, 10)]);
+        assert!(held.released);
+        assert_eq!(
+            stopped.to_string(),
+            "drag stopped after 2 of 3 motions, and the button was released: \
+             foreground_unavailable: the niri pointer space changed"
+        );
+        assert_eq!(crate::input::foreground::error_code(&stopped), None);
+    }
+
+    #[test]
+    fn an_output_added_while_settling_refuses_the_pointer_input() {
+        super::pointer_space_holds((0, 0, 854, 480), (0, 0, 854, 480)).unwrap();
+        // The session scaled for one output; a second one doubles the extent,
+        // so (350, 80) would land near (700, 80).
+        assert_eq!(
+            super::pointer_space_holds((0, 0, 854, 480), (0, 0, 1707, 480))
+                .unwrap_err()
+                .to_string(),
+            "foreground_unavailable: the niri pointer space changed from (0, 0, 854, 480) to (0, 0, 1707, 480); take a new screenshot"
+        );
+    }
+
     /// The pointer always moves before a desktop click or scroll, even when
     /// it already sits on the target pixel (corners and 1-pixel outputs too).
     #[test]

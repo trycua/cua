@@ -54,6 +54,9 @@ fn desktop_point_window_resolver() -> cua_driver_core::window_target::DesktopPoi
         let (x, y) = if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
             let frame = crate::wayland::hyprland::desktop_frame().ok()?;
             (x + f64::from(frame.x), y + f64::from(frame.y))
+        } else if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+            let frame = crate::wayland::niri::desktop_snapshot().ok()?.frame;
+            (x + f64::from(frame.x), y + f64::from(frame.y))
         } else {
             (x, y)
         };
@@ -93,6 +96,9 @@ fn topmost_window_at(
 fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallbackWindowResolver {
     Arc::new(|pid| {
         let pid = u32::try_from(pid).ok()?;
+        if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+            return crate::wayland::niri::window_in_use(pid);
+        }
         let windows: Vec<crate::x11::WindowInfo> = crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .filter(|w| w.pid == Some(pid))
@@ -262,6 +268,14 @@ fn screenshot_scale(
     state
         .snapshots
         .screenshot_scale(pid as i32, window_id, args)
+        .map_err(|missing| {
+            // A tiled niri window never has a screenshot: say why instead of
+            // asking for the get_window_state read that cannot give one.
+            window_id
+                .filter(|_| crate::wayland::is_wayland() && crate::wayland::niri::is_session())
+                .and_then(crate::wayland::niri::tiled_refusal)
+                .map_or(missing, input_error_result)
+        })
 }
 
 // ── list_apps ────────────────────────────────────────────────────────────────
@@ -1527,9 +1541,12 @@ impl Tool for GetWindowStateTool {
                     structured["timeout_ms"] = json!(timeout_ms);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
-                    let target_scoped = !(crate::wayland::is_wayland()
-                        && crate::wayland::hyprland::is_session())
-                        || tr.window_scoped;
+                    let target_scoped = snapshot_target_scoped(
+                        crate::wayland::is_wayland()
+                            && (crate::wayland::hyprland::is_session()
+                                || crate::wayland::niri::is_session()),
+                        tr.window_scoped,
+                    );
                     if !observation_only && !target_scoped {
                         invalidated.extend(state.snapshots.remove(pid as i32, xid));
                         crate::atspi::snapshot::forget_window(pid, xid);
@@ -2590,8 +2607,36 @@ fn desktop_frame_requested(args: &Value) -> bool {
 /// Convert desktop (screen) coordinates to `xid`'s window-local frame so the
 /// rest of the pointer pipeline (which is window-local by contract) is reused.
 fn desktop_to_window_local(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
+    // A niri window id is no X11 window: never ask XWayland about it.
+    if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+        return Err(crate::wayland::niri::desktop_frame_window_refusal(xid));
+    }
     let (ox, oy) = window_local_to_screen(xid, 0.0, 0.0)?;
     Ok((x - ox, y - oy))
+}
+
+/// A failed desktop-to-window mapping; a coded refusal keeps its structure.
+fn desktop_frame_unmapped(xid: u64, error: anyhow::Error) -> ToolResult {
+    if crate::input::foreground::error_code(&error).is_some() {
+        return input_error_result(error);
+    }
+    ToolResult::error(format!(
+        "desktop-frame coordinates could not be mapped into window {xid}: {error}"
+    ))
+}
+
+#[cfg(test)]
+#[test]
+fn a_niri_desktop_frame_window_refusal_is_structured() {
+    let refused =
+        desktop_frame_unmapped(31, crate::wayland::niri::desktop_frame_window_refusal(31));
+    let structured = refused.structured_content.unwrap();
+    assert_eq!(structured["code"], "foreground_unavailable");
+    assert_eq!(structured["effect"], "none");
+    assert!(structured["suggestion"]
+        .as_str()
+        .unwrap()
+        .starts_with("Drop pid and window_id"));
 }
 
 /// Upper bound for one foreground input transaction: focus confirmation plus
@@ -2600,28 +2645,405 @@ fn foreground_budget(chars: usize) -> std::time::Duration {
     std::time::Duration::from_millis(12_000 + (chars as u64) * 40)
 }
 
+/// The budget of a `type_text` call that types `chars` characters. niri's
+/// keyboard gives itself its own deadline, which starts once the window is
+/// focused and stops the call with how far it got; the call allows that
+/// plus the foreground setup, so that deadline ends it first.
+fn typing_budget(chars: usize, niri: bool) -> std::time::Duration {
+    let budget = foreground_budget(chars);
+    if niri {
+        budget.max(foreground_budget(0) + crate::wayland::niri_keyboard_budget(chars))
+    } else {
+        budget
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn niri_typing_outlasts_the_keyboard_deadline() {
+    // niri's keyboard allows itself a deadline per key and reports how far
+    // it got when that passes. A call budget that ran out first would cut
+    // the text off with a bare timeout, and a retry would type its start
+    // again.
+    for chars in [0, 1, 150, 1_000, 100_000] {
+        assert!(
+            typing_budget(chars, true) > crate::wayland::niri_keyboard_budget(chars),
+            "{chars} characters"
+        );
+        assert_eq!(typing_budget(chars, false), foreground_budget(chars));
+    }
+}
+
+/// [`foreground_budget`] for `chars` characters with `delay_ms` between them.
+/// The delay comes from the caller unbounded.
+fn paced_typing_budget(chars: usize, delay_ms: u64) -> std::time::Duration {
+    foreground_budget(chars)
+        + std::time::Duration::from_millis(delay_ms.saturating_mul(chars as u64))
+}
+
+#[cfg(test)]
+#[test]
+fn any_typing_delay_gives_a_budget() {
+    assert_eq!(
+        paced_typing_budget(2, 30),
+        foreground_budget(2) + std::time::Duration::from_millis(60)
+    );
+    // Sizing the call must not panic, however long the caller's delay.
+    let longest = paced_typing_budget(3, u64::MAX);
+    assert!(longest >= std::time::Duration::from_millis(u64::MAX));
+    crate::input::action::Action::new(longest);
+}
+
 /// `spawn_blocking` with a hard deadline. A wedged X server (or a client
 /// holding a server grab) must surface as a structured `foreground_timeout`
 /// error instead of a tool call that never returns. The blocking task is not
-/// cancellable; it is left to finish (or leak) on the blocking pool.
+/// cancellable; it is left to finish (or leak) on the blocking pool, with its
+/// [`crate::input::action::Action`] abandoned so its input routes send
+/// nothing more. Routes that do not read the action (wtype, XTest) keep
+/// sending, and niri gives focus back late, so the worker keeps the call's
+/// desktop lease: the next desktop action waits until it has stopped.
 async fn spawn_blocking_bounded<T: Send + 'static>(
     label: &'static str,
     budget: std::time::Duration,
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> Result<anyhow::Result<T>, tokio::task::JoinError> {
-    match tokio::time::timeout(budget, tokio::task::spawn_blocking(f)).await {
+    let action = crate::input::action::Action::new(budget);
+    // Returning or being dropped while the worker runs both mean nobody waits
+    // for it any more.
+    let _abandon = action.abandon_on_drop();
+    let worker = {
+        let action = action.clone();
+        let lease = cua_driver_core::tool::DesktopLease::current();
+        move || {
+            let _lease = lease;
+            let _bound = crate::input::action::bind(action);
+            f()
+        }
+    };
+    match tokio::time::timeout(budget, tokio::task::spawn_blocking(worker)).await {
         Ok(joined) => joined,
-        Err(_elapsed) => Ok(Err(anyhow::anyhow!(
-            "{}: {label} did not complete within {budget:?}; the X server or the target \
+        Err(_elapsed) => Ok(Err({
+            anyhow::anyhow!(
+                "{}: {label} did not complete within {budget:?}; the X server or the target \
              application may be wedged. Take a screenshot before retrying",
-            crate::input::foreground::CODE_TIMEOUT
-        ))),
+                crate::input::foreground::CODE_TIMEOUT
+            )
+        })),
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_timed_out_input_worker_sends_nothing_more() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // A worker that keeps sending events, as a stalled compositor's would
+    // once it answers again.
+    let sent = Arc::new(AtomicUsize::new(0));
+    let worker_sent = sent.clone();
+    let result = spawn_blocking_bounded(
+        "test input",
+        std::time::Duration::from_millis(100),
+        move || {
+            for _ in 0..50 {
+                crate::input::action::admit(|| worker_sent.fetch_add(1, Ordering::SeqCst))?;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.is_err());
+    let at_timeout = sent.load(Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(sent.load(Ordering::SeqCst), at_timeout);
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn an_input_worker_whose_caller_was_dropped_sends_nothing_more() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // The tool call's future is dropped (its client went away, or an outer
+    // timeout fired) long before the worker's own budget runs out.
+    let sent = Arc::new(AtomicUsize::new(0));
+    let worker_sent = sent.clone();
+    let call = spawn_blocking_bounded(
+        "test input",
+        std::time::Duration::from_secs(60),
+        move || {
+            for _ in 0..50 {
+                crate::input::action::admit(|| worker_sent.fetch_add(1, Ordering::SeqCst))?;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Ok(())
+        },
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), call)
+            .await
+            .is_err()
+    );
+    let at_drop = sent.load(Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(sent.load(Ordering::SeqCst) <= at_drop + 1);
+}
+
+#[cfg(test)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_timed_out_call_holds_the_desktop_until_its_late_cleanup_is_done() {
+    use cua_driver_core::tool::DesktopCall;
+    // niri: call 1 focused its window, then waited in niri past its budget.
+    // Its worker gives focus back afterwards. Desktop typing that started in
+    // between would have focus moved away under it.
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let call_1 = {
+        let events = events.clone();
+        DesktopCall::acquire()
+            .await
+            .unwrap()
+            .scope(spawn_blocking_bounded(
+                "call 1",
+                std::time::Duration::from_millis(50),
+                move || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    // The next key is refused, but focus still goes back.
+                    assert!(crate::input::action::admit(|| ()).is_err());
+                    events.lock().unwrap().push("call 1 gave focus back");
+                    Ok(())
+                },
+            ))
+            .await
+            .unwrap()
+    };
+    assert!(call_1.is_err());
+    DesktopCall::acquire()
+        .await
+        .unwrap()
+        .scope(async { events.lock().unwrap().push("call 2 typed") })
+        .await;
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["call 1 gave focus back", "call 2 typed"]
+    );
+}
+
+#[cfg(test)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn input_that_cannot_be_cancelled_never_overlaps_the_next_desktop_action() {
+    use cua_driver_core::tool::DesktopCall;
+    // wtype and XTest do not read the call's action: a worker whose call
+    // timed out, or whose caller went away, still sends all of its input.
+    // That input must not reach whatever the next desktop action targets.
+    for budget in [50, 60_000] {
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let worker_events = events.clone();
+        let call = DesktopCall::acquire().await.unwrap();
+        let call_1 = async move {
+            call.scope(spawn_blocking_bounded(
+                "call 1",
+                std::time::Duration::from_millis(budget),
+                move || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    worker_events.lock().unwrap().push("call 1 typed");
+                    Ok(())
+                },
+            ))
+            .await
+        };
+        // A 50 ms budget times out; with 60 s the caller is dropped first.
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), call_1).await;
+        DesktopCall::acquire()
+            .await
+            .unwrap()
+            .scope(async { events.lock().unwrap().push("call 2 typed") })
+            .await;
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["call 1 typed", "call 2 typed"],
+            "budget {budget} ms"
+        );
+    }
+}
+
+#[cfg(test)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_x11_press_is_recorded_before_the_next_call_on_its_cursor() {
+    use cua_driver_core::tool::DesktopCall;
+    let state = ToolState::new();
+    let hold = |xid| MouseHoldState {
+        pid: 1,
+        xid,
+        button: 1,
+        x: 0.0,
+        y: 0.0,
+    };
+    // Call 1: XTest is slow, and its client cancels the call.
+    let call = DesktopCall::acquire().await.unwrap();
+    let first = {
+        let state = state.clone();
+        async move {
+            call.scope(press_and_record_x11_hold(
+                state,
+                "default".to_owned(),
+                hold(1),
+                || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    Ok(())
+                },
+            ))
+            .await
+        }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(50), first).await;
+    // Call 2 on the same cursor checks for a hold once it has the desktop.
+    let _call = DesktopCall::acquire().await.unwrap();
+    let held = state
+        .mouse_hold
+        .lock()
+        .unwrap()
+        .get("default")
+        .map(|hold| hold.xid);
+    assert_eq!(
+        held,
+        Some(1),
+        "call 2 would find no hold, press window 2, and have call 1 overwrite its hold"
+    );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_late_x11_drag_press_is_followed_by_its_release() {
+    // The X server answers the press only after the call timed out. The
+    // drag then sends its own release, which arrives first.
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let pressed = press_x11_drag_start(
+        std::time::Duration::from_millis(50),
+        {
+            let events = events.clone();
+            move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                events.lock().unwrap().push("press");
+                Ok(())
+            }
+        },
+        {
+            let events = events.clone();
+            move || {
+                events.lock().unwrap().push("release");
+                Ok(())
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert!(pressed.is_err());
+    events.lock().unwrap().push("release");
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let events = events.lock().unwrap();
+    assert!(events.contains(&"press"), "{events:?}");
+    assert_eq!(events.last(), Some(&"release"), "{events:?}");
+}
+
+#[cfg(test)]
+#[test]
+fn every_input_worker_stops_when_its_call_ends() {
+    // Structural: a worker started with plain `spawn_blocking` has no bound
+    // action, so once its call times out or its client cancels it, it keeps
+    // sending the rest of its clicks, ticks, motions or keys. It has no time
+    // limit either and holds no desktop lease, so on X11 a stale worker can
+    // send input during the next desktop action.
+    const ROUTES: &[&str] = &[
+        "click",
+        "click_focused",
+        "click_desktop",
+        "scroll",
+        "scroll_at",
+        "scroll_desktop",
+        "move_cursor_absolute",
+        "move_cursor_desktop",
+        "drag",
+        "drag_desktop",
+        "type_text",
+        "type_text_focused",
+        "type_text_then_key_focused",
+        "press_key",
+        "press_key_focused",
+        "hotkey",
+        "hotkey_focused",
+        "with_target_foreground",
+        "restoring_niri_focus",
+        "persistent_vptr::press",
+        "persistent_vptr::move_to",
+        "persistent_vptr::release",
+    ];
+    let source = include_str!("impl_.rs");
+    let unbound: Vec<usize> = source
+        .match_indices("tokio::task::spawn_blocking(")
+        .filter(|(start, opening)| {
+            let mut depth = 0;
+            let end = source[*start + opening.len() - 1..]
+                .find(|c| {
+                    depth += match c {
+                        '(' => 1,
+                        ')' => -1,
+                        _ => 0,
+                    };
+                    depth == 0
+                })
+                .unwrap();
+            let worker = &source[*start..*start + opening.len() + end];
+            worker.contains("crate::input::send_")
+                || ROUTES
+                    .iter()
+                    .any(|route| worker.contains(&format!("crate::wayland::{route}(")))
+        })
+        .map(|(start, _)| source[..start].lines().count())
+        .collect();
+    assert!(
+        unbound.is_empty(),
+        "input workers not bound to their call, at impl_.rs lines {unbound:?}; \
+         start them with spawn_blocking_bounded"
+    );
+}
+
+/// The `steps` of a `drag` or `mouse_drag`, held to the advertised 1..=200
+/// before the button goes down: every step is a motion sent with the
+/// button held.
+fn drag_steps(args: &Value) -> usize {
+    args.u64_or("steps", 20).clamp(1, 200) as usize
+}
+
+#[cfg(test)]
+#[test]
+fn drag_steps_stay_within_the_advertised_bounds() {
+    // Without the bound, steps = u32::MAX holds the button through about
+    // 4.3 billion motions.
+    assert_eq!(drag_steps(&json!({ "steps": u32::MAX })), 200);
+    assert_eq!(drag_steps(&json!({ "steps": 0 })), 1);
+    assert_eq!(drag_steps(&json!({})), 20);
 }
 
 /// Map an input-path error to a tool error, attaching the structured
 /// foreground `code` (`foreground_unavailable` / `foreground_timeout`) when the
 /// message carries one so the caller can branch instead of parsing prose.
+/// Whether a snapshot's elements may become actionable tokens for the
+/// requested window. On compositors addressed by exact window ids (Hyprland,
+/// niri) an application-wide walk can include another window of the same
+/// process, so only a walk scoped to the requested window publishes.
+fn snapshot_target_scoped(exact_window_ids: bool, window_scoped: bool) -> bool {
+    !exact_window_ids || window_scoped
+}
+
+#[cfg(test)]
+mod snapshot_scope_tests {
+    #[test]
+    fn exact_id_compositors_publish_only_window_scoped_walks() {
+        assert!(!super::snapshot_target_scoped(true, false));
+        assert!(super::snapshot_target_scoped(true, true));
+        assert!(super::snapshot_target_scoped(false, false));
+    }
+}
+
 fn input_error_result(e: anyhow::Error) -> ToolResult {
     let text = e.to_string();
     if crate::input::is_uinput_unavailable(&e) {
@@ -2645,11 +3067,27 @@ fn input_error_result(e: anyhow::Error) -> ToolResult {
             "suggestion": if code == crate::input::foreground::CODE_TIMEOUT {
                 "Take a screenshot (get_desktop_state) to confirm the desktop is responsive, then retry once."
             } else {
-                "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry."
+                crate::wayland::niri::refusal_suggestion(&text).unwrap_or(
+                    "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry.",
+                )
             },
         })),
         None => linux_input_error(e),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_niri_refusal_suggests_its_own_remedy_instead_of_bring_to_front() {
+    let refused = input_error_result(anyhow::anyhow!(
+        "foreground_unavailable: the niri layout changed after the get_desktop_state screenshot, so its pixels may be elsewhere now; take a new screenshot"
+    ));
+    let structured = refused.structured_content.unwrap();
+    assert_eq!(structured["code"], "foreground_unavailable");
+    assert!(structured["suggestion"]
+        .as_str()
+        .unwrap()
+        .starts_with("Take a new screenshot"));
 }
 
 /// Structured payload for a completed foreground transaction.
@@ -5064,14 +5502,14 @@ fn coordinate_less_mouse_button_up_survives_snapshot_replacement() {
 fn persistent_wayland_pointer_coordinates_include_window_origin() {
     let output = persistent_pointer_coordinates(true, 7, 10, 20, |window_id, x, y| {
         assert_eq!(window_id, 7);
-        (x + 100, y + 200)
+        Ok((x + 100, y + 200))
     });
-    assert_eq!(output, (110, 220));
+    assert_eq!(output.unwrap(), (110, 220));
 
     let x11 = persistent_pointer_coordinates(false, 7, 10, 20, |_, _, _| {
         panic!("X11 coordinates must remain window-local")
     });
-    assert_eq!(x11, (10, 20));
+    assert_eq!(x11.unwrap(), (10, 20));
 }
 
 #[cfg(test)]
@@ -5469,12 +5907,12 @@ fn persistent_pointer_coordinates(
     window_id: u64,
     x: i32,
     y: i32,
-    window_local_to_output: impl FnOnce(u64, i32, i32) -> (i32, i32),
-) -> (i32, i32) {
+    window_local_to_output: impl FnOnce(u64, i32, i32) -> anyhow::Result<(i32, i32)>,
+) -> anyhow::Result<(i32, i32)> {
     if is_wayland {
         window_local_to_output(window_id, x, y)
     } else {
-        (x, y)
+        Ok((x, y))
     }
 }
 
@@ -5564,14 +6002,19 @@ async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: 
 
 /// The compositor snapshot a desktop-scope action is addressed in. One
 /// snapshot converts the action's points, places the overlay and sizes the
-/// virtual pointer, so they cannot disagree about the monitor layout.
-async fn desktop_input_space() -> anyhow::Result<crate::wayland::DesktopInputSpace> {
+/// virtual pointer, so they cannot disagree about the monitor layout. The
+/// points come from the `get_desktop_state` capture `capture_id` when it is
+/// named, else from the latest one.
+async fn desktop_input_space(
+    capture_id: Option<String>,
+) -> anyhow::Result<crate::wayland::DesktopInputSpace> {
     if !crate::wayland::wayland_input_enabled() {
         return Ok(crate::wayland::DesktopInputSpace::default());
     }
     tokio::task::spawn_blocking(crate::wayland::DesktopInputSpace::current)
         .await
         .map_err(|error| anyhow::anyhow!("task error: {error}"))?
+        .map(|space| space.with_capture(capture_id))
 }
 
 /// Keep the logical cursor position in sync with every visibly targeted
@@ -6009,6 +6452,59 @@ fn capture_admission_error(error: anyhow::Error) -> ToolResult {
 }
 static CLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Wheel detents for a compositor scroll: one per line. On niri a page is
+/// the detent approximation the Hyprland route documents; other compositors
+/// keep one detent per page, which no run has measured against.
+fn wheel_ticks(amount: usize, by: cua_driver_contract::ScrollBy, niri: bool) -> u32 {
+    let detents = match by {
+        cua_driver_contract::ScrollBy::Page if niri => {
+            amount * crate::wayland::hyprland_input::PAGE_WHEEL_DETENTS
+        }
+        _ => amount,
+    };
+    detents as u32
+}
+
+#[cfg(test)]
+#[test]
+fn a_niri_page_scroll_sends_more_than_one_detent_per_page() {
+    // `by: "page"` used to send `amount` detents, the same as lines: two
+    // pages moved a WebKitGTK scroller 80 px under niri, less than its
+    // 128 px viewport.
+    use cua_driver_contract::ScrollBy;
+    assert_eq!(wheel_ticks(2, ScrollBy::Line, true), 2);
+    assert_eq!(
+        wheel_ticks(2, ScrollBy::Page, true),
+        2 * crate::wayland::hyprland_input::PAGE_WHEEL_DETENTS as u32
+    );
+    // Sway, KWin and GNOME keep their earlier page scroll.
+    assert_eq!(wheel_ticks(2, ScrollBy::Page, false), 2);
+}
+
+/// Presses in one click train: 1 to 3, as the contract states. A niri click
+/// train is one gated action, so a larger count would mean seconds of
+/// presses no recheck covers.
+fn click_train(requested: u64) -> usize {
+    requested.clamp(1, 3) as usize
+}
+
+#[cfg(test)]
+#[test]
+fn click_trains_stop_at_the_advertised_triple_click() {
+    // A niri click train is rechecked once, before its first press, so a
+    // `count: 20` must not become seconds of ungated presses.
+    let tool = ClickTool {
+        state: ToolState::new(),
+    };
+    let count = &tool.def().input_schema["properties"]["count"];
+    assert_eq!(
+        (count["minimum"].as_u64(), count["maximum"].as_u64()),
+        (Some(1), Some(3))
+    );
+    assert_eq!(click_train(20), 3);
+    assert_eq!(click_train(2), 2);
+}
+
 /// Where a foreground element click may put the real pointer.
 enum ForegroundElementPlacement {
     /// The element centre lies inside the target window (or a popup of the
@@ -6438,7 +6934,7 @@ impl Tool for ClickTool {
                     // [left,right,middle]); kept inline to carry the Linux/Wayland
                     // back-compat prose the click button-schema test asserts on.
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
-                    "count":{"type":"integer","minimum":1,"description":"Number of clicks in one press train: 1 (default), 2 = double-click, 3 = triple-click (line/paragraph selection). There is no separate triple_click tool — pass count: 3 here."},
+                    "count":{"type":"integer","minimum":1,"maximum":3,"description":"Number of clicks in one press train: 1 (default), 2 = double-click, 3 = triple-click (line/paragraph selection). There is no separate triple_click tool — pass count: 3 here."},
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window","description":"Coordinate frame (default \"window\"). Pass \"desktop\" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates."},
@@ -6484,12 +6980,13 @@ impl Tool for ClickTool {
                 Err(result) => return result,
             };
             let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
-            let n = input.count.unwrap_or(1) as usize;
+            let n = input.count.unwrap_or(1);
             if n == 0 {
                 return ToolResult::error("click.count must be at least 1.")
                     .with_structured(json!({ "code": "invalid_arguments" }));
             }
-            let space = match desktop_input_space().await {
+            let n = click_train(u64::from(n));
+            let space = match desktop_input_space(args.opt_str("capture_id")).await {
                 Ok(space) => space,
                 Err(error) => {
                     return ToolResult::error(format!("desktop-scope click failed: {error}"))
@@ -6525,7 +7022,7 @@ impl Tool for ClickTool {
                 true,
             )
             .await;
-            let r = tokio::task::spawn_blocking(move || {
+            let r = spawn_blocking_bounded("desktop click", foreground_budget(0), move || {
                 if crate::wayland::wayland_input_enabled() {
                     if !modifiers.is_empty() {
                         anyhow::bail!(
@@ -6555,6 +7052,9 @@ impl Tool for ClickTool {
                 .with_structured(
                     json!({ "path": if crate::wayland::wayland_input_enabled() { "wayland_desktop" } else { "xtest_desktop" }, "verified": false, "effect": "unverifiable" }),
                 ),
+                Ok(Err(e)) if crate::input::foreground::error_code(&e).is_some() => {
+                    input_error_result(e)
+                }
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
             };
@@ -6565,7 +7065,7 @@ impl Tool for ClickTool {
             Err(e) => return e,
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        let count = args.u64_or("count", 1) as usize;
+        let count = click_train(args.u64_or("count", 1));
         let isolated_background = isolated_hyprland_background(delivery);
         // Surface 5: reject unknown buttons so a typo can't silently fall through
         // to a left-click. Empty string keeps back-compat with old clients.
@@ -6896,54 +7396,61 @@ impl Tool for ClickTool {
             // click at the element (no focus steal), then to a target-addressed
             // X11 event for toolkits that accept it.
             let cursor_id_for_fallback = cursor_id.clone();
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
-                let (xid2, lx, ly) = checked_element_local_coords(pid, idx, xid_hint)?;
-                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                if crate::wayland::wayland_input_enabled() && !modifier_refs.is_empty() {
-                    anyhow::bail!(
-                        "modified element clicks are unavailable on native Wayland: \
+            let result = spawn_blocking_bounded(
+                "element click",
+                foreground_budget(0),
+                move || -> anyhow::Result<PointerRoute> {
+                    // Refuse before resolving coordinates: the refusal does not
+                    // depend on where the element is, and a window without
+                    // compositor geometry must not turn it into a lookup error.
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    if crate::wayland::wayland_input_enabled() && !modifier_refs.is_empty() {
+                        anyhow::bail!(
+                            "modified element clicks are unavailable on native Wayland: \
                          the pointer route cannot carry keyboard modifier state"
-                    );
-                }
-                // An explicit X11 foreground request needs the real XTest path
-                // even for a plain click. Some native widgets (notably GTK
-                // selectable rows) expose bounds but no AT-SPI Action and
-                // ignore a targeted XSendEvent; limiting XTest to modified
-                // clicks made those rows addressable but not selectable.
-                if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
-                    let (_, sx, sy) = placement
-                        .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
-                    crate::input::with_x11_foreground(xid2, 80, || {
-                        crate::input::send_click_xtest_desktop_with_modifiers(
-                            sx.round() as i32,
-                            sy.round() as i32,
+                        );
+                    }
+                    let (xid2, lx, ly) = checked_element_local_coords(pid, idx, xid_hint)?;
+                    // An explicit X11 foreground request needs the real XTest path
+                    // even for a plain click. Some native widgets (notably GTK
+                    // selectable rows) expose bounds but no AT-SPI Action and
+                    // ignore a targeted XSendEvent; limiting XTest to modified
+                    // clicks made those rows addressable but not selectable.
+                    if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
+                        let (_, sx, sy) = placement
+                            .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
+                        crate::input::with_x11_foreground(xid2, 80, || {
+                            crate::input::send_click_xtest_desktop_with_modifiers(
+                                sx.round() as i32,
+                                sy.round() as i32,
+                                button,
+                                count,
+                                &modifier_refs,
+                            )
+                        })
+                        .map(|()| PointerRoute::Foreground)
+                    } else if modifier_refs.is_empty() && !crate::wayland::wayland_input_enabled() {
+                        x11_pixel_click_no_focus_steal(
+                            &cursor_id_for_fallback,
+                            xid2,
+                            lx as i32,
+                            ly as i32,
                             button,
                             count,
+                        )
+                    } else {
+                        crate::input::send_click_with_modifiers(
+                            xid2,
+                            lx as i32,
+                            ly as i32,
+                            count,
+                            button,
                             &modifier_refs,
                         )
-                    })
-                    .map(|()| PointerRoute::Foreground)
-                } else if modifier_refs.is_empty() && !crate::wayland::wayland_input_enabled() {
-                    x11_pixel_click_no_focus_steal(
-                        &cursor_id_for_fallback,
-                        xid2,
-                        lx as i32,
-                        ly as i32,
-                        button,
-                        count,
-                    )
-                } else {
-                    crate::input::send_click_with_modifiers(
-                        xid2,
-                        lx as i32,
-                        ly as i32,
-                        count,
-                        button,
-                        &modifier_refs,
-                    )
-                    .map(|()| PointerRoute::Synthetic)
-                }
-            })
+                        .map(|()| PointerRoute::Synthetic)
+                    }
+                },
+            )
             .await;
             let mode_label = if delivery.is_foreground() {
                 "foreground"
@@ -7054,11 +7561,7 @@ impl Tool for ClickTool {
                     x = lx;
                     y = ly;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -7071,11 +7574,10 @@ impl Tool for ClickTool {
         // always window-local screenshot pixels; native Wayland translates
         // through compositor/AT-SPI geometry while X11 uses XTranslateCoordinates.
         let wayland_output_point = if crate::wayland::wayland_input_enabled() {
-            Some(crate::wayland::window_local_to_output(
-                xid,
-                x.round() as i32,
-                y.round() as i32,
-            ))
+            match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
+                Ok(point) => Some(point),
+                Err(error) => return input_error_result(error),
+            }
         } else {
             None
         };
@@ -7491,13 +7993,17 @@ impl Tool for TypeTextTool {
                 .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland {
-                    crate::wayland::type_text_focused(&text)
-                } else {
-                    crate::input::send_type_text_xtest(&text)
-                }
-            })
+            let result = spawn_blocking_bounded(
+                "desktop type_text",
+                typing_budget(text.chars().count(), crate::wayland::niri::is_session()),
+                move || {
+                    if wayland {
+                        crate::wayland::type_text_focused(&text)
+                    } else {
+                        crate::input::send_type_text_xtest(&text)
+                    }
+                },
+            )
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text("Typed text into the focused desktop application.")
@@ -7845,16 +8351,20 @@ impl Tool for TypeTextTool {
         {
             if let Some(idx) = resolved_elem_idx {
                 let text_w = text.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::wayland::with_target_foreground(pid, xid, || {
-                        if !crate::atspi::focus_element(pid, idx)? {
-                            anyhow::bail!(
-                                "AT-SPI Component.GrabFocus returned false for element {idx}"
-                            );
-                        }
-                        crate::wayland::type_text_focused(&text_w)
-                    })
-                })
+                let result = spawn_blocking_bounded(
+                    "type_text",
+                    typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
+                    move || {
+                        crate::wayland::with_target_foreground(pid, xid, || {
+                            if !crate::atspi::focus_element(pid, idx)? {
+                                anyhow::bail!(
+                                    "AT-SPI Component.GrabFocus returned false for element {idx}"
+                                );
+                            }
+                            crate::wayland::type_text_focused(&text_w)
+                        })
+                    },
+                )
                 .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
@@ -7913,18 +8423,22 @@ impl Tool for TypeTextTool {
             }
             let text_w = text.clone();
             let idx = resolved_elem_idx;
-            let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::with_target_foreground(pid, xid, || {
-                    if let Some(idx) = idx {
-                        if !crate::atspi::focus_element(pid, idx)? {
-                            anyhow::bail!(
-                                "AT-SPI Component.GrabFocus returned false for element {idx}"
-                            );
+            let result = spawn_blocking_bounded(
+                "type_text",
+                typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
+                move || {
+                    crate::wayland::with_target_foreground(pid, xid, || {
+                        if let Some(idx) = idx {
+                            if !crate::atspi::focus_element(pid, idx)? {
+                                anyhow::bail!(
+                                    "AT-SPI Component.GrabFocus returned false for element {idx}"
+                                );
+                            }
                         }
-                    }
-                    crate::wayland::type_text_focused(&text_w)
-                })
-            })
+                        crate::wayland::type_text_focused(&text_w)
+                    })
+                },
+            )
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -7960,7 +8474,7 @@ impl Tool for TypeTextTool {
             let cursor_id = resolve_cursor_key(&args);
             let result = spawn_blocking_bounded(
                 "type_text terminal",
-                foreground_budget(text_len),
+                typing_budget(text_len, crate::wayland::niri::is_session()),
                 move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
                 // pty-master injection is preferred — it skips the X event
                 // queue entirely. Falls through to key events if the terminal
@@ -8006,7 +8520,7 @@ impl Tool for TypeTextTool {
             let idx = resolved_elem_idx;
             let result = spawn_blocking_bounded(
                 "foreground type_text",
-                foreground_budget(text_len),
+                typing_budget(text_len, crate::wayland::niri::is_session()),
                 move || {
                     crate::input::with_x11_foreground_opts(
                         xid,
@@ -8060,7 +8574,7 @@ impl Tool for TypeTextTool {
             let cursor_id = resolve_cursor_key(&args);
             let result = spawn_blocking_bounded(
                 "background type_text",
-                foreground_budget(text_len),
+                typing_budget(text_len, crate::wayland::niri::is_session()),
                 move || background_text_route(&cursor_id, pid, xid, &text_b),
             )
             .await;
@@ -8098,7 +8612,7 @@ impl Tool for TypeTextTool {
                 let cursor_id = resolve_cursor_key(&args);
                 let result = spawn_blocking_bounded(
                     "background type_text",
-                    foreground_budget(text_len),
+                    typing_budget(text_len, crate::wayland::niri::is_session()),
                     move || -> anyhow::Result<Option<KeyRoute>> {
                         if inject_terminal_input(pid, xid, &text_b)? {
                             return Ok(Some(KeyRoute::Terminal));
@@ -8119,18 +8633,22 @@ impl Tool for TypeTextTool {
                 };
             }
             let text_f = text.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                if inject_terminal_input(pid, xid, &text_f)? {
-                    return Ok(());
-                }
-                // XTest (real input to the focused window), NOT XSendEvent: GTK/Qt
-                // drop synthetic key events, so a spreadsheet cell / canvas would
-                // stay empty. The click that gave this widget focus already put it
-                // under the X input focus, so XTest-to-focus lands correctly.
-                crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_type_text_xtest(&text_f)
-                })
-            })
+            let result = spawn_blocking_bounded(
+                "foreground type_text",
+                typing_budget(text_len, crate::wayland::niri::is_session()),
+                move || {
+                    if inject_terminal_input(pid, xid, &text_f)? {
+                        return Ok(());
+                    }
+                    // XTest (real input to the focused window), NOT XSendEvent: GTK/Qt
+                    // drop synthetic key events, so a spreadsheet cell / canvas would
+                    // stay empty. The click that gave this widget focus already put it
+                    // under the X input focus, so XTest-to-focus lands correctly.
+                    crate::input::with_x11_foreground(xid, 80, || {
+                        crate::input::send_type_text_xtest(&text_f)
+                    })
+                },
+            )
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -8169,22 +8687,26 @@ impl Tool for TypeTextTool {
         // expose the widget tree, type via AT-SPI, then send FocusOut.
         // This doesn't change the X11 active window, so the test's focus check passes.
         let text_clone2 = text.clone();
-        let qt5_result = tokio::task::spawn_blocking(move || {
-            if !is_qt5_process(pid) {
-                anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
-            }
-            // Send FocusIn to trigger Qt5's bridge
-            crate::input::send_focus_in(xid)?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        let qt5_result = spawn_blocking_bounded(
+            "Qt5 type_text",
+            typing_budget(text_len, crate::wayland::niri::is_session()),
+            move || {
+                if !is_qt5_process(pid) {
+                    anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
+                }
+                // Send FocusIn to trigger Qt5's bridge
+                crate::input::send_focus_in(xid)?;
+                std::thread::sleep(std::time::Duration::from_millis(100));
 
-            // Try AT-SPI again now that widgets should be exposed
-            let result = crate::atspi::type_into_editable(pid, &text_clone2);
+                // Try AT-SPI again now that widgets should be exposed
+                let result = crate::atspi::type_into_editable(pid, &text_clone2);
 
-            // Restore state with FocusOut
-            crate::input::send_focus_out(xid)?;
+                // Restore state with FocusOut
+                crate::input::send_focus_out(xid)?;
 
-            result
-        })
+                result
+            },
+        )
         .await;
 
         match qt5_result {
@@ -8207,7 +8729,7 @@ impl Tool for TypeTextTool {
         let cursor_id = resolve_cursor_key(&args);
         let result = spawn_blocking_bounded(
             "type_text",
-            foreground_budget(text_len),
+            typing_budget(text_len, crate::wayland::niri::is_session()),
             move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
             // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {
@@ -8427,19 +8949,20 @@ impl Tool for PressKeyTool {
                 .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland && modifiers.is_empty() {
-                    crate::wayland::press_key_focused(&key)
-                } else if wayland {
-                    let mut keys = modifiers;
-                    keys.push(key);
-                    crate::wayland::hotkey_focused(&keys)
-                } else {
-                    let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    crate::input::send_key_xtest(&key, &refs)
-                }
-            })
-            .await;
+            let result =
+                spawn_blocking_bounded("desktop press_key", foreground_budget(1), move || {
+                    if wayland && modifiers.is_empty() {
+                        crate::wayland::press_key_focused(&key)
+                    } else if wayland {
+                        let mut keys = modifiers;
+                        keys.push(key);
+                        crate::wayland::hotkey_focused(&keys)
+                    } else {
+                        let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                        crate::input::send_key_xtest(&key, &refs)
+                    }
+                })
+                .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!("Pressed desktop key '{display}'."))
                     .with_structured(
@@ -8699,7 +9222,7 @@ impl Tool for PressKeyTool {
             let key_w = key.clone();
             let chord = press_key_chord(&mods, &key);
             let idx = resolved_element_index;
-            let result = tokio::task::spawn_blocking(move || {
+            let result = spawn_blocking_bounded("press_key", foreground_budget(1), move || {
                 crate::wayland::with_target_foreground(pid, xid, || {
                     if let Some(idx) = idx {
                         if !crate::atspi::focus_element(pid, idx)? {
@@ -8867,15 +9390,16 @@ impl Tool for HotkeyTool {
                 .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland {
-                    crate::wayland::hotkey_focused(&keys)
-                } else {
-                    let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    crate::input::send_key_xtest(&key, &refs)
-                }
-            })
-            .await;
+            let result =
+                spawn_blocking_bounded("desktop hotkey", foreground_budget(1), move || {
+                    if wayland {
+                        crate::wayland::hotkey_focused(&keys)
+                    } else {
+                        let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                        crate::input::send_key_xtest(&key, &refs)
+                    }
+                })
+                .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!("Pressed desktop hotkey {display}."))
                     .with_structured(
@@ -9756,10 +10280,15 @@ impl Tool for ScrollTool {
             let x = x.round() as i32;
             let y = y.round() as i32;
             let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
+            let ticks = wheel_ticks(
+                amount,
+                input.by.unwrap_or(cua_driver_contract::ScrollBy::Line),
+                crate::wayland::niri::is_session(),
+            );
             let display = direction.clone();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
-            let space = match desktop_input_space().await {
+            let space = match desktop_input_space(None).await {
                 Ok(space) => space,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
@@ -9774,19 +10303,26 @@ impl Tool for ScrollTool {
                 )
                 .await;
             }
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland {
-                    crate::wayland::scroll_desktop(&space, x, y, &direction, amount as u32)
-                } else {
-                    crate::input::send_scroll_xtest_desktop(x, y, &direction, amount)
-                }
-            })
+            let result = spawn_blocking_bounded(
+                "desktop scroll",
+                foreground_budget(ticks as usize),
+                move || {
+                    if wayland {
+                        crate::wayland::scroll_desktop(&space, x, y, &direction, ticks)
+                    } else {
+                        crate::input::send_scroll_xtest_desktop(x, y, &direction, amount)
+                    }
+                },
+            )
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!("Scrolled desktop {display} × {amount}."))
                     .with_structured(
                         json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
                     ),
+                Ok(Err(error)) if crate::input::foreground::error_code(&error).is_some() => {
+                    input_error_result(error)
+                }
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
@@ -9883,11 +10419,7 @@ impl Tool for ScrollTool {
                 match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await
                 {
                     Ok(Ok(local)) => Some(local),
-                    Ok(Err(e)) => {
-                        return ToolResult::error(format!(
-                            "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                        ))
-                    }
+                    Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                     Err(e) => return ToolResult::error(format!("Task error: {e}")),
                 }
             }
@@ -10104,16 +10636,26 @@ impl Tool for ScrollTool {
                 }
                 (None, cua_driver_core::element_token::ResolvedElement::None) => None,
             };
-            let output_point = local_point.map(|(x, y)| {
-                crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32)
-            });
-            let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::scroll_at(xid, output_point, &direction_for_wayland, amount as u32)
-            })
-            .await;
+            let output_point = match local_point
+                .map(|(x, y)| {
+                    crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32)
+                })
+                .transpose()
+            {
+                Ok(point) => point,
+                Err(error) => return input_error_result(error),
+            };
+            let ticks = wheel_ticks(amount, by, crate::wayland::niri::is_session());
+            let result =
+                spawn_blocking_bounded("scroll", foreground_budget(ticks as usize), move || {
+                    crate::wayland::restoring_niri_focus(pid, xid, || {
+                        crate::wayland::scroll_at(xid, output_point, &direction_for_wayland, ticks)
+                    })
+                })
+                .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "Scrolled {direction} {amount} ticks (delivery_mode=foreground)."
+                    "Scrolled {direction} {ticks} ticks (delivery_mode=foreground)."
                 ))
                 .with_structured(json!({ "verified": false, "delivery_mode": "foreground" })),
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
@@ -10173,74 +10715,82 @@ impl Tool for ScrollTool {
         let cursor_id_for_task = cursor_id.clone();
         let direction_for_wayland = direction.clone();
         let amount_u32 = amount as u32;
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if crate::wayland::wayland_input_enabled() {
-                return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);
-            }
-            // foreground: activate the window, then scroll, then restore — for
-            // surfaces that only route wheel events to the active window.
-            let x11_scroll = || -> anyhow::Result<()> {
-                // X11: synthetic Button4-7 XSendEvents are dropped by XInput2
-                // toolkits (GTK never scrolls). On a real Xorg host, drive a real
-                // wheel detent through the MPX uinput pointer over the window's
-                // center — libinput turns it into the XI2 smooth-scroll GTK reads —
-                // without stealing focus. Falls back to the legacy XSendEvent
-                // Button4-7 path on Xvfb / unsupported servers.
-                // Button → axis/sign: 4=up(+v) 5=down(-v) 6=left(-h) 7=right(+h).
-                if crate::input::real_pointer_input_available() {
-                    let pointer_point = element_point
-                        .and_then(|(_, screen)| screen)
-                        .map(|(x, y)| (x as i32, y as i32))
-                        .or_else(|| window_screen_center(xid).ok());
-                    if let Some((cx, cy)) = pointer_point {
-                        let horizontal = matches!(button, 6 | 7);
-                        let ticks = match button {
-                            4 | 7 => amount as i32,
-                            _ => -(amount as i32), // 5 (down) and 6 (left)
-                        };
-                        match crate::input::send_virtual_pointer_scroll(
-                            &cursor_id_for_task,
-                            &crate::input::VirtualPointerScroll {
-                                target_window: xid,
-                                x: cx,
-                                y: cy,
-                                horizontal,
-                                ticks,
-                            },
-                        ) {
-                            Ok(()) => return Ok(()),
-                            Err(error) if crate::input::is_uinput_unavailable(&error) => {
-                                return Err(error)
+        let result = spawn_blocking_bounded(
+            "scroll",
+            foreground_budget(amount_u32 as usize),
+            move || -> anyhow::Result<()> {
+                if crate::wayland::wayland_input_enabled() {
+                    return crate::wayland::restoring_niri_focus(pid, xid, || {
+                        crate::wayland::scroll(xid, &direction_for_wayland, amount_u32)
+                    });
+                }
+                // foreground: activate the window, then scroll, then restore — for
+                // surfaces that only route wheel events to the active window.
+                let x11_scroll = || -> anyhow::Result<()> {
+                    // X11: synthetic Button4-7 XSendEvents are dropped by XInput2
+                    // toolkits (GTK never scrolls). On a real Xorg host, drive a real
+                    // wheel detent through the MPX uinput pointer over the window's
+                    // center — libinput turns it into the XI2 smooth-scroll GTK reads —
+                    // without stealing focus. Falls back to the legacy XSendEvent
+                    // Button4-7 path on Xvfb / unsupported servers.
+                    // Button → axis/sign: 4=up(+v) 5=down(-v) 6=left(-h) 7=right(+h).
+                    if crate::input::real_pointer_input_available() {
+                        let pointer_point = element_point
+                            .and_then(|(_, screen)| screen)
+                            .map(|(x, y)| (x as i32, y as i32))
+                            .or_else(|| window_screen_center(xid).ok());
+                        if let Some((cx, cy)) = pointer_point {
+                            let horizontal = matches!(button, 6 | 7);
+                            let ticks = match button {
+                                4 | 7 => amount as i32,
+                                _ => -(amount as i32), // 5 (down) and 6 (left)
+                            };
+                            match crate::input::send_virtual_pointer_scroll(
+                                &cursor_id_for_task,
+                                &crate::input::VirtualPointerScroll {
+                                    target_window: xid,
+                                    x: cx,
+                                    y: cy,
+                                    horizontal,
+                                    ticks,
+                                },
+                            ) {
+                                Ok(()) => return Ok(()),
+                                Err(error) if crate::input::is_uinput_unavailable(&error) => {
+                                    return Err(error)
+                                }
+                                Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
                             }
-                            Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
                         }
                     }
-                }
-                let (local_x, local_y) =
-                    element_point.map(|(local, _)| local).unwrap_or((0.0, 0.0));
-                crate::input::send_click(xid, local_x as i32, local_y as i32, amount, button)
-            };
-            if delivery.is_foreground() {
-                let point = element_point
-                    .and_then(|(_, screen)| screen)
-                    .or_else(|| {
-                        window_screen_center(xid)
-                            .ok()
-                            .map(|(x, y)| (x as f64, y as f64))
+                    let (local_x, local_y) =
+                        element_point.map(|(local, _)| local).unwrap_or((0.0, 0.0));
+                    crate::input::send_click(xid, local_x as i32, local_y as i32, amount, button)
+                };
+                if delivery.is_foreground() {
+                    let point = element_point
+                        .and_then(|(_, screen)| screen)
+                        .or_else(|| {
+                            window_screen_center(xid)
+                                .ok()
+                                .map(|(x, y)| (x as f64, y as f64))
+                        })
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("could not resolve foreground scroll point")
+                        })?;
+                    crate::input::with_x11_foreground(xid, 80, || {
+                        crate::input::send_click_xtest_desktop(
+                            point.0 as i32,
+                            point.1 as i32,
+                            button,
+                            amount,
+                        )
                     })
-                    .ok_or_else(|| anyhow::anyhow!("could not resolve foreground scroll point"))?;
-                crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_click_xtest_desktop(
-                        point.0 as i32,
-                        point.1 as i32,
-                        button,
-                        amount,
-                    )
-                })
-            } else {
-                x11_scroll()
-            }
-        })
+                } else {
+                    x11_scroll()
+                }
+            },
+        )
         .await;
         let mode_label = if delivery.is_foreground() {
             "foreground"
@@ -10372,19 +10922,28 @@ impl Tool for DoubleClickTool {
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
-                    let wayland_point = crate::wayland::wayland_input_enabled()
-                        .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi));
+                    let wayland_point = match crate::wayland::wayland_input_enabled()
+                        .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi))
+                        .transpose()
+                    {
+                        Ok(point) => point,
+                        Err(error) => return input_error_result(error),
+                    };
                     let cursor_id_for_task = cursor_id.clone();
-                    let click_result =
-                        tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
+                    let click_result = spawn_blocking_bounded(
+                        "double_click",
+                        foreground_budget(0),
+                        move || -> anyhow::Result<PointerRoute> {
                             if crate::wayland::is_inject_mode() {
                                 return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1)
                                     .map(|()| PointerRoute::Wayland);
                             }
                             if crate::wayland::wayland_input_enabled() {
                                 let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
-                                return crate::wayland::click(xid, output_x, output_y, 2, 1)
-                                    .map(|()| PointerRoute::Wayland);
+                                return crate::wayland::restoring_niri_focus(pid, xid, || {
+                                    crate::wayland::click(xid, output_x, output_y, 2, 1)
+                                })
+                                .map(|()| PointerRoute::Wayland);
                             }
                             if delivery.is_foreground() {
                                 return crate::input::with_x11_foreground(xid, 80, || {
@@ -10400,8 +10959,9 @@ impl Tool for DoubleClickTool {
                                 .map(|()| PointerRoute::Foreground);
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 1, 2)
-                        })
-                        .await;
+                        },
+                    )
+                    .await;
                     let mode_label = if delivery.is_foreground() {
                         "foreground"
                     } else {
@@ -10457,11 +11017,7 @@ impl Tool for DoubleClickTool {
                     x = lx;
                     y = ly;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -10470,11 +11026,10 @@ impl Tool for DoubleClickTool {
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
         let wayland_output_point = if crate::wayland::wayland_input_enabled() {
-            Some(crate::wayland::window_local_to_output(
-                xid,
-                x.round() as i32,
-                y.round() as i32,
-            ))
+            match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
+                Ok(point) => Some(point),
+                Err(error) => return input_error_result(error),
+            }
         } else {
             None
         };
@@ -10491,38 +11046,44 @@ impl Tool for DoubleClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
-            if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(pid, xid, x, y, 2, 1)
+        let result = spawn_blocking_bounded(
+            "double_click",
+            foreground_budget(0),
+            move || -> anyhow::Result<PointerRoute> {
+                if crate::wayland::is_inject_mode() {
+                    return crate::wayland::inject_click(pid, xid, x, y, 2, 1)
+                        .map(|()| PointerRoute::Wayland);
+                }
+                if crate::wayland::wayland_input_enabled() {
+                    let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
+                    return crate::wayland::restoring_niri_focus(pid, xid, || {
+                        crate::wayland::click(xid, output_x, output_y, 2, 1)
+                    })
                     .map(|()| PointerRoute::Wayland);
-            }
-            if crate::wayland::wayland_input_enabled() {
-                let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-                return crate::wayland::click(xid, output_x, output_y, 2, 1)
-                    .map(|()| PointerRoute::Wayland);
-            }
-            if delivery.is_foreground() {
-                return crate::input::with_x11_foreground(xid, 80, || {
-                    // Real XTest double-click at the screen point — synthetic
-                    // XSendEvent button events are dropped by GTK/Qt and the MPX
-                    // uinput path needs /dev/uinput (absent on Xvfb/Xtigervnc), so
-                    // neither lands. Mirrors the single-click foreground path.
-                    if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
-                        crate::input::send_click_xtest_desktop(
-                            sx.round() as i32,
-                            sy.round() as i32,
-                            1,
-                            2,
-                        )?;
-                        return Ok(());
-                    }
-                    x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
-                        .map(|_| ())
-                })
-                .map(|()| PointerRoute::Foreground);
-            }
-            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
-        })
+                }
+                if delivery.is_foreground() {
+                    return crate::input::with_x11_foreground(xid, 80, || {
+                        // Real XTest double-click at the screen point — synthetic
+                        // XSendEvent button events are dropped by GTK/Qt and the MPX
+                        // uinput path needs /dev/uinput (absent on Xvfb/Xtigervnc), so
+                        // neither lands. Mirrors the single-click foreground path.
+                        if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
+                            crate::input::send_click_xtest_desktop(
+                                sx.round() as i32,
+                                sy.round() as i32,
+                                1,
+                                2,
+                            )?;
+                            return Ok(());
+                        }
+                        x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
+                            .map(|_| ())
+                    })
+                    .map(|()| PointerRoute::Foreground);
+                }
+                x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
+            },
+        )
         .await;
         let mode_label = if delivery.is_foreground() {
             "foreground"
@@ -10659,11 +11220,18 @@ impl Tool for RightClickTool {
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
-                    let wayland_point = crate::wayland::wayland_input_enabled()
-                        .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi));
+                    let wayland_point = match crate::wayland::wayland_input_enabled()
+                        .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi))
+                        .transpose()
+                    {
+                        Ok(point) => point,
+                        Err(error) => return input_error_result(error),
+                    };
                     let cursor_id_for_task = cursor_id.clone();
-                    let click_result =
-                        tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
+                    let click_result = spawn_blocking_bounded(
+                        "right_click",
+                        foreground_budget(0),
+                        move || -> anyhow::Result<PointerRoute> {
                             if crate::wayland::is_inject_mode() {
                                 return crate::wayland::inject_click(pid, xid, lx, ly, 1, 3)
                                     .map(|()| PointerRoute::Wayland);
@@ -10687,8 +11255,9 @@ impl Tool for RightClickTool {
                                 .map(|()| PointerRoute::Foreground);
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 3, 1)
-                        })
-                        .await;
+                        },
+                    )
+                    .await;
                     let mode_label = if delivery.is_foreground() {
                         "foreground"
                     } else {
@@ -10744,11 +11313,7 @@ impl Tool for RightClickTool {
                     x = lx;
                     y = ly;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -10757,11 +11322,10 @@ impl Tool for RightClickTool {
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
         let wayland_output_point = if crate::wayland::wayland_input_enabled() {
-            Some(crate::wayland::window_local_to_output(
-                xid,
-                x.round() as i32,
-                y.round() as i32,
-            ))
+            match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
+                Ok(point) => Some(point),
+                Err(error) => return input_error_result(error),
+            }
         } else {
             None
         };
@@ -10778,37 +11342,41 @@ impl Tool for RightClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
-            if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(pid, xid, x, y, 1, 3)
-                    .map(|()| PointerRoute::Wayland);
-            }
-            if crate::wayland::wayland_input_enabled() {
-                let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-                return crate::wayland::click(xid, output_x, output_y, 1, 3)
-                    .map(|()| PointerRoute::Wayland);
-            }
-            if delivery.is_foreground() {
-                return crate::input::with_x11_foreground(xid, 80, || {
-                    // Real XTest right-click at the screen point (synthetic
-                    // XSendEvent is dropped by GTK/Qt; MPX needs /dev/uinput).
-                    // Mirrors the single-click foreground path.
-                    if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
-                        crate::input::send_click_xtest_desktop(
-                            sx.round() as i32,
-                            sy.round() as i32,
-                            3,
-                            1,
-                        )?;
-                        return Ok(());
-                    }
-                    x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
-                        .map(|_| ())
-                })
-                .map(|()| PointerRoute::Foreground);
-            }
-            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
-        })
+        let result = spawn_blocking_bounded(
+            "right_click",
+            foreground_budget(0),
+            move || -> anyhow::Result<PointerRoute> {
+                if crate::wayland::is_inject_mode() {
+                    return crate::wayland::inject_click(pid, xid, x, y, 1, 3)
+                        .map(|()| PointerRoute::Wayland);
+                }
+                if crate::wayland::wayland_input_enabled() {
+                    let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
+                    return crate::wayland::click(xid, output_x, output_y, 1, 3)
+                        .map(|()| PointerRoute::Wayland);
+                }
+                if delivery.is_foreground() {
+                    return crate::input::with_x11_foreground(xid, 80, || {
+                        // Real XTest right-click at the screen point (synthetic
+                        // XSendEvent is dropped by GTK/Qt; MPX needs /dev/uinput).
+                        // Mirrors the single-click foreground path.
+                        if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
+                            crate::input::send_click_xtest_desktop(
+                                sx.round() as i32,
+                                sy.round() as i32,
+                                3,
+                                1,
+                            )?;
+                            return Ok(());
+                        }
+                        x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
+                            .map(|_| ())
+                    })
+                    .map(|()| PointerRoute::Foreground);
+                }
+                x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
+            },
+        )
         .await;
         let mode_label = if delivery.is_foreground() {
             "foreground"
@@ -10924,7 +11492,7 @@ impl Tool for DragTool {
                 return wayland_modified_drag_refusal();
             }
             let path = if wayland { "wayland_desktop" } else { "xtest" };
-            let space = match desktop_input_space().await {
+            let space = match desktop_input_space(None).await {
                 Ok(space) => space,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
@@ -10935,32 +11503,37 @@ impl Tool for DragTool {
             };
             let (overlay_from, overlay_to) =
                 (overlay_point(from_x, from_y), overlay_point(to_x, to_y));
-            let result = tokio::task::spawn_blocking(move || {
-                if wayland {
-                    crate::wayland::drag_desktop(
-                        &space,
-                        from_x.round() as i32,
-                        from_y.round() as i32,
-                        to_x.round() as i32,
-                        to_y.round() as i32,
-                        steps as u32,
-                        duration_ms,
-                        button,
-                    )
-                } else {
-                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    crate::input::send_drag_xtest_desktop_with_modifiers(
-                        from_x.round() as i32,
-                        from_y.round() as i32,
-                        to_x.round() as i32,
-                        to_y.round() as i32,
-                        button,
-                        duration_ms,
-                        steps,
-                        &modifier_refs,
-                    )
-                }
-            });
+            let result = spawn_blocking_bounded(
+                "desktop drag",
+                foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
+                move || {
+                    if wayland {
+                        crate::wayland::drag_desktop(
+                            &space,
+                            from_x.round() as i32,
+                            from_y.round() as i32,
+                            to_x.round() as i32,
+                            to_y.round() as i32,
+                            steps as u32,
+                            duration_ms,
+                            button,
+                        )
+                    } else {
+                        let modifier_refs: Vec<&str> =
+                            modifiers.iter().map(String::as_str).collect();
+                        crate::input::send_drag_xtest_desktop_with_modifiers(
+                            from_x.round() as i32,
+                            from_y.round() as i32,
+                            to_x.round() as i32,
+                            to_y.round() as i32,
+                            button,
+                            duration_ms,
+                            steps,
+                            &modifier_refs,
+                        )
+                    }
+                },
+            );
             let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
                 overlay_from,
@@ -10978,6 +11551,9 @@ impl Tool for DragTool {
                 Ok(Ok(())) => ToolResult::text("Dragged on the desktop.").with_structured(
                     json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
                 ),
+                Ok(Err(error)) if crate::input::foreground::error_code(&error).is_some() => {
+                    input_error_result(error)
+                }
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
@@ -11061,7 +11637,7 @@ impl Tool for DragTool {
         };
 
         let duration_ms = args.u64_or("duration_ms", 500);
-        let steps = args.u64_or("steps", 20) as usize;
+        let steps = drag_steps(&args);
         let button_str = args.str_or("button", "left");
         let button = parse_mouse_button(button_str.as_str());
         match context {
@@ -11091,11 +11667,7 @@ impl Tool for DragTool {
                     to_x = tx;
                     to_y = ty;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -11112,16 +11684,23 @@ impl Tool for DragTool {
                 );
             }
             let owner = named_session_cursor_key(&args);
-            let from = crate::wayland::window_local_to_output(
+            let points = crate::wayland::window_local_to_output(
                 xid,
                 from_x.round() as i32,
                 from_y.round() as i32,
-            );
-            let to = crate::wayland::window_local_to_output(
-                xid,
-                to_x.round() as i32,
-                to_y.round() as i32,
-            );
+            )
+            .and_then(|from| {
+                crate::wayland::window_local_to_output(
+                    xid,
+                    to_x.round() as i32,
+                    to_y.round() as i32,
+                )
+                .map(|to| (from, to))
+            });
+            let (from, to) = match points {
+                Ok(points) => points,
+                Err(error) => return input_error_result(error),
+            };
             let (started, acknowledged) = tokio::sync::oneshot::channel();
             let (_cancellation, mut dispatch) =
                 match spawn_isolated_hyprland(&args, move |cancellation| {
@@ -11175,16 +11754,23 @@ impl Tool for DragTool {
                 );
             }
             let owner = named_session_cursor_key(&args);
-            let from = crate::wayland::window_local_to_output(
+            let points = crate::wayland::window_local_to_output(
                 xid,
                 from_x.round() as i32,
                 from_y.round() as i32,
-            );
-            let to = crate::wayland::window_local_to_output(
-                xid,
-                to_x.round() as i32,
-                to_y.round() as i32,
-            );
+            )
+            .and_then(|from| {
+                crate::wayland::window_local_to_output(
+                    xid,
+                    to_x.round() as i32,
+                    to_y.round() as i32,
+                )
+                .map(|to| (from, to))
+            });
+            let (from, to) = match points {
+                Ok(points) => points,
+                Err(error) => return input_error_result(error),
+            };
             let (started, acknowledged) = tokio::sync::oneshot::channel();
             let (_cancellation, mut dispatch) =
                 match spawn_isolated_hyprland(&args, move |cancellation| {
@@ -11227,20 +11813,27 @@ impl Tool for DragTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        let wayland_points = crate::wayland::wayland_input_enabled().then(|| {
-            (
+        let wayland_points = match crate::wayland::wayland_input_enabled()
+            .then(|| {
                 crate::wayland::window_local_to_output(
                     xid,
                     from_x.round() as i32,
                     from_y.round() as i32,
-                ),
-                crate::wayland::window_local_to_output(
-                    xid,
-                    to_x.round() as i32,
-                    to_y.round() as i32,
-                ),
-            )
-        });
+                )
+                .and_then(|from| {
+                    crate::wayland::window_local_to_output(
+                        xid,
+                        to_x.round() as i32,
+                        to_y.round() as i32,
+                    )
+                    .map(|to| (from, to))
+                })
+            })
+            .transpose()
+        {
+            Ok(points) => points,
+            Err(error) => return input_error_result(error),
+        };
         let screen_from = if let Some((from, _)) = wayland_points {
             Some((from.0 as f64, from.1 as f64))
         } else {
@@ -11268,33 +11861,37 @@ impl Tool for DragTool {
         // coords. Returns early so we don't fall into the X11 XSendEvent loop below.
         if crate::wayland::wayland_input_enabled() {
             let steps_u32 = steps as u32;
-            let drag_result = if crate::wayland::is_inject_mode() {
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::inject_drag(
-                        pid,
-                        xid,
-                        (from_x, from_y),
-                        (to_x, to_y),
-                        steps,
-                        button as u32,
-                    )
-                })
-            } else {
-                let ((fxi, fyi), (txi, tyi)) = wayland_points.unwrap_or((
-                    (from_x.round() as i32, from_y.round() as i32),
-                    (to_x.round() as i32, to_y.round() as i32),
-                ));
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::drag(
-                        xid,
-                        (fxi, fyi),
-                        (txi, tyi),
-                        steps_u32,
-                        duration_ms,
-                        button,
-                    )
-                })
-            };
+            let inject = crate::wayland::is_inject_mode();
+            let ((fxi, fyi), (txi, tyi)) = wayland_points.unwrap_or((
+                (from_x.round() as i32, from_y.round() as i32),
+                (to_x.round() as i32, to_y.round() as i32),
+            ));
+            let drag_result = spawn_blocking_bounded(
+                "drag",
+                foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
+                move || {
+                    if inject {
+                        return crate::wayland::inject_drag(
+                            pid,
+                            xid,
+                            (from_x, from_y),
+                            (to_x, to_y),
+                            steps,
+                            button as u32,
+                        );
+                    }
+                    crate::wayland::restoring_niri_focus(pid, xid, || {
+                        crate::wayland::drag(
+                            xid,
+                            (fxi, fyi),
+                            (txi, tyi),
+                            steps_u32,
+                            duration_ms,
+                            button,
+                        )
+                    })
+                },
+            );
             let ((from_output_x, from_output_y), (to_output_x, to_output_y)) = wayland_points
                 .unwrap_or((
                     (from_x.round() as i32, from_y.round() as i32),
@@ -11339,21 +11936,25 @@ impl Tool for DragTool {
                 Ok(Err(e)) => return ToolResult::error(e.to_string()),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             };
-            let drag_result = tokio::task::spawn_blocking(move || {
-                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_drag_xtest_desktop_with_modifiers(
-                        screen_from_x.round() as i32,
-                        screen_from_y.round() as i32,
-                        screen_to_x.round() as i32,
-                        screen_to_y.round() as i32,
-                        button,
-                        duration_ms,
-                        steps,
-                        &modifier_refs,
-                    )
-                })
-            });
+            let drag_result = spawn_blocking_bounded(
+                "foreground drag",
+                foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
+                move || {
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::with_x11_foreground(xid, 80, || {
+                        crate::input::send_drag_xtest_desktop_with_modifiers(
+                            screen_from_x.round() as i32,
+                            screen_from_y.round() as i32,
+                            screen_to_x.round() as i32,
+                            screen_to_y.round() as i32,
+                            button,
+                            duration_ms,
+                            steps,
+                            &modifier_refs,
+                        )
+                    })
+                },
+            );
             let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
                 (screen_from_x, screen_from_y),
@@ -11406,28 +12007,32 @@ impl Tool for DragTool {
                 cursor_overlay::OverlayCommand::SetPressed(true),
             );
             let cursor_id_for_task = cursor_id.clone();
-            let drag_result = tokio::task::spawn_blocking(move || {
-                let (outcome, guard) =
-                    crate::input::focus_guard::guarded_settled(Some(pid), || {
-                        Ok(crate::input::send_virtual_pointer_drag(
-                            &cursor_id_for_task,
-                            &crate::input::VirtualPointerDrag {
-                                target_window: xid,
-                                button,
-                                path: vec![
-                                    (sfx.round() as i32, sfy.round() as i32),
-                                    (stx.round() as i32, sty.round() as i32),
-                                ],
-                                duration_ms,
-                                steps,
-                            },
-                        ))
-                    })?;
-                outcome.map(|mut effect| {
-                    effect.focus_guard = guard;
-                    effect
-                })
-            })
+            let drag_result = spawn_blocking_bounded(
+                "drag",
+                foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
+                move || {
+                    let (outcome, guard) =
+                        crate::input::focus_guard::guarded_settled(Some(pid), || {
+                            Ok(crate::input::send_virtual_pointer_drag(
+                                &cursor_id_for_task,
+                                &crate::input::VirtualPointerDrag {
+                                    target_window: xid,
+                                    button,
+                                    path: vec![
+                                        (sfx.round() as i32, sfy.round() as i32),
+                                        (stx.round() as i32, sty.round() as i32),
+                                    ],
+                                    duration_ms,
+                                    steps,
+                                },
+                            ))
+                        })?;
+                    outcome.map(|mut effect| {
+                        effect.focus_guard = guard;
+                        effect
+                    })
+                },
+            )
             .await;
             crate::overlay::send_command_for(
                 cursor_id.clone(),
@@ -11469,14 +12074,25 @@ impl Tool for DragTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::SetPressed(true),
         );
-        let press_result = tokio::task::spawn_blocking(move || {
-            crate::input::send_button_down(
-                xid,
-                from_x.round() as i32,
-                from_y.round() as i32,
-                button,
-            )
-        })
+        let press_result = press_x11_drag_start(
+            foreground_budget(0),
+            move || {
+                crate::input::send_button_down(
+                    xid,
+                    from_x.round() as i32,
+                    from_y.round() as i32,
+                    button,
+                )
+            },
+            move || {
+                crate::input::send_button_up(
+                    xid,
+                    from_x.round() as i32,
+                    from_y.round() as i32,
+                    button,
+                )
+            },
+        )
         .await;
         let mut result: anyhow::Result<()> = match press_result {
             Ok(Ok(())) => Ok(()),
@@ -11494,15 +12110,16 @@ impl Tool for DragTool {
                 let t = i as f64 / steps.max(1) as f64;
                 let ix = from_x + (to_x - from_x) * t;
                 let iy = from_y + (to_y - from_y) * t;
-                let motion_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_motion(
-                        xid,
-                        ix.round() as i32,
-                        iy.round() as i32,
-                        Some(button),
-                    )
-                })
-                .await;
+                let motion_result =
+                    spawn_blocking_bounded("drag", foreground_budget(0), move || {
+                        crate::input::send_motion(
+                            xid,
+                            ix.round() as i32,
+                            iy.round() as i32,
+                            Some(button),
+                        )
+                    })
+                    .await;
                 match motion_result {
                     Ok(Ok(())) => {
                         if let Ok(Ok((sx, sy))) =
@@ -11534,7 +12151,9 @@ impl Tool for DragTool {
             }
         }
 
-        let release_result = tokio::task::spawn_blocking(move || {
+        // XSendEvent does not read the call's action, so the release still
+        // goes out if the call ends first.
+        let release_result = spawn_blocking_bounded("drag", foreground_budget(0), move || {
             crate::input::send_button_up(xid, to_x.round() as i32, to_y.round() as i32, button)
         })
         .await;
@@ -11664,11 +12283,7 @@ impl Tool for MouseButtonDownTool {
                     x = lx;
                     y = ly;
                 }
-                Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
-                    ))
-                }
+                Ok(Err(e)) => return desktop_frame_unmapped(xid, e),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         }
@@ -11695,20 +12310,49 @@ impl Tool for MouseButtonDownTool {
         // the existing input::send_button_down behaviour.
         let result = if is_wl {
             let cid = cursor_id.clone();
-            let (output_x, output_y) = persistent_pointer_coordinates(
+            let (output_x, output_y) = match persistent_pointer_coordinates(
                 is_wl,
                 xid,
                 xi,
                 yi,
                 crate::wayland::window_local_to_output,
-            );
-            tokio::task::spawn_blocking(move || {
-                crate::wayland::persistent_vptr::press(&cid, xid, output_x, output_y, button)
+            ) {
+                Ok(point) => point,
+                Err(error) => return input_error_result(error),
+            };
+            let state = self.state.clone();
+            let hold = MouseHoldState {
+                pid,
+                xid,
+                button,
+                x,
+                y,
+            };
+            spawn_blocking_bounded("mouse_button_down", foreground_budget(0), move || {
+                crate::wayland::persistent_vptr::press(
+                    &cid,
+                    xid,
+                    output_x,
+                    output_y,
+                    button,
+                    || {
+                        state.mouse_hold.lock().unwrap().insert(cid.clone(), hold);
+                    },
+                )
             })
             .await
         } else {
-            tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button))
-                .await
+            let hold = MouseHoldState {
+                pid,
+                xid,
+                button,
+                x,
+                y,
+            };
+            press_and_record_x11_hold(self.state.clone(), cursor_id.clone(), hold, move || {
+                crate::input::send_button_down(xid, xi, yi, button)
+            })
+            .await
         };
         match result {
             Ok(Ok(())) => {
@@ -11719,11 +12363,6 @@ impl Tool for MouseButtonDownTool {
                     x,
                     y,
                 };
-                self.state
-                    .mouse_hold
-                    .lock()
-                    .unwrap()
-                    .insert(cursor_id.clone(), hold.clone());
                 if let Ok(Ok((sx, sy))) =
                     tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
                 {
@@ -11754,6 +12393,44 @@ impl Tool for MouseButtonDownTool {
             }
         }
     }
+}
+
+/// The press of an X11 step-by-step drag. A press that goes down after its
+/// call ended is released here, in the same worker: the drag's own release
+/// runs in another worker on its own X connection and can reach the app
+/// first, which would leave the app's last event a press.
+async fn press_x11_drag_start(
+    budget: std::time::Duration,
+    press: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+    release: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
+    spawn_blocking_bounded("drag", budget, move || {
+        press()?;
+        if crate::input::action::admit(|| ()).is_err() {
+            release()?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// Press an X11 button and record its hold as soon as it is down, so a caller
+/// that goes away before the await resumes still leaves a hold that
+/// mouse_button_up can release. The worker keeps the call's desktop lease
+/// through both, so the next call on the cursor sees this hold instead of
+/// pressing and recording its own, which this one would then overwrite.
+async fn press_and_record_x11_hold(
+    state: Arc<ToolState>,
+    cursor_id: String,
+    hold: MouseHoldState,
+    press: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
+    spawn_blocking_bounded("mouse_button_down", foreground_budget(0), move || {
+        press()?;
+        state.mouse_hold.lock().unwrap().insert(cursor_id, hold);
+        Ok(())
+    })
+    .await
 }
 
 pub struct MouseDragTool {
@@ -11833,7 +12510,7 @@ impl Tool for MouseDragTool {
         let from_x = hold.x;
         let from_y = hold.y;
         let duration_ms = args.u64_or("duration_ms", 500);
-        let steps = args.u64_or("steps", 20).max(1) as usize;
+        let steps = drag_steps(&args);
         crate::overlay::send_command_for(
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
@@ -11859,6 +12536,7 @@ impl Tool for MouseDragTool {
             duration_ms
         };
         let mut result: anyhow::Result<()> = Ok(());
+        let mut moved = 0;
         let mut prev_x = from_x;
         let mut prev_y = from_y;
         let is_wl = crate::wayland::is_wayland();
@@ -11871,19 +12549,23 @@ impl Tool for MouseDragTool {
             // X11 keeps the existing input::send_motion path.
             let cid_inner = cursor_id.clone();
             let move_result = if is_wl {
-                let (output_x, output_y) = persistent_pointer_coordinates(
+                match persistent_pointer_coordinates(
                     is_wl,
                     xid,
                     ix.round() as i32,
                     iy.round() as i32,
                     crate::wayland::window_local_to_output,
-                );
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::persistent_vptr::move_to(&cid_inner, output_x, output_y)
-                })
-                .await
+                ) {
+                    Ok((output_x, output_y)) => {
+                        spawn_blocking_bounded("mouse_drag", foreground_budget(0), move || {
+                            crate::wayland::persistent_vptr::move_to(&cid_inner, output_x, output_y)
+                        })
+                        .await
+                    }
+                    Err(error) => Ok(Err(error)),
+                }
             } else {
-                tokio::task::spawn_blocking(move || {
+                spawn_blocking_bounded("mouse_drag", foreground_budget(0), move || {
                     crate::input::send_motion(
                         xid,
                         ix.round() as i32,
@@ -11913,6 +12595,7 @@ impl Tool for MouseDragTool {
                     }
                     prev_x = ix;
                     prev_y = iy;
+                    moved = i;
                     if step_delay_ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms)).await;
                     }
@@ -11961,6 +12644,21 @@ impl Tool for MouseDragTool {
                 ))
                 .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
             }
+            Err(e) if e.is::<crate::wayland::persistent_vptr::HeldPointerEnded>() => {
+                // The persistent pointer released the button and discarded
+                // the cursor: it holds nothing any more.
+                self.state.mouse_hold.lock().unwrap().remove(&cursor_id);
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::SetPressed(false),
+                );
+                let mut structured = mouse_hold_json(&cursor_id, None);
+                structured["effect"] = json!("partial");
+                ToolResult::error(format!(
+                    "mouse_drag stopped after {moved} of {steps} steps: {e}"
+                ))
+                .with_structured(structured)
+            }
             Err(e) => ToolResult::error(e.to_string())
                 .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
         }
@@ -12005,6 +12703,35 @@ impl Tool for MouseButtonUpTool {
             .get(&cursor_id)
             .cloned()
         else {
+            // A press whose recording failed and whose release niri did not
+            // confirm stays with the persistent pointer: release it there.
+            if crate::wayland::is_wayland() {
+                let cid = cursor_id.clone();
+                let released =
+                    spawn_blocking_bounded("mouse_button_up", foreground_budget(0), move || {
+                        crate::wayland::persistent_vptr::release_unrecorded(&cid)
+                    })
+                    .await;
+                let unheld = mouse_hold_json(&cursor_id, None);
+                match released {
+                    Ok(Ok(true)) => {
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::SetPressed(false),
+                        );
+                        return ToolResult::text(format!(
+                            "✅ Cursor '{cursor_id}' released a button an earlier call pressed but could not record."
+                        ))
+                        .with_structured(unheld);
+                    }
+                    Ok(Ok(false)) => {}
+                    Ok(Err(e)) => return ToolResult::error(e.to_string()).with_structured(unheld),
+                    Err(e) => {
+                        return ToolResult::error(format!("Task error: {e}"))
+                            .with_structured(unheld)
+                    }
+                }
+            }
             return ToolResult::error(format!(
                 "No mouse button is currently held for cursor '{cursor_id}'."
             ))
@@ -12065,13 +12792,17 @@ impl Tool for MouseButtonUpTool {
         // (single logical drag rather than a click pair).
         let result = if crate::wayland::is_wayland() {
             let cid = cursor_id.clone();
-            tokio::task::spawn_blocking(move || {
+            spawn_blocking_bounded("mouse_button_up", foreground_budget(0), move || {
                 crate::wayland::persistent_vptr::release(&cid, button)
             })
             .await
         } else {
-            tokio::task::spawn_blocking(move || crate::input::send_button_up(xid, xi, yi, button))
-                .await
+            // XSendEvent does not read the call's action, so the release
+            // still goes out if the call ends first.
+            spawn_blocking_bounded("mouse_button_up", foreground_budget(0), move || {
+                crate::input::send_button_up(xid, xi, yi, button)
+            })
+            .await
         };
         match result {
             Ok(Ok(())) => {
@@ -12377,7 +13108,15 @@ impl Tool for ParallelMouseDragTool {
         }
 
         let drags_for_task = drags.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        // The drags run side by side, so the longest one bounds the call.
+        let budget = drags
+            .iter()
+            .map(|(_, drag)| {
+                foreground_budget(drag.steps) + std::time::Duration::from_millis(drag.duration_ms)
+            })
+            .max()
+            .unwrap_or_default();
+        let result = spawn_blocking_bounded("parallel_mouse_drag", budget, move || {
             crate::input::send_parallel_virtual_pointer_drags(&drags_for_task)
         })
         .await;
@@ -12477,6 +13216,12 @@ impl Tool for GetScreenSizeTool {
                 // Scaled outputs report logical pixels plus the output scale.
                 // The size and the monitor list come from one snapshot.
                 let (frame, monitors) = crate::wayland::hyprland::screen_report()?;
+                return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
+            }
+            if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+                // niri reports logical output geometry and its fractional
+                // scale over attested IPC, for a single-output layout.
+                let (frame, monitors) = crate::wayland::niri::screen_report()?;
                 return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
             }
             // X11 reports pixel dimensions; scale factor on X11 is not
@@ -12650,7 +13395,12 @@ impl Tool for GetDesktopStateTool {
                 } else {
                     None
                 };
-            let (native_png, overlay_capture) =
+            // niri: the single output's frame, read before the capture and
+            // compared after it.
+            let niri_frame = (crate::wayland::is_wayland() && crate::wayland::niri::is_session())
+                .then(|| crate::wayland::niri::desktop_snapshot().map(|snapshot| snapshot.frame))
+                .transpose()?;
+            let capture = || {
                 cursor_overlay::capture_exclusion::capture_excluding_overlays(
                     &crate::overlay_capture::OverlayExcluder,
                     |hidden| {
@@ -12666,7 +13416,16 @@ impl Tool for GetDesktopStateTool {
                             png, hidden,
                         ))
                     },
-                )?;
+                )
+            };
+            // niri: capture on a settled layout, and keep the frame that
+            // desktop-scope input on this screenshot is checked against.
+            let ((native_png, overlay_capture), niri_desktop) = if niri_frame.is_some() {
+                let (captured, frame) = crate::wayland::niri::capture_desktop(capture)?;
+                (captured, Some(frame))
+            } else {
+                (capture()?, None)
+            };
             let (native_w, native_h) = crate::capture::png_dimensions_pub(&native_png)?;
             // True screen size. On a pure-Wayland session (native backend
             // opted in, no X11 DISPLAY) the capture above came from the
@@ -12725,14 +13484,28 @@ impl Tool for GetDesktopStateTool {
                     "the Hyprland monitor layout changed during get_desktop_state; call it again"
                 );
                 frame.rebase_windows(&mut windows);
+            } else if let Some(frame) = &niri_frame {
+                // niri window geometry is in layout coordinates; screenshot
+                // pixel (0, 0) is the single output's logical origin.
+                anyhow::ensure!(
+                    crate::wayland::niri::desktop_snapshot()?.frame == *frame,
+                    "the niri output layout changed during get_desktop_state; call it again"
+                );
+                frame.rebase_windows(&mut windows);
             }
-            let capture_id = crate::capture_action_frame::publish_desktop(
-                &capture_service,
-                &capture_args,
-                &png,
-                (shot_w, shot_h),
-                (screen_w, screen_h),
-            )?;
+            let publish = || {
+                crate::capture_action_frame::publish_desktop(
+                    &capture_service,
+                    &capture_args,
+                    &png,
+                    (shot_w, shot_h),
+                    (screen_w, screen_h),
+                )
+            };
+            let capture_id = match niri_desktop {
+                Some(frame) => crate::wayland::niri::adopt_desktop(frame, publish)?,
+                None => publish()?,
+            };
             Ok((
                 b64,
                 shot_w,
@@ -13001,14 +13774,16 @@ impl Tool for MoveCursorTool {
                 "xtest_desktop"
             };
             let result = if wayland {
-                tokio::task::spawn_blocking(move || {
+                spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
                     let space = crate::wayland::DesktopInputSpace::current()?;
                     crate::wayland::move_cursor_desktop(&space, xi, yi)
                 })
                 .await
             } else {
-                tokio::task::spawn_blocking(move || crate::input::send_move_xtest_desktop(xi, yi))
-                    .await
+                spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
+                    crate::input::send_move_xtest_desktop(xi, yi)
+                })
+                .await
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -13017,6 +13792,9 @@ impl Tool for MoveCursorTool {
                 .with_structured(
                     json!({"scope":"desktop","path":path,"x":xi,"y":yi,"effect":"unverifiable"}),
                 ),
+                Ok(Err(error)) if crate::input::foreground::error_code(&error).is_some() => {
+                    input_error_result(error)
+                }
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
@@ -13800,23 +14578,27 @@ impl Tool for TypeTextCharsTool {
             }
         };
         let text_len = text.chars().count();
-        let result = tokio::task::spawn_blocking(move || {
-            if crate::wayland::wayland_input_enabled() {
-                // Per-char `wtype` loop with the requested delay — mirrors the
-                // X11 XSendEvent per-char path. Sleeping here is fine because
-                // we're inside spawn_blocking.
-                let mut buf = [0u8; 4];
-                for ch in text.chars() {
-                    let s = ch.encode_utf8(&mut buf);
-                    crate::wayland::type_text(xid, s)?;
-                    if delay_ms > 0 {
-                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        let result = spawn_blocking_bounded(
+            "type_text_chars",
+            paced_typing_budget(text_len, delay_ms),
+            move || {
+                if crate::wayland::wayland_input_enabled() {
+                    // Per-char `wtype` loop with the requested delay — mirrors the
+                    // X11 XSendEvent per-char path. Sleeping here is fine because
+                    // we're inside spawn_blocking.
+                    let mut buf = [0u8; 4];
+                    for ch in text.chars() {
+                        let s = ch.encode_utf8(&mut buf);
+                        crate::wayland::type_text(xid, s)?;
+                        if delay_ms > 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                        }
                     }
+                    return Ok(());
                 }
-                return Ok(());
-            }
-            crate::input::send_type_text_with_delay(xid, &text, delay_ms)
-        })
+                crate::input::send_type_text_with_delay(xid, &text, delay_ms)
+            },
+        )
         .await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
@@ -14539,9 +15321,16 @@ pub fn build_registry_with_provider(
                         &state_for_session_end,
                         session_id,
                         |cursor_id, held| {
-                            crate::wayland::persistent_vptr::release(cursor_id, held.button)
+                            crate::wayland::persistent_vptr::release_at_session_end(
+                                cursor_id,
+                                held.button,
+                            )
                         },
                     )?;
+                    // A press the tool never recorded (its recording failed
+                    // and its release was not confirmed) is released too.
+                    crate::wayland::persistent_vptr::release_unrecorded_at_session_end(session_id)
+                        .map_err(|error| error.to_string())?;
                 } else {
                     clear_mouse_hold_after_release(&state_for_session_end, session_id);
                 }

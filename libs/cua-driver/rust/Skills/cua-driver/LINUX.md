@@ -365,6 +365,54 @@ packaging and lifecycle validation require separate evidence. Physical Omarchy
 parity requires separate acceptance; it is not a gate for publishing a validated
 image.
 
+### niri
+
+niri 25.08 or later is recognised when `NIRI_SOCKET` and `WAYLAND_DISPLAY`
+belong to the same niri process; window ids are niri's own. niri has no
+RemoteDesktop or libei, so input is foreground only and the libei/portal
+recovery refuses. Refusals carry `foreground_unavailable` and a `suggestion`
+that names the remedy.
+
+- Floating windows get window capture, cropped from the output, and
+  window-coordinate pointer input from niri's floating geometry. A point under
+  another floating window refuses, because niri reports no stacking order.
+- Tiled windows, niri's default layout, refuse window capture and
+  window-coordinate pointer input: niri does not report where they are.
+  `get_window_state` still returns their accessibility tree, and element
+  actions work. For pixels, call `get_desktop_state` and act at desktop scope
+  (no `pid` or `window_id`), or float the window.
+- Desktop-scope pointer input takes pixels of the latest `get_desktop_state`
+  screenshot. It refuses before there is one, when `capture_id` names an older
+  one, after 60 s, past the output edge, and once niri reports a layout or
+  focus change; take a new screenshot then. A click that focuses another
+  window is such a change for the next call, and within a double or triple
+  click on a tiled window that did not have focus: the train stops after the
+  first press. Click once, take a new `get_desktop_state`, then double-click.
+  With niri's `focus-follows-mouse`, moving the pointer onto a window that
+  does not have focus focuses it, so that click refuses before its press;
+  take a new `get_desktop_state`, where the window has focus, and click again.
+- A desktop-scope `drag` refuses before its press when the press would move
+  focus and stop it: the start is on a floating window that does not have
+  focus and the drop is off that window, or the start is off every floating
+  window while no tiled window has focus, unless nothing has focus and the
+  workspace has no tiled window (the press lands on empty space). Click the
+  start point, take a new `get_desktop_state`, then drag.
+  niri does not say where tiled windows are, so a drag that starts on one
+  tiled window while another has focus is not refused: its press focuses that
+  window, the drag stops after the press, and the app gets the press and
+  release as a click.
+- `coordinate_frame:"desktop"` with a window target refuses.
+- Foreground actions activate the target, act, and give focus back to the
+  window that had it. `right_click` and `hotkey` leave the target focused, as
+  on Sway: giving focus back would close the menu they opened. Text and keys
+  use niri's own keymap, and focus is checked before every key.
+- `list_windows` gives tiled windows 0x0 bounds, and a tiled window reads
+  `is_on_screen:true` only while it is the active window of a shown workspace.
+  With a floating window active, visible tiled windows read `false`, so do not
+  filter niri windows on `is_on_screen`.
+- With more than one output, window capture, `get_desktop_state`,
+  window-coordinate pointer input, and desktop-scope input refuse.
+
 ## Quick triage
 
 If a tool call surprises you on Linux:
@@ -384,6 +432,15 @@ If a tool call surprises you on Linux:
    (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`);
    (c) GTK4 / Qt6 / Chromium populate lazily: re-snapshot after an
    interaction or an AX-enable settle.
+4. **`input_busy` saying a previous call's input is still finishing**: an
+   earlier call timed out or was cancelled, and its input worker still holds
+   the desktop (wtype and XTest input runs to completion). The next desktop
+   action waits for that worker for up to 12 s, then refuses before sending
+   anything. Retry once it has stopped. A worker that never stops, such as
+   one blocked on a compositor or X server that stopped answering, keeps
+   every later desktop action refusing until the driver restarts. An
+   `input_busy` that names a pid is different: text input to that process is
+   already running.
 
 ## Forbidden vectors
 

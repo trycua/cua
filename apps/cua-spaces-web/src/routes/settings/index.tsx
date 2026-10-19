@@ -21,6 +21,7 @@ import {
 } from "@/bridge";
 import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AdvancedSection } from "@/components/settings/advanced-section";
 import { AgentsSettingsSection } from "@/components/settings/agents-section";
 import { CoreSettingsRow, CoreSettingsSection } from "@/components/settings/core-section";
 import { Button } from "@/components/ui/button";
@@ -168,6 +169,8 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
           <SettingsRow key={b.command} label={COMMAND_LABEL[b.command]} control={<Shortcut spec={b.key} />} />
         ))}
       </SettingsGroup>
+
+      <AdvancedSection />
     </>
   );
 }
@@ -186,7 +189,7 @@ function GlobalShortcutRow({ shortcut }: { shortcut: GlobalShortcut | null | und
   );
 }
 
-/** The plan and the relay allowance this month (the core's words), where the host reads it. */
+/** The plan and remote use this month (the core's words), where the host reads it. */
 function RelayUsageRow() {
   const view = useRelayUsageView();
   const { openExternal } = useSession();

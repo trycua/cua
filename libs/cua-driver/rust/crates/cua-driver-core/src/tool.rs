@@ -3051,6 +3051,8 @@ impl ToolRegistry {
             .validate_protected_resource_scope(adapter_id, args, &validation_scope)
             .await
         {
+            // Any validation error revokes the grant, whatever code it carries:
+            // a CDP timeout here still means the caller must re-bind, not wait.
             if let Some(grant) = self.protected_resource_grants.revoke_resource(
                 context,
                 lifecycle_session,
@@ -3743,6 +3745,29 @@ mod runtime_isolation_tests {
                 "window_id": args["window_id"].as_u64().unwrap_or(7),
                 "snapshot_id": "synthetic-snapshot", "elements": []
             }))
+        }
+    }
+
+    struct StringScopeProbe {
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for StringScopeProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn protected_resource_scope(
+            &self,
+            _adapter_id: &str,
+            _args: &serde_json::Value,
+        ) -> Result<Option<serde_json::Value>, super::ProtectedResourceScopeError> {
+            Err("synthetic scope lookup failed".into())
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            crate::protocol::ToolResult::text("must not run")
         }
     }
 
@@ -5509,6 +5534,51 @@ resources:
                 .and_then(serde_json::Value::as_str),
             Some("protected_resource_scope_stale")
         );
+    }
+
+    #[tokio::test]
+    async fn a_plain_string_scope_error_keeps_the_generic_refusal_codes() {
+        for (name, read_only, code) in [
+            ("get_browser_state", true, "authorization_host_failed"),
+            ("browser_click", false, "protected_resource_scope_invalid"),
+        ] {
+            let mut registry = super::ToolRegistry::new_with_protected_consent_provider(Some(
+                Arc::new(AcceptingProvider {
+                    requests: AtomicUsize::new(0),
+                }),
+            ));
+            registry.register(Box::new(StringScopeProbe {
+                def: super::ToolDef {
+                    name: name.to_owned(),
+                    description: "test string scope error".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only,
+                    destructive: false,
+                    idempotent: read_only,
+                    open_world: true,
+                },
+            }));
+            let result = registry
+                .invoke_with_context(
+                    name,
+                    serde_json::json!({
+                        "target_id": "target-1",
+                        "tab_id": "tab-1",
+                        "session": "browser"
+                    }),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.pointer("/refusal/code"))
+                    .and_then(serde_json::Value::as_str),
+                Some(code),
+                "{name}"
+            );
+        }
     }
 
     #[tokio::test]

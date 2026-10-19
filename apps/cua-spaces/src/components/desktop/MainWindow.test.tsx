@@ -36,7 +36,7 @@ function setup(
     isNative: true,
     listSpaces: async () => ROWS,
     localStatus: async () => LOCAL,
-    status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+    status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
     screenshot: async () => "data:image/png;base64,AAAA",
     createSpace,
     setDefaultLocation,
@@ -53,7 +53,7 @@ describe("MainWindow", () => {
   it("first run shows the welcome flow in the window, then the Spaces", async () => {
     const { host } = setup({}, false);
     fireEvent.click(await screen.findByRole("button", { name: "Get started" }));
-    // Already signed in (the fleet status names the account): just continue.
+    // Already signed in (the account status names the user): just continue.
     await screen.findByText("Signed in as ada@example.com.");
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "AI agents" });

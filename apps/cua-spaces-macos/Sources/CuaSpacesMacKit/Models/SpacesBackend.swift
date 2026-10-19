@@ -165,8 +165,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// `cua daemon` when it accepts connections, else the runtime in this
     /// process. `Cua.auto` probes the daemon's socket, so files left by a
     /// daemon that exited (`daemon.json`, `cua.sock`) fall back to embedded
-    /// instead of failing every call. Cua Cloud uses the signed-in session
-    /// when no client credentials are set (the Tauri app does the same).
+    /// instead of failing every call. The signed-in session drives the relay
+    /// account.
     public static func make() throws -> LiveSpacesBackend {
         LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(fleetFromSession: true)))
     }
@@ -402,9 +402,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         }.count
     }
 
-    /// No estimate: the rates came from the retired Fleets API
-    /// (`Fleet.usagePricing()` on run.cua.ai), and the app does not offer
-    /// new cloud Spaces. New Space never waits on it.
+    /// No estimate: the rates came from the Cua Cloud API, which has ended,
+    /// and the app does not offer new cloud Spaces. New Space never waits on it.
     public func cloudPricing() async -> AppCloudPricing? { nil }
 
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {

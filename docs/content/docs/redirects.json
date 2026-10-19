@@ -1,12 +1,16 @@
 {
   "$comment": "Old docs slug -> current slug. Read by the docs.cua.ai renderer and next.config. When a page is merged or removed, point its entry (and entries targeting it) at the page that preserves its intent.",
   "redirects": {
+    "driver": "cua-driver",
+    "cli": "cua-cli",
+    "sdk": "cua-sdk",
+    "bench": "cua-bench",
     "cloud-fleets": "cua-sdk/guides/cua-cloud-ended",
     "concepts": "",
     "concepts/architecture": "cua-sdk/concepts/how-sandboxes-work",
     "concepts/browser-targeting-and-background-delivery": "cua-driver/guides/browsers",
     "concepts/capture-and-delivery-modalities": "cua-driver/concepts/how-cua-driver-works",
-    "concepts/choose-a-cua-driver-integration": "cua-driver",
+    "concepts/choose-a-cua-driver-integration": "cua-driver/concepts/how-cua-driver-works#choose-an-integration",
     "concepts/cua-bench-task-lifecycle": "cua-bench",
     "concepts/how-cua-driver-is-validated": "cua-driver/concepts/how-cua-driver-works",
     "concepts/how-fleet-images-work": "cua-sdk/guides/images",

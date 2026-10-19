@@ -1,6 +1,6 @@
 ---
 title: How Cua Driver works
-description: Observation, targets, the background-first action ladder, verification, who owns the runtime, and the optional perception extension.
+description: Observation, targets, the background-first action ladder, verification, choosing an integration, who owns the runtime, and the optional perception extension.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -84,6 +84,22 @@ On Wayland, knowing where a window is does not change which window the
 compositor's seat sends input to, so the driver refuses rather than risk typing
 into the wrong app. A structured `background_unavailable` is part of the
 contract, not a failure to hide.
+
+## Choose an integration
+
+Pick by who owns the runtime: the process that holds the OS permissions,
+sessions and browser connections.
+
+| You are building                                    | Use                                                                          | Runtime owner                                        |
+| --------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- |
+| An agent or harness (Claude Code, Codex, Cursor, …) | [MCP](/cua-driver/guides/connect-your-agent): `cua-driver mcp`               | The MCP process; on macOS, the `CuaDriver.app` daemon |
+| An agent that can only run shell commands           | [CLI](/cua-driver/reference/cli): `cua-driver call <tool>`                   | The `cua-driver serve` daemon                        |
+| An app with built-in computer use                   | [SDK](/cua-driver/guides/use-the-sdk): `CuaDriver.create()`                  | On macOS, the `CuaDriver.app` daemon; elsewhere your app process |
+| A signed desktop app that serves an external agent  | [App-hosted service](/cua-driver/guides/use-the-sdk#expose-mcp-from-a-desktop-app) | The permission-owning desktop app               |
+| Several clients sharing one desktop                 | `cua-driver serve --socket <path>` plus `cua-driver mcp --socket <path>`     | The daemon                                           |
+
+Inside a [Cua Sandbox](/cua-sdk) you do not install Cua Driver: the sandbox's
+guest service bundles its tools.
 
 ## Processes and sessions
 

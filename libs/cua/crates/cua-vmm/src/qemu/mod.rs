@@ -517,7 +517,7 @@ impl QemuRuntime {
         let bin = self.binary(st.arch).await?;
         let dir = self.dir(&st.name);
         let tpm_dir = dir.join("tpm");
-        let swtpm = if spec.tpm || tpm_dir.exists() {
+        let swtpm: Option<PathBuf> = if spec.tpm || tpm_dir.exists() {
             #[cfg(not(unix))]
             return Err(VmmError::invalid("TPM requires a Unix host"));
             #[cfg(unix)]
@@ -617,11 +617,11 @@ impl QemuRuntime {
         // survives this process, while its stderr (crash reports, hvf/tcg
         // errors) goes to qemu.log instead of /dev/null as with -daemonize.
         let log_path = dir.join("qemu.log");
-        let tpm_log = swtpm.as_ref().map_or(String::new(), |_| {
-            format!("; see {}", dir.join("swtpm.log").display())
-        });
         #[cfg(unix)]
         {
+            let tpm_log = swtpm.as_ref().map_or(String::new(), |_| {
+                format!("; see {}", dir.join("swtpm.log").display())
+            });
             let mut command = tokio::process::Command::new("/bin/sh");
             if let Some(swtpm) = &swtpm {
                 command.env("CUA_SWTPM", swtpm).env("CUA_TPM_DIR", &tpm_dir);

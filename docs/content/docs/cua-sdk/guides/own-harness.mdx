@@ -283,15 +283,72 @@ or `DriverService/CallTool`. Server-streaming RPCs, such as
 ## Other languages
 
 cua-spacesd serves native gRPC and gRPC-Web on port `3211`, with server
-reflection. Send the env token as `authorization: Bearer <token>`. Generate a
-client in your language from the `.proto` files in
+reflection. Send the env token as `authorization: Bearer <token>`. The
+contract is the `.proto` files in
 [`libs/cua/proto`](https://github.com/trycua/cua/tree/main/libs/cua/proto)
-(package `cua.env.v1`) with [buf](https://buf.build), using a `buf.gen.yaml`
-that names your language's plugins:
+(package `cua.env.v1`), so there is nothing to map by hand: generate a client
+for your language with [buf](https://buf.build). For Go, put this
+`buf.gen.yaml` in your module:
+
+```yaml test="config" id="harness-buf-gen"
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: example.com/harness/gen
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: gen
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: gen
+    opt: paths=source_relative
+```
 
 ```bash skip="third-party-cli"
-buf generate https://github.com/trycua/cua.git#ref=main,subdir=libs/cua/proto
+buf generate "https://github.com/trycua/cua.git#ref=main,subdir=libs/cua/proto"
 ```
+
+Then call it like any gRPC service. The examples below reach a spacesd at
+`127.0.0.1:3211`, such as the container in
+[Attach to any spacesd](/cua-sdk/guides/spacesd#attach-to-any-spacesd):
+
+```go skip="third-party-cli"
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	envv1 "example.com/harness/gen/cua/env/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+)
+
+func main() {
+	conn, err := grpc.NewClient("127.0.0.1:3211", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+	ctx := metadata.AppendToOutgoingContext(context.Background(),
+		"authorization", "Bearer "+os.Getenv("CUA_ENV_TOKEN"))
+
+	windows, err := envv1.NewWindowsServiceClient(conn).ListWindows(ctx, &envv1.ListWindowsRequest{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, w := range windows.Windows {
+		fmt.Println(w.Title, w.App.GetName())
+	}
+}
+```
+
+Other languages work the same way with their own buf plugins.
 
 Or call it with no generated code at all, through reflection:
 
@@ -301,5 +358,6 @@ grpcurl -plaintext -H "authorization: Bearer $CUA_ENV_TOKEN" \
   127.0.0.1:3211 cua.env.v1.WindowsService/ListWindows
 ```
 
-`grpcurl ... 127.0.0.1:3211 list` lists the services. Keep the token out of
-URLs and logs: it grants full control of the machine.
+`grpcurl -plaintext -H "authorization: Bearer $CUA_ENV_TOKEN" 127.0.0.1:3211 list`
+lists the services. Keep the token out of URLs and logs: it grants full
+control of the machine.

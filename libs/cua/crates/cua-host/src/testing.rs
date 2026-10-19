@@ -1167,6 +1167,15 @@ impl FakeRelay {
         }
     }
 
+    /// Sets a machine's session: online since `connected_at` (Unix
+    /// seconds), or offline (a new driver session gets a new time).
+    pub fn set_session(&self, id: &str, online: bool, connected_at: Option<u64>) {
+        if let Some(r) = self.state.lock().unwrap().machines.get_mut(id) {
+            r.machine.online = online;
+            r.machine.connected_at = if online { connected_at } else { None };
+        }
+    }
+
     /// Adds a connected client to a machine.
     pub fn add_client(&self, id: &str, client: ConnectedClient) {
         if let Some(r) = self.state.lock().unwrap().machines.get_mut(id) {

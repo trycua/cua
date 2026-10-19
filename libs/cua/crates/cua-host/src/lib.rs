@@ -35,6 +35,9 @@ pub mod access;
 pub mod device;
 pub mod direct;
 pub mod driver;
+pub mod helper_migration;
+#[cfg(test)]
+mod helper_migration_tests;
 mod host;
 pub mod machine;
 pub mod pairing;
@@ -51,6 +54,7 @@ pub mod testing;
 mod tests;
 
 pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
+pub use helper_migration::{ServiceMigration, VerifyTiming};
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,

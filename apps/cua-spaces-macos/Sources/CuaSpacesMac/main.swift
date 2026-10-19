@@ -4,6 +4,7 @@
 import CuaSpacesFFI
 import CuaSpacesMacKit
 import Foundation
+import ServiceManagement
 
 // `CuaSpacesMac --check-launch-only`: dyld has loaded every library the app
 // links (libcua_sdk.dylib, Sparkle.framework) and their signatures passed
@@ -15,6 +16,16 @@ if CommandLine.arguments.dropFirst().first == "--check-launch-only" {
     let version = info["CuaVersion"] as? String ?? info["CFBundleShortVersionString"] as? String ?? "?"
     print("Cua Spaces \(version) (\(info["CFBundleVersion"] as? String ?? "?")) loads")
     exit(0)
+}
+
+// `CuaSpacesMac --service-helper register|unregister|status`: the host
+// service's login item (Contents/Library/LaunchAgents/
+// com.trycua.spaces.helper.plist, "Cua Spaces Helper") through
+// SMAppService, which only this bundle's own code may register. cua-host's
+// app-helper runner runs it (from the app's SDK and from the `cua` CLI);
+// prints `{"status": ...}` (and `"error"`) and exits before anything else.
+if CommandLine.arguments.dropFirst().first == "--service-helper" {
+    exit(HelperService.run(Array(CommandLine.arguments.dropFirst(2))))
 }
 
 // `CUA_ENV=staging`: this process and the daemon use the staging home.

@@ -60,7 +60,9 @@ pub enum HostCmd {
         /// one, or the release download).
         #[arg(long)]
         driver_bin: Option<PathBuf>,
-        /// auto | systemd | launchd | windows-task | process.
+        /// auto | systemd | launchd | app-helper | windows-task | process.
+        /// On a Mac with the Cua Spaces app, auto is app-helper: the
+        /// service runs as the app's "Cua Spaces Helper" login item.
         #[arg(long, default_value = "auto")]
         runner: String,
         /// What this machine is for: `desktop` (share this desktop; the
@@ -197,6 +199,21 @@ pub enum HostCmd {
         /// Relay URL.
         #[arg(long)]
         relay: Option<String>,
+    },
+    /// macOS: move the host service into the Cua Spaces app, as its "Cua
+    /// Spaces Helper" login item, from the LaunchAgent that older versions
+    /// installed. This machine keeps its id, registration and Spaces; if
+    /// the helper does not take over, the old service is put back. macOS
+    /// then asks once for Screen Recording and Accessibility for Cua Spaces
+    /// Helper.
+    #[command(after_help = "Examples:
+  cua host migrate
+  # Try again after a move that was rolled back
+  cua host migrate --force")]
+    Migrate {
+        /// Try again even if a move failed before with this version.
+        #[arg(long)]
+        force: bool,
     },
     /// Unregister from the relay, uninstall the service and delete the host
     /// configuration (asks first).
@@ -1081,6 +1098,17 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
             }
         ),
     );
+    if s.service.kind == "app-helper" && s.legacy_service {
+        line(
+            out,
+            "  the old LaunchAgent (com.trycua.spacesd.host) is still there: run `cua host migrate` to remove it",
+        );
+    } else if s.service.kind == "launchd" && s.helper_available {
+        line(
+            out,
+            "  tip: `cua host migrate` moves this service into the Cua Spaces app (Cua Spaces Helper)",
+        );
+    }
     line(
         out,
         format!(
@@ -1432,6 +1460,36 @@ pub async fn run_host(
             )
             .await
             .map_err(crate::team_cmd::err)?;
+        }
+        HostCmd::Migrate { force } => {
+            let m = host
+                .migrate_service(force, env!("CARGO_PKG_VERSION"))
+                .await
+                .map_err(host_err)?;
+            if json {
+                writeln!(
+                    out,
+                    "{}",
+                    serde_json::to_string_pretty(&m)
+                        .map_err(|e| CuaError::Internal(e.to_string()))?
+                )
+                .map_err(|e| CuaError::Internal(e.to_string()))?;
+            } else {
+                line(out, format!("{}: {}", m.outcome, m.detail));
+                if m.permissions_needed {
+                    line(
+                        out,
+                        "macOS will ask you once more for Screen Recording and Accessibility, \
+                         now for Cua Spaces Helper: allow both in System Settings > Privacy & \
+                         Security (`cua host status` lists them). The old \"cua-spacesd\" \
+                         entries there can be removed with the minus button.",
+                    );
+                }
+            }
+            return Ok(match m.outcome.as_str() {
+                "rolled-back" | "kept" => 1,
+                _ => 0,
+            });
         }
         HostCmd::Status => {
             let s = host.status().await.map_err(host_err)?;

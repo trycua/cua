@@ -24,6 +24,17 @@ public protocol HostRunning: AnyObject, Sendable {
     /// Changes what this machine shares: its desktop, and Spaces for your
     /// other devices.
     func configure(change: HostSettingsChange) async throws -> HostStatus
+    /// Moves the host service from the old LaunchAgent into this app, as
+    /// its "Cua Spaces Helper" login item, keeping this machine's id,
+    /// registration and Spaces; the old one comes back if the helper does
+    /// not take over (outcome `rolled-back`).
+    func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration
+}
+
+extension HostRunning {
+    public func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration {
+        HostServiceMigration(outcome: "not-needed", detail: "", permissionsNeeded: false)
+    }
 }
 
 extension CuaSDK.Host: HostRunning {}
@@ -36,6 +47,8 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     public var failSetup: String?
     /// The next `configure` fails with this (once).
     public var failConfigure: String?
+    /// What `migrateService` answers (nil: moved, needing permissions).
+    public var migration: HostServiceMigration?
 
     public init(status: HostStatus? = nil) {
         current = status ?? FixtureHost.unconfigured
@@ -139,6 +152,34 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         calls.append("remove")
         current = FixtureHost.unconfigured
     }
+
+    public func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration {
+        calls.append("migrate:\(force)")
+        let m = migration ?? HostServiceMigration(
+            outcome: "migrated", detail: "the host service now runs as Cua Spaces Helper", permissionsNeeded: true)
+        if m.outcome == "migrated" || m.outcome == "cleaned-up" {
+            current.serviceKind = "app-helper"
+            current.legacyService = false
+        }
+        return m
+    }
+}
+
+/// The one-time move of the host service into this app, as its login item
+/// "Cua Spaces Helper" (Cua Spaces 0.9.4 and earlier, and `cua host setup`
+/// without the app, ran it from a LaunchAgent of their own). Offered on the
+/// main window, so a person is there for the one thing macOS asks again:
+/// Screen Recording and Accessibility, now for Cua Spaces Helper. A login
+/// launch nobody sees never moves it.
+public enum HelperMove: Equatable {
+    /// "Cua Spaces moved its background helper": Continue or Not now.
+    case offer
+    case moving
+    /// Moved; `permissions`: macOS needs Screen Recording and Accessibility
+    /// for the helper.
+    case moved(permissions: Bool)
+    /// It did not take over; the old one runs as before (the reason).
+    case rolledBack(String)
 }
 
 /// "This machine": the host's state, its page and the host setup form.
@@ -198,6 +239,22 @@ public final class HostModel {
         "Sign in to Cua in your browser to continue. Setup finishes on its own after that."
     /// Called whenever the state changes (the roster's entry follows it).
     public var onChange: (() -> Void)?
+    /// The host's last status, as the SDK reported it.
+    public private(set) var status: HostStatus?
+    /// The move into the app's helper, while it shows.
+    public private(set) var helperMove: HelperMove? {
+        didSet { if oldValue != helperMove { onHelperMove?(helperMove) } }
+    }
+    /// Shows or hides the move's window (`HelperMoveWindow`).
+    public var onHelperMove: ((HelperMove?) -> Void)?
+    /// "Not now" this launch.
+    private var helperMoveDeclined = false
+    /// Restarts of a helper that should run but did not, this launch.
+    private var helperRepairs = 0
+    /// This app's version (a move that failed is not offered again by
+    /// itself with the same version).
+    public var appVersion = Bundle.main.infoDictionary?["CuaVersion"] as? String
+        ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
 
     public init(host: HostRunning?) {
         self.host = host
@@ -209,12 +266,14 @@ public final class HostModel {
     public var summaryInput: AppHostSummaryInput? { state.map { appHostSummaryInput(state: $0) } }
 
     func apply(_ status: HostStatus) {
+        self.status = status
         var next = appHostState(status: status)
         next.account = account
         state = next
         machineId = status.machineId
         onChange?()
     }
+
 
     public func refresh() async {
         guard let host else { return }
@@ -223,6 +282,73 @@ public final class HostModel {
         } catch {
             self.error = LiveSpacesBackend.words(error)
         }
+        await followHelper()
+    }
+
+    // MARK: - The app's helper ("Cua Spaces Helper")
+
+    /// After each status: offer the move when the old LaunchAgent runs this
+    /// machine and this app carries the helper; quietly remove what an
+    /// interrupted move left of the old one.
+    func followHelper() async {
+        guard let host, let status, status.configured, status.helperAvailable else { return }
+        // The helper should run but does not (launchd lost it after the app
+        // was replaced): starting it again registers it from this copy.
+        if status.serviceKind == "app-helper", !status.serviceRunning, status.sharing,
+           !status.pausedSignedOut, helperRepairs < 3 {
+            helperRepairs += 1
+            if let s = try? await host.startSharing() { apply(s) }
+            return
+        }
+        if status.serviceKind == "app-helper", status.legacyService {
+            if let m = try? await host.migrateService(force: false, appVersion: appVersion),
+               m.outcome == "cleaned-up" {
+                await refreshStatusOnly()
+            }
+            return
+        }
+        if status.serviceKind == "launchd", helperMove == nil, !helperMoveDeclined {
+            helperMove = .offer
+        }
+    }
+
+    private func refreshStatusOnly() async {
+        guard let host, let s = try? await host.status() else { return }
+        apply(s)
+    }
+
+    /// Continue: move it now (the old one comes back if the helper does not
+    /// take over).
+    public func moveToHelper() async {
+        guard let host, helperMove == .offer else { return }
+        helperMove = .moving
+        do {
+            // The person asked for it: try again even after a failed move.
+            let m = try await host.migrateService(force: true, appVersion: appVersion)
+            switch m.outcome {
+            case "migrated", "switched", "cleaned-up":
+                helperMove = .moved(permissions: m.permissionsNeeded)
+            case "not-needed":
+                helperMove = nil
+            default:
+                helperMove = .rolledBack(m.detail)
+            }
+        } catch {
+            helperMove = .rolledBack(LiveSpacesBackend.words(error))
+        }
+        await refreshStatusOnly()
+    }
+
+    /// Not now: asked again at the next launch.
+    public func declineHelperMove() {
+        helperMoveDeclined = true
+        helperMove = nil
+    }
+
+    /// Done (or OK) on the last step.
+    public func closeHelperMove() {
+        helperMoveDeclined = true
+        helperMove = nil
     }
 
     // MARK: - Form

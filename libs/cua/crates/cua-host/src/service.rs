@@ -12,7 +12,12 @@
 //! - macOS: a LaunchAgent in the GUI (Aqua) session, so screen capture and
 //!   accessibility run with the user's TCC grants. The user grants Screen
 //!   Recording and Accessibility in System Settings; nothing here grants or
-//!   opens anything.
+//!   opens anything. With the Cua Spaces app installed, the agent is the
+//!   app's own login item ([`AppHelper`]): "Cua Spaces Helper", a signed
+//!   helper bundle inside the app registered with `SMAppService`, so macOS
+//!   shows and keeps its permissions under the app's name and Team ID;
+//!   without the app, a hand-written LaunchAgent ([`Launchd`]) runs the
+//!   downloaded binary.
 //! - Windows: a scheduled task that starts at logon with the user's
 //!   interactive token, which is the interactive-session helper: a Windows
 //!   service lives in session 0 and cannot capture the desktop or inject
@@ -30,6 +35,20 @@ pub const SERVICE_NAME: &str = "cua-spacesd-host";
 pub const LAUNCHD_LABEL: &str = "com.trycua.spacesd.host";
 /// Windows task name.
 pub const WINDOWS_TASK_NAME: &str = "Cua\\SpacesdHost";
+
+/// launchd label of the Cua Spaces app's login item ([`AppHelper`]).
+pub const APP_HELPER_LABEL: &str = "com.trycua.spaces.helper";
+/// What macOS shows for it (System Settings: Privacy & Security, Login
+/// Items).
+pub const APP_HELPER_NAME: &str = "Cua Spaces Helper";
+/// The helper bundle, inside the app.
+pub const APP_HELPER_BUNDLE: &str = "Contents/Library/LoginItems/Cua Spaces Helper.app";
+/// The helper's launcher (its bundle's main executable), inside the bundle.
+pub const APP_HELPER_EXECUTABLE: &str = "Contents/MacOS/Cua Spaces Helper";
+/// The `SMAppService.agent` plist, inside the app.
+pub const APP_HELPER_PLIST: &str = "Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist";
+/// The app's own executable (which registers the helper), inside the app.
+pub const APP_EXECUTABLE: &str = "Contents/MacOS/CuaSpacesMac";
 
 /// The names installs made before the cua-spacesd rename used. `install` and
 /// `uninstall` remove a service left under them (best effort), so an upgrade
@@ -66,6 +85,9 @@ pub enum RunnerKind {
     Systemd,
     /// launchd LaunchAgent in the GUI session.
     Launchd,
+    /// macOS: the Cua Spaces app's login item, "Cua Spaces Helper"
+    /// ([`AppHelper`]).
+    AppHelper,
     /// Windows scheduled task at logon (interactive token).
     WindowsTask,
     /// A detached process with a pidfile (no init system, e.g. containers).
@@ -73,11 +95,17 @@ pub enum RunnerKind {
 }
 
 impl RunnerKind {
-    /// The runner for this machine: launchd on macOS, the scheduled task on
-    /// Windows, systemd on Linux when it is PID 1, else a plain process.
+    /// The runner for this machine: on macOS the Cua Spaces app's helper
+    /// when the app (with one) is installed, else launchd; the scheduled
+    /// task on Windows, systemd on Linux when it is PID 1, else a plain
+    /// process.
     pub fn detect() -> Self {
         if cfg!(target_os = "macos") {
-            RunnerKind::Launchd
+            if find_app_helper().is_some() {
+                RunnerKind::AppHelper
+            } else {
+                RunnerKind::Launchd
+            }
         } else if cfg!(windows) {
             RunnerKind::WindowsTask
         } else if Path::new("/run/systemd/system").is_dir() {
@@ -102,6 +130,7 @@ impl RunnerKind {
             RunnerKind::Auto => "auto",
             RunnerKind::Systemd => "systemd",
             RunnerKind::Launchd => "launchd",
+            RunnerKind::AppHelper => "app-helper",
             RunnerKind::WindowsTask => "windows-task",
             RunnerKind::Process => "process",
         }
@@ -113,6 +142,7 @@ impl RunnerKind {
             "auto" | "" => RunnerKind::Auto,
             "systemd" => RunnerKind::Systemd,
             "launchd" => RunnerKind::Launchd,
+            "app-helper" => RunnerKind::AppHelper,
             "windows-task" | "schtasks" => RunnerKind::WindowsTask,
             "process" => RunnerKind::Process,
             other => return Err(Error::InvalidArgument(format!("unknown runner {other:?}"))),
@@ -128,7 +158,7 @@ pub struct ServiceState {
     pub installed: bool,
     /// The driver is running.
     pub running: bool,
-    /// `systemd`, `launchd`, `windows-task` or `process`.
+    /// `systemd`, `launchd`, `app-helper`, `windows-task` or `process`.
     pub kind: String,
     /// Human detail (unit path, pid, runner output).
     pub detail: String,
@@ -1173,6 +1203,352 @@ impl ServiceManager for ProcessRunner {
     }
 }
 
+// ------------------------------------------------------------- app helper
+
+/// `~/.cua/helper/service.json`: what the Cua Spaces app's helper runs (a
+/// [`ServiceSpec`] as JSON, 0600). A fixed path under the user's home: the
+/// helper's launchd plist is sealed in the app and cannot name a cua home.
+pub fn helper_spec_path(user_home: &Path) -> PathBuf {
+    user_home.join(".cua").join("helper").join("service.json")
+}
+
+/// The helper's launcher inside `app` (what `config.driver_bin` names for
+/// the app-helper runner: `<launcher> check-permissions` answers for the
+/// helper's own permissions).
+pub fn app_helper_launcher(app: &Path) -> PathBuf {
+    app.join(APP_HELPER_BUNDLE).join(APP_HELPER_EXECUTABLE)
+}
+
+/// Whether `app` is a Cua Spaces app that carries the helper.
+pub fn has_app_helper(app: &Path) -> bool {
+    app.join(APP_HELPER_PLIST).is_file()
+        && app_helper_launcher(app).is_file()
+        && app.join(APP_EXECUTABLE).is_file()
+}
+
+/// Whether `launcher` is a Cua Spaces app's helper launcher (a host set up
+/// with the app-helper runner names it as its driver).
+pub fn is_app_helper_launcher(launcher: &Path) -> bool {
+    launcher.ends_with(Path::new(APP_HELPER_BUNDLE).join(APP_HELPER_EXECUTABLE))
+}
+
+/// The installed Cua Spaces app that carries the helper, if any (macOS):
+/// `CUA_SPACES_APP` when set (empty or `none`: no app), else the app this
+/// process runs from (the app itself, or the `cua` it links onto PATH),
+/// else `/Applications/Cua Spaces.app`, else `~/Applications/Cua Spaces.app`.
+pub fn find_app_helper() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    if let Some(v) = std::env::var_os("CUA_SPACES_APP") {
+        let p = PathBuf::from(&v);
+        return (!v.is_empty() && v != "none" && has_app_helper(&p)).then_some(p);
+    }
+    let mut candidates = vec![];
+    if let Ok(exe) = std::env::current_exe().and_then(|e| e.canonicalize()) {
+        // .../X.app/Contents/MacOS/<exe>
+        if let Some(app) = exe.parent().and_then(Path::parent).and_then(Path::parent)
+            && app.extension().is_some_and(|e| e == "app")
+        {
+            candidates.push(app.to_path_buf());
+        }
+    }
+    candidates.push(PathBuf::from("/Applications/Cua Spaces.app"));
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join("Applications/Cua Spaces.app"));
+    }
+    candidates.into_iter().find(|a| has_app_helper(a))
+}
+
+/// What `CuaSpacesMac --service-helper <command>` reports: the
+/// `SMAppService` status of the helper (`enabled`, `not-registered`,
+/// `requires-approval`, `not-found`) and an error, if the command failed.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct HelperRegistration {
+    /// The status after the command.
+    pub status: String,
+    /// Why the command failed.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// The Cua Spaces app's login item: "Cua Spaces Helper"
+/// (`Contents/Library/LoginItems/Cua Spaces Helper.app`), registered with
+/// `SMAppService.agent` by the app's own executable. Its launcher reads
+/// [`helper_spec_path`] and runs the cua-spacesd sealed in the helper
+/// bundle with it, in the GUI session; macOS holds the helper responsible
+/// for it, so Screen Recording and Accessibility are granted to "Cua
+/// Spaces Helper" (bundle id `com.trycua.spaces.helper`, the Cua team)
+/// and survive app updates.
+pub struct AppHelper {
+    /// The app (`/Applications/Cua Spaces.app`).
+    pub app: PathBuf,
+    /// [`helper_spec_path`].
+    pub spec_path: PathBuf,
+    /// The user id (`gui/<uid>`).
+    pub uid: u32,
+}
+
+impl AppHelper {
+    /// The helper of `app` for the current user.
+    pub fn for_current_user(app: PathBuf, user_home: &Path) -> Self {
+        #[cfg(unix)]
+        // SAFETY: getuid has no preconditions.
+        let uid = unsafe { libc::getuid() };
+        #[cfg(not(unix))]
+        let uid = 0;
+        Self {
+            app,
+            spec_path: helper_spec_path(user_home),
+            uid,
+        }
+    }
+
+    fn target(&self) -> String {
+        format!("gui/{}/{APP_HELPER_LABEL}", self.uid)
+    }
+
+    /// `CuaSpacesMac --service-helper <command>`.
+    pub fn registration(&self, command: &str) -> Result<HelperRegistration> {
+        let exe = self.app.join(APP_EXECUTABLE);
+        let out = Command::new(&exe)
+            .args(["--service-helper", command])
+            .output()
+            .map_err(|e| Error::Service(format!("{}: {e}", exe.display())))?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let reg: HelperRegistration = text
+            .lines()
+            .rev()
+            .find_map(|l| serde_json::from_str(l.trim()).ok())
+            .ok_or_else(|| {
+                Error::Service(format!(
+                    "Cua Spaces could not {command} its helper: {}{}",
+                    text.trim(),
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ))
+            })?;
+        Ok(reg)
+    }
+
+    fn loaded(&self) -> bool {
+        run(Command::new("launchctl").args(["print", &self.target()])).is_ok()
+    }
+
+    /// launchd could not start the helper's program at its last try.
+    fn spawn_failed(&self) -> bool {
+        Command::new("launchctl")
+            .args(["print", &self.target()])
+            .output()
+            .map(|o| {
+                let p = String::from_utf8_lossy(&o.stdout);
+                p.contains("spawn failed") || p.contains("last exit code = 78")
+            })
+            .unwrap_or(false)
+    }
+}
+
+impl ServiceManager for AppHelper {
+    fn kind(&self) -> RunnerKind {
+        RunnerKind::AppHelper
+    }
+    fn install(&self, spec: &ServiceSpec) -> Result<()> {
+        let mut spec = spec.clone();
+        // The helper runs only its own cua-spacesd; the spec says which
+        // launcher it was written for.
+        spec.program = app_helper_launcher(&self.app);
+        let json =
+            serde_json::to_string_pretty(&spec).map_err(|e| Error::Internal(e.to_string()))?;
+        crate::host::write_secret(&self.spec_path, &json)?;
+        // A registration made by another copy of the app (replaced since:
+        // an update, a reinstall, a downgrade and back) can leave launchd
+        // resolving the helper in a bundle that is gone ("Invalid or missing
+        // Program", exit 78). Registering again from this app binds it here.
+        if !self.state().running {
+            let _ = self.registration("unregister");
+        }
+        let reg = self.registration("register")?;
+        helper_registered(&reg)
+    }
+    fn start(&self) -> Result<()> {
+        // A fresh registration can take a moment to reach launchd.
+        let mut waited = std::time::Duration::ZERO;
+        let step = std::time::Duration::from_millis(200);
+        while !self.loaded() && waited < std::time::Duration::from_secs(5) {
+            std::thread::sleep(step);
+            waited += step;
+        }
+        let kick = || run(Command::new("launchctl").args(["kickstart", "-k", &self.target()]));
+        let mut result = kick();
+        // Started but gone at once with launchd's "could not find the
+        // program" (a stale bundle): register from this app and try once more.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        if result.is_ok() && !self.state().running && self.spawn_failed() {
+            let _ = self.registration("unregister");
+            helper_registered(&self.registration("register")?)?;
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            result = kick();
+        }
+        result.map(drop).map_err(|e| {
+            Error::Service(format!(
+                "macOS did not start {APP_HELPER_NAME} ({e}); if it keeps failing, turn on \
+                     Cua Spaces in System Settings > General > Login Items & Extensions"
+            ))
+        })
+    }
+    fn stop(&self) -> Result<()> {
+        if !self.state().running {
+            return Ok(());
+        }
+        // The launcher passes it on and exits 0, which launchd leaves
+        // stopped (KeepAlive SuccessfulExit=false).
+        run(Command::new("launchctl").args(["kill", "SIGTERM", &self.target()])).map(drop)
+    }
+    fn uninstall(&self) -> Result<()> {
+        let _ = self.stop();
+        let _ = std::fs::remove_file(&self.spec_path);
+        // Unregistering also takes it out of Login Items.
+        let _ = self.registration("unregister");
+        Ok(())
+    }
+    fn state(&self) -> ServiceState {
+        let printed = Command::new("launchctl")
+            .args(["print", &self.target()])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
+        ServiceState {
+            installed: self.spec_path.is_file() && printed.is_some(),
+            running: printed
+                .as_deref()
+                .is_some_and(|p| p.contains("state = running")),
+            kind: RunnerKind::AppHelper.as_str().into(),
+            detail: format!("{APP_HELPER_NAME} in {}", self.app.display()),
+        }
+    }
+}
+
+/// A registration that did not leave the helper allowed to run, in words.
+fn helper_registered(reg: &HelperRegistration) -> Result<()> {
+    match (reg.status.as_str(), &reg.error) {
+        ("enabled", _) => Ok(()),
+        ("requires-approval", _) => Err(Error::Service(format!(
+            "macOS needs you to allow {APP_HELPER_NAME}: turn on Cua Spaces in System Settings > \
+             General > Login Items & Extensions, then try again"
+        ))),
+        (status, Some(e)) => Err(Error::Service(format!(
+            "Cua Spaces could not register {APP_HELPER_NAME} ({status}): {e}"
+        ))),
+        (status, None) => Err(Error::Service(format!(
+            "Cua Spaces could not register {APP_HELPER_NAME} ({status})"
+        ))),
+    }
+}
+
+/// The app-helper runner on a Mac whose Cua Spaces app (with the helper)
+/// is gone: nothing installed, nothing runs, and nothing can start.
+pub struct MissingAppHelper;
+
+impl ServiceManager for MissingAppHelper {
+    fn kind(&self) -> RunnerKind {
+        RunnerKind::AppHelper
+    }
+    fn install(&self, _: &ServiceSpec) -> Result<()> {
+        Err(missing_app())
+    }
+    fn start(&self) -> Result<()> {
+        Err(missing_app())
+    }
+    fn stop(&self) -> Result<()> {
+        Ok(())
+    }
+    fn uninstall(&self) -> Result<()> {
+        Ok(())
+    }
+    fn state(&self) -> ServiceState {
+        ServiceState {
+            installed: false,
+            running: false,
+            kind: RunnerKind::AppHelper.as_str().into(),
+            detail: format!("{APP_HELPER_NAME}: the Cua Spaces app is not installed"),
+        }
+    }
+}
+
+fn missing_app() -> Error {
+    Error::Service(format!(
+        "{APP_HELPER_NAME} lives in the Cua Spaces app, which is not installed; install it \
+         again, or run `cua host setup --runner launchd`"
+    ))
+}
+
+/// The hand-written LaunchAgent an install made before the helper (`cua
+/// host setup` without the app, or Cua Spaces 0.9.4 and earlier), as found
+/// on this Mac.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct LegacyAgent {
+    /// `~/Library/LaunchAgents/com.trycua.spacesd.host.plist` exists.
+    pub plist: bool,
+    /// launchd has it loaded.
+    pub loaded: bool,
+    /// It runs now.
+    pub running: bool,
+}
+
+impl LegacyAgent {
+    /// Anything of it is left.
+    pub fn present(&self) -> bool {
+        self.plist || self.loaded
+    }
+}
+
+impl Launchd {
+    /// What is left of this LaunchAgent.
+    pub fn legacy(&self) -> LegacyAgent {
+        let printed = Command::new("launchctl")
+            .args(["print", &self.target()])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
+        LegacyAgent {
+            plist: self.plist_path().is_file(),
+            loaded: printed.is_some(),
+            running: printed
+                .as_deref()
+                .is_some_and(|p| p.contains("state = running")),
+        }
+    }
+
+    /// The plist's path.
+    pub fn plist_file(&self) -> PathBuf {
+        self.plist_path()
+    }
+
+    /// Stops it and takes it out of launchd, leaving the plist in place.
+    pub fn bootout(&self) -> Result<()> {
+        let target = self.target();
+        if !launchd_loaded(&target, &mut |args: &[&str]| {
+            run(Command::new("launchctl").args(args))
+        }) {
+            return Ok(());
+        }
+        let _ = run(Command::new("launchctl").args(["bootout", &target]));
+        // bootout returns before the teardown ends.
+        for _ in 0..50 {
+            if !launchd_loaded(&target, &mut |args: &[&str]| {
+                run(Command::new("launchctl").args(args))
+            }) {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        Err(Error::Service(format!(
+            "launchd did not let go of {target}"
+        )))
+    }
+}
+
 /// Records calls; for tests of everything above the runner.
 #[derive(Default)]
 pub struct FakeServiceManager {
@@ -1223,6 +1599,12 @@ pub fn manager_for(kind: RunnerKind, user_home: &Path, host_dir: &Path) -> Box<d
     match kind.resolve() {
         RunnerKind::Systemd => Box::new(Systemd::for_current_user(user_home)),
         RunnerKind::Launchd => Box::new(Launchd::for_current_user(user_home)),
+        RunnerKind::AppHelper => match find_app_helper() {
+            Some(app) => Box::new(AppHelper::for_current_user(app, user_home)),
+            // The app was removed (or replaced by one without the helper):
+            // nothing can run it; report it as not installed.
+            None => Box::new(MissingAppHelper),
+        },
         RunnerKind::WindowsTask => Box::new(WindowsTask::for_current_user(host_dir)),
         RunnerKind::Process | RunnerKind::Auto => Box::new(ProcessRunner {
             dir: host_dir.to_path_buf(),
@@ -1471,6 +1853,7 @@ mod tests {
             RunnerKind::Auto,
             RunnerKind::Systemd,
             RunnerKind::Launchd,
+            RunnerKind::AppHelper,
             RunnerKind::WindowsTask,
             RunnerKind::Process,
         ] {
@@ -1478,6 +1861,73 @@ mod tests {
         }
         assert!(RunnerKind::parse("init.d").is_err());
         assert_ne!(RunnerKind::Auto.resolve(), RunnerKind::Auto);
+    }
+
+    #[test]
+    fn the_app_helper_is_found_by_its_bundle_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Cua Spaces.app");
+        assert!(!has_app_helper(&app));
+        for f in [APP_HELPER_PLIST, APP_EXECUTABLE] {
+            std::fs::create_dir_all(app.join(f).parent().unwrap()).unwrap();
+            std::fs::write(app.join(f), "").unwrap();
+        }
+        assert!(
+            !has_app_helper(&app),
+            "an app without the helper bundle (0.9.4)"
+        );
+        let launcher = app_helper_launcher(&app);
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(&launcher, "").unwrap();
+        assert!(has_app_helper(&app));
+        assert!(is_app_helper_launcher(&launcher));
+        assert!(!is_app_helper_launcher(Path::new(
+            "/Users/ada/.cua/host/bin/cua-spacesd"
+        )));
+        assert_eq!(
+            helper_spec_path(Path::new("/Users/ada")),
+            Path::new("/Users/ada/.cua/helper/service.json")
+        );
+    }
+
+    #[test]
+    fn a_helper_registration_says_what_to_do_in_words() {
+        let reg = |status: &str, error: Option<&str>| HelperRegistration {
+            status: status.into(),
+            error: error.map(Into::into),
+        };
+        assert!(helper_registered(&reg("enabled", None)).is_ok());
+        let e = helper_registered(&reg("requires-approval", None))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("Login Items"), "{e}");
+        let e = helper_registered(&reg("not-found", Some("Invalid argument")))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("Cua Spaces Helper") && e.contains("Invalid argument"),
+            "{e}"
+        );
+        // The JSON CuaSpacesMac --service-helper prints.
+        let r: HelperRegistration = serde_json::from_str(
+            r#"{"error":"Operation not permitted","status":"not-registered"}"#,
+        )
+        .unwrap();
+        assert_eq!(r.status, "not-registered");
+    }
+
+    #[test]
+    fn without_the_app_the_helper_runner_reports_and_refuses_in_words() {
+        let m = MissingAppHelper;
+        assert!(!m.state().installed && !m.state().running);
+        assert_eq!(m.state().kind, "app-helper");
+        assert!(
+            m.start()
+                .unwrap_err()
+                .to_string()
+                .contains("--runner launchd")
+        );
+        assert!(m.uninstall().is_ok());
     }
 
     #[cfg(unix)]

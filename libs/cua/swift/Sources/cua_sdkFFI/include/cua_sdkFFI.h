@@ -946,6 +946,11 @@ uint64_t uniffi_cua_sdk_fn_constructor_host_new(RustBuffer cua_home, RustCallSta
 uint64_t uniffi_cua_sdk_fn_method_host_configure(uint64_t ptr, RustBuffer change
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_MIGRATE_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_MIGRATE_SERVICE
+uint64_t uniffi_cua_sdk_fn_method_host_migrate_service(uint64_t ptr, int8_t force, RustBuffer app_version
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_PAUSE_SIGNED_OUT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_PAUSE_SIGNED_OUT
 uint64_t uniffi_cua_sdk_fn_method_host_pause_signed_out(uint64_t ptr
@@ -4060,6 +4065,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_snapshot(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_CONFIGURE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_CONFIGURE
 uint16_t uniffi_cua_sdk_checksum_method_host_configure(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_MIGRATE_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_MIGRATE_SERVICE
+uint16_t uniffi_cua_sdk_checksum_method_host_migrate_service(void
 
 );
 #endif

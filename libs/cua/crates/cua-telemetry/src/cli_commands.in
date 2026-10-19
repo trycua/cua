@@ -89,6 +89,7 @@
     "dump-docs",
     "fleet",
     "host.config",
+    "host.migrate",
     "host.pair",
     "host.remove",
     "host.setup",

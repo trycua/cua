@@ -1041,6 +1041,8 @@ external fun uniffi_cua_sdk_checksum_method_devices_snapshot(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_host_configure(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_host_migrate_service(
+): Short
 external fun uniffi_cua_sdk_checksum_method_host_pause_signed_out(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_host_remove(
@@ -1900,6 +1902,8 @@ external fun uniffi_cua_sdk_fn_free_host(`handle`: Long,uniffi_out_err: UniffiRu
 external fun uniffi_cua_sdk_fn_constructor_host_new(`cuaHome`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cua_sdk_fn_method_host_configure(`ptr`: Long,`change`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_host_migrate_service(`ptr`: Long,`force`: Byte,`appVersion`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_host_pause_signed_out(`ptr`: Long,
 ): Long
@@ -3244,6 +3248,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_host_migrate_service() != 12365.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338.toShort()) {
@@ -10562,6 +10569,16 @@ public interface HostInterface {
     suspend fun `configure`(`change`: HostSettingsChange): HostStatus
 
     /**
+     * macOS: moves the host service from the old LaunchAgent to the Cua
+     * Spaces app's helper ("Cua Spaces Helper"), keeping this machine's
+     * registration, id and Spaces; puts the old one back if the helper
+     * does not take over (the outcome says so). `app_version`: a failed
+     * move is not tried again by itself with the same version; `force`
+     * tries anyway.
+     */
+    suspend fun `migrateService`(`force`: kotlin.Boolean, `appVersion`: kotlin.String): HostServiceMigration
+
+    /**
      * Pause relay sharing while nobody is signed in to the owner's
      * account: the host leaves the relay and stays off it (also across a
      * restart) with its setup kept. Direct mode is left alone.
@@ -10735,6 +10752,35 @@ open class Host: Disposable, AutoCloseable, HostInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeHostStatus.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * macOS: moves the host service from the old LaunchAgent to the Cua
+     * Spaces app's helper ("Cua Spaces Helper"), keeping this machine's
+     * registration, id and Spaces; puts the old one back if the helper
+     * does not take over (the outcome says so). `app_version`: a failed
+     * move is not tried again by itself with the same version; `force`
+     * tries anyway.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `migrateService`(`force`: kotlin.Boolean, `appVersion`: kotlin.String) : HostServiceMigration {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service(
+                uniffiHandle,
+                FfiConverterBoolean.lower(`force`),FfiConverterString.lower(`appVersion`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeHostServiceMigration.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -30069,6 +30115,63 @@ public object FfiConverterTypeHostProvidedSpace: FfiConverterRustBuffer<HostProv
 
 
 /**
+ * What [`Host::migrate_service`] did.
+ */
+data class HostServiceMigration (
+    /**
+     * `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or
+     * `not-needed`.
+     */
+    var `outcome`: kotlin.String
+    ,
+    /**
+     * In words.
+     */
+    var `detail`: kotlin.String
+    ,
+    /**
+     * macOS will ask for Screen Recording and Accessibility for Cua Spaces
+     * Helper.
+     */
+    var `permissionsNeeded`: kotlin.Boolean
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeHostServiceMigration: FfiConverterRustBuffer<HostServiceMigration> {
+    override fun read(buf: ByteBuffer): HostServiceMigration {
+        return HostServiceMigration(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: HostServiceMigration) = (
+            FfiConverterString.allocationSize(value.`outcome`) +
+            FfiConverterString.allocationSize(value.`detail`) +
+            FfiConverterBoolean.allocationSize(value.`permissionsNeeded`)
+    )
+
+    override fun write(value: HostServiceMigration, buf: ByteBuffer) {
+            FfiConverterString.write(value.`outcome`, buf)
+            FfiConverterString.write(value.`detail`, buf)
+            FfiConverterBoolean.write(value.`permissionsNeeded`, buf)
+    }
+}
+
+
+
+/**
  * A change to this machine's Spaces settings (`None` keeps a value).
  */
 data class HostSettingsChange (
@@ -30462,6 +30565,17 @@ data class HostStatus (
      * The owner's email, when the relay gave one.
      */
     var `ownerEmail`: kotlin.String? = null
+    ,
+    /**
+     * macOS: a Cua Spaces app with its helper ("Cua Spaces Helper") is
+     * installed, so the host service can run as it.
+     */
+    var `helperAvailable`: kotlin.Boolean = false
+    ,
+    /**
+     * macOS: the old hand-written LaunchAgent is still there.
+     */
+    var `legacyService`: kotlin.Boolean = false
 
 ){
 
@@ -30506,6 +30620,8 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterBoolean.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -30537,7 +30653,9 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterOptionalString.allocationSize(value.`spacesAuditError`) +
             FfiConverterBoolean.allocationSize(value.`pausedSignedOut`) +
             FfiConverterOptionalString.allocationSize(value.`owner`) +
-            FfiConverterOptionalString.allocationSize(value.`ownerEmail`)
+            FfiConverterOptionalString.allocationSize(value.`ownerEmail`) +
+            FfiConverterBoolean.allocationSize(value.`helperAvailable`) +
+            FfiConverterBoolean.allocationSize(value.`legacyService`)
     )
 
     override fun write(value: HostStatus, buf: ByteBuffer) {
@@ -30569,6 +30687,8 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterBoolean.write(value.`pausedSignedOut`, buf)
             FfiConverterOptionalString.write(value.`owner`, buf)
             FfiConverterOptionalString.write(value.`ownerEmail`, buf)
+            FfiConverterBoolean.write(value.`helperAvailable`, buf)
+            FfiConverterBoolean.write(value.`legacyService`, buf)
     }
 }
 

@@ -4516,6 +4516,16 @@ public protocol HostProtocol: AnyObject, Sendable {
     func configure(change: HostSettingsChange) async throws  -> HostStatus
 
     /**
+     * macOS: moves the host service from the old LaunchAgent to the Cua
+     * Spaces app's helper ("Cua Spaces Helper"), keeping this machine's
+     * registration, id and Spaces; puts the old one back if the helper
+     * does not take over (the outcome says so). `app_version`: a failed
+     * move is not tried again by itself with the same version; `force`
+     * tries anyway.
+     */
+    func migrateService(force: Bool, appVersion: String) async throws  -> HostServiceMigration
+
+    /**
      * Pause relay sharing while nobody is signed in to the owner's
      * account: the host leaves the relay and stays off it (also across a
      * restart) with its setup kept. Direct mode is left alone.
@@ -4641,6 +4651,31 @@ open func configure(change: HostSettingsChange)async throws  -> HostStatus  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeHostStatus_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * macOS: moves the host service from the old LaunchAgent to the Cua
+     * Spaces app's helper ("Cua Spaces Helper"), keeping this machine's
+     * registration, id and Spaces; puts the old one back if the helper
+     * does not take over (the outcome says so). `app_version`: a failed
+     * move is not tried again by itself with the same version; `force`
+     * tries anyway.
+     */
+open func migrateService(force: Bool, appVersion: String)async throws  -> HostServiceMigration  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_host_migrate_service(
+                    self.uniffiCloneHandle(),
+                    FfiConverterBool.lower(force),FfiConverterString.lower(appVersion)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeHostServiceMigration_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -22637,6 +22672,89 @@ public func FfiConverterTypeHostProvidedSpace_lower(_ value: HostProvidedSpace) 
 
 
 /**
+ * What [`Host::migrate_service`] did.
+ */
+public struct HostServiceMigration: Equatable, Hashable {
+    /**
+     * `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or
+     * `not-needed`.
+     */
+    public var outcome: String
+    /**
+     * In words.
+     */
+    public var detail: String
+    /**
+     * macOS will ask for Screen Recording and Accessibility for Cua Spaces
+     * Helper.
+     */
+    public var permissionsNeeded: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or
+         * `not-needed`.
+         */outcome: String,
+        /**
+         * In words.
+         */detail: String,
+        /**
+         * macOS will ask for Screen Recording and Accessibility for Cua Spaces
+         * Helper.
+         */permissionsNeeded: Bool) {
+        self.outcome = outcome
+        self.detail = detail
+        self.permissionsNeeded = permissionsNeeded
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension HostServiceMigration: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHostServiceMigration: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HostServiceMigration {
+        return
+            try HostServiceMigration(
+                outcome: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                permissionsNeeded: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HostServiceMigration, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.outcome, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterBool.write(value.permissionsNeeded, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHostServiceMigration_lift(_ buf: RustBuffer) throws -> HostServiceMigration {
+    return try FfiConverterTypeHostServiceMigration.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHostServiceMigration_lower(_ value: HostServiceMigration) -> RustBuffer {
+    return FfiConverterTypeHostServiceMigration.lower(value)
+}
+
+
+/**
  * A change to this machine's Spaces settings (`None` keeps a value).
  */
 public struct HostSettingsChange: Equatable, Hashable {
@@ -23098,6 +23216,15 @@ public struct HostStatus: Equatable, Hashable {
      * The owner's email, when the relay gave one.
      */
     public var ownerEmail: String?
+    /**
+     * macOS: a Cua Spaces app with its helper ("Cua Spaces Helper") is
+     * installed, so the host service can run as it.
+     */
+    public var helperAvailable: Bool
+    /**
+     * macOS: the old hand-written LaunchAgent is still there.
+     */
+    public var legacyService: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -23187,7 +23314,14 @@ public struct HostStatus: Equatable, Hashable {
          */owner: String? = nil,
         /**
          * The owner's email, when the relay gave one.
-         */ownerEmail: String? = nil) {
+         */ownerEmail: String? = nil,
+        /**
+         * macOS: a Cua Spaces app with its helper ("Cua Spaces Helper") is
+         * installed, so the host service can run as it.
+         */helperAvailable: Bool = false,
+        /**
+         * macOS: the old hand-written LaunchAgent is still there.
+         */legacyService: Bool = false) {
         self.configured = configured
         self.mode = mode
         self.relayUrl = relayUrl
@@ -23216,6 +23350,8 @@ public struct HostStatus: Equatable, Hashable {
         self.pausedSignedOut = pausedSignedOut
         self.owner = owner
         self.ownerEmail = ownerEmail
+        self.helperAvailable = helperAvailable
+        self.legacyService = legacyService
     }
 
 
@@ -23261,7 +23397,9 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
                 spacesAuditError: FfiConverterOptionString.read(from: &buf),
                 pausedSignedOut: FfiConverterBool.read(from: &buf),
                 owner: FfiConverterOptionString.read(from: &buf),
-                ownerEmail: FfiConverterOptionString.read(from: &buf)
+                ownerEmail: FfiConverterOptionString.read(from: &buf),
+                helperAvailable: FfiConverterBool.read(from: &buf),
+                legacyService: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -23294,6 +23432,8 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
         FfiConverterBool.write(value.pausedSignedOut, into: &buf)
         FfiConverterOptionString.write(value.owner, into: &buf)
         FfiConverterOptionString.write(value.ownerEmail, into: &buf)
+        FfiConverterBool.write(value.helperAvailable, into: &buf)
+        FfiConverterBool.write(value.legacyService, into: &buf)
     }
 }
 
@@ -40610,6 +40750,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_host_configure() != 36828) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_host_migrate_service() != 12365) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338) {

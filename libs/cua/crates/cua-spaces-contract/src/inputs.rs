@@ -22,9 +22,9 @@ use std::collections::BTreeMap;
 ///
 /// Ids are sandbox refs: `local:<name>`, `cloud:<name>`,
 /// `direct:<host:port>` and `relay:<machine-id>`. The legacy spellings
-/// (`space://local/<name>`, `space://relay/<id>`, ...) are still accepted,
-/// as is a registered Space's display name or a bare name unique across
-/// locations.
+/// (`space://fleet/<ns>/<claim>`, `space://local/<name>`,
+/// `fleet:<ns>:<claim>`, ...) are still accepted, as is a registered
+/// Space's display name or a bare name unique across locations.
 pub type SpaceArg = String;
 
 /// `add_space`: register a Space by URL after a capabilities handshake.
@@ -83,6 +83,29 @@ pub struct RemoveSpace {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ListSpaces {}
 
+/// The cloud runtime a cloud Space's pool is named after (internal; the
+/// tools take `runtime` as a string).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FleetRuntime {
+    /// A full KubeVirt VM booted from a KubeVirt containerDisk image (one
+    /// with a `/disk/disk.img` layer).
+    Kubevirt,
+    /// A gVisor (runsc) pod running a container rootfs image. About six
+    /// times faster to warm-start, with a far smaller memory footprint.
+    Gvisor,
+}
+
+impl FleetRuntime {
+    /// The wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FleetRuntime::Kubevirt => "kubevirt",
+            FleetRuntime::Gvisor => "gvisor",
+        }
+    }
+}
+
 /// What kind of computer a Space is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -92,7 +115,7 @@ pub enum SpaceKind {
     Auto,
     /// A container (gVisor, or runc locally).
     Container,
-    /// A virtual machine (QEMU or Lume locally, or one in your own cloud account).
+    /// A virtual machine (QEMU or Lume locally, KubeVirt in the cloud).
     Vm,
 }
 
@@ -114,9 +137,8 @@ pub struct CreateSpace {
     /// (`ghcr.io/trycua/linux:24.04`), whose variant follows the kind.
     #[serde(default)]
     pub image: Option<String>,
-    /// Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal`
-    /// (your own cloud account, connected with `cloud_connect` and billed
-    /// there), or `host:<computer>`: one of the user's own computers that
+    /// Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal` (your own
+    /// cloud account, billed there), or `host:<computer>`: one of the user's own computers that
     /// provides Spaces (`cua host setup --provide-spaces` on it), named by
     /// id or by words from its name ("host:spare mac mini" matches "Mac
     /// mini (spare)" or `dillons-mac-mini`). Default: the user's default
@@ -131,8 +153,8 @@ pub struct CreateSpace {
     pub kind: Option<SpaceKind>,
     /// Which engine. Default `auto`: the safest one for the location and
     /// kind. Local: `gvisor` or `runc` (containers), `qemu` or `lume`
-    /// (VMs). Anything else fails with `invalid_placement`, listing the
-    /// valid values.
+    /// (VMs). Cloud: `gvisor` (containers), `kubevirt` (VMs). Anything
+    /// else fails with `invalid_placement`, listing the valid values.
     #[serde(default)]
     pub runtime: Option<String>,
     /// Name. Default: a generated `space-<hex>`.

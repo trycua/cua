@@ -463,7 +463,7 @@
               },
               {
                 "const": "vm",
-                "description": "A virtual machine (QEMU or Lume locally, or one in your own cloud account).",
+                "description": "A virtual machine (QEMU or Lume locally, KubeVirt in the cloud).",
                 "type": "string"
               }
             ]
@@ -473,7 +473,7 @@
             "type": "string"
           },
           "on": {
-            "description": "Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal`\n(your own cloud account, connected with `cloud_connect` and billed\nthere), or `host:<computer>`: one of the user's own computers that\nprovides Spaces (`cua host setup --provide-spaces` on it), named by\nid or by words from its name (\"host:spare mac mini\" matches \"Mac\nmini (spare)\" or `dillons-mac-mini`). Default: the user's default\nlocation (`cua config set default.on`, `CUA_DEFAULT_ON`), else\n`local`. Not `direct:<addr>`: that is one already-running Space at a\nfixed address, attached with `add_space`, not a host this can create\non. An existing computer is added with `add_space`, not created.",
+            "description": "Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal` (your own\ncloud account, billed there), or `host:<computer>`: one of the user's own computers that\nprovides Spaces (`cua host setup --provide-spaces` on it), named by\nid or by words from its name (\"host:spare mac mini\" matches \"Mac\nmini (spare)\" or `dillons-mac-mini`). Default: the user's default\nlocation (`cua config set default.on`, `CUA_DEFAULT_ON`), else\n`local`. Not `direct:<addr>`: that is one already-running Space at a\nfixed address, attached with `add_space`, not a host this can create\non. An existing computer is added with `add_space`, not created.",
             "type": "string"
           },
           "reuse": {
@@ -481,7 +481,7 @@
             "type": "boolean"
           },
           "runtime": {
-            "description": "Which engine. Default `auto`: the safest one for the location and\nkind. Local: `gvisor` or `runc` (containers), `qemu` or `lume`\n(VMs). Anything else fails with `invalid_placement`, listing the\nvalid values.",
+            "description": "Which engine. Default `auto`: the safest one for the location and\nkind. Local: `gvisor` or `runc` (containers), `qemu` or `lume`\n(VMs). Cloud: `gvisor` (containers), `kubevirt` (VMs). Anything\nelse fails with `invalid_placement`, listing the valid values.",
             "type": "string"
           },
           "services": {

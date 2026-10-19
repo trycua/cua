@@ -31,7 +31,7 @@ What the base class does for every adapter:
   kind selection (``--kind auto|container|vm``, VM-only OSes) and the
   requirement check happen in ``cb run`` before any sandbox starts;
 * :class:`Endpoints` (``ep``): the benchmark's own server and other guest
-  ports, the same way locally and on Fleet;
+  ports;
 * timeouts: setup, evaluate and the oracle are bounded (``timeouts``).
 """
 
@@ -61,7 +61,7 @@ class ServerSpec:
 
 
 class Endpoints:
-    """How an adapter reaches guest ports, the same locally and on Fleet.
+    """How an adapter reaches guest ports.
 
     * ``await ep.url()`` / ``await ep.url("server")``: the benchmark server;
     * ``await ep.url(9222)``: any exposed guest port;
@@ -69,8 +69,8 @@ class Endpoints:
       request through the SDK's service API;
     * ``await ep.host_port(9222)``: a ``(host, port)`` for code that builds
       ``http://{host}:{port}/...`` itself (upstream controllers). Locally that
-      is the published port; when the service URL has a path prefix (Fleet
-      signed URLs) it is a loopback :class:`~cua_bench.adapters.bridge.PathBridge`
+      is the published port; when the service URL has a path prefix (a
+      signed URL) it is a loopback :class:`~cua_bench.adapters.bridge.PathBridge`
       to it, closed by ``await ep.aclose()``.
 
     Sessions attached to a legacy computer-server by URL (no cua-sandbox

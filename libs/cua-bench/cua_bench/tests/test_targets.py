@@ -9,6 +9,7 @@ kind and the engine, the same as every cua surface. ``--on`` is
 
 import pytest
 from cua_bench.targets import (
+    CloudEnded,
     EnvSpec,
     Target,
     TargetError,
@@ -58,12 +59,11 @@ class TestResolveTarget:
         with pytest.raises(SystemExit):
             parser.parse_args(["--on", "fleet"])
 
-    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     def test_env_fallbacks(self):
         t = resolve_target(
-            environ={"CUA_DEFAULT_ON": "cloud", "CUA_DEFAULT_KIND": "vm", "CUA_BENCH_IMAGE": IMG}
+            environ={"CUA_DEFAULT_ON": "local", "CUA_DEFAULT_KIND": "vm", "CUA_BENCH_IMAGE": IMG}
         )
-        assert (t.on, t.kind, t.image) == ("cloud", "vm", IMG)
+        assert (t.on, t.kind, t.image) == ("local", "vm", IMG)
         assert (t.on_source, t.kind_source) == ("CUA_DEFAULT_ON", "CUA_DEFAULT_KIND")
 
     def test_flags_beat_env(self):
@@ -74,10 +74,9 @@ class TestResolveTarget:
         t = resolve_target("local", runtime="qemu", environ={})
         assert (t.on, t.kind, t.runtime) == ("local", "vm", "qemu")
 
-    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
     def test_resources(self):
         t = resolve_target(
-            "cloud", cpu="2", memory="4G", concurrency=8, warm=True, claim_ttl="20m", environ={}
+            "local", cpu="2", memory="4G", concurrency=8, warm=True, claim_ttl="20m", environ={}
         )
         assert (t.cpu, t.memory_mb, t.concurrency, t.warm, t.claim_ttl_s) == (
             2,
@@ -340,16 +339,11 @@ class TestVariantSelection:
 
 
 class TestPoolImages:
-    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-    def test_pool_prefix_claims_from_an_existing_fleet_pool(self):
-        spec = resolve_env_spec({"provider": "native"}, Target(on="cloud", image="pool:bench-p"))
-        assert (spec.pool, spec.image, spec.image_label) == ("bench-p", None, "pool:bench-p")
-        assert spec.backend("cloud") == "cloud-pool:bench-p"
-        with pytest.raises(TargetError, match="--on cloud"):
+    def test_pool_images_end_with_cua_cloud(self):
+        with pytest.raises(CloudEnded, match="Cua Cloud has ended"):
             resolve_env_spec({"provider": "native"}, Target(image="pool:bench-p"))
 
-    @pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-    def test_fleet_prefix_is_a_deprecated_alias(self):
+    def test_the_fleet_prefix_ends_with_cua_cloud_too(self):
         with pytest.warns(DeprecationWarning, match="use pool:old"):
-            spec = resolve_env_spec({"provider": "native"}, Target(on="cloud", image="fleet:old"))
-        assert spec.pool == "old"
+            with pytest.raises(CloudEnded):
+                resolve_env_spec({"provider": "native"}, Target(image="fleet:old"))

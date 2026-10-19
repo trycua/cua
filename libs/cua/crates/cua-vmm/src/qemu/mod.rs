@@ -504,9 +504,7 @@ impl QemuRuntime {
             }
             r => r,
         }
-        .inspect_err(|_| {
-            self.stop_tpm(st);
-        })
+        .inspect_err(|_| self.stop_tpm(st))
     }
 
     async fn launch_once(
@@ -519,7 +517,7 @@ impl QemuRuntime {
         let bin = self.binary(st.arch).await?;
         let dir = self.dir(&st.name);
         let tpm_dir = dir.join("tpm");
-        let swtpm: Option<PathBuf> = if spec.tpm || tpm_dir.exists() {
+        let swtpm = if spec.tpm || tpm_dir.exists() {
             #[cfg(not(unix))]
             return Err(VmmError::invalid("TPM requires a Unix host"));
             #[cfg(unix)]

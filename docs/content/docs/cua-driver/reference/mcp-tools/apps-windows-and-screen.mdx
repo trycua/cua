@@ -54,7 +54,7 @@ List macOS apps, both currently running and installed-but-not-running, with per-
 
 - running: is a process for this app live? (pid is 0 when false)
 - active: is it the system-frontmost app? (implies running)
-- launch_path: filesystem path to the `.app` bundle, when known. Pass this to `launch_app` to start the app cold.
+- launch_path: filesystem path to the `.app` bundle, when known. Pass this as `name` to `launch_app` to start the app cold.
 - kind: `"desktop"` for `.app` bundles on macOS.
 - last_used: RFC3339 timestamp from the bundle's filesystem mtime, when readable.
 
@@ -174,7 +174,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 Launch a macOS app in the background: the target does NOT come to the foreground.
 
-Provide either `bundle_id` (preferred: unambiguous, e.g. `com.apple.calculator`) or `name` (e.g. "Calculator"). If both are given, bundle_id wins.
+Provide either `bundle_id` (preferred: unambiguous, e.g. `com.apple.calculator`) or `name` (e.g. "Calculator", or the absolute `.app` path from `list_apps` `launch_path`). If both are given, bundle_id wins.
 
 Optional `urls` are handed to the app as open targets: for Finder, pass a folder path to open a backgrounded Finder window there.
 
@@ -195,7 +195,7 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 | <span id="launch_app--macos--additional_arguments"></span>`additional_arguments` | `string[]` |  | Extra arguments appended after --args when launching. |
 | <span id="launch_app--macos--bundle_id"></span>`bundle_id` | `string` |  | App bundle identifier, e.g. com.apple.calculator. Preferred over name. |
 | <span id="launch_app--macos--creates_new_application_instance"></span>`creates_new_application_instance` | `boolean` |  | When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one: on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other. |
-| <span id="launch_app--macos--name"></span>`name` | `string` |  | App display name. Used only when bundle_id is absent. |
+| <span id="launch_app--macos--name"></span>`name` | `string` |  | App display name, or absolute path to a .app bundle (e.g. launch_path from list_apps). Used only when bundle_id is absent. |
 | <span id="launch_app--macos--urls"></span>`urls` | `string[]` |  | Optional file paths or URLs to open with the app (e.g. a folder path for Finder). |
 | <span id="launch_app--macos--webkit_inspector_port"></span>`webkit_inspector_port` | `integer` |  | Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var). |
 

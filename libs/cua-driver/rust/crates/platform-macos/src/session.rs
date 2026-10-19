@@ -54,7 +54,12 @@ extern "C" {
 /// Read fresh on every call; lock state changes at any time. On macOS 14 and
 /// later the screen saver and display sleep put the session behind the lock
 /// screen (`loginwindow` frontmost) even before a password is required, and
-/// while that holds every app's `AXWindows` reads as empty. `false` when the
+/// while that holds every app's `AXWindows` reads as empty. The key is the
+/// session's lock flag, not a per-cause one: it covers the screen-saver lock,
+/// a manual lock, and loginwindow's lock on display dim (`kLWLockFromDisplayDim`,
+/// seen in a user's display-sleep logs with `screenSaverIsRunning = 0`). Only
+/// the screen-saver path was reproduced here; the dim path is the same lock
+/// as far as this key is concerned, so no separate check exists. `false` when the
 /// session dictionary is unavailable (no window-server session) or the key is
 /// absent, which is how an unlocked session reports itself.
 pub fn screen_locked() -> bool {

@@ -13,6 +13,14 @@
 //! display, dismisses the screen saver, or gets past a lock or password, and
 //! the user can still sleep or lock the Mac by hand.
 //!
+//! The idle display-sleep path dims the display first, and loginwindow can
+//! lock on that dim (`kLWLockFromDisplayDim`) without the screen saver ever
+//! running. A `PreventUserIdleDisplaySleep` assertion holds off the idle dim as
+//! well as the sleep that follows (the display stays at full brightness during
+//! video playback, which takes the same assertion), so that lock does not fire
+//! while the guard is held. It is not a system-sleep assertion: keeping the
+//! machine awake is not enough, because the lock comes from the display path.
+//!
 //! `CUA_DRIVER_KEEP_DISPLAY_AWAKE` sets the idle window in seconds (default
 //! 600); `0`, `off` or `false` turns the guard off.
 

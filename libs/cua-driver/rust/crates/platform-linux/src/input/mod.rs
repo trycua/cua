@@ -11,6 +11,7 @@
 //! them, because XTest delivers to the *focused* window and would break the
 //! no-focus-steal contract.
 
+pub mod action;
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;

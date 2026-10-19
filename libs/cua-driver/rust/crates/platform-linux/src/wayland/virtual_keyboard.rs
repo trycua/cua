@@ -11,7 +11,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use self::protocol::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use self::protocol::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
 
-mod protocol {
+pub(super) mod protocol {
     use wayland_client;
     use wayland_client::protocol::*;
 

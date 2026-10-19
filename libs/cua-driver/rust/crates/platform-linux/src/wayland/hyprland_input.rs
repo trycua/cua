@@ -462,8 +462,8 @@ impl Client {
         let wayland = super::hyprland::wayland_connection()?;
         super::hyprland::verify_capture_peer(&wayland)?;
         ensure!(
-            super::hyprland::peer_pid(self.socket.as_raw_fd())?
-                == super::hyprland::peer_pid(wayland.backend().poll_fd().as_raw_fd())?,
+            super::compositor_peer::peer_pid(self.socket.as_raw_fd())?
+                == super::compositor_peer::peer_pid(wayland.backend().poll_fd().as_raw_fd())?,
             "input plugin and Wayland name different compositor processes"
         );
         Ok(())

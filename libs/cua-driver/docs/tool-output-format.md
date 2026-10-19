@@ -45,3 +45,6 @@ not make the underlying snapshot incomplete; compare `total_element_count`
 with `returned_element_count` to measure that projection. Partial MSAA trees,
 unusable UIA trees, and process-root fallbacks remain incomplete because they
 cannot prove the exact target window's full UIA tree.
+Internal `verify_state` reads also remain incomplete while the Windows
+structured projection omits display-only UIA nodes. A complete native walk
+does not make that projection exhaustive.

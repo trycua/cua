@@ -1555,7 +1555,11 @@ impl Tool for GetWindowStateTool {
                         header + &tr.tree_markdown,
                     ));
                     structured["element_count"] = json!(count);
-                    structured["elements_complete"] = json!(tr.elements_complete);
+                    // Verification consumes only structured rows, which still
+                    // omit non-actionable UIA nodes on Windows. A complete
+                    // native walk cannot prove absence in that projection.
+                    structured["elements_complete"] =
+                        json!(tr.elements_complete && !observation_only);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
                     walk.apply(&mut structured);
 

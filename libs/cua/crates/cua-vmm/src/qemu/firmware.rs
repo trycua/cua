@@ -120,6 +120,10 @@ pub fn find_uefi_with(arch: Arch, qemu_bin: &Path, exists: impl Fn(&Path) -> boo
 /// Windows ARM needs Secure Boot code and a Microsoft-enrolled persistent store.
 /// Search only known matching pairs; never pair arbitrary firmware halves.
 pub fn find_windows_arm(qemu_bin: &Path) -> Option<Uefi> {
+    find_windows_arm_with(qemu_bin, |p| p.is_file())
+}
+
+fn find_windows_arm_with(qemu_bin: &Path, exists: impl Fn(&Path) -> bool) -> Option<Uefi> {
     let real = std::fs::canonicalize(qemu_bin).unwrap_or_else(|_| qemu_bin.into());
     let prefix = real.parent()?.parent()?;
     [
@@ -130,7 +134,7 @@ pub fn find_windows_arm(qemu_bin: &Path) -> Option<Uefi> {
     .find_map(|dir| {
         let code = dir.join("AAVMF_CODE.secboot.fd");
         let vars = dir.join("AAVMF_VARS.ms.fd");
-        (code.is_file() && vars.is_file()).then_some(Uefi {
+        (exists(&code) && exists(&vars)).then_some(Uefi {
             code,
             vars_template: Some(vars),
         })
@@ -154,6 +158,29 @@ mod tests {
     fn fs(paths: &[&str]) -> impl Fn(&Path) -> bool {
         let set: HashSet<PathBuf> = paths.iter().map(PathBuf::from).collect();
         move |p: &Path| set.contains(p)
+    }
+
+    #[test]
+    fn windows_arm_requires_matching_secure_boot_pair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("share/AAVMF");
+        std::fs::create_dir_all(&dir).unwrap();
+        let code = dir.join("AAVMF_CODE.secboot.fd");
+        let vars = dir.join("AAVMF_VARS.ms.fd");
+        std::fs::write(&code, []).unwrap();
+        std::fs::write(&vars, []).unwrap();
+        let bin = tmp.path().join("bin/qemu-system-aarch64");
+        // Exclude system firmware so the missing-pair check is host independent.
+        let find = || find_windows_arm_with(&bin, |p| p.starts_with(tmp.path()) && p.is_file());
+        assert_eq!(
+            find(),
+            Some(Uefi {
+                code,
+                vars_template: Some(vars.clone())
+            })
+        );
+        std::fs::remove_file(vars).unwrap();
+        assert!(find().is_none());
     }
 
     #[test]

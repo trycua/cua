@@ -136,7 +136,7 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
             cfg.disk_format
         ),
     ]);
-    // Windows boots from AHCI, as its image is built and validated: its
+    // Windows ARM uses NVMe; Windows x86 boots from AHCI, as its image is built and validated: its
     // virtio storage driver is not a boot driver there, so over virtio-blk
     // it cannot find its system volume and lands in WinRE. Everything else
     // boots virtio.

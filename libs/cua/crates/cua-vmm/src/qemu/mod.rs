@@ -373,15 +373,11 @@ impl QemuRuntime {
         .ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                format!(
-                    "install edk2 (Homebrew qemu ships it; {}){}",
-                    QemuPackageManager::linux_hint(),
-                    if windows_arm {
-                        "; Windows ARM requires Secure Boot CODE and Microsoft-enrolled VARS"
-                    } else {
-                        ""
-                    }
-                ),
+                if windows_arm {
+                    "Windows ARM needs Secure Boot firmware: AAVMF_CODE.secboot.fd and AAVMF_VARS.ms.fd in <qemu prefix>/share/AAVMF or /usr/share/AAVMF".into()
+                } else {
+                    format!("install edk2 (Homebrew qemu ships it; {})", QemuPackageManager::linux_hint())
+                },
             )
         })?;
         match fw.vars_template {
@@ -499,11 +495,13 @@ impl QemuRuntime {
                     }
                 }
                 st.pid = None;
-                self.stop_tpm(st);
                 self.launch_once(st, spec, loadvm, true).await
             }
             r => r,
-        }.inspect_err(|_| { self.stop_tpm(st); })
+        }
+        .inspect_err(|_| {
+            self.stop_tpm(st);
+        })
     }
 
     async fn launch_once(
@@ -643,6 +641,12 @@ impl QemuRuntime {
                 .env("CUA_QEMU_LOG", &log_path)
                 .output()
                 .await?;
+            if swtpm.is_some() && !out.status.success() {
+                return Err(VmmError::other(format!(
+                    "TPM launch failed; see {}",
+                    dir.join("swtpm.log").display()
+                )));
+            }
             let pid = String::from_utf8_lossy(&out.stdout)
                 .trim()
                 .parse::<u32>()

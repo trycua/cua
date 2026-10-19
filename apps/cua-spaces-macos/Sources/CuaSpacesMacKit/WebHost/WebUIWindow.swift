@@ -171,6 +171,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         // Where it was last (size and place), else centred.
         if !window.setFrameUsingName(Self.frameName) { window.center() }
         window.setFrameAutosaveName(Self.frameName)
+        // An offscreen run (`OffscreenRun`): invisible, though it paints.
+        OffscreenRun.hide(window)
         super.init(window: window)
         window.delegate = self
         webView.navigationDelegate = self
@@ -204,6 +206,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
             shown = true
             applyInset()
         }
+        // Offscreen: in (so the page paints for `takeSnapshot`), never key, never active.
+        if OffscreenRun.isOn { return window.orderFrontRegardless() }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }

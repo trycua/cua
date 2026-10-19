@@ -70,7 +70,8 @@ public struct CuaSpacesMacApp: App {
             SettingsScene(model: model)
         }
 
-        MenuBarExtra {
+        // Not inserted in an offscreen run (`OffscreenRun`).
+        MenuBarExtra(isInserted: .constant(!OffscreenRun.isOn)) {
             MenuBarContent(model: model)
         } label: {
             MenuBarLabel(model: model)
@@ -357,8 +358,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        // "Spaces tab in the notch": applied now and on every change.
-        Self.followNotchSetting(model, controller)
+        // "Spaces tab in the notch": applied now and on every change (an
+        // offscreen run never puts the notch up).
+        if !OffscreenRun.isOn { Self.followNotchSetting(model, controller) }
         // The tiles read the shared thumbnail store (the SDK's cache);
         // open, every tile asks for one no older than the open interval.
         let thumbnails = model.thumbnails
@@ -379,7 +381,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         notch = controller
         // ⌘⇧Space from any app: the window of the UI in use, in front.
-        GlobalShortcut.install(model)
+        if !OffscreenRun.isOn { GlobalShortcut.install(model) }
         AppEnvironment.applyStartView(model, notch: controller)
         // New UI on, or the first run due: the New UI window is the one a
         // launch opens (the main window is suppressed), the first run at
@@ -435,7 +437,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // there while it waits). Opened at login: in the background, never
         // taking focus. Fixtures (UI tests, captures) come forward only
         // when asked.
-        if Self.activatesAtLaunch(loginLaunch: Self.launchedAtLogin,
+        if !OffscreenRun.isOn,
+           Self.activatesAtLaunch(loginLaunch: Self.launchedAtLogin,
                                   fixtures: DevHooks.value("CUA_SPACES_FIXTURES") == "1",
                                   asked: DevHooks.value("CUA_SPACES_ACTIVATE") == "1") {
             NSApp.activate()

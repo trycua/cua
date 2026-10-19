@@ -422,7 +422,6 @@ unsafe fn walk_tree_unsafe(
         &mut counter,
         &mut walk_state,
     );
-    let mut elements_complete = walk_state.complete;
 
     // Fallback for CoreWindow-class apps (Calculator, Settings, older UWPs).
     // `ElementFromHandle(hwnd)` on a `Windows.UI.Core.CoreWindow` HWND returns
@@ -443,14 +442,13 @@ unsafe fn walk_tree_unsafe(
         // An empty HWND wrapper cannot prove a complete window snapshot. The
         // fallback may discover controls in other windows of the process, so
         // it remains discovery evidence rather than an exact-window proof.
-        elements_complete = false;
+        walk_state.mark_incomplete();
         // SAL windows already returned through the MSAA path above.
-        if !budget.expired() {
+        if !walk_state.budget.expired() {
             if let Some(target_pid) = pid_from_hwnd(hwnd_win) {
                 let mut fallback_nodes: Vec<UiaNode> = Vec::new();
                 let mut fallback_lines: Vec<(usize, String)> = Vec::new();
                 let mut fallback_counter = 0usize;
-                let mut fallback_walk_state = WalkState::new(budget, max_depth);
 
                 tracing::debug!(
                     target: "uia",
@@ -464,7 +462,7 @@ unsafe fn walk_tree_unsafe(
                     &mut fallback_nodes,
                     &mut fallback_lines,
                     &mut fallback_counter,
-                    &mut fallback_walk_state,
+                    &mut walk_state,
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
@@ -485,7 +483,7 @@ unsafe fn walk_tree_unsafe(
     UiaTreeResult {
         tree_markdown,
         nodes,
-        elements_complete,
+        elements_complete: walk_state.complete,
     }
 }
 

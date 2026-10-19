@@ -3,21 +3,18 @@ use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn fake_swtpm() {
-    let Ok(socket) = std::env::var("CUA_TPM_SOCKET") else {
+    let Ok(dir) = std::env::var("CUA_TPM_DIR") else {
         return;
     };
-    let _listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
-    std::fs::write(
-        std::env::var("CUA_TPM_PID").unwrap(),
-        std::process::id().to_string(),
-    )
-    .unwrap();
+    let dir = PathBuf::from(dir);
+    let _listener = std::os::unix::net::UnixListener::bind(dir.join("swtpm.sock")).unwrap();
+    std::fs::write(dir.join("../swtpm.pid"), std::process::id().to_string()).unwrap();
     std::thread::sleep(Duration::from_secs(30));
 }
 
 #[tokio::test]
-async fn readiness_failure_and_stop_tpm() {
-    for mode in ["ready", "failure"] {
+async fn launch_success_failure_and_stop_tpm() {
+    for mode in ["success", "failure"] {
         let tmp = tempfile::tempdir().unwrap();
         let runtime = QemuRuntime::new(QemuConfig {
             root: tmp.path().into(),
@@ -29,7 +26,7 @@ async fn readiness_failure_and_stop_tpm() {
         let body = match mode {
             "failure" => "#!/bin/sh\nexit 1\n",
             _ => {
-                "#!/bin/sh\n\"$CUA_TEST_BIN\" --exact qemu::tpm_tests::fake_swtpm --nocapture </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$CUA_TPM_SOCKET\" ]; do sleep 0.01; done\n"
+                "#!/bin/sh\n\"$CUA_TEST_BIN\" --exact qemu::tpm_tests::fake_swtpm --nocapture </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$CUA_TPM_DIR/swtpm.sock\" ]; do sleep 0.01; done\n"
             }
         };
         std::fs::write(&tpm, body).unwrap();
@@ -42,21 +39,18 @@ async fn readiness_failure_and_stop_tpm() {
                 .arg("/bin/sh")
                 .args([
                     "-c",
-                    "[ -S \"$CUA_TPM_SOCKET\" ] && touch \"$CUA_TPM_DIR/../started\"",
+                    "[ -S \"$CUA_TPM_DIR/swtpm.sock\" ] && touch \"$CUA_TPM_DIR/../started\"",
                 ])
                 .env("CUA_TEST_BIN", std::env::current_exe().unwrap())
                 .env("CUA_SWTPM", &tpm)
                 .env("CUA_TPM_DIR", dir.join("tpm"))
-                .env("CUA_TPM_SOCKET", dir.join("tpm/swtpm.sock"))
-                .env("CUA_TPM_PID", dir.join("swtpm.pid"))
-                .env("CUA_TPM_LOG", dir.join("swtpm.log"))
                 .env("CUA_QEMU_LOG", dir.join("qemu.log"))
                 .output(),
         )
         .await
         .unwrap()
         .unwrap();
-        if mode == "ready" {
+        if mode == "success" {
             assert!(output.status.success());
             for _ in 0..100 {
                 if dir.join("started").exists() {

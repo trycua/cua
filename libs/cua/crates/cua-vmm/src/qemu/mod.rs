@@ -515,13 +515,10 @@ impl QemuRuntime {
             if !cfg!(unix) {
                 return Err(VmmError::invalid("TPM requires a Unix host"));
             }
-            let bin = host::which("swtpm").ok_or_else(|| {
-                VmmError::invalid(
-                    "swtpm is not available: install swtpm with TPM 2.0 support and add it to PATH",
-                )
-            })?;
+            let bin = host::which("swtpm").ok_or(VmmError::invalid(
+                "swtpm is not available: install swtpm with TPM 2.0 support and add it to PATH",
+            ))?;
             self.stop_tpm(st);
-            let _ = std::fs::remove_file(tpm_dir.join("swtpm.sock"));
             std::fs::create_dir_all(&tpm_dir)?;
             #[cfg(unix)]
             {
@@ -633,16 +630,12 @@ impl QemuRuntime {
                 .env("CUA_QEMU_LOG", &log_path)
                 .output()
                 .await?;
-            if swtpm.is_some() && !out.status.success() {
-                return Err(VmmError::other(format!(
-                    "TPM launch failed; see {}",
-                    dir.join("swtpm.log").display()
-                )));
-            }
             let pid = String::from_utf8_lossy(&out.stdout)
                 .trim()
                 .parse::<u32>()
-                .map_err(|e| VmmError::other(format!("could not launch {}: {e}", bin.display())))?;
+                .map_err(|e| {
+                    VmmError::other(format!("launch failed: {e}; see {dir:?}/swtpm.log"))
+                })?;
             st.pid = Some(pid);
         }
         #[cfg(not(unix))]
@@ -852,27 +845,21 @@ impl QemuRuntime {
     }
 
     async fn force_stop(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
-        let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) else {
-            st.pid = None;
-            self.stop_tpm(st);
-            return Ok(());
-        };
-        if !graceful.is_zero() {
-            if let Ok(mut q) = self.qmp(&st.name).await {
-                let _ = q.system_powerdown().await;
+        if let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) {
+            if !graceful.is_zero() {
+                if let Ok(mut q) = self.qmp(&st.name).await {
+                    let _ = q.system_powerdown().await;
+                }
             }
-            if Self::wait_exit(pid, graceful).await {
-                st.pid = None;
-                self.stop_tpm(st);
-                return Ok(());
+            if graceful.is_zero() || !Self::wait_exit(pid, graceful).await {
+                if let Ok(mut q) = self.qmp(&st.name).await {
+                    let _ = q.quit().await;
+                }
+                if !Self::wait_exit(pid, Duration::from_secs(5)).await {
+                    host::signal(pid, "KILL");
+                    Self::wait_exit(pid, Duration::from_secs(5)).await;
+                }
             }
-        }
-        if let Ok(mut q) = self.qmp(&st.name).await {
-            let _ = q.quit().await;
-        }
-        if !Self::wait_exit(pid, Duration::from_secs(5)).await {
-            host::signal(pid, "KILL");
-            Self::wait_exit(pid, Duration::from_secs(5)).await;
         }
         st.pid = None;
         self.stop_tpm(st);

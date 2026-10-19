@@ -181,15 +181,16 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
                         iso.display()
                     ),
                 ]);
-                if windows_arm {
-                    push(&["-device", "usb-storage,drive=cd0,bus=xhci.0,bootindex=0"]);
-                } else {
-                    push(&[
-                        "-device",
-                        "virtio-scsi-pci,id=scsi0",
-                        "-device",
-                        "scsi-cd,drive=cd0,bootindex=0",
-                    ]);
+                push(&[
+                    "-device",
+                    if windows_arm {
+                        "usb-storage,drive=cd0,bus=xhci.0,bootindex=0"
+                    } else {
+                        "virtio-scsi-pci,id=scsi0"
+                    },
+                ]);
+                if !windows_arm {
+                    push(&["-device", "scsi-cd,drive=cd0,bootindex=0"]);
                 }
             }
         }
@@ -227,10 +228,9 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
             "-tpmdev",
             "emulator,id=tpm0,chardev=chrtpm",
             "-device",
-            if cfg.arch == Arch::Aarch64 {
-                "tpm-tis-device,tpmdev=tpm0"
-            } else {
-                "tpm-tis,tpmdev=tpm0"
+            match cfg.arch {
+                Arch::Aarch64 => "tpm-tis-device,tpmdev=tpm0",
+                Arch::X86_64 => "tpm-tis,tpmdev=tpm0",
             },
         ]);
     }

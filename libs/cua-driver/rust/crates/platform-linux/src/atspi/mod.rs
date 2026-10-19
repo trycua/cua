@@ -25,6 +25,33 @@ pub fn input_may_have_landed(error: &anyhow::Error) -> bool {
     error.is::<InputMayHaveLanded>()
 }
 
+/// The outcome of an action whose effect the caller reads back from the UI
+/// before deciding anything. One that failed after it was sent may have
+/// acted, so it counts as sent and the readback decides; a refusal there
+/// would hide what it did. Other errors are returned.
+pub fn action_sent<T>(result: Result<T>) -> Result<()> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(error) if input_may_have_landed(&error) => {
+            tracing::debug!("action may have acted, reading it back: {error:#}");
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn an_action_that_may_have_acted_is_read_back_not_refused() {
+    let sent = anyhow::Error::new(InputMayHaveLanded(
+        "doAction failed: raised after acting".into(),
+    ));
+    assert!(action_sent(Err::<(), _>(sent.context("the exact checkbox action"))).is_ok());
+    assert!(action_sent(Ok(("click".to_owned(), false, false))).is_ok());
+    let unsent = action_sent(Err::<(), _>(anyhow::anyhow!("no Action interface")));
+    assert_eq!(unsent.unwrap_err().to_string(), "no Action interface");
+}
+
 /// Stable address on one AT-SPI bus connection, including the owning frame.
 /// Unique bus names prevent a restarted process from reusing an observed path.
 #[derive(Clone, Debug, PartialEq, Eq)]

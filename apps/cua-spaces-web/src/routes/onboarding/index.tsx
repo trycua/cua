@@ -2,643 +2,454 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { CheckIcon } from "lucide-react";
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { CheckIcon, CopyIcon, PlusIcon } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import {
-  useFirstSpaceOffers,
-  useMachines,
-  useOnboarding,
-  useOnboardingVolume,
-  useSession,
-  useSpaces,
-  useThisMachine,
-  type OnboardingHook,
-  type OnboardingView,
-  type SandboxImage,
-} from "@/bridge";
-import { AddMachineDialog } from "@/components/add-machine-dialog";
+import { useFirstRun, type FirstRunArt, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunUpsell, type FirstRunView } from "@/bridge";
+import { CuaKey } from "@/components/cua-key";
 import { CuaLogo } from "@/components/cua-logo";
-import { useAgentsStep, type AgentsStep } from "@/components/volume/use-agents-step";
 import { OsIcon } from "@/components/os-icon";
-import { ExamplePrompts } from "@/components/onboarding-prompts";
-import { ModeCard, ModeContinue, useModeChoice, type ModeChoice } from "@/components/onboarding-mode";
-import { PresentationCards } from "@/components/onboarding-presentation";
-import { pressPrimaryOnReturn } from "@/components/onboarding-keys";
-import { SetUpLater } from "@/components/onboarding-skip";
-import { SignInLink } from "@/components/sign-in-link";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
-import { cn } from "@/lib/utils";
 import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/onboarding/")({ component: OnboardingPage });
 
-// The AI agents and Cua Volume cards load when their page shows.
-const AgentsCard = lazy(() => import("@/components/volume/agents-step").then((m) => ({ default: m.AgentsCard })));
-const DriveCardView = lazy(() => import("@/components/volume/drive-card").then((m) => ({ default: m.DriveCardView })));
-
-/** Done's example prompts when the core doesn't send them (`OnboardingView.prompts` is the core's `PROMPTS`). */
-const EXAMPLE_PROMPTS = [
-  "Open a Linux Space and run my test suite in it",
-  "Use my Space's browser to finish the checkout test and show me",
-  "Share this Space with a teammate as a viewer",
-];
-
-/** Sign in is optional: everything local works without an account. */
-const NO_ACCOUNT_NEEDED = "No account needed to start.";
-
 /**
- * First run, laid out like the SwiftUI app's (`OnboardingView.swift`):
- * Welcome centred, every other page in two columns, Back bottom-left, the
- * page dots centred, Skip and the primary action bottom-right. Pages, copy,
- * which buttons show and the answers come from the app core through
- * `useOnboarding`; this file only places them.
+ * The first run, the same on macOS, Windows and Linux: connect your agent,
+ * then "Your agent can use this Mac". Every word and state is the app
+ * core's (`firstRun.view`, through `useFirstRun`); this file places them
+ * beside the keycap art.
  */
 function OnboardingPage() {
-  const flow = useOnboarding();
+  const fr = useFirstRun();
   const navigate = useNavigate();
-  const { view } = flow;
-  useOnboardingVolume(flow);
-  const agents = useAgentsStep(view?.step === "agents");
-  // Host setup's form and the choice on This machine, which the footer's Continue shares.
-  const { data: session } = useSession();
-  const host = useThisMachine(session?.identity ?? null);
-  const choice = useModeChoice(flow, view, host);
-
-  // Return with nothing focused (the window just opened, or focus is on the
-  // page itself) presses the primary button too.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Enter" || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-      if (e.target !== document.body && e.target !== document.documentElement) return;
-      const primary = document.querySelector<HTMLButtonElement>("[data-step] [data-onboarding-primary]:not(:disabled)");
-      if (!primary) return;
-      e.preventDefault();
-      primary.click();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  const { view } = fr;
 
   const leave = () => {
-    flow.skip();
+    fr.later();
     void navigate({ to: "/spaces" });
   };
   const finish = async () => {
     try {
-      await flow.finish();
+      await fr.finish();
       await navigate({ to: "/spaces" });
     } catch (e) {
       toast("Couldn't finish setup", { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
-  // A new page: focus moves to its heading, so a screen reader reads it
-  // and Return goes to the page (Welcome focuses Get started itself).
-  const step = view?.step;
+  // A new screen: focus moves to its heading, so a screen reader reads it.
   useEffect(() => {
-    if (step && step !== "welcome") document.querySelector<HTMLElement>("[data-onboarding-heading]")?.focus();
-  }, [step]);
-
-  // Hold the frame while the session loads, so the page never flashes empty.
-  if (!view) return <div className="h-full" aria-busy="true" />;
+    document.querySelector<HTMLElement>("[data-onboarding-heading]")?.focus();
+  }, [view.step]);
 
   return (
-    <div className="relative flex h-full flex-col" data-step={view.step} onKeyDown={pressPrimaryOnReturn}>
-      {view.step !== "done" ? <SetUpLater onClick={leave} /> : null}
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-10 py-6">
-        {view.step === "welcome" ? <Welcome flow={flow} view={view} /> : <Columns flow={flow} view={view} agents={agents} host={host} choice={choice} />}
+    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] dark:bg-[#07080a]" data-step={view.step}>
+      <Backdrop />
+      <Art art={view.art} step={view.step} />
+      <header className="relative z-30 flex shrink-0 items-center justify-between px-10 pt-[calc(var(--titlebar-height)+12px)] pb-2">
+        <CuaWordmark />
+        <button type="button" onClick={leave} className="text-[13px] text-muted-foreground hover:text-foreground" data-onboarding-later="">
+          {view.later}
+        </button>
+      </header>
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto px-10 pb-6 [@media(min-width:1000px)]:pr-[42%]">
+        {view.connect ? <Connect fr={fr} view={view} /> : null}
+        {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
       </div>
-      <Footer flow={flow} view={view} agents={agents} host={host} choice={choice} onFinish={() => void finish()} />
+      <Dots view={view} />
     </div>
   );
 }
 
-/* ---- Welcome ----------------------------------------------------------------- */
-
-function Welcome({ flow, view }: { flow: OnboardingHook; view: OnboardingView }) {
-  const { openExternal } = useSession();
-  const usage = view.usage;
-  // Welcome is on screen: the core counts the run now when this machine
-  // already showed the usage notice (else when Welcome is left).
-  const settingRead = Boolean(flow.state?.telemetry);
-  useEffect(() => {
-    if (settingRead) flow.send({ type: "welcome-shown" });
-    // Once per showing, after the setting was read.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingRead]);
+function CuaWordmark() {
   return (
-    <div className="flex w-full max-w-[520px] flex-col items-center text-center">
-      {view.showMark ? <CuaLogo className="mb-6 size-14" /> : null}
-      <h1 className="text-[26px] font-semibold tracking-[-0.015em]">{view.title}</h1>
-      <p className="mt-2 text-[14px] text-muted-foreground">{view.lede}</p>
-      <Button size="lg" className="mt-8 min-w-36" autoFocus onClick={() => flow.send({ type: "start" })}>
-        {view.primaryLabel}
-      </Button>
-      <div className="mt-10 flex flex-col items-center gap-2.5">
-        {usage ? (
-          <label className="flex items-center gap-2.5 text-[13px]" title={usage.help ?? undefined}>
-            <Switch
-              checked={usage.on}
-              disabled={!usage.enabled}
-              onCheckedChange={(on) => flow.send({ type: "usage-data-toggled", on })}
-              data-testid="onboarding-share-usage"
-            />
-            {usage.label}
-            <span className="text-muted-foreground">{usage.on ? "On" : "Off"}</span>
-          </label>
+    <span className="flex items-center gap-1.5">
+      <CuaLogo className="size-5" />
+      <span className="font-display text-[17px] font-medium tracking-[-0.01em]">Cua</span>
+    </span>
+  );
+}
+
+/* ---- Step 1: connect your agent --------------------------------------------------- */
+
+const MARKS: Record<string, string> = {
+  "claude-code": "/onboarding/marks/mark-claude.svg",
+  codex: "/onboarding/marks/mark-openai.svg",
+  hermes: "/onboarding/marks/mark-hermes.svg",
+  openclaw: "/onboarding/marks/mark-openclaw.svg",
+};
+
+function AgentMark({ agent, className }: { agent: string; className?: string }) {
+  const src = MARKS[agent];
+  if (!src) return <PlusIcon className={cn("size-4", className)} aria-hidden />;
+  return <img src={src} alt="" aria-hidden className={cn("size-4 shrink-0 object-contain", agent !== "claude-code" && agent !== "openclaw" && "dark:invert", className)} draggable={false} />;
+}
+
+function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+  const c = view.connect!;
+  const [others, setOthers] = useState(false);
+  const [before, after] = c.title.split(c.accent);
+  return (
+    <div className="my-auto flex max-w-[620px] flex-col py-8" data-first-run="connect">
+      <h1
+        tabIndex={-1}
+        data-onboarding-heading=""
+        className="font-display text-[clamp(40px,6vw,64px)] leading-[1.02] font-semibold tracking-[-0.03em] text-balance outline-none"
+      >
+        {before}
+        {after !== undefined ? (
+          <>
+            <span className="font-accent font-normal tracking-normal italic">{c.accent}</span>
+            {after}
+          </>
         ) : null}
-        {usage?.help ? <p className="text-xs text-muted-foreground">{usage.help}</p> : null}
-        {view.notice ? (
-          <p className="text-xs text-pretty text-muted-foreground">
-            {view.notice}{" "}
-            {view.noticeLinkLabel && view.noticeLinkUrl ? (
-              <button
-                type="button"
-                className="text-foreground underline-offset-2 hover:underline"
-                onClick={() => void openExternal(view.noticeLinkUrl!)}
-              >
-                {view.noticeLinkLabel}
-              </button>
-            ) : null}
-          </p>
-        ) : null}
+      </h1>
+      <p className="mt-5 max-w-[520px] text-[16px] leading-relaxed text-muted-foreground">{c.lede}</p>
+      <div className="mt-10">
+        <Button
+          size="lg"
+          className="h-12 gap-2.5 rounded-full px-6 text-[15px]"
+          data-onboarding-primary=""
+          data-first-run-connect={c.agent.agent}
+          disabled={Boolean(c.busy)}
+          autoFocus
+          onClick={() => void fr.connect()}
+        >
+          <AgentMark agent={c.agent.agent} className={c.agent.agent === "claude-code" ? "" : "invert dark:invert-0"} />
+          {c.busy ?? c.primary.label}
+        </Button>
       </div>
+      {c.error ? (
+        <p role="alert" className="mt-3 text-[13px] text-destructive">
+          {c.error}
+        </p>
+      ) : null}
+      <p className="mt-6 flex flex-wrap items-center gap-x-2 text-[13px]">
+        <span>{c.note}</span>
+        <span className="text-muted-foreground">{c.noteMore}</span>
+      </p>
+      <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
+        <span className="text-muted-foreground">{c.orLabel}</span>
+        {c.others.map((o) => (
+          <button
+            key={o.agent}
+            type="button"
+            className="flex items-center gap-1.5 hover:underline disabled:opacity-50"
+            disabled={Boolean(c.busy)}
+            data-first-run-other={o.agent}
+            onClick={() => void fr.connect(o.agent)}
+          >
+            <AgentMark agent={o.agent} />
+            {o.name}
+          </button>
+        ))}
+        <button type="button" className="flex items-center gap-1.5 hover:underline" aria-expanded={others} onClick={() => setOthers((v) => !v)}>
+          <PlusIcon className="size-3.5" aria-hidden />
+          {c.otherLabel}
+        </button>
+      </div>
+      {others ? <OtherAgents fr={fr} known={[c.agent.agent, ...c.others.map((o) => o.agent)]} /> : null}
     </div>
   );
 }
 
-/* ---- Two-column pages --------------------------------------------------------- */
-
-type HostSetup = ReturnType<typeof useThisMachine>;
-
-function Columns({
-  flow,
-  view,
-  agents,
-  host,
-  choice,
-}: {
-  flow: OnboardingHook;
-  view: OnboardingView;
-  agents: AgentsStep;
-  host: HostSetup;
-  choice: ModeChoice;
-}) {
-  const settingUpHost = view.step === "mode" && host.formView !== null;
-  // Leaving the page (Back) leaves the form too.
-  const formOpen = host.form !== null;
-  useEffect(() => {
-    if (view.step !== "mode" && formOpen) host.closeForm();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view.step, formOpen]);
+/** "Other": every other agent the setup knows, installed ones first. */
+function OtherAgents({ fr, known }: { fr: FirstRunHook; known: string[] }) {
+  const rest = fr.agents.filter((a) => !known.includes(a.agent)).sort((a, b) => Number(b.installed) - Number(a.installed));
   return (
-    <div className="w-full max-w-[860px]">
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] items-center gap-14">
-        <div>
-          <h1 tabIndex={-1} data-onboarding-heading="" className="text-[22px] font-semibold tracking-[-0.01em] outline-none">
-            {view.title}
-          </h1>
-          <p className="mt-2 text-[14px] text-muted-foreground">{view.lede}</p>
-          {view.step === "signin" ? <SignInAside flow={flow} /> : null}
+    <div className="mt-4 max-w-[520px] rounded-xl border bg-card p-1.5" data-first-run-others="">
+      {rest.length === 0 ? <p className="px-3 py-2 text-[13px] text-muted-foreground">No other agents found on this computer.</p> : null}
+      {rest.map((a) => (
+        <div key={a.agent} className="flex items-center justify-between gap-3 px-3 py-1.5">
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium">{a.name}</div>
+            <div className="truncate text-xs text-muted-foreground">{a.installed ? (a.configured ? "Already uses Cua" : "Installed") : "Not installed"}</div>
+          </div>
+          <Button variant="outline" size="sm" disabled={!a.installed} onClick={() => void fr.connect(a.agent)}>
+            Connect
+          </Button>
         </div>
-        <div>
-          {view.step === "signin" ? <SignInCard flow={flow} /> : null}
-          {view.step === "agents" ? (
-            <Card>
-              <Suspense fallback={<p className="text-[13px] text-muted-foreground">{agents.copy.agentsLooking}</p>}>
-                <AgentsCard step={agents} />
-              </Suspense>
-            </Card>
-          ) : null}
-          {view.step === "presentation" ? <PresentationCards flow={flow} view={view} /> : null}
-          {view.step === "drive" && view.drive ? (
-            <Card>
-              <Suspense fallback={null}>
-              <DriveCardView
-                card={view.drive}
-                act={{
-                  toggle: (on) => flow.send({ type: "drive-toggled", on }),
-                  chooseStorage: (choice) => flow.send({ type: "storage-chosen", choice }),
-                  storage: (action) => flow.send({ type: "drive-storage", action }),
-                }}
-              />
-              </Suspense>
-            </Card>
-          ) : null}
-          {view.step === "mode" ? <ModeCard flow={flow} view={view} host={host} choice={choice} /> : null}
-          {view.step === "done" ? <DoneCard view={view} flow={flow} /> : null}
-        </div>
-      </div>
-      {/* Only hosts need Screen Recording and Accessibility (the core's host setup). */}
-      {settingUpHost && (flow.permissions.length > 0 || flow.grantedPermissions.length > 0) ? <Permissions flow={flow} /> : null}
-      {view.step === "done" ? <ExamplePrompts prompts={view.prompts ?? EXAMPLE_PROMPTS} /> : null}
-      {view.step === "done" ? <FirstSpace images={flow.images} /> : null}
+      ))}
     </div>
   );
 }
 
-function Card({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string>) {
+/* ---- Step 2: your agent can use this Mac ------------------------------------------- */
+
+function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; onFinish: () => void }) {
+  const s = view.setup!;
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await fr.copyPrompt();
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
   return (
-    <div className={cn("rounded-xl border bg-card px-5 py-4 shadow-xs", className)} {...rest}>
+    <div className="my-auto flex max-w-[600px] flex-col py-6" data-first-run="setup">
+      <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(32px,4.4vw,48px)] leading-[1.05] font-semibold tracking-[-0.03em] outline-none" role="status">
+        {s.title}
+      </h1>
+      <Card className="mt-7 divide-y p-0">
+        {s.rows.map((r) => (
+          <Row key={r.id} row={r} onAct={() => void fr.act(r.action!.id, r.settingsUrl)} />
+        ))}
+      </Card>
+
+      <h2 className="mt-7 text-[14px] font-semibold">{s.prompt.heading}</h2>
+      {s.prompt.copy ? (
+        <Card className="mt-2 flex items-center justify-between gap-3 py-2.5 pr-2.5">
+          <span className="min-w-0 text-[14px] select-text">“{s.prompt.text}”</span>
+          <Button variant="outline" size="sm" className="shrink-0 gap-1.5 rounded-full" onClick={() => void copy()} data-first-run-copy="">
+            {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+            {copied ? "Copied" : s.prompt.copy}
+          </Button>
+        </Card>
+      ) : (
+        <p className="mt-1.5 text-[14px] select-text">“{s.prompt.text}”</p>
+      )}
+      <p className="mt-2 text-[13px] text-muted-foreground">{s.prompt.note}</p>
+
+      <ExtraCard extra={s.extra} fr={fr} />
+      {s.upsell ? <UpsellCard card={s.upsell} fr={fr} /> : null}
+
+      <div className="mt-8 flex items-center gap-4">
+        <Button
+          size="lg"
+          variant={s.primary.id === "done" ? "default" : "outline"}
+          className="h-11 min-w-28 rounded-full px-6 text-[15px]"
+          disabled={!s.primary.enabled}
+          data-onboarding-primary=""
+          data-first-run-primary={s.primary.id}
+          onClick={onFinish}
+        >
+          {s.primary.label}
+        </Button>
+        {s.primary.note ? <span className="text-[13px] text-muted-foreground">{s.primary.note}</span> : null}
+      </div>
+      {view.setup && !fr.saved.usedAtMs ? (
+        <button type="button" onClick={fr.back} className="mt-5 self-start text-xs text-muted-foreground hover:text-foreground">
+          Use a different agent
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function Card({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string | undefined>) {
+  return (
+    <div className={cn("rounded-2xl border bg-card px-5 py-4 shadow-xs", className)} {...rest}>
       {children}
     </div>
   );
 }
 
-function SignInAside({ flow }: { flow: OnboardingHook }) {
-  const { openExternal } = useSession();
+function StateIcon({ state }: { state: FirstRunRow["state"] | "later" }) {
+  if (state === "ok")
+    return (
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#1f9d55] text-white" aria-label="Done">
+        <CheckIcon className="size-3" strokeWidth={3} />
+      </span>
+    );
+  if (state === "fix") return <span className="size-5 shrink-0 rounded-full border-[5px] border-[#d18a12]" aria-label="Needs a fix" />;
+  if (state === "later") return <span className="size-5 shrink-0 rounded-full border border-dashed border-foreground/40" aria-hidden />;
+  return <span className="size-5 shrink-0 animate-spin rounded-full border-2 border-foreground/15 border-t-foreground/60" aria-label="Checking" />;
+}
+
+function Row({ row, onAct }: { row: FirstRunRow; onAct: () => void }) {
   return (
-    <>
-      <p className="mt-4 text-[13px]">{NO_ACCOUNT_NEEDED}</p>
-      <p className="mt-3 text-xs text-muted-foreground">
-        {flow.copy.teams} ·{" "}
-        <button type="button" className="text-foreground underline-offset-2 hover:underline" onClick={() => void openExternal(flow.copy.teamsUrl)}>
-          {flow.copy.teamsLink}
-        </button>
-      </p>
-    </>
+    <div className="flex items-center gap-3.5 px-5 py-3.5" data-first-run-row={row.id} data-state={row.state}>
+      <StateIcon state={row.state} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px] font-medium">{row.title}</div>
+        <div className="text-[13px] text-muted-foreground">{row.note}</div>
+      </div>
+      {row.action ? (
+        <Button size="sm" variant={row.action.id === "restart-check" ? "outline" : "default"} className="shrink-0 rounded-full" onClick={onAct} data-first-run-action={row.action.id}>
+          {row.action.label}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
-function SignInCard({ flow }: { flow: OnboardingHook }) {
-  const { data: session, signOut, cancelSignIn, openExternal } = useSession();
-  const phase = session?.signIn.kind ?? "idle";
-  if (flow.state?.identity) {
+function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }) {
+  const act = (id: string) => void fr.extra(id);
+  if (extra.phase === "choose") {
     return (
-      <Card className="flex items-center justify-between gap-4">
-        <span className="min-w-0 truncate text-[13px]">{flow.signInText}</span>
-        {session?.fleet.authMode === "user" ? (
-          <Button variant="ghost" size="sm" onClick={() => void signOut()}>
-            Sign out
-          </Button>
-        ) : null}
-      </Card>
-    );
-  }
-  if (phase === "starting" || phase === "waiting") {
-    // The code to confirm, the page to open again if the tab was closed,
-    // and a way out (it also times out by itself).
-    const url = session?.signInUrl;
-    return (
-      <Card data-signin="waiting">
-        <p className="text-[13px] text-muted-foreground select-text" role="status">
-          {phase === "starting" ? flow.copy.signInWaiting : flow.signInText}
-        </p>
-        {url ? <SignInLink url={url} /> : null}
-        <div className="mt-3 flex items-center gap-3 text-xs">
-          {url ? (
+      <Card className="mt-6 border-dashed bg-card/60" data-first-run-extra="choose">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-[15px] font-semibold">{extra.title}</h2>
+          {extra.tag ? <span className="text-[13px] text-muted-foreground">{extra.tag}</span> : null}
+        </div>
+        <p className="mt-1 text-[13px] text-muted-foreground">{extra.note}</p>
+        <div className="mt-3 flex flex-wrap items-stretch gap-2.5">
+          {extra.choices.map((c) => (
             <button
+              key={c.os}
               type="button"
-              className="text-foreground underline-offset-2 hover:underline"
-              onClick={() => void openExternal(url)}
-              data-signin-reopen=""
+              disabled={c.blocked !== null}
+              title={c.blocked ?? undefined}
+              onClick={() => act(c.os)}
+              data-first-run-extra-choice={c.os}
+              className="flex min-w-44 items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-left hover:bg-foreground/[0.03] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Open the browser again
+              <OsIcon os={c.os as "macos" | "linux"} className="mt-0.5 size-4 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-[14px] font-medium">{c.label}</span>
+                <span className="block text-xs text-muted-foreground">{c.blocked ?? c.detail}</span>
+              </span>
+            </button>
+          ))}
+          {extra.action ? (
+            <button type="button" className="px-2 text-[14px] font-medium underline decoration-foreground/25 underline-offset-4" onClick={() => act(extra.action!.id)}>
+              {extra.action.label}
             </button>
           ) : null}
-          <button
-            type="button"
-            className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            onClick={() => cancelSignIn()}
-            data-signin-cancel=""
-          >
-            Cancel
-          </button>
         </div>
+        {/* Windows without Docker Desktop: install or start it from here, and the choices follow. */}
+        {extra.choices.some((c) => c.blocked !== null) ? <RuntimeFixRow /> : null}
       </Card>
     );
   }
-  if (phase === "failed") {
-    return (
-      <Card data-signin="failed">
-        <p className="text-[13px] text-destructive" role="alert">
-          {flow.signInText}
-        </p>
-      </Card>
-    );
-  }
-  return null;
-}
-
-/** Explainers only: the grant itself is macOS's, in System Settings. */
-function Permissions({ flow }: { flow: OnboardingHook }) {
-  const { openExternal } = useSession();
+  const icon = extra.phase === "ready" ? "ok" : extra.phase === "failed" ? "fix" : extra.phase === "not-now" ? "later" : "checking";
   return (
-    <section className="mt-10" aria-labelledby="onboarding-permissions">
-      <h2 id="onboarding-permissions" className="mb-1 text-[13px] font-semibold">
-        {flow.copy.permissionsTitle}
-      </h2>
-      <p className="mb-3 text-xs text-muted-foreground">macOS asks for each one itself. Cua Spaces can't turn them on for you.</p>
-      <Card className="divide-y p-0">
-        {flow.grantedPermissions.map((p) => (
-          <div key={p.id} className="flex items-center justify-between gap-6 px-4 py-3" data-granted="true">
-            <div className="text-[13px]">{p.title}</div>
-            <span className="text-xs text-muted-foreground" aria-label={`${p.title} granted`}>
-              ✓ Granted
-            </span>
-          </div>
-        ))}
-        {flow.permissions.map((p) => {
-          const url = p.settingsUrl?.startsWith("x-apple.systempreferences:") ? p.settingsUrl : null;
-          return (
-            <div key={p.id} className="flex items-center justify-between gap-6 px-4 py-3">
-              <div className="min-w-0">
-                <div className="text-[13px]">{p.title}</div>
-                {p.help ? <div className="mt-0.5 text-xs text-muted-foreground">{p.help}</div> : null}
-              </div>
-              {url ? (
-                <Button variant="outline" size="sm" onClick={() => void openExternal(url)}>
-                  {flow.copy.openSettings}
-                </Button>
-              ) : null}
+    <Card className="mt-6" data-first-run-extra={extra.phase}>
+      <div className="flex items-start gap-3.5">
+        <span className="mt-0.5 flex">
+          <StateIcon state={icon} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[15px] font-semibold">{extra.title}</h2>
+          <p className={cn("text-[13px] text-muted-foreground", extra.phase === "failed" && "text-destructive")}>{extra.note}</p>
+          {extra.phase === "creating" ? (
+            <div
+              className="mt-2 h-1 max-w-[400px] overflow-hidden rounded-full bg-foreground/10"
+              role="progressbar"
+              aria-label={extra.title}
+              aria-valuenow={extra.fraction === null ? undefined : Math.round(extra.fraction * 100)}
+            >
+              <div className={cn("h-full rounded-full bg-brand", extra.fraction === null && "w-1/4 animate-pulse")} style={extra.fraction === null ? undefined : { width: `${Math.max(2, extra.fraction * 100)}%` }} />
             </div>
-          );
-        })}
-      </Card>
-    </section>
-  );
-}
-
-function DoneCard({ view, flow }: { view: OnboardingView; flow: OnboardingHook }) {
-  // "Launch at login", where the host applies it (the SwiftUI app's Done has it too).
-  const login = flow.launchAtLogin;
-  const todos = view.todos ?? [];
-  return (
-    <Card>
-      {todos.length ? (
-        <ul className="-mx-1 mb-3 flex flex-col divide-y" data-onboarding-todos="">
-          {todos.map((t) => (
-            <li key={t.id} className="flex items-center gap-3 px-1 py-2.5" data-onboarding-todo={t.id} data-done={t.done ? "" : undefined}>
-              <span
-                aria-hidden
-                className={cn(
-                  "flex size-5 shrink-0 items-center justify-center rounded-full border",
-                  t.done ? "border-brand bg-brand text-white" : "border-foreground/20",
-                )}
-              >
-                {t.done ? <CheckIcon className="size-3" strokeWidth={3} /> : null}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className={cn("text-[13px] font-medium", t.done && "text-muted-foreground")}>
-                  {t.title}
-                  <span className="sr-only">{t.done ? " (done)" : ""}</span>
-                  {t.optional && !t.done ? <span className="font-normal text-muted-foreground"> (optional)</span> : null}
-                </p>
-                <p className="text-xs text-muted-foreground">{t.note}</p>
-              </div>
-              {t.action ? (
-                <Button variant="outline" size="sm" className="shrink-0" onClick={() => void flow.fixTodo(t.id)}>
-                  {t.action}
-                </Button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-1.5 text-[13px]">
-        {view.summary.map((f) => (
-          <div key={f.label} className="contents">
-            <dt className="text-muted-foreground">{f.label}</dt>
-            <dd>{f.value}</dd>
-          </div>
-        ))}
-      </dl>
-      {login ? (
-        <div className="mt-4 flex flex-col gap-1">
-          <label className="flex items-center gap-2.5 text-[13px]">
-            <Checkbox
-              checked={login.checked}
-              onCheckedChange={(on) => flow.send({ type: "launch-at-login-toggled", on: Boolean(on) })}
-              data-onboarding-launch-at-login=""
-            />
-            {login.label}
-          </label>
-          {login.note ? <p className="pl-[26px] text-xs text-muted-foreground">{login.note}</p> : null}
+          ) : null}
+          {extra.footnote ? <p className="mt-2.5 text-[13px] text-muted-foreground">{extra.footnote}</p> : null}
         </div>
-      ) : null}
+        {extra.action ? (
+          <Button variant="outline" size="sm" className="shrink-0 rounded-full" onClick={() => act(extra.action!.id)} data-first-run-extra-action={extra.action.id}>
+            {extra.action.label}
+          </Button>
+        ) : null}
+      </div>
     </Card>
   );
 }
 
-function FirstSpace({ images }: { images: SandboxImage[] }) {
-  const { createSpace } = useSpaces();
-  // What this machine can create: the Spaces page's one-click rule (no
-  // macOS off an Apple silicon Mac, nothing without a runtime).
-  const first = useFirstSpaceOffers();
-  const [started, setStarted] = useState<SandboxImage | null>(null);
-  const create = (image: SandboxImage) => {
-    setStarted(image);
-    // The hosts' create needs the kind (Electron and the SwiftUI bridge
-    // reject a config without one), as New Space's plan sends it.
-    createSpace({ image: image.ref, kind: image.variant, os: image.os }).catch((e: unknown) => {
-      setStarted(null);
-      toast(`Couldn't create ${image.name}`, { description: e instanceof Error ? e.message : String(e) });
-    });
-  };
+function UpsellCard({ card, fr }: { card: FirstRunUpsell; fr: FirstRunHook }) {
+  useEffect(() => {
+    // Counted once per showing.
+    fr.upsell("shown");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.plan]);
   return (
-    <section className="mt-10" aria-labelledby="onboarding-first-space">
-      <h2 id="onboarding-first-space" className="mb-1 text-[13px] font-semibold">
-        Create your first Space
-      </h2>
-      <p className="mb-3 text-xs text-muted-foreground">
-        {started ? `Creating ${started.name}. It shows in Spaces when it's ready.` : "A separate desktop for an agent. You can also do this later."}
-      </p>
-      <ul className="grid grid-cols-3 gap-3">
-        {images.map((image) => {
-          const blocked = first.blockedReason(image.ref);
-          return (
-            <li key={image.ref}>
-              <Card className="flex items-center gap-3 px-4 py-3" data-first-space={image.os}>
-                <OsIcon os={image.os} className="size-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium">{image.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{image.variant === "vm" ? "Virtual machine" : "Container"}</div>
-                  {blocked ? (
-                    <p data-first-space-blocked="" title={blocked} className="mt-0.5 line-clamp-2 text-xs text-destructive">
-                      {blocked}
-                    </p>
-                  ) : null}
-                </div>
-                <Button variant="outline" size="sm" disabled={started !== null || !first.known || blocked !== null} onClick={() => create(image)}>
-                  {started?.ref === image.ref ? "Creating…" : "Create"}
-                </Button>
-              </Card>
-            </li>
-          );
-        })}
-      </ul>
-      {/* Windows without Docker Desktop: install or start it from here, and the cards follow. */}
-      {images.some((image) => first.blockedReason(image.ref) !== null) ? <RuntimeFixRow /> : null}
-      {/* Nothing runs here (no runtime, virtualization off): another computer can run them. */}
-      {first.known && images.length > 0 && images.every((image) => first.blockedReason(image.ref) !== null) ? <AnotherComputer /> : null}
-    </section>
-  );
-}
-
-/** "Or run Spaces on another computer": Add a machine, from the last page. */
-function AnotherComputer() {
-  const [adding, setAdding] = useState(false);
-  const { setupGuide } = useMachines();
-  return (
-    <div data-first-space-elsewhere="" className="mt-3 flex items-center gap-3">
-      <p className="text-xs text-muted-foreground">Or run Spaces on another computer you use: add it here and create Spaces on it from this one.</p>
-      <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
-        Add a machine
-      </Button>
-      <AddMachineDialog open={adding} onOpenChange={setAdding} guide={setupGuide} />
-    </div>
-  );
-}
-
-/* ---- Footer ---------------------------------------------------------------------- */
-
-function Footer({
-  flow,
-  view,
-  agents,
-  host,
-  choice,
-  onFinish,
-}: {
-  flow: OnboardingHook;
-  view: OnboardingView;
-  agents: AgentsStep;
-  host: HostSetup;
-  choice: ModeChoice;
-  onFinish: () => void;
-}) {
-  return (
-    <div className="relative flex h-16 shrink-0 items-center px-6 pb-2">
-      <div className="z-10">
-        {view.canBack && view.step !== "welcome" ? (
-          <Button variant="ghost" size="lg" onClick={() => flow.send({ type: "back" })}>
-            {flow.copy.back}
-          </Button>
-        ) : null}
+    <Card className="mt-4" data-first-run-upsell={card.plan}>
+      <div className="flex items-start gap-3">
+        <CuaKey size={20} className="mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[15px] font-semibold">{card.title}</h2>
+          {card.lines.map((l) => (
+            <p key={l} className="text-[13px] text-muted-foreground">
+              {l}
+            </p>
+          ))}
+          <div className="mt-3 flex items-center gap-2">
+            <span className="flex-1 text-[14px] font-medium">{card.price}</span>
+            <Button size="sm" className="rounded-full" onClick={() => fr.upsell("click")} data-first-run-upsell-cta="">
+              {card.cta.label}
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-full" onClick={() => fr.upsell("dismiss")} data-first-run-upsell-dismiss="">
+              {card.dismiss}
+            </Button>
+          </div>
+        </div>
       </div>
-      <Dots view={view} />
-      <div className="z-10 ml-auto flex items-center gap-2">{view.step !== "welcome" ? <Trailing flow={flow} view={view} agents={agents} host={host} choice={choice} onFinish={onFinish} /> : null}</div>
+    </Card>
+  );
+}
+
+/* ---- Art and chrome ------------------------------------------------------------------- */
+
+/** Light: a plain field with far keys. Dark: the starfield, darker on the text side. */
+function Backdrop() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0">
+      <div className="absolute inset-0 hidden bg-[url(/onboarding/sky.jpg)] bg-cover bg-center brightness-[1.7] contrast-[1.08] dark:block" />
+      <div className="absolute inset-0 hidden bg-gradient-to-r from-black/70 via-black/35 to-transparent dark:block" />
+      <img src="/onboarding/depth.webp" alt="" className="absolute inset-0 size-full object-cover opacity-90" draggable={false} />
     </div>
   );
 }
 
-function Dots({ view }: { view: OnboardingView }) {
-  const current = view.dots.findIndex((d) => d.current);
+/**
+ * The keys beside the page: the agent's key, the blue key for this
+ * computer (faded while it is checked or needs a fix) and, on step 2, a
+ * small dashed outline for the optional extra Space that fills in while
+ * one is being made.
+ */
+function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
+  const agent = ["claude-code", "codex", "hermes", "openclaw"].includes(art.agent) ? art.agent.replace("claude-code", "claude") : "other";
+  const connect = step === "connect";
   return (
-    <ol className="absolute inset-x-0 flex justify-center gap-2" aria-label={`Step ${current + 1} of ${view.dots.length}`}>
-      {view.dots.map((d) => (
-        <li
-          key={d.step}
-          title={d.label}
-          aria-current={d.current ? "step" : undefined}
-          className={cn("size-1.5 rounded-full bg-foreground/20", d.current && "bg-foreground/70")}
-        >
-          <span className="sr-only">{d.label}</span>
-        </li>
+    <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 hidden w-[46%] [@media(min-width:1000px)]:block" data-first-run-art={`${art.agent} ${art.computer} ${art.extra}`}>
+      <img
+        src={`/onboarding/agent-${agent}.webp`}
+        alt=""
+        draggable={false}
+        className={cn("absolute w-[56%] max-w-[420px] transition-all duration-500", connect ? "top-[30%] left-[4%]" : "top-[34%] left-[10%]")}
+      />
+      <img
+        src="/onboarding/cua.webp"
+        alt=""
+        draggable={false}
+        className={cn("absolute top-[12%] right-[6%] w-[40%] max-w-[300px] transition-all duration-500", art.computer === "faded" && "opacity-40 blur-[1px]")}
+      />
+      {art.extra !== "none" ? (
+        <div className="absolute right-[12%] bottom-[10%] w-[24%] max-w-[190px]">
+          {art.extra === "outline" ? (
+            <SlotOutline />
+          ) : (
+            <img src="/onboarding/extra.webp" alt="" draggable={false} className={cn("w-full transition-opacity", art.extra === "filling" ? "animate-pulse opacity-40" : "opacity-95")} />
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The Spaces key's outline, dashed: an extra Space that doesn't exist yet. */
+function SlotOutline() {
+  return (
+    <svg viewBox="0 0 486 470" className="w-full -rotate-6 text-foreground/35 dark:text-white/35">
+      <polygon
+        points="110,65 309,8 327,10 341,20 359,52 414,165 445,238 461,280 476,326 476,345 465,357 421,375 328,406 187,449 143,461 125,461 116,456 109,447 84,388 19,218 8,184 11,164 27,140 51,109 82,78 104,67"
+        fill="currentColor"
+        fillOpacity={0.05}
+        stroke="currentColor"
+        strokeWidth={4}
+        strokeDasharray="14 16"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function Dots({ view }: { view: FirstRunView }) {
+  return (
+    <ol className="relative z-10 flex shrink-0 justify-center gap-2 pb-5" aria-label={`Step ${view.current + 1} of ${view.dots}`}>
+      {Array.from({ length: view.dots }, (_, i) => (
+        <li key={i} aria-current={i === view.current ? "step" : undefined} className={cn("h-0.5 w-6 rounded-full bg-foreground/20", i <= view.current && "bg-foreground/80")} />
       ))}
     </ol>
   );
-}
-
-function Trailing({
-  flow,
-  view,
-  agents,
-  host,
-  choice,
-  onFinish,
-}: {
-  flow: OnboardingHook;
-  view: OnboardingView;
-  agents: AgentsStep;
-  host: HostSetup;
-  choice: ModeChoice;
-  onFinish: () => void;
-}) {
-  const { data: session, signIn } = useSession();
-  const skip = view.canSkip ? (
-    <Button variant="ghost" size="lg" onClick={() => flow.send({ type: "signin-done" })}>
-      {flow.copy.skip}
-    </Button>
-  ) : null;
-
-  switch (view.step) {
-    case "signin": {
-      if (flow.state?.identity) {
-        return (
-          <Button size="lg" data-onboarding-primary="" onClick={() => flow.send({ type: "signin-done" })}>
-            {view.primaryLabel}
-          </Button>
-        );
-      }
-      const phase = session?.signIn.kind ?? "idle";
-      const waiting = phase === "starting" || phase === "waiting";
-      return (
-        <>
-          {skip}
-          <Button
-            size="lg"
-            data-onboarding-primary=""
-            disabled={!session || waiting}
-            onClick={() => signIn().catch(() => {}) /* the failure shows on the page */}
-          >
-            {waiting ? flow.copy.signInWaiting : phase === "failed" ? flow.copy.tryAgain : flow.copy.signIn}
-          </Button>
-        </>
-      );
-    }
-    case "agents":
-      return (
-        <>
-          {agents.summaries ? null : (
-            <Button variant="ghost" size="lg" disabled={agents.busy} onClick={() => flow.send({ type: "agents-done", configured: [] })}>
-              {flow.copy.skip}
-            </Button>
-          )}
-          {agents.summaries ? (
-            <Button size="lg" data-onboarding-primary="" onClick={() => flow.send({ type: "agents-done", configured: agents.configured })}>
-              {view.primaryLabel}
-            </Button>
-          ) : (
-            <Button size="lg" data-onboarding-primary="" disabled={!agents.canSetUp} onClick={() => void agents.setUp()} data-agents-set-up="">
-              {agents.busy ? agents.copy.agentsSettingUp : agents.copy.agentsSetUp}
-            </Button>
-          )}
-        </>
-      );
-    case "presentation":
-      return (
-        <Button size="lg" data-onboarding-primary="" onClick={() => flow.send({ type: "presentation-done" })}>
-          {view.primaryLabel}
-        </Button>
-      );
-    case "drive":
-      return (
-        <Button
-          size="lg"
-          disabled={!view.drive || view.drive.busy || !view.drive.canContinue}
-          onClick={() => flow.send({ type: "drive-continue" })}
-          data-drive-continue=""
-          data-onboarding-primary=""
-        >
-          {view.primaryLabel}
-        </Button>
-      );
-    case "mode":
-      // The cards select; Continue (and Return) moves on.
-      return <ModeContinue view={view} host={host} choice={choice} />;
-    case "done":
-      return (
-        <Button size="lg" data-onboarding-primary="" onClick={onFinish}>
-          {view.primaryLabel}
-        </Button>
-      );
-    default:
-      // Welcome has its own button.
-      return null;
-  }
 }

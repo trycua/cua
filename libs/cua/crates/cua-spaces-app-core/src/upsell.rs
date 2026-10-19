@@ -33,8 +33,10 @@ pub const REDISMISS_DAYS: u64 = 30;
 
 const DAY_MS: u64 = 86_400_000;
 
-/// Where a prompt shows.
-pub const SURFACES: [&str; 3] = ["meter", "share", "machine"];
+/// Where a prompt shows. `onboarding` is the first run's plan card after the
+/// first success ([`crate::first_run::upsell`]): its own rules (once, and
+/// "Not now" is for good).
+pub const SURFACES: [&str; 4] = ["meter", "share", "machine", "onboarding"];
 
 /// What an app remembers between launches, and what is going on now.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

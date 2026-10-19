@@ -19,9 +19,8 @@
  * `spaces.createProgress`); the host's menu items ask for the wizard with
  * `spaces.newRequested`. By design: a passphrase never
  * crosses the bridge, so `keyvault.unlock` with one fails with `native_only`.
- * The SwiftUI app's first run is native, so there `session.completeOnboarding`
- * resolves without a call; the Electron shell's is this page's
- * (`onboarding.get`, `onboarding.complete`). Appearance and the hotkey are page-side; an appearance change sets
+ * The first run is this page's on both hosts (`onboarding.get`,
+ * `onboarding.complete`). Appearance and the hotkey are page-side; an appearance change sets
  * the window's background (`window.setBackgroundColor`). The page tells the
  * window where it drags (`window.setDragRegions`, `../drag-regions.ts`), and
  * where its Space tiles are for a real window dragged onto one
@@ -59,6 +58,7 @@ import { webkitSettingsOps } from "../ops/settings";
 import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
@@ -513,9 +513,10 @@ export function createWebkitAdapter(
 
   const ops: { [K in OpName]: (args: OpArgs<K>) => Promise<OpResult<K>> } = {
     "spaces.list": async () => (await listSpaces()).spaces.filter((s) => !ownCreates.has(s.space.id)).map((s) => spaceToRow(s.space)),
-    "spaces.create": async ({ config, pendingId, os }) => {
+    "spaces.create": async ({ config, pendingId, os, notifyWhenReady }) => {
       ownCreates.add(pendingId);
-      return spaceToRow(await request<WkSpace>("spaces.create", { config, pendingId, os: os ?? null }, null));
+      const args = notifyWhenReady ? { config, pendingId, os: os ?? null, notifyWhenReady } : { config, pendingId, os: os ?? null };
+      return spaceToRow(await request<WkSpace>("spaces.create", args, null));
     },
     "spaces.cancelCreate": ({ pendingId }) => request<CancelOutcome>("spaces.cancelCreate", { pendingId }),
     "spaces.setPower": async ({ spaceId, on }): Promise<SpacePowerReport> => {
@@ -594,8 +595,8 @@ export function createWebkitAdapter(
     },
     "keyvault.revokeGrant": async ({ id }) => Number(await request<number>("keyvault.revokeGrant", { id })),
     "session.get": async () => {
-      if (!electron) return toSessionSnapshot(await request<WkSession>("session.get"));
-      const [s, onboarding] = await Promise.all([request<WkSession>("session.get"), request<WkOnboarding>("onboarding.get")]);
+      // A SwiftUI host from before the shared first run has no `onboarding.get`: it ran its own.
+      const [s, onboarding] = await Promise.all([request<WkSession>("session.get"), request<WkOnboarding>("onboarding.get").catch(() => null)]);
       return toSessionSnapshot(s, onboarding);
     },
     "session.signIn": async () => {
@@ -608,7 +609,7 @@ export function createWebkitAdapter(
       return null;
     },
     "session.completeOnboarding": async ({ mode, launchAtLogin }) => {
-      if (electron) await request("onboarding.complete", launchAtLogin === undefined ? { mode } : { mode, launchAtLogin });
+      await request("onboarding.complete", launchAtLogin === undefined ? { mode } : { mode, launchAtLogin });
       return null;
     },
 
@@ -643,6 +644,7 @@ export function createWebkitAdapter(
       ? { "spaces.openStream": (target: OpArgs<"spaces.openStream">) => request<StreamTicket>("spaces.openStream", { ...target }) }
       : unsupportedStreamOps("webkit")),
     "relay.usage": () => request<RelayUsage | null>("relay.usage"),
+    "resources.get": ({ visible }) => request<ResourcesSnapshot | null>("resources.get", { visible }),
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     // Presence over the page's own video: the Mac app draws it natively.

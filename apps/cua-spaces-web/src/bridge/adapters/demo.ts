@@ -50,6 +50,7 @@ import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./dem
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
+import { demoResourcesHandlers, demoResourcesState, type DemoResourcesState } from "./demo/resources";
 import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
@@ -77,6 +78,8 @@ export interface DemoOptions {
   /** The relay allowance: `idle` (free, no live session, so prompts can show),
    * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
+  /** This Mac's free disk: `low` (`?demo=low-disk`) or `full` (`?demo=disk-full`). */
+  disk?: "low" | "full";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
    * Electron shell passes its own system and architecture). */
   platform?: DemoPlatform;
@@ -86,14 +89,17 @@ export interface DemoOptions {
 
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
-/** `?demo=fresh` (signed out, first run), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
+/** `?demo=fresh` (signed out, first run), `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
- * `?demo=update-ready` (an update is downloaded) and `?demo=update-downloading`. */
+ * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`,
+ * and `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space). */
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
+    // `?demo=slow`: every answer takes a few seconds (the first run's "Checking" in screenshots).
+    ...(flags.has("slow") ? { latencyMs: 4000 } : {}),
     signedIn: !flags.has("fresh"),
     onboarded: !flags.has("fresh"),
     keyvaultLocked: flags.has("locked"),
@@ -103,6 +109,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
+    disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
       : flags.has("update-downloading")
@@ -161,6 +168,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
+    ...demoResourcesState(options.disk ?? "healthy"),
     ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
     ...demoSpaceDetailState(),
     ...demoHostSetupState(now(), options.onboarded === false),
@@ -477,6 +485,14 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       state.agentSetup = state.agentSetup.map((r) =>
         wanted(r) ? { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" } : r,
       );
+      // The demo plays the agent's first request a little later: a line in this computer's access log.
+      const used = state.agentSetup.find(wanted);
+      if (used && agents?.length === 1) {
+        setTimeout(() => {
+          const line = { atMs: now(), via: "token", who: used.name, what: "MCP" };
+          state.host = { ...state.host, recentAccess: [line, ...(state.host.recentAccess ?? [])] };
+        }, step * 30);
+      }
       return state.agentSetup.map((r) => ({ ...r }));
     },
     ...newSpaceDemoHandlers({ state, wait, emit, step, now }),
@@ -488,6 +504,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
     ...demoRelayUsageHandlers(ctx),
+    ...demoResourcesHandlers(ctx),
     ...demoSpaceDetailHandlers(ctx),
     ...demoHostSetupHandlers(ctx),
     ...demoKeyvaultSetupHandlers(ctx),
@@ -517,7 +534,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   };
 }
 
-export interface DemoState extends DemoTelemetryState, DemoRelayUsageState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+export interface DemoState extends DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;

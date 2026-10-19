@@ -85,7 +85,14 @@
   --shadow-color: 220 40% 2%;
 }
 
+/* The first run's headline type (Outfit) and its one accent word (Instrument Serif). */
+@font-face { font-family: "Outfit"; font-weight: 500; font-display: swap; src: url(/onboarding/fonts/outfit-latin-500-normal.woff2) format("woff2"); }
+@font-face { font-family: "Outfit"; font-weight: 600; font-display: swap; src: url(/onboarding/fonts/outfit-latin-600-normal.woff2) format("woff2"); }
+@font-face { font-family: "Instrument Serif"; font-style: italic; font-weight: 400; font-display: swap; src: url(/onboarding/fonts/instrument-serif-latin-400-italic.woff2) format("woff2"); }
+
 @theme {
+  --font-display: "Outfit", var(--font-sans);
+  --font-accent: "Instrument Serif", ui-serif, Georgia, serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 

@@ -60,12 +60,13 @@ import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestI
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
 import type { GlobalShortcut, HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
-import type { WebkitMethod, WkHostState, WkMachines, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
+import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
 const defs = new Defs();
@@ -75,6 +76,34 @@ const limits = list(object({ resource: str, used: num, limit: num, reason: str }
 const os = oneOf("macos", "windows", "linux", "unknown");
 
 /* ---- Spaces and machines --------------------------------------------------- */
+
+const DiskWarningShape = ref("DiskWarning", obj<DiskWarning>()({ level: oneOf("ok", "low", "critical"), free: num, total: num, threshold: num }));
+
+/** `resources.get`'s computers (CUA-1880). */
+const ComputerResourcesShape = ref(
+  "ComputerResources",
+  obj<ComputerResources>()({
+    id: str,
+    name: str,
+    online: bool,
+    sampledAtMs: num,
+    cpuCount: num,
+    cpuPercent: num,
+    loadAverage1m: num,
+    memoryTotal: num,
+    memoryUsed: num,
+    diskTotal: num,
+    diskFree: num,
+    spacesCount: num,
+    spacesRunning: num,
+    spacesCpuAllocated: num,
+    spacesMemoryAllocated: num,
+    spacesMemoryUsed: num,
+    spacesDiskBytes: num,
+    spacesDiskExact: bool,
+    warning: DiskWarningShape,
+  }),
+);
 
 const SpaceProgressShape = ref(
   "SpaceProgress",
@@ -839,6 +868,41 @@ export const OP_SHAPES: Record<OpName, Schema> = {
       upgradeUrl: nullable(str),
     }),
   ),
+  "resources.get": nullable(
+    obj<ResourcesSnapshot>()({
+      sequence: num,
+      sampledAtMs: num,
+      thisMac: ComputerResourcesShape,
+      spaces: list(
+        ref(
+          "SpaceResources",
+          obj<SpaceResources>()({
+            id: str,
+            powerState: oneOf("running", "stopped", "suspended", ""),
+            cpuAllocated: num,
+            memoryAllocated: num,
+            diskAllocated: num,
+            usage: nullable(
+              obj<GuestUsage>()({
+                cpuCount: num,
+                cpuPercent: num,
+                loadAverage1m: num,
+                memoryUsed: num,
+                memoryTotal: num,
+                memoryLimited: bool,
+                diskUsed: num,
+                diskTotal: num,
+                diskLimited: bool,
+              }),
+            ),
+            diskOnHost: nullable(obj<DiskOnHost>()({ bytes: nullable(num), allocated: num, sharesSpace: bool })),
+          }),
+        ),
+      ),
+      computers: list(ComputerResourcesShape),
+      warning: DiskWarningShape,
+    }),
+  ),
   "checklist.get": ChecklistAnswerShape,
   "checklist.send": ChecklistAnswerShape,
   "presence.join": obj<PresenceJoinInfo>()({
@@ -1107,6 +1171,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "session.get": WkSessionShape,
   "session.signIn": WkSessionShape,
   "session.signOut": WkSessionShape,
+  // The first run is this page's on both hosts (`WkOnboarding`).
+  "onboarding.get": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
+  "onboarding.complete": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
   "spaces.list": WkSpacesShape,
   "spaces.setPower": WkSpacesShape,
   "spaces.delete": WkSpacesShape,
@@ -1221,6 +1288,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "startup.get": StartupShape,
   "startup.act": StartupShape,
   "relay.usage": OP_SHAPES["relay.usage"],
+  "resources.get": OP_SHAPES["resources.get"],
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
 };

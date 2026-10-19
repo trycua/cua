@@ -28,6 +28,7 @@ import { notificationsMethods } from "./notifications";
 import { onboardingMethods } from "./onboarding";
 import { presenceMethods } from "./presence";
 import { relayUsageMethods } from "./relay-usage";
+import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
 import { settingsMethods } from "./settings";
 import { sharingMethods } from "./sharing";
@@ -69,6 +70,7 @@ export const AREAS = [
   streamMethods,
   onboardingMethods,
   relayUsageMethods,
+  resourcesMethods,
   checklistMethods,
   presenceMethods,
 ];

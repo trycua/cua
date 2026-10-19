@@ -721,6 +721,23 @@ One stream session's aggregate stats (sampled).
 | `height` | `u32` |  | Stream height in pixels. |
 | `duration_ms` / `durationMs` | `u64` |  |  |
 
+## `TelemetryLinkNotice` record
+
+The one-time notice for machines that saw the older "anonymous" wording,
+shown before anything is linked to the account. Both buttons close it;
+the second also turns usage data off.
+
+Returned by [`telemetry_link_notice`](#telemetry_link_notice).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `title` | `String` |  |  |
+| `body` | `String` |  |  |
+| `ok_label` / `okLabel` | `String` |  | Keeps usage data on ("Got it"). |
+| `turn_off_label` / `turnOffLabel` | `String` |  | Turns usage data off ("Turn off usage data"). |
+| `details_label` / `detailsLabel` | `String` |  | The link to what is collected. |
+| `docs_url` / `docsUrl` | `String` |  |  |
+
 ## `TelemetryStatus` record
 
 Telemetry state.
@@ -738,6 +755,49 @@ Returned by [`telemetry_set_enabled`](#telemetry_set_enabled), [`telemetry_statu
 | `endpoint` | `String` |  | Where batches go. |
 | `product` | `String` |  | Which Cua program events are attributed to. |
 | `envelope_json` / `envelopeJson` | `String` |  | The exact properties every event carries, as JSON. |
+
+## `telemetry_acknowledge_link_notice`
+
+The person closed the linking notice (either button). Linking starts
+with the app's next launch, never in the process that showed it.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+def telemetry_acknowledge_link_notice() -> None
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+function telemetryAcknowledgeLinkNotice(): void
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func telemetryAcknowledgeLinkNotice()
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+fun telemetryAcknowledgeLinkNotice()
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn telemetry_acknowledge_link_notice()
+```
+
+</Tab>
+</Tabs>
 
 ## `telemetry_acknowledge_notice`
 
@@ -829,6 +889,139 @@ pub fn telemetry_flush(timeout_ms: u32)
 | Parameter | Type | Default |
 | --- | --- | --- |
 | `timeout_ms` | `u32` | required |
+
+## `telemetry_link_notice`
+
+The one-time linking notice's words.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+def telemetry_link_notice() -> TelemetryLinkNotice
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+function telemetryLinkNotice(): TelemetryLinkNotice
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func telemetryLinkNotice() -> TelemetryLinkNotice
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+fun telemetryLinkNotice(): TelemetryLinkNotice
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn telemetry_link_notice() -> TelemetryLinkNotice
+```
+
+</Tab>
+</Tabs>
+
+**Returns** [`TelemetryLinkNotice`](#telemetrylinknotice-record)
+
+## `telemetry_link_notice_due`
+
+Whether the app should show the one-time linking notice now: usage data
+is on, the account offered linking, and this machine has not shown it.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+def telemetry_link_notice_due() -> bool
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+function telemetryLinkNoticeDue(): boolean
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func telemetryLinkNoticeDue() -> Bool
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+fun telemetryLinkNoticeDue(): Boolean
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn telemetry_link_notice_due() -> bool
+```
+
+</Tab>
+</Tabs>
+
+**Returns** `bool`
+
+## `telemetry_link_state`
+
+Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+def telemetry_link_state() -> str
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+function telemetryLinkState(): string
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func telemetryLinkState() -> String
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+fun telemetryLinkState(): String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn telemetry_link_state() -> String
+```
+
+</Tab>
+</Tabs>
+
+**Returns** `String`
 
 ## `telemetry_notice_text`
 
@@ -1125,6 +1318,53 @@ pub fn telemetry_set_surface(surface: String, version: String)
 | --- | --- | --- |
 | `surface` | `String` | required |
 | `version` | `String` | required |
+
+## `telemetry_sync_account`
+
+Asks the Spaces API for the signed-in account's opaque id and hands it
+to telemetry (none unlinks). Call at launch and after a sign-in; the
+SDK's own sign-in already does. Returns the link state. Best effort:
+offline or signed out, nothing changes.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def telemetry_sync_account() -> str
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+function telemetrySyncAccount(asyncOpts_?: { signal: AbortSignal }): Promise<string>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func telemetrySyncAccount() async -> String
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+suspend fun telemetrySyncAccount(): String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn telemetry_sync_account() -> String
+```
+
+</Tab>
+</Tabs>
+
+**Returns** `String` · **Async**
 
 ## `telemetry_use_app_notice`
 

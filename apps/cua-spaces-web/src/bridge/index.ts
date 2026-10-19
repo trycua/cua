@@ -180,6 +180,7 @@ export {
   useFirstRunSaved,
   writeFirstRun,
   type FirstRunHook,
+  type FirstRunUsage,
   type FirstRunSaved,
 } from "./first-run";
 export type * from "./contracts/first-run";

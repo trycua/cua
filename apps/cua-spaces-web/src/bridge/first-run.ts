@@ -42,7 +42,7 @@ import type {
 import { useSession, useSettings, useSpaces } from "./hooks";
 import { hostOs } from "./host-os";
 import { useFirstSpaceOffers } from "./new-space-hooks";
-import { onboardingInitial, onboardingTelemetry, readSavedOnboarding, writeSavedOnboarding } from "./onboarding";
+import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "./onboarding";
 import type { OnboardingFlowState } from "./contracts/onboarding";
 import { useRelayUsage } from "./relay-usage";
 import { newPendingId } from "./store";
@@ -255,8 +255,25 @@ function track(send: () => void): void {
 /** How often the setup screen reads the agent setup and this computer. */
 export const FIRST_RUN_POLL_MS = 2_500;
 
+/** The usage-data note and switch on the first page: the words are the app core's
+ * (the old Welcome's), on by default, off with one tap. */
+export interface FirstRunUsage {
+  notice: string;
+  linkLabel: string;
+  linkUrl: string;
+  label: string;
+  on: boolean;
+  enabled: boolean;
+  help: string | null;
+}
+
 export interface FirstRunHook {
   view: FirstRunView;
+  /** The usage-data note and switch (first page only; none until the host says what the setting is). */
+  usage: FirstRunUsage | null;
+  setUsage(on: boolean): Promise<void>;
+  /** "What is collected". */
+  openUsageLink(): void;
   input: FirstRunInput;
   saved: FirstRunSaved;
   /** Every agent the setup knows (for "Other"). */
@@ -410,6 +427,22 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   };
   const view = firstRunView(core, input);
 
+  const welcome = settings.data?.telemetry
+    ? onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(settings.data.telemetry) })
+    : null;
+  const usageNote: FirstRunUsage | null =
+    s.step === "connect" && welcome?.usage && welcome.notice && welcome.noticeLinkLabel && welcome.noticeLinkUrl
+      ? {
+          notice: welcome.notice,
+          linkLabel: welcome.noticeLinkLabel,
+          linkUrl: welcome.noticeLinkUrl,
+          label: welcome.usage.label,
+          on: welcome.usage.on,
+          enabled: welcome.usage.enabled,
+          help: welcome.usage.help ?? null,
+        }
+      : null;
+
   // The run starts (once a page shows): the usage event the old Welcome sent.
   useEffect(() => {
     const t = settings.data?.telemetry;
@@ -496,6 +529,11 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
 
   return {
     view,
+    usage: usageNote,
+    setUsage: (on) => settings.updateSetting("telemetry", on),
+    openUsageLink: () => {
+      if (usageNote) void session.openExternal(usageNote.linkUrl).catch(() => {});
+    },
     input,
     saved: s,
     agents: agents ?? [],

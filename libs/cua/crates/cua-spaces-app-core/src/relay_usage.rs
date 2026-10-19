@@ -2,11 +2,15 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! The account's relay allowance this month, as every app shows it: one
-//! Settings row ("Relay usage") and, past the allowance, one dismissible
+//! Settings row ("Remote use") and, past the allowance, one dismissible
 //! line above every page with Upgrade. A live session is a connection to
 //! one of the user's remote machines through the hosted relay; relay hours
 //! are the time with at least one. Nothing stops at the limit, so the apps
 //! only say so.
+//!
+//! Users see relay hours as "remote hours" (the API and metric names keep
+//! `relay_hours`): the time spent using a computer from somewhere else.
+//! Using a computer from itself never goes through the relay, so it is free.
 //!
 //! Plain data in (the relay's `GET /v1/usage`, as `cua_host::RelayUsage`
 //! reads it and `cua usage` prints it) and plain data out. Every app reads
@@ -16,7 +20,13 @@
 use serde::{Deserialize, Serialize};
 
 /// The Settings row's label.
-pub const ROW_LABEL: &str = "Relay usage";
+pub const ROW_LABEL: &str = "Remote use";
+
+/// What remote hours are, in plain words: where the term first shows (the
+/// Free plan card, `cua usage`). The relay meters the time an account has
+/// at least one live session through it; a computer used from itself never
+/// goes through the relay.
+pub const REMOTE_HOURS_MEANING: &str = "Remote hours: time spent using your computers from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free.";
 
 /// The notice's button.
 pub const UPGRADE: &str = "Upgrade";
@@ -178,7 +188,7 @@ pub fn usage_line(u: &RelayUsage) -> String {
         u.live_sessions_limit.map(|l| l.to_string()),
     );
     let relay_hours = of(hours(u.hours_used), u.hours_limit.map(hours));
-    format!("Live sessions {sessions} \u{b7} Relay hours {relay_hours} this month")
+    format!("Live sessions {sessions} \u{b7} Remote hours {relay_hours} this month")
 }
 
 /// "Free plan", "Pro plan"; empty when the relay names none.
@@ -230,15 +240,15 @@ pub fn dismiss_key(u: &RelayUsage) -> String {
 pub fn notice_text(u: &RelayUsage) -> String {
     if warns(u) {
         return format!(
-            "You've used {} of {} relay hours this month. Nothing stops at the limit. Pro gives you {PRO_HOURS} hours and {PRO_SESSIONS} live sessions.",
+            "You've used {} of {} remote hours this month. Nothing stops at the limit. Pro gives you {PRO_HOURS} hours and {PRO_SESSIONS} live sessions.",
             hours(u.hours_used),
             hours(u.hours_limit.unwrap_or_default()),
         );
     }
     match plan_kind(&u.plan) {
-        "free" => "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more.".into(),
-        "pro" => "You've used your relay allowance for this month. Your Spaces keep working. Teams pools hours across seats.".into(),
-        _ => "You've used your relay allowance for this month. Your Spaces keep working. Add seats for more.".into(),
+        "free" => "You've reached the free plan's remote limit for this month. Your Spaces keep working. Pro gives you more.".into(),
+        "pro" => "You've reached your plan's remote limit for this month. Your Spaces keep working. Teams pools remote hours across seats.".into(),
+        _ => "You've reached your team's remote limit for this month. Your Spaces keep working. Add seats for more.".into(),
     }
 }
 
@@ -276,13 +286,13 @@ pub fn plan_card(u: &RelayUsage, account_app: &str) -> PlanCard {
         url: buy(account_app, path, "app_plan_card"),
     };
     let allowance = |s: Option<u32>, h: Option<f64>| match (s, h) {
-        (Some(s), Some(h)) => format!("{s} live sessions and {} relay hours a month", hours(h)),
-        _ => "No relay limit".into(),
+        (Some(s), Some(h)) => format!("{s} live sessions and {} remote hours a month", hours(h)),
+        _ => "No limit on remote use".into(),
     };
     let (detail, primary, secondary) = match kind {
         "free" => (
             format!(
-                "{} on the hosted relay. Spaces you reach on your own network don't count.",
+                "{}. {REMOTE_HOURS_MEANING}",
                 allowance(u.live_sessions_limit, u.hours_limit)
             ),
             Some(link("Get Pro", BUY_PRO_PATH)),
@@ -395,10 +405,10 @@ mod tests {
     #[test]
     fn within_the_allowance_one_row_and_no_notice() {
         let v = view(&free()).unwrap();
-        assert_eq!(v.label, "Relay usage");
+        assert_eq!(v.label, "Remote use");
         assert_eq!(
             v.line,
-            "Live sessions 1 of 2 \u{b7} Relay hours 6.5 of 20 this month"
+            "Live sessions 1 of 2 \u{b7} Remote hours 6.5 of 20 this month"
         );
         assert_eq!(v.plan, "Free plan");
         assert_eq!(v.notice, None);
@@ -419,12 +429,12 @@ mod tests {
         let v = view_for(&u, "https://app.cua.ai").unwrap();
         assert_eq!(
             v.line,
-            "Live sessions 1 of 2 \u{b7} Relay hours 20.2 of 20 this month \u{b7} Team pool, 3 seats"
+            "Live sessions 1 of 2 \u{b7} Remote hours 20.2 of 20 this month \u{b7} Team pool, 3 seats"
         );
         let n = v.notice.unwrap();
         assert_eq!(
             n.text,
-            "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more."
+            "You've reached the free plan's remote limit for this month. Your Spaces keep working. Pro gives you more."
         );
         assert_eq!(n.upgrade, "Upgrade");
         assert_eq!(n.level, "limit");
@@ -443,7 +453,7 @@ mod tests {
             .unwrap()
             .notice
             .unwrap();
-        assert!(n.text.starts_with("You've used your relay"), "{}", n.text);
+        assert!(n.text.starts_with("You've reached your"), "{}", n.text);
         assert_eq!(
             n.upgrade_url.as_deref(),
             Some("https://app.cua.ai/buy/teams?from=app_meter")
@@ -473,7 +483,7 @@ mod tests {
         assert_eq!(n.level, "warn");
         assert_eq!(
             n.text,
-            "You've used 16 of 20 relay hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions."
+            "You've used 16 of 20 remote hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions."
         );
         assert_eq!(
             n.upgrade_url.as_deref(),
@@ -520,7 +530,7 @@ mod tests {
         assert_eq!((f.plan.as_str(), f.label.as_str()), ("free", "Free plan"));
         assert_eq!(
             f.detail,
-            "2 live sessions and 20 relay hours a month on the hosted relay. Spaces you reach on your own network don't count."
+            "2 live sessions and 20 remote hours a month. Remote hours: time spent using your computers from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free."
         );
         let p = f.primary.unwrap();
         assert_eq!(
@@ -562,7 +572,7 @@ mod tests {
         assert_eq!(team.plan, "teams");
         assert_eq!(
             team.detail,
-            "10 live sessions and 400 relay hours a month across 2 seats, shared by the team."
+            "10 live sessions and 400 remote hours a month across 2 seats, shared by the team."
         );
         assert!(team.secondary.is_none());
     }
@@ -577,7 +587,7 @@ mod tests {
             ..free()
         };
         let v = view(&u).unwrap();
-        assert_eq!(v.line, "Live sessions 1 \u{b7} Relay hours 3 this month");
+        assert_eq!(v.line, "Live sessions 1 \u{b7} Remote hours 3 this month");
         assert_eq!(v.plan, "");
         assert_eq!(
             view(&RelayUsage {
@@ -647,7 +657,7 @@ mod tests {
         let bare: RelayUsage = serde_json::from_str(r#"{"metered":true}"#).unwrap();
         assert_eq!(
             view(&bare).unwrap().line,
-            "Live sessions 0 \u{b7} Relay hours 0 this month"
+            "Live sessions 0 \u{b7} Remote hours 0 this month"
         );
     }
 }

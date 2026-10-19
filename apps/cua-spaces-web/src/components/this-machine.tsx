@@ -256,6 +256,9 @@ export function HostSetupForm({
   return (
     <form
       data-host-form
+      // Advanced (Direct connection, your own relay) is open only when
+      // Settings → Advanced opened the form; there is no toggle here.
+      data-host-advanced={view.advancedOpen ? "open" : "closed"}
       onSubmit={(e) => {
         e.preventDefault();
         if (view.canSubmit) void host.submit();
@@ -268,15 +271,6 @@ export function HostSetupForm({
         {basic.map((f) => (
           <Field key={f.id} field={f} host={host} />
         ))}
-        <button
-          type="button"
-          data-host-advanced={view.advancedOpen ? "open" : "closed"}
-          onClick={() => host.send({ type: "toggle-advanced" })}
-          className="flex w-full cursor-default items-center gap-1 px-4 py-2.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
-        >
-          {view.advancedOpen ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
-          {view.advancedLabel}
-        </button>
         {advanced.map((f) => (
           <Field key={f.id} field={f} host={host} />
         ))}

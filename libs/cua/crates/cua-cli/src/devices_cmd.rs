@@ -21,7 +21,7 @@ pub enum DevicesCmd {
   cua devices status")]
     Status {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Enroll this device. Right after a fresh `cua auth login` it enrolls
@@ -39,7 +39,7 @@ pub enum DevicesCmd {
         #[arg(long)]
         wait: bool,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Approve a new device (or re-verify an expired one) from this
@@ -58,7 +58,7 @@ pub enum DevicesCmd {
         #[arg(long)]
         yes: bool,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Your devices and their state.
@@ -70,7 +70,7 @@ pub enum DevicesCmd {
     )]
     Ls {
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Rename a device.
@@ -82,7 +82,7 @@ pub enum DevicesCmd {
         /// New name.
         name: String,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Revoke a device: it can no longer list or reach your machines.
@@ -95,7 +95,7 @@ pub enum DevicesCmd {
         #[arg(long)]
         yes: bool,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Who accessed what, and when: enrollments, device sessions, machine
@@ -108,7 +108,7 @@ pub enum DevicesCmd {
         #[arg(long, default_value_t = 50)]
         limit: usize,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
 }

@@ -170,13 +170,10 @@ def cli_env(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(manager, "RUNS_FILE", tmp_path / "state" / "cua-bench" / "runs.json")
     # Never read the real credential store (the OS vault on macOS) in tests.
-    monkeypatch.setenv("CUA_FLEET_SESSION", "0")
     monkeypatch.setenv("CUA_CREDENTIAL_STORE", "file")
     monkeypatch.setenv("CUA_HOME", str(tmp_path / "cua-home"))
     # No user config (~/.cua/config.yaml, agents.yaml) leaks into the tests.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    for var in ("FLEETS_TOKEN", "CUA_CLIENT_ID", "CUA_CLIENT_SECRET"):
-        monkeypatch.delenv(var, raising=False)
     monkeypatch.chdir(tmp_path)
     return sdk
 
@@ -248,7 +245,6 @@ def test_run_list_info_logs_and_trace_lookup(cli_env, tmp_path, capsys):
     assert [name for name, _ in traces] == ["hello_file_env_v1"]
 
 
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 def test_dry_run_plans_without_a_sandbox(cli_env, tmp_path, capsys):
     out = tmp_path / "out"
     code = run_cb(["run", str(HELLO), "--dry-run", "--kind", "auto", "--output-dir", str(out)])
@@ -259,9 +255,8 @@ def test_dry_run_plans_without_a_sandbox(cli_env, tmp_path, capsys):
     assert "no sandbox was started" in text
     assert cli_env.calls == [] and not out.exists()
     code = run_cb(["run", str(HELLO), "--dry-run", "--kind", "vm", "--on", "cloud"])
-    text = capsys.readouterr().out
-    assert code == 0
-    assert "-> vm (containerdisk) on Fleet via cloud-kubevirt [--kind/--runtime]" in text
+    assert code == 1
+    assert "Cua Cloud has ended" in capsys.readouterr().out
     code = run_cb(["run", str(HELLO), "--dry-run", "--runtime", "qemu"])
     assert "-> vm (containerdisk) on local via local-qemu [--kind/--runtime]" in (
         capsys.readouterr().out
@@ -274,11 +269,10 @@ def test_dry_run_plans_without_a_sandbox(cli_env, tmp_path, capsys):
     assert "valid runtime: auto, gvisor, runc, qemu, lume" in capsys.readouterr().out
 
 
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-def test_the_user_default_location_drives_cb_run(cli_env, monkeypatch, capsys):
+def test_a_cloud_default_location_fails_unless_overridden(cli_env, monkeypatch, capsys):
     monkeypatch.setenv("CUA_DEFAULT_ON", "cloud")
-    assert run_cb(["run", str(HELLO), "--dry-run"]) == 0
-    assert "on Fleet via cloud-gvisor" in capsys.readouterr().out
+    assert run_cb(["run", str(HELLO), "--dry-run"]) == 1
+    assert "Cua Cloud has ended" in capsys.readouterr().out
     assert run_cb(["run", str(HELLO), "--dry-run", "--on", "local"]) == 0
     assert "via local-gvisor" in capsys.readouterr().out
 
@@ -328,46 +322,6 @@ def test_results_record_what_ran(cli_env, tmp_path):
             "count": 1,
         }
     ]
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-def test_env_ls_and_gc_use_the_sdk_pools_api(cli_env, monkeypatch, capsys):
-    from types import SimpleNamespace
-
-    from cua_bench import sandboxes as sb
-
-    calls = []
-
-    class Pools:
-        @staticmethod
-        async def list_pools():
-            calls.append("list_pools")
-            return [
-                SimpleNamespace(
-                    name="cua-auto-abc", ready_replicas=1, replicas=2, claims=1, last_used=None
-                )
-            ]
-
-        @staticmethod
-        async def list_claims():
-            calls.append("list_claims")
-            return [SimpleNamespace(name="c1", pool="cua-auto-abc", phase="Bound", managed=True)]
-
-        @staticmethod
-        async def gc(idle_after):
-            calls.append(("gc", idle_after))
-            return SimpleNamespace(pools_deleted=["cua-auto-old"], claims_deleted=[], errors=[])
-
-    monkeypatch.setattr(sb, "pools_module", lambda: Pools)
-    monkeypatch.setattr(sb, "cloud_auth_source", lambda *a: "client credentials")
-    assert run_cb(["env", "ls"]) == 0
-    out = capsys.readouterr().out
-    assert "cua-auto-abc" in out and "1/2" in out and "Bound" in out
-    assert run_cb(["env", "gc", "--idle", "30m"]) == 0
-    assert "deleted pool cua-auto-old" in capsys.readouterr().out.replace("\x1b[92m", "").replace(
-        "\x1b[0m", ""
-    )
-    assert calls == ["list_pools", "list_claims", ("gc", 1800)]
 
 
 def test_legacy_commands_are_deprecation_shims(cli_env, tmp_path, capsys):

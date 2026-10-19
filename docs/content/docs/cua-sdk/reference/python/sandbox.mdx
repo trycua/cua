@@ -60,7 +60,7 @@ async with Sandbox.ephemeral(Image.linux()) as sb:
 
 | Attribute | Type | Description |
 | --- | --- | --- |
-| `name` | `Optional[str]` | The sandbox name (`None` until a cloud sandbox is bound). |
+| `name` | `Optional[str]` | The sandbox name. |
 | `telemetry_enabled` | `bool` | Whether this sandbox records anonymous usage events. |
 | `screen` | `Screen` | Screenshots and screen size (cua-spacesd). |
 | `mouse` | `Mouse` | Pointer input in screen pixels (cua-spacesd). |
@@ -76,11 +76,11 @@ async with Sandbox.ephemeral(Image.linux()) as sb:
 | `driver` | `Driver` | Typed Cua Driver access (`cua-sandbox[driver]`). |
 | `apps` | `Apps` | Install and launch catalog applications (cua-spacesd). |
 | `exposed_ports` | `dict` | Map each Image.expose() port to the host port forwarding it. |
-| `image_info` | `Optional[ImageInfo]` | The image this sandbox runs, as resolved and pinned at create time (digest, variant, arch), or `None` when unknown: direct (URL) connections, images not resolved from a registry. A claim on a named Fleet pool reports its template's image (`pinned_ref`/`digest` empty when the registry could not be read). |
-| `claim_name` | `str \| None` | Fleet claim name, distinct from the bound sandbox name. |
-| `pool_name` | `str \| None` | Fleet pool that owns this claim (advanced; see `(await sb.info()).provider_details`). |
-| `location` | `str` | Where it runs: `local`, `cloud` or `direct`. |
-| `id` | `str \| None` | The qualified ref, the same kind of value local and in the cloud: `local:<name>`, `cloud:<name>` or `direct:<host:port>`. It is what `Sandbox.connect(id)` and `Sandbox.delete(id)` take, and what listings print. |
+| `image_info` | `Optional[ImageInfo]` | The image this sandbox runs, as resolved and pinned at create time (digest, variant, arch), or `None` when unknown: direct (URL) connections, images not resolved from a registry. |
+| `claim_name` | `str \| None` | Always `None`: claims belonged to Cua Cloud, which has ended. |
+| `pool_name` | `str \| None` | Always `None`: pools belonged to Cua Cloud, which has ended. |
+| `location` | `str` | Where it runs: `local` or `direct`. |
+| `id` | `str \| None` | The qualified ref: `local:<name>` or `direct:<host:port>`. It is what `Sandbox.connect(id)` and `Sandbox.delete(id)` take, and what listings print. |
 
 #### Sandbox.disconnect
 
@@ -89,10 +89,6 @@ async def disconnect() -> None
 ```
 
 Drop the transport connection. The sandbox keeps running.
-
-A claim on a managed Fleet pool stops being renewed and lives until
-its shutdown time (`claim_ttl`, or later if `keep_alive` was
-called).
 
 #### Sandbox.overlay
 
@@ -117,8 +113,8 @@ async def info() -> SandboxInfo
 ```
 
 Portable info: `status` (provisioning, starting, ready, stopped),
-`location` (local, cloud or direct), `services` (name -&gt; guest
-port), `expires_at` (cloud) and `provider_details`.
+`location` (local or direct), `services` (name -&gt; guest port),
+`expires_at` and `provider_details`.
 
 #### Sandbox.service
 
@@ -127,8 +123,7 @@ def service(name: str) -> 'ServiceHandle'
 ```
 
 A named service (`services={"mcp": 8765}` at create):
-`request`, `url` and `public_url`, the same local and in the
-cloud.
+`request`, `url` and `public_url`.
 
 #### Sandbox.public_url
 
@@ -142,9 +137,8 @@ async def public_url(
 ```
 
 A shareable URL for `service` that stops working after `ttl`
-seconds (60 s to 24 h). Cloud: a signed service URL. Local: a
-loopback URL with its own token, served by the cua daemon (started
-if needed).
+seconds (60 s to 24 h): a loopback URL with its own token, served by
+the cua daemon (started if needed).
 
 #### Sandbox.revoke_public_url
 
@@ -160,7 +154,8 @@ Revokes a URL from `public_url` (or its id).
 def to_dict() -> dict[str, Any]
 ```
 
-Serialize a durable Fleet sandbox reference.
+Always raises `CloudEnded`: durable references were Cua Cloud
+claims.
 
 #### Sandbox.from_dict
 
@@ -169,7 +164,8 @@ Serialize a durable Fleet sandbox reference.
 def from_dict(data: dict[str, Any]) -> '_ConnectResult'
 ```
 
-Reconnect to a serialized Fleet claim reference.
+Always raises `CloudEnded`: durable references were Cua Cloud
+claims.
 
 #### Sandbox.keep_alive
 
@@ -177,7 +173,8 @@ Reconnect to a serialized Fleet claim reference.
 async def keep_alive(*, minutes: float) -> None
 ```
 
-Push a Fleet claim's controller-enforced shutdown time forward.
+Always raises `CloudEnded`: only Cua Cloud claims had a
+shutdown time to push back.
 
 #### Sandbox.close
 
@@ -185,7 +182,8 @@ Push a Fleet claim's controller-enforced shutdown time forward.
 async def close() -> None
 ```
 
-Release this Fleet claim; repeated calls are safe.
+Always raises `CloudEnded`: only Cua Cloud claims were
+released. `destroy()` deletes a local sandbox.
 
 #### Sandbox.snapshot
 
@@ -193,17 +191,8 @@ Release this Fleet claim; repeated calls are safe.
 async def snapshot(name: str | None = None, stateful: bool = False) -> 'Image'
 ```
 
-Snapshot this sandbox's current state. Returns an Image.
-
-The returned Image can be passed to Sandbox.create() or Sandbox.ephemeral()
-to boot a new sandbox from the snapshot (COW fork: instant on btrfs).
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `name` | `str \| None` | `None` | Optional human-readable name for the snapshot. |
-| `stateful` | `bool` | `False` | Whether to capture memory state (VMs only). |
-
-**Returns:** An Image with _snapshot_source set, ready to pass to Sandbox.ephemeral().
+Always raises `CloudEnded`: snapshots were a Cua Cloud
+feature.
 
 #### Sandbox.destroy
 
@@ -288,9 +277,9 @@ async with sb.mcp("mcp") as client:
     result = await client.call_tool("add", {"a": 2, "b": 3})
 ```
 
-Requests go through the sandbox's service route (loopback locally, the
-Fleet gateway in the cloud), streamed both ways, so every protocol
-feature and content block works unchanged. No cua-spacesd needed.
+Requests go through the sandbox's service route (loopback), streamed
+both ways, so every protocol feature and content block works
+unchanged. No cua-spacesd needed.
 
 #### Sandbox.mcp_config
 
@@ -300,7 +289,7 @@ async def mcp_config(service: str, *, path: str = '/mcp') -> dict
 
 `{"url": ..., "headers": {...}}` of `service`'s MCP endpoint, for
 any MCP client (Claude Code, Cursor, other SDKs). The headers can carry
-a short-lived Fleet bearer: fetch a fresh config per connection.
+a short-lived bearer: fetch a fresh config per connection.
 
 #### Sandbox.spacesd
 
@@ -357,38 +346,35 @@ async def create(
 ) -> 'Sandbox'
 ```
 
-Provision or claim a persistent sandbox and return it connected.
+Provision a persistent local sandbox and return it connected.
 
 Where, what kind and which engine are three separate choices:
 
-* `on`: `"local"` or `"cloud"`. `local=True`/`False` is the
-  same switch; `on` and a contradicting `local` is an
-  `InvalidArgument`, and so is `local=True` with `cloud=`.
-  Unset, `cloud=` implies the cloud; a cloud-only argument (a
-  Fleet `pool`, `warm`, `max_pool_size`, `claim_ttl`,
-  `claim_spec`, `api_key`, ...) still implies it with a
-  `DeprecationWarning`; otherwise the user default applies
-  (`CUA_DEFAULT_ON`, else `cua config set default.on cloud` in
-  `$CUA_HOME/config.toml`, else local, with a one-time notice that
-  `CUA_QUIET_DEFAULT=1` hides).
+* `on`: `"local"`. `local=True` is the same switch; `on` and a
+  contradicting `local` is an `InvalidArgument`. Unset, the
+  user default applies (`CUA_DEFAULT_ON`, else `cua config set
+  default.on` in `$CUA_HOME/config.toml`, else local, with a
+  one-time notice that `CUA_QUIET_DEFAULT=1` hides). Cua Cloud has
+  ended: `on="cloud"`, `local=False`, `cloud=` and the other
+  Cua Cloud arguments (`pool`, `claim_spec`, `api_key`, ...)
+  raise `CloudEnded`.
 * `kind`: `"auto"`, `"container"` or `"vm"`. Unset: the
   image's `kind` when it has one, else `default.kind`, else auto
   (macOS and Windows images are VMs, a container rootfs is a
   container, a disk-only image is a VM).
 * `runtime`: the engine, `"auto"` or one the location offers for
-  the kind: locally `"gvisor"`/`"runc"` (containers) and
-  `"qemu"`/`"lume"` (VMs); in the cloud `"gvisor"` and
-  `"kubevirt"`. Unset: `default.runtime`, else auto. A local
-  sandbox with `sidecars` needs `"runc"` where gVisor would run
+  the kind: `"gvisor"`/`"runc"` (containers) and
+  `"qemu"`/`"lume"` (VMs). Unset: `default.runtime`, else auto.
+  A sandbox with `sidecars` needs `"runc"` where gVisor would run
   (separate gVisor containers cannot share a network namespace).
   A `Runtime` object (`DockerRuntime()`, `TartRuntime()`,
   ...) still picks a local adapter, as before.
 
 A combination that does not exist (`kind="container",
-runtime="qemu"`, or `runtime="kubevirt"` locally) raises
-`InvalidPlacement`, listing the valid values.
+runtime="qemu"`) raises `InvalidPlacement`, listing the valid
+values.
 
-The same options mean the same thing local and in the cloud:
+Options:
 
 * `command`: argv replacing the image's entrypoint.
 * `env`: environment variables.
@@ -397,15 +383,11 @@ The same options mean the same thing local and in the cloud:
   `sb.tunnel.forward(8765)`.
 * `wait_for`: `tcp("mcp")` / `http("mcp", "/health")` (or a
   list); readiness otherwise is "the sandbox is running".
-* `cloud`: `CloudOptions` (warm capacity, limits, TTL, a
-  dedicated pool). The flat `pool`, `warm`, `max_pool_size` and
-  `claim_ttl` keywords are deprecated aliases.
 * `memory`: `"4GB"` / `"512MB"` (or `memory_mb`).
 * `network`: `"default"` (outbound network, like a Docker
   container) or `"none"` (no egress; the SDK still reaches the
   guest's published ports). `"none"` needs a local QEMU VM;
-  containers, Lume and cloud sandboxes raise `Unsupported`.
-
+  containers and Lume raise `Unsupported`.
 * `overlay`: binaries to inject once it is up, so tests run the
   build under test and not the copy the image bundles:
   `{"cua-driver": "./target/release/cua-driver"}` (`cua-driver` and
@@ -415,32 +397,14 @@ The same options mean the same thing local and in the cloud:
   it is restarted. If it fails, the sandbox is deleted and the error
   raised. See `overlay`.
 
-Supplying `pool` claims from an existing Fleet pool without changing
-its configuration.
+`warm`, `max_pool_size`, `claim_ttl`, `progress` and
+`keep_alive_minutes` configured Cua Cloud claims; a local sandbox
+ignores them.
 
-A Fleet registry image without `pool` is claimed from this
-account's managed pool for that image spec (`cua-auto-*`), created
-on first use and reused afterwards. The first start of an image can
-take a few minutes; later starts reuse its capacity. Fleet-only
-options:
-
-* `warm`: seed one ready replica when the pool is first created.
-* `max_pool_size`: autoscaling ceiling (default 10).
-* `claim_ttl`: seconds (or a timedelta) the claim outlives this
-  process; it is renewed while the process holds it (default 15 min).
-  Use `keep_alive(minutes=...)` to keep a sandbox longer.
-* `progress`: callback receiving `AcquireProgress` events.
-
-Without `on`/`local`, passing one of them keeps the sandbox in
-the cloud (deprecated: pass `local=False`); with `local=True` they
-are ignored. An existing `pool` keeps its own kind and runtime
-(`Pool.apply(..., runtime=)`).
-
-`server_port` names a port your image serves itself: it is exposed
-(Fleet: as the `server` service) and becomes the readiness probe.
-Leave it unset for the default, daemon-agnostic readiness (the
-provider reports the sandbox running; cua-spacesd on 3211 is used
-by the interfaces when the image has it).
+`server_port` names a port your image serves itself: it becomes the
+readiness probe. Leave it unset for the default, daemon-agnostic
+readiness (the provider reports the sandbox running; cua-spacesd on
+3211 is used by the interfaces when the image has it).
 
 **Example**
 
@@ -507,15 +471,15 @@ async with Sandbox.connect("my-sandbox") as sb:
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `name` | `Optional[str]` | `None` | A sandbox ref (`local:<name>`, `cloud:<name>`, `direct:<host:port>`, a legacy id) or a name. A bare name must be unique across locations, else `AmbiguousSandbox` lists the refs it matches. |
-| `local` | `Optional[bool]` | `None` | `None` (default): search every location. `True`/ `False` narrow a bare name to local or cloud. |
-| `url` | `Optional[str]` | `None` | A cua-spacesd URL to connect to directly (`http://host:3211`, a relay URL or a Fleet service URL). |
+| `name` | `Optional[str]` | `None` | A sandbox ref (`local:<name>`, `direct:<host:port>`, a legacy id) or a name. A `cloud:<name>` ref raises `CloudEnded`: Cua Cloud has ended. |
+| `local` | `Optional[bool]` | `None` | `None` (default): the local sandbox `name`. `False` raises `CloudEnded`. |
+| `url` | `Optional[str]` | `None` | A cua-spacesd URL to connect to directly (`http://host:3211` or a relay URL). |
 | `token` | `Optional[str]` | `None` | The spacesd token for `url`. |
-| `api_key` | `Optional[str]` | `None` | Legacy CUA API key (API-key cloud VMs were removed; see `cua_sandbox.transport.cloud`). |
+| `api_key` | `Optional[str]` | `None` | Used as the spacesd token for `url` when `token` is not given. |
 | `ws_url` | `Optional[str]` | `None` | Removed (the computer-server WebSocket protocol is gone). |
 | `http_url` | `Optional[str]` | `None` | Base URL of a cua-spacesd (same as `url`). |
 | `container_name` | `Optional[str]` | `None` | Unused; kept for compatibility. |
-| `region` | `str` | `'us-east-1'` | Cloud region (default `"us-east-1"`). |
+| `region` | `str` | `'us-east-1'` | Unused; kept for compatibility. |
 
 **Example**
 
@@ -576,18 +540,12 @@ async def ephemeral(
 ) -> AsyncIterator['Sandbox']
 ```
 
-A sandbox that is released when the `async with` block exits.
+A local sandbox that is deleted when the `async with` block exits.
 
 Takes the same `on`/`local`, `kind`, `runtime`, `command`,
 `env`, `services`, `wait_for`, `cloud`, `memory` and
-`network` options as `create`.
-
-A Fleet registry image without `pool` is claimed from this
-account's reusable managed pool (see `create` for `warm`,
-`max_pool_size`, `claim_ttl` and `progress`). Exiting releases
-the claim; the pool stays for the next run and idle GC deletes it
-once unused. If the process dies, the claim expires after
-`claim_ttl`. `keep_pool` is deprecated and has no effect.
+`network` options as `create`. `keep_pool` is deprecated and
+has no effect.
 
 #### Sandbox.list
 
@@ -602,20 +560,15 @@ async def list(
 ) -> 'list[SandboxInfo]'
 ```
 
-List sandboxes, each with its `location`, `kind` and
-`runtime`: local and cloud ones by default.
-
-The cloud part never fails the default listing: without cloud
-credentials it is left out silently, and when the cloud fails or does
-not answer within 5 s the local rows come back with a logged warning
-("cloud sandboxes not listed: ...").
+List the local sandboxes (containers, QEMU, Lume, Android), each
+with its `location`, `kind` and `runtime`.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `location` | `Optional[str]` | `None` | `None` (default): local and cloud. `"local"`: only the local ones (containers, QEMU, Lume, Android). `"cloud"`: only the cloud ones. |
+| `location` | `Optional[str]` | `None` | `None` (default) or `"local"`: the local sandboxes. `"cloud"` raises `CloudEnded`: Cua Cloud has ended. |
 | `local` | `Optional[bool]` | `None` | The same switch as a bool (`True` is `"local"`, `False` is `"cloud"`). |
 | `all` | `Optional[bool]` | `None` | Deprecated; everything is the default. |
-| `api_key` | `Optional[str]` | `None` | Legacy CUA API key for api.cua.ai VMs. |
+| `api_key` | `Optional[str]` | `None` | Unused; kept for compatibility. |
 
 #### Sandbox.get_info
 
@@ -633,9 +586,9 @@ Get metadata for a specific sandbox.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `name` | `str` | required | Sandbox ref (`local:<name>`, `cloud:<name>`) or a name unique across locations. |
-| `local` | `Optional[bool]` | `None` | `True`/`False` narrow a bare name to local or cloud. `None` (default): the local sandbox `name` when one exists (and no cloud sandbox shares it), else the cloud. |
-| `api_key` | `Optional[str]` | `None` | CUA API key for cloud. |
+| `name` | `str` | required | Sandbox ref (`local:<name>`) or a name. A `cloud:<name>` ref raises `CloudEnded`: Cua Cloud has ended. |
+| `local` | `Optional[bool]` | `None` | `None` (default) or `True`: the local sandbox `name`. `False` raises `CloudEnded`. |
+| `api_key` | `Optional[str]` | `None` | Unused; kept for compatibility. |
 
 #### Sandbox.suspend
 
@@ -649,20 +602,18 @@ async def suspend(
 ) -> None
 ```
 
-Suspend the sandbox `name`, keeping its state; `resume`
-continues it. Only that sandbox is affected.
+Suspend the local sandbox `name`, keeping its state;
+`resume` continues it. Only that sandbox is affected.
 
-Local: the SDK suspends it on its backend (a container is paused or
+The SDK suspends it on its backend (a container is paused or
 checkpointed, a QEMU VM snapshotted, a Lume VM stopped with its
-disk). Cloud: a Fleet sandbox cannot be suspended on its own, so this
-raises `Unsupported`; keep it with `keep_alive()` or release
-it with `delete`. A legacy api.cua.ai VM (an API key) stops.
+disk).
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | `str` | required | Sandbox name. |
-| `local` | `Optional[bool]` | `None` | `None` (default): the local sandbox `name` when one exists, else the cloud. `True`/`False` decide. |
-| `api_key` | `Optional[str]` | `None` | Legacy CUA API key (api.cua.ai VMs). |
+| `local` | `Optional[bool]` | `None` | `None` (default) or `True`: the local sandbox `name`. `False` raises `CloudEnded`: Cua Cloud has ended. |
+| `api_key` | `Optional[str]` | `None` | Unused; kept for compatibility. |
 
 #### Sandbox.resume
 
@@ -676,18 +627,14 @@ async def resume(
 ) -> 'Sandbox'
 ```
 
-Resume the suspended sandbox `name` and return it connected.
-
-Local: the backend resumes it. Cloud: a running sandbox just
-reconnects (a Fleet sandbox is never suspended); one that is gone
-raises `Unsupported`. A legacy api.cua.ai VM (an API key)
-starts.
+Resume the suspended local sandbox `name` and return it
+connected. The backend resumes it.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | `str` | required | Sandbox name. |
-| `local` | `Optional[bool]` | `None` | `None` (default): the local sandbox `name` when one exists, else the cloud. |
-| `api_key` | `Optional[str]` | `None` | Legacy CUA API key (api.cua.ai VMs). |
+| `local` | `Optional[bool]` | `None` | `None` (default) or `True`: the local sandbox `name`. `False` raises `CloudEnded`: Cua Cloud has ended. |
+| `api_key` | `Optional[str]` | `None` | Unused; kept for compatibility. |
 
 **Returns:** A connected Sandbox ready to use.
 
@@ -703,15 +650,14 @@ async def restart(
 ) -> 'Sandbox'
 ```
 
-Restart the sandbox `name` (suspend then resume) and return it
-connected. Local only (see `suspend`): a Fleet sandbox raises
-`Unsupported`.
+Restart the local sandbox `name` (suspend then resume) and return
+it connected (see `suspend`).
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | `str` | required | Sandbox name. |
-| `local` | `Optional[bool]` | `None` | `None` (default): the local sandbox `name` when one exists, else the cloud. |
-| `api_key` | `Optional[str]` | `None` | Legacy CUA API key (api.cua.ai VMs). |
+| `local` | `Optional[bool]` | `None` | `None` (default) or `True`: the local sandbox `name`. `False` raises `CloudEnded`: Cua Cloud has ended. |
+| `api_key` | `Optional[str]` | `None` | Unused; kept for compatibility. |
 
 **Returns:** A connected Sandbox ready to use.
 
@@ -727,16 +673,14 @@ async def delete(
 ) -> None
 ```
 
-Permanently delete a sandbox.
-
-For local sandboxes, stops the VM and removes the state file.
-For cloud sandboxes, calls DELETE /v1/vms/&#123;name&#125;.
+Permanently delete a local sandbox: stops the VM or container and
+removes the state file.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | `str` | required | Sandbox name. |
-| `local` | `Optional[bool]` | `None` | If True, delete a local sandbox. `None` (default): the local sandbox `name` when one exists, else the cloud. |
-| `api_key` | `Optional[str]` | `None` | CUA API key for cloud. |
+| `local` | `Optional[bool]` | `None` | `None` (default) or `True`: the local sandbox `name`. `False` raises `CloudEnded`: Cua Cloud has ended. |
+| `api_key` | `Optional[str]` | `None` | Unused; kept for compatibility. |
 
 ### sandbox
 
@@ -803,12 +747,12 @@ SandboxInfo(
 )
 ```
 
-Metadata for a local or cloud sandbox.
+Metadata for a local sandbox.
 
 `status` from `Sandbox.info` is portable: `provisioning`,
 `starting`, `ready` or `stopped`. Listings keep the provider's word
-(`running`, `suspended`, ...). Provider internals (the cloud pool,
-namespace and claim; the local backend) are in `provider_details`.
+(`running`, `suspended`, ...). Provider internals (the local backend)
+are in `provider_details`.
 
 | Attribute | Type | Description |
 | --- | --- | --- |
@@ -844,24 +788,16 @@ CloudOptions(
 )
 ```
 
-Advanced options for cloud sandboxes. Passing them implies the cloud;
-with `on="local"`/`local=True` they are an `InvalidArgument`. The
-engine is `Sandbox.create(runtime="gvisor"|"kubevirt")`, not a cloud
-option.
+Options for Cua Cloud sandboxes. Cua Cloud has ended: passing
+`cloud=` to `Sandbox.create` or `Sandbox.ephemeral` raises
+`cua_sandbox._ended.CloudEnded`, and the class goes away in the
+next minor release.
 
-* `warm`: keep one sandbox of this image ready (faster next start).
-* `max_pool_size`: most sandboxes of this image at once (default 10).
-* `claim_ttl`: how long the sandbox outlives this process without a
-  `keep_alive` (seconds or a timedelta; renewed while held; default
-  15 min).
-* `pool`: dedicated capacity: claim from this existing pool. Sandbox
-  fields given with it (`image`, `command`, `env`, `services`,
-  `sidecars`, `cpu`, `memory`, a registry secret) must match the
-  pool's template, else `cua_sandbox.PoolSpecMismatch` (with a
-  readable diff) is raised; fields left unset are not compared.
-* `apply`: with `pool`, update the pool's template to the given
-  fields instead (the pool's capacity is kept; managed `cua-auto-*`
-  pools refuse it).
+* `warm`: keep one sandbox of this image ready.
+* `max_pool_size`: most sandboxes of this image at once.
+* `claim_ttl`: how long the sandbox outlived the process.
+* `pool`: claim from this existing pool.
+* `apply`: with `pool`, update the pool's template.
 
 | Attribute | Type | Description |
 | --- | --- | --- |
@@ -926,8 +862,8 @@ PublicUrl(
 ```
 
 A shareable URL of a sandbox service that stops working at
-`expires_at`. Cloud: a signed service URL; local: a loopback URL with
-its own token, served by the cua daemon.
+`expires_at`: a loopback URL with its own token, served by the cua
+daemon.
 
 | Attribute | Type | Description |
 | --- | --- | --- |

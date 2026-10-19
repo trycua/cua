@@ -244,7 +244,7 @@ pub enum SpacesCmd {
   cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"")]
     Add {
         /// The Space's cua-spacesd (`http(s)://host:port`, `host:port`,
-        /// default port 3211), a Space id (`local:<name>`, `cloud:<name>`),
+        /// default port 3211), a Space id (`local:<name>`),
         /// or any MCP endpoint URL.
         url: String,
         /// spacesd token (or the bearer an MCP endpoint needs).
@@ -264,8 +264,8 @@ pub enum SpacesCmd {
         host: bool,
     },
     /// Create Spaces: on this machine, on one of your machines that
-    /// provides Spaces (`cua host setup --provide-spaces` there), or in the
-    /// cloud.
+    /// provides Spaces (`cua host setup --provide-spaces` there), or in your
+    /// own cloud account.
     #[command(after_help = "Examples:
   cua spaces create linux
   # Two macOS VMs on your spare Mac mini (matched by name)
@@ -275,7 +275,7 @@ pub enum SpacesCmd {
         /// Image: an alias (`linux`, `macos`, `macos:26`) or a registry
         /// reference. Default: the canonical Linux image.
         image: Option<String>,
-        /// Where: `local`, `cloud`, `host:<machine>`, or a machine name
+        /// Where: `local`, `aws`, `gcp`, `host:<machine>`, or a machine name
         /// (`mac-mini`, "spare mac mini"). Default: your default location.
         #[arg(long)]
         on: Option<String>,
@@ -318,18 +318,18 @@ pub enum SpacesCmd {
         /// create starts) or its name.
         space: String,
     },
-    /// The GPU options each runtime offers on this machine (or in the
-    /// cloud).
+    /// The GPU options each runtime offers on this machine (or in your
+    /// own cloud account).
     #[command(after_help = "Examples:
   cua spaces gpus
   cua spaces gpus --json")]
     Gpus {
-        /// `local` (default) or `cloud`.
+        /// `local` (default), `aws`, `gcp` or `modal`.
         #[arg(long)]
         on: Option<String>,
     },
     /// Delete a Space's sandbox (on this machine, on the machine that
-    /// provides it, or in the cloud) and forget it (asks first).
+    /// provides it, or in your own cloud account) and forget it (asks first).
     #[command(after_help = "Examples:
   cua spaces delete relay:space-0123456789abcdef
   cua spaces delete local:studio --force")]
@@ -343,8 +343,8 @@ pub enum SpacesCmd {
     /// Turn a Space off: a local container or QEMU VM is suspended (its
     /// memory is kept), a Lume VM or a Space one of your machines provides
     /// is stopped (its disk is kept), and so is a Space in your own cloud
-    /// (`--on aws`, `gcp`; compute billing stops). Fleet cloud Spaces,
-    /// Modal sandboxes and Spaces added by address cannot be turned off.
+    /// (`--on aws`, `gcp`; compute billing stops). Modal sandboxes and
+    /// Spaces added by address cannot be turned off.
     #[command(after_help = "Examples:
   cua spaces stop local:studio
   cua spaces stop relay:space-0123456789abcdef --json")]
@@ -980,7 +980,8 @@ impl AccountTokens for SetupTokens {
 /// Signs in for `cua host setup` without storing the session.
 async fn sign_in_for_setup(flow: cua_auth::Flow) -> cua_host::Result<String> {
     let unauth = |e: cua_auth::Error| cua_host::Error::Unauthenticated(e.to_string());
-    let pending = auth::session().begin_login(flow).await.map_err(unauth)?;
+    let mut pending = auth::session().begin_login(flow).await.map_err(unauth)?;
+    pending.return_to = Some(cua_auth::ReturnTo::Terminal);
     eprintln!("Sign in to cua.ai to register this machine (the session is not stored here):");
     eprintln!("  {}", pending.url);
     if let Some(code) = &pending.user_code {

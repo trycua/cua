@@ -20,20 +20,19 @@ Run `cua <command> --help` for the build you have.
 
 ### `cua auth`
 
-Sign in, inspect your Fleet identity, manage API keys and CI tokens. [Reference](/cua-cli/reference/cli/auth).
+Sign in and out, see who is signed in, and store sandbox provider keys. [Reference](/cua-cli/reference/cli/auth).
 
 | Command | Description | Subcommands |
 | --- | --- | --- |
-| <span id="cua-auth-login"></span><span id="cua-auth-logout"></span><span id="cua-auth-status"></span><span id="cua-auth-whoami"></span><span id="cua-auth-keys"></span><span id="cua-auth-keys-ls"></span><span id="cua-auth-keys-create"></span><span id="cua-auth-keys-rm"></span><span id="cua-auth-provider"></span><span id="cua-auth-provider-ls"></span><span id="cua-auth-provider-set"></span><span id="cua-auth-provider-rm"></span>[`cua auth`](/cua-cli/reference/cli/auth#cua-auth) | Log in to Cua and inspect Fleet identity. | [`login`](/cua-cli/reference/cli/auth#cua-auth-login), [`logout`](/cua-cli/reference/cli/auth#cua-auth-logout), [`status`](/cua-cli/reference/cli/auth#cua-auth-status), [`whoami`](/cua-cli/reference/cli/auth#cua-auth-whoami), [`keys`](/cua-cli/reference/cli/auth#cua-auth-keys), [`keys ls`](/cua-cli/reference/cli/auth#cua-auth-keys-ls), [`keys create`](/cua-cli/reference/cli/auth#cua-auth-keys-create), [`keys rm`](/cua-cli/reference/cli/auth#cua-auth-keys-rm), [`provider`](/cua-cli/reference/cli/auth#cua-auth-provider), [`provider ls`](/cua-cli/reference/cli/auth#cua-auth-provider-ls), [`provider set`](/cua-cli/reference/cli/auth#cua-auth-provider-set), [`provider rm`](/cua-cli/reference/cli/auth#cua-auth-provider-rm) |
-| <span id="cua-wif-token"></span><span id="cua-wif-token-github"></span>[`cua wif-token`](/cua-cli/reference/cli/auth#cua-wif-token) | Workload identity federation tokens. | [`github`](/cua-cli/reference/cli/auth#cua-wif-token-github) |
+| <span id="cua-auth-login"></span><span id="cua-auth-logout"></span><span id="cua-auth-status"></span><span id="cua-auth-whoami"></span><span id="cua-auth-provider"></span><span id="cua-auth-provider-ls"></span><span id="cua-auth-provider-set"></span><span id="cua-auth-provider-rm"></span>[`cua auth`](/cua-cli/reference/cli/auth#cua-auth) | Log in to Cua and manage the signed-in session. | [`login`](/cua-cli/reference/cli/auth#cua-auth-login), [`logout`](/cua-cli/reference/cli/auth#cua-auth-logout), [`status`](/cua-cli/reference/cli/auth#cua-auth-status), [`whoami`](/cua-cli/reference/cli/auth#cua-auth-whoami), [`provider`](/cua-cli/reference/cli/auth#cua-auth-provider), [`provider ls`](/cua-cli/reference/cli/auth#cua-auth-provider-ls), [`provider set`](/cua-cli/reference/cli/auth#cua-auth-provider-set), [`provider rm`](/cua-cli/reference/cli/auth#cua-auth-provider-rm) |
 
 ### `cua sandbox`
 
-Create, list, connect to, suspend and delete sandboxes, local or in the cloud. [Reference](/cua-cli/reference/cli/sandbox).
+Create, list, connect to, suspend and delete sandboxes, local or on your own machines. [Reference](/cua-cli/reference/cli/sandbox).
 
 | Command | Description | Subcommands |
 | --- | --- | --- |
-| <span id="cua-sandbox-create"></span><span id="cua-sandbox-launch"></span><span id="cua-sandbox-connect"></span><span id="cua-sandbox-ls"></span><span id="cua-sandbox-info"></span><span id="cua-sandbox-suspend"></span><span id="cua-sandbox-resume"></span><span id="cua-sandbox-restart"></span><span id="cua-sandbox-keep-alive"></span><span id="cua-sandbox-rm"></span>[`cua sandbox`](/cua-cli/reference/cli/sandbox#cua-sandbox) | Sandboxes: local, cloud or an existing machine (direct). | [`create`](/cua-cli/reference/cli/sandbox#cua-sandbox-create), [`launch`](/cua-cli/reference/cli/sandbox#cua-sandbox-launch), [`connect`](/cua-cli/reference/cli/sandbox#cua-sandbox-connect), [`ls`](/cua-cli/reference/cli/sandbox#cua-sandbox-ls), [`info`](/cua-cli/reference/cli/sandbox#cua-sandbox-info), [`suspend`](/cua-cli/reference/cli/sandbox#cua-sandbox-suspend), [`resume`](/cua-cli/reference/cli/sandbox#cua-sandbox-resume), [`restart`](/cua-cli/reference/cli/sandbox#cua-sandbox-restart), [`keep-alive`](/cua-cli/reference/cli/sandbox#cua-sandbox-keep-alive), [`rm`](/cua-cli/reference/cli/sandbox#cua-sandbox-rm) |
+| <span id="cua-sandbox-create"></span><span id="cua-sandbox-launch"></span><span id="cua-sandbox-connect"></span><span id="cua-sandbox-ls"></span><span id="cua-sandbox-info"></span><span id="cua-sandbox-suspend"></span><span id="cua-sandbox-resume"></span><span id="cua-sandbox-restart"></span><span id="cua-sandbox-rm"></span>[`cua sandbox`](/cua-cli/reference/cli/sandbox#cua-sandbox) | Sandboxes: local or an existing machine (direct). | [`create`](/cua-cli/reference/cli/sandbox#cua-sandbox-create), [`launch`](/cua-cli/reference/cli/sandbox#cua-sandbox-launch), [`connect`](/cua-cli/reference/cli/sandbox#cua-sandbox-connect), [`ls`](/cua-cli/reference/cli/sandbox#cua-sandbox-ls), [`info`](/cua-cli/reference/cli/sandbox#cua-sandbox-info), [`suspend`](/cua-cli/reference/cli/sandbox#cua-sandbox-suspend), [`resume`](/cua-cli/reference/cli/sandbox#cua-sandbox-resume), [`restart`](/cua-cli/reference/cli/sandbox#cua-sandbox-restart), [`rm`](/cua-cli/reference/cli/sandbox#cua-sandbox-rm) |
 
 ### Sandbox access
 
@@ -46,19 +45,19 @@ Run commands, copy files, forward ports, take screenshots, reach the MCP and vie
 | <span id="cua-sandbox-cp"></span>[`cua sandbox cp`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-cp) | Copy files: `cp NAME:/guest/path LOCAL` or `cp LOCAL NAME:/guest/path` (NAME may be a ref: `cp local:box:/tmp/x .`). |  |
 | <span id="cua-sandbox-overlay"></span>[`cua sandbox overlay`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-overlay) | Inject freshly built binaries into a running sandbox (see `create --overlay`): NAME=PATH or NAME=PATH:GUEST_PATH. |  |
 | <span id="cua-sandbox-logs"></span>[`cua sandbox logs`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-logs) | Show logs: the backend console (QEMU serial, container) when there is one, else the guest system log through the spacesd. |  |
-| <span id="cua-sandbox-port-forward"></span>[`cua sandbox port-forward`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-port-forward) | Forward a guest port: `port-forward NAME PORT[:LOCAL]` (a local sandbox's port not published at create, and cloud sandboxes, tunnel through cua-spacesd when the image has it; cloud images without it get HTTP and WebSocket through a loopback proxy to the cloud gateway). |  |
-| <span id="cua-sandbox-url"></span>[`cua sandbox url`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-url) | Print a URL for a named service: usable from this machine (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; cloud: a signed URL; local: a token URL served by the cua daemon). |  |
+| <span id="cua-sandbox-port-forward"></span>[`cua sandbox port-forward`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-port-forward) | Forward a guest port: `port-forward NAME PORT[:LOCAL]` (a local sandbox's port not published at create tunnels through cua-spacesd when the image has it). |  |
+| <span id="cua-sandbox-url"></span>[`cua sandbox url`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-url) | Print a URL for a named service: usable from this machine (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; a token URL served by the cua daemon). |  |
 | <span id="cua-sandbox-screenshot"></span>[`cua sandbox screenshot`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-screenshot) | Save a screenshot (PNG). |  |
 | <span id="cua-sandbox-mcp"></span><span id="cua-sandbox-mcp-config"></span><span id="cua-sandbox-mcp-info"></span><span id="cua-sandbox-mcp-tools"></span><span id="cua-sandbox-mcp-call"></span><span id="cua-sandbox-mcp-resources"></span><span id="cua-sandbox-mcp-templates"></span><span id="cua-sandbox-mcp-read"></span><span id="cua-sandbox-mcp-prompts"></span><span id="cua-sandbox-mcp-prompt"></span><span id="cua-sandbox-mcp-request"></span>[`cua sandbox mcp`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp) | Talk to an MCP server a sandbox serves: `mcp NAME SERVICE tools`, `mcp NAME SERVICE call TOOL '{"a":1}'`. | [`config`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-config), [`info`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-info), [`tools`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-tools), [`call`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-call), [`resources`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-resources), [`templates`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-templates), [`read`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-read), [`prompts`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-prompts), [`prompt`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-prompt), [`request`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-mcp-request) |
 | <span id="cua-sandbox-view"></span>[`cua sandbox view`](/cua-cli/reference/cli/sandbox-access#cua-sandbox-view) | Open the sandbox desktop in the browser (the cua-spacesd HTML5 viewer). |  |
 
 ### `cua config`
 
-User defaults: where sandboxes run (`default.on`), the default kind and runtime, cloud defaults. [Reference](/cua-cli/reference/cli/config).
+User defaults: where sandboxes run (`default.on`), the default kind and runtime. [Reference](/cua-cli/reference/cli/config).
 
 | Command | Description | Subcommands |
 | --- | --- | --- |
-| <span id="cua-config-list"></span><span id="cua-config-get"></span><span id="cua-config-set"></span><span id="cua-config-unset"></span><span id="cua-config-path"></span>[`cua config`](/cua-cli/reference/cli/config#cua-config) | User defaults (~/.cua/config.toml): where sandboxes run when --on is not given (default.on), the default kind and runtime, cloud defaults. | [`list`](/cua-cli/reference/cli/config#cua-config-list), [`get`](/cua-cli/reference/cli/config#cua-config-get), [`set`](/cua-cli/reference/cli/config#cua-config-set), [`unset`](/cua-cli/reference/cli/config#cua-config-unset), [`path`](/cua-cli/reference/cli/config#cua-config-path) |
+| <span id="cua-config-list"></span><span id="cua-config-get"></span><span id="cua-config-set"></span><span id="cua-config-unset"></span><span id="cua-config-path"></span>[`cua config`](/cua-cli/reference/cli/config#cua-config) | User defaults (~/.cua/config.toml): where sandboxes run when --on is not given (default.on), the default kind and runtime. | [`list`](/cua-cli/reference/cli/config#cua-config-list), [`get`](/cua-cli/reference/cli/config#cua-config-get), [`set`](/cua-cli/reference/cli/config#cua-config-set), [`unset`](/cua-cli/reference/cli/config#cua-config-unset), [`path`](/cua-cli/reference/cli/config#cua-config-path) |
 
 ### `cua viewer`
 
@@ -79,11 +78,11 @@ One-shot computer actions (screenshot, click, type, windows) against a selected 
 
 ### `cua image`
 
-Pull, build and push OCI images, and manage Fleet image resources; list the image catalog. [Reference](/cua-cli/reference/cli/image).
+Pull, build and push OCI images; list the image catalog. [Reference](/cua-cli/reference/cli/image).
 
 | Command | Description | Subcommands |
 | --- | --- | --- |
-| <span id="cua-image-pull"></span><span id="cua-image-build"></span><span id="cua-image-push"></span><span id="cua-image-ls"></span><span id="cua-image-info"></span><span id="cua-image-rm"></span><span id="cua-image-create"></span>[`cua image`](/cua-cli/reference/cli/image#cua-image) | Images: local OCI pull/build/push and Fleet image resources. | [`pull`](/cua-cli/reference/cli/image#cua-image-pull), [`build`](/cua-cli/reference/cli/image#cua-image-build), [`push`](/cua-cli/reference/cli/image#cua-image-push), [`ls`](/cua-cli/reference/cli/image#cua-image-ls), [`info`](/cua-cli/reference/cli/image#cua-image-info), [`rm`](/cua-cli/reference/cli/image#cua-image-rm), [`create`](/cua-cli/reference/cli/image#cua-image-create) |
+| <span id="cua-image-pull"></span><span id="cua-image-build"></span><span id="cua-image-push"></span>[`cua image`](/cua-cli/reference/cli/image#cua-image) | Images: local OCI pull/build/push. | [`pull`](/cua-cli/reference/cli/image#cua-image-pull), [`build`](/cua-cli/reference/cli/image#cua-image-build), [`push`](/cua-cli/reference/cli/image#cua-image-push) |
 | <span id="cua-images"></span><span id="cua-images-ls"></span><span id="cua-images-info"></span><span id="cua-images-build"></span><span id="cua-images-pack"></span><span id="cua-images-publish"></span><span id="cua-images-release"></span><span id="cua-images-promote"></span>[`cua images`](/cua-cli/reference/cli/image#cua-images) | The sandbox image catalog (the images the docs list): which exist, their variants, and which ship cua-spacesd and a browser. | [`ls`](/cua-cli/reference/cli/image#cua-images-ls), [`info`](/cua-cli/reference/cli/image#cua-images-info), [`build`](/cua-cli/reference/cli/image#cua-images-build), [`pack`](/cua-cli/reference/cli/image#cua-images-pack), [`publish`](/cua-cli/reference/cli/image#cua-images-publish), [`release`](/cua-cli/reference/cli/image#cua-images-release), [`promote`](/cua-cli/reference/cli/image#cua-images-promote) |
 
 ### `cua mcp`
@@ -266,9 +265,9 @@ Accepted by every command, before or after the subcommand.
 | --- | --- |
 | `0` | Success. |
 | `1` | Failure, or `cua do` reported an error. |
-| `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`, `cloud:NAME`). |
+| `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`). |
 | `3` | Not found: sandbox, window, skill or image (or an image not published yet). |
-| `4` | Not supported, or not configured (for example no cloud credentials). |
+| `4` | Not supported, or not configured (for example no provider credentials). |
 | `5` | No cua-spacesd answered, or a transport failure. |
 | `6` | Unauthenticated or permission denied (by Cua or your cloud account). |
 | `7` | Not enough free disk space (see `cua cache`). |

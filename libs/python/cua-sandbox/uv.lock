@@ -584,25 +584,12 @@ wheels = [
 ]
 
 [[package]]
-name = "cua-fleet"
-version = "0.1.17"
-source = { registry = "https://wheels.cua.ai/simple" }
-wheels = [
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:a8908b5c7f0f3c75d09b908b58867d43270f69d3726bb0d90316443f2265d0e3" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-macosx_11_0_arm64.whl", hash = "sha256:6aea577f21343326aeb06df03c07df65df8dd2f3b0097e02f25a7bc6b9d2c458" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:bda49298c77c65eb349e8420f9237f6b7fb2fd25203747df98a9513b98fd5d73" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:4cdbc89e850d841481713abf1e8bf9719b2e33b3c31f26bbea5f63e1ead3c6c0" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-win_amd64.whl", hash = "sha256:ee4c139b1c0cebe1702114a34fd0fd60d216c5862d9fdc3472bb8b9879ac9eae" },
-]
-
-[[package]]
 name = "cua-sandbox"
 version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "cua" },
     { name = "cua-core" },
-    { name = "cua-fleet" },
     { name = "grpcio" },
     { name = "httpx" },
     { name = "jsonschema" },
@@ -646,7 +633,6 @@ requires-dist = [
     { name = "cua", editable = "../../cua/python" },
     { name = "cua-core", specifier = ">=0.1.18,<0.4.0" },
     { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.28.2" },
-    { name = "cua-fleet", specifier = "==0.1.17" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "jsonschema", specifier = ">=4.23,<5.0" },

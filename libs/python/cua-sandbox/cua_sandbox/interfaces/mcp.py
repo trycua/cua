@@ -2,8 +2,7 @@
 
 cua does not implement MCP. It only gets bytes to the service: ``sb.mcp_config``
 returns the endpoint URL and the headers the route needs (nothing locally; the
-Fleet gateway bearer and claim header in the cloud; the daemon bearer through
-``cua daemon``). ``sb.mcp`` hands that to the official SDK
+daemon bearer through ``cua daemon``). ``sb.mcp`` hands that to the official SDK
 (``pip install "cua-sandbox[mcp]"``), so every protocol revision and every
 content block the SDK supports works unchanged::
 
@@ -12,8 +11,8 @@ content block the SDK supports works unchanged::
         result = await client.call_tool("add", {"a": 2, "b": 3})
 
 Any other MCP client (Claude Code, Cursor, the TypeScript SDK) can use
-``await sb.mcp_config("mcp")`` directly. Fleet bearers are short-lived: fetch
-a fresh config per connection.
+``await sb.mcp_config("mcp")`` directly. Bearers can be short-lived: fetch a
+fresh config per connection.
 """
 
 from __future__ import annotations

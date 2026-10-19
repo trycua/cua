@@ -64,7 +64,7 @@ cua agent run [OPTIONS] <SANDBOX> <HARNESS> <PROMPT>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<SANDBOX>` | string | required | Sandbox (`local:NAME`, `cloud:NAME`, `direct:HOST:PORT`, or NAME). |
+| `<SANDBOX>` | string | required | Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME). |
 | `<HARNESS>` | string | required | Harness (`cua agent harnesses`). |
 | `<PROMPT>` | string | required | The task. |
 
@@ -81,7 +81,6 @@ cua agent run [OPTIONS] <SANDBOX> <HARNESS> <PROMPT>
 | <span id="cua-agent-run--file"></span>`--file` |  | path |  | Attach a local file to the prompt (repeatable). |
 | <span id="cua-agent-run--label"></span>`--label` |  | string |  |  |
 | <span id="cua-agent-run--local"></span>`--local` |  | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-run--cloud"></span>`--cloud` |  | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 | <span id="cua-agent-run--no-sandbox-mcp"></span>`--no-sandbox-mcp` |  | boolean | `false` | Do not give the agent the sandbox's own MCP tools. |
 | <span id="cua-agent-run--no-skills"></span>`--no-skills` |  | boolean | `false` | Do not copy the cua skills into the harness. |
 | <span id="cua-agent-run--exit-when-idle"></span>`--exit-when-idle` |  | boolean | `false` | Stop (resumably) once the prompt is answered. |
@@ -91,7 +90,7 @@ cua agent run [OPTIONS] <SANDBOX> <HARNESS> <PROMPT>
 
 ```bash test="cli-shape" id="ref-cua-agent-run"
 cua agent run local:dev claude-code "fix the failing test" --env-from-host ANTHROPIC_API_KEY -f
-cua agent run cloud:ci openai-codex "add tests" --repo https://github.com/org/repo --exit-when-idle
+cua agent run local:ci openai-codex "add tests" --repo https://github.com/org/repo --exit-when-idle
 ```
 
 ## `cua agent ls`
@@ -106,12 +105,11 @@ Alias: `cua agent list`.
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<SANDBOX>` | string | required | Sandbox (`local:NAME`, `cloud:NAME`, `direct:HOST:PORT`, or NAME). |
+| `<SANDBOX>` | string | required | Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME). |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-agent-ls--local"></span>`--local` | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-ls--cloud"></span>`--cloud` | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 
 **Examples**
 
@@ -135,7 +133,6 @@ cua agent logs [OPTIONS] <SANDBOX> <RUN_ID>
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | <span id="cua-agent-logs--local"></span>`--local` |  | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-logs--cloud"></span>`--cloud` |  | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 | <span id="cua-agent-logs--follow"></span>`--follow` | `-f` | boolean | `false` | Keep streaming until the turn ends. |
 | <span id="cua-agent-logs--raw"></span>`--raw` |  | boolean | `false` | Print each event's JSON (raw ACP payload included). |
 
@@ -162,7 +159,6 @@ cua agent send [OPTIONS] <SANDBOX> <RUN_ID> <TEXT>
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | <span id="cua-agent-send--local"></span>`--local` |  | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-send--cloud"></span>`--cloud` |  | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 | <span id="cua-agent-send--follow"></span>`--follow` | `-f` | boolean | `false` |  |
 
 **Examples**
@@ -187,7 +183,6 @@ cua agent interrupt [OPTIONS] <SANDBOX> <RUN_ID>
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-agent-interrupt--local"></span>`--local` | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-interrupt--cloud"></span>`--cloud` | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 
 **Examples**
 
@@ -211,7 +206,6 @@ cua agent stop [OPTIONS] <SANDBOX> <RUN_ID>
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-agent-stop--local"></span>`--local` | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-stop--cloud"></span>`--cloud` | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 
 **Examples**
 
@@ -235,7 +229,6 @@ cua agent status [OPTIONS] <SANDBOX> <RUN_ID>
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-agent-status--local"></span>`--local` | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-status--cloud"></span>`--cloud` | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 
 **Examples**
 
@@ -259,7 +252,6 @@ cua agent rm [OPTIONS] <SANDBOX> <RUN_ID>
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-agent-rm--local"></span>`--local` | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-rm--cloud"></span>`--cloud` | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 
 **Examples**
 
@@ -283,7 +275,6 @@ cua agent ensure [OPTIONS] <SANDBOX> <IDS>...
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-agent-ensure--local"></span>`--local` | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
-| <span id="cua-agent-ensure--cloud"></span>`--cloud` | boolean | `false` | Look NAME up among cloud sandboxes only (same as `cloud:NAME`). |
 
 **Examples**
 
@@ -402,7 +393,7 @@ cua agent create [OPTIONS] --harness <HARNESS> --in <SPACE> <NAME>
 
 ```bash test="cli-shape" id="ref-cua-agent-create"
 cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
-cua agent create scout --harness claude-code --in cloud:scout --env-from-host ANTHROPIC_API_KEY
+cua agent create scout --harness claude-code --in local:scout --env-from-host ANTHROPIC_API_KEY
 ```
 
 ## `cua agent persistent`
@@ -716,9 +707,9 @@ cua agent notifications --mark-read
 | --- | --- |
 | `0` | Success. |
 | `1` | Failure, or `cua do` reported an error. |
-| `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`, `cloud:NAME`). |
+| `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`). |
 | `3` | Not found: sandbox, window, skill or image (or an image not published yet). |
-| `4` | Not supported, or not configured (for example no cloud credentials). |
+| `4` | Not supported, or not configured (for example no provider credentials). |
 | `5` | No cua-spacesd answered, or a transport failure. |
 | `6` | Unauthenticated or permission denied (by Cua or your cloud account). |
 | `7` | Not enough free disk space (see `cua cache`). |

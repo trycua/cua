@@ -100,7 +100,7 @@ pub struct ConnectOptions {
     pub principal: Option<pb::Principal>,
     /// Wire protocol preference.
     pub transport: TransportPreference,
-    /// Fleet gateway credentials (Fleet endpoints only).
+    /// Gateway credentials (the relay's account session).
     pub gateway: Option<GatewayAuth>,
     /// TCP/TLS connect timeout.
     pub connect_timeout: Duration,
@@ -159,9 +159,10 @@ impl ConnectOptions {
         self
     }
 
-    /// Routes through the Fleet gateway with this bearer and claim.
-    pub fn fleet_gateway(mut self, bearer: Arc<dyn BearerProvider>, claim: Option<String>) -> Self {
-        self.gateway = Some(GatewayAuth { bearer, claim });
+    /// Authenticates through a gateway (the relay) with this bearer; the
+    /// spacesd token moves to `x-cua-env-authorization`.
+    pub fn gateway(mut self, bearer: Arc<dyn BearerProvider>) -> Self {
+        self.gateway = Some(GatewayAuth { bearer });
         self
     }
 

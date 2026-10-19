@@ -6,6 +6,6 @@
 <plist version="1.0">
 <dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Cua Spaces connects to Spaces and machines on your local network.</string>
+	<string>Cua Spaces connects to Spaces and computers on your local network.</string>
 </dict>
 </plist>

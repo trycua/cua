@@ -181,6 +181,17 @@ extension WebUIBridge {
             if !signals.isEmpty { telemetry.record(signals) }
             return NSNull()
 
+        // The one-time notice that usage data is now linked to the account
+        // (CUA-1881); no telemetry (a bare model) has none.
+        case "telemetry.linkNotice":
+            guard let telemetry = model.telemetrySink else { return NSNull() }
+            let n = telemetry.linkNotice()
+            return ["due": n.due, "title": n.title, "body": n.body, "okLabel": n.okLabel,
+                    "turnOffLabel": n.turnOffLabel, "detailsLabel": n.detailsLabel, "docsUrl": n.docsUrl] as [String: Any]
+        case "telemetry.acknowledgeLinkNotice":
+            model.telemetrySink?.acknowledgeLinkNotice()
+            return NSNull()
+
         // A Space's detail
         case "spaces.usage":
             return BridgeValue.encode(await model.backend.usage(id: try spaceId(args)))
@@ -475,8 +486,11 @@ extension WebUIBridge {
                   let method = word("mountMethod"), let outcome = word("outcome") else { return nil }
             return .volumeSetup(surface: surface, storage: storage, addToFinder: finder, mountMethod: method, outcome: outcome)
         case "share":
-            guard let action = word("action"), let role = word("role"), let outcome = word("outcome") else { return nil }
-            return .share(action: action, role: role, outcome: outcome)
+            // Why and where a share failed (CUA-1855); a page from before them sends neither.
+            guard let action = word("action"), let role = word("role"), let outcome = word("outcome"),
+                  let errorKind = s["errorKind"] == nil ? "none" : word("errorKind"),
+                  let failedStage = s["failedStage"] == nil ? "none" : word("failedStage") else { return nil }
+            return .share(action: action, role: role, outcome: outcome, errorKind: errorKind, failedStage: failedStage)
         case "app-update":
             guard let action = word("action"), let channel = word("channel"), let trigger = word("trigger") else { return nil }
             return .appUpdate(action: action, channel: channel, trigger: trigger)

@@ -16,39 +16,34 @@ use std::sync::Arc;
 
 #[derive(Subcommand, Debug)]
 pub enum HostCmd {
-    /// Set this machine up for unattended access: install cua-spacesd as
-    /// a service that joins the cua.ai relay as your account (default) or
-    /// serves on a direct ip:port.
+    /// Set this computer up for unattended access: install cua-spacesd as
+    /// a service that joins the cua.ai relay as your account.
     #[command(after_help = "Examples:
   # Join the cua.ai relay as your account (shares this desktop)
   cua host setup
-  # A spare machine: do not share its desktop, run Spaces for your devices
+  # A spare computer: do not share its desktop, run Spaces for your devices
   cua host setup --profile spare --name \"Mac mini (spare)\"
   cua host setup --no-desktop --provide-spaces
-  # Serve on the LAN instead of the relay
-  cua host setup --direct 0.0.0.0:3211 --name studio-mac
-  # A spare Mac on your tailnet that runs Spaces, without the relay
-  # (prints the command that adds it on your laptop)
-  cua host setup --direct 100.101.102.103:3211 --profile spare
-  # Add this machine with a one-time code from the Cua Spaces app
-  # (Add a machine) or `cua host pair`: no sign-in needed here
-  cua host setup --pair K7QM-4XPB-2RHD")]
+  # Add this computer with a one-time code from the Cua Spaces app
+  # (Add a computer) or `cua host pair`: no sign-in needed here
+  cua host setup --pair K7QM-4XPB-2RHD
+  # Self-hosting teams: cua help advanced")]
     Setup {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long, conflicts_with = "direct")]
+        #[arg(long, hide = true, conflicts_with = "direct")]
         relay: Option<String>,
         /// Join with a one-time pairing code (or add-machine link) made in
         /// the Cua Spaces app or with `cua host pair`, instead of signing
-        /// in here. The machine joins the account (or team) that made it.
+        /// in here. The computer joins the account (or team) that made it.
         #[arg(long, value_name = "CODE", conflicts_with_all = ["direct", "remote"])]
         pair: Option<String>,
         /// When sign-in is needed, use a device code to approve it in a
-        /// browser on another machine. The account session is not saved.
+        /// browser on another computer. The account session is not saved.
         #[arg(long, conflicts_with = "direct")]
         remote: bool,
         /// Serve directly on ip:port with a local env token (LAN /
         /// port-forwarded) instead of joining a relay.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         direct: Option<String>,
         /// Display name (default: the host name).
         #[arg(long)]
@@ -63,18 +58,18 @@ pub enum HostCmd {
         /// auto | systemd | launchd | windows-task | process.
         #[arg(long, default_value = "auto")]
         runner: String,
-        /// What this machine is for: `desktop` (share this desktop; the
+        /// What this computer is for: `desktop` (share this desktop; the
         /// default) or `spare` (do not share the desktop; provide Spaces).
         #[arg(long, default_value = "desktop", value_parser = ["desktop", "spare"])]
         profile: String,
-        /// Share this machine's own desktop as a Space.
+        /// Share this computer's own desktop as a Space.
         #[arg(long, overrides_with = "no_desktop")]
         desktop: bool,
-        /// Do not share this machine's own desktop (screen, input, shell,
+        /// Do not share this computer's own desktop (screen, input, shell,
         /// files): relayed callers reach only the Spaces it provides.
         #[arg(long)]
         no_desktop: bool,
-        /// Create Spaces for your enrolled devices on this machine's
+        /// Create Spaces for your enrolled devices on this computer's
         /// runtimes (Lume macOS VMs, Docker Linux containers).
         #[arg(long, overrides_with = "no_provide_spaces")]
         provide_spaces: bool,
@@ -85,11 +80,11 @@ pub enum HostCmd {
         #[arg(long)]
         max_spaces: Option<u32>,
         /// With --direct and Spaces: take host calls, and connections to
-        /// the Spaces this machine forwards, from any address (and allow a
+        /// the Spaces this computer forwards, from any address (and allow a
         /// public --direct address). By default only loopback, Tailscale
         /// and private LAN addresses may. The direct listener is plaintext
-        /// and its token is a shell on this machine: prefer Tailscale.
-        #[arg(long, requires = "direct")]
+        /// and its token is a shell on this computer: prefer Tailscale.
+        #[arg(long, hide = true, requires = "direct")]
         allow_any_address: bool,
     },
     /// Make a one-time code (with a link and the install command) that adds
@@ -101,18 +96,18 @@ pub enum HostCmd {
   cua host pair --name build-box --expires 60
   cua host pair --list
   cua host pair --revoke pc_0123456789abcdef
-  # Add the machine to a team: waits for it to join, then adds it
+  # Add the computer to a team: waits for it to join, then adds it
   cua host pair --team AIGIS")]
     Pair {
-        /// Add the machine to this team (id, alias or name; owner or admin):
-        /// waits until the machine joins, then makes it a team machine.
+        /// Add the computer to this team (id, alias or name; owner or admin):
+        /// waits until the computer joins, then makes it a team computer.
         #[arg(long)]
         team: Option<String>,
         /// With --team: print the code and exit instead of waiting; add the
-        /// machine later with `cua team add-machine <team> relay:<id>`.
+        /// computer later with `cua team add-machine <team> relay:<id>`.
         #[arg(long, requires = "team")]
         no_wait: bool,
-        /// Name the machine gets (default: its own host name).
+        /// Name the computer gets (default: its own host name).
         #[arg(long)]
         name: Option<String>,
         /// Minutes until the code expires (1 to 1440).
@@ -125,10 +120,10 @@ pub enum HostCmd {
         #[arg(long, value_name = "ID", conflicts_with_all = ["team", "name"])]
         revoke: Option<String>,
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
-    /// Show or change what this machine shares: its own desktop, and
+    /// Show or change what this computer shares: its own desktop, and
     /// whether it creates Spaces for your other devices.
     #[command(after_help = "Examples:
   cua host config
@@ -136,7 +131,7 @@ pub enum HostCmd {
   cua host config --desktop off --provide-spaces on
   cua host config --max-spaces 6")]
     Config {
-        /// Share this machine's own desktop: on | off.
+        /// Share this computer's own desktop: on | off.
         #[arg(long, value_parser = ["on", "off"])]
         desktop: Option<String>,
         /// Create Spaces for your enrolled devices: on | off.
@@ -149,7 +144,7 @@ pub enum HostCmd {
         #[arg(long)]
         max_macos_vms: Option<u32>,
     },
-    /// Show whether this machine is set up, the service, and who is
+    /// Show whether this computer is set up, the service, and who is
     /// connected.
     #[command(after_help = "Examples:
   cua host status")]
@@ -162,7 +157,7 @@ pub enum HostCmd {
     #[command(after_help = "Examples:
   cua host start")]
     Start,
-    /// Share a relay machine (this one, or `--machine`) with other cua.ai
+    /// Share a relay computer (this one, or `--machine`) with other cua.ai
     /// accounts (id or verified email). Run from an enrolled device; every
     /// change is in the owner's audit log (`cua devices audit`).
     #[command(after_help = "Examples:
@@ -172,18 +167,18 @@ pub enum HostCmd {
         /// Accounts to add. Repeatable.
         #[arg(required = true)]
         who: Vec<String>,
-        /// Machine id (default: this machine).
-        #[arg(long)]
+        /// Computer id (default: this computer).
+        #[arg(long, visible_alias = "computer", value_name = "COMPUTER")]
         machine: Option<String>,
-        /// Relay URL (default: the one this machine joined, else
+        /// Relay URL (default: the one this computer joined, else
         /// $CUA_RELAY_URL / https://relay.cua.ai).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
         /// Do not ask for confirmation.
         #[arg(long)]
         yes: bool,
     },
-    /// Stop sharing a relay machine with accounts; their open connections
+    /// Stop sharing a relay computer with accounts; their open connections
     /// are cut.
     #[command(after_help = "Examples:
   cua host unshare friend@example.com")]
@@ -191,11 +186,11 @@ pub enum HostCmd {
         /// Accounts to remove. Repeatable.
         #[arg(required = true)]
         who: Vec<String>,
-        /// Machine id (default: this machine).
-        #[arg(long)]
+        /// Computer id (default: this computer).
+        #[arg(long, visible_alias = "computer", value_name = "COMPUTER")]
         machine: Option<String>,
         /// Relay URL.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Unregister from the relay, uninstall the service and delete the host
@@ -209,10 +204,10 @@ pub enum HostCmd {
         /// to ask on (scripts, agents): without it nothing is removed.
         #[arg(long, short)]
         force: bool,
-        /// For an uninstall of Cua Spaces: turns off the Spaces this machine
+        /// For an uninstall of Cua Spaces: turns off the Spaces this computer
         /// provides and takes them off the relay too, instead of refusing
         /// while it provides any. The Spaces and their data stay on this
-        /// machine.
+        /// computer.
         #[arg(long)]
         uninstalling: bool,
     },
@@ -220,7 +215,7 @@ pub enum HostCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum SpacesCmd {
-    /// Registered Spaces and your machines on the relay.
+    /// Registered Spaces and your computers on the relay.
     #[command(
         visible_alias = "list",
         after_help = "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it
@@ -234,7 +229,7 @@ Examples:
     )]
     Ls {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
         /// Do not measure what each Space takes on this computer's disk
         /// (that walk can take a moment with many Spaces).
@@ -248,7 +243,7 @@ Examples:
   cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio
   cua spaces add local:my-sandbox
   cua spaces add http://127.0.0.1:8765/mcp --service tools
-  # A machine that provides Spaces over Tailscale, without the relay
+  # A computer that provides Spaces over Tailscale, without the relay
   # (`cua host setup --direct ... --provide-spaces` on it prints this)
   cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"")]
     Add {
@@ -266,13 +261,13 @@ Examples:
         /// (default `mcp`).
         #[arg(long)]
         service: Option<String>,
-        /// It is a machine that provides Spaces over its direct address
+        /// It is a computer that provides Spaces over its direct address
         /// (Tailscale or LAN): `--on host:<name>` finds it without the
         /// relay. Its token is stored like any direct Space's.
         #[arg(long, conflicts_with = "service")]
         host: bool,
     },
-    /// Create Spaces: on this machine, on one of your machines that
+    /// Create Spaces: on this computer, on one of your computers that
     /// provides Spaces (`cua host setup --provide-spaces` there), or in your
     /// own cloud account.
     #[command(after_help = "Examples:
@@ -284,7 +279,7 @@ Examples:
         /// Image: an alias (`linux`, `macos`, `macos:26`) or a registry
         /// reference. Default: the canonical Linux image.
         image: Option<String>,
-        /// Where: `local`, `aws`, `gcp`, `host:<machine>`, or a machine name
+        /// Where: `local`, `aws`, `gcp`, `host:<computer>`, or a computer name
         /// (`mac-mini`, "spare mac mini"). Default: your default location.
         #[arg(long)]
         on: Option<String>,
@@ -327,7 +322,7 @@ Examples:
         /// create starts) or its name.
         space: String,
     },
-    /// The GPU options each runtime offers on this machine (or in your
+    /// The GPU options each runtime offers on this computer (or in your
     /// own cloud account).
     #[command(after_help = "Examples:
   cua spaces gpus
@@ -337,7 +332,7 @@ Examples:
         #[arg(long)]
         on: Option<String>,
     },
-    /// Delete a Space's sandbox (on this machine, on the machine that
+    /// Delete a Space's sandbox (on this computer, on the computer that
     /// provides it, or in your own cloud account) and forget it (asks first).
     #[command(after_help = "Examples:
   cua spaces delete relay:space-0123456789abcdef
@@ -350,7 +345,7 @@ Examples:
         force: bool,
     },
     /// Turn a Space off: a local container or QEMU VM is suspended (its
-    /// memory is kept), a Lume VM or a Space one of your machines provides
+    /// memory is kept), a Lume VM or a Space one of your computers provides
     /// is stopped (its disk is kept), and so is a Space in your own cloud
     /// (`--on aws`, `gcp`; compute billing stops). Modal sandboxes and
     /// Spaces added by address cannot be turned off.
@@ -370,7 +365,7 @@ Examples:
         space: String,
     },
     /// Forget a registered Space and its stored token. The sandbox keeps
-    /// running. The `relay:<machine>` record of a Space that registered
+    /// running. The `relay:<computer>` record of a Space that registered
     /// itself and is gone (not connected) also leaves your relay directory.
     #[command(
         visible_alias = "remove",
@@ -383,7 +378,7 @@ Examples:
         space: String,
     },
     /// Let another cua.ai account watch (viewer) or use (editor) a Space,
-    /// through the relay. They open it as `relay:<machine>`.
+    /// through the relay. They open it as `relay:<computer>`.
     #[command(after_help = "Examples:
   cua spaces share local:studio bob@example.com
   cua spaces share local:studio bob@example.com --role editor
@@ -441,9 +436,9 @@ Examples:
         space: String,
     },
     /// Take a Space off the relay (every share with it ends). With a
-    /// `relay:<machine>` id, removes that machine's record from your relay
+    /// `relay:<computer>` id, removes that computer's record from your relay
     /// directory: a Space that registered itself (also after it was
-    /// deleted), or a machine of yours that is gone. Only its owner can.
+    /// deleted), or a computer of yours that is gone. Only its owner can.
     #[command(
         name = "relay-unregister",
         after_help = "Examples:
@@ -991,7 +986,7 @@ async fn sign_in_for_setup(flow: cua_auth::Flow) -> cua_host::Result<String> {
     let unauth = |e: cua_auth::Error| cua_host::Error::Unauthenticated(e.to_string());
     let mut pending = auth::session().begin_login(flow).await.map_err(unauth)?;
     pending.return_to = Some(cua_auth::ReturnTo::Terminal);
-    eprintln!("Sign in to cua.ai to register this machine (the session is not stored here):");
+    eprintln!("Sign in to cua.ai to register this computer (the session is not stored here):");
     eprintln!("  {}", pending.url);
     if let Some(code) = &pending.user_code {
         eprintln!("Enter this code if prompted: {code}");
@@ -1042,7 +1037,7 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
     if !s.configured {
         line(
             out,
-            "This machine is not set up for access (run `cua host setup`).",
+            "This computer is not set up for access (run `cua host setup`).",
         );
         return;
     }
@@ -1050,7 +1045,7 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
     if s.paused_signed_out {
         line(
             out,
-            "Relay sharing is paused: the Cua app on this machine is signed out. \
+            "Relay sharing is paused: the Cua app on this computer is signed out. \
              Sign in to it again (or run `cua host start`) to share it.",
         );
     }
@@ -1058,7 +1053,7 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
         Some("relay") => line(
             out,
             format!(
-                "{name}: relay {} as machine {}",
+                "{name}: relay {} as computer {}",
                 s.relay_url.clone().unwrap_or_default(),
                 s.machine_id.clone().unwrap_or_default()
             ),
@@ -1158,7 +1153,7 @@ fn render_settings(s: &HostStatus, out: &mut dyn Write) {
         format!(
             "  desktop: {}",
             if s.share_desktop {
-                "shared (this machine is a Space)"
+                "shared (this computer is a Space)"
             } else {
                 "not shared (its screen, input, shell and files are off limits)"
             }
@@ -1401,7 +1396,7 @@ pub async fn run_host(
             // so to stderr when the output is JSON for a program).
             if let Some(pair) = host.pairing_command().map_err(host_err)? {
                 let lines = [
-                    "On your laptop, add this machine (the token is a shell on this machine: \
+                    "On your laptop, add this computer (the token is a shell on this computer: \
                      keep it private):"
                         .to_string(),
                     format!("  {pair}"),
@@ -1509,7 +1504,7 @@ pub async fn run_host(
             if !yes
                 && !(crate::util::interactive()
                     && crate::util::confirm(
-                        &format!("Let {} reach this machine?", who.join(", ")),
+                        &format!("Let {} reach this computer?", who.join(", ")),
                         false,
                     ))
             {
@@ -1540,7 +1535,7 @@ pub async fn run_host(
             use std::io::IsTerminal as _;
             match confirm_delete(force, std::io::stdin().is_terminal(), || {
                 crate::util::confirm(
-                    "Remove this machine's access setup (unregister it and delete its tokens)?",
+                    "Remove this computer's access setup (unregister it and delete its tokens)?",
                     false,
                 )
             }) {
@@ -1551,7 +1546,7 @@ pub async fn run_host(
                 }
                 DeleteConfirmation::NeedsForce => {
                     return Err(crate::sandbox::needs_force(
-                        "remove this machine's access setup",
+                        "remove this computer's access setup",
                     ));
                 }
             }
@@ -1563,7 +1558,7 @@ pub async fn run_host(
             if json {
                 line(out, r#"{"removed":true}"#);
             } else {
-                line(out, "This machine is no longer set up for access.");
+                line(out, "This computer is no longer set up for access.");
             }
         }
     }
@@ -1588,7 +1583,7 @@ where
     let cua = match open().await {
         Ok(cua) => cua,
         Err(e) => {
-            eprintln!("Could not turn off the Spaces this machine provides: {e}");
+            eprintln!("Could not turn off the Spaces this computer provides: {e}");
             return;
         }
     };
@@ -1667,7 +1662,7 @@ async fn pair_codes(
         } else {
             line(
                 out,
-                format!("Revoked {id}: it can no longer add a machine."),
+                format!("Revoked {id}: it can no longer add a computer."),
             );
         }
         return Ok(());
@@ -1704,13 +1699,13 @@ async fn pair_codes(
             let org = api.resolve_org(&token, t).await?;
             if !org.manages() {
                 return Err(cua_host::Error::PermissionDenied(format!(
-                    "only an owner or admin of {} can add machines to it",
+                    "only an owner or admin of {} can add computers to it",
                     org.label()
                 )));
             }
             if !org.has("team_machines") {
                 eprintln!(
-                    "Note: {} has no team machines on its plan yet (buy Teams at app.cua.ai); a plan bought a moment ago is waited for.",
+                    "Note: {} has no team computers on its plan yet (buy Teams at app.cua.ai); a plan bought a moment ago is waited for.",
                     org.label()
                 );
             }
@@ -1763,7 +1758,7 @@ async fn pair_codes(
     let Some(org) = org else {
         return Ok(());
     };
-    let later = format!("cua team add-machine {} relay:<machine id>", org.id);
+    let later = format!("cua team add-machine {} relay:<computer id>", org.id);
     if no_wait {
         if !json {
             line(
@@ -1777,7 +1772,7 @@ async fn pair_codes(
         line(
             out,
             format!(
-                "Waiting for the machine to join, to add it to {} (Ctrl-C to stop; then: {later})…",
+                "Waiting for the computer to join, to add it to {} (Ctrl-C to stop; then: {later})…",
                 org.label()
             ),
         );
@@ -1811,7 +1806,7 @@ async fn pair_codes(
         line(
             out,
             format!(
-                "relay:{machine} joined and is a machine of {}.",
+                "relay:{machine} joined and is a computer of {}.",
                 org.label()
             ),
         );
@@ -1837,7 +1832,7 @@ async fn change_allow(
     let local_id = config.as_ref().and_then(|c| c.machine_id.clone());
     let id = machine.or(local_id.clone()).ok_or_else(|| {
         cua_host::Error::InvalidArgument(
-            "this machine is not on a relay; pass --machine <id> (`cua spaces ls`)".into(),
+            "this computer is not on a relay; pass --machine <id> (`cua spaces ls`)".into(),
         )
     })?;
     let url = relay
@@ -2209,7 +2204,7 @@ pub async fn run_spaces(
         line(out, l);
     }
     if let Some(e) = relay_error {
-        line(out, format!("(relay machines unavailable: {e})"));
+        line(out, format!("(relay computers unavailable: {e})"));
     }
     if let Some(w) = columns.warning() {
         line(out, w);
@@ -3138,9 +3133,6 @@ mod tests {
         let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
             state_dir: Some(dir.path().join("sandboxes").display().to_string()),
             spaces_home: Some(dir.path().join("cua").display().to_string()),
-            fleet_pool_home: Some(dir.path().join("pools").display().to_string()),
-            fleet_from_env: false,
-            fleet_from_session: false,
             ..Default::default()
         })
         .unwrap();

@@ -106,7 +106,6 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         image: String::new(),
         name: Some(name.into()),
         token: token.map(str::to_string),
-        pool: None,
         os: None,
         cpus: None,
         memory_mb: None,
@@ -115,12 +114,7 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
         command: None,
-        cloud: None,
         sidecars: vec![],
         registry_secret: None,
         build: None,
@@ -464,7 +458,6 @@ async fn suite(t: Topology) {
     // every topology.
     let mut o = direct("", POOL, None);
     o.on = Some("cloud".into());
-    o.pool = Some(POOL.into());
     o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
     let e = sbx.create(o).await.err().expect("cloud create fails");
     assert!(e.to_string().contains("Cua Cloud has ended"), "{t:?}: {e}");
@@ -629,7 +622,7 @@ async fn discovery_refusal(t: Topology) {
     match error {
         CuaError::Unauthenticated(message) => assert_eq!(
             message,
-            "Relay authentication failed. Sign in again to refresh your machines."
+            "Relay authentication failed. Sign in again to refresh your computers."
         ),
         other => panic!("unexpected discovery refusal: {other:?}"),
     }

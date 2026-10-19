@@ -161,7 +161,7 @@ import cua
 
 async def main():
     spaces = cua.embedded().spaces()
-    info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")  # a machine running cua-spacesd
+    info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")  # a computer running cua-spacesd
     space = await spaces.space(info.id)
     out = await space.bash("echo hi", None)
     print([info.provider, out.stdout, out.exit_code])
@@ -176,7 +176,7 @@ asyncio.run(main())
 import Cua
 
 let spaces = try Cua.embedded().spaces()
-let info = try await spaces.add(url: "http://10.0.0.5:3211", token: "TOKEN", name: "lab")  // a machine running cua-spacesd
+let info = try await spaces.add(url: "http://10.0.0.5:3211", token: "TOKEN", name: "lab")  // a computer running cua-spacesd
 let space = try await spaces.space(space: info.id)
 let out = try await space.bash(command: "echo hi", timeoutMs: nil)
 print(info.provider, out.stdout, out.exitCode ?? -1)
@@ -190,7 +190,7 @@ import ai.cua.sdk.Cua
 import ai.cua.sdk.CuaConfig
 
 val spaces = Cua.embedded(CuaConfig()).spaces()
-val info = spaces.add("http://10.0.0.5:3211", "TOKEN", "lab") // a machine running cua-spacesd
+val info = spaces.add("http://10.0.0.5:3211", "TOKEN", "lab") // a computer running cua-spacesd
 val space = spaces.space(info.id)
 val out = space.bash("echo hi", null)
 println("${info.provider} ${out.stdout} ${out.exitCode}")
@@ -308,9 +308,9 @@ pub async fn call_tool_json(&self, tool: String, arguments_json: Option<String>)
 Cancels a create that is still running: `space` is the create's
 `create_id`, the id the Space will have (`local:<name>`, carried by
 every progress report) or its name. The work in flight stops (an
-image download, a boot, a claim, a relay registration) and what the
-create made is removed (its VM or container and disks, its cloud
-claim, its relay machine); nothing that existed before is touched.
+image download, a boot, a relay registration) and what the
+create made is removed (its VM or container and disks, its relay
+machine); nothing that existed before is touched.
 Finished image downloads stay cached, so the next create resumes.
 Returns once the clean-up is done; the create itself fails with
 `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -1171,7 +1171,7 @@ as sandboxes.
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `image` | `Option<String>` | `None` | Image (default: the canonical Linux image). |
-| `on` | `Option<String>` | `None` | Where: `local` (free) or `cloud` (metered). `None`: the user default (`default.on`, `CUA_DEFAULT_ON`, else `local`). |
+| `on` | `Option<String>` | `None` | Where: `local` (free), a connected cloud account (`aws`, `gcp`, `modal`) or `host:<name>`. `None`: the user default (`default.on`, `CUA_DEFAULT_ON`, else `local`). |
 | `kind` | `Option<String>` | `None` | `auto` (default), `container` or `vm`. |
 | `runtime` | `Option<String>` | `None` | `auto` (default) or an engine the location offers for the kind. |
 | `name` | `Option<String>` | `None` | Name (default `space-<hex>`). |

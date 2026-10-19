@@ -14936,7 +14936,7 @@ public func FfiConverterTypeAppFileView_lower(_ value: AppFileView) -> RustBuffe
 
 public struct AppGpuChoice: Equatable, Hashable {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+     * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
      */
     public var runtime: String
     /**
@@ -14968,7 +14968,7 @@ public struct AppGpuChoice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+         * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
          */runtime: String,
         /**
          * What the create passes as `gpu` (`paravirtual`).
@@ -23018,7 +23018,7 @@ public struct AppOnboardingState: Equatable, Hashable {
     public var launchAtLogin: Bool
     /**
      * The usage-data switch on Welcome: the machine's telemetry setting
-     * (Settings' "Share anonymous usage data", `cua telemetry off`), none
+     * (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
      * until the shell read it (then it shows on).
      */
     public var telemetry: AppTelemetryInput?
@@ -23114,7 +23114,7 @@ public struct AppOnboardingState: Equatable, Hashable {
          */launchAtLogin: Bool,
         /**
          * The usage-data switch on Welcome: the machine's telemetry setting
-         * (Settings' "Share anonymous usage data", `cua telemetry off`), none
+         * (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
          * until the shell read it (then it shows on).
          */telemetry: AppTelemetryInput?,
         /**
@@ -35680,7 +35680,7 @@ public func FfiConverterTypeAppUnconfirmedMachine_lower(_ value: AppUnconfirmedM
 
 public struct AppUsageToggle: Equatable, Hashable {
     /**
-     * "Share anonymous usage data".
+     * "Share usage data to help improve Cua".
      */
     public var label: String
     /**
@@ -35700,7 +35700,7 @@ public struct AppUsageToggle: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Share anonymous usage data".
+         * "Share usage data to help improve Cua".
          */label: String,
         /**
          * On.
@@ -50454,7 +50454,7 @@ public enum AppOnboardingAction: Equatable, Hashable {
      */
     case welcomeShown
     /**
-     * Welcome's "Share anonymous usage data" switch (not while the
+     * Welcome's "Share usage data to help improve Cua" switch (not while the
      * environment decides). The shell writes the setting.
      */
     case usageDataToggled(
@@ -55406,8 +55406,19 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          * `viewer`, `editor` or `none`.
          */role: String,
         /**
-         * `ok` or `error`.
-         */outcome: String
+         * `ok`, `error`, or `cancelled` when the confirmation prompt was
+         * dismissed.
+         */outcome: String,
+        /**
+         * Why it did not happen (`presence_denied`, `presence_cancelled`,
+         * `presence_unavailable`, `not_signed_in`, `device_not_enrolled`,
+         * `driver_unsupported`, `relay_refused`, `relay_unreachable`,
+         * `invalid_who` or `other`); `none` when it worked.
+         */errorKind: String,
+        /**
+         * Where it stopped (`request`, `presence`, `account`, `device`,
+         * `driver`, `relay` or `other`); `none` when it worked.
+         */failedStage: String
     )
     /**
      * An updater step (`cua_app_update`).
@@ -55504,7 +55515,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
         case 9: return .volumeSetup(surface: try FfiConverterString.read(from: &buf), storage: try FfiConverterString.read(from: &buf), addToFinder: try FfiConverterBool.read(from: &buf), mountMethod: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
         )
 
-        case 10: return .share(action: try FfiConverterString.read(from: &buf), role: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
+        case 10: return .share(action: try FfiConverterString.read(from: &buf), role: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), errorKind: try FfiConverterString.read(from: &buf), failedStage: try FfiConverterString.read(from: &buf)
         )
 
         case 11: return .appUpdate(action: try FfiConverterString.read(from: &buf), channel: try FfiConverterString.read(from: &buf), trigger: try FfiConverterString.read(from: &buf)
@@ -55590,11 +55601,13 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterString.write(outcome, into: &buf)
 
 
-        case let .share(action,role,outcome):
+        case let .share(action,role,outcome,errorKind,failedStage):
             writeInt(&buf, Int32(10))
             FfiConverterString.write(action, into: &buf)
             FfiConverterString.write(role, into: &buf)
             FfiConverterString.write(outcome, into: &buf)
+            FfiConverterString.write(errorKind, into: &buf)
+            FfiConverterString.write(failedStage, into: &buf)
 
 
         case let .appUpdate(action,channel,trigger):
@@ -66886,17 +66899,6 @@ public func appApproveView(state: AppApproveSheetState, devices: [AppDeviceInput
 })
 }
 /**
- * The SDK's billing status as the app core takes it (Settings' Billing
- * row).
- */
-public func appBillingStatus(status: FleetBillingStatus) -> AppBillingStatus  {
-    return try!  FfiConverterTypeAppBillingStatus_lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_app_billing_status(
-        FfiConverterTypeFleetBillingStatus_lower(status),$0
-    )
-})
-}
-/**
  * Picker catalog entries from JSON (fixtures, parity flows).
  */
 public func appCatalogEntriesFromJson(json: String)throws  -> [AppCatalogEntry]  {
@@ -69157,7 +69159,8 @@ public func appTelemetrySignInFailed(message: String?) -> [AppTelemetrySignal]  
 }
 /**
  * The app started: attributes this process's events to `spaces_app` at
- * `version`, lets the app show the first-run notice itself (nothing is
+ * `version`, links usage data to the signed-in account in the background
+ * when the Spaces API offers it, lets the app show the first-run notice itself (nothing is
  * sent before it has been shown once), and records `app_launched` (on a
  * first run, once the notice shows). Call once at launch, before the
  * first `Cua`. `onboarding_eligible`: the first run is still to finish
@@ -69953,9 +69956,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_approve_view() != 20205) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_billing_status() != 4162) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json() != 39250) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -70580,7 +70580,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed() != 34262) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 189) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 30125) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_storage() != 21459) {

@@ -1,8 +1,9 @@
-//! `cua usage`: your relay allowance this month. A live session is a
+//! `cua usage`: your remote use this month. A live session is a
 //! connection to one of your remote machines through the hosted relay
-//! (viewing, a terminal, an agent); relay hours are the time with at least
-//! one. Spaces reached on your own network use no allowance, and nothing
-//! stops at the limit: the relay only says it was reached.
+//! (viewing, a terminal, an agent); relay hours, shown as "remote hours",
+//! are the time with at least one. A computer used from itself never goes
+//! through the relay, and nothing stops at the limit: the relay only says
+//! it was reached.
 
 use crate::util::line;
 use cua_host::{AccountTokens, RelayClient, RelayUsage};
@@ -42,7 +43,7 @@ pub async fn run_with(
     }
     match usage {
         Some(u) if u.metered => print(&u, out),
-        _ => line(out, "No relay allowance applies to your account."),
+        _ => line(out, "Your account has no limit on remote use."),
     }
     Ok(0)
 }
@@ -77,10 +78,11 @@ fn print(u: &RelayUsage, out: &mut dyn Write) {
     line(
         out,
         format!(
-            "Relay hours: {} this month",
+            "Remote hours: {} this month",
             of(hours(u.hours_used), u.hours_limit.map(hours))
         ),
     );
+    line(out, REMOTE_HOURS_MEANING);
     if let Some(team) = &u.team {
         line(
             out,
@@ -101,10 +103,16 @@ fn print(u: &RelayUsage, out: &mut dyn Write) {
             .unwrap_or_default();
         line(
             out,
-            format!("You've reached your relay allowance. Your Spaces keep working.{upgrade}"),
+            format!(
+                "You've reached your plan's remote limit for this month. Your Spaces keep working.{upgrade}"
+            ),
         );
     }
 }
+
+/// What remote hours are (the apps' words: `relay_usage::REMOTE_HOURS_MEANING`
+/// in cua-spaces-app-core).
+const REMOTE_HOURS_MEANING: &str = "Remote hours: time spent using your computers from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free.";
 
 /// `20` or `3.4`.
 fn hours(h: f64) -> String {
@@ -137,7 +145,7 @@ mod tests {
         relay.add_account("acct", "user-1", None);
         assert_eq!(
             text(&relay, false).await.trim(),
-            "No relay allowance applies to your account."
+            "Your account has no limit on remote use."
         );
         assert_eq!(text(&relay, true).await.trim(), r#"{"metered":false}"#);
 
@@ -151,7 +159,7 @@ mod tests {
         let t = text(&relay, false).await;
         assert!(t.contains("Plan: free (2026-10)"), "{t}");
         assert!(t.contains("Live sessions: 1 of 2"), "{t}");
-        assert!(t.contains("Relay hours: 6.5 of 20 this month"), "{t}");
+        assert!(t.contains("Remote hours: 6.5 of 20 this month"), "{t}");
         assert!(!t.contains("Team pool") && !t.contains("reached"), "{t}");
 
         usage["team"] = serde_json::json!({ "id": "acme", "seats": 3 });
@@ -160,13 +168,13 @@ mod tests {
         usage["reasons"] = serde_json::json!(["hours"]);
         relay.set_usage(Some(usage));
         let t = text(&relay, false).await;
-        assert!(t.contains("Relay hours: 21 of 20 this month"), "{t}");
+        assert!(t.contains("Remote hours: 21 of 20 this month"), "{t}");
         assert!(
             t.contains("Team pool: acme, 3 seats (your hours: 6.5)"),
             "{t}"
         );
         assert!(
-            t.contains("You've reached your relay allowance. Your Spaces keep working. Upgrade: https://cua.ai/pricing"),
+            t.contains("You've reached your plan's remote limit for this month. Your Spaces keep working. Upgrade: https://cua.ai/pricing"),
             "{t}"
         );
         let v: serde_json::Value = serde_json::from_str(&text(&relay, true).await).unwrap();

@@ -865,7 +865,7 @@ mod tests {
         assert_eq!((s.backend.as_str(), s.mount.as_str()), ("fs", idle));
         assert!(
             s.cache.is_none(),
-            "no cache in front of a store on this machine"
+            "no cache in front of a store on this computer"
         );
         assert!(s.pending.is_empty());
         assert!(svc.sync_resolve("nothing").is_err());

@@ -56,8 +56,10 @@ import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
 import { webkitKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { webkitSettingsOps } from "../ops/settings";
 import { startupFromHost, webkitStartupOps } from "../ops/startup";
+import { webkitTelemetryNoticeOps } from "../ops/telemetry";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { RiskyRequest } from "../ops/nudges";
 import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
@@ -634,6 +636,7 @@ export function createWebkitAdapter(
     ...webkitSettingsOps(request),
     ...webkitPageOps(request, toHostStatus, spaceToRow),
     ...webkitStartupOps(request),
+    ...webkitTelemetryNoticeOps(request),
     ...webkitAgentDetailOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
@@ -644,6 +647,8 @@ export function createWebkitAdapter(
       ? { "spaces.openStream": (target: OpArgs<"spaces.openStream">) => request<StreamTicket>("spaces.openStream", { ...target }) }
       : unsupportedStreamOps("webkit")),
     "relay.usage": () => request<RelayUsage | null>("relay.usage"),
+    "nudges.pending": () => request<RiskyRequest[]>("nudges.pending"),
+    "nudges.answer": ({ id, choice }) => request<null>("nudges.answer", { id, choice }),
     "resources.get": ({ visible }) => request<ResourcesSnapshot | null>("resources.get", { visible }),
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),

@@ -162,7 +162,7 @@ const PROVIDER_ID: Record<string, string> = {
   cloud: '`cloud:<name>`',
   local: '`local:<name>`',
   direct: '`direct:<host:port>`',
-  relay: '`relay:<machine-id>`',
+  relay: '`relay:<computer-id>`',
 };
 
 function effect(a: Annotations): string {
@@ -227,7 +227,7 @@ function toolSection(tool: Tool, manifest: Manifest): string[] {
         ? 'all (cloud, local, direct, relay)'
         : tool.providers.map((p) => `${p} only (${PROVIDER_ID[p] ?? p})`).join(', '),
     ],
-    ['Platforms', tool.platforms.length === 3 ? 'all (macos, windows, linux)' : `${tool.platforms.join(', ')} (the operator's machine)`],
+    ['Platforms', tool.platforms.length === 3 ? 'all (macos, windows, linux)' : `${tool.platforms.join(', ')} (the operator's computer)`],
     ['Metering', tool.metering],
     [
       'Approval',
@@ -235,7 +235,7 @@ function toolSection(tool: Tool, manifest: Manifest): string[] {
     ],
   ];
   if (tool.requires.length) facts.push(['Requires (spacesd)', tool.requires.map((r) => codeCell(r)).join(', ')]);
-  if (tool.host_requires.length) facts.push(['Requires (this machine)', tool.host_requires.map((r) => codeCell(r)).join(', ')]);
+  if (tool.host_requires.length) facts.push(['Requires (this computer)', tool.host_requires.map((r) => codeCell(r)).join(', ')]);
   if (tool.sdk_symbol) facts.push(['Swift SDK', codeCell(tool.sdk_symbol)]);
   facts.push(['Rust', codeCell(tool.rust_symbol)]);
   out.push('| | |', '| --- | --- |');

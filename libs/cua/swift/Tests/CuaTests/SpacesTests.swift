@@ -198,7 +198,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
         let cua = try Cua.embedded(
-            stateDir: tmp.appendingPathComponent("sbx").path, fleetFromEnv: false,
+            stateDir: tmp.appendingPathComponent("sbx").path,
             spacesHome: tmp.appendingPathComponent("cua").path,
             teleportHome: fx.fields["teleport_host_home"])
         try await exerciseSpaces(cua, fx, tmp: tmp)

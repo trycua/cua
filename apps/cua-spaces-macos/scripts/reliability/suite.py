@@ -703,7 +703,7 @@ class Suite:
     # 7. network off / relay unreachable
     def s_offline(self, run, h, n):
         bad = {"CUA_RELAY_URL": "http://127.0.0.1:9", "CUA_DAEMON_NO_RELAY": None,
-               "CUA_API_URL": "http://127.0.0.1:9", "CUA_FLEET_URL": "http://127.0.0.1:9",
+               "CUA_API_URL": "http://127.0.0.1:9",
                "HTTPS_PROXY": "http://127.0.0.1:9", "https_proxy": "http://127.0.0.1:9",
                "NO_PROXY": "127.0.0.1,localhost,ghcr.io,pkg-containers.githubusercontent.com,*.docker.io,docker.io"}
         h.extra.update({k: v for k, v in bad.items() if v is not None})
@@ -711,7 +711,7 @@ class Suite:
 
         def fake_session():
             # A signed-in session (file store) whose relay and API are
-            # unreachable: the daemon's relay attach and Fleet both fail.
+            # unreachable: the daemon's relay attach fails.
             import base64
             b = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
             tok = f"{b({'alg': 'none'})}.{b({'sub': 'reliability', 'exp': int(time.time()) + 3600})}.x"

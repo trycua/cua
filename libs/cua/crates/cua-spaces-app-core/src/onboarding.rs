@@ -66,7 +66,7 @@ impl OnboardingStep {
             OnboardingStep::Signin => "Sign in",
             OnboardingStep::Agents => "AI agents",
             OnboardingStep::Drive => "Cua Volume",
-            OnboardingStep::Mode => "This machine",
+            OnboardingStep::Mode => "This computer",
             OnboardingStep::Done => "Done",
         }
     }
@@ -206,7 +206,7 @@ pub struct OnboardingState {
     #[serde(default = "ticked")]
     pub launch_at_login: bool,
     /// The usage-data switch on Welcome: the machine's telemetry setting
-    /// (Settings' "Share anonymous usage data", `cua telemetry off`), none
+    /// (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
     /// until the shell read it (then it shows on).
     #[serde(default)]
     pub telemetry: Option<TelemetryInput>,
@@ -355,7 +355,7 @@ pub enum OnboardingAction {
     /// On a machine that already showed the usage notice, with usage data
     /// on, the run's start counts now rather than when Welcome is left.
     WelcomeShown,
-    /// Welcome's "Share anonymous usage data" switch (not while the
+    /// Welcome's "Share usage data to help improve Cua" switch (not while the
     /// environment decides). The shell writes the setting.
     UsageDataToggled {
         /// On.
@@ -1007,11 +1007,11 @@ fn drive_fact(s: &OnboardingState) -> String {
 }
 
 /// One answer on the This machine page.
-/// Welcome's "Share anonymous usage data" switch.
+/// Welcome's "Share usage data to help improve Cua" switch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageToggle {
-    /// "Share anonymous usage data".
+    /// "Share usage data to help improve Cua".
     pub label: String,
     /// On.
     pub on: bool,
@@ -1349,7 +1349,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
                 warning: None,
             },
             Fact {
-                label: "This machine".into(),
+                label: "This computer".into(),
                 value: if s.mode == Some(OnboardingMode::Host) {
                     "Your other devices can reach it"
                 } else {
@@ -1417,7 +1417,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
             vec![]
         },
         notice: (s.step == Welcome).then(|| {
-            "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy."
+            "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy."
                 .into()
         }),
         notice_link_label: (s.step == Welcome).then(|| "What is collected".into()),
@@ -1429,7 +1429,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
                 .and_then(|t| t.locked_by.clone())
                 .filter(|b| !b.is_empty());
             UsageToggle {
-                label: "Share anonymous usage data".into(),
+                label: "Share usage data to help improve Cua".into(),
                 on: s.shares_usage(),
                 enabled: locked.is_none(),
                 help: locked.map(|by| format!("Set by {by}")),
@@ -1586,7 +1586,7 @@ mod tests {
         assert!(
             v.summary
                 .iter()
-                .any(|f| f.label == "This machine" && f.value == "Opens your other computers")
+                .any(|f| f.label == "This computer" && f.value == "Opens your other computers")
         );
         // Sign in from Done, then back to Done.
         let at = reduce(

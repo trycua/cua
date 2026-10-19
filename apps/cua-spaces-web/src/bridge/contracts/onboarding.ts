@@ -123,7 +123,7 @@ export interface PresentationCard {
   selected: boolean;
 }
 
-/** Welcome's "Share anonymous usage data" switch. */
+/** Welcome's "Share usage data to help improve Cua" switch. */
 export interface OnboardingUsage {
   label: string;
   on: boolean;

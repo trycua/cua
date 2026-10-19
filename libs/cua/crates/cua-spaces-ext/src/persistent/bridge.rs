@@ -419,7 +419,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "volume_sync_status",
-                "Sync state of the Cua Volume as this machine sees it: `feed` (`live`, `off` for storage on this machine, `offline` with `last_error`), each device's last sync, your files still uploading (`pending`), `conflicts` (each `path` and the kept `conflict_path`) and the volume mounted in this Space. Check it before relying on a file another device just wrote.",
+                "Sync state of the Cua Volume as this computer sees it: `feed` (`live`, `off` for storage on this computer, `offline` with `last_error`), each device's last sync, your files still uploading (`pending`), `conflicts` (each `path` and the kept `conflict_path`) and the volume mounted in this Space. Check it before relying on a file another device just wrote.",
                 schema(json!({}), &[]),
                 true,
             ),

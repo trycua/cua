@@ -1,7 +1,7 @@
 //! The one image resolver: `resolve(ref, backend, arch) -> ResolvedImage`.
 //!
 //! Every SDK (Python through the native `cua` binding, TypeScript, the CLI,
-//! Spaces, the daemon's local placement and cua-fleet) turns an image
+//! Spaces and the daemon's local placement) turns an image
 //! reference into something a backend runs through this function.
 //!
 //! 1. The reference is normalised like the docker CLI: a short ref
@@ -25,7 +25,7 @@
 //! | [`Backend::Vm`] (QEMU, KubeVirt, `vm=True`) | containerdisk |
 //! | [`Backend::Lume`] | lume |
 //! | [`Backend::Local`] | rootfs, containerdisk, lume |
-//! | [`Backend::Fleet`] | rootfs, containerdisk (always amd64) |
+//! | [`Backend::Provider`] (a bring-your-own cloud provider) | rootfs, containerdisk |
 //! | [`Backend::Auto`] | whatever the reference is |
 
 use std::collections::{BTreeMap, HashMap};
@@ -54,15 +54,15 @@ pub const OS_ANNOTATION: &str = "ai.cua.image.os";
 pub enum Variant {
     /// A container rootfs (docker, gVisor).
     Rootfs,
-    /// A KubeVirt containerDisk (`/disk/disk.img`): QEMU locally, KubeVirt on Fleet.
+    /// A KubeVirt containerDisk (`/disk/disk.img`): QEMU locally.
     Containerdisk,
     /// A Lume VM image (Apple Virtualization, macOS hosts).
     Lume,
 }
 
-/// Why a macOS image (Lume or not) does not run on Fleet.
-pub const FLEET_MACOS_UNSUPPORTED: &str =
-    "macOS images run locally with Lume; Fleet does not offer macOS sandboxes in this SDK";
+/// Why a macOS image (Lume or not) does not run on a cloud provider.
+pub const CLOUD_MACOS_UNSUPPORTED: &str =
+    "macOS images run locally with Lume; cloud providers do not offer macOS sandboxes in this SDK";
 
 /// The name [`ImageError::UnsupportedVariant`] lists in `found` for a
 /// darwin image in no Lume format ([`ImageKind::Macos`]): no backend runs it.
@@ -119,31 +119,31 @@ pub enum Backend {
     Auto,
     /// This machine: rootfs (container), containerdisk (QEMU) or lume.
     Local,
-    /// Fleet: rootfs (gVisor) or containerdisk (KubeVirt).
-    Fleet,
-    /// docker / gVisor locally, `gvisor` on Fleet.
+    /// A bring-your-own cloud provider: rootfs or containerdisk.
+    Provider,
+    /// docker / gVisor locally.
     Container,
-    /// QEMU locally, `kubevirt` on Fleet (`vm=True`).
+    /// QEMU locally (`vm=True`).
     Vm,
     /// Lume.
     Lume,
 }
 
 impl Backend {
-    /// Parses a backend or runtime name: `auto`, `local`, `fleet`,
+    /// Parses a backend or runtime name: `auto`, `local`, `provider`,
     /// `container`/`docker`/`gvisor`/`runsc`, `vm`/`qemu`/`kubevirt`, `lume`.
     pub fn parse(s: &str) -> Result<Self> {
         Ok(match s.trim().to_ascii_lowercase().as_str() {
             "" | "auto" => Self::Auto,
             "local" => Self::Local,
-            "fleet" | "cloud" => Self::Fleet,
+            "provider" => Self::Provider,
             "container" | "docker" | "gvisor" | "runsc" | "rootfs" => Self::Container,
             "vm" | "qemu" | "kubevirt" | "containerdisk" => Self::Vm,
             "lume" => Self::Lume,
             other => {
                 return Err(ImageError::Reference(
                     other.into(),
-                    "unknown backend; expected auto, local, fleet, container, vm or lume".into(),
+                    "unknown backend; expected auto, local, provider, container, vm or lume".into(),
                 ));
             }
         })
@@ -154,7 +154,7 @@ impl Backend {
         match self {
             Self::Auto => "auto",
             Self::Local => "local",
-            Self::Fleet => "fleet",
+            Self::Provider => "provider",
             Self::Container => "container",
             Self::Vm => "vm",
             Self::Lume => "lume",
@@ -167,7 +167,7 @@ impl Backend {
         match self {
             Self::Auto => &[Rootfs, Containerdisk, Lume],
             Self::Local => &[Rootfs, Containerdisk, Lume],
-            Self::Fleet => &[Rootfs, Containerdisk],
+            Self::Provider => &[Rootfs, Containerdisk],
             Self::Container => &[Rootfs],
             Self::Vm => &[Containerdisk],
             Self::Lume => &[Lume],
@@ -487,8 +487,8 @@ fn unsupported(
     if macos {
         names.push(MACOS_FOUND.into());
     }
-    let reason = if (macos || found.contains(&Variant::Lume)) && backend == Backend::Fleet {
-        FLEET_MACOS_UNSUPPORTED.to_string()
+    let reason = if (macos || found.contains(&Variant::Lume)) && backend == Backend::Provider {
+        CLOUD_MACOS_UNSUPPORTED.to_string()
     } else if macos && found.is_empty() {
         "a macOS image that is not a Lume image cannot run here; macOS images run locally with \
          Lume (e.g. ghcr.io/trycua/macos:26) on a Mac"

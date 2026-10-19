@@ -116,6 +116,8 @@ export { useThisMachine, type HostFailure, type HostFormView as HostSetupFormVie
 export type { HostFormAction, HostSetupRequest } from "./ops/host-setup";
 export type { TelemetrySignal } from "./ops/telemetry";
 export { useStartup, type StartupHook } from "./startup";
+export { useLinkNotice, TURN_OFF_FAILED, type LinkNoticeHook } from "./link-notice";
+export type { TelemetryLinkNotice } from "./ops/telemetry";
 export { defaultTeam, eligibleTeams, teamName, useTeamChoices, type TeamChoices } from "./teams";
 export { joinFailureText, useJoinWithCode, type JoinHook, type JoinPhase } from "./join";
 export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pairing-code";
@@ -178,6 +180,7 @@ export {
   useFirstRunSaved,
   writeFirstRun,
   type FirstRunHook,
+  type FirstRunUsage,
   type FirstRunSaved,
 } from "./first-run";
 export type * from "./contracts/first-run";

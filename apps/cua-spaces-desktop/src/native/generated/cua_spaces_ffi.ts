@@ -10,12 +10,12 @@
 import nativeModule from "./cua_spaces_ffi-ffi";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSpacesFfiDecodedFrameSink, type UniffiVTableCallbackInterfaceCuaSpacesFfiPcmSink, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportApproval, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportRunListener, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportWindowDragListener,
 } from "./cua_spaces_ffi-ffi";
-import { type AgentInfo, type AgentSetupOutcome, type ComputerResources, type CuaLike, type DevicesLike, type DevicesSnapshot, type DiskWarning, type FleetBillingStatus, type HostLike, type HostStatus, type MediaEvent, type MediaOpenOptions, type MediaSessionLike, type ResourcesSnapshot, type SandboxLike, type SpaceLike, type SpaceResources, type SpaceSendFileReport, type SpacesHost, type SpacesdClientLike, type TeleportItem, type TeleportManifest, CuaError,
+import { type AgentInfo, type AgentSetupOutcome, type ComputerResources, type CuaLike, type DevicesLike, type DevicesSnapshot, type DiskWarning, type HostLike, type HostStatus, type MediaEvent, type MediaOpenOptions, type MediaSessionLike, type ResourcesSnapshot, type SandboxLike, type SpaceLike, type SpaceResources, type SpaceSendFileReport, type SpacesHost, type SpacesdClientLike, type TeleportItem, type TeleportManifest, CuaError,
 } from "./cua_sdk";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterFloat64, FfiConverterInt16, FfiConverterInt32, FfiConverterInt64, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTypeNameSymbol,
 } from "@ubjs/core";
 import uniffiCuaSdkModule from "./cua_sdk";
-const { FfiConverterTypeAgentInfo, FfiConverterTypeAgentSetupOutcome, FfiConverterTypeComputerResources, FfiConverterTypeCua, FfiConverterTypeCuaError, FfiConverterTypeDevices, FfiConverterTypeDevicesSnapshot, FfiConverterTypeDiskWarning, FfiConverterTypeFleetBillingStatus, FfiConverterTypeHost, FfiConverterTypeHostStatus, FfiConverterTypeMediaEvent, FfiConverterTypeMediaOpenOptions, FfiConverterTypeMediaSession, FfiConverterTypeResourcesSnapshot, FfiConverterTypeSandbox, FfiConverterTypeSpace, FfiConverterTypeSpaceResources, FfiConverterTypeSpaceSendFileReport, FfiConverterTypeSpacesHost, FfiConverterTypeSpacesdClient, FfiConverterTypeTeleportItem, FfiConverterTypeTeleportManifest } = uniffiCuaSdkModule.converters;
+const { FfiConverterTypeAgentInfo, FfiConverterTypeAgentSetupOutcome, FfiConverterTypeComputerResources, FfiConverterTypeCua, FfiConverterTypeCuaError, FfiConverterTypeDevices, FfiConverterTypeDevicesSnapshot, FfiConverterTypeDiskWarning, FfiConverterTypeHost, FfiConverterTypeHostStatus, FfiConverterTypeMediaEvent, FfiConverterTypeMediaOpenOptions, FfiConverterTypeMediaSession, FfiConverterTypeResourcesSnapshot, FfiConverterTypeSandbox, FfiConverterTypeSpace, FfiConverterTypeSpaceResources, FfiConverterTypeSpaceSendFileReport, FfiConverterTypeSpacesHost, FfiConverterTypeSpacesdClient, FfiConverterTypeTeleportItem, FfiConverterTypeTeleportManifest } = uniffiCuaSdkModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -701,27 +701,6 @@ export function appApproveView(state: AppApproveSheetState, devices: Array<AppDe
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_approve_view(
         FfiConverterTypeAppApproveSheetState.lower(state, nativeModule().rustbuffer_alloc),
         FfiConverterSequenceTypeAppDeviceInput.lower(devices, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * The SDK's billing status as the app core takes it (Settings' Billing
- * row).
- */
-export function appBillingStatus(status: FleetBillingStatus): AppBillingStatus {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterTypeAppBillingStatus.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_billing_status(
-        FfiConverterTypeFleetBillingStatus.lower(status, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -5089,7 +5068,8 @@ export function appTelemetrySignInFailed(message: string | undefined): Array<App
 
 /**
  * The app started: attributes this process's events to `spaces_app` at
- * `version`, lets the app show the first-run notice itself (nothing is
+ * `version`, links usage data to the signed-in account in the background
+ * when the Spaces API offers it, lets the app show the first-run notice itself (nothing is
  * sent before it has been shown once), and records `app_launched` (on a
  * first run, once the notice shows). Call once at launch, before the
  * first `Cua`. `onboarding_eligible`: the first run is still to finish
@@ -11933,7 +11913,7 @@ inner: {surface: string; storage: string; addToFinder: boolean; mountMethod: str
     type Share__interface = {
         tag: AppTelemetrySignal_Tags.Share;
         inner:
-Readonly<{action: string; role: string; outcome: string}>
+Readonly<{action: string; role: string; outcome: string; errorKind: string; failedStage: string}>
     };
     /**
      * A Space was shared, unshared or its role changed (`cua_share`).
@@ -11946,15 +11926,15 @@ Readonly<{action: string; role: string; outcome: string}>
         readonly [uniffiTypeNameSymbol] = "AppTelemetrySignal";
         readonly tag = AppTelemetrySignal_Tags.Share;
         readonly inner:
-Readonly<{action: string; role: string; outcome: string}>;
+Readonly<{action: string; role: string; outcome: string; errorKind: string; failedStage: string}>;
         constructor(
-inner: {action: string; role: string; outcome: string }) {
+inner: {action: string; role: string; outcome: string; errorKind: string; failedStage: string }) {
             super("AppTelemetrySignal", "Share");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {action: string; role: string; outcome: string }): Share_ {
+inner: {action: string; role: string; outcome: string; errorKind: string; failedStage: string }): Share_ {
             return new Share_(inner);
         }
 
@@ -12146,7 +12126,7 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                 case 7: return new AppTelemetrySignal.SpaceCreate({location: FfiConverterString.read(from), guestOs: FfiConverterString.read(from), kind: FfiConverterString.read(from), outcome: FfiConverterString.read(from), failedPhase: FfiConverterString.read(from), stalled: FfiConverterBool.read(from), elapsedMs: FfiConverterUInt64.read(from), gpu: FfiConverterBool.read(from), errorVariant: FfiConverterString.read(from) });
                 case 8: return new AppTelemetrySignal.SpaceCreateStarted({location: FfiConverterString.read(from), guestOs: FfiConverterString.read(from), kind: FfiConverterString.read(from), gpu: FfiConverterBool.read(from) });
                 case 9: return new AppTelemetrySignal.VolumeSetup({surface: FfiConverterString.read(from), storage: FfiConverterString.read(from), addToFinder: FfiConverterBool.read(from), mountMethod: FfiConverterString.read(from), outcome: FfiConverterString.read(from) });
-                case 10: return new AppTelemetrySignal.Share({action: FfiConverterString.read(from), role: FfiConverterString.read(from), outcome: FfiConverterString.read(from) });
+                case 10: return new AppTelemetrySignal.Share({action: FfiConverterString.read(from), role: FfiConverterString.read(from), outcome: FfiConverterString.read(from), errorKind: FfiConverterString.read(from), failedStage: FfiConverterString.read(from) });
                 case 11: return new AppTelemetrySignal.AppUpdate({action: FfiConverterString.read(from), channel: FfiConverterString.read(from), trigger: FfiConverterString.read(from) });
                 case 12: return new AppTelemetrySignal.DeviceEnroll({method: FfiConverterString.read(from), outcome: FfiConverterString.read(from) });
                 case 13: return new AppTelemetrySignal.Experiment({action: FfiConverterString.read(from), experiment: FfiConverterString.read(from) });
@@ -12234,6 +12214,8 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                     FfiConverterString.write(inner.action, into);
                     FfiConverterString.write(inner.role, into);
                     FfiConverterString.write(inner.outcome, into);
+                    FfiConverterString.write(inner.errorKind, into);
+                    FfiConverterString.write(inner.failedStage, into);
                     return;
                 }
                 case AppTelemetrySignal_Tags.AppUpdate: {
@@ -12349,6 +12331,8 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                     size += FfiConverterString.allocationSize(inner.action);
                     size += FfiConverterString.allocationSize(inner.role);
                     size += FfiConverterString.allocationSize(inner.outcome);
+                    size += FfiConverterString.allocationSize(inner.errorKind);
+                    size += FfiConverterString.allocationSize(inner.failedStage);
                     return size;
                 }
                 case AppTelemetrySignal_Tags.AppUpdate: {
@@ -21908,7 +21892,7 @@ const FfiConverterTypeAppFact = (() => {
 
 export type AppGpuChoice = {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+     * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
      */
     runtime: string,
     /**
@@ -28974,7 +28958,7 @@ export type AppOnboardingState = {
     launchAtLogin: boolean,
     /**
      * The usage-data switch on Welcome: the machine's telemetry setting
-     * (Settings' "Share anonymous usage data", `cua telemetry off`), none
+     * (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
      * until the shell read it (then it shows on).
      */
     telemetry?: AppTelemetryInput,
@@ -29360,7 +29344,7 @@ const FfiConverterTypeAppPresentationCard = (() => {
 
 export type AppUsageToggle = {
     /**
-     * "Share anonymous usage data".
+     * "Share usage data to help improve Cua".
      */
     label: string,
     /**
@@ -52542,7 +52526,7 @@ inner: {telemetry: AppTelemetryInput }): TelemetryLoaded_ {
 Readonly<{on: boolean}>
     };
     /**
-     * Welcome's "Share anonymous usage data" switch (not while the
+     * Welcome's "Share usage data to help improve Cua" switch (not while the
      * environment decides). The shell writes the setting.
      */
     class UsageDataToggled_ extends UniffiEnum implements UsageDataToggled__interface {
@@ -62023,9 +62007,6 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_approve_view() !== 20205) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_approve_view");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_billing_status() !== 4162) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_billing_status");
-    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json() !== 39250) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json");
     }
@@ -62653,7 +62634,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed() !== 34262) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() !== 189) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() !== 30125) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_telemetry_storage() !== 21459) {

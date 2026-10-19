@@ -84,8 +84,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "shortDescription": "Reach your cloud Spaces and your own machines",
-    "longDescription": "Cua Spaces connects to cloud Spaces and to your own computers through the Cua relay, and can set this machine up for unattended access.",
+    "shortDescription": "Reach your cloud Spaces and your own computers",
+    "longDescription": "Cua Spaces connects to cloud Spaces and to your own computers through the Cua relay, and can set this computer up for unattended access.",
     "windows": {
       "nsis": {
         "installMode": "currentUser",

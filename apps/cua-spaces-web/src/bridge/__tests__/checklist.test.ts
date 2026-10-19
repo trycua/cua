@@ -65,7 +65,7 @@ describe("the getting-started checklist", () => {
     const view = checklistView(core, { done: { teleport: true }, dismissed: false, shown: true })!;
     expect(view).toMatchObject({ visible: true, complete: false, title: "Get started", progress: "1 of 5" });
     expect(view.rows.map((r) => [r.step, r.action, r.done])).toEqual([
-      ["add_machine", "Add machine", false],
+      ["add_machine", "Add computer", false],
       ["create_space", "Create", false],
       ["teleport", "Teleport", true],
       ["share", "Share", false],

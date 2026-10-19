@@ -108,4 +108,3 @@ What the sample does with today's primitives, and what needs core work:
 - Host access is per account, not per bot.
 - Saved sign-ins need the Cua daemon's Keyvault and a Cua-signed app to
   approve; this sample's build shows the request and falls back to take over.
-- Pause on a Cua Cloud Space can't suspend it (Fleet claims have no suspend).

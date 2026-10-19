@@ -89,7 +89,7 @@ pub struct LocalStartSpec {
     /// How long the backend may take to report running.
     pub ready_timeout: Duration,
     /// Boot firmware for VM backends (`bios` / `efi`); `None` lets the
-    /// backend decide. Set from a Fleet template's `firmware`.
+    /// backend decide. Set from an image's `firmware`.
     #[serde(default)]
     pub firmware: Option<String>,
     /// Extra containers sharing the instance's network namespace

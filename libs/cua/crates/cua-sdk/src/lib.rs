@@ -15,7 +15,6 @@
 //! |---|---|
 //! | [`Sandboxes`] / [`Sandbox`] / [`Service`] / [`PortForward`] | daemon-agnostic sandboxes (local, direct, your own cloud) |
 //! | [`SpacesdClient`] / [`SpacesdProcess`] / [`MediaSession`] | cua-spacesd (`cua.env.v1`), including a JSON escape hatch |
-//! | [`Fleet`] | pools, templates, claims, images of Cua Cloud, which has ended (every call fails with the "Cua Cloud has ended" error) |
 //! | [`Local`] | local runtimes and images (cua-vmm, cua-image) |
 //! | [`Spaces`] / [`Space`] / [`SpaceStreamSession`] / [`SpacePresence`] | Spaces: registry, local/direct/relay Spaces, exec, files, services, streams, presence, teleport, hotspot, agents |
 //! | `Teleport` (feature `teleport`) | move a desktop app session from this machine into a sandbox (cua-teleport) |
@@ -135,29 +134,6 @@ pub enum CuaError {
     /// the sandbox or service actually starts.
     #[error("timed out: {0}")]
     Timeout(String),
-    /// Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
-    /// this.
-    ///
-    /// Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-    /// ended guide.
-    #[error("fleet: {0}")]
-    Fleet(String),
-    /// Fleet's admission refused the request. Cua Cloud has ended, so the SDK
-    /// no longer raises this.
-    ///
-    /// Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-    /// ended guide.
-    #[error("fleet admission denied: {0}")]
-    FleetAdmissionDenied(String),
-    /// The account is out of Cua Cloud credit: no credit left, and no card
-    /// or plan. New cloud sandboxes and Spaces are refused; running ones
-    /// keep running, and local ones are never affected. The message ends
-    /// with the website billing page's URL.
-    ///
-    /// Fix: Add credit on that page (a plan, or a card for pay as you go),
-    /// or run the sandbox locally.
-    #[error("{0}")]
-    CloudCreditExhausted(String),
     /// Local runtime failure.
     ///
     /// Fix: Run `cua runtime doctor` (`Local.doctor`) and follow the steps it
@@ -218,7 +194,7 @@ pub enum CuaError {
     /// display, a local runtime) is not available.
     ///
     /// Fix: Install or start the prerequisite the message names on this
-    /// machine.
+    /// computer.
     #[error("host capability missing: {0}")]
     HostCapabilityMissing(String),
     /// The teleport consent gate refused (or the approver declined).
@@ -227,21 +203,6 @@ pub enum CuaError {
     /// scope.
     #[error("teleport refused: {0}")]
     TeleportRefused(String),
-    /// A named cloud pool's template differs from the requested sandbox
-    /// fields. Cua Cloud has ended, so the SDK no longer raises this.
-    ///
-    /// Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-    /// ended guide.
-    #[error("pool spec mismatch: {0}")]
-    PoolSpecMismatch(String),
-    /// A claim bound but its per-claim secrets (the env token) never
-    /// reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
-    /// this.
-    ///
-    /// Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-    /// ended guide.
-    #[error("claim secrets not delivered: {0}")]
-    ClaimSecretsNotDelivered(String),
     /// Bug or I/O failure.
     ///
     /// Fix: Report it with the message at https://github.com/trycua/cua/issues.
@@ -309,9 +270,6 @@ impl CuaError {
             CuaError::Unsupported(_) => "Unsupported",
             CuaError::SpacesdNotAvailable(_) => "SpacesdNotAvailable",
             CuaError::Timeout(_) => "Timeout",
-            CuaError::Fleet(_) => "Fleet",
-            CuaError::FleetAdmissionDenied(_) => "FleetAdmissionDenied",
-            CuaError::CloudCreditExhausted(_) => "CloudCreditExhausted",
             CuaError::Runtime(_) => "Runtime",
             CuaError::Env(_) => "Env",
             CuaError::Http(_) => "Http",
@@ -323,8 +281,6 @@ impl CuaError {
             CuaError::CapabilityMissing(_) => "CapabilityMissing",
             CuaError::HostCapabilityMissing(_) => "HostCapabilityMissing",
             CuaError::TeleportRefused(_) => "TeleportRefused",
-            CuaError::PoolSpecMismatch(_) => "PoolSpecMismatch",
-            CuaError::ClaimSecretsNotDelivered(_) => "ClaimSecretsNotDelivered",
             CuaError::Internal(_) => "Internal",
             CuaError::AmbiguousSandbox(_) => "AmbiguousSandbox",
             CuaError::InsufficientDisk(_) => "InsufficientDisk",

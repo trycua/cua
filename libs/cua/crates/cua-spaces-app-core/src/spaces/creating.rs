@@ -363,7 +363,7 @@ pub enum CreateFamily {
     Macos,
     /// A Windows VM (QEMU; emulated on Apple silicon).
     Windows,
-    /// A cloud Space (a Fleet claim).
+    /// A cloud Space.
     Cloud,
 }
 
@@ -1343,7 +1343,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         // Created on another of your machines: not this Mac.
-        SpaceProvider::Relay | SpaceProvider::Direct => "Another machine",
+        SpaceProvider::Relay | SpaceProvider::Direct => "Another computer",
     };
     let label = if failed {
         "Failed".to_string()
@@ -1710,7 +1710,7 @@ mod tests {
         assert!(p.permille > 10, "past the 1% floor: {}", p.permille);
         assert_eq!(
             row.detail,
-            e("Another machine \u{b7} Downloading macOS (first time only)...")
+            e("Another computer \u{b7} Downloading macOS (first time only)...")
         );
     }
 
@@ -2693,7 +2693,7 @@ mod tests {
         let s = reduce(&CreatesState::default(), &relay(SpaceOs::Macos));
         assert_eq!(
             compose(&[], &s)[0].detail,
-            "Another machine \u{b7} Starting\u{2026}"
+            "Another computer \u{b7} Starting\u{2026}"
         );
         // The host pulls 22 GB without reporting: no stall at 5 min, nor
         // at the local preparing limit.

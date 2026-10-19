@@ -23,7 +23,7 @@ import type {
 } from "../src/native/generated/index";
 import type { LocalRuntimes, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
-import type { AccountProfile, AccountRunning, SignInAttempt, TelemetryRunning } from "../src/model/services";
+import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
 export function sampleRows(n: Native): AppSpaceRow[] {
   const row = (r: Partial<AppSpaceRow> & Pick<AppSpaceRow, "id" | "name" | "provider">): AppSpaceRow => ({
@@ -390,5 +390,23 @@ export class FixtureTelemetry implements TelemetryRunning {
   acknowledgeNotice() {
     this.acknowledged += 1;
     this.current = { ...this.current, noticeShown: true };
+  }
+  /** Whether the one-time linking notice is due (a machine that saw the older wording). */
+  linkNoticeDue = false;
+  linkNoticeAcknowledged = 0;
+  linkNotice(): LinkNoticeView {
+    return {
+      due: this.linkNoticeDue,
+      title: "We've updated how usage data works",
+      body: "Cua collects usage data, like which features you use and when something goes wrong.",
+      okLabel: "Got it",
+      turnOffLabel: "Turn off usage data",
+      detailsLabel: "What is collected",
+      docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+    };
+  }
+  acknowledgeLinkNotice() {
+    this.linkNoticeAcknowledged += 1;
+    this.linkNoticeDue = false;
   }
 }

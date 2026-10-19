@@ -26,7 +26,6 @@ cua-spaces = { path = "../../../libs/cua/crates/cua-spaces", default-features = 
     # `Spaces::call_extension`: session teleport's tool calls.
     "mcp",
 ] }
-cua-fleet = { path = "../../../libs/cua/crates/cua-fleet" }
 # The streaming client behind `StreamSession` ships with Cua Spaces
 # (source-available, FSL-1.1-MIT), which makes this sample FSL too.
 cua-spaces-ext = { path = "../../../libs/cua/crates/cua-spaces-ext" }

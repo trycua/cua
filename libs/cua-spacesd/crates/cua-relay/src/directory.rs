@@ -155,7 +155,7 @@ impl std::fmt::Display for DirectoryError {
             Self::Invalid(m) | Self::Forbidden(m) | Self::Conflict(m) | Self::Storage(m) => {
                 f.write_str(m)
             }
-            Self::NotFound => f.write_str("no such machine"),
+            Self::NotFound => f.write_str("no such computer"),
         }
     }
 }
@@ -308,7 +308,7 @@ impl Directory {
         confirmed: bool,
     ) -> Result<(MachineRecord, String), DirectoryError> {
         if !crate::valid_machine_id(id) {
-            return Err(DirectoryError::Invalid("invalid machine id".into()));
+            return Err(DirectoryError::Invalid("invalid computer id".into()));
         }
         let allow = allow.map(clean_allow).transpose()?;
         let token = new_token();
@@ -316,7 +316,7 @@ impl Directory {
         let record = match records.get(id) {
             Some(existing) if existing.owner.id != who.account => {
                 return Err(DirectoryError::Conflict(
-                    "machine id registered to another account".into(),
+                    "computer id registered to another account".into(),
                 ))
             }
             Some(existing) => {
@@ -339,7 +339,7 @@ impl Directory {
                     .count();
                 if owned >= self.max_per_account {
                     return Err(DirectoryError::Forbidden(format!(
-                        "an account may register at most {} machines",
+                        "an account may register at most {} computers",
                         self.max_per_account
                     )));
                 }
@@ -408,7 +408,7 @@ impl Directory {
     pub fn set_host(&self, id: &str, host: Option<&str>) -> Result<MachineRecord, DirectoryError> {
         if let Some(h) = host {
             if !crate::valid_machine_id(h) {
-                return Err(DirectoryError::Invalid("invalid host machine id".into()));
+                return Err(DirectoryError::Invalid("invalid host computer id".into()));
             }
         }
         let mut records = self.records.lock().expect("directory");
@@ -486,7 +486,7 @@ impl Directory {
         }
         if record.allow.len() + record.viewers.len() > 64 {
             return Err(DirectoryError::Invalid(
-                "at most 64 shared accounts per machine".into(),
+                "at most 64 shared accounts per computer".into(),
             ));
         }
         if let Some(sharing) = patch.sharing {

@@ -3115,8 +3115,7 @@ pub struct AppLocalStorage {
     pub linux_runtime_download_bytes: u64,
 }
 
-/// Cua Cloud rates for this account (the SDK's `Fleet.usage_pricing()`,
-/// read from Fleet's `GET /api/config`).
+/// Cua Cloud rates for this account.
 pub type AppCloudPricing = core::wizard::CloudPricing;
 #[uniffi::remote(Record)]
 pub struct AppCloudPricing {
@@ -3245,7 +3244,7 @@ pub struct AppPlacementOption {
 pub type AppGpuChoice = core::wizard::GpuChoice;
 #[uniffi::remote(Record)]
 pub struct AppGpuChoice {
-    /// `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+    /// `lume`, `qemu`, `container`, `gvisor`, `cloud`.
     pub runtime: String,
     /// What the create passes as `gpu` (`paravirtual`).
     pub id: String,
@@ -5234,8 +5233,7 @@ pub struct AppBillingCredit {
     pub balance_usd_cents: i64,
 }
 
-/// The account's billing (the SDK's `Fleet.billing_status()`, Fleet's
-/// `GET /api/billing/status`).
+/// The account's billing, as the apps read it.
 pub type AppBillingStatus = core::billing::BillingStatus;
 #[uniffi::remote(Record)]
 pub struct AppBillingStatus {
@@ -5249,8 +5247,8 @@ pub struct AppBillingStatus {
     pub billing_url: Option<String>,
 }
 
-/// A cloud Space Fleet refused for want of credit: the line, the button,
-/// and the website billing page it opens.
+/// A cloud Space refused for want of credit: the line, the button, and the
+/// website billing page it opens.
 pub type AppCreditNotice = core::billing::CreditNotice;
 #[uniffi::remote(Record)]
 pub struct AppCreditNotice {
@@ -5594,7 +5592,7 @@ pub struct AppOnboardingState {
     /// shell applies it when the first run finishes.
     pub launch_at_login: bool,
     /// The usage-data switch on Welcome: the machine's telemetry setting
-    /// (Settings' "Share anonymous usage data", `cua telemetry off`), none
+    /// (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
     /// until the shell read it (then it shows on).
     pub telemetry: Option<AppTelemetryInput>,
     /// Settings, Experiments: the Cua Volume page (and its Done line) only
@@ -5725,7 +5723,7 @@ pub enum AppOnboardingAction {
     /// On a machine that already showed the usage notice, with usage data
     /// on, the run's start counts now rather than when Welcome is left.
     WelcomeShown,
-    /// Welcome's "Share anonymous usage data" switch (not while the
+    /// Welcome's "Share usage data to help improve Cua" switch (not while the
     /// environment decides). The shell writes the setting.
     UsageDataToggled {
         /// On.
@@ -5799,11 +5797,11 @@ pub struct AppStepDot {
 }
 
 /// One answer on the This machine page.
-/// Welcome's "Share anonymous usage data" switch.
+/// Welcome's "Share usage data to help improve Cua" switch.
 pub type AppUsageToggle = core::onboarding::UsageToggle;
 #[uniffi::remote(Record)]
 pub struct AppUsageToggle {
-    /// "Share anonymous usage data".
+    /// "Share usage data to help improve Cua".
     pub label: String,
     /// On.
     pub on: bool,
@@ -9259,8 +9257,17 @@ pub enum AppTelemetrySignal {
         action: String,
         /// `viewer`, `editor` or `none`.
         role: String,
-        /// `ok` or `error`.
+        /// `ok`, `error`, or `cancelled` when the confirmation prompt was
+        /// dismissed.
         outcome: String,
+        /// Why it did not happen (`presence_denied`, `presence_cancelled`,
+        /// `presence_unavailable`, `not_signed_in`, `device_not_enrolled`,
+        /// `driver_unsupported`, `relay_refused`, `relay_unreachable`,
+        /// `invalid_who` or `other`); `none` when it worked.
+        error_kind: String,
+        /// Where it stopped (`request`, `presence`, `account`, `device`,
+        /// `driver`, `relay` or `other`); `none` when it worked.
+        failed_stage: String,
     },
     /// An updater step (`cua_app_update`).
     AppUpdate {

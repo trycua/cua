@@ -833,7 +833,7 @@ async fn do_drives_a_relay_space() {
     assert_eq!(o.code, 2, "{o:?}");
     assert!(
         o.stderr.contains(
-            "invalid argument: not a sandbox ref: \"relay:short\" (relay machine ids are [a-z0-9-]{8,64})"
+            "invalid argument: not a sandbox ref: \"relay:short\" (relay computer ids are [a-z0-9-]{8,64})"
         ),
         "{o:?}"
     );
@@ -844,7 +844,7 @@ async fn do_drives_a_relay_space() {
     assert_eq!(o.code, 6, "{o:?}");
     assert!(
         o.stderr.contains(
-            "unauthenticated: Relay authentication failed. Sign in again to refresh your machines."
+            "unauthenticated: Relay authentication failed. Sign in again to refresh your computers."
         ),
         "{o:?}"
     );

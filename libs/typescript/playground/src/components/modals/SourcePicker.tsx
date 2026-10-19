@@ -19,7 +19,7 @@ export function SourcePicker({ onSelect }: SourcePickerProps) {
       source: 'local',
       icon: <Monitor className="h-6 w-6" />,
       title: 'Local (Docker)',
-      description: 'Run a sandbox on your machine using Docker',
+      description: 'Run a sandbox on your computer using Docker',
     },
     {
       source: 'custom',

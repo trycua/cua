@@ -101,7 +101,7 @@ plan to `POST /api/spaces/create`, which makes one SDK call,
 | Where | `on` | `kind` / `runtime` |
 |---|---|---|
 | This machine | `local` | container / `auto` (gVisor when available), vm / `qemu`, vm / `lume`; plus `cpus`, `memoryMb`. The SDK runs it itself |
-| Cua Cloud | `cloud` | container / `gvisor`, vm / `kubevirt`. Needs `cua auth login` (or `CUA_CLIENT_ID`/`CUA_CLIENT_SECRET`); metered until deleted |
+| Cua Cloud | `cloud` | Ended: a create fails with "Cua Cloud has ended". Create the Space on this machine instead |
 
 **Add by address** (wizard footer or empty state) registers a machine that
 already runs cua-spacesd. **Delete…** is a separate control that always asks

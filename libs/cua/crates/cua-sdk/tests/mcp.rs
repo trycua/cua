@@ -26,7 +26,6 @@ fn opts(on: &str, name: &str) -> SandboxCreateOptions {
         image: String::new(),
         name: Some(name.into()),
         token: None,
-        pool: None,
         os: None,
         cpus: None,
         memory_mb: None,
@@ -35,12 +34,7 @@ fn opts(on: &str, name: &str) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
         command: None,
-        cloud: None,
         sidecars: vec![],
         registry_secret: None,
         build: None,
@@ -242,7 +236,6 @@ async fn suite(daemon: bool) {
 
     // Cua Cloud has ended: a cloud create fails with the one message.
     let mut o = opts("cloud", CLAIM);
-    o.pool = Some(CLAIM.into());
     o.image = IMAGE.into();
     let e = sbx.create(o).await.err().expect("cloud create fails");
     assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");

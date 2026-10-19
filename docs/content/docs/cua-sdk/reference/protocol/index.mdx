@@ -21,7 +21,7 @@ Clients use the SDK's [`SpacesdClient`](/cua-sdk/reference/spacesd) or `cua spac
 | TCP 3211 | Native gRPC (HTTP/2) and gRPC-Web (HTTP/1.1), gRPC reflection, and the HTTP routes below |
 | UDP 3212 | QUIC media datagrams (ALPN `rcdp/2`, certificate pinned through `StreamService.OpenMedia`) |
 
-The default bind is `0.0.0.0:3211` with a token and `127.0.0.1:3211` without one; a non-loopback bind without a token is refused. Clients send the env token as `authorization: Bearer <token>` or `x-cua-env-authorization: Bearer <token>` (the Fleet gateway consumes `authorization`). The token grants full control of the machine: never put it in a URL; browsers use tickets and signed URLs.
+The default bind is `0.0.0.0:3211` with a token and `127.0.0.1:3211` without one; a non-loopback bind without a token is refused. Clients send the env token as `authorization: Bearer <token>` or `x-cua-env-authorization: Bearer <token>` (a gateway may consume `authorization`). The token grants full control of the computer: never put it in a URL; browsers use tickets and signed URLs.
 
 | Route | Auth | Purpose |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ Tickets go in `?ticket=` or the WebSocket subprotocol `cua.ticket.<ticket>`. Tic
 | [`HostSpacesService`](/cua-sdk/reference/protocol/env-stream#hostspacesservice) | `cua.env.v1` | [Streams, teleport, tunnels and host Spaces](/cua-sdk/reference/protocol/env-stream) | 6 |
 | [`SandboxService`](/cua-sdk/reference/protocol/daemon#sandboxservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 20 |
 | [`RuntimeService`](/cua-sdk/reference/protocol/daemon#runtimeservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 5 |
-| [`SpaceService`](/cua-sdk/reference/protocol/daemon#spaceservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 19 |
+| [`SpaceService`](/cua-sdk/reference/protocol/daemon#spaceservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 18 |
 | [`DaemonService`](/cua-sdk/reference/protocol/daemon#daemonservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 3 |
 
 ## Metadata and HTTP routes
@@ -63,7 +63,7 @@ Well-known metadata keys and HTTP paths (`cua_proto::metadata`).
 | Constant | Value | Meaning |
 | --- | --- | --- |
 | `AUTHORIZATION` | `authorization` | Bearer token header: `authorization: Bearer <token>`. |
-| `ENV_AUTHORIZATION` | `x-cua-env-authorization` | Alternate spacesd token header, `x-cua-env-authorization: Bearer <token>`, for paths where `authorization` belongs to an outer hop (the Fleet gateway consumes and strips it). Servers accept either header. |
+| `ENV_AUTHORIZATION` | `x-cua-env-authorization` | Alternate spacesd token header, `x-cua-env-authorization: Bearer <token>`, for paths where `authorization` belongs to an outer hop (a gateway consumes and strips it). Servers accept either header. |
 | `PRINCIPAL_BIN` | `x-cua-principal-bin` | Binary metadata carrying a serialized `cua.env.v1.Principal`. |
 | `HEALTH_PATH` | `/health` | Plain-HTTP, unauthenticated health route (204 when healthy). |
 | `MEDIA_WS_PATH` | `/media` | Media WebSocket path (ticket-authenticated). |

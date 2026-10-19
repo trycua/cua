@@ -2001,8 +2001,8 @@ public protocol AuthProtocol: AnyObject, Sendable {
     func beginLogin(flow: String?) async throws  -> LoginAttempt
 
     /**
-     * Revokes (best effort) and removes the session. Returns whether one
-     * existed.
+     * Revokes (best effort) and removes the session, and unlinks usage
+     * data from the account. Returns whether one existed.
      */
     func logout() async throws  -> Bool
 
@@ -2119,8 +2119,8 @@ open func beginLogin(flow: String?)async throws  -> LoginAttempt  {
 }
 
     /**
-     * Revokes (best effort) and removes the session. Returns whether one
-     * existed.
+     * Revokes (best effort) and removes the session, and unlinks usage
+     * data from the account. Returns whether one existed.
      */
 open func logout()async throws  -> Bool  {
     return
@@ -2234,12 +2234,6 @@ public protocol CuaProtocol: AnyObject, Sendable {
      * `CUA_CREDENTIAL_STORE`, `CUA_HOME` apply).
      */
     func auth()  -> Auth
-
-    /**
-     * Fleet pools, templates, claims and images. Cua Cloud has ended: this
-     * always fails with the "Cua Cloud has ended" error and never connects.
-     */
-    func fleet() throws  -> Fleet
 
     /**
      * SDK (and daemon) identity. In daemon mode this is the connectivity
@@ -2379,9 +2373,8 @@ public static func connect(address: String?, token: String?)throws  -> Cua  {
 
     /**
      * Runs the SDK runtime in this process. Performs no I/O beyond
-     * reading the credential store when `fleet_from_session` is set (for
-     * the relay account). It never builds a Fleet client: Cua Cloud has
-     * ended.
+     * reading the credential store when `account_from_session` is set (for
+     * the relay account).
      */
 public static func embedded(config: CuaConfig)throws  -> Cua  {
     return try  FfiConverterTypeCua_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -2412,18 +2405,6 @@ open func agentSetup() -> AgentSetup  {
 open func auth() -> Auth  {
     return try!  FfiConverterTypeAuth_lift(try! rustCall() {
     uniffi_cua_sdk_fn_method_cua_auth(
-            self.uniffiCloneHandle(),$0
-    )
-})
-}
-
-    /**
-     * Fleet pools, templates, claims and images. Cua Cloud has ended: this
-     * always fails with the "Cua Cloud has ended" error and never connects.
-     */
-open func fleet()throws  -> Fleet  {
-    return try  FfiConverterTypeFleet_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
-    uniffi_cua_sdk_fn_method_cua_fleet(
             self.uniffiCloneHandle(),$0
     )
 })
@@ -3005,1067 +2986,6 @@ public func FfiConverterTypeDevices_lift(_ handle: UInt64) throws -> Devices {
 #endif
 public func FfiConverterTypeDevices_lower(_ value: Devices) -> UInt64 {
     return FfiConverterTypeDevices.lower(value)
-}
-
-
-
-
-
-
-/**
- * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
- * one, so none of its methods can be called.
- */
-public protocol FleetProtocol: AnyObject, Sendable {
-
-    /**
-     * Claims a sandbox from a pool and waits for it to bind. A claim named
-     * `name` that already exists is reattached.
-     */
-    func acquire(pool: String, name: String?, ttlSeconds: UInt32?) async throws  -> FleetSandbox
-
-    /**
-     * [`Fleet::acquire`] with claim options, including a per-claim env
-     * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-     * releases the claim).
-     */
-    func acquireWith(pool: String, options: FleetClaimOptions) async throws  -> FleetSandbox
-
-    /**
-     * Reconciles pool `name` (= namespace = template) to run `spec` with
-     * `options`: the one pool writer (rolls a new pool back if the
-     * template fails). The image is pinned to the variant the runtime
-     * runs; `spec.registry_secret` is written as the pool's pull Secret.
-     */
-    func apply(name: String, spec: SandboxSpec, options: PoolOptions) async throws  -> FleetPool
-
-    /**
-     * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-     * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
-     */
-    func applyPool(spec: FleetPoolSpec) async throws  -> FleetPool
-
-    /**
-     * Lays the set fields of `spec` over pool `pool`'s template and writes
-     * it (the pool's capacity is kept; a no-op when nothing differs).
-     */
-    func applyPoolTemplate(pool: String, spec: SandboxSpec) async throws
-
-    /**
-     * Waits for a named claim to bind.
-     */
-    func attachClaim(namespace: String, name: String) async throws  -> FleetSandbox
-
-    /**
-     * Fleet API base URL.
-     */
-    func baseUrl()  -> String
-
-    /**
-     * The account's Cua Cloud billing: its credit, card and the website
-     * billing page. A Fleet without billing answers `billing_enabled:
-     * false`.
-     */
-    func billingStatus() async throws  -> FleetBillingStatus
-
-    /**
-     * Compares the set fields of `spec` with pool `pool`'s template:
-     * `PoolSpecMismatch` (with a readable diff) when they differ.
-     */
-    func checkPoolSpec(pool: String, spec: SandboxSpec) async throws
-
-    /**
-     * Creates a claim without waiting.
-     */
-    func claim(pool: String, name: String?, ttlSeconds: UInt32?) async throws  -> FleetClaim
-
-    /**
-     * Creates an image resource (remote build) from a JSON manifest.
-     */
-    func createImage(namespace: String, manifestJson: String) async throws  -> String
-
-    /**
-     * Mints a signed, shareable service URL.
-     */
-    func createSignedServiceUrl(sandbox: FleetSandbox, service: String, label: String?, expiresInSeconds: UInt32) async throws  -> FleetSignedUrl
-
-    /**
-     * Deletes an image resource.
-     */
-    func deleteImage(namespace: String, name: String) async throws
-
-    /**
-     * Deletes a pool, its namespace and its same-named template.
-     */
-    func deletePool(name: String) async throws
-
-    /**
-     * A random ephemeral pool name (`cua-eph-<hex>`).
-     */
-    func ephemeralPoolName()  -> String
-
-    /**
-     * Reads pool `name` back as the shared model, with its `fleets_pool`
-     * Terraform block.
-     */
-    func exportPool(name: String) async throws  -> FleetPoolExport
-
-    /**
-     * Gets an image resource (JSON).
-     */
-    func getImage(namespace: String, name: String) async throws  -> String
-
-    /**
-     * Looks up a pool.
-     */
-    func getPool(name: String) async throws  -> FleetPool
-
-    /**
-     * Extends a claim's lease; returns the RFC 3339 shutdown time.
-     */
-    func keepAlive(namespace: String, name: String, seconds: UInt32) async throws  -> String
-
-    /**
-     * Lists claims in a namespace.
-     */
-    func listClaims(namespace: String) async throws  -> [FleetClaim]
-
-    /**
-     * Lists image resources (JSON) in a namespace.
-     */
-    func listImages(namespace: String) async throws  -> [String]
-
-    /**
-     * Lists pools in a namespace.
-     */
-    func listPools(namespace: String) async throws  -> [FleetPool]
-
-    /**
-     * Lists templates in a namespace as JSON resources.
-     */
-    func listTemplates(namespace: String) async throws  -> [String]
-
-    /**
-     * The image pool `name`'s template runs, as a claim on it reports it
-     * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-     * the template reference with empty `pinned_ref`/`digest` when the
-     * registry cannot be read. `None` when the template names no image.
-     */
-    func poolImageInfo(name: String) async throws  -> ImageInfo?
-
-    /**
-     * Managed pools (list, gc).
-     */
-    func pools()  -> FleetPools
-
-    /**
-     * Releases a claim (missing claims are fine).
-     */
-    func release(namespace: String, name: String) async throws
-
-    /**
-     * The gateway URL of a sandbox service (needs the Fleet bearer).
-     */
-    func serviceUrl(sandbox: FleetSandbox, service: String) throws  -> String
-
-    /**
-     * Sets warm replicas (0 suspends).
-     */
-    func setPoolReplicas(name: String, replicas: UInt32) async throws  -> FleetPool
-
-    /**
-     * This account's Cua Cloud rates (`GET /api/config`), reused for five
-     * minutes. `None` when Fleet answers without rates: show no price
-     * rather than a guess.
-     */
-    func usagePricing() async throws  -> FleetUsagePricing?
-
-    /**
-     * Waits for at least one ready replica.
-     */
-    func waitPoolReady(name: String, timeoutMs: UInt32) async throws  -> FleetPool
-
-}
-/**
- * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
- * one, so none of its methods can be called.
- */
-open class Fleet: FleetProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_cua_sdk_fn_clone_fleet(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_cua_sdk_fn_free_fleet(handle, $0) }
-    }
-
-
-
-
-    /**
-     * Claims a sandbox from a pool and waits for it to bind. A claim named
-     * `name` that already exists is reattached.
-     */
-open func acquire(pool: String, name: String?, ttlSeconds: UInt32?)async throws  -> FleetSandbox  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_acquire(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(pool),FfiConverterOptionString.lower(name),FfiConverterOptionUInt32.lower(ttlSeconds)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetSandbox_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * [`Fleet::acquire`] with claim options, including a per-claim env
-     * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-     * releases the claim).
-     */
-open func acquireWith(pool: String, options: FleetClaimOptions)async throws  -> FleetSandbox  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_acquire_with(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(pool),FfiConverterTypeFleetClaimOptions_lower(options)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetSandbox_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Reconciles pool `name` (= namespace = template) to run `spec` with
-     * `options`: the one pool writer (rolls a new pool back if the
-     * template fails). The image is pinned to the variant the runtime
-     * runs; `spec.registry_secret` is written as the pool's pull Secret.
-     */
-open func apply(name: String, spec: SandboxSpec, options: PoolOptions)async throws  -> FleetPool  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_apply(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(name),FfiConverterTypeSandboxSpec_lower(spec),FfiConverterTypePoolOptions_lower(options)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetPool_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-     * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
-     */
-open func applyPool(spec: FleetPoolSpec)async throws  -> FleetPool  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_apply_pool(
-                    self.uniffiCloneHandle(),
-                    FfiConverterTypeFleetPoolSpec_lower(spec)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetPool_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Lays the set fields of `spec` over pool `pool`'s template and writes
-     * it (the pool's capacity is kept; a no-op when nothing differs).
-     */
-open func applyPoolTemplate(pool: String, spec: SandboxSpec)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_apply_pool_template(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(pool),FfiConverterTypeSandboxSpec_lower(spec)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_void,
-            completeFunc: ffi_cua_sdk_rust_future_complete_void,
-            freeFunc: ffi_cua_sdk_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Waits for a named claim to bind.
-     */
-open func attachClaim(namespace: String, name: String)async throws  -> FleetSandbox  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_attach_claim(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace),FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetSandbox_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Fleet API base URL.
-     */
-open func baseUrl() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-    uniffi_cua_sdk_fn_method_fleet_base_url(
-            self.uniffiCloneHandle(),$0
-    )
-})
-}
-
-    /**
-     * The account's Cua Cloud billing: its credit, card and the website
-     * billing page. A Fleet without billing answers `billing_enabled:
-     * false`.
-     */
-open func billingStatus()async throws  -> FleetBillingStatus  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_billing_status(
-                    self.uniffiCloneHandle()
-
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetBillingStatus_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Compares the set fields of `spec` with pool `pool`'s template:
-     * `PoolSpecMismatch` (with a readable diff) when they differ.
-     */
-open func checkPoolSpec(pool: String, spec: SandboxSpec)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_check_pool_spec(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(pool),FfiConverterTypeSandboxSpec_lower(spec)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_void,
-            completeFunc: ffi_cua_sdk_rust_future_complete_void,
-            freeFunc: ffi_cua_sdk_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Creates a claim without waiting.
-     */
-open func claim(pool: String, name: String?, ttlSeconds: UInt32?)async throws  -> FleetClaim  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_claim(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(pool),FfiConverterOptionString.lower(name),FfiConverterOptionUInt32.lower(ttlSeconds)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetClaim_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Creates an image resource (remote build) from a JSON manifest.
-     */
-open func createImage(namespace: String, manifestJson: String)async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_create_image(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace),FfiConverterString.lower(manifestJson)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Mints a signed, shareable service URL.
-     */
-open func createSignedServiceUrl(sandbox: FleetSandbox, service: String, label: String?, expiresInSeconds: UInt32)async throws  -> FleetSignedUrl  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_create_signed_service_url(
-                    self.uniffiCloneHandle(),
-                    FfiConverterTypeFleetSandbox_lower(sandbox),FfiConverterString.lower(service),FfiConverterOptionString.lower(label),FfiConverterUInt32.lower(expiresInSeconds)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetSignedUrl_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Deletes an image resource.
-     */
-open func deleteImage(namespace: String, name: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_delete_image(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace),FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_void,
-            completeFunc: ffi_cua_sdk_rust_future_complete_void,
-            freeFunc: ffi_cua_sdk_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Deletes a pool, its namespace and its same-named template.
-     */
-open func deletePool(name: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_delete_pool(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_void,
-            completeFunc: ffi_cua_sdk_rust_future_complete_void,
-            freeFunc: ffi_cua_sdk_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * A random ephemeral pool name (`cua-eph-<hex>`).
-     */
-open func ephemeralPoolName() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-    uniffi_cua_sdk_fn_method_fleet_ephemeral_pool_name(
-            self.uniffiCloneHandle(),$0
-    )
-})
-}
-
-    /**
-     * Reads pool `name` back as the shared model, with its `fleets_pool`
-     * Terraform block.
-     */
-open func exportPool(name: String)async throws  -> FleetPoolExport  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_export_pool(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetPoolExport_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Gets an image resource (JSON).
-     */
-open func getImage(namespace: String, name: String)async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_get_image(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace),FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Looks up a pool.
-     */
-open func getPool(name: String)async throws  -> FleetPool  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_get_pool(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetPool_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Extends a claim's lease; returns the RFC 3339 shutdown time.
-     */
-open func keepAlive(namespace: String, name: String, seconds: UInt32)async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_keep_alive(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace),FfiConverterString.lower(name),FfiConverterUInt32.lower(seconds)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Lists claims in a namespace.
-     */
-open func listClaims(namespace: String)async throws  -> [FleetClaim]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_list_claims(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeFleetClaim.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Lists image resources (JSON) in a namespace.
-     */
-open func listImages(namespace: String)async throws  -> [String]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_list_images(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceString.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Lists pools in a namespace.
-     */
-open func listPools(namespace: String)async throws  -> [FleetPool]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_list_pools(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeFleetPool.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Lists templates in a namespace as JSON resources.
-     */
-open func listTemplates(namespace: String)async throws  -> [String]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_list_templates(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceString.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * The image pool `name`'s template runs, as a claim on it reports it
-     * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-     * the template reference with empty `pinned_ref`/`digest` when the
-     * registry cannot be read. `None` when the template names no image.
-     */
-open func poolImageInfo(name: String)async throws  -> ImageInfo?  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_pool_image_info(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionTypeImageInfo.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Managed pools (list, gc).
-     */
-open func pools() -> FleetPools  {
-    return try!  FfiConverterTypeFleetPools_lift(try! rustCall() {
-    uniffi_cua_sdk_fn_method_fleet_pools(
-            self.uniffiCloneHandle(),$0
-    )
-})
-}
-
-    /**
-     * Releases a claim (missing claims are fine).
-     */
-open func release(namespace: String, name: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_release(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(namespace),FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_void,
-            completeFunc: ffi_cua_sdk_rust_future_complete_void,
-            freeFunc: ffi_cua_sdk_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * The gateway URL of a sandbox service (needs the Fleet bearer).
-     */
-open func serviceUrl(sandbox: FleetSandbox, service: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
-    uniffi_cua_sdk_fn_method_fleet_service_url(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeFleetSandbox_lower(sandbox),
-        FfiConverterString.lower(service),$0
-    )
-})
-}
-
-    /**
-     * Sets warm replicas (0 suspends).
-     */
-open func setPoolReplicas(name: String, replicas: UInt32)async throws  -> FleetPool  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_set_pool_replicas(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(name),FfiConverterUInt32.lower(replicas)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetPool_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * This account's Cua Cloud rates (`GET /api/config`), reused for five
-     * minutes. `None` when Fleet answers without rates: show no price
-     * rather than a guess.
-     */
-open func usagePricing()async throws  -> FleetUsagePricing?  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_usage_pricing(
-                    self.uniffiCloneHandle()
-
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionTypeFleetUsagePricing.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * Waits for at least one ready replica.
-     */
-open func waitPoolReady(name: String, timeoutMs: UInt32)async throws  -> FleetPool  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleet_wait_pool_ready(
-                    self.uniffiCloneHandle(),
-                    FfiConverterString.lower(name),FfiConverterUInt32.lower(timeoutMs)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetPool_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-
-
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleet: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = Fleet
-
-    public static func lift(_ handle: UInt64) throws -> Fleet {
-        return Fleet(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: Fleet) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Fleet {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: Fleet, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleet_lift(_ handle: UInt64) throws -> Fleet {
-    return try FfiConverterTypeFleet.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleet_lower(_ value: Fleet) -> UInt64 {
-    return FfiConverterTypeFleet.lower(value)
-}
-
-
-
-
-
-
-/**
- * Managed pools: what `Sandboxes.create` without a pool uses.
- */
-public protocol FleetPoolsProtocol: AnyObject, Sendable {
-
-    /**
-     * Deletes managed pools idle for `idle_seconds` (default 1800) and
-     * stuck Pending/Failed managed claims past their TTL.
-     */
-    func gc(idleSeconds: UInt32?) async throws  -> FleetGcReport
-
-    /**
-     * [`FleetPools::gc`] restricted to the named managed pools: each is
-     * deleted (with its namespace) once it has no claims and has been idle
-     * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-     * kept, so a pool another process is using survives. Tests use this to
-     * remove the pools they created.
-     */
-    func gcPools(names: [String], idleSeconds: UInt32?) async throws  -> FleetGcReport
-
-    /**
-     * This account's managed pools.
-     */
-    func list() async throws  -> [FleetManagedPool]
-
-}
-/**
- * Managed pools: what `Sandboxes.create` without a pool uses.
- */
-open class FleetPools: FleetPoolsProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_cua_sdk_fn_clone_fleetpools(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_cua_sdk_fn_free_fleetpools(handle, $0) }
-    }
-
-
-
-
-    /**
-     * Deletes managed pools idle for `idle_seconds` (default 1800) and
-     * stuck Pending/Failed managed claims past their TTL.
-     */
-open func gc(idleSeconds: UInt32?)async throws  -> FleetGcReport  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleetpools_gc(
-                    self.uniffiCloneHandle(),
-                    FfiConverterOptionUInt32.lower(idleSeconds)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetGcReport_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * [`FleetPools::gc`] restricted to the named managed pools: each is
-     * deleted (with its namespace) once it has no claims and has been idle
-     * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-     * kept, so a pool another process is using survives. Tests use this to
-     * remove the pools they created.
-     */
-open func gcPools(names: [String], idleSeconds: UInt32?)async throws  -> FleetGcReport  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleetpools_gc_pools(
-                    self.uniffiCloneHandle(),
-                    FfiConverterSequenceString.lower(names),FfiConverterOptionUInt32.lower(idleSeconds)
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeFleetGcReport_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-    /**
-     * This account's managed pools.
-     */
-open func list()async throws  -> [FleetManagedPool]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_fleetpools_list(
-                    self.uniffiCloneHandle()
-
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
-            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
-            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeFleetManagedPool.lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
-}
-
-
-
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetPools: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = FleetPools
-
-    public static func lift(_ handle: UInt64) throws -> FleetPools {
-        return FleetPools(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: FleetPools) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetPools {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: FleetPools, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetPools_lift(_ handle: UInt64) throws -> FleetPools {
-    return try FfiConverterTypeFleetPools.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetPools_lower(_ value: FleetPools) -> UInt64 {
-    return FfiConverterTypeFleetPools.lower(value)
 }
 
 
@@ -7091,12 +6011,6 @@ public protocol SandboxProtocol: AnyObject, Sendable {
     func delete() async throws
 
     /**
-     * Forgets the handle this runtime holds (a Cua Cloud claim used to
-     * stop renewing; Cua Cloud has ended). Embedded runtime only.
-     */
-    func detach() throws
-
-    /**
      * Forwards a loopback port to guest `port`: a TCP forward locally (and
      * over cua-spacesd's tunnel when the image has it). `url()` is a
      * loopback URL.
@@ -7134,8 +6048,8 @@ public protocol SandboxProtocol: AnyObject, Sendable {
     /**
      * The image this sandbox runs, as resolved and pinned at create time:
      * the digest and variant that actually ran. `None` for direct (URL)
-     * connections, claims on a named pool, images not resolved from a
-     * registry, and the daemon topology.
+     * connections, images not resolved from a registry, and the daemon
+     * topology.
      */
     func imageInfo()  -> ImageInfo?
 
@@ -7398,17 +6312,6 @@ open func delete()async throws   {
 }
 
     /**
-     * Forgets the handle this runtime holds (a Cua Cloud claim used to
-     * stop renewing; Cua Cloud has ended). Embedded runtime only.
-     */
-open func detach()throws   {try rustCallWithError(FfiConverterTypeCuaError_lift) {
-    uniffi_cua_sdk_fn_method_sandbox_detach(
-            self.uniffiCloneHandle(),$0
-    )
-}
-}
-
-    /**
      * Forwards a loopback port to guest `port`: a TCP forward locally (and
      * over cua-spacesd's tunnel when the image has it). `url()` is a
      * loopback URL.
@@ -7512,8 +6415,8 @@ open func id() -> String  {
     /**
      * The image this sandbox runs, as resolved and pinned at create time:
      * the digest and variant that actually ran. `None` for direct (URL)
-     * connections, claims on a named pool, images not resolved from a
-     * registry, and the daemon topology.
+     * connections, images not resolved from a registry, and the daemon
+     * topology.
      */
 open func imageInfo() -> ImageInfo?  {
     return try!  FfiConverterOptionTypeImageInfo.lift(try! rustCall() {
@@ -7970,7 +6873,7 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
     /**
      * Cancels the create of the named sandbox `name` that is still
      * running (in this process or the daemon): the work in flight stops
-     * (an image download, a boot, a claim) and what the create made is
+     * (an image download, a boot) and what the create made is
      * deleted; a sandbox of that name that existed before is never
      * touched. Finished image downloads stay cached. Returns what was
      * removed, or `None` when no create of that name was running. The
@@ -8010,11 +6913,9 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
 
     /**
      * Sandboxes, each tagged with its `location`. `None` (the default):
-     * all of them, local, direct and the account's live cloud sandboxes,
-     * whatever the default location is. `"local"`, `"cloud"` or
-     * `"direct"`: only those.
-     * Cua Cloud has ended: its sandboxes are never listed, and listing
-     * never asks Fleet.
+     * all of them, local and direct, whatever the default location is.
+     * `"local"` or `"direct"`: only those. Cua Cloud has ended, so
+     * `"cloud"` lists none.
      */
     func list(location: String?) async throws  -> [SandboxInfo]
 
@@ -8024,8 +6925,7 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
     func listAll() async throws  -> [SandboxInfo]
 
     /**
-     * [`Sandboxes::list`] with what the listing left out (for example
-     * "cloud sandboxes not listed: <reason>").
+     * [`Sandboxes::list`] with what the listing left out.
      */
     func listWithWarnings(location: String?) async throws  -> SandboxListing
 
@@ -8089,7 +6989,7 @@ open class Sandboxes: SandboxesProtocol, @unchecked Sendable {
     /**
      * Cancels the create of the named sandbox `name` that is still
      * running (in this process or the daemon): the work in flight stops
-     * (an image download, a boot, a claim) and what the create made is
+     * (an image download, a boot) and what the create made is
      * deleted; a sandbox of that name that existed before is never
      * touched. Finished image downloads stay cached. Returns what was
      * removed, or `None` when no create of that name was running. The
@@ -8219,11 +7119,9 @@ open func get(name: String)async throws  -> SandboxInfo  {
 
     /**
      * Sandboxes, each tagged with its `location`. `None` (the default):
-     * all of them, local, direct and the account's live cloud sandboxes,
-     * whatever the default location is. `"local"`, `"cloud"` or
-     * `"direct"`: only those.
-     * Cua Cloud has ended: its sandboxes are never listed, and listing
-     * never asks Fleet.
+     * all of them, local and direct, whatever the default location is.
+     * `"local"` or `"direct"`: only those. Cua Cloud has ended, so
+     * `"cloud"` lists none.
      */
 open func list(location: String?)async throws  -> [SandboxInfo]  {
     return
@@ -8263,8 +7161,7 @@ open func listAll()async throws  -> [SandboxInfo]  {
 }
 
     /**
-     * [`Sandboxes::list`] with what the listing left out (for example
-     * "cloud sandboxes not listed: <reason>").
+     * [`Sandboxes::list`] with what the listing left out.
      */
 open func listWithWarnings(location: String?)async throws  -> SandboxListing  {
     return
@@ -8378,8 +7275,7 @@ public protocol ServiceProtocol: AnyObject, Sendable {
 
     /**
      * A URL for the service usable from this machine with no credentials
-     * (no trailing slash): the published loopback port locally, a signed
-     * service URL (1 h, renewed on later calls) in the cloud.
+     * (no trailing slash): the published loopback port locally.
      */
     func url() async throws  -> String
 
@@ -8561,8 +7457,7 @@ open func request(method: String, path: String, body: Data?, timeoutMs: UInt32?,
 
     /**
      * A URL for the service usable from this machine with no credentials
-     * (no trailing slash): the published loopback port locally, a signed
-     * service URL (1 h, renewed on later calls) in the cloud.
+     * (no trailing slash): the published loopback port locally.
      */
 open func url()async throws  -> String  {
     return
@@ -10829,9 +9724,9 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * Cancels a create that is still running: `space` is the create's
      * `create_id`, the id the Space will have (`local:<name>`, carried by
      * every progress report) or its name. The work in flight stops (an
-     * image download, a boot, a claim, a relay registration) and what the
-     * create made is removed (its VM or container and disks, its cloud
-     * claim, its relay machine); nothing that existed before is touched.
+     * image download, a boot, a relay registration) and what the
+     * create made is removed (its VM or container and disks, its relay
+     * machine); nothing that existed before is touched.
      * Finished image downloads stay cached, so the next create resumes.
      * Returns once the clean-up is done; the create itself fails with
      * `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -11682,9 +10577,9 @@ open func callToolJson(tool: String, argumentsJson: String?)async throws  -> Spa
      * Cancels a create that is still running: `space` is the create's
      * `create_id`, the id the Space will have (`local:<name>`, carried by
      * every progress report) or its name. The work in flight stops (an
-     * image download, a boot, a claim, a relay registration) and what the
-     * create made is removed (its VM or container and disks, its cloud
-     * claim, its relay machine); nothing that existed before is touched.
+     * image download, a boot, a relay registration) and what the
+     * create made is removed (its VM or container and disks, its relay
+     * machine); nothing that existed before is touched.
      * Finished image downloads stay cached, so the next create resumes.
      * Returns once the clean-up is done; the create itself fails with
      * `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -12714,8 +11609,8 @@ public protocol SpacesdClientProtocol: AnyObject, Sendable {
 
     /**
      * Sends one plain-HTTP request to the spacesd port with this
-     * client's endpoint and credentials (through the Fleet gateway when the
-     * endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+     * client's endpoint and credentials (through a gateway when the
+     * endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
      * for example by typed cua-driver clients. Not retried.
      */
     func http(request: SpacesdHttpRequest) async throws  -> SpacesdHttpResponse
@@ -13260,8 +12155,8 @@ open func hotkey(keys: [String])async throws   {
 
     /**
      * Sends one plain-HTTP request to the spacesd port with this
-     * client's endpoint and credentials (through the Fleet gateway when the
-     * endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+     * client's endpoint and credentials (through a gateway when the
+     * endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
      * for example by typed cua-driver clients. Not retried.
      */
 open func http(request: SpacesdHttpRequest)async throws  -> SpacesdHttpResponse  {
@@ -17038,117 +15933,6 @@ public func FfiConverterTypeCloudKind_lower(_ value: CloudKind) -> RustBuffer {
 
 
 /**
- * Advanced options for cloud sandboxes (warm capacity, limits, TTL, a
- * dedicated pool). Leave unset for the defaults. Setting them with `on`
- * unset means the cloud; with `on = "local"` they are an error.
- */
-public struct CloudOptions: Equatable, Hashable {
-    /**
-     * Keep one warm replica of this image ready (faster next start).
-     */
-    public var warm: Bool?
-    /**
-     * Most sandboxes of this image at once (default 10).
-     */
-    public var maxPoolSize: UInt32?
-    /**
-     * Seconds the sandbox outlives this process without a keep-alive
-     * (renewed while held; default 15 min).
-     */
-    public var claimTtlSeconds: UInt32?
-    /**
-     * Dedicated capacity: claim from this existing pool. The sandbox
-     * fields given alongside (image, command, env, services, sidecars,
-     * cpus, memory) must match its template, or creation fails with
-     * `PoolSpecMismatch` and a diff.
-     */
-    public var pool: String?
-    /**
-     * With `pool`: update the pool's template to the given fields instead
-     * of failing on a mismatch. Cua Cloud has ended: ignored.
-     */
-    public var apply: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Keep one warm replica of this image ready (faster next start).
-         */warm: Bool? = nil,
-        /**
-         * Most sandboxes of this image at once (default 10).
-         */maxPoolSize: UInt32? = nil,
-        /**
-         * Seconds the sandbox outlives this process without a keep-alive
-         * (renewed while held; default 15 min).
-         */claimTtlSeconds: UInt32? = nil,
-        /**
-         * Dedicated capacity: claim from this existing pool. The sandbox
-         * fields given alongside (image, command, env, services, sidecars,
-         * cpus, memory) must match its template, or creation fails with
-         * `PoolSpecMismatch` and a diff.
-         */pool: String? = nil,
-        /**
-         * With `pool`: update the pool's template to the given fields instead
-         * of failing on a mismatch. Cua Cloud has ended: ignored.
-         */apply: Bool = false) {
-        self.warm = warm
-        self.maxPoolSize = maxPoolSize
-        self.claimTtlSeconds = claimTtlSeconds
-        self.pool = pool
-        self.apply = apply
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CloudOptions: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudOptions: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudOptions {
-        return
-            try CloudOptions(
-                warm: FfiConverterOptionBool.read(from: &buf),
-                maxPoolSize: FfiConverterOptionUInt32.read(from: &buf),
-                claimTtlSeconds: FfiConverterOptionUInt32.read(from: &buf),
-                pool: FfiConverterOptionString.read(from: &buf),
-                apply: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CloudOptions, into buf: inout [UInt8]) {
-        FfiConverterOptionBool.write(value.warm, into: &buf)
-        FfiConverterOptionUInt32.write(value.maxPoolSize, into: &buf)
-        FfiConverterOptionUInt32.write(value.claimTtlSeconds, into: &buf)
-        FfiConverterOptionString.write(value.pool, into: &buf)
-        FfiConverterBool.write(value.apply, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudOptions_lift(_ buf: RustBuffer) throws -> CloudOptions {
-    return try FfiConverterTypeCloudOptions.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudOptions_lower(_ value: CloudOptions) -> RustBuffer {
-    return FfiConverterTypeCloudOptions.lower(value)
-}
-
-
-/**
  * One cloud as `cloud_status` lists it.
  */
 public struct CloudProvider: Equatable, Hashable {
@@ -18114,8 +16898,8 @@ public func FfiConverterTypeComputerResources_lower(_ value: ComputerResources) 
  */
 public struct ConfigEntry: Equatable, Hashable {
     /**
-     * `default.on`, `default.kind`, `default.runtime`, `cloud.warm`,
-     * `cloud.max_pool_size` or `cloud.claim_ttl`.
+     * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
+     * `runtime.linux` or `telemetry.enabled`.
      */
     public var key: String
     /**
@@ -18148,8 +16932,8 @@ public struct ConfigEntry: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `default.on`, `default.kind`, `default.runtime`, `cloud.warm`,
-         * `cloud.max_pool_size` or `cloud.claim_ttl`.
+         * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
+         * `runtime.linux` or `telemetry.enabled`.
          */key: String,
         /**
          * The effective value.
@@ -18238,9 +17022,7 @@ public func FfiConverterTypeConfigEntry_lower(_ value: ConfigEntry) -> RustBuffe
  * `name` (on its `ports`), it reaches the sandbox at `main`, and
  * `services` may name its ports (`{"db": 5432}`). Local containers run it
  * in the sandbox's network namespace (`localhost` works too; needs
- * `runtime="runc"`); cloud gVisor sandboxes run it in the same pod; cloud
- * VM (KubeVirt) sandboxes run it in a companion pod named in the guest's
- * `/etc/hosts`. Local VM sandboxes refuse sidecars. With sidecars the
+ * `runtime="runc"`). Local VM sandboxes refuse sidecars. With sidecars the
  * service names `main`, `sidecars` and `sc` are reserved.
  */
 public struct Container: Equatable, Hashable {
@@ -18350,14 +17132,6 @@ public struct CuaConfig: Equatable, Hashable {
      */
     public var stateDir: String?
     /**
-     * Ignored: Cua Cloud has ended.
-     */
-    public var fleet: FleetSettings?
-    /**
-     * Ignored: Cua Cloud has ended.
-     */
-    public var fleetFromEnv: Bool
-    /**
      * spacesd probe timeout (default 15 s).
      */
     public var envProbeTimeoutMs: UInt32?
@@ -18373,15 +17147,9 @@ public struct CuaConfig: Equatable, Hashable {
     /**
      * Use the signed-in session (`Cua.auth()`, `cua auth login`) from the
      * shared credential store, refreshed as needed, for the relay account
-     * the runtime lists the account's machines with ("My machines"). The
-     * name is historical: it no longer builds a Fleet client, because Cua
-     * Cloud has ended.
+     * the runtime lists the account's machines with ("My machines").
      */
-    public var fleetFromSession: Bool
-    /**
-     * Ignored: Cua Cloud has ended, so there are no managed pools.
-     */
-    public var fleetPoolHome: String?
+    public var accountFromSession: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -18389,12 +17157,6 @@ public struct CuaConfig: Equatable, Hashable {
         /**
          * State directory for sandbox state files (default `~/.cua/sandboxes`).
          */stateDir: String? = nil,
-        /**
-         * Ignored: Cua Cloud has ended.
-         */fleet: FleetSettings? = nil,
-        /**
-         * Ignored: Cua Cloud has ended.
-         */fleetFromEnv: Bool = true,
         /**
          * spacesd probe timeout (default 15 s).
          */envProbeTimeoutMs: UInt32? = nil,
@@ -18408,21 +17170,13 @@ public struct CuaConfig: Equatable, Hashable {
         /**
          * Use the signed-in session (`Cua.auth()`, `cua auth login`) from the
          * shared credential store, refreshed as needed, for the relay account
-         * the runtime lists the account's machines with ("My machines"). The
-         * name is historical: it no longer builds a Fleet client, because Cua
-         * Cloud has ended.
-         */fleetFromSession: Bool = false,
-        /**
-         * Ignored: Cua Cloud has ended, so there are no managed pools.
-         */fleetPoolHome: String? = nil) {
+         * the runtime lists the account's machines with ("My machines").
+         */accountFromSession: Bool = false) {
         self.stateDir = stateDir
-        self.fleet = fleet
-        self.fleetFromEnv = fleetFromEnv
         self.envProbeTimeoutMs = envProbeTimeoutMs
         self.spacesHome = spacesHome
         self.teleportHome = teleportHome
-        self.fleetFromSession = fleetFromSession
-        self.fleetPoolHome = fleetPoolHome
+        self.accountFromSession = accountFromSession
     }
 
 
@@ -18442,25 +17196,19 @@ public struct FfiConverterTypeCuaConfig: FfiConverterRustBuffer {
         return
             try CuaConfig(
                 stateDir: FfiConverterOptionString.read(from: &buf),
-                fleet: FfiConverterOptionTypeFleetSettings.read(from: &buf),
-                fleetFromEnv: FfiConverterBool.read(from: &buf),
                 envProbeTimeoutMs: FfiConverterOptionUInt32.read(from: &buf),
                 spacesHome: FfiConverterOptionString.read(from: &buf),
                 teleportHome: FfiConverterOptionString.read(from: &buf),
-                fleetFromSession: FfiConverterBool.read(from: &buf),
-                fleetPoolHome: FfiConverterOptionString.read(from: &buf)
+                accountFromSession: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: CuaConfig, into buf: inout [UInt8]) {
         FfiConverterOptionString.write(value.stateDir, into: &buf)
-        FfiConverterOptionTypeFleetSettings.write(value.fleet, into: &buf)
-        FfiConverterBool.write(value.fleetFromEnv, into: &buf)
         FfiConverterOptionUInt32.write(value.envProbeTimeoutMs, into: &buf)
         FfiConverterOptionString.write(value.spacesHome, into: &buf)
         FfiConverterOptionString.write(value.teleportHome, into: &buf)
-        FfiConverterBool.write(value.fleetFromSession, into: &buf)
-        FfiConverterOptionString.write(value.fleetPoolHome, into: &buf)
+        FfiConverterBool.write(value.accountFromSession, into: &buf)
     }
 }
 
@@ -21363,1505 +20111,6 @@ public func FfiConverterTypeFileEntry_lower(_ value: FileEntry) -> RustBuffer {
 
 
 /**
- * The saved card ([`Fleet::billing_status`]): never its number.
- */
-public struct FleetBillingCard: Equatable, Hashable {
-    /**
-     * `visa`, `mastercard`, ...
-     */
-    public var brand: String
-    /**
-     * Last four digits.
-     */
-    public var last4: String
-    /**
-     * Expiry month.
-     */
-    public var expMonth: UInt32
-    /**
-     * Expiry year.
-     */
-    public var expYear: UInt32
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `visa`, `mastercard`, ...
-         */brand: String,
-        /**
-         * Last four digits.
-         */last4: String,
-        /**
-         * Expiry month.
-         */expMonth: UInt32,
-        /**
-         * Expiry year.
-         */expYear: UInt32) {
-        self.brand = brand
-        self.last4 = last4
-        self.expMonth = expMonth
-        self.expYear = expYear
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetBillingCard: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetBillingCard: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetBillingCard {
-        return
-            try FleetBillingCard(
-                brand: FfiConverterString.read(from: &buf),
-                last4: FfiConverterString.read(from: &buf),
-                expMonth: FfiConverterUInt32.read(from: &buf),
-                expYear: FfiConverterUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetBillingCard, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.brand, into: &buf)
-        FfiConverterString.write(value.last4, into: &buf)
-        FfiConverterUInt32.write(value.expMonth, into: &buf)
-        FfiConverterUInt32.write(value.expYear, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetBillingCard_lift(_ buf: RustBuffer) throws -> FleetBillingCard {
-    return try FfiConverterTypeFleetBillingCard.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetBillingCard_lower(_ value: FleetBillingCard) -> RustBuffer {
-    return FfiConverterTypeFleetBillingCard.lower(value)
-}
-
-
-/**
- * The account's Cua Cloud credit.
- */
-public struct FleetBillingCredit: Equatable, Hashable {
-    /**
-     * What is left, US cents.
-     */
-    public var balanceUsdCents: Int64
-    /**
-     * The signup grant's amount, US cents (0: none).
-     */
-    public var signupGrantUsdCents: Int64
-    /**
-     * A signup grant exists and none of it has been used.
-     */
-    public var signupGrantUnused: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * What is left, US cents.
-         */balanceUsdCents: Int64,
-        /**
-         * The signup grant's amount, US cents (0: none).
-         */signupGrantUsdCents: Int64,
-        /**
-         * A signup grant exists and none of it has been used.
-         */signupGrantUnused: Bool) {
-        self.balanceUsdCents = balanceUsdCents
-        self.signupGrantUsdCents = signupGrantUsdCents
-        self.signupGrantUnused = signupGrantUnused
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetBillingCredit: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetBillingCredit: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetBillingCredit {
-        return
-            try FleetBillingCredit(
-                balanceUsdCents: FfiConverterInt64.read(from: &buf),
-                signupGrantUsdCents: FfiConverterInt64.read(from: &buf),
-                signupGrantUnused: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetBillingCredit, into buf: inout [UInt8]) {
-        FfiConverterInt64.write(value.balanceUsdCents, into: &buf)
-        FfiConverterInt64.write(value.signupGrantUsdCents, into: &buf)
-        FfiConverterBool.write(value.signupGrantUnused, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetBillingCredit_lift(_ buf: RustBuffer) throws -> FleetBillingCredit {
-    return try FfiConverterTypeFleetBillingCredit.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetBillingCredit_lower(_ value: FleetBillingCredit) -> RustBuffer {
-    return FfiConverterTypeFleetBillingCredit.lower(value)
-}
-
-
-/**
- * The account's Cua Cloud billing (`GET /api/billing/status`).
- */
-public struct FleetBillingStatus: Equatable, Hashable {
-    /**
-     * Billing is on for this account.
-     */
-    public var billingEnabled: Bool
-    /**
-     * A default card is saved.
-     */
-    public var paymentMethodPresent: Bool
-    /**
-     * That card.
-     */
-    public var card: FleetBillingCard?
-    /**
-     * `none`, `payg`, or a plan key.
-     */
-    public var plan: String
-    /**
-     * A card can be added for pay as you go.
-     */
-    public var paygAvailable: Bool
-    /**
-     * The account's credit, when Fleet has credit for it.
-     */
-    public var credit: FleetBillingCredit?
-    /**
-     * The website billing page (credit, cards, plans).
-     */
-    public var billingUrl: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Billing is on for this account.
-         */billingEnabled: Bool,
-        /**
-         * A default card is saved.
-         */paymentMethodPresent: Bool,
-        /**
-         * That card.
-         */card: FleetBillingCard?,
-        /**
-         * `none`, `payg`, or a plan key.
-         */plan: String,
-        /**
-         * A card can be added for pay as you go.
-         */paygAvailable: Bool,
-        /**
-         * The account's credit, when Fleet has credit for it.
-         */credit: FleetBillingCredit?,
-        /**
-         * The website billing page (credit, cards, plans).
-         */billingUrl: String?) {
-        self.billingEnabled = billingEnabled
-        self.paymentMethodPresent = paymentMethodPresent
-        self.card = card
-        self.plan = plan
-        self.paygAvailable = paygAvailable
-        self.credit = credit
-        self.billingUrl = billingUrl
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetBillingStatus: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetBillingStatus: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetBillingStatus {
-        return
-            try FleetBillingStatus(
-                billingEnabled: FfiConverterBool.read(from: &buf),
-                paymentMethodPresent: FfiConverterBool.read(from: &buf),
-                card: FfiConverterOptionTypeFleetBillingCard.read(from: &buf),
-                plan: FfiConverterString.read(from: &buf),
-                paygAvailable: FfiConverterBool.read(from: &buf),
-                credit: FfiConverterOptionTypeFleetBillingCredit.read(from: &buf),
-                billingUrl: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetBillingStatus, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.billingEnabled, into: &buf)
-        FfiConverterBool.write(value.paymentMethodPresent, into: &buf)
-        FfiConverterOptionTypeFleetBillingCard.write(value.card, into: &buf)
-        FfiConverterString.write(value.plan, into: &buf)
-        FfiConverterBool.write(value.paygAvailable, into: &buf)
-        FfiConverterOptionTypeFleetBillingCredit.write(value.credit, into: &buf)
-        FfiConverterOptionString.write(value.billingUrl, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetBillingStatus_lift(_ buf: RustBuffer) throws -> FleetBillingStatus {
-    return try FfiConverterTypeFleetBillingStatus.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetBillingStatus_lower(_ value: FleetBillingStatus) -> RustBuffer {
-    return FfiConverterTypeFleetBillingStatus.lower(value)
-}
-
-
-/**
- * A claim.
- */
-public struct FleetClaim: Equatable, Hashable {
-    /**
-     * Claim name.
-     */
-    public var name: String
-    /**
-     * Namespace (the pool's).
-     */
-    public var namespace: String
-    /**
-     * The resource as JSON.
-     */
-    public var json: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Claim name.
-         */name: String,
-        /**
-         * Namespace (the pool's).
-         */namespace: String,
-        /**
-         * The resource as JSON.
-         */json: String) {
-        self.name = name
-        self.namespace = namespace
-        self.json = json
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetClaim: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetClaim: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetClaim {
-        return
-            try FleetClaim(
-                name: FfiConverterString.read(from: &buf),
-                namespace: FfiConverterString.read(from: &buf),
-                json: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetClaim, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterString.write(value.namespace, into: &buf)
-        FfiConverterString.write(value.json, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetClaim_lift(_ buf: RustBuffer) throws -> FleetClaim {
-    return try FfiConverterTypeFleetClaim.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetClaim_lower(_ value: FleetClaim) -> RustBuffer {
-    return FfiConverterTypeFleetClaim.lower(value)
-}
-
-
-/**
- * Claim options for [`Fleet::acquire_with`].
- */
-public struct FleetClaimOptions: Equatable, Hashable {
-    /**
-     * Claim name; an existing claim with it is reattached.
-     */
-    public var name: String?
-    /**
-     * Claim TTL (seconds).
-     */
-    public var ttlSeconds: UInt32?
-    /**
-     * Per-claim env token (see [`fleet_generate_claim_token`]); the pool's
-     * spec must set `claim_secrets`. Acquire waits (at most 90 s) until
-     * the sandbox has it, else releases the claim and raises
-     * `ClaimSecretsNotDelivered`.
-     */
-    public var claimToken: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Claim name; an existing claim with it is reattached.
-         */name: String? = nil,
-        /**
-         * Claim TTL (seconds).
-         */ttlSeconds: UInt32? = nil,
-        /**
-         * Per-claim env token (see [`fleet_generate_claim_token`]); the pool's
-         * spec must set `claim_secrets`. Acquire waits (at most 90 s) until
-         * the sandbox has it, else releases the claim and raises
-         * `ClaimSecretsNotDelivered`.
-         */claimToken: String? = nil) {
-        self.name = name
-        self.ttlSeconds = ttlSeconds
-        self.claimToken = claimToken
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetClaimOptions: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetClaimOptions: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetClaimOptions {
-        return
-            try FleetClaimOptions(
-                name: FfiConverterOptionString.read(from: &buf),
-                ttlSeconds: FfiConverterOptionUInt32.read(from: &buf),
-                claimToken: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetClaimOptions, into buf: inout [UInt8]) {
-        FfiConverterOptionString.write(value.name, into: &buf)
-        FfiConverterOptionUInt32.write(value.ttlSeconds, into: &buf)
-        FfiConverterOptionString.write(value.claimToken, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetClaimOptions_lift(_ buf: RustBuffer) throws -> FleetClaimOptions {
-    return try FfiConverterTypeFleetClaimOptions.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetClaimOptions_lower(_ value: FleetClaimOptions) -> RustBuffer {
-    return FfiConverterTypeFleetClaimOptions.lower(value)
-}
-
-
-/**
- * What a pool GC did.
- */
-public struct FleetGcReport: Equatable, Hashable {
-    /**
-     * Deleted pools.
-     */
-    public var deletedPools: [String]
-    /**
-     * Deleted leftover namespaces.
-     */
-    public var deletedNamespaces: [String]
-    /**
-     * Deleted stuck claims (`namespace/name`).
-     */
-    public var deletedClaims: [String]
-    /**
-     * Kept pools.
-     */
-    public var kept: [String]
-    /**
-     * Non-fatal errors.
-     */
-    public var errors: [String]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Deleted pools.
-         */deletedPools: [String],
-        /**
-         * Deleted leftover namespaces.
-         */deletedNamespaces: [String],
-        /**
-         * Deleted stuck claims (`namespace/name`).
-         */deletedClaims: [String],
-        /**
-         * Kept pools.
-         */kept: [String],
-        /**
-         * Non-fatal errors.
-         */errors: [String]) {
-        self.deletedPools = deletedPools
-        self.deletedNamespaces = deletedNamespaces
-        self.deletedClaims = deletedClaims
-        self.kept = kept
-        self.errors = errors
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetGcReport: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetGcReport: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetGcReport {
-        return
-            try FleetGcReport(
-                deletedPools: FfiConverterSequenceString.read(from: &buf),
-                deletedNamespaces: FfiConverterSequenceString.read(from: &buf),
-                deletedClaims: FfiConverterSequenceString.read(from: &buf),
-                kept: FfiConverterSequenceString.read(from: &buf),
-                errors: FfiConverterSequenceString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetGcReport, into buf: inout [UInt8]) {
-        FfiConverterSequenceString.write(value.deletedPools, into: &buf)
-        FfiConverterSequenceString.write(value.deletedNamespaces, into: &buf)
-        FfiConverterSequenceString.write(value.deletedClaims, into: &buf)
-        FfiConverterSequenceString.write(value.kept, into: &buf)
-        FfiConverterSequenceString.write(value.errors, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetGcReport_lift(_ buf: RustBuffer) throws -> FleetGcReport {
-    return try FfiConverterTypeFleetGcReport.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetGcReport_lower(_ value: FleetGcReport) -> RustBuffer {
-    return FfiConverterTypeFleetGcReport.lower(value)
-}
-
-
-/**
- * A managed pool (`cua-auto-*`, or a legacy `cua-eph-*`).
- */
-public struct FleetManagedPool: Equatable, Hashable {
-    /**
-     * Pool (= namespace = template) name.
-     */
-    public var name: String
-    /**
-     * Created by the SDK (labeled), not only matching the prefix.
-     */
-    public var managed: Bool
-    /**
-     * Spec hash label (first 32 hex digits).
-     */
-    public var specHash: String?
-    /**
-     * Template image.
-     */
-    public var image: String?
-    /**
-     * Current replicas (KEDA-owned).
-     */
-    public var replicas: UInt32
-    /**
-     * Ready replicas.
-     */
-    public var readyReplicas: UInt32?
-    /**
-     * Autoscaling ceiling.
-     */
-    public var maxPoolSize: UInt32?
-    /**
-     * Claims in the pool.
-     */
-    public var claims: UInt32
-    /**
-     * Bound claims.
-     */
-    public var boundClaims: UInt32
-    /**
-     * Last use (unix seconds).
-     */
-    public var lastUsedUnix: Int64?
-    /**
-     * Creation (unix seconds).
-     */
-    public var createdUnix: Int64?
-    /**
-     * Backstop expiry (unix seconds).
-     */
-    public var expiresUnix: Int64?
-    /**
-     * Being deleted.
-     */
-    public var terminating: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Pool (= namespace = template) name.
-         */name: String,
-        /**
-         * Created by the SDK (labeled), not only matching the prefix.
-         */managed: Bool,
-        /**
-         * Spec hash label (first 32 hex digits).
-         */specHash: String?,
-        /**
-         * Template image.
-         */image: String?,
-        /**
-         * Current replicas (KEDA-owned).
-         */replicas: UInt32,
-        /**
-         * Ready replicas.
-         */readyReplicas: UInt32?,
-        /**
-         * Autoscaling ceiling.
-         */maxPoolSize: UInt32?,
-        /**
-         * Claims in the pool.
-         */claims: UInt32,
-        /**
-         * Bound claims.
-         */boundClaims: UInt32,
-        /**
-         * Last use (unix seconds).
-         */lastUsedUnix: Int64?,
-        /**
-         * Creation (unix seconds).
-         */createdUnix: Int64?,
-        /**
-         * Backstop expiry (unix seconds).
-         */expiresUnix: Int64?,
-        /**
-         * Being deleted.
-         */terminating: Bool) {
-        self.name = name
-        self.managed = managed
-        self.specHash = specHash
-        self.image = image
-        self.replicas = replicas
-        self.readyReplicas = readyReplicas
-        self.maxPoolSize = maxPoolSize
-        self.claims = claims
-        self.boundClaims = boundClaims
-        self.lastUsedUnix = lastUsedUnix
-        self.createdUnix = createdUnix
-        self.expiresUnix = expiresUnix
-        self.terminating = terminating
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetManagedPool: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetManagedPool: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetManagedPool {
-        return
-            try FleetManagedPool(
-                name: FfiConverterString.read(from: &buf),
-                managed: FfiConverterBool.read(from: &buf),
-                specHash: FfiConverterOptionString.read(from: &buf),
-                image: FfiConverterOptionString.read(from: &buf),
-                replicas: FfiConverterUInt32.read(from: &buf),
-                readyReplicas: FfiConverterOptionUInt32.read(from: &buf),
-                maxPoolSize: FfiConverterOptionUInt32.read(from: &buf),
-                claims: FfiConverterUInt32.read(from: &buf),
-                boundClaims: FfiConverterUInt32.read(from: &buf),
-                lastUsedUnix: FfiConverterOptionInt64.read(from: &buf),
-                createdUnix: FfiConverterOptionInt64.read(from: &buf),
-                expiresUnix: FfiConverterOptionInt64.read(from: &buf),
-                terminating: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetManagedPool, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterBool.write(value.managed, into: &buf)
-        FfiConverterOptionString.write(value.specHash, into: &buf)
-        FfiConverterOptionString.write(value.image, into: &buf)
-        FfiConverterUInt32.write(value.replicas, into: &buf)
-        FfiConverterOptionUInt32.write(value.readyReplicas, into: &buf)
-        FfiConverterOptionUInt32.write(value.maxPoolSize, into: &buf)
-        FfiConverterUInt32.write(value.claims, into: &buf)
-        FfiConverterUInt32.write(value.boundClaims, into: &buf)
-        FfiConverterOptionInt64.write(value.lastUsedUnix, into: &buf)
-        FfiConverterOptionInt64.write(value.createdUnix, into: &buf)
-        FfiConverterOptionInt64.write(value.expiresUnix, into: &buf)
-        FfiConverterBool.write(value.terminating, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetManagedPool_lift(_ buf: RustBuffer) throws -> FleetManagedPool {
-    return try FfiConverterTypeFleetManagedPool.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetManagedPool_lower(_ value: FleetManagedPool) -> RustBuffer {
-    return FfiConverterTypeFleetManagedPool.lower(value)
-}
-
-
-/**
- * A pool.
- */
-public struct FleetPool: Equatable, Hashable {
-    /**
-     * Name.
-     */
-    public var name: String
-    /**
-     * Namespace.
-     */
-    public var namespace: String
-    /**
-     * Desired replicas.
-     */
-    public var replicas: UInt32
-    /**
-     * Ready replicas, when reported.
-     */
-    public var readyReplicas: UInt32?
-    /**
-     * The resource as JSON.
-     */
-    public var json: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Name.
-         */name: String,
-        /**
-         * Namespace.
-         */namespace: String,
-        /**
-         * Desired replicas.
-         */replicas: UInt32,
-        /**
-         * Ready replicas, when reported.
-         */readyReplicas: UInt32?,
-        /**
-         * The resource as JSON.
-         */json: String) {
-        self.name = name
-        self.namespace = namespace
-        self.replicas = replicas
-        self.readyReplicas = readyReplicas
-        self.json = json
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetPool: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetPool: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetPool {
-        return
-            try FleetPool(
-                name: FfiConverterString.read(from: &buf),
-                namespace: FfiConverterString.read(from: &buf),
-                replicas: FfiConverterUInt32.read(from: &buf),
-                readyReplicas: FfiConverterOptionUInt32.read(from: &buf),
-                json: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetPool, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterString.write(value.namespace, into: &buf)
-        FfiConverterUInt32.write(value.replicas, into: &buf)
-        FfiConverterOptionUInt32.write(value.readyReplicas, into: &buf)
-        FfiConverterString.write(value.json, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetPool_lift(_ buf: RustBuffer) throws -> FleetPool {
-    return try FfiConverterTypeFleetPool.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetPool_lower(_ value: FleetPool) -> RustBuffer {
-    return FfiConverterTypeFleetPool.lower(value)
-}
-
-
-/**
- * A pool read back as the shared model, plus its Terraform block.
- */
-public struct FleetPoolExport: Equatable, Hashable {
-    /**
-     * What the pool's sandboxes run.
-     */
-    public var spec: SandboxSpec
-    /**
-     * The pool's capacity settings.
-     */
-    public var options: PoolOptions
-    /**
-     * The runtime.
-     */
-    public var runtime: String
-    /**
-     * A `fleets_pool` resource block (attributes the provider lacks yet
-     * are commented).
-     */
-    public var terraform: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * What the pool's sandboxes run.
-         */spec: SandboxSpec,
-        /**
-         * The pool's capacity settings.
-         */options: PoolOptions,
-        /**
-         * The runtime.
-         */runtime: String,
-        /**
-         * A `fleets_pool` resource block (attributes the provider lacks yet
-         * are commented).
-         */terraform: String) {
-        self.spec = spec
-        self.options = options
-        self.runtime = runtime
-        self.terraform = terraform
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetPoolExport: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetPoolExport: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetPoolExport {
-        return
-            try FleetPoolExport(
-                spec: FfiConverterTypeSandboxSpec.read(from: &buf),
-                options: FfiConverterTypePoolOptions.read(from: &buf),
-                runtime: FfiConverterString.read(from: &buf),
-                terraform: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetPoolExport, into buf: inout [UInt8]) {
-        FfiConverterTypeSandboxSpec.write(value.spec, into: &buf)
-        FfiConverterTypePoolOptions.write(value.options, into: &buf)
-        FfiConverterString.write(value.runtime, into: &buf)
-        FfiConverterString.write(value.terraform, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetPoolExport_lift(_ buf: RustBuffer) throws -> FleetPoolExport {
-    return try FfiConverterTypeFleetPoolExport.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetPoolExport_lower(_ value: FleetPoolExport) -> RustBuffer {
-    return FfiConverterTypeFleetPoolExport.lower(value)
-}
-
-
-/**
- * A warm pool spec (`Pool.apply` semantics: pool, namespace and template
- * share `name`). Deprecated: use [`SandboxSpec`] + [`PoolOptions`] with
- * [`Fleet::apply`].
- */
-public struct FleetPoolSpec: Equatable, Hashable {
-    /**
-     * Pool name (globally unique on Fleet).
-     */
-    public var name: String
-    /**
-     * containerDisk (kubevirt) or pod image (gvisor).
-     */
-    public var image: String
-    /**
-     * `kubevirt` (default) or `gvisor`.
-     */
-    public var runtime: String?
-    /**
-     * Warm replicas (default 1).
-     */
-    public var replicas: UInt32?
-    /**
-     * vCPUs.
-     */
-    public var cpu: UInt32?
-    /**
-     * Memory (MiB).
-     */
-    public var memoryMb: UInt32?
-    /**
-     * Services (name → port). Default `{"env": 3211}`.
-     */
-    public var services: [String: UInt16]
-    /**
-     * Optional TCP readiness probe port.
-     */
-    public var readinessTcpPort: UInt16?
-    /**
-     * UEFI firmware (Windows images).
-     */
-    public var efi: Bool
-    /**
-     * Pod runtimes: entrypoint override.
-     */
-    public var command: [String]?
-    /**
-     * Pool TTL after creation (seconds).
-     */
-    public var ttlSecondsAfterCreated: UInt32?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Pool name (globally unique on Fleet).
-         */name: String,
-        /**
-         * containerDisk (kubevirt) or pod image (gvisor).
-         */image: String,
-        /**
-         * `kubevirt` (default) or `gvisor`.
-         */runtime: String? = nil,
-        /**
-         * Warm replicas (default 1).
-         */replicas: UInt32? = nil,
-        /**
-         * vCPUs.
-         */cpu: UInt32? = nil,
-        /**
-         * Memory (MiB).
-         */memoryMb: UInt32? = nil,
-        /**
-         * Services (name → port). Default `{"env": 3211}`.
-         */services: [String: UInt16] = [:],
-        /**
-         * Optional TCP readiness probe port.
-         */readinessTcpPort: UInt16? = nil,
-        /**
-         * UEFI firmware (Windows images).
-         */efi: Bool = false,
-        /**
-         * Pod runtimes: entrypoint override.
-         */command: [String]? = nil,
-        /**
-         * Pool TTL after creation (seconds).
-         */ttlSecondsAfterCreated: UInt32? = nil) {
-        self.name = name
-        self.image = image
-        self.runtime = runtime
-        self.replicas = replicas
-        self.cpu = cpu
-        self.memoryMb = memoryMb
-        self.services = services
-        self.readinessTcpPort = readinessTcpPort
-        self.efi = efi
-        self.command = command
-        self.ttlSecondsAfterCreated = ttlSecondsAfterCreated
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetPoolSpec: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetPoolSpec: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetPoolSpec {
-        return
-            try FleetPoolSpec(
-                name: FfiConverterString.read(from: &buf),
-                image: FfiConverterString.read(from: &buf),
-                runtime: FfiConverterOptionString.read(from: &buf),
-                replicas: FfiConverterOptionUInt32.read(from: &buf),
-                cpu: FfiConverterOptionUInt32.read(from: &buf),
-                memoryMb: FfiConverterOptionUInt32.read(from: &buf),
-                services: FfiConverterDictionaryStringUInt16.read(from: &buf),
-                readinessTcpPort: FfiConverterOptionUInt16.read(from: &buf),
-                efi: FfiConverterBool.read(from: &buf),
-                command: FfiConverterOptionSequenceString.read(from: &buf),
-                ttlSecondsAfterCreated: FfiConverterOptionUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetPoolSpec, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterString.write(value.image, into: &buf)
-        FfiConverterOptionString.write(value.runtime, into: &buf)
-        FfiConverterOptionUInt32.write(value.replicas, into: &buf)
-        FfiConverterOptionUInt32.write(value.cpu, into: &buf)
-        FfiConverterOptionUInt32.write(value.memoryMb, into: &buf)
-        FfiConverterDictionaryStringUInt16.write(value.services, into: &buf)
-        FfiConverterOptionUInt16.write(value.readinessTcpPort, into: &buf)
-        FfiConverterBool.write(value.efi, into: &buf)
-        FfiConverterOptionSequenceString.write(value.command, into: &buf)
-        FfiConverterOptionUInt32.write(value.ttlSecondsAfterCreated, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetPoolSpec_lift(_ buf: RustBuffer) throws -> FleetPoolSpec {
-    return try FfiConverterTypeFleetPoolSpec.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetPoolSpec_lower(_ value: FleetPoolSpec) -> RustBuffer {
-    return FfiConverterTypeFleetPoolSpec.lower(value)
-}
-
-
-/**
- * A bound sandbox.
- */
-public struct FleetSandbox: Equatable, Hashable {
-    /**
-     * Sandbox name.
-     */
-    public var name: String
-    /**
-     * Namespace.
-     */
-    public var namespace: String
-    /**
-     * Claim name.
-     */
-    public var claim: String
-    /**
-     * Declared service names.
-     */
-    public var services: [String]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Sandbox name.
-         */name: String,
-        /**
-         * Namespace.
-         */namespace: String,
-        /**
-         * Claim name.
-         */claim: String,
-        /**
-         * Declared service names.
-         */services: [String]) {
-        self.name = name
-        self.namespace = namespace
-        self.claim = claim
-        self.services = services
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetSandbox: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetSandbox: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetSandbox {
-        return
-            try FleetSandbox(
-                name: FfiConverterString.read(from: &buf),
-                namespace: FfiConverterString.read(from: &buf),
-                claim: FfiConverterString.read(from: &buf),
-                services: FfiConverterSequenceString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetSandbox, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterString.write(value.namespace, into: &buf)
-        FfiConverterString.write(value.claim, into: &buf)
-        FfiConverterSequenceString.write(value.services, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetSandbox_lift(_ buf: RustBuffer) throws -> FleetSandbox {
-    return try FfiConverterTypeFleetSandbox.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetSandbox_lower(_ value: FleetSandbox) -> RustBuffer {
-    return FfiConverterTypeFleetSandbox.lower(value)
-}
-
-
-/**
- * Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
- * reads them any more. Kept so existing callers still compile.
- */
-public struct FleetSettings: Equatable, Hashable {
-    /**
-     * Ignored.
-     */
-    public var baseUrl: String?
-    /**
-     * Ignored.
-     */
-    public var tokenUrl: String?
-    /**
-     * Ignored.
-     */
-    public var clientId: String?
-    /**
-     * Ignored.
-     */
-    public var clientSecret: String?
-    /**
-     * Ignored.
-     */
-    public var token: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Ignored.
-         */baseUrl: String? = nil,
-        /**
-         * Ignored.
-         */tokenUrl: String? = nil,
-        /**
-         * Ignored.
-         */clientId: String? = nil,
-        /**
-         * Ignored.
-         */clientSecret: String? = nil,
-        /**
-         * Ignored.
-         */token: String? = nil) {
-        self.baseUrl = baseUrl
-        self.tokenUrl = tokenUrl
-        self.clientId = clientId
-        self.clientSecret = clientSecret
-        self.token = token
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetSettings: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetSettings: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetSettings {
-        return
-            try FleetSettings(
-                baseUrl: FfiConverterOptionString.read(from: &buf),
-                tokenUrl: FfiConverterOptionString.read(from: &buf),
-                clientId: FfiConverterOptionString.read(from: &buf),
-                clientSecret: FfiConverterOptionString.read(from: &buf),
-                token: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetSettings, into buf: inout [UInt8]) {
-        FfiConverterOptionString.write(value.baseUrl, into: &buf)
-        FfiConverterOptionString.write(value.tokenUrl, into: &buf)
-        FfiConverterOptionString.write(value.clientId, into: &buf)
-        FfiConverterOptionString.write(value.clientSecret, into: &buf)
-        FfiConverterOptionString.write(value.token, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetSettings_lift(_ buf: RustBuffer) throws -> FleetSettings {
-    return try FfiConverterTypeFleetSettings.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetSettings_lower(_ value: FleetSettings) -> RustBuffer {
-    return FfiConverterTypeFleetSettings.lower(value)
-}
-
-
-/**
- * A signed, shareable service URL.
- */
-public struct FleetSignedUrl: Equatable, Hashable {
-    /**
-     * The URL.
-     */
-    public var url: String
-    /**
-     * The resource as JSON (for `revoke_signed_service_url`).
-     */
-    public var json: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * The URL.
-         */url: String,
-        /**
-         * The resource as JSON (for `revoke_signed_service_url`).
-         */json: String) {
-        self.url = url
-        self.json = json
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetSignedUrl: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetSignedUrl: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetSignedUrl {
-        return
-            try FleetSignedUrl(
-                url: FfiConverterString.read(from: &buf),
-                json: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetSignedUrl, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.url, into: &buf)
-        FfiConverterString.write(value.json, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetSignedUrl_lift(_ buf: RustBuffer) throws -> FleetSignedUrl {
-    return try FfiConverterTypeFleetSignedUrl.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetSignedUrl_lower(_ value: FleetSignedUrl) -> RustBuffer {
-    return FfiConverterTypeFleetSignedUrl.lower(value)
-}
-
-
-/**
- * The everyday sizes of a cloud sandbox, which the Cua apps offer
- * (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`,
- * `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`).
- */
-public struct FleetSizeLimits: Equatable, Hashable {
-    /**
-     * Fewest vCPUs.
-     */
-    public var minCpus: UInt32
-    /**
-     * Most vCPUs.
-     */
-    public var maxCpus: UInt32
-    /**
-     * Least memory, MiB.
-     */
-    public var minMemoryMb: UInt32
-    /**
-     * Most memory, MiB.
-     */
-    public var maxMemoryMb: UInt32
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Fewest vCPUs.
-         */minCpus: UInt32,
-        /**
-         * Most vCPUs.
-         */maxCpus: UInt32,
-        /**
-         * Least memory, MiB.
-         */minMemoryMb: UInt32,
-        /**
-         * Most memory, MiB.
-         */maxMemoryMb: UInt32) {
-        self.minCpus = minCpus
-        self.maxCpus = maxCpus
-        self.minMemoryMb = minMemoryMb
-        self.maxMemoryMb = maxMemoryMb
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetSizeLimits: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetSizeLimits: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetSizeLimits {
-        return
-            try FleetSizeLimits(
-                minCpus: FfiConverterUInt32.read(from: &buf),
-                maxCpus: FfiConverterUInt32.read(from: &buf),
-                minMemoryMb: FfiConverterUInt32.read(from: &buf),
-                maxMemoryMb: FfiConverterUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetSizeLimits, into buf: inout [UInt8]) {
-        FfiConverterUInt32.write(value.minCpus, into: &buf)
-        FfiConverterUInt32.write(value.maxCpus, into: &buf)
-        FfiConverterUInt32.write(value.minMemoryMb, into: &buf)
-        FfiConverterUInt32.write(value.maxMemoryMb, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetSizeLimits_lift(_ buf: RustBuffer) throws -> FleetSizeLimits {
-    return try FfiConverterTypeFleetSizeLimits.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetSizeLimits_lower(_ value: FleetSizeLimits) -> RustBuffer {
-    return FfiConverterTypeFleetSizeLimits.lower(value)
-}
-
-
-/**
- * This account's Cua Cloud rates ([`Fleet::usage_pricing`]). Fleet bills
- * the vCPUs and memory a sandbox reserves, per hour; disk is not metered.
- */
-public struct FleetUsagePricing: Equatable, Hashable {
-    /**
-     * USD per reserved vCPU per hour.
-     */
-    public var vcpuHourUsd: Double
-    /**
-     * USD per reserved GiB of memory per hour.
-     */
-    public var memoryGibHourUsd: Double
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * USD per reserved vCPU per hour.
-         */vcpuHourUsd: Double,
-        /**
-         * USD per reserved GiB of memory per hour.
-         */memoryGibHourUsd: Double) {
-        self.vcpuHourUsd = vcpuHourUsd
-        self.memoryGibHourUsd = memoryGibHourUsd
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FleetUsagePricing: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFleetUsagePricing: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetUsagePricing {
-        return
-            try FleetUsagePricing(
-                vcpuHourUsd: FfiConverterDouble.read(from: &buf),
-                memoryGibHourUsd: FfiConverterDouble.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FleetUsagePricing, into buf: inout [UInt8]) {
-        FfiConverterDouble.write(value.vcpuHourUsd, into: &buf)
-        FfiConverterDouble.write(value.memoryGibHourUsd, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetUsagePricing_lift(_ buf: RustBuffer) throws -> FleetUsagePricing {
-    return try FfiConverterTypeFleetUsagePricing.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFleetUsagePricing_lower(_ value: FleetUsagePricing) -> RustBuffer {
-    return FfiConverterTypeFleetUsagePricing.lower(value)
-}
-
-
-/**
  * One GPU option of a runtime (see [`Spaces::gpu_support`]).
  */
 public struct GpuOption: Equatable, Hashable {
@@ -24414,7 +21663,7 @@ public func FfiConverterTypeHttpResponse_lower(_ value: HttpResponse) -> RustBuf
  * Image layers built on top of a sandbox's image. Local: a build into the
  * container engine (container images only; VM images take no layers here),
  * cached by a content hash (`cua-b-<hash>`), so an identical spec never
- * rebuilds. (Cua Cloud's remote build has ended.)
+ * rebuilds.
  */
 public struct ImageBuild: Equatable, Hashable {
     /**
@@ -24852,7 +22101,7 @@ public func FfiConverterTypeLocalStorage_lower(_ value: LocalStorage) -> RustBuf
 
 
 /**
- * The locations `on` accepts: `local`, `cloud`, then registered providers.
+ * The locations `on` accepts: `local`, then registered providers.
  */
 public struct LocationInfo: Equatable, Hashable {
     /**
@@ -24944,9 +22193,9 @@ public func FfiConverterTypeLocationInfo_lower(_ value: LocationInfo) -> RustBuf
 
 /**
  * Where an MCP endpoint is and what every request needs. Hand it to any
- * MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). On
- * Fleet the headers carry a short-lived gateway bearer: fetch a fresh
- * config per connection.
+ * MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). A
+ * provider's headers may be short-lived: fetch a fresh config per
+ * connection.
  */
 public struct McpConfig: Equatable, Hashable {
     /**
@@ -26132,145 +23381,6 @@ public func FfiConverterTypePoint_lower(_ value: Point) -> RustBuffer {
 
 
 /**
- * How a pool keeps capacity for a [`SandboxSpec`].
- */
-public struct PoolOptions: Equatable, Hashable {
-    /**
-     * `kubevirt` or `gvisor`. Unset: from the image.
-     */
-    public var runtime: String?
-    /**
-     * Replicas of a pool without autoscaling (default 1).
-     */
-    public var replicas: UInt32?
-    /**
-     * Keep one sandbox warm (`minPoolSize: 1`).
-     */
-    public var warm: Bool?
-    /**
-     * Autoscaling floor.
-     */
-    public var minPoolSize: UInt32?
-    /**
-     * Autoscaling ceiling.
-     */
-    public var maxPoolSize: UInt32?
-    /**
-     * Delete the pool after this many seconds without claims.
-     */
-    public var idleTtlSeconds: UInt32?
-    /**
-     * `Retain` or `Cascade`: what TTL expiry deletes.
-     */
-    public var ttlPolicy: String?
-    /**
-     * Pool creation-age TTL (seconds).
-     */
-    public var poolTtlSeconds: UInt32?
-    /**
-     * Default TTL (seconds) of claims made on the pool through this SDK.
-     */
-    public var claimTtlSeconds: UInt32?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `kubevirt` or `gvisor`. Unset: from the image.
-         */runtime: String? = nil,
-        /**
-         * Replicas of a pool without autoscaling (default 1).
-         */replicas: UInt32? = nil,
-        /**
-         * Keep one sandbox warm (`minPoolSize: 1`).
-         */warm: Bool? = nil,
-        /**
-         * Autoscaling floor.
-         */minPoolSize: UInt32? = nil,
-        /**
-         * Autoscaling ceiling.
-         */maxPoolSize: UInt32? = nil,
-        /**
-         * Delete the pool after this many seconds without claims.
-         */idleTtlSeconds: UInt32? = nil,
-        /**
-         * `Retain` or `Cascade`: what TTL expiry deletes.
-         */ttlPolicy: String? = nil,
-        /**
-         * Pool creation-age TTL (seconds).
-         */poolTtlSeconds: UInt32? = nil,
-        /**
-         * Default TTL (seconds) of claims made on the pool through this SDK.
-         */claimTtlSeconds: UInt32? = nil) {
-        self.runtime = runtime
-        self.replicas = replicas
-        self.warm = warm
-        self.minPoolSize = minPoolSize
-        self.maxPoolSize = maxPoolSize
-        self.idleTtlSeconds = idleTtlSeconds
-        self.ttlPolicy = ttlPolicy
-        self.poolTtlSeconds = poolTtlSeconds
-        self.claimTtlSeconds = claimTtlSeconds
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension PoolOptions: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypePoolOptions: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PoolOptions {
-        return
-            try PoolOptions(
-                runtime: FfiConverterOptionString.read(from: &buf),
-                replicas: FfiConverterOptionUInt32.read(from: &buf),
-                warm: FfiConverterOptionBool.read(from: &buf),
-                minPoolSize: FfiConverterOptionUInt32.read(from: &buf),
-                maxPoolSize: FfiConverterOptionUInt32.read(from: &buf),
-                idleTtlSeconds: FfiConverterOptionUInt32.read(from: &buf),
-                ttlPolicy: FfiConverterOptionString.read(from: &buf),
-                poolTtlSeconds: FfiConverterOptionUInt32.read(from: &buf),
-                claimTtlSeconds: FfiConverterOptionUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: PoolOptions, into buf: inout [UInt8]) {
-        FfiConverterOptionString.write(value.runtime, into: &buf)
-        FfiConverterOptionUInt32.write(value.replicas, into: &buf)
-        FfiConverterOptionBool.write(value.warm, into: &buf)
-        FfiConverterOptionUInt32.write(value.minPoolSize, into: &buf)
-        FfiConverterOptionUInt32.write(value.maxPoolSize, into: &buf)
-        FfiConverterOptionUInt32.write(value.idleTtlSeconds, into: &buf)
-        FfiConverterOptionString.write(value.ttlPolicy, into: &buf)
-        FfiConverterOptionUInt32.write(value.poolTtlSeconds, into: &buf)
-        FfiConverterOptionUInt32.write(value.claimTtlSeconds, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePoolOptions_lift(_ buf: RustBuffer) throws -> PoolOptions {
-    return try FfiConverterTypePoolOptions.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePoolOptions_lower(_ value: PoolOptions) -> RustBuffer {
-    return FfiConverterTypePoolOptions.lower(value)
-}
-
-
-/**
  * A normalized cursor.
  */
 public struct PresenceCursor: Equatable, Hashable {
@@ -27323,7 +24433,7 @@ public struct PublicUrl: Equatable, Hashable {
      */
     public var service: String
     /**
-     * Provider internals (cloud: namespace, claim; local: upstream).
+     * Provider internals (local: upstream).
      */
     public var providerDetails: [String: String]
 
@@ -27343,7 +24453,7 @@ public struct PublicUrl: Equatable, Hashable {
          * Service name.
          */service: String,
         /**
-         * Provider internals (cloud: namespace, claim; local: upstream).
+         * Provider internals (local: upstream).
          */providerDetails: [String: String]) {
         self.id = id
         self.url = url
@@ -28580,12 +25690,11 @@ public func FfiConverterTypeRuntimeCheck_lower(_ value: RuntimeCheck) -> RustBuf
  */
 public struct SandboxCreateOptions: Equatable, Hashable {
     /**
-     * Where it runs: `local`, `cloud`, `direct:<addr>` (an existing
-     * machine running cua-spacesd) or a registered provider. `None` (the
-     * default): the cloud when `cloud` options (or the deprecated flat
-     * cloud fields) are set, else the user default (`default.on` in
-     * `~/.cua/config.toml`, `CUA_DEFAULT_ON`, else `local`). `local`
-     * together with `cloud` is an `InvalidArgument`.
+     * Where it runs: `local`, `direct:<addr>` (an existing machine running
+     * cua-spacesd) or a registered provider. `None` (the default): the
+     * user default (`default.on` in `~/.cua/config.toml`,
+     * `CUA_DEFAULT_ON`, else `local`). `cloud` fails with the "Cua Cloud has
+     * ended" error.
      */
     public var on: String?
     /**
@@ -28597,7 +25706,7 @@ public struct SandboxCreateOptions: Equatable, Hashable {
     public var kind: String?
     /**
      * Which engine: `auto` or one the location offers for the kind (local
-     * `gvisor`, `runc`, `qemu`, `lume`; cloud `gvisor`, `kubevirt`). `None`:
+     * `gvisor`, `runc`, `qemu`, `lume`). `None`:
      * the user default (`default.runtime`, else `auto`, the safest
      * available). A local sandbox with sidecars needs `runc` where gVisor
      * would run. A combination that does not exist is `InvalidPlacement`,
@@ -28605,24 +25714,18 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      */
     public var runtime: String?
     /**
-     * Image reference. Locally, `pool:<name>` runs that cloud pool's
-     * template image.
+     * Image reference. A `pool:<name>` image fails with the "Cua Cloud has
+     * ended" error.
      */
     public var image: String
     /**
-     * Name. `None`: ephemeral (cloud: released with the sandbox; the
-     * managed capacity stays for reuse).
+     * Name. `None`: ephemeral (no state file; deleted with the sandbox).
      */
     public var name: String?
     /**
      * spacesd token.
      */
     public var token: String?
-    /**
-     * Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
-     * error.
-     */
-    public var pool: String?
     /**
      * Guest OS (`linux`, `macos`, `windows`).
      */
@@ -28657,34 +25760,12 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      */
     public var env: [String: String]
     /**
-     * Deprecated, and Cua Cloud has ended: initial replicas of a new
-     * managed pool (> 0 = warm).
-     */
-    public var fleetReplicas: UInt32?
-    /**
-     * Deprecated: use `cloud.claim_ttl_seconds`.
-     */
-    public var fleetTtlSeconds: UInt32?
-    /**
-     * Deprecated: use `cloud.warm`.
-     */
-    public var warm: Bool?
-    /**
-     * Deprecated: use `cloud.max_pool_size`.
-     */
-    public var maxPoolSize: UInt32?
-    /**
      * The sandbox's command (argv), replacing the image's entrypoint.
      * Same meaning local (container ENTRYPOINT, or run by cloud-init in a
      * Linux VM) and in the cloud (the template command with
      * `processMode: Run`, on gVisor and KubeVirt).
      */
     public var command: [String]?
-    /**
-     * Advanced cloud options (warm capacity, limits, TTL, runtime, a
-     * dedicated pool). They win over the deprecated flat fields.
-     */
-    public var cloud: CloudOptions?
     /**
      * Sidecar containers, addressed by name (see [`Container`]).
      */
@@ -28695,15 +25776,14 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      */
     public var registrySecret: RegistrySecret?
     /**
-     * Image layers built on top of `image` (cloud: a remote build; local:
-     * a build into the container engine; both cached by content).
+     * Image layers built on top of `image` (a build into the local
+     * container engine, cached by content).
      */
     public var build: ImageBuild?
     /**
      * Guest network: `"default"` (unset) gives outbound network, like a
      * Docker container; `"none"` cuts it while published ports still work.
-     * Only local QEMU VMs honour `"none"`; containers, Lume and cloud
-     * sandboxes reject it.
+     * Only local QEMU VMs honour `"none"`; containers and Lume reject it.
      */
     public var network: String?
     /**
@@ -28714,10 +25794,10 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      */
     public var overlays: [Overlay]
     /**
-     * Keep a named sandbox whose readiness check fails (its cloud claim,
-     * VM or container, and its record) to debug it. `false` (the
-     * default): a failed create deletes what it made and releases the
-     * claim. Ephemeral sandboxes are always deleted.
+     * Keep a named sandbox whose readiness check fails (its VM or
+     * container, and its record) to debug it. `false` (the default): a
+     * failed create deletes what it made. Ephemeral sandboxes are always
+     * deleted.
      */
     public var keepOnFailure: Bool
     /**
@@ -28733,12 +25813,11 @@ public struct SandboxCreateOptions: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Where it runs: `local`, `cloud`, `direct:<addr>` (an existing
-         * machine running cua-spacesd) or a registered provider. `None` (the
-         * default): the cloud when `cloud` options (or the deprecated flat
-         * cloud fields) are set, else the user default (`default.on` in
-         * `~/.cua/config.toml`, `CUA_DEFAULT_ON`, else `local`). `local`
-         * together with `cloud` is an `InvalidArgument`.
+         * Where it runs: `local`, `direct:<addr>` (an existing machine running
+         * cua-spacesd) or a registered provider. `None` (the default): the
+         * user default (`default.on` in `~/.cua/config.toml`,
+         * `CUA_DEFAULT_ON`, else `local`). `cloud` fails with the "Cua Cloud has
+         * ended" error.
          */on: String? = nil,
         /**
          * What kind of machine: `auto`, `container` or `vm`. `None`: the user
@@ -28748,27 +25827,22 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          */kind: String? = nil,
         /**
          * Which engine: `auto` or one the location offers for the kind (local
-         * `gvisor`, `runc`, `qemu`, `lume`; cloud `gvisor`, `kubevirt`). `None`:
+         * `gvisor`, `runc`, `qemu`, `lume`). `None`:
          * the user default (`default.runtime`, else `auto`, the safest
          * available). A local sandbox with sidecars needs `runc` where gVisor
          * would run. A combination that does not exist is `InvalidPlacement`,
          * listing the valid values.
          */runtime: String? = nil,
         /**
-         * Image reference. Locally, `pool:<name>` runs that cloud pool's
-         * template image.
+         * Image reference. A `pool:<name>` image fails with the "Cua Cloud has
+         * ended" error.
          */image: String = "",
         /**
-         * Name. `None`: ephemeral (cloud: released with the sandbox; the
-         * managed capacity stays for reuse).
+         * Name. `None`: ephemeral (no state file; deleted with the sandbox).
          */name: String? = nil,
         /**
          * spacesd token.
          */token: String? = nil,
-        /**
-         * Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
-         * error.
-         */pool: String? = nil,
         /**
          * Guest OS (`linux`, `macos`, `windows`).
          */os: String? = nil,
@@ -28795,28 +25869,11 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * are not secrets).
          */env: [String: String] = [:],
         /**
-         * Deprecated, and Cua Cloud has ended: initial replicas of a new
-         * managed pool (> 0 = warm).
-         */fleetReplicas: UInt32? = nil,
-        /**
-         * Deprecated: use `cloud.claim_ttl_seconds`.
-         */fleetTtlSeconds: UInt32? = nil,
-        /**
-         * Deprecated: use `cloud.warm`.
-         */warm: Bool? = nil,
-        /**
-         * Deprecated: use `cloud.max_pool_size`.
-         */maxPoolSize: UInt32? = nil,
-        /**
          * The sandbox's command (argv), replacing the image's entrypoint.
          * Same meaning local (container ENTRYPOINT, or run by cloud-init in a
          * Linux VM) and in the cloud (the template command with
          * `processMode: Run`, on gVisor and KubeVirt).
          */command: [String]? = nil,
-        /**
-         * Advanced cloud options (warm capacity, limits, TTL, runtime, a
-         * dedicated pool). They win over the deprecated flat fields.
-         */cloud: CloudOptions? = nil,
         /**
          * Sidecar containers, addressed by name (see [`Container`]).
          */sidecars: [Container] = [],
@@ -28825,14 +25882,13 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * registry).
          */registrySecret: RegistrySecret? = nil,
         /**
-         * Image layers built on top of `image` (cloud: a remote build; local:
-         * a build into the container engine; both cached by content).
+         * Image layers built on top of `image` (a build into the local
+         * container engine, cached by content).
          */build: ImageBuild? = nil,
         /**
          * Guest network: `"default"` (unset) gives outbound network, like a
          * Docker container; `"none"` cuts it while published ports still work.
-         * Only local QEMU VMs honour `"none"`; containers, Lume and cloud
-         * sandboxes reject it.
+         * Only local QEMU VMs honour `"none"`; containers and Lume reject it.
          */network: String? = nil,
         /**
          * Binaries to inject once the sandbox is up, so tests run the build
@@ -28841,10 +25897,10 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * cua-spacesd in the image, or a local container.
          */overlays: [Overlay] = [],
         /**
-         * Keep a named sandbox whose readiness check fails (its cloud claim,
-         * VM or container, and its record) to debug it. `false` (the
-         * default): a failed create deletes what it made and releases the
-         * claim. Ephemeral sandboxes are always deleted.
+         * Keep a named sandbox whose readiness check fails (its VM or
+         * container, and its record) to debug it. `false` (the default): a
+         * failed create deletes what it made. Ephemeral sandboxes are always
+         * deleted.
          */keepOnFailure: Bool = false,
         /**
          * A GPU option of the runtime it runs on (`Spaces.gpu_support` lists them):
@@ -28859,7 +25915,6 @@ public struct SandboxCreateOptions: Equatable, Hashable {
         self.image = image
         self.name = name
         self.token = token
-        self.pool = pool
         self.os = os
         self.cpus = cpus
         self.memoryMb = memoryMb
@@ -28868,12 +25923,7 @@ public struct SandboxCreateOptions: Equatable, Hashable {
         self.waitFor = waitFor
         self.readyTimeoutMs = readyTimeoutMs
         self.env = env
-        self.fleetReplicas = fleetReplicas
-        self.fleetTtlSeconds = fleetTtlSeconds
-        self.warm = warm
-        self.maxPoolSize = maxPoolSize
         self.command = command
-        self.cloud = cloud
         self.sidecars = sidecars
         self.registrySecret = registrySecret
         self.build = build
@@ -28905,7 +25955,6 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
                 image: FfiConverterString.read(from: &buf),
                 name: FfiConverterOptionString.read(from: &buf),
                 token: FfiConverterOptionString.read(from: &buf),
-                pool: FfiConverterOptionString.read(from: &buf),
                 os: FfiConverterOptionString.read(from: &buf),
                 cpus: FfiConverterOptionUInt32.read(from: &buf),
                 memoryMb: FfiConverterOptionUInt64.read(from: &buf),
@@ -28914,12 +25963,7 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
                 waitFor: FfiConverterSequenceTypeReadinessProbe.read(from: &buf),
                 readyTimeoutMs: FfiConverterOptionUInt32.read(from: &buf),
                 env: FfiConverterDictionaryStringString.read(from: &buf),
-                fleetReplicas: FfiConverterOptionUInt32.read(from: &buf),
-                fleetTtlSeconds: FfiConverterOptionUInt32.read(from: &buf),
-                warm: FfiConverterOptionBool.read(from: &buf),
-                maxPoolSize: FfiConverterOptionUInt32.read(from: &buf),
                 command: FfiConverterOptionSequenceString.read(from: &buf),
-                cloud: FfiConverterOptionTypeCloudOptions.read(from: &buf),
                 sidecars: FfiConverterSequenceTypeContainer.read(from: &buf),
                 registrySecret: FfiConverterOptionTypeRegistrySecret.read(from: &buf),
                 build: FfiConverterOptionTypeImageBuild.read(from: &buf),
@@ -28937,7 +25981,6 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
         FfiConverterString.write(value.image, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
         FfiConverterOptionString.write(value.token, into: &buf)
-        FfiConverterOptionString.write(value.pool, into: &buf)
         FfiConverterOptionString.write(value.os, into: &buf)
         FfiConverterOptionUInt32.write(value.cpus, into: &buf)
         FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
@@ -28946,12 +25989,7 @@ public struct FfiConverterTypeSandboxCreateOptions: FfiConverterRustBuffer {
         FfiConverterSequenceTypeReadinessProbe.write(value.waitFor, into: &buf)
         FfiConverterOptionUInt32.write(value.readyTimeoutMs, into: &buf)
         FfiConverterDictionaryStringString.write(value.env, into: &buf)
-        FfiConverterOptionUInt32.write(value.fleetReplicas, into: &buf)
-        FfiConverterOptionUInt32.write(value.fleetTtlSeconds, into: &buf)
-        FfiConverterOptionBool.write(value.warm, into: &buf)
-        FfiConverterOptionUInt32.write(value.maxPoolSize, into: &buf)
         FfiConverterOptionSequenceString.write(value.command, into: &buf)
-        FfiConverterOptionTypeCloudOptions.write(value.cloud, into: &buf)
         FfiConverterSequenceTypeContainer.write(value.sidecars, into: &buf)
         FfiConverterOptionTypeRegistrySecret.write(value.registrySecret, into: &buf)
         FfiConverterOptionTypeImageBuild.write(value.build, into: &buf)
@@ -28988,18 +26026,17 @@ public struct SandboxInfo: Equatable, Hashable {
     public var name: String
     /**
      * What kind of machine: `container` or `vm` (empty when not known:
-     * an existing machine, or a cloud sandbox this client did not create).
+     * an existing machine).
      */
     public var kind: String
     /**
-     * The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or
-     * `kubevirt` (empty when not known).
+     * The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a
+     * provider's own (empty when not known).
      */
     public var runtime: String
     /**
-     * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
-     * for a record of the Cua Cloud that has ended); prefer `location`,
-     * `kind` and `runtime`.
+     * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...); prefer
+     * `location`, `kind` and `runtime`.
      */
     public var runtimeType: String
     /**
@@ -29027,9 +26064,8 @@ public struct SandboxInfo: Equatable, Hashable {
      */
     public var image: String?
     /**
-     * Qualified ref, the same kind of value local and in the cloud:
-     * `local:<name>`, `cloud:<name>` or `direct:<host:port>`. Every call
-     * that takes a sandbox name accepts it.
+     * Qualified ref: `local:<name>`, `direct:<host:port>` or
+     * `<provider>:<name>`. Every call that takes a sandbox name accepts it.
      */
     public var id: String
     /**
@@ -29037,8 +26073,8 @@ public struct SandboxInfo: Equatable, Hashable {
      */
     public var phase: SandboxPhase
     /**
-     * Where it runs: `local`, `cloud`, `direct` (a machine by address) or
-     * `relay`.
+     * Where it runs: `local`, `direct` (a machine by address), `relay` or a
+     * provider.
      */
     public var location: String
     /**
@@ -29046,14 +26082,14 @@ public struct SandboxInfo: Equatable, Hashable {
      */
     public var expiresAtUnix: Int64?
     /**
-     * Provider internals (cloud: `pool`, `namespace`, `claim`; local:
-     * `backend`, `container_id`). Not part of the portable API.
+     * Provider internals (local: `backend`, `container_id`). Not part of
+     * the portable API.
      */
     public var providerDetails: [String: String]
     /**
      * The image as resolved and pinned at create time (digest, variant).
-     * `None` for direct connections, named pools, images not resolved from
-     * a registry, and the daemon topology.
+     * `None` for direct connections, images not resolved from a registry,
+     * and the daemon topology.
      */
     public var imageInfo: ImageInfo?
     /**
@@ -29070,16 +26106,15 @@ public struct SandboxInfo: Equatable, Hashable {
          */name: String,
         /**
          * What kind of machine: `container` or `vm` (empty when not known:
-         * an existing machine, or a cloud sandbox this client did not create).
+         * an existing machine).
          */kind: String,
         /**
-         * The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or
-         * `kubevirt` (empty when not known).
+         * The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a
+         * provider's own (empty when not known).
          */runtime: String,
         /**
-         * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
-         * for a record of the Cua Cloud that has ended); prefer `location`,
-         * `kind` and `runtime`.
+         * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...); prefer
+         * `location`, `kind` and `runtime`.
          */runtimeType: String,
         /**
          * Status.
@@ -29100,28 +26135,27 @@ public struct SandboxInfo: Equatable, Hashable {
          * Image, when known.
          */image: String?,
         /**
-         * Qualified ref, the same kind of value local and in the cloud:
-         * `local:<name>`, `cloud:<name>` or `direct:<host:port>`. Every call
-         * that takes a sandbox name accepts it.
+         * Qualified ref: `local:<name>`, `direct:<host:port>` or
+         * `<provider>:<name>`. Every call that takes a sandbox name accepts it.
          */id: String,
         /**
          * Portable phase: provisioning, starting, ready or stopped.
          */phase: SandboxPhase,
         /**
-         * Where it runs: `local`, `cloud`, `direct` (a machine by address) or
-         * `relay`.
+         * Where it runs: `local`, `direct` (a machine by address), `relay` or a
+         * provider.
          */location: String,
         /**
          * When it expires unless kept alive (unix seconds), when known.
          */expiresAtUnix: Int64?,
         /**
-         * Provider internals (cloud: `pool`, `namespace`, `claim`; local:
-         * `backend`, `container_id`). Not part of the portable API.
+         * Provider internals (local: `backend`, `container_id`). Not part of
+         * the portable API.
          */providerDetails: [String: String],
         /**
          * The image as resolved and pinned at create time (digest, variant).
-         * `None` for direct connections, named pools, images not resolved from
-         * a registry, and the daemon topology.
+         * `None` for direct connections, images not resolved from a registry,
+         * and the daemon topology.
          */imageInfo: ImageInfo? = nil,
         /**
          * Why a local sandbox stopped without being asked to, in plain words
@@ -29228,7 +26262,7 @@ public struct SandboxListing: Equatable, Hashable {
      */
     public var sandboxes: [SandboxInfo]
     /**
-     * Sources left out, for example "cloud sandboxes not listed: ...".
+     * Sources left out of the listing.
      */
     public var warnings: [String]
 
@@ -29239,7 +26273,7 @@ public struct SandboxListing: Equatable, Hashable {
          * Sandboxes, each with its `location`.
          */sandboxes: [SandboxInfo],
         /**
-         * Sources left out, for example "cloud sandboxes not listed: ...".
+         * Sources left out of the listing.
          */warnings: [String]) {
         self.sandboxes = sandboxes
         self.warnings = warnings
@@ -29366,207 +26400,6 @@ public func FfiConverterTypeSandboxRefParts_lift(_ buf: RustBuffer) throws -> Sa
 #endif
 public func FfiConverterTypeSandboxRefParts_lower(_ value: SandboxRefParts) -> RustBuffer {
     return FfiConverterTypeSandboxRefParts.lower(value)
-}
-
-
-/**
- * What a sandbox runs: the one model behind `Sandbox.create`, managed
- * pools and [`Fleet::apply`]. Unset fields keep Fleet's defaults (and are
- * not compared by [`Fleet::check_pool_spec`]).
- */
-public struct SandboxSpec: Equatable, Hashable {
-    /**
-     * Image (a container image runs on gVisor, a containerDisk on
-     * KubeVirt).
-     */
-    public var image: String
-    /**
-     * argv replacing the image ENTRYPOINT.
-     */
-    public var command: [String]?
-    /**
-     * Arguments replacing the image CMD.
-     */
-    public var args: [String]?
-    /**
-     * Plain environment variables (not secrets).
-     */
-    public var env: [String: String]
-    /**
-     * Named services (name → guest port).
-     */
-    public var services: [String: UInt16]
-    /**
-     * Readiness probe (`port`, or a declared `service`; `http_path` for
-     * HTTP). A replica binds a claim only once it passes.
-     */
-    public var readiness: ReadinessProbe?
-    /**
-     * vCPUs.
-     */
-    public var cpu: UInt32?
-    /**
-     * Memory (MiB).
-     */
-    public var memoryMb: UInt32?
-    /**
-     * UEFI firmware (Windows images).
-     */
-    public var efi: Bool
-    /**
-     * Extra containers sharing the sandbox's network namespace.
-     */
-    public var sidecars: [Container]
-    /**
-     * Credentials for a private image: stored as the pool's
-     * `cua-registry-*` pull Secret.
-     */
-    public var registrySecret: RegistrySecret?
-    /**
-     * An existing `cua-registry-*` pull Secret in the pool namespace
-     * (instead of `registry_secret`).
-     */
-    public var registrySecretName: String?
-    /**
-     * `Legacy` or `Run` (`vmTemplate.processMode`).
-     */
-    public var processMode: String?
-    /**
-     * Per-claim secrets: claims may carry a token delivered at
-     * `/run/cua/env-token`.
-     */
-    public var claimSecrets: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Image (a container image runs on gVisor, a containerDisk on
-         * KubeVirt).
-         */image: String = "",
-        /**
-         * argv replacing the image ENTRYPOINT.
-         */command: [String]? = nil,
-        /**
-         * Arguments replacing the image CMD.
-         */args: [String]? = nil,
-        /**
-         * Plain environment variables (not secrets).
-         */env: [String: String] = [:],
-        /**
-         * Named services (name → guest port).
-         */services: [String: UInt16] = [:],
-        /**
-         * Readiness probe (`port`, or a declared `service`; `http_path` for
-         * HTTP). A replica binds a claim only once it passes.
-         */readiness: ReadinessProbe? = nil,
-        /**
-         * vCPUs.
-         */cpu: UInt32? = nil,
-        /**
-         * Memory (MiB).
-         */memoryMb: UInt32? = nil,
-        /**
-         * UEFI firmware (Windows images).
-         */efi: Bool = false,
-        /**
-         * Extra containers sharing the sandbox's network namespace.
-         */sidecars: [Container] = [],
-        /**
-         * Credentials for a private image: stored as the pool's
-         * `cua-registry-*` pull Secret.
-         */registrySecret: RegistrySecret? = nil,
-        /**
-         * An existing `cua-registry-*` pull Secret in the pool namespace
-         * (instead of `registry_secret`).
-         */registrySecretName: String? = nil,
-        /**
-         * `Legacy` or `Run` (`vmTemplate.processMode`).
-         */processMode: String? = nil,
-        /**
-         * Per-claim secrets: claims may carry a token delivered at
-         * `/run/cua/env-token`.
-         */claimSecrets: Bool = false) {
-        self.image = image
-        self.command = command
-        self.args = args
-        self.env = env
-        self.services = services
-        self.readiness = readiness
-        self.cpu = cpu
-        self.memoryMb = memoryMb
-        self.efi = efi
-        self.sidecars = sidecars
-        self.registrySecret = registrySecret
-        self.registrySecretName = registrySecretName
-        self.processMode = processMode
-        self.claimSecrets = claimSecrets
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension SandboxSpec: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeSandboxSpec: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SandboxSpec {
-        return
-            try SandboxSpec(
-                image: FfiConverterString.read(from: &buf),
-                command: FfiConverterOptionSequenceString.read(from: &buf),
-                args: FfiConverterOptionSequenceString.read(from: &buf),
-                env: FfiConverterDictionaryStringString.read(from: &buf),
-                services: FfiConverterDictionaryStringUInt16.read(from: &buf),
-                readiness: FfiConverterOptionTypeReadinessProbe.read(from: &buf),
-                cpu: FfiConverterOptionUInt32.read(from: &buf),
-                memoryMb: FfiConverterOptionUInt32.read(from: &buf),
-                efi: FfiConverterBool.read(from: &buf),
-                sidecars: FfiConverterSequenceTypeContainer.read(from: &buf),
-                registrySecret: FfiConverterOptionTypeRegistrySecret.read(from: &buf),
-                registrySecretName: FfiConverterOptionString.read(from: &buf),
-                processMode: FfiConverterOptionString.read(from: &buf),
-                claimSecrets: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: SandboxSpec, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.image, into: &buf)
-        FfiConverterOptionSequenceString.write(value.command, into: &buf)
-        FfiConverterOptionSequenceString.write(value.args, into: &buf)
-        FfiConverterDictionaryStringString.write(value.env, into: &buf)
-        FfiConverterDictionaryStringUInt16.write(value.services, into: &buf)
-        FfiConverterOptionTypeReadinessProbe.write(value.readiness, into: &buf)
-        FfiConverterOptionUInt32.write(value.cpu, into: &buf)
-        FfiConverterOptionUInt32.write(value.memoryMb, into: &buf)
-        FfiConverterBool.write(value.efi, into: &buf)
-        FfiConverterSequenceTypeContainer.write(value.sidecars, into: &buf)
-        FfiConverterOptionTypeRegistrySecret.write(value.registrySecret, into: &buf)
-        FfiConverterOptionString.write(value.registrySecretName, into: &buf)
-        FfiConverterOptionString.write(value.processMode, into: &buf)
-        FfiConverterBool.write(value.claimSecrets, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSandboxSpec_lift(_ buf: RustBuffer) throws -> SandboxSpec {
-    return try FfiConverterTypeSandboxSpec.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSandboxSpec_lower(_ value: SandboxSpec) -> RustBuffer {
-    return FfiConverterTypeSandboxSpec.lower(value)
 }
 
 
@@ -30684,8 +27517,9 @@ public struct SpaceCreateOptions: Equatable, Hashable {
      */
     public var image: String?
     /**
-     * Where: `local` (free) or `cloud` (metered). `None`: the user default
-     * (`default.on`, `CUA_DEFAULT_ON`, else `local`).
+     * Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+     * `modal`) or `host:<name>`. `None`: the user default (`default.on`,
+     * `CUA_DEFAULT_ON`, else `local`).
      */
     public var on: String?
     /**
@@ -30766,8 +27600,9 @@ public struct SpaceCreateOptions: Equatable, Hashable {
          * Image (default: the canonical Linux image).
          */image: String? = nil,
         /**
-         * Where: `local` (free) or `cloud` (metered). `None`: the user default
-         * (`default.on`, `CUA_DEFAULT_ON`, else `local`).
+         * Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+         * `modal`) or `host:<name>`. `None`: the user default (`default.on`,
+         * `CUA_DEFAULT_ON`, else `local`).
          */on: String? = nil,
         /**
          * `auto` (default), `container` or `vm`.
@@ -34810,6 +31645,99 @@ public func FfiConverterTypeStreamStatsReport_lower(_ value: StreamStatsReport) 
 
 
 /**
+ * The one-time notice for machines that saw the older "anonymous" wording,
+ * shown before anything is linked to the account. Both buttons close it;
+ * the second also turns usage data off.
+ */
+public struct TelemetryLinkNotice: Equatable, Hashable {
+    public var title: String
+    public var body: String
+    /**
+     * Keeps usage data on ("Got it").
+     */
+    public var okLabel: String
+    /**
+     * Turns usage data off ("Turn off usage data").
+     */
+    public var turnOffLabel: String
+    /**
+     * The link to what is collected.
+     */
+    public var detailsLabel: String
+    public var docsUrl: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, body: String,
+        /**
+         * Keeps usage data on ("Got it").
+         */okLabel: String,
+        /**
+         * Turns usage data off ("Turn off usage data").
+         */turnOffLabel: String,
+        /**
+         * The link to what is collected.
+         */detailsLabel: String, docsUrl: String) {
+        self.title = title
+        self.body = body
+        self.okLabel = okLabel
+        self.turnOffLabel = turnOffLabel
+        self.detailsLabel = detailsLabel
+        self.docsUrl = docsUrl
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TelemetryLinkNotice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTelemetryLinkNotice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TelemetryLinkNotice {
+        return
+            try TelemetryLinkNotice(
+                title: FfiConverterString.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                okLabel: FfiConverterString.read(from: &buf),
+                turnOffLabel: FfiConverterString.read(from: &buf),
+                detailsLabel: FfiConverterString.read(from: &buf),
+                docsUrl: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TelemetryLinkNotice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterString.write(value.okLabel, into: &buf)
+        FfiConverterString.write(value.turnOffLabel, into: &buf)
+        FfiConverterString.write(value.detailsLabel, into: &buf)
+        FfiConverterString.write(value.docsUrl, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTelemetryLinkNotice_lift(_ buf: RustBuffer) throws -> TelemetryLinkNotice {
+    return try FfiConverterTypeTelemetryLinkNotice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTelemetryLinkNotice_lower(_ value: TelemetryLinkNotice) -> RustBuffer {
+    return FfiConverterTypeTelemetryLinkNotice.lower(value)
+}
+
+
+/**
  * Telemetry state.
  */
 public struct TelemetryStatus: Equatable, Hashable {
@@ -36169,35 +33097,6 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     case Timeout(message: String)
 
     /**
-     * Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
-     * this.
-     *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-     * ended guide.
-     */
-    case Fleet(message: String)
-
-    /**
-     * Fleet's admission refused the request. Cua Cloud has ended, so the SDK
-     * no longer raises this.
-     *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-     * ended guide.
-     */
-    case FleetAdmissionDenied(message: String)
-
-    /**
-     * The account is out of Cua Cloud credit: no credit left, and no card
-     * or plan. New cloud sandboxes and Spaces are refused; running ones
-     * keep running, and local ones are never affected. The message ends
-     * with the website billing page's URL.
-     *
-     * Fix: Add credit on that page (a plan, or a card for pay as you go),
-     * or run the sandbox locally.
-     */
-    case CloudCreditExhausted(message: String)
-
-    /**
      * Local runtime failure.
      *
      * Fix: Run `cua runtime doctor` (`Local.doctor`) and follow the steps it
@@ -36276,7 +33175,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * display, a local runtime) is not available.
      *
      * Fix: Install or start the prerequisite the message names on this
-     * machine.
+     * computer.
      */
     case HostCapabilityMissing(message: String)
 
@@ -36287,25 +33186,6 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * scope.
      */
     case TeleportRefused(message: String)
-
-    /**
-     * A named cloud pool's template differs from the requested sandbox
-     * fields. Cua Cloud has ended, so the SDK no longer raises this.
-     *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-     * ended guide.
-     */
-    case PoolSpecMismatch(message: String)
-
-    /**
-     * A claim bound but its per-claim secrets (the env token) never
-     * reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
-     * this.
-     *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-     * ended guide.
-     */
-    case ClaimSecretsNotDelivered(message: String)
 
     /**
      * Bug or I/O failure.
@@ -36423,91 +33303,71 @@ public struct FfiConverterTypeCuaError: FfiConverterRustBuffer {
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 8: return .Fleet(
+        case 8: return .Runtime(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 9: return .FleetAdmissionDenied(
+        case 9: return .Env(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 10: return .CloudCreditExhausted(
+        case 10: return .Http(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 11: return .Runtime(
+        case 11: return .Unauthenticated(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 12: return .Env(
+        case 12: return .PermissionDenied(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 13: return .Http(
+        case 13: return .Transport(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 14: return .Unauthenticated(
+        case 14: return .DaemonNotRunning(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 15: return .PermissionDenied(
+        case 15: return .Closed(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 16: return .Transport(
+        case 16: return .CapabilityMissing(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 17: return .DaemonNotRunning(
+        case 17: return .HostCapabilityMissing(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 18: return .Closed(
+        case 18: return .TeleportRefused(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 19: return .CapabilityMissing(
+        case 19: return .Internal(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 20: return .HostCapabilityMissing(
+        case 20: return .AmbiguousSandbox(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 21: return .TeleportRefused(
+        case 21: return .InsufficientDisk(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 22: return .PoolSpecMismatch(
+        case 22: return .ImageNotPublished(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 23: return .ClaimSecretsNotDelivered(
+        case 23: return .Cancelled(
             message: try FfiConverterString.read(from: &buf)
         )
 
-        case 24: return .Internal(
-            message: try FfiConverterString.read(from: &buf)
-        )
-
-        case 25: return .AmbiguousSandbox(
-            message: try FfiConverterString.read(from: &buf)
-        )
-
-        case 26: return .InsufficientDisk(
-            message: try FfiConverterString.read(from: &buf)
-        )
-
-        case 27: return .ImageNotPublished(
-            message: try FfiConverterString.read(from: &buf)
-        )
-
-        case 28: return .Cancelled(
-            message: try FfiConverterString.read(from: &buf)
-        )
-
-        case 29: return .Cloud(
+        case 24: return .Cloud(
             message: try FfiConverterString.read(from: &buf)
         )
 
@@ -36536,50 +33396,40 @@ public struct FfiConverterTypeCuaError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(6))
         case .Timeout(_ /* message is ignored*/):
             writeInt(&buf, Int32(7))
-        case .Fleet(_ /* message is ignored*/):
-            writeInt(&buf, Int32(8))
-        case .FleetAdmissionDenied(_ /* message is ignored*/):
-            writeInt(&buf, Int32(9))
-        case .CloudCreditExhausted(_ /* message is ignored*/):
-            writeInt(&buf, Int32(10))
         case .Runtime(_ /* message is ignored*/):
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(8))
         case .Env(_ /* message is ignored*/):
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(9))
         case .Http(_ /* message is ignored*/):
-            writeInt(&buf, Int32(13))
+            writeInt(&buf, Int32(10))
         case .Unauthenticated(_ /* message is ignored*/):
-            writeInt(&buf, Int32(14))
+            writeInt(&buf, Int32(11))
         case .PermissionDenied(_ /* message is ignored*/):
-            writeInt(&buf, Int32(15))
+            writeInt(&buf, Int32(12))
         case .Transport(_ /* message is ignored*/):
-            writeInt(&buf, Int32(16))
+            writeInt(&buf, Int32(13))
         case .DaemonNotRunning(_ /* message is ignored*/):
-            writeInt(&buf, Int32(17))
+            writeInt(&buf, Int32(14))
         case .Closed(_ /* message is ignored*/):
-            writeInt(&buf, Int32(18))
+            writeInt(&buf, Int32(15))
         case .CapabilityMissing(_ /* message is ignored*/):
-            writeInt(&buf, Int32(19))
+            writeInt(&buf, Int32(16))
         case .HostCapabilityMissing(_ /* message is ignored*/):
-            writeInt(&buf, Int32(20))
+            writeInt(&buf, Int32(17))
         case .TeleportRefused(_ /* message is ignored*/):
-            writeInt(&buf, Int32(21))
-        case .PoolSpecMismatch(_ /* message is ignored*/):
-            writeInt(&buf, Int32(22))
-        case .ClaimSecretsNotDelivered(_ /* message is ignored*/):
-            writeInt(&buf, Int32(23))
+            writeInt(&buf, Int32(18))
         case .Internal(_ /* message is ignored*/):
-            writeInt(&buf, Int32(24))
+            writeInt(&buf, Int32(19))
         case .AmbiguousSandbox(_ /* message is ignored*/):
-            writeInt(&buf, Int32(25))
+            writeInt(&buf, Int32(20))
         case .InsufficientDisk(_ /* message is ignored*/):
-            writeInt(&buf, Int32(26))
+            writeInt(&buf, Int32(21))
         case .ImageNotPublished(_ /* message is ignored*/):
-            writeInt(&buf, Int32(27))
+            writeInt(&buf, Int32(22))
         case .Cancelled(_ /* message is ignored*/):
-            writeInt(&buf, Int32(28))
+            writeInt(&buf, Int32(23))
         case .Cloud(_ /* message is ignored*/):
-            writeInt(&buf, Int32(29))
+            writeInt(&buf, Int32(24))
 
 
         }
@@ -37161,9 +34011,8 @@ public func FfiConverterTypeProcessEventKind_lower(_ value: ProcessEventKind) ->
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
- * Credentials for a private registry image. Local sandboxes pull with
- * them; cloud sandboxes store them as the sandbox's registry pull Secret.
- * Never logged or persisted.
+ * Credentials for a private registry image, used for the pull. Never
+ * logged or persisted.
  */
 
 public enum RegistrySecret: Equatable, Hashable {
@@ -37602,13 +34451,13 @@ public func FfiConverterTypeRuntimeCheckStatus_lower(_ value: RuntimeCheckStatus
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
- * Portable lifecycle phase, the same words local and in the cloud.
+ * Portable lifecycle phase, the same words on every provider.
  */
 
 public enum SandboxPhase: Equatable, Hashable {
 
     /**
-     * Being created (cloud: capacity is being provisioned).
+     * Being created.
      */
     case provisioning
     /**
@@ -38116,30 +34965,6 @@ fileprivate struct FfiConverterOptionTypeAuthIdentity: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeCloudOptions: FfiConverterRustBuffer {
-    typealias SwiftType = CloudOptions?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeCloudOptions.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeCloudOptions.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeComputerResources: FfiConverterRustBuffer {
     typealias SwiftType = ComputerResources?
 
@@ -38300,102 +35125,6 @@ fileprivate struct FfiConverterOptionTypeExitInfo: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeExitInfo.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeFleetBillingCard: FfiConverterRustBuffer {
-    typealias SwiftType = FleetBillingCard?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeFleetBillingCard.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeFleetBillingCard.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeFleetBillingCredit: FfiConverterRustBuffer {
-    typealias SwiftType = FleetBillingCredit?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeFleetBillingCredit.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeFleetBillingCredit.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeFleetSettings: FfiConverterRustBuffer {
-    typealias SwiftType = FleetSettings?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeFleetSettings.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeFleetSettings.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeFleetUsagePricing: FfiConverterRustBuffer {
-    typealias SwiftType = FleetUsagePricing?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeFleetUsagePricing.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeFleetUsagePricing.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -38660,30 +35389,6 @@ fileprivate struct FfiConverterOptionTypePtySize: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypePtySize.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeReadinessProbe: FfiConverterRustBuffer {
-    typealias SwiftType = ReadinessProbe?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeReadinessProbe.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeReadinessProbe.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -39903,81 +36608,6 @@ fileprivate struct FfiConverterSequenceTypeFileEntry: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeFleetClaim: FfiConverterRustBuffer {
-    typealias SwiftType = [FleetClaim]
-
-    public static func write(_ value: [FleetClaim], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeFleetClaim.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FleetClaim] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [FleetClaim]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeFleetClaim.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeFleetManagedPool: FfiConverterRustBuffer {
-    typealias SwiftType = [FleetManagedPool]
-
-    public static func write(_ value: [FleetManagedPool], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeFleetManagedPool.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FleetManagedPool] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [FleetManagedPool]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeFleetManagedPool.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeFleetPool: FfiConverterRustBuffer {
-    typealias SwiftType = [FleetPool]
-
-    public static func write(_ value: [FleetPool], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeFleetPool.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FleetPool] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [FleetPool]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeFleetPool.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeGpuOption: FfiConverterRustBuffer {
     typealias SwiftType = [GpuOption]
 
@@ -41174,9 +37804,9 @@ public func agentHarnesses() -> String  {
  * this before reading the session; an explicit read of a session stored
  * before markers existed writes the marker.
  */
-public func mayHaveFleetSession() -> Bool  {
+public func mayHaveSession() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
-    uniffi_cua_sdk_fn_func_may_have_fleet_session($0
+    uniffi_cua_sdk_fn_func_may_have_session($0
     )
 })
 }
@@ -41224,7 +37854,7 @@ public func configPath() -> String  {
 }
 /**
  * Writes a setting to the config file (checked and normalised: `default.on`
- * takes `local`, `cloud` or a provider). Returns its effective value, which
+ * takes `local` or a provider). Returns its effective value, which
  * an environment variable may still override.
  */
 public func configSet(key: String, value: String)throws  -> ConfigEntry  {
@@ -41253,79 +37883,6 @@ public func configUnset(key: String)throws  -> ConfigEntry  {
 public func locations() -> [LocationInfo]  {
     return try!  FfiConverterSequenceTypeLocationInfo.lift(try! rustCall() {
     uniffi_cua_sdk_fn_func_locations($0
-    )
-})
-}
-/**
- * [`fleet_resolve_runtime`] with the image variant already known
- * (`variant` as [`fleet_image_variant`] returns it); `None` means the
- * manifest could not be read (an unset runtime then falls back to the
- * reference). Pure (no registry read).
- */
-public func fleetCheckRuntime(runtime: String?, image: String, variant: String?)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
-    uniffi_cua_sdk_fn_func_fleet_check_runtime(
-        FfiConverterOptionString.lower(runtime),
-        FfiConverterString.lower(image),
-        FfiConverterOptionString.lower(variant),$0
-    )
-})
-}
-/**
- * A fresh per-claim env token (64 hex characters).
- */
-public func fleetGenerateClaimToken() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-    uniffi_cua_sdk_fn_func_fleet_generate_claim_token($0
-    )
-})
-}
-/**
- * The variant of an image from its registry documents (`manifest`: an
- * image manifest or index, `config`: the platform manifest's config blob):
- * `container-disk`, `rootfs` or `other`. Pure (no registry read). A macOS
- * image raises `Unsupported`.
- */
-public func fleetImageVariant(manifest: String, config: String?)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
-    uniffi_cua_sdk_fn_func_fleet_image_variant(
-        FfiConverterString.lower(manifest),
-        FfiConverterOptionString.lower(config),$0
-    )
-})
-}
-/**
- * The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when
- * given, else the one the image needs. What the image is
- * comes from its registry manifest (read with docker, ghcr and ECR
- * credentials): a KubeVirt containerDisk (a `/disk/disk.img` layer or
- * trycua containerDisk media types) runs on `kubevirt`, a container rootfs
- * on `gvisor`. When the manifest cannot be read and no runtime is given,
- * the runtime is guessed from the reference with a warning (a `docker-`
- * tag runs on `gvisor`, anything else on `kubevirt`). Raises
- * `InvalidArgument` only for a runtime the image cannot run on, and
- * `Unsupported` for a macOS image or runtime `macos` (Fleet does not offer
- * macOS in this SDK). Blocks
- * while the registry is read (at most 20 s; `CUA_FLEET_IMAGE_INSPECT=0`
- * skips it). The one copy of this rule; cua-sandbox calls it.
- */
-public func fleetResolveRuntime(runtime: String?, image: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
-    uniffi_cua_sdk_fn_func_fleet_resolve_runtime(
-        FfiConverterOptionString.lower(runtime),
-        FfiConverterString.lower(image),$0
-    )
-})
-}
-/**
- * The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the
- * Cua apps offer. The SDK does not enforce them: it accepts up to 64 vCPUs
- * and 512 MiB to 512 GiB, and Fleet decides what an account may run (a
- * size over the account's limits fails with `FleetAdmissionDenied`).
- */
-public func fleetSizeLimits() -> FleetSizeLimits  {
-    return try!  FfiConverterTypeFleetSizeLimits_lift(try! rustCall() {
-    uniffi_cua_sdk_fn_func_fleet_size_limits($0
     )
 })
 }
@@ -41401,14 +37958,14 @@ public func omarchyImage(channel: String?)throws  -> String  {
 })
 }
 /**
- * Resolves `reference` for `backend` (`auto`, `local`, `fleet`,
+ * Resolves `reference` for `backend` (`auto`, `local`, `provider`,
  * `container`/`docker`/`gvisor`, `vm`/`qemu`/`kubevirt`, `lume`)
- * on `arch` (`amd64`/`arm64`; `None` = this host, or amd64 for `fleet`).
+ * on `arch` (`amd64`/`arm64`; `None` = this host).
  * `reference` is literal (`ubuntu:24.04` is Docker Hub's image): no
  * alias applies here; use [`image_alias`] or [`canonical_image`] first.
  * Raises `NotFound` (no such image: e.g. a tag only the local engine has),
  * `Unauthenticated` (the registry refused the credentials), `Unsupported`
- * (no variant the backend runs, e.g. a macOS image on Fleet).
+ * (no variant the backend runs, e.g. a macOS image on a cloud provider).
  * Blocks while the registry is read (cached for five minutes).
  */
 public func resolveImage(reference: String, backend: String, arch: String?)throws  -> ResolvedImage  {
@@ -41494,8 +38051,7 @@ public func contribProvidersBuilt() -> [String]  {
 /**
  * Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
  * `direct:<host:port>`, `relay:<machine-id>`, a legacy spelling
- * (`space://fleet/<ns>/<claim>`, `fleet:<ns>:<claim>`, `url:<addr>`, a
- * URL), or a bare name.
+ * (`space://cloud/<name>`, `url:<addr>`, a URL), or a bare name.
  */
 public func parseSandboxRef(input: String)throws  -> SandboxRefParts  {
     return try  FfiConverterTypeSandboxRefParts_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -41614,6 +38170,15 @@ public func spacesToolMethods() -> [SpacesToolMethod]  {
 })
 }
 /**
+ * The person closed the linking notice (either button). Linking starts
+ * with the app's next launch, never in the process that showed it.
+ */
+public func telemetryAcknowledgeLinkNotice()  {try! rustCall() {
+    uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice($0
+    )
+}
+}
+/**
  * Records that the first-run notice was shown in the app's UI (nothing is
  * sent from a machine before that). Apps that show the notice themselves
  * call [`telemetry_use_app_notice`] first so the SDK does not print it.
@@ -41632,6 +38197,34 @@ public func telemetryFlush(timeoutMs: UInt32)  {try! rustCall() {
         FfiConverterUInt32.lower(timeoutMs),$0
     )
 }
+}
+/**
+ * The one-time linking notice's words.
+ */
+public func telemetryLinkNotice() -> TelemetryLinkNotice  {
+    return try!  FfiConverterTypeTelemetryLinkNotice_lift(try! rustCall() {
+    uniffi_cua_sdk_fn_func_telemetry_link_notice($0
+    )
+})
+}
+/**
+ * Whether the app should show the one-time linking notice now: usage data
+ * is on, the account offered linking, and this machine has not shown it.
+ */
+public func telemetryLinkNoticeDue() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cua_sdk_fn_func_telemetry_link_notice_due($0
+    )
+})
+}
+/**
+ * Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+ */
+public func telemetryLinkState() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cua_sdk_fn_func_telemetry_link_state($0
+    )
+})
 }
 /**
  * The first-run notice text (an app shows it in its own UI, then calls
@@ -41755,6 +38348,27 @@ public func telemetryStatus() -> TelemetryStatus  {
 })
 }
 /**
+ * Asks the Spaces API for the signed-in account's opaque id and hands it
+ * to telemetry (none unlinks). Call at launch and after a sign-in; the
+ * SDK's own sign-in already does. Returns the link state. Best effort:
+ * offline or signed out, nothing changes.
+ */
+public func telemetrySyncAccount()async  -> String  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_func_telemetry_sync_account(
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: nil
+
+        )
+}
+/**
  * The host app shows the first-run notice itself (no stderr notice).
  */
 public func telemetryUseAppNotice()  {try! rustCall() {
@@ -41790,7 +38404,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_agent_harnesses() != 59846) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_may_have_fleet_session() != 10680) {
+    if (uniffi_cua_sdk_checksum_func_may_have_session() != 35927) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_check_placement() != 4628) {
@@ -41805,28 +38419,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_config_path() != 14727) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_config_set() != 13213) {
+    if (uniffi_cua_sdk_checksum_func_config_set() != 33388) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_config_unset() != 24761) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_locations() != 62174) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_func_fleet_check_runtime() != 18168) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_func_fleet_generate_claim_token() != 46314) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_func_fleet_image_variant() != 30093) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() != 15632) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_func_fleet_size_limits() != 53900) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_canonical_image() != 8955) {
@@ -41844,7 +38443,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_omarchy_image() != 9950) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_resolve_image() != 51943) {
+    if (uniffi_cua_sdk_checksum_func_resolve_image() != 56346) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_resolve_image_with_secret() != 48984) {
@@ -41862,7 +38461,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_contrib_providers_built() != 14866) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_parse_sandbox_ref() != 45182) {
+    if (uniffi_cua_sdk_checksum_func_parse_sandbox_ref() != 7299) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_qualify_sandbox_ref() != 59566) {
@@ -41895,10 +38494,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_spaces_tool_methods() != 24762) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice() != 46398) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice() != 6317) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_flush() != 29688) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_telemetry_link_notice() != 11798) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_telemetry_link_notice_due() != 52419) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_telemetry_link_state() != 28062) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_notice_text() != 47486) {
@@ -41932,6 +38543,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_status() != 18801) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_telemetry_sync_account() != 61343) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365) {
@@ -42042,7 +38656,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_auth_begin_login() != 55109) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_auth_logout() != 38806) {
+    if (uniffi_cua_sdk_checksum_method_auth_logout() != 42354) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_auth_status() != 29264) {
@@ -42072,9 +38686,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_auth() != 19106) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_cua_fleet() != 45933) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_cua_sdk_checksum_method_cua_info() != 11159) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -42094,105 +38705,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_acquire() != 16535) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_acquire_with() != 8432) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_apply() != 23134) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_apply_pool() != 43781) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() != 43651) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_attach_claim() != 27491) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_base_url() != 7166) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_billing_status() != 50128) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() != 58799) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_claim() != 33116) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_create_image() != 53686) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() != 1809) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_delete_image() != 54232) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_delete_pool() != 41031) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name() != 51788) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_export_pool() != 36800) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_get_image() != 26535) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_get_pool() != 27007) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_keep_alive() != 21850) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_list_claims() != 30494) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_list_images() != 5380) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_list_pools() != 19148) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_list_templates() != 27819) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_pool_image_info() != 2800) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_pools() != 34094) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_release() != 34855) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_service_url() != 49169) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() != 32806) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_usage_pricing() != 25347) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() != 64422) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleetpools_gc() != 4829) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() != 3481) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_sdk_checksum_method_fleetpools_list() != 61403) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_approve() != 49147) {
@@ -42390,9 +38902,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_delete() != 17492) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_detach() != 26534) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_cua_sdk_checksum_method_sandbox_forward() != 19019) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -42408,7 +38917,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_id() != 11596) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_image_info() != 19322) {
+    if (uniffi_cua_sdk_checksum_method_sandbox_image_info() != 9393) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_info() != 9231) {
@@ -42480,7 +38989,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_wait_ready() != 17033) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandboxes_cancel_create() != 32419) {
+    if (uniffi_cua_sdk_checksum_method_sandboxes_cancel_create() != 52079) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandboxes_connect() != 12250) {
@@ -42498,13 +39007,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandboxes_get() != 32181) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandboxes_list() != 6497) {
+    if (uniffi_cua_sdk_checksum_method_sandboxes_list() != 11890) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandboxes_list_all() != 9098) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandboxes_list_with_warnings() != 39432) {
+    if (uniffi_cua_sdk_checksum_method_sandboxes_list_with_warnings() != 59684) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_service_endpoint() != 13535) {
@@ -42525,7 +39034,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_service_request() != 31558) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_service_url() != 25888) {
+    if (uniffi_cua_sdk_checksum_method_service_url() != 22228) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_presenceview_apply() != 15392) {
@@ -42819,7 +39328,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_call_tool_json() != 63270) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spaces_cancel_create() != 53246) {
+    if (uniffi_cua_sdk_checksum_method_spaces_cancel_create() != 14647) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_create() != 2097) {
@@ -43002,7 +39511,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdclient_hotkey() != 58197) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdclient_http() != 43966) {
+    if (uniffi_cua_sdk_checksum_method_spacesdclient_http() != 51813) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdclient_json_methods() != 32263) {
@@ -43116,7 +39625,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_constructor_cua_connect() != 19646) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_constructor_cua_embedded() != 26623) {
+    if (uniffi_cua_sdk_checksum_constructor_cua_embedded() != 54998) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_constructor_host_new() != 62533) {

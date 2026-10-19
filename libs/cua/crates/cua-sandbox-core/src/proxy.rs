@@ -1,10 +1,10 @@
 //! A small loopback HTTP reverse proxy.
 //!
-//! It backs two things that must look the same local and in the cloud:
+//! It backs two things that must look the same local and on a provider:
 //!
-//! - [`crate::Tunnel::forward`] on a cloud sandbox without cua-spacesd:
+//! - [`crate::Tunnel::forward`] on a provider sandbox without cua-spacesd:
 //!   a loopback listener whose requests go to the port's service through the
-//!   Fleet gateway with the Fleet bearer and claim header attached, so any
+//!   provider's URL with the provider's access headers attached, so any
 //!   HTTP client (and WebSocket upgrades) reach the guest port with no
 //!   credentials of its own;
 //! - local public URLs (the cua daemon's share proxy): a per-URL token in the
@@ -31,7 +31,7 @@ use tokio::net::TcpListener;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProxyRoute {
     /// Upstream URL for this request, path and query included
-    /// (`https://fleet/api/svc/ns/sb-mcp/mcp?x=1`).
+    /// (`https://provider.example/sb-mcp/mcp?x=1`).
     pub url: String,
     /// Headers to set on the upstream request (credentials), replacing any
     /// the client sent under the same names.
@@ -385,7 +385,7 @@ mod tests {
         let up = upstream().await;
         let p = forward_to(
             format!("http://{up}/base"),
-            vec![("authorization".into(), "Bearer fleet".into())],
+            vec![("authorization".into(), "Bearer token".into())],
         )
         .await
         .unwrap();
@@ -397,7 +397,7 @@ mod tests {
         .await;
         assert!(r.starts_with("HTTP/1.1 200"), "{r}");
         assert!(
-            r.contains("POST /base/mcp?x=1 x-test=yes auth=Bearer fleet body=hello"),
+            r.contains("POST /base/mcp?x=1 x-test=yes auth=Bearer token body=hello"),
             "{r}"
         );
     }

@@ -1,6 +1,6 @@
 //! OCI container backend over the Docker Engine API (`bollard`).
 //!
-//! Runs rootfs images such as the Fleet gVisor `docker-*` tags. Isolation is
+//! Runs rootfs images such as the gVisor `docker-*` tags. Isolation is
 //! chosen per engine:
 //!
 //! 1. `runsc` (gVisor) when the engine has it registered;
@@ -44,7 +44,7 @@ const LABEL_BACKEND: &str = "cua.vmm.backend";
 /// On sidecar containers: the sandbox whose network namespace they share.
 /// Sidecars carry no [`LABEL_BACKEND`], so they are not listed as sandboxes.
 const LABEL_SIDECAR_OF: &str = "cua.sandbox.sidecar-of";
-/// Sidecar defaults, the same as a Fleet pod sidecar's (500m / 512Mi).
+/// Sidecar defaults (500m / 512Mi).
 const SIDECAR_NANO_CPUS: i64 = 500_000_000;
 pub(crate) const SIDECAR_MEMORY_BYTES: i64 = 512 * 1024 * 1024;
 /// Engine repository of `ensure_base` images (pulled images re-tagged).
@@ -1737,7 +1737,7 @@ fn create_body(
         env: (!spec.env.is_empty())
             .then(|| spec.env.iter().map(|(k, v)| format!("{k}={v}")).collect()),
         // `command` replaces the image's ENTRYPOINT and CMD, like a
-        // Kubernetes `command` (and so a Fleet pod template's).
+        // Kubernetes `command`.
         entrypoint: spec.command.clone().filter(|c| !c.is_empty()),
         cmd: spec
             .command
@@ -1800,12 +1800,12 @@ pub fn shm_size_bytes(memory_mb: u64) -> i64 {
     half.clamp(64 * MIB, 2048 * MIB)
 }
 
-/// The hostname sidecars reach the sandbox at (as on Fleet).
+/// The hostname sidecars reach the sandbox at.
 pub const MAIN_HOSTNAME: &str = "main";
 
 /// `/etc/hosts` entries naming every container of a sidecar group, so the
 /// sandbox reaches a sidecar at its name and a sidecar reaches the sandbox
-/// at [`MAIN_HOSTNAME`], as on Fleet. They all share the sandbox's network
+/// at [`MAIN_HOSTNAME`]. They all share the sandbox's network
 /// namespace, so every name is loopback. Sidecars joined with
 /// `container:<sandbox>` networking use the sandbox's `/etc/hosts` (Docker
 /// refuses `--add-host` on them), so the entries go on the sandbox only.
@@ -1876,7 +1876,7 @@ pub fn sidecar_container_name(sandbox: &str, sidecar: &str) -> String {
 }
 
 /// The Docker create body for a sidecar: the sandbox's network namespace,
-/// its own image, command and environment, Fleet's default resources.
+/// its own image, command and environment, and the default resources.
 fn sidecar_body(sandbox: &str, sc: &SidecarSpec, runtime: String) -> ContainerCreateBody {
     let mut labels = HashMap::new();
     labels.insert(LABEL_SANDBOX.to_string(), "true".to_string());
@@ -2036,7 +2036,7 @@ mod tests {
             hc.extra_hosts.is_none(),
             "a container: network takes no hosts"
         );
-        // Names resolve on every container of the group, as on Fleet.
+        // Names resolve on every container of the group.
         assert_eq!(
             main.host_config.as_ref().unwrap().extra_hosts,
             Some(vec![

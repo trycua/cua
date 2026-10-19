@@ -76,14 +76,16 @@ General**.
 ## Linux packages
 
 The supported package is the **.deb** on Ubuntu 24.04. It is sandboxed and
-installs the confirmation prompt the Keyvault needs. `sudo apt remove cua-spaces`
+installs the confirmation prompt (polkit) that sharing a Space and the Keyvault
+need. The prompt asks for your password in a desktop session with a polkit
+authentication agent, local or over a remote desktop such as xrdp. `sudo apt remove cua-spaces`
 turns off what the app set up (see
 [Check, pause or remove](/spaces/guides/add-a-computer#check-pause-or-remove)).
 
 The **AppImage** is a portable build, not a supported one. It cannot use the
 browser sandbox (it starts with `--no-sandbox`), and without the system's
-confirmation prompt the Keyvault is unavailable. Use it to try Cua Spaces
-without installing, and install the .deb to keep it.
+confirmation prompt you cannot share a Space and the Keyvault is unavailable.
+Use it to try Cua Spaces without installing, and install the .deb to keep it.
 
 For Linux Spaces created on this computer, the `cua` CLI uses Docker (gVisor
 `runsc`, when installed, adds isolation) or QEMU. QEMU needs read and write

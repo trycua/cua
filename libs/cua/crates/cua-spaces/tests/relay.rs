@@ -158,7 +158,7 @@ async fn lists_owned_and_shared_relay_machines_as_spaces() {
     assert_eq!(err.tag(), "unauthenticated");
     assert_eq!(
         err.to_string(),
-        "Relay authentication failed. Sign in again to refresh your machines."
+        "Relay authentication failed. Sign in again to refresh your computers."
     );
 }
 
@@ -273,7 +273,7 @@ async fn relay_spaces_carry_the_enrolled_device_session() {
     assert_eq!(err.tag(), "permission_denied", "{err}");
     assert_eq!(
         err.to_string(),
-        "This device could not list relay machines. Check its account access."
+        "This device could not list relay computers. Check its account access."
     );
     assert_eq!(
         bare.list_all().await.unwrap_err().tag(),
@@ -507,7 +507,7 @@ async fn discovery_errors_do_not_expose_provider_payloads() {
     assert_eq!(error.tag(), "relay");
     assert_eq!(
         error.to_string(),
-        "relay: Could not refresh relay machines."
+        "relay: Could not refresh relay computers."
     );
 }
 
@@ -628,7 +628,7 @@ async fn a_relay_hiccup_lists_the_last_directory() {
     let err = fresh.list_all().await.unwrap_err();
     assert!(
         err.to_string()
-            .contains("Could not refresh relay machines."),
+            .contains("Could not refresh relay computers."),
         "{err}"
     );
 

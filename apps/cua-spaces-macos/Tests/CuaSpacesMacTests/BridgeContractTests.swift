@@ -200,6 +200,9 @@ struct BridgeContractTests {
     func cases(space: String) -> [(String, [String: Any])] {
         [
             // The relay allowance before the sign-out below (signed out, it is null).
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("session.signOut", [:]),
+            // No request is waiting on the fixtures: an answer to none is left alone.
+            ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
             ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("spaces.list", [:]),
@@ -234,6 +237,7 @@ struct BridgeContractTests {
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
+            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]),
             ("spaces.usage", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
             ("spaces.thumbnail", ["spaceId": space]),
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),

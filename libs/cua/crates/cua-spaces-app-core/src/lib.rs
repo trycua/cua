@@ -47,7 +47,7 @@
 //! | [`share`] | who a Space is shared with (viewer or editor) and the Share sheet |
 //! | `installer` | the "Command line" step: plan and install the bundled `cua` (feature `installer`) |
 //! | [`agents`] | coding agent runs (labels, order, filter) and the agents on this machine (Settings rows, setup summary) |
-//! | [`telemetry`] | which anonymous usage events a UI step means, and sending them (feature `telemetry`) |
+//! | [`telemetry`] | which usage events a UI step means, and sending them (feature `telemetry`) |
 //! | [`presence`] | the name and principal id the apps join a Space's presence as |
 //! | [`paths`] | home-relative paths |
 //! | [`errors`] | the words a failed action shows (a dead daemon in plain words) |
@@ -78,6 +78,7 @@ pub mod machines;
 pub mod model;
 pub mod notch;
 pub mod notifications;
+pub mod nudges;
 pub mod onboarding;
 pub mod onboarding_preview;
 pub mod palette;

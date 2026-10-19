@@ -357,7 +357,7 @@ pub type StageSink = Arc<dyn Fn(TeleportStage) + Send + Sync>;
 #[async_trait::async_trait]
 pub trait Backend: Send + Sync {
     /// Resolves a target Space name to a STABLE, immutable identity: a
-    /// sandbox or Fleet-claim id, or a pinned receiver public key, that a
+    /// sandbox id, or a pinned receiver public key, that a
     /// rename or re-create cannot forge. Grants and rules pin this id at
     /// approval time and delivery re-resolves and verifies it, so a name that
     /// now maps to a different Space fails closed (red-team F1). Fails when the
@@ -1898,7 +1898,7 @@ impl Broker {
                 f(s);
             }
         };
-        policy::require_first_party(caller, "teleporting from this machine")?;
+        policy::require_first_party(caller, "teleporting from this computer")?;
         {
             let st = self.state.lock().await;
             if Self::settings(&st)?.disabled {

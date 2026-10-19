@@ -45,6 +45,7 @@ mod mcp;
 mod persistent_cmd;
 mod providers;
 mod resources_view;
+mod risky;
 pub mod sandbox;
 mod shell;
 mod skills;
@@ -99,13 +100,13 @@ enum Command {
     /// Log in to Cua and manage the signed-in session.
     #[command(subcommand)]
     Auth(AuthCmd),
-    /// AI coding agents on this machine: install cua skills and configure the cua MCP server.
+    /// AI coding agents on this computer: install cua skills and configure the cua MCP server.
     #[command(subcommand)]
     Agents(agents::AgentsCmd),
     /// Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop.
     #[command(subcommand)]
     Agent(agent_cmd::AgentCmd),
-    /// Sandboxes: local or an existing machine (direct).
+    /// Sandboxes: local or an existing computer (direct).
     #[command(subcommand, visible_alias = "sb")]
     Sandbox(Box<sandbox::SandboxCmd>),
     /// User defaults (~/.cua/config.toml): where sandboxes run when --on is
@@ -138,7 +139,7 @@ enum Command {
     #[command(
         name = "do-host-consent",
         after_help = "Examples:
-  # Allow `cua do` to act on this machine's desktop
+  # Allow `cua do` to act on this computer's desktop
   cua do-host-consent"
     )]
     DoHostConsent,
@@ -204,10 +205,10 @@ enum Command {
   # CI: fail on warnings, write JUnit XML
   cua doctor local:dev --strict --junit doctor.xml")]
     Doctor(Box<doctor::DoctorCmd>),
-    /// Unattended access to this machine (setup, status, stop, start, remove).
+    /// Unattended access to this computer (setup, status, stop, start, remove).
     #[command(subcommand)]
     Host(host::HostCmd),
-    /// Spaces: registered ones and your machines on the relay.
+    /// Spaces: registered ones and your computers on the relay.
     #[command(subcommand)]
     Spaces(host::SpacesCmd),
     /// Spaces in your own cloud account (AWS, Google Cloud, Modal):
@@ -233,9 +234,9 @@ enum Command {
   cua devices audit"
     )]
     Devices(devices_cmd::DevicesCmd),
-    /// Teams (organizations of your cua.ai account) share machines with
+    /// Teams (organizations of your cua.ai account) share computers with
     /// every member and their agents. Owners and admins invite by email,
-    /// approve member devices and add machines.
+    /// approve member devices and add computers.
     #[command(
         subcommand,
         after_help = "Examples:
@@ -246,14 +247,15 @@ enum Command {
   cua team show AIGIS"
     )]
     Team(team_cmd::TeamCmd),
-    /// Your relay allowance this month: live sessions, relay hours, and
-    /// your plan. Spaces on your own network use none of it.
+    /// Your remote use this month: live sessions, remote hours, and your
+    /// plan. Remote hours are time spent using your computers from
+    /// somewhere else; using a computer from itself is free.
     #[command(after_help = "Examples:
   cua usage
   cua usage --json")]
     Usage {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         relay: Option<String>,
     },
     /// Move a desktop app session (tabs, profile, sign-in) into a sandbox.
@@ -328,7 +330,7 @@ enum AuthCmd {
         #[arg(long)]
         no_browser: bool,
         /// Sign in from another device with a code (for SSH sessions and
-        /// machines without a browser).
+        /// computers without a browser).
         #[arg(long)]
         remote: bool,
         /// Force a flow: `pkce` or `device`.
@@ -498,6 +500,7 @@ enum TrajCmd {
   cua traj ls dev")]
     Ls {
         /// Only sessions of this target (sandbox name or `host`).
+        #[arg(value_name = "TARGET")]
         machine: Option<String>,
     },
     /// Zip, serve on loopback and open the hosted viewer.
@@ -525,7 +528,7 @@ enum TrajCmd {
         #[arg(long, value_name = "DAYS")]
         older_than: Option<i64>,
         /// Only sessions of this target.
-        #[arg(long)]
+        #[arg(long, visible_alias = "computer", value_name = "COMPUTER")]
         machine: Option<String>,
         /// Do not ask for confirmation.
         #[arg(short, long)]
@@ -1016,11 +1019,7 @@ fn exit_code(e: &CuaError) -> i32 {
         CuaError::SpacesdNotAvailable(_)
         | CuaError::Transport(_)
         | CuaError::DaemonNotRunning(_) => 5,
-        CuaError::Unauthenticated(_)
-        | CuaError::PermissionDenied(_)
-        | CuaError::FleetAdmissionDenied(_)
-        | CuaError::CloudCreditExhausted(_)
-        | CuaError::Cloud(_) => 6,
+        CuaError::Unauthenticated(_) | CuaError::PermissionDenied(_) | CuaError::Cloud(_) => 6,
         CuaError::InsufficientDisk(_) => 7,
         CuaError::Cancelled(_) => 130,
         _ => 1,
@@ -1055,7 +1054,7 @@ async fn open(cli: &Cli, with_session: bool) -> Result<Arc<Cua>, CuaError> {
     let embedded = move || {
         Cua::embedded(CuaConfig {
             state_dir: cli.state_dir.clone(),
-            fleet_from_session: with_session,
+            account_from_session: with_session,
             ..Default::default()
         })
     };
@@ -1543,7 +1542,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 host::run_host(cmd, &home, &tokens, device.as_deref(), None, json, out).await?;
             if tokens.used_ephemeral() && !json {
                 eprintln!(
-                    "Signed in for this command only: this machine keeps no cua.ai session, just its machine token."
+                    "Signed in for this command only: this computer keeps no cua.ai session, only its own access token."
                 );
             }
             Ok(code)
@@ -2172,7 +2171,7 @@ async fn daemon_start(
             // Test and CI hosts point teleport at a throwaway home; the
             // real daemon reads the user's own app sessions (on consent).
             teleport_home: env("CUA_SPACES_TELEPORT_HOME"),
-            fleet_from_session: true,
+            account_from_session: true,
             ..Default::default()
         };
         let cua = Cua::embedded(cfg)?;
@@ -2243,7 +2242,7 @@ async fn daemon_start(
                 loop {
                     tick.tick().await;
                     let n = health_runtime
-                        .list_filtered(None, false)
+                        .list_filtered(None)
                         .await
                         .map(|l| l.sandboxes.len() as u64)
                         .unwrap_or(0);
@@ -2382,9 +2381,45 @@ fn cli_command(teams: bool) -> clap::Command {
 
 /// The `cua` command: parses this process's arguments, runs them and exits.
 /// The Cua Spaces build registers its [`extension`] first.
+/// `cua help advanced`: the options most people never need, kept out of
+/// every other `--help` (the flags still work everywhere).
+pub const ADVANCED_HELP: &str = "\
+Advanced options
+
+For self-hosting teams that run their own Cua relay, or connect machines
+directly without one. Most people use Cua's relay and need none of this.
+
+  --relay <URL>
+      Use your own relay instead of Cua's. Works with cua host setup,
+      host pair, host share, host unshare, spaces ls, devices and usage.
+      Default: $CUA_RELAY_URL, else https://relay.cua.ai.
+
+  cua host setup --direct <IP:PORT>
+      Serve on ip:port with a local access token instead of joining a
+      relay (your network, a VPN or a forwarded port). Add
+      --allow-any-address to accept callers from any address.
+
+Examples:
+  cua host setup --relay https://relay.example.com
+  cua host setup --direct 0.0.0.0:3211 --name studio-mac
+  # A spare Mac on your tailnet that runs Spaces, without a relay
+  # (prints the command that adds it on your laptop)
+  cua host setup --direct 100.101.102.103:3211 --profile spare
+";
+
+/// `cua help advanced`, answered before clap: it is a help topic, not a
+/// command.
+fn is_advanced_help(args: &[std::ffi::OsString]) -> bool {
+    args.len() == 2 && args[0] == "help" && args[1] == "advanced"
+}
+
 pub fn main() {
     #[cfg(windows)]
     keep_stdio_out_of_children();
+    if is_advanced_help(&std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        print!("{ADVANCED_HELP}");
+        return;
+    }
     promote_spacesd_env_vars();
     // `CUA_ENV` picks every endpoint and the cua home: a typo must not fall
     // back to production silently.
@@ -2510,6 +2545,50 @@ pub fn main() {
 mod tests {
     use super::*;
 
+    /// Self-hosting stays out of every `--help` but `cua help advanced`;
+    /// the flags still parse.
+    #[test]
+    fn self_hosting_flags_are_hidden_but_work() {
+        let help = |path: &[&str]| {
+            let mut cmd = cli_command(false);
+            let mut sub = &mut cmd;
+            for p in path {
+                sub = sub.find_subcommand_mut(p).expect(p);
+            }
+            sub.render_long_help().to_string()
+        };
+        for path in [
+            &["host", "setup"][..],
+            &["host", "pair"],
+            &["usage"],
+            &["spaces", "ls"],
+        ] {
+            let text = help(path);
+            assert!(!text.contains("--relay"), "{path:?}: {text}");
+            assert!(!text.contains("--direct"), "{path:?}: {text}");
+        }
+        assert!(!help(&[]).contains("--relay"));
+        assert!(
+            Cli::try_parse_from(["cua", "usage", "--relay", "https://relay.example.com"]).is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "cua",
+                "host",
+                "setup",
+                "--relay",
+                "https://relay.example.com"
+            ])
+            .is_ok()
+        );
+        assert!(Cli::try_parse_from(["cua", "host", "setup", "--direct", "0.0.0.0:3211"]).is_ok());
+        let args = |a: &[&str]| a.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+        assert!(is_advanced_help(&args(&["help", "advanced"])));
+        assert!(!is_advanced_help(&args(&["help"])));
+        assert!(ADVANCED_HELP.contains("--relay <URL>"));
+        assert!(ADVANCED_HELP.contains("--direct <IP:PORT>"));
+    }
+
     /// The Spaces app's launch check (`cua auth keychain`) records no usage
     /// event and never shows the first-run notice; other auth commands do.
     #[test]
@@ -2630,8 +2709,6 @@ mod tests {
             CuaError::DaemonNotRunning(s()),
             CuaError::Unauthenticated(s()),
             CuaError::PermissionDenied(s()),
-            CuaError::FleetAdmissionDenied(s()),
-            CuaError::CloudCreditExhausted(s()),
             CuaError::Cloud(s()),
             CuaError::InsufficientDisk(s()),
             CuaError::ImageNotPublished(s()),

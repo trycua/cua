@@ -1109,8 +1109,17 @@ pub fn keyvault_action(a: KeyvaultAction, m: KeyvaultMethod, outcome: Outcome) -
         .s("outcome", outcome.as_str())
 }
 
-/// `cua_share`; None for an action outside the vocabulary.
-pub fn share(action: &str, role: &str, outcome: Outcome) -> Option<Event> {
+/// `cua_share`; None for an action outside the vocabulary. `error_kind`
+/// and `failed_stage` say why and where a failure stopped
+/// ([`schema::SHARE_ERROR_KINDS`], [`schema::SHARE_STAGES`]); both are
+/// `none` when it worked, and a failure with no known kind is `other`.
+pub fn share(
+    action: &str,
+    role: &str,
+    outcome: Outcome,
+    error_kind: &str,
+    failed_stage: &str,
+) -> Option<Event> {
     let a = pick(schema::SHARE_ACTIONS, action, "");
     (!a.is_empty()).then(|| {
         Event::new(event::SHARE)
@@ -1124,6 +1133,26 @@ pub fn share(action: &str, role: &str, outcome: Outcome) -> Option<Event> {
                 },
             )
             .s("outcome", outcome.as_str())
+            .s(
+                "error_kind",
+                match outcome {
+                    Outcome::Ok => "none",
+                    _ => match pick(schema::SHARE_ERROR_KINDS, error_kind, "other") {
+                        "none" => "other",
+                        k => k,
+                    },
+                },
+            )
+            .s(
+                "failed_stage",
+                match outcome {
+                    Outcome::Ok => "none",
+                    _ => match pick(schema::SHARE_STAGES, failed_stage, "other") {
+                        "none" => "other",
+                        st => st,
+                    },
+                },
+            )
     })
 }
 

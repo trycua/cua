@@ -20,10 +20,10 @@ Register, provision, list and release Spaces.
 
 | Tool | Description | Effect |
 | --- | --- | --- |
-| [`add_space`](/spaces/reference/spaces#add_space) | Add an existing machine as a Space by address and token. | mutating, idempotent |
+| [`add_space`](/spaces/reference/spaces#add_space) | Add an existing computer as a Space by address and token. | mutating, idempotent |
 | [`remove_space`](/spaces/reference/spaces#remove_space) | Forget a registered Space without touching it. | mutating, idempotent |
 | [`list_spaces`](/spaces/reference/spaces#list_spaces) | List the Spaces this connection can see. | read-only, idempotent |
-| [`create_space`](/spaces/reference/spaces#create_space) | Create a Space: a new sandbox on this machine, on one of your machines, or in the cloud. | destructive |
+| [`create_space`](/spaces/reference/spaces#create_space) | Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud. | destructive |
 | [`delete_space`](/spaces/reference/spaces#delete_space) | Delete a Space's sandbox and forget it. | destructive |
 | [`stop_space`](/spaces/reference/spaces#stop_space) | Turn a Space off: suspend it (memory kept) or stop it (disk kept). | mutating, idempotent |
 | [`start_space`](/spaces/reference/spaces#start_space) | Turn a Space back on: resume or boot it. | mutating, idempotent |
@@ -103,7 +103,7 @@ Named agents whose memory outlives their Space: homes in Cua Volume, routines, n
 
 ### [Session teleport](/spaces/reference/agents#session-teleport)
 
-Move a signed-in app session from this machine into a Space.
+Move a signed-in app session from this computer into a Space.
 
 | Tool | Description | Effect |
 | --- | --- | --- |
@@ -120,13 +120,13 @@ Use the user's saved credentials in a Space, only with their approval.
 
 ### [Hotspot](/spaces/reference/spaces#hotspot)
 
-Share this machine's network with a Space.
+Share this computer's network with a Space.
 
 | Tool | Description | Effect |
 | --- | --- | --- |
-| [`hotspot_start`](/spaces/reference/spaces#hotspot_start) | Start sharing this machine's network with a Space. | destructive |
-| [`hotspot_stop`](/spaces/reference/spaces#hotspot_stop) | Stop sharing this machine's network. | destructive |
-| [`hotspot_status`](/spaces/reference/spaces#hotspot_status) | Report which Spaces are sharing this machine's network, with counters. | read-only, idempotent |
+| [`hotspot_start`](/spaces/reference/spaces#hotspot_start) | Start sharing this computer's network with a Space. | destructive |
+| [`hotspot_stop`](/spaces/reference/spaces#hotspot_stop) | Stop sharing this computer's network. | destructive |
+| [`hotspot_status`](/spaces/reference/spaces#hotspot_status) | Report which Spaces are sharing this computer's network, with counters. | read-only, idempotent |
 
 ### [Cua Volume](/spaces/reference/agents#cua-volume)
 
@@ -193,7 +193,7 @@ Every tool that takes `space` accepts a Space id or its name.
 | `cloud` | `cloud:<name>` | all but the provider-only ones |
 | `local` | `local:<name>` | all but the provider-only ones |
 | `direct` | `direct:<host:port>` | all but the provider-only ones |
-| `relay` | `relay:<machine-id>` | all but the provider-only ones |
+| `relay` | `relay:<computer-id>` | all but the provider-only ones |
 
 ## Approval
 
@@ -222,13 +222,13 @@ Branch on `kind`; the message is for people. Every tool can return `invalid_argu
 | --- | --- |
 | [`invalid_argument`](#invalid_argument) | An argument is missing, malformed or out of range. |
 | [`not_found`](#not_found) | No Space, run, window, service, tool or file with that id. |
-| [`spacesd_not_available`](#spacesd_not_available) | The machine answered but runs no cua-spacesd, so the spacesd primitives cannot work. |
+| [`spacesd_not_available`](#spacesd_not_available) | The computer answered but runs no cua-spacesd, so the spacesd primitives cannot work. |
 | [`capability_missing`](#capability_missing) | The Space's cua-spacesd reports a feature this tool needs as unsupported; the message names it and the driver's limitation. |
-| [`host_capability_missing`](#host_capability_missing) | A prerequisite on this machine is missing: Fleet credentials, a local runtime, an operator display or app-session providers. |
+| [`host_capability_missing`](#host_capability_missing) | A prerequisite on this computer is missing: a local runtime, an operator display or app-session providers. |
 | [`wrong_provider`](#wrong_provider) | The operation does not apply to this kind of Space. |
 | [`unauthenticated`](#unauthenticated) | The Space's spacesd or the cua.ai relay rejected the token. |
-| [`permission_denied`](#permission_denied) | The signed-in account may not reach that relay machine. |
-| [`ambiguous_host`](#ambiguous_host) | The machine name given to on="host:&lt;name&gt;" fits several of your machines equally well; the message lists them. |
+| [`permission_denied`](#permission_denied) | The signed-in account may not reach that relay computer. |
+| [`ambiguous_host`](#ambiguous_host) | The computer name given to on="host:&lt;name&gt;" fits several of your computers equally well; the message lists them. |
 | [`limit_exceeded`](#limit_exceeded) | The host is at a capacity limit: two macOS VMs per Mac (Apple's macOS license, enforced by Apple Virtualization) or the host's own Space limit. |
 | [`ambiguous_sandbox`](#ambiguous_sandbox) | A short name matches more than one sandbox. |
 | [`transfer_failed`](#transfer_failed) | A file transfer did not land, or landed with a different sha256. |
@@ -239,9 +239,6 @@ Branch on `kind`; the message is for people. Every tool can return `invalid_argu
 | [`cancelled`](#cancelled) | The create was cancelled (cancel_create, or its caller went away); what it made is gone. |
 | [`stream`](#stream) | The media plane failed to open or run the stream. |
 | [`env`](#env) | A cua-spacesd call failed. |
-| [`fleet`](#fleet) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call. |
-| [`fleet_admission_denied`](#fleet_admission_denied) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit. |
-| [`cloud_credit_exhausted`](#cloud_credit_exhausted) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space. |
 | [`invalid_placement`](#invalid_placement) | The location, kind or runtime does not exist, or the combination (with the image) does not. |
 | [`sandbox`](#sandbox) | Starting, stopping or deleting the Space's sandbox failed. |
 | [`cloud`](#cloud) | Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error. |
@@ -274,7 +271,7 @@ Listed by [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve).
 
 #### spacesd_not_available
 
-The machine answered but runs no cua-spacesd, so the spacesd primitives cannot work.
+The computer answered but runs no cua-spacesd, so the spacesd primitives cannot work.
 
 Fix: Use an image that runs cua-spacesd (for example ghcr.io/trycua/linux:24.04), or reach the Space's own services with list_tools and call_tool.
 
@@ -286,7 +283,7 @@ Fix: Use a Space whose spacesd supports the feature (see the tool's `requires`).
 
 #### host_capability_missing
 
-A prerequisite on this machine is missing: Fleet credentials, a local runtime, an operator display or app-session providers.
+A prerequisite on this computer is missing: a local runtime, an operator display or app-session providers.
 
 Fix: Set up what the message names (see the tool's `host_requires`).
 
@@ -308,17 +305,17 @@ Listed by [`add_space`](/spaces/reference/spaces#add_space), [`list_spaces`](/sp
 
 #### permission_denied
 
-The signed-in account may not reach that relay machine.
+The signed-in account may not reach that relay computer.
 
-Fix: Sign in with the account that owns the machine.
+Fix: Sign in with the account that owns the computer.
 
 Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`share_space`](/spaces/reference/spaces#share_space), [`unshare_space`](/spaces/reference/spaces#unshare_space), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space).
 
 #### ambiguous_host
 
-The machine name given to on="host:&lt;name&gt;" fits several of your machines equally well; the message lists them.
+The computer name given to on="host:&lt;name&gt;" fits several of your computers equally well; the message lists them.
 
-Fix: Ask the user which machine they meant, then pass on="host:&lt;machine id&gt;" from the list.
+Fix: Ask the user which computer they meant, then pass on="host:&lt;computer id&gt;" from the list.
 
 Listed by [`create_space`](/spaces/reference/spaces#create_space).
 
@@ -326,7 +323,7 @@ Listed by [`create_space`](/spaces/reference/spaces#create_space).
 
 The host is at a capacity limit: two macOS VMs per Mac (Apple's macOS license, enforced by Apple Virtualization) or the host's own Space limit.
 
-Fix: Delete a Space on that host (delete_space), pick another machine, or create a Linux Space instead.
+Fix: Delete a Space on that host (delete_space), pick another computer, or create a Linux Space instead.
 
 Listed by [`create_space`](/spaces/reference/spaces#create_space).
 
@@ -396,30 +393,6 @@ A cua-spacesd call failed.
 
 Fix: Retry; if it persists, check the spacesd log in the Space.
 
-#### fleet
-
-Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call.
-
-Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
-
-Listed by [`create_space`](/spaces/reference/spaces#create_space), [`delete_space`](/spaces/reference/spaces#delete_space), [`agent_resume`](/spaces/reference/agents#agent_resume).
-
-#### fleet_admission_denied
-
-Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit.
-
-Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
-
-Listed by [`create_space`](/spaces/reference/spaces#create_space).
-
-#### cloud_credit_exhausted
-
-Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space.
-
-Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
-
-Listed by [`create_space`](/spaces/reference/spaces#create_space).
-
 #### invalid_placement
 
 The location, kind or runtime does not exist, or the combination (with the image) does not.
@@ -464,7 +437,7 @@ Listed by [`list_tools`](/spaces/reference/spaces#list_tools), [`call_tool`](/sp
 
 Reading or writing a local file failed.
 
-Fix: Check the path and its permissions on this machine.
+Fix: Check the path and its permissions on this computer.
 
 Listed by [`upload`](/spaces/reference/spaces#upload), [`send_file`](/spaces/reference/spaces#send_file), [`download`](/spaces/reference/spaces#download).
 

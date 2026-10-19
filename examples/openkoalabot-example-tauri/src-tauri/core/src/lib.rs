@@ -55,11 +55,6 @@ pub struct CoreConfig {
     pub spaces_home: PathBuf,
     /// Where `download` lands.
     pub download_dir: PathBuf,
-    /// Connect a Cua Cloud client from the environment
-    /// (`CUA_CLIENT_ID`/`SECRET` or `FLEETS_TOKEN`). Cua Cloud has ended, so
-    /// [`Core::create_cloud_space`] still fails with
-    /// [`cua_sandbox_core::CLOUD_ENDED`] whatever the credentials.
-    pub cloud_from_env: bool,
     /// spacesd handshake timeout.
     pub probe_timeout: Duration,
     /// The runtime behind local Spaces (the Tauri shell passes the SDK's
@@ -75,7 +70,6 @@ impl std::fmt::Debug for CoreConfig {
         f.debug_struct("CoreConfig")
             .field("spaces_home", &self.spaces_home)
             .field("download_dir", &self.download_dir)
-            .field("cloud_from_env", &self.cloud_from_env)
             .field(
                 "local_runtime",
                 &self.local_runtime.as_ref().map(|r| r.backend()),
@@ -86,13 +80,12 @@ impl std::fmt::Debug for CoreConfig {
 
 impl CoreConfig {
     /// A config rooted at `dir` (registry in `dir/spaces`, downloads in
-    /// `dir/downloads`), no cloud.
+    /// `dir/downloads`).
     pub fn in_dir(dir: impl Into<PathBuf>) -> Self {
         let dir = dir.into();
         Self {
             spaces_home: dir.join("spaces"),
             download_dir: dir.join("downloads"),
-            cloud_from_env: false,
             probe_timeout: Duration::from_secs(20),
             local_runtime: None,
             sandboxes_home: dir.join("sandboxes"),
@@ -102,13 +95,6 @@ impl CoreConfig {
     /// Enable local Spaces on `runtime`.
     pub fn with_local_runtime(mut self, runtime: Arc<dyn LocalRuntime>) -> Self {
         self.local_runtime = Some(runtime);
-        self
-    }
-
-    /// Read Cua Cloud credentials from the environment. Cua Cloud has ended:
-    /// cloud creates fail with [`cua_sandbox_core::CLOUD_ENDED`] either way.
-    pub fn with_cloud_from_env(mut self, on: bool) -> Self {
-        self.cloud_from_env = on;
         self
     }
 }
@@ -136,10 +122,6 @@ impl Core {
             // itself (PiP), from frames or a media ticket.
             .operator_display(Arc::new(cua_spaces::operator::NoDisplay))
             .probe_timeout(config.probe_timeout);
-        if config.cloud_from_env {
-            // Cua Cloud (the SDK's cloud engine client).
-            builder = builder.fleet(cua_fleet::FleetClient::from_env()?);
-        }
         // #endregion docs:rs-open
         if let Some(local) = &config.local_runtime {
             // Local sandboxes, with their state in the app's directory.
@@ -259,7 +241,6 @@ mod tests {
     fn config_in_dir_never_points_at_the_real_home() {
         let c = CoreConfig::in_dir("/tmp/x");
         assert_eq!(c.spaces_home, PathBuf::from("/tmp/x/spaces"));
-        assert!(!c.cloud_from_env);
     }
 
     #[test]

@@ -209,11 +209,11 @@ struct ChecklistPaletteTests {
     @Test func thePaletteRanksWithTheCore() {
         let entries = [
             AppPaletteEntry(group: "Actions", label: "New Space", hint: nil, keywords: "create add"),
-            AppPaletteEntry(group: "Go to", label: "Machines", hint: nil, keywords: "page"),
+            AppPaletteEntry(group: "Go to", label: "Computers", hint: nil, keywords: "page"),
             AppPaletteEntry(group: "Spaces", label: "Stop builder", hint: "Running", keywords: nil),
         ]
         #expect(appPaletteRank(entries: entries, query: "") == [0, 1, 2])
-        #expect(appPaletteRank(entries: entries, query: "mach") == [1])
+        #expect(appPaletteRank(entries: entries, query: "comp") == [1])
         #expect(appPaletteRank(entries: entries, query: "stop run") == [2])
     }
 }

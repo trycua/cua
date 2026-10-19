@@ -59,7 +59,7 @@ See the [wire contract](../../cua-driver/docs/mcp-envelope-carrier.md) for limit
 
 ## Any image, locally
 
-Cua Cloud has ended; use a local sandbox or your own machine. Three separate
+Cua Cloud has ended; use a local sandbox or your own computer. Three separate
 choices, each optional:
 
 - `on`: `"local"` (`on="cloud"` and `local=False` raise: Cua Cloud has ended).
@@ -256,4 +256,4 @@ Sandboxes are daemon-agnostic: readiness is the provider's "running" plus your
 the image has it and raise `SpacesdNotAvailable` otherwise. `await sb.spacesd()`
 returns the SDK's typed `SpacesdClient` and is optional.
 
-Cua Cloud has ended; see [Cua Cloud has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended). `on="cloud"`, `local=False`, `CloudOptions`, `Pool` and `cua_sandbox.pools` now raise that error.
+Cua Cloud has ended; see [Cua Cloud has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended). `on="cloud"`, `local=False` and `pool=` raise that error.

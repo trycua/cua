@@ -32,7 +32,7 @@ demo: same no-z-raise, no-real-mouse-movement background actuation, but here the
 
 Each instrument owns its **own `rodio` output stream**, so notes from the
 separate instrument processes mix at the OS mixer: genuine polyphony across the
-whole fleet. The track's name picks its minigame + synth voice (kick/snare/hat →
+whole ensemble. The track's name picks its minigame + synth voice (kick/snare/hat →
 pad; bass/lead/pad/arp/… → pitch strip), mirroring the original HTML jukebox's
 `inferKind`.
 

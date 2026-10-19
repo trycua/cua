@@ -50,7 +50,7 @@ describe.skipIf(!wasmBuilt)("a machine its owner stopped sharing (real routes, w
     await waitFor(() => expect(hooks.machines.data?.some((m) => m.id === "studio")).toBe(true));
     const total = hooks.machines.data!.length;
     const online = hooks.machines.data!.filter((m) => m.online && !m.notSharing).length;
-    await screen.findByText(`${total} machines, ${online} online`);
+    await screen.findByText(`${total} computers, ${online} online`);
 
     const row = document.querySelector('[data-machine-id="studio"]') as HTMLElement;
     expect(within(row).getByText("Not sharing")).toBeTruthy();

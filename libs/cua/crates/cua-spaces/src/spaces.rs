@@ -9,11 +9,9 @@ use crate::operator::{ControlServerDisplay, OperatorDisplay};
 use crate::registry::{Credential, Registry, cua_home};
 use crate::space::{ServiceSource, SpaceService};
 use crate::space::{Space, SpaceInfo, SpacePower};
-use cua_fleet::FleetClient;
 use cua_proto::daemon::v1 as dpb;
 use cua_sandbox_core::placement::{Kind, On, Runtime};
 use cua_sandbox_core::{CreateOptions, LocalRuntime, PortTarget, Probe, ProviderKind, Sandboxes};
-use cua_spaces_contract::inputs::FleetRuntime;
 use cua_spacesd_client::{ConnectOptions, SpacesdClient, pb};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -39,16 +37,12 @@ pub struct SpaceCreate {
     pub runtime: Runtime,
     /// Name. Default `space-<hex>`.
     pub name: Option<String>,
-    /// vCPUs. Local default 2; Cua Cloud: 1-64
-    /// ([`cua_fleet::FLEET_ABSOLUTE_CPUS`]; most accounts run 1-8), default
-    /// the pool template's (4).
+    /// vCPUs. Local default 2.
     pub cpus: Option<u32>,
-    /// Memory in MiB. Local default 4096; Cua Cloud: 512 up to 512 GiB
-    /// ([`cua_fleet::FLEET_ABSOLUTE_MEMORY_MB`]; most accounts run 1-32
-    /// GiB), default the pool template's (4096).
+    /// Memory in MiB. Local default 4096.
     pub memory_mb: Option<u64>,
     /// Grow the VM's disk to this many GiB (local VMs; `None` keeps the
-    /// image's size). Containers and cloud Spaces refuse it.
+    /// image's size). Containers and provider Spaces refuse it.
     pub disk_gb: Option<u32>,
     /// Readiness budget (local; default 600 s).
     pub timeout: Option<Duration>,
@@ -185,7 +179,6 @@ pub struct SpacesBuilder {
     home: Option<PathBuf>,
     local: Option<Arc<dyn LocalRuntime>>,
     sandboxes: Option<Sandboxes>,
-    fleet_namespace: Option<String>,
     operator_display: Option<Arc<dyn OperatorDisplay>>,
     probe_timeout: Option<Duration>,
     download_dir: Option<PathBuf>,
@@ -229,13 +222,6 @@ impl SpacesBuilder {
         self
     }
 
-    /// Ignored: Cua Cloud has ended, so Spaces never uses a Fleet client.
-    /// Kept so existing callers still compile.
-    pub fn fleet(self, fleet: FleetClient) -> Self {
-        let _ = fleet;
-        self
-    }
-
     /// Enables Local Spaces on this runtime (the daemon passes its cua-vmm
     /// adapter).
     pub fn local_runtime(mut self, runtime: Arc<dyn LocalRuntime>) -> Self {
@@ -247,14 +233,6 @@ impl SpacesBuilder {
     /// sandbox lifecycle).
     pub fn sandboxes(mut self, sandboxes: Sandboxes) -> Self {
         self.sandboxes = Some(sandboxes);
-        self
-    }
-
-    /// Base name of [`Spaces::fleet_pool_name`]. Default:
-    /// `$CUA_SPACES_NAMESPACE`, else `cua-spaces`. Cua Cloud has ended, so
-    /// no pool is claimed from.
-    pub fn fleet_namespace(mut self, ns: impl Into<String>) -> Self {
-        self.fleet_namespace = Some(ns.into());
         self
     }
 
@@ -287,9 +265,6 @@ impl SpacesBuilder {
             }
             b.build()
         });
-        let namespace = self
-            .fleet_namespace
-            .unwrap_or_else(|| default_namespace(None));
         let operator_display = self.operator_display.unwrap_or_else(|| {
             Arc::new(ControlServerDisplay::new(home.join("spaces-control.json")))
         });
@@ -312,7 +287,6 @@ impl SpacesBuilder {
                 registry: Registry::new(home),
                 has_local: self.local.is_some(),
                 sandboxes,
-                namespace,
                 operator_display,
                 probe_timeout: self.probe_timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT),
                 download_dir,
@@ -329,22 +303,6 @@ impl SpacesBuilder {
                 site_login: std::sync::RwLock::new(None),
             }),
         }
-    }
-}
-
-fn default_namespace(client_id: Option<String>) -> String {
-    if let Some(ns) = std::env::var("CUA_SPACES_NAMESPACE")
-        .ok()
-        .filter(|v| !v.is_empty())
-    {
-        return sanitize_label(&ns);
-    }
-    match client_id
-        .map(|c| sanitize_label(&c))
-        .filter(|c| !c.is_empty())
-    {
-        Some(cid) => sanitize_label(&format!("cua-spaces-{cid}")),
-        None => "cua-spaces".into(),
     }
 }
 
@@ -520,7 +478,6 @@ pub(crate) struct Inner {
     pub(crate) share_consent: std::sync::RwLock<Option<Arc<dyn crate::share::ShareConsent>>>,
     has_local: bool,
     pub(crate) sandboxes: Sandboxes,
-    namespace: String,
     pub(crate) operator_display: Arc<dyn OperatorDisplay>,
     probe_timeout: Duration,
     pub(crate) download_dir: PathBuf,
@@ -588,12 +545,6 @@ impl Spaces {
     /// The operator display.
     pub fn operator_display(&self) -> &Arc<dyn OperatorDisplay> {
         &self.inner.operator_display
-    }
-
-    /// Base name of [`Spaces::fleet_pool_name`] (Cua Cloud has ended: no pool
-    /// is claimed from).
-    pub fn fleet_namespace(&self) -> &str {
-        &self.inner.namespace
     }
 
     // ------------------------------------------------------------ registry
@@ -791,7 +742,7 @@ impl Spaces {
         self.relay_account().ok_or_else(|| {
             Error::host(
                 "cua.ai relay account",
-                "sign in to cua.ai (`cua auth login` or the app) to list your machines",
+                "sign in to cua.ai (`cua auth login` or the app) to list your computers",
             )
         })
     }
@@ -841,14 +792,14 @@ impl Spaces {
             Err(e) => {
                 return Err(Error::Relay(match e.tag() {
                     "unauthenticated" => cua_host::Error::Unauthenticated(
-                        "Relay authentication failed. Sign in again to refresh your machines."
+                        "Relay authentication failed. Sign in again to refresh your computers."
                             .into(),
                     ),
                     "permission_denied" => cua_host::Error::PermissionDenied(
-                        "This device could not list relay machines. Check its account access."
+                        "This device could not list relay computers. Check its account access."
                             .into(),
                     ),
-                    _ => cua_host::Error::Relay("Could not refresh relay machines.".into()),
+                    _ => cua_host::Error::Relay("Could not refresh relay computers.".into()),
                 }));
             }
         };
@@ -950,7 +901,7 @@ impl Spaces {
     ) -> Result<SpaceInfo> {
         let url = url.trim();
         let is_id = url.starts_with("space://")
-            || ["local:", "cloud:", "fleet:", "direct:", "relay:"]
+            || ["local:", "cloud:", "direct:", "relay:"]
                 .iter()
                 .any(|p| url.starts_with(p));
         let (id, endpoint_url) = if is_id {
@@ -1297,7 +1248,7 @@ impl Spaces {
 
     /// Connects to a Space: its declared services, plus cua-spacesd when
     /// the image runs it. `probe` bounds the spacesd handshake. Without
-    /// a spacesd, a Local or Fleet Space (and a direct Space registered
+    /// a spacesd, a Local Space (and a direct Space registered
     /// with service URLs) is still a Space, with an empty capability set;
     /// a direct URL with neither fails with [`Error::SpacesdNotAvailable`].
     async fn connect_with(
@@ -1405,8 +1356,7 @@ impl Spaces {
                         // refreshed) per call; the relay checks both and
                         // swaps them for its signed identity assertion.
                         let bearer = crate::relay::RelayBearer { account: relay };
-                        let mut o =
-                            ConnectOptions::parse(&url)?.fleet_gateway(Arc::new(bearer), None);
+                        let mut o = ConnectOptions::parse(&url)?.gateway(Arc::new(bearer));
                         o.token = credential.token.clone();
                         (Some(o), None)
                     }
@@ -1683,13 +1633,12 @@ impl Spaces {
 
     /// The GPU options each runtime of `on` offers here: on this machine,
     /// per local runtime (Lume: "GPU acceleration" for macOS VMs; QEMU:
-    /// virgl on Linux; containers: NVIDIA on Linux); none on Cua Cloud yet.
+    /// virgl on Linux; containers: NVIDIA on Linux).
     /// A runtime with no option says why ([`cua_sandbox_core::gpu`]).
     pub async fn gpu_support(&self, on: &On) -> Vec<cua_sandbox_core::gpu::GpuSupport> {
         let sbx = &self.inner.sandboxes;
         match on {
             On::Local => sbx.gpu_support(ProviderKind::Local, None).await,
-            On::Cloud => sbx.gpu_support(ProviderKind::Fleet, None).await,
             On::Provider(word) => sbx.gpu_support(ProviderKind::Contrib, Some(word)).await,
             _ => vec![],
         }
@@ -1864,7 +1813,7 @@ impl Spaces {
         }
         if on.is_existing_machine() {
             return Err(Error::invalid(format!(
-                "{on} is an existing machine: add it with add_space (url {}), create_space \
+                "{on} is an existing computer: add it with add_space (url {}), create_space \
                  makes a new one (on local or cloud)",
                 on.to_string().split_once(':').map_or("", |(_, a)| a)
             )));
@@ -1915,21 +1864,6 @@ impl Spaces {
         })
     }
 
-    /// The warm pool Spaces claims `image` on `runtime` from:
-    /// `<namespace>-<runtime>-<sha256(image)[..8]>`, a DNS label.
-    pub fn fleet_pool_name(&self, runtime: FleetRuntime, image: &str) -> String {
-        self.pool_name(runtime, image)
-    }
-
-    fn pool_name(&self, runtime: FleetRuntime, image: &str) -> String {
-        use sha2::Digest;
-        let digest = hex::encode(sha2::Sha256::digest(image.as_bytes()));
-        let suffix = format!("-{}-{}", runtime.as_str(), &digest[..8]);
-        let base = &self.inner.namespace;
-        let keep = 63usize.saturating_sub(suffix.len()).min(base.len());
-        sanitize_label(&format!("{}{suffix}", base[..keep].trim_end_matches('-')))
-    }
-
     /// Provisions a Space on the local runtime and registers it. Readiness
     /// is the runtime's plus a TCP probe per declared service (the Spaces
     /// images: the spacesd port). An image without cua-spacesd
@@ -1956,7 +1890,7 @@ impl Spaces {
             .image
             .as_deref()
             .map(|i| cua_image::canonical::alias(i).unwrap_or_else(|| i.to_string()))
-            .unwrap_or_else(|| cua_fleet::canonical_image("linux"));
+            .unwrap_or_else(|| cua_image::canonical::canonical_image_or_linux("linux"));
         let token = format!("{:032x}", rand::random::<u128>());
         // Until the Space is registered, the create's journal holds its
         // token and what it made: a process that dies mid-create (a daemon
@@ -2213,7 +2147,7 @@ impl Spaces {
                 }
                 let _ = self.inner.registry.forget_direct(&id.to_string());
                 format!(
-                    "Removed {id} (added by address, so only forgotten; the machine is untouched)."
+                    "Removed {id} (added by address, so only forgotten; the computer is untouched)."
                 )
             }
             SpaceId::Relay { machine_id } => {
@@ -2247,9 +2181,9 @@ impl Spaces {
                              owner can remove it from the relay directory)."
                         ),
                         Some(_) => format!(
-                            "Removed {id} (disconnected; it is one of your machines, so it stays \
+                            "Removed {id} (disconnected; it is one of your computers, so it stays \
                              in your relay directory: run `cua host remove` on it, or if that \
-                             machine is gone, `cua spaces relay-unregister {id}`)."
+                             computer is gone, `cua spaces relay-unregister {id}`)."
                         ),
                         None => format!("Removed {id} (disconnected)."),
                     },
@@ -2537,7 +2471,9 @@ impl Spaces {
                         self.drop_connection(&id).await;
                         self.power_on_host(&m, &host, on).await
                     }
-                    None => Err(refuse("relay (only a Space one of your machines provides)")),
+                    None => Err(refuse(
+                        "relay (only a Space one of your computers provides)",
+                    )),
                 }
             }
             // Cua Cloud has ended: there is no cloud Space to turn on or off.
@@ -2660,7 +2596,7 @@ pub fn expects_spacesd(image: Option<&str>, explicit: Option<bool>) -> bool {
         // The canonical images (and their CUA_IMAGE_<OS> overrides) carry
         // cua-spacesd; anything else says so with `spacesd`. A local runtime
         // prefix (`container:`, `vm:`, ...) picks the variant, not the image.
-        Some(image) => cua_fleet::is_canonical_image(strip_runtime_prefix(image)),
+        Some(image) => cua_image::canonical::is_canonical(strip_runtime_prefix(image)),
     }
 }
 
@@ -2672,48 +2608,6 @@ fn split_mcp_url(url: &str) -> Result<(String, String)> {
         path = format!("{path}?{q}");
     }
     Ok((u.origin().ascii_serialization(), path))
-}
-
-/// The key a Fleet pool is named after (see [`Spaces::fleet_pool_name`]):
-/// the image alone for a plain Spaces claim (unchanged pool names), else the
-/// image plus what else shapes the template (`command`, `env` and the
-/// services). A sized Space's key is [`sized_pool_key`].
-pub fn pool_key(
-    image: &str,
-    command: Option<&[String]>,
-    env: &BTreeMap<String, String>,
-    services: &BTreeMap<String, u16>,
-) -> String {
-    sized_pool_key(image, command, env, services, None, None)
-}
-
-/// [`pool_key`] plus the size (`vmTemplate.cpuCores`, `vmTemplate.memory`
-/// in MiB), which shapes the template too. Unsized, it is [`pool_key`].
-pub fn sized_pool_key(
-    image: &str,
-    command: Option<&[String]>,
-    env: &BTreeMap<String, String>,
-    services: &BTreeMap<String, u16>,
-    cpus: Option<u32>,
-    memory_mb: Option<u32>,
-) -> String {
-    if command.is_none()
-        && env.is_empty()
-        && services.is_empty()
-        && cpus.is_none()
-        && memory_mb.is_none()
-    {
-        return image.to_string();
-    }
-    let mut key = serde_json::json!({"command": command, "env": env, "services": services});
-    // Only when set, so the pools of unsized Spaces keep their names.
-    if let Some(c) = cpus {
-        key["cpu"] = c.into();
-    }
-    if let Some(m) = memory_mb {
-        key["memory_mb"] = m.into();
-    }
-    format!("{image}\n{key}")
 }
 
 /// The error a thumbnail request gets while the Space's capture backs off
@@ -2926,19 +2820,5 @@ mod tests {
         ] {
             assert!(!is_generated_name(other), "{other}");
         }
-    }
-
-    #[test]
-    fn pool_names_fit_and_differ_by_image_and_runtime() {
-        let spaces = Spaces::builder()
-            .home(tempfile::tempdir().unwrap().keep())
-            .fleet_namespace("cua-spaces-".to_string() + &"x".repeat(70))
-            .build();
-        let a = spaces.pool_name(FleetRuntime::Kubevirt, "img:1");
-        let b = spaces.pool_name(FleetRuntime::Kubevirt, "img:2");
-        let c = spaces.pool_name(FleetRuntime::Gvisor, "img:docker-1");
-        assert!(a.len() <= 63 && b.len() <= 63 && c.len() <= 63);
-        assert_ne!(a, b);
-        assert!(c.contains("-gvisor-"));
     }
 }

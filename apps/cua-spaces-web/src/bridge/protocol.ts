@@ -45,11 +45,12 @@ import type { HostSetupOps } from "./ops/host-setup";
 import type { SpaceDetailOps } from "./ops/space-detail";
 import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
+import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
-import type { TelemetryOps } from "./ops/telemetry";
+import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
 
 /* ---- Settings the web UI reads and writes -------------------------------- */
@@ -64,7 +65,7 @@ export interface SettingsValues {
   menuBar: boolean;
   /** The global hotkey, as glyphs (`⌘⇧Space`). */
   hotkey: string;
-  /** Anonymous usage telemetry (`$CUA_HOME/config.toml`, same as `cua telemetry`). */
+  /** Usage telemetry (`$CUA_HOME/config.toml`, same as `cua telemetry`). */
   telemetry: boolean;
   /** Where New Space starts: `local`, `cloud`, `host:<id>`, or a cloud word. */
   defaultLocation: string;
@@ -187,6 +188,7 @@ export interface HostOperations
     StartupOps,
     StreamOps,
     RelayUsageOps,
+    NudgesOps,
     ResourcesOps,
     ChecklistOps,
     PresenceOps,
@@ -292,13 +294,14 @@ export const OPERATIONS = [
   ...VOLUME_OPERATIONS,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...NUDGES_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
-  "telemetry.track",
+  ...TELEMETRY_OPERATIONS,
   "spaces.usage",
   "spaces.windows",
   "stream.pip",

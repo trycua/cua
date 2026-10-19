@@ -376,7 +376,7 @@ describe("SettingsPanel Privacy", () => {
   it("acknowledges the notice, turns usage telemetry off and links the docs", async () => {
     const telemetry = fakeTelemetry();
     const props = renderPanel({ telemetry });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     expect(telemetry.calls).toEqual(["ack"]);
     await userEvent.click(screen.getByRole("radio", { name: "Off" }));
     expect(telemetry.calls).toContain("set:false");
@@ -395,7 +395,7 @@ describe("SettingsPanel Privacy", () => {
   it("lists Account, Teams, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
     const onShowWelcome = vi.fn();
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments"]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
@@ -426,7 +426,7 @@ describe("SettingsPanel Experiments", () => {
       recordSignals: vi.fn(),
     };
     renderPanel({ telemetry });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
     for (const name of ["Cua Volume", "Your cloud"]) {
       expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
@@ -716,7 +716,7 @@ describe("SettingsPanel launch at login", () => {
     const { fakeLoginItemBridge } = await import("../native/loginItem");
     renderPanel({ loginItem: fakeLoginItemBridge("notRegistered"), serves: { providesSpaces: true, runsAgents: false } });
     expect(
-      await screen.findByText("This machine provides Spaces, which stop after a restart until you open Cua Spaces."),
+      await screen.findByText("This computer provides Spaces, which stop after a restart until you open Cua Spaces."),
     ).toBeInTheDocument();
   });
 

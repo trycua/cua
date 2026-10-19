@@ -1893,13 +1893,25 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         Command::Runtime(RuntimeCmd::Doctor) => {
             let report = cua.local().doctor().await?;
-            return Ok(runtime_doctor_output(out, &report, json));
+            return Ok(runtime_doctor_output_with(
+                out,
+                &report,
+                json,
+                &runtime_optional(&report.report_json),
+            ));
         }
         Command::Runtime(RuntimeCmd::Setup {
             dry_run,
             components,
         }) => {
-            let steps = cua.local().setup(components, dry_run).await?;
+            let mut steps = cua.local().setup(components, dry_run).await?;
+            let report = cua.local().doctor().await?;
+            let optional = runtime_optional(&report.report_json);
+            for step in &mut steps {
+                if optional.contains(&step.name) {
+                    step.status = cua_sdk::RuntimeCheckStatus::NotApplicable;
+                }
+            }
             return Ok(runtime_setup_output(out, &steps));
         }
         Command::Image(cmd) => {
@@ -2529,15 +2541,66 @@ pub fn main() {
     std::process::exit(code);
 }
 
-fn runtime_doctor_output(
+// Keep daemon/SDK statuses actionable for target-specific host doctor and Spaces.
+// Only the runtime overview treats unavailable alternatives as optional.
+fn runtime_optional(report_json: &str) -> Vec<String> {
+    runtime_optional_with(
+        report_json,
+        cua_vmm::managed::supported(),
+        cua_vmm::managed::LinuxSource::current(),
+    )
+}
+
+fn runtime_optional_with(
+    report_json: &str,
+    managed_supported: bool,
+    source: cua_vmm::managed::LinuxSource,
+) -> Vec<String> {
+    use cua_vmm::{BackendKind as B, host::HostOs, managed::LinuxSource};
+    let Ok(r) = serde_json::from_str::<cua_vmm::auto::DoctorReport>(report_json) else {
+        return Vec::new();
+    };
+    let linux_ready = r.backends.iter().any(|b| {
+        b.ready
+            && (matches!(b.backend, B::Qemu | B::Container)
+                || b.backend == B::Managed && r.host.os == HostOs::Macos)
+    });
+    let mut optional: Vec<String> = r
+        .backends
+        .iter()
+        .filter(|b| {
+            !b.ready
+                && (linux_ready
+                    || match b.backend {
+                        B::Lume => !r.lume.supported_host,
+                        B::Managed => !managed_supported || source == LinuxSource::System,
+                        _ => false,
+                    })
+        })
+        .map(|b| b.backend.as_str().to_string())
+        .collect();
+    if linux_ready && !r.backends.iter().any(|b| b.backend == B::Qemu && b.ready) {
+        optional.push("kvm".into());
+    }
+    optional
+}
+
+fn runtime_doctor_output_with(
     out: &mut dyn std::io::Write,
     report: &cua_sdk::DoctorReport,
     json: bool,
+    optional: &[String],
 ) -> i32 {
+    let mut checks = report.checks.clone();
+    for check in &mut checks {
+        if optional.contains(&check.name) {
+            check.status = cua_sdk::RuntimeCheckStatus::NotApplicable;
+        }
+    }
     if json {
         line(out, &report.report_json);
     } else {
-        for c in &report.checks {
+        for c in &checks {
             line(
                 out,
                 format!(
@@ -2554,8 +2617,7 @@ fn runtime_doctor_output(
         }
     }
     i32::from(
-        report
-            .checks
+        checks
             .iter()
             .any(|c| c.status == cua_sdk::RuntimeCheckStatus::Error),
     )
@@ -2841,6 +2903,86 @@ mod tests {
     }
 
     #[test]
+    fn runtime_optional_backends_preserve_sdk_contract() {
+        use cua_vmm::{
+            BackendKind as B,
+            auto::{BackendStatus, DoctorReport, HostReport},
+            host::HostOs,
+            managed::LinuxSource,
+        };
+        for (os, ready, supported, source) in [
+            (HostOs::Linux, B::Qemu, false, LinuxSource::Auto),
+            (HostOs::Linux, B::Container, false, LinuxSource::Auto),
+            (HostOs::Macos, B::Container, true, LinuxSource::System),
+            (HostOs::Macos, B::Managed, true, LinuxSource::Builtin),
+        ] {
+            let mut r = DoctorReport {
+                host: HostReport {
+                    os,
+                    arch: cua_vmm::Arch::X86_64,
+                    kvm: true,
+                    accel: Default::default(),
+                },
+                backends: [B::Qemu, B::Lume, B::Managed, B::Container]
+                    .into_iter()
+                    .map(|backend| BackendStatus {
+                        backend,
+                        ready: backend == ready,
+                        provisionable: matches!(backend, B::Lume | B::Managed),
+                        detail: String::new(),
+                        missing: vec![],
+                        provisioning: vec![],
+                    })
+                    .collect(),
+                qemu: Default::default(),
+                lume: Default::default(),
+                container: Default::default(),
+            };
+            let raw = cua_daemon::local::doctor_checks(&r);
+            assert_eq!(
+                raw[1].status,
+                cua_proto::daemon::v1::CheckStatus::Installable as i32
+            );
+            if ready != B::Qemu {
+                assert_eq!(
+                    raw[0].status,
+                    cua_proto::daemon::v1::CheckStatus::Error as i32
+                );
+            }
+            let optional = super::runtime_optional_with(
+                &serde_json::to_string(&r).unwrap(),
+                supported,
+                source,
+            );
+            for (b, c) in r.backends.iter().zip(&raw) {
+                assert!(b.ready || optional.contains(&c.name));
+            }
+            let report = cua_sdk::DoctorReport {
+                checks: raw.into_iter().map(Into::into).collect(),
+                report_json: serde_json::to_string(&r).unwrap(),
+            };
+            for json in [false, true] {
+                let mut out = Vec::new();
+                assert_eq!(
+                    super::runtime_doctor_output_with(&mut out, &report, json, &optional),
+                    0
+                );
+                if !json {
+                    assert!(!String::from_utf8(out).unwrap().contains("error"));
+                }
+            }
+            r.backends.iter_mut().for_each(|b| b.ready = false);
+            let optional = super::runtime_optional_with(
+                &serde_json::to_string(&r).unwrap(),
+                supported,
+                source,
+            );
+            assert!(!optional.contains(&"qemu".into()));
+            assert!(!optional.contains(&"kvm".into()));
+        }
+    }
+
+    #[test]
     fn runtime_output_exit_codes() {
         use cua_sdk::{DoctorReport, RuntimeCheck, RuntimeCheckStatus as S, SetupStep};
         for (status, expected) in [(S::Ok, 0), (S::Installable, 0), (S::Error, 1)] {
@@ -2865,7 +3007,7 @@ mod tests {
             for json in [false, true] {
                 let mut out = Vec::new();
                 assert_eq!(
-                    super::runtime_doctor_output(&mut out, &report, json),
+                    super::runtime_doctor_output_with(&mut out, &report, json, &[]),
                     expected
                 );
                 if json {

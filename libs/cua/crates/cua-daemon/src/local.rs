@@ -1249,41 +1249,12 @@ pub async fn doctor_response() -> cua_proto::daemon::v1::DoctorResponse {
 
 /// The report as `cua.daemon.v1` checks (one per backend).
 pub fn doctor_checks(r: &DoctorReport) -> Vec<cua_proto::daemon::v1::RuntimeCheck> {
-    doctor_checks_with(
-        r,
-        cua_vmm::managed::supported(),
-        cua_vmm::managed::LinuxSource::current(),
-    )
-}
-
-fn doctor_checks_with(
-    r: &DoctorReport,
-    managed_supported: bool,
-    linux_source: cua_vmm::managed::LinuxSource,
-) -> Vec<cua_proto::daemon::v1::RuntimeCheck> {
     use cua_proto::daemon::v1::{CheckStatus, RuntimeCheck};
-    let linux_ready = r.backends.iter().any(|b| {
-        b.ready && matches!(b.backend, BackendKind::Qemu | BackendKind::Container)
-            || b.ready
-                && b.backend == BackendKind::Managed
-                && r.host.os == cua_vmm::host::HostOs::Macos
-    });
     r.backends
         .iter()
         .map(|b| {
-            let not_applicable = linux_ready
-                || match b.backend {
-                    BackendKind::Lume => !r.lume.supported_host,
-                    BackendKind::Managed => {
-                        !managed_supported
-                            || linux_source == cua_vmm::managed::LinuxSource::System
-                    }
-                    _ => false,
-                };
             let status = if b.ready {
                 CheckStatus::Ok
-            } else if not_applicable {
-                CheckStatus::NotApplicable
             } else if b.provisionable {
                 CheckStatus::Installable
             } else {
@@ -1989,88 +1960,17 @@ mod tests {
     }
 
     #[test]
-    fn doctor_preserves_backend_failures_when_docker_is_ready() {
+    fn doctor_preserves_backend_contract() {
         use cua_proto::daemon::v1::CheckStatus;
-        use cua_vmm::auto::BackendStatus;
-        let mut report = qemu_report(true);
-        report.host.kvm = true;
-        for backend in [
-            super::BackendKind::Lume,
-            super::BackendKind::Managed,
-            super::BackendKind::Container,
-        ] {
-            report.backends.push(BackendStatus {
-                backend,
-                ready: false,
-                provisionable: false,
-                detail: "unavailable".into(),
-                missing: vec![],
-                provisioning: vec![],
-            });
-        }
-        let checks = super::doctor_checks_with(&report, false, cua_vmm::managed::LinuxSource::Auto);
-        assert_eq!(checks[0].status, CheckStatus::Ok as i32);
-        assert_eq!(checks[1].status, CheckStatus::NotApplicable as i32);
-        assert_eq!(checks[2].status, CheckStatus::NotApplicable as i32);
-        assert_eq!(checks[3].status, CheckStatus::NotApplicable as i32);
-        assert!(checks.iter().all(|c| c.status != CheckStatus::Error as i32));
-        // Even a supported but unavailable alternative is optional when QEMU works.
-        assert!(
-            super::doctor_checks_with(&report, true, cua_vmm::managed::LinuxSource::Builtin)
-                .iter()
-                .all(|c| c.status != CheckStatus::Error as i32)
-        );
-        #[cfg(target_os = "macos")]
-        {
-            report.host.os = cua_vmm::host::HostOs::Macos;
-            report.backends[3].ready = true;
-            report.container.engine = Some("Docker Desktop".into());
-            assert!(
-                super::doctor_checks_with(&report, false, cua_vmm::managed::LinuxSource::Auto)
-                    .iter()
-                    .all(|c| c.status != CheckStatus::Error as i32)
-            );
-            report.backends[0].ready = false;
-            report.backends[0].provisionable = false;
-            report.backends[3].ready = false;
-            report.backends[2].ready = true;
-            assert_ne!(
-                super::doctor_checks_with(&report, false, cua_vmm::managed::LinuxSource::Auto)[0]
-                    .status,
-                CheckStatus::Error as i32
-            );
-            report.backends[2].ready = false;
-            report.host.os = cua_vmm::host::HostOs::Linux;
-        }
-        report.backends[0].ready = false;
-        report.backends[0].provisionable = false;
-        report.backends[3].ready = true;
-        let checks = super::doctor_checks_with(&report, false, cua_vmm::managed::LinuxSource::Auto);
-        assert_ne!(checks[0].status, CheckStatus::Error as i32);
-        assert_eq!(checks[3].status, CheckStatus::Ok as i32);
-        report.backends[3].ready = false;
+        let mut report = qemu_report(false);
         assert_eq!(
-            super::doctor_checks_with(&report, false, cua_vmm::managed::LinuxSource::Auto)[0]
-                .status,
-            CheckStatus::Error as i32
-        );
-        report.backends[0].detail = "permission denied opening /dev/kvm".into();
-        assert_eq!(
-            super::doctor_checks_with(&report, false, cua_vmm::managed::LinuxSource::Auto)[0]
-                .status,
-            CheckStatus::Error as i32
-        );
-        report.backends[3].ready = false;
-        assert_eq!(
-            super::doctor_checks_with(&report, false, cua_vmm::managed::LinuxSource::Auto)[0]
-                .status,
-            CheckStatus::Error as i32
-        );
-        report.backends[0].provisionable = true;
-        assert_eq!(
-            super::doctor_checks_with(&report, false, cua_vmm::managed::LinuxSource::Auto)[0]
-                .status,
+            super::doctor_checks(&report)[0].status,
             CheckStatus::Installable as i32
+        );
+        report.backends[0].provisionable = false;
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Error as i32
         );
     }
 

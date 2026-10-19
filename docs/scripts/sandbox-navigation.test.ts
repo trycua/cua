@@ -49,7 +49,13 @@ test('the Cua SDK has its task guides and one concept page', async () => {
     'omarchy',
     'migrate-from-deprecated-packages',
   ]);
-  assert.deepEqual((await metadata('cua-sdk/concepts')).pages, ['how-sandboxes-work', 'telemetry', 'telemetry-events']);
+  assert.deepEqual((await metadata('cua-sdk/concepts')).pages, [
+    'how-sandboxes-work',
+    'telemetry',
+    'telemetry-events',
+    'telemetry-counting',
+    'telemetry-error-kinds',
+  ]);
   for (const slug of guides.pages) {
     assert.equal(await routeExists(`/cua-sdk/guides/${slug}`), true, slug);
   }

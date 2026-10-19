@@ -303,9 +303,9 @@ pub const FEATURES: &[&str] = &[
     "upsell_plan_card_click",
     "upsell_account_menu_click",
 ];
+/// Install steps live in [`INSTALLER_STEPS`] (`cua_installer_step`): the
+/// installers send them before any Cua program is on the machine.
 pub const ONBOARDING_STEPS: &[&str] = &[
-    "installer_started",
-    "installer_completed",
     "app_launched",
     "onboarding_shown",
     "onboarding_completed",
@@ -331,6 +331,38 @@ pub const ONBOARDING_STEPS: &[&str] = &[
     "checklist_dismissed",
     "checklist_reopened",
 ];
+/// What `install.sh` and `install.ps1` report about their own run
+/// (`cua_installer_step`): started, finished, or stopped by an error.
+pub const INSTALLER_STEPS: &[&str] = &[
+    "installer_started",
+    "installer_completed",
+    "installer_failed",
+];
+/// The part of the install that was running when it stopped (`none` on
+/// `installer_started` and `installer_completed`).
+pub const INSTALL_STAGES: &[&str] = &[
+    "none", "platform", "manifest", "cli", "runtime", "app", "driver", "sign_in", "host", "other",
+];
+/// Why an install stopped, as a fixed word the installer picks from its
+/// own error; never the message.
+pub const INSTALL_ERROR_KINDS: &[&str] = &[
+    "none",
+    "network",
+    "checksum",
+    "signature",
+    "unsupported_platform",
+    "permission_denied",
+    "missing_tool",
+    "cancelled",
+    "other",
+];
+/// Which installer sent the event.
+pub const INSTALLERS: &[&str] = &["sh", "ps1"];
+/// What the install was asked to put on the machine (joined with `+`).
+pub const INSTALL_ITEMS: &[&str] = &["cli", "spaces", "cua_driver", "host"];
+/// The kind of Spaces tool an agent's call used (`cua_agent_used_space`).
+pub const SPACE_TOOL_GROUPS: &[&str] =
+    &["shell", "files", "computer", "services", "agents", "other"];
 /// Whether an `app_launched` opens the first run (`unknown` elsewhere).
 pub const ONBOARDING_ELIGIBLE: &[&str] = &["yes", "no", "unknown"];
 /// The Spaces app's first-run pages (`cua-spaces-app-core` `onboarding`).
@@ -566,7 +598,11 @@ pub const COMMON: &[Prop] = &[
         Kind::ConstBool(true),
         "No location lookup from the IP.",
     ),
-    p("$lib", Kind::Enum(&["cua-telemetry"]), "Sender library."),
+    p(
+        "$lib",
+        Kind::Enum(&["cua-telemetry", "cua-installer"]),
+        "Sender library (cua-installer: install.sh or install.ps1).",
+    ),
     p("$lib_version", Kind::Version, "Sender library version."),
 ];
 
@@ -666,6 +702,8 @@ pub mod event {
     pub const APP_UPDATE: &str = "cua_app_update";
     pub const DEVICE_ENROLL: &str = "cua_device_enroll";
     pub const EXPERIMENT: &str = "cua_experiment";
+    pub const INSTALLER_STEP: &str = "cua_installer_step";
+    pub const AGENT_USED_SPACE: &str = "cua_agent_used_space";
 }
 
 /// Every event.
@@ -907,6 +945,56 @@ pub const EVENTS: &[EventSpec] = &[
             ),
         ],
         purpose: "Install and onboarding funnel: where people drop off.",
+    },
+    EventSpec {
+        name: event::INSTALLER_STEP,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        // The installers install the CLI, so they report as it.
+        products: &["cli"],
+        props: &[
+            p(
+                "step",
+                Kind::Enum(INSTALLER_STEPS),
+                "installer_started, installer_completed or installer_failed.",
+            ),
+            OUTCOME,
+            p(
+                "install_stage",
+                Kind::Enum(INSTALL_STAGES),
+                "installer_failed only: the part of the install that was running (platform, manifest, cli, runtime, app, driver, sign_in, host, other); none otherwise.",
+            ),
+            p(
+                "error_kind",
+                Kind::Enum(INSTALL_ERROR_KINDS),
+                "installer_failed only: why, as a fixed word (network, checksum, signature, unsupported_platform, permission_denied, missing_tool, cancelled, other); none otherwise. Never the message.",
+            ),
+            p(
+                "installer",
+                Kind::Enum(INSTALLERS),
+                "install.sh (sh) or install.ps1 (ps1).",
+            ),
+            p(
+                "items",
+                Kind::Set(INSTALL_ITEMS),
+                "What the install was asked for: cli, spaces, cua_driver, host, joined with +.",
+            ),
+        ],
+        purpose: "Install funnel: how many installs start, finish, and where and why they fail.",
+    },
+    EventSpec {
+        name: event::AGENT_USED_SPACE,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: ALL,
+        props: &[p(
+            "tool_group",
+            Kind::Enum(SPACE_TOOL_GROUPS),
+            "The kind of tool the call used: shell, files, computer, services, agents or other.",
+        )],
+        purpose: "First success and agent retention: an AI agent's tool call reached a Space and worked. At most one per install per UTC day.",
     },
     EventSpec {
         name: event::AGENT_RUN_STARTED,

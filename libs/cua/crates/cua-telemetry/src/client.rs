@@ -43,6 +43,8 @@ const FIRST_RUN_FILE: &str = "first_run_recorded";
 const FUNNEL_DIR: &str = "funnel";
 /// The UTC day (days since the epoch) `cua_app_active` was last sent.
 const ACTIVE_DAY_FILE: &str = "active_day";
+/// The UTC day of the last `cua_agent_used_space`.
+const AGENT_USED_SPACE_FILE: &str = "agent_used_space_day";
 /// The Spaces app's experiments that are on (`cua_volume+sharing`, `none`).
 const EXPERIMENTS_FILE: &str = "experiments_on";
 
@@ -628,6 +630,46 @@ impl Telemetry {
         let experiments = std::fs::read_to_string(dir.join(EXPERIMENTS_FILE)).unwrap_or_default();
         let ids: Vec<&str> = experiments.trim().split('+').collect();
         let r = self.capture(crate::events::app_active_with(&ids));
+        if r == Captured::Queued {
+            let _ = fsutil::write_replace(&marker, today.as_bytes());
+        }
+        r
+    }
+
+    /// Captures `cua_agent_used_space` when an AI agent's tool call `tool`
+    /// reached a Space and worked: at most once per install per UTC day.
+    /// Tools that do not act inside a Space are ignored.
+    pub fn capture_agent_used_space(&self, tool: &str) -> Captured {
+        let day = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86_400)
+            .unwrap_or(0);
+        self.capture_agent_used_space_on(day, tool)
+    }
+
+    /// [`Self::capture_agent_used_space`] for a given UTC day (days since
+    /// the epoch).
+    pub fn capture_agent_used_space_on(&self, day: u64, tool: &str) -> Captured {
+        let Some(ev) = crate::events::agent_used_space(tool) else {
+            return Captured::Invalid(format!("{tool} does not act inside a Space"));
+        };
+        if !self.is_enabled() {
+            return Captured::Disabled;
+        }
+        // A sandbox's cua-spacesd is not an install, and a Cua program inside
+        // an agent run's Space is not the install the agent works for.
+        if self.product() == "spacesd" || self.in_agent_run() {
+            return Captured::Disabled;
+        }
+        let Some(dir) = self.state_dir() else {
+            return Captured::Disabled;
+        };
+        let marker = dir.join(FUNNEL_DIR).join(AGENT_USED_SPACE_FILE);
+        let today = format!("{day}\n");
+        if std::fs::read_to_string(&marker).is_ok_and(|s| s == today) {
+            return Captured::AlreadyRecorded;
+        }
+        let r = self.capture(ev);
         if r == Captured::Queued {
             let _ = fsutil::write_replace(&marker, today.as_bytes());
         }

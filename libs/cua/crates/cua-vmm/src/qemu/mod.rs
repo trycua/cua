@@ -1038,6 +1038,24 @@ pub async fn install_qemu() -> Result<()> {
             let (manager, program) = QemuPackageManager::detect().ok_or_else(|| {
                 VmmError::missing("QEMU", "no supported package manager found (apt-get/dnf)")
             })?;
+            if host::which("apt-get").is_some() && !host::sudo_available() {
+                let home = host::cua_home();
+                tracing::info!(
+                    "installing user-local QEMU at {}",
+                    home.join("qemu").display()
+                );
+                return host::run(
+                    "sh",
+                    &[
+                        "-c",
+                        include_str!("install-local.sh"),
+                        "cua-qemu",
+                        &home.to_string_lossy(),
+                    ],
+                )
+                .await
+                .map(|_| ());
+            }
             let program = program.display().to_string();
             tracing::info!("installing QEMU with {manager:?} (sudo -n)");
             for args in manager.commands(&program) {
@@ -1607,9 +1625,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let r = rt(tmp.path());
         let denied = Err(std::io::ErrorKind::PermissionDenied.into());
-        let err = r.accel_for(Arch::host(), &denied).unwrap_err().to_string();
-        assert!(err.contains("permission denied"), "{err}");
-        assert!(err.contains("sudo usermod -aG kvm"), "{err}");
+        let result = r.accel_for(Arch::host(), &denied);
+        if host::sudo_available() {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("permission denied")
+            );
+        } else {
+            assert_eq!(result.unwrap(), "tcg");
+        }
         let missing = Err(std::io::ErrorKind::NotFound.into());
         assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
     }

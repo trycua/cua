@@ -163,6 +163,26 @@ pub async fn run(program: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Result<
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Probe only when installation or denied KVM access requires privilege.
+static SUDO_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+pub fn local_qemu_plan() -> bool {
+    which("sudo").is_none() || SUDO_AVAILABLE.get() == Some(&false)
+}
+
+pub fn sudo_available() -> bool {
+    *SUDO_AVAILABLE.get_or_init(|| {
+        which("sudo").is_some_and(|sudo| {
+            std::process::Command::new(sudo)
+                .args(["-n", "true"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        })
+    })
+}
+
 /// Whether hardware virtualisation is usable for a guest of `guest` arch, and
 /// which QEMU accelerator to use.
 pub fn qemu_accel(os: HostOs, guest: Arch, kvm: &std::io::Result<()>) -> Result<&'static str> {
@@ -172,7 +192,12 @@ pub fn qemu_accel(os: HostOs, guest: Arch, kvm: &std::io::Result<()>) -> Result<
         (HostOs::Macos, _) if host == guest => Ok("hvf"),
         (HostOs::Linux, Ok(())) if host == guest => Ok("kvm"),
         (HostOs::Linux, Err(e)) if host == guest && e.kind() != std::io::ErrorKind::NotFound => {
-            Err(VmmError::missing("KVM", kvm_hint(e)))
+            if e.kind() == std::io::ErrorKind::PermissionDenied && !sudo_available() {
+                tracing::warn!("KVM access denied and sudo unavailable; using slow TCG emulation");
+                Ok("tcg")
+            } else {
+                Err(VmmError::missing("KVM", kvm_hint(e)))
+            }
         }
         (HostOs::Windows, _) if host == guest => Ok("whpx"),
         _ => Ok("tcg"),
@@ -320,14 +345,17 @@ mod tests {
         );
         let missing = kvm_hint(&std::io::ErrorKind::NotFound.into());
         assert!(missing.contains("nested virtualization"), "{missing}");
-        let denied = native(Err(std::io::ErrorKind::PermissionDenied.into()))
-            .unwrap_err()
-            .to_string();
-        assert!(denied.contains("permission denied"), "{denied}");
-        assert!(
-            denied.contains("sudo usermod -aG kvm \"$USER\""),
-            "{denied}"
-        );
+        let denied = native(Err(std::io::ErrorKind::PermissionDenied.into()));
+        if sudo_available() {
+            assert!(
+                denied
+                    .unwrap_err()
+                    .to_string()
+                    .contains("permission denied")
+            );
+        } else {
+            assert_eq!(denied.unwrap(), "tcg");
+        }
         let other = native(Err(std::io::Error::other("device busy")))
             .unwrap_err()
             .to_string();

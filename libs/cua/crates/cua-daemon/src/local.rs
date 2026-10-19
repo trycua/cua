@@ -1359,6 +1359,14 @@ async fn setup_with(
                 op: "unattended runsc install (run the plan shown by --dry-run)",
             }),
         };
+        let plan = if kind == BackendKind::Qemu && cua_vmm::host::cua_home().join("qemu").is_dir() {
+            format!(
+                "user-local QEMU at {}",
+                cua_vmm::host::cua_home().join("qemu").display()
+            )
+        } else {
+            plan
+        };
         steps.push(match result {
             Ok(()) => SetupStep {
                 name: c,
@@ -1393,6 +1401,13 @@ async fn kvm_step(dry_run: bool) -> Option<cua_proto::daemon::v1::SetupStep> {
     }
     let denied = cua_vmm::host::kvm_usable()
         .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    if denied && !dry_run && !cua_vmm::host::sudo_available() {
+        return Some(SetupStep {
+            name: "kvm".into(),
+            status: CheckStatus::Ok as i32,
+            detail: "KVM access denied; using slow TCG emulation (sudo unavailable)".into(),
+        });
+    }
     let user = std::env::var("USER").ok();
     let run = async |program: &str, args: &[&str]| cua_vmm::host::run(program, args).await;
     let (status, detail) =

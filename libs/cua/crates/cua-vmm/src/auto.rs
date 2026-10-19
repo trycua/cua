@@ -259,6 +259,12 @@ pub async fn doctor() -> DoctorReport {
             .push(format!("qemu-system-{native} / qemu-img"));
         let step = match host_os {
             HostOs::Macos if host::which("brew").is_some() => Some("brew install qemu".into()),
+            HostOs::Linux if host::which("apt-get").is_some() && host::local_qemu_plan() => {
+                Some(format!(
+                    "user-local QEMU at {}",
+                    host::cua_home().join("qemu").display()
+                ))
+            }
             HostOs::Linux => QemuPackageManager::detect().map(|(manager, _)| manager.render()),
             _ => None,
         };
@@ -266,6 +272,12 @@ pub async fn doctor() -> DoctorReport {
             qemu_status.provisionable = true;
             qemu_status.provisioning.push(s);
         }
+    }
+    if host::cua_home().join("qemu").is_dir() {
+        qemu_status.detail.push_str(&format!(
+            "; user-local wrappers at {}",
+            host::cua_home().join("bin").display()
+        ));
     }
     note_kvm(&mut qemu_status, host_os, &kvm);
 
@@ -423,7 +435,7 @@ fn note_kvm(status: &mut BackendStatus, host_os: HostOs, kvm: &std::io::Result<(
             status.ready = false;
             status.missing.push(host::kvm_hint(e));
         } else {
-            status.detail = format!("{}; {}", status.detail, host::kvm_hint(e));
+            status.detail = format!("{}; TCG ready; {}", status.detail, host::kvm_hint(e));
         }
     }
 }
@@ -711,11 +723,12 @@ mod tests {
             "{missing:?}"
         );
         let denied = noted(Err(std::io::ErrorKind::PermissionDenied.into()));
-        assert!(!denied.ready && !denied.provisionable, "{denied:?}");
-        assert!(
-            denied.missing[0].contains("sudo usermod -aG kvm"),
-            "{denied:?}"
-        );
+        if host::sudo_available() {
+            assert!(!denied.ready && !denied.provisionable, "{denied:?}");
+            assert!(denied.missing[0].contains("sudo usermod -aG kvm"));
+        } else {
+            assert!(denied.ready && denied.missing.is_empty(), "{denied:?}");
+        }
         let ok = noted(Ok(()));
         assert!(
             ok.ready && ok.missing.is_empty() && ok.detail == "QEMU 10",

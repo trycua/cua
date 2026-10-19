@@ -642,13 +642,15 @@ unsafe fn require_live_menu_window(
 /// `off_space`: WindowServer places the requested window on another Space.
 /// Foreground delivery takes the same route for that window (see
 /// [`menu_route`]), so the refusal names the Space and `bring_to_front`
-/// instead of advising `foreground`.
+/// instead of advising `foreground`. Otherwise it recommends `escalation`
+/// ([`MenuRequest::escalation`]).
 fn unbound_menu_window(
     pid: i32,
     requested: u32,
     focused: Option<u32>,
     main: Option<u32>,
     off_space: bool,
+    escalation: &'static str,
 ) -> ToolResult {
     let mut reason = format!(
         "invoke_menu: requested window {requested} is not the confirmed document menu context \
@@ -667,7 +669,7 @@ fn unbound_menu_window(
         &cua_driver_core::background_input::BackgroundRefusal {
             code: super::WINDOW_NOT_KEY,
             reason,
-            advice: (!off_space).then_some("foreground"),
+            advice: (!off_space).then_some(escalation),
         },
     )
 }
@@ -833,6 +835,15 @@ impl MenuRequest {
         )
     }
 
+    /// The next step a refusal recommends when the window is not the menu's
+    /// context (`window_not_key`).
+    fn escalation(&self) -> &'static str {
+        match self {
+            MenuRequest::Path | MenuRequest::KeyEquivalent(_) => "foreground",
+            MenuRequest::PathBehindUsersWindow => "bring_to_front",
+        }
+    }
+
     /// Why the call refuses instead of reaching the item, for
     /// `background_unavailable`.
     fn unavailable_because(&self) -> &'static str {
@@ -892,8 +903,8 @@ pub(super) async fn run_in_background(
     window_id: u32,
     path: Vec<String>,
     request: MenuRequest,
+    mutation: Arc<super::BackgroundMutationLease>,
 ) -> ToolResult {
-    let mutation = Arc::new(super::acquire_background_mutation(pid).await);
     let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
         .await
         .ok()
@@ -1008,7 +1019,14 @@ pub(super) async fn run_in_background(
             })
             .await
             .unwrap_or(false);
-            unbound_menu_window(pid, requested, focused, main, off_space)
+            unbound_menu_window(
+                pid,
+                requested,
+                focused,
+                main,
+                off_space,
+                request.escalation(),
+            )
         }
         Ok(Err(BackgroundPressError::Other(error))) => refusal(error),
         Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
@@ -1059,16 +1077,17 @@ enum MenuRoute {
     /// changes nothing.
     KeyWindowInFront,
     /// The frontmost app's key window cannot be read, and the target is not
-    /// its frontmost window on screen (`order_read`) or that order cannot be
-    /// read either. The target may be behind the user's window, and the
+    /// its frontmost window on screen (`front_known`), or no frontmost window
+    /// can be found either (the app has none on screen, or the window list
+    /// cannot be read). The target may be behind the user's window, and the
     /// key-window record cannot be confirmed without a readable key window:
     /// refuse rather than raise it.
-    KeyWindowUnknown { order_read: bool },
+    KeyWindowUnknown { front_known: bool },
 }
 
 /// `key_window` is the frontmost app's `AXFocusedWindow`. `front_window` is
 /// its frontmost on-screen window, consulted only when the key window cannot
-/// be read; `None` when the window order cannot be read.
+/// be read; `None` when none can be found.
 fn menu_route(
     target_in_front: bool,
     window_on_current_space: Option<bool>,
@@ -1084,7 +1103,7 @@ fn menu_route(
         Some(_) => MenuRoute::BehindUsersWindow,
         None if front_window == Some(window_id) => MenuRoute::KeyWindowInFront,
         None => MenuRoute::KeyWindowUnknown {
-            order_read: front_window.is_some(),
+            front_known: front_window.is_some(),
         },
     }
 }
@@ -1118,13 +1137,13 @@ fn not_made_key(reason: &str) -> String {
 
 /// Why a window of the frontmost app was not pressed when that app's key
 /// window cannot be read ([`MenuRoute::KeyWindowUnknown`]).
-fn key_window_unknown(order_read: bool) -> &'static str {
-    if order_read {
+fn key_window_unknown(front_known: bool) -> &'static str {
+    if front_known {
         "is not the frontmost window of the app the user is using, and that app's key window \
          could not be read, so it may be behind the user's window"
     } else {
-        "belongs to the app the user is using, whose key window and on-screen window order \
-         could not be read, so it may be behind the user's window"
+        "belongs to the app the user is using, whose key window could not be read and whose \
+         frontmost window on screen could not be found, so it may be behind the user's window"
     }
 }
 
@@ -1206,6 +1225,13 @@ impl Tool for InvokeMenuTool {
         // background app, refuse and say so instead of activating it. A window
         // behind the user's window in the app they are using is not raised
         // either (MenuRoute::BehindUsersWindow, MenuRoute::KeyWindowUnknown).
+        //
+        // One per-process mutation lease covers the route decision, every
+        // focus change, the press and the hand-back. A key scope that a
+        // concurrent same-pid call holds would otherwise read as the user's key
+        // window and send that window down the raising path, or overlap this
+        // call's scope and hand key back to the wrong window.
+        let mutation = Arc::new(super::acquire_background_mutation(pid).await);
         let (target_in_front, on_current_space, key_window, front_window) =
             tokio::task::spawn_blocking(move || {
                 if live_frontmost_app().or_else(crate::apps::frontmost_pid) != Some(pid) {
@@ -1235,19 +1261,29 @@ impl Tool for InvokeMenuTool {
             window_id,
         ) {
             MenuRoute::Background => {
-                return run_in_background(pid, window_id, path, MenuRequest::Path).await;
+                return run_in_background(pid, window_id, path, MenuRequest::Path, mutation).await;
             }
-            MenuRoute::KeyWindowUnknown { order_read } => {
-                return behind_users_window_refusal(pid, window_id, key_window_unknown(order_read));
+            MenuRoute::KeyWindowUnknown { front_known } => {
+                return behind_users_window_refusal(
+                    pid,
+                    window_id,
+                    key_window_unknown(front_known),
+                );
             }
             MenuRoute::BehindUsersWindow => {
                 let scope = match key_scope_behind_users_window(pid, window_id).await {
                     Ok(scope) => scope,
                     Err(refused) => return refused,
                 };
-                let result =
-                    run_in_background(pid, window_id, path, MenuRequest::PathBehindUsersWindow)
-                        .await;
+                let result = run_in_background(
+                    pid,
+                    window_id,
+                    path,
+                    MenuRequest::PathBehindUsersWindow,
+                    mutation.clone(),
+                )
+                .await;
+                // Key goes back before the lease is released.
                 drop(scope);
                 return result;
             }
@@ -1362,18 +1398,24 @@ mod tests {
 
     #[test]
     fn unbound_menu_refuses_before_dispatch_with_the_exact_target() {
-        let result = unbound_menu_window(42, 7, Some(8), None, false);
-        assert_eq!(result.is_error, Some(true));
-        let data = result.structured_content.unwrap();
-        assert_eq!(data["code"], "window_not_key");
-        assert_eq!(data["effect"], "refused");
-        assert_eq!(data["pid"], 42);
-        assert_eq!(data["window_id"], 7);
-        assert_eq!(data["escalation"]["recommended"], "foreground");
-        assert!(data["reason"]
-            .as_str()
-            .unwrap()
-            .contains("no menu action was dispatched"));
+        for (request, next) in [
+            (MenuRequest::Path, "foreground"),
+            (MenuRequest::KeyEquivalent("⌘S".into()), "foreground"),
+            (MenuRequest::PathBehindUsersWindow, "bring_to_front"),
+        ] {
+            let result = unbound_menu_window(42, 7, Some(8), None, false, request.escalation());
+            assert_eq!(result.is_error, Some(true));
+            let data = result.structured_content.unwrap();
+            assert_eq!(data["code"], "window_not_key");
+            assert_eq!(data["effect"], "refused");
+            assert_eq!(data["pid"], 42);
+            assert_eq!(data["window_id"], 7);
+            assert_eq!(data["escalation"]["recommended"], next);
+            assert!(data["reason"]
+                .as_str()
+                .unwrap()
+                .contains("no menu action was dispatched"));
+        }
     }
 
     /// Issue #4635: an off-Space window whose sibling holds the menu context
@@ -1381,7 +1423,7 @@ mod tests {
     /// that window, so the refusal must not recommend it.
     #[test]
     fn an_unbound_off_space_window_is_refused_with_the_space_named() {
-        let result = unbound_menu_window(42, 7, Some(8), Some(8), true);
+        let result = unbound_menu_window(42, 7, Some(8), Some(8), true, "foreground");
         assert_eq!(result.is_error, Some(true));
         let data = result.structured_content.unwrap();
         assert_eq!(data["code"], "window_not_key");
@@ -1658,12 +1700,12 @@ mod tests {
         // cannot be confirmed without a readable key window.
         assert_eq!(
             menu_route(true, None, None, Some(41), 42),
-            MenuRoute::KeyWindowUnknown { order_read: true }
+            MenuRoute::KeyWindowUnknown { front_known: true }
         );
-        // Nothing is known about the order: refuse too.
+        // No frontmost window can be found either: refuse too.
         assert_eq!(
             menu_route(true, None, None, None, 42),
-            MenuRoute::KeyWindowUnknown { order_read: false }
+            MenuRoute::KeyWindowUnknown { front_known: false }
         );
     }
 
@@ -1703,13 +1745,16 @@ mod tests {
         ));
         assert!(not_front.contains("is not the frontmost window of the app the user is using"));
         assert!(not_front.contains("may be behind the user's window"));
-        let unread = assert_refused_with_bring_to_front(behind_users_window_refusal(
+        let no_front = assert_refused_with_bring_to_front(behind_users_window_refusal(
             7,
             42,
             key_window_unknown(false),
         ));
-        assert!(unread.contains("whose key window and on-screen window order could not be read"));
-        assert!(unread.contains("may be behind the user's window"));
+        assert!(no_front.contains(
+            "whose key window could not be read and whose frontmost window on screen could not \
+             be found"
+        ));
+        assert!(no_front.contains("may be behind the user's window"));
     }
 
     #[test]

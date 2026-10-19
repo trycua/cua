@@ -2541,8 +2541,6 @@ pub fn main() {
     std::process::exit(code);
 }
 
-// Keep daemon/SDK statuses actionable for target-specific host doctor and Spaces.
-// Only the runtime overview treats unavailable alternatives as optional.
 fn runtime_optional(report_json: &str) -> Vec<String> {
     runtime_optional_with(
         report_json,

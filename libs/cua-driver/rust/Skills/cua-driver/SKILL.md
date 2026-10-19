@@ -92,6 +92,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 | LibreOffice, Preview and other macOS editors              | [macOS recipes](MACOS.md#libreoffice-numbers-and-other-editors-in-the-background)                                                                                   |
 | Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)                                                                                         |
 | Browser setup, binding, or ref refused                    | [Browser recovery](BROWSER.md#recovery-rules)                                                                                                                       |
+| Any refusal, `unverifiable` or `suspected_noop`           | Read `hint` and make `next_call`; [Refusals and hints](WORKFLOW.md#refusals-and-hints)                                                                              |
 
 ## Consult recent Cua activity only for continuation
 

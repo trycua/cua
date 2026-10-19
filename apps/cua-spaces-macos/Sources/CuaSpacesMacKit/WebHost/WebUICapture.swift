@@ -9,10 +9,15 @@ import WebKit
 /// (`<html data-bridge>`), saves the web view's own snapshot of each to
 /// `<dir>/<route>-<theme>.png` with a `report.json`, then quits. Window
 /// captures from outside the app miss WKWebView's content (it draws in
-/// another process), so the screenshots in docs/webui come from here.
+/// another process), so the screenshots in docs/webui come from here. With
+/// `CUA_SPACES_OFFSCREEN=1` too, nothing shows on screen (`OffscreenRun`).
 extension WebUIWindowController {
-    static let captureRoutes = ["spaces", "machines", "agents", "keyvault", "notifications", "settings",
+    static let captureRoutes = ["onboarding", "spaces", "machines", "agents", "keyvault", "notifications", "settings",
                                  "settings/about", "settings/devices"]
+
+    /// The base page routes resolve under: the window may have opened at
+    /// another route (the first run, at `/onboarding`).
+    var captureBase: URL { Self.devURL ?? WebUISchemeHandler.startURL }
 
     static var captureDirectory: URL? {
         guard DevHooks.enabled, let dir = DevHooks.environment["CUA_SPACES_WEBUI_CAPTURE"], !dir.isEmpty else { return nil }
@@ -29,7 +34,7 @@ extension WebUIWindowController {
                 var page: [String: Any] = [:]
                 // The first navigation can interrupt the initial load: try again.
                 for _ in 0..<3 where !(page["bridge"] is String) {
-                    webView.load(URLRequest(url: startURL.appendingPathComponent(route)))
+                    webView.load(URLRequest(url: Self.url(route, in: captureBase)))
                     page = await settledPage()
                 }
                 let file = dir.appendingPathComponent("\(route.replacingOccurrences(of: "/", with: "-"))-\(theme).png")
@@ -84,6 +89,8 @@ extension WebUIWindowController {
             if page["bridge"] is String, (page["text"] as? Int ?? 0) > 0 { break }
         }
         try? await Task.sleep(for: .milliseconds(700))
+        // Where it landed: with the first run due, every page goes to /onboarding.
+        if let path = try? await webView.evaluateJavaScript("location.pathname") as? String { last["path"] = path }
         return last
     }
 }

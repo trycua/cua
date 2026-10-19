@@ -466,7 +466,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             try await cua.spaces().space(space: id).usage()
         }
         guard let u = try? result.get() else { return nil }
-        return AppSpaceUsage(memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited,
+        return AppSpaceUsage(cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m,
+                             memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited,
                              diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited)
     }
 
@@ -854,6 +855,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// The fixture Spaces' memory and storage: a 4 GB container limit on a
     /// host disk (Storage hides).
     public var fixtureUsage: AppSpaceUsage? = AppSpaceUsage(
+        cpuCount: 4, cpuPercent: 12.5, loadAverage1m: 0.5,
         memoryUsed: 2_254_857_830, memoryTotal: 4 << 30, memoryLimited: true,
         diskUsed: 150_000_000_000, diskTotal: 494_000_000_000, diskLimited: false)
     public func usage(id: String) async -> AppSpaceUsage? { await MainActor.run { fixtureUsage } }

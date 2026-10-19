@@ -217,7 +217,7 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
 
 macOS attributes Accessibility and Screen Recording grants to a responsible app identity, not simply to an executable path. Use one of these supported launch modes:
 
-- **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `open -n -g -a CuaDriver --args serve`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
+- **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `cua-driver permissions grant`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
 - **Explicit direct MCP:** `cua-driver mcp --direct` makes the MCP process own
   its runtime. On macOS this deliberately uses the spawning host's TCC
   attribution and does not provide the AppKit cursor overlay without a

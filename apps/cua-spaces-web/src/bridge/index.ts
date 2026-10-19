@@ -116,6 +116,8 @@ export { useThisMachine, type HostFailure, type HostFormView as HostSetupFormVie
 export type { HostFormAction, HostSetupRequest } from "./ops/host-setup";
 export type { TelemetrySignal } from "./ops/telemetry";
 export { useStartup, type StartupHook } from "./startup";
+export { useLinkNotice, TURN_OFF_FAILED, type LinkNoticeHook } from "./link-notice";
+export type { TelemetryLinkNotice } from "./ops/telemetry";
 export { defaultTeam, eligibleTeams, teamName, useTeamChoices, type TeamChoices } from "./teams";
 export { joinFailureText, useJoinWithCode, type JoinHook, type JoinPhase } from "./join";
 export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pairing-code";
@@ -142,6 +144,19 @@ export {
   type RelayUsageView,
 } from "./relay-usage";
 export {
+  useResources,
+  hostResources,
+  spaceResources,
+  RESOURCES_HIDDEN_MS,
+  RESOURCES_VISIBLE_MS,
+  type ComputerResources,
+  type DiskOnHost,
+  type DiskWarning,
+  type GuestUsage,
+  type ResourcesSnapshot,
+  type SpaceResources,
+} from "./resources";
+export {
   resetUpsellMemory,
   useQuiet,
   useTrackPlanClick,
@@ -152,3 +167,20 @@ export {
   type UpsellSurface,
 } from "./upsell";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
+export {
+  FIRST_RUN_POLL_MS,
+  TEAMMATES_KEY,
+  UPSELL_DISMISSED_KEY,
+  firstRunTodos,
+  firstRunView,
+  noteTeammates,
+  readFirstRun,
+  resetFirstRunCache,
+  useFirstRun,
+  useFirstRunSaved,
+  writeFirstRun,
+  type FirstRunHook,
+  type FirstRunUsage,
+  type FirstRunSaved,
+} from "./first-run";
+export type * from "./contracts/first-run";

@@ -106,7 +106,7 @@ impl FleetRuntime {
     }
 }
 
-/// What kind of machine a Space is.
+/// What kind of computer a Space is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SpaceKind {
@@ -137,18 +137,18 @@ pub struct CreateSpace {
     /// (`ghcr.io/trycua/linux:24.04`), whose variant follows the kind.
     #[serde(default)]
     pub image: Option<String>,
-    /// Where it runs: `local` (this machine, free), `cloud` (Cua cloud,
-    /// metered), or `host:<machine>`: one of the user's own machines that
+    /// Where it runs: `local` (this computer, free), `cloud` (Cua cloud,
+    /// metered), or `host:<computer>`: one of the user's own computers that
     /// provides Spaces (`cua host setup --provide-spaces` on it), named by
     /// id or by words from its name ("host:spare mac mini" matches "Mac
     /// mini (spare)" or `dillons-mac-mini`). Default: the user's default
     /// location (`cua config set default.on`, `CUA_DEFAULT_ON`), else
     /// `local`. Not `direct:<addr>`: that is one already-running Space at a
     /// fixed address, attached with `add_space`, not a host this can create
-    /// on. An existing machine is added with `add_space`, not created.
+    /// on. An existing computer is added with `add_space`, not created.
     #[serde(default)]
     pub on: Option<String>,
-    /// What kind of machine. Default `auto` (from the image).
+    /// What kind of computer. Default `auto` (from the image).
     #[serde(default)]
     pub kind: Option<SpaceKind>,
     /// Which engine. Default `auto`: the safest one for the location and
@@ -429,7 +429,7 @@ pub struct AgentStart {
     #[serde(default)]
     pub wire: Option<String>,
     /// Host files attached to the first prompt (absolute paths on this
-    /// server's machine, at most 8 MiB each).
+    /// server's computer, at most 8 MiB each).
     #[serde(default)]
     pub files: Vec<String>,
     /// Give the agent the Space's own MCP tools. Default true.
@@ -660,7 +660,7 @@ pub struct NotificationsAck {
 pub struct ComputerAccessGrant {
     /// The persistent agent.
     pub agent: String,
-    /// The machine (a Space id, usually `relay:<machine-id>` from `cua
+    /// The computer (a Space id, usually `relay:<computer-id>` from `cua
     /// host setup`).
     pub machine: String,
     /// End the grant after this many seconds. Default: until revoked.
@@ -673,7 +673,7 @@ pub struct ComputerAccessGrant {
 pub struct ComputerAccessRevoke {
     /// The persistent agent.
     pub agent: String,
-    /// The machine. Default: every machine.
+    /// The computer. Default: every computer.
     #[serde(default)]
     pub machine: Option<String>,
 }
@@ -765,7 +765,7 @@ pub struct RequestSiteLogin {
     pub relay_plaintext_ack: bool,
 }
 
-/// `hotspot_start`: route the Space's egress through this machine.
+/// `hotspot_start`: route the Space's egress through this computer.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct HotspotStart {
     /// Space id or name.
@@ -970,7 +970,7 @@ pub struct DriveAudit {
 /// `volume_storage_set`: test or change where the drive keeps its bytes.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DriveStorageSet {
-    /// `fs` (this machine) or `s3` (an S3-compatible bucket: AWS S3, R2,
+    /// `fs` (this computer) or `s3` (an S3-compatible bucket: AWS S3, R2,
     /// MinIO). `cloud` is refused.
     pub backend: String,
     /// The bucket, for `s3`.
@@ -1042,8 +1042,9 @@ pub struct NoArgs {}
 pub struct ShareSpace {
     /// Space id or name.
     pub space: SpaceArg,
-    /// Who: an email address (verified by cua.ai) or an account id. Teams
-    /// are not accepted: share with each member.
+    /// Who: an email address (verified by cua.ai) or an account id, or
+    /// `team:<id>` for a whole team. A team always gets `editor` and needs
+    /// the Teams plan; the sharer is a team owner or admin who owns the Space.
     pub who: String,
     /// `viewer` (presence with their own cursor and a view-only stream) or
     /// `editor` (full use; their input is a human session). Default

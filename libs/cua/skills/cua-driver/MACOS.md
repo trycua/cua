@@ -216,10 +216,11 @@ editor state.
 
 1. `cua-driver` is on `$PATH` (`which cua-driver`). If not, point the
    user at `scripts/install-local.sh` and stop.
-2. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
-   recommended form: goes through LaunchServices so TCC attributes
-   the process to CuaDriver.app). `cua-driver serve &` also works;
-   the CLI auto-relaunches through `open -n -g -a CuaDriver` when it
+2. Start the daemon with `cua-driver permissions grant` (the
+   recommended form: it launches the installed CuaDriver.app by its
+   exact path through LaunchServices, so TCC attributes the process to
+   that app). `cua-driver serve &` also works;
+   the CLI auto-relaunches the installed app by path when it
    detects a wrong-TCC context (any IDE-spawned shell: Claude Code,
    Cursor, VS Code, Conductor). Verify with `cua-driver status`.
 3. Run `cua-driver permissions status --json`. This

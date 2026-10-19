@@ -24,6 +24,8 @@ mod check_update_tool;
 mod cli;
 mod doctor;
 mod driver_service_http;
+#[cfg(any(target_os = "macos", all(test, unix)))]
+mod duplicate_copies;
 mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;
@@ -675,9 +677,9 @@ fn main() {
             // is ungranted. Fresh helper processes poll TCC until the user
             // grants or the deadline elapses. If serve ran after the gate,
             // the daemon's socket wouldn't appear for minutes on first
-            // launch, so `permissions grant` / MCP clients launched via
-            // `open -n -g -a CuaDriver --args serve` (the correct-TCC-
-            // attribution path) couldn't reach the daemon to even report
+            // launch, so `permissions grant` / MCP clients launching the
+            // installed app bundle by path (the correct-TCC-attribution
+            // path) couldn't reach the daemon to even report
             // "pending". Binding the socket first makes the daemon
             // reachable within ~1s while the gate works toward the grant.
             //
@@ -823,7 +825,7 @@ fn main() {
         } => {
             cli::run_channel_cmd(&subcommand, value.as_deref(), json);
         }
-        cli::Command::Doctor { json } => {
+        cli::Command::Doctor { json, fix } => {
             // Long-running interactive entry point — kick off the
             // background "new version available?" check so the banner
             // can land on stderr if the user is on an outdated install.
@@ -831,7 +833,7 @@ fn main() {
             if !json {
                 version_check::maybe_announce_update();
             }
-            cli::run_doctor_cmd(json);
+            cli::run_doctor_cmd(json, fix);
         }
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
@@ -1130,14 +1132,14 @@ fn main() -> anyhow::Result<()> {
             cli::run_channel_cmd(&subcommand, value.as_deref(), json);
             Ok(())
         }
-        cli::Command::Doctor { json } => {
+        cli::Command::Doctor { json, fix } => {
             // Long-running interactive entry point — kick off the
             // background update check so the banner can land on stderr.
             // Skip the banner in --json mode so output stays parseable.
             if !json {
                 version_check::maybe_announce_update();
             }
-            cli::run_doctor_cmd(json);
+            cli::run_doctor_cmd(json, fix);
             Ok(())
         }
         cli::Command::Diagnose => {

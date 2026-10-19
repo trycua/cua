@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import test from 'node:test';
 import { renderAll, type CLIDocumentation } from './lume';
 
@@ -35,11 +35,15 @@ test('lume: CLI groups, HTTP API and MCP render from one dump', () => {
     },
   });
   const byName = (end: string) => [...files].find(([p]) => p.endsWith(end))![1];
-  assert.ok(byName(join('cli', 'vms.mdx')).includes('## `lume create`'));
-  const http = byName('http-api.mdx');
+  // The whole CLI is one page, a section per group.
+  const cliPage = byName(join('reference', 'cli.mdx'));
+  assert.ok(cliPage.includes('## VMs') && cliPage.includes('### `lume create`'));
+  assert.ok(![...files.keys()].some((p) => p.includes(join('reference', 'cli') + sep)), 'no CLI folder');
+  // The HTTP API, then the MCP tools, on one page.
+  const page = byName('http-api.mdx');
+  const [http, mcp] = page.split('\n## MCP tools\n');
   assert.ok(http.includes('Get VM &#123;name&#125;') && http.includes('VM \\| name'));
   assert.ok(!/^#### /m.test(http), 'endpoint sub-sections must not repeat headings');
-  const mcp = byName('mcp-tools.mdx');
-  assert.ok(mcp.includes('## VM tools') && mcp.includes('### `lume_list_vms`') && mcp.includes('## Maintenance tools'));
-  assert.deepEqual(JSON.parse(byName(join('reference', 'meta.json'))).pages, ['index', 'cli', 'http-api', 'mcp-tools']);
+  assert.ok(mcp.includes('### VM tools') && mcp.includes('#### `lume_list_vms`') && mcp.includes('### Maintenance tools'));
+  assert.deepEqual(JSON.parse(byName(join('reference', 'meta.json'))).pages, ['index', 'cli', 'http-api']);
 });

@@ -510,7 +510,7 @@ provides-extras = ["test", "sandbox", "agent", "ui", "all"]
 
 [[package]]
 name = "cua-agent"
-version = "0.9.0"
+version = "0.9.1"
 source = { editable = "../python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -594,7 +594,7 @@ provides-extras = ["computer", "openai", "anthropic", "qwen", "uitars", "uitars-
 
 [[package]]
 name = "cua-bench"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -782,7 +782,7 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.9.0"
+version = "0.9.1"
 source = { editable = "../python/cua-sandbox" }
 dependencies = [
     { name = "cua" },

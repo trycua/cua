@@ -288,7 +288,7 @@ impl McpDriver {
         if !daemon_socket_is_reachable(&socket) {
             eprintln!(
                 "[testkit] CuaDriver daemon not listening at {socket} — \
-                 run `./scripts/install-local.sh` and `open -n -g -a CuaDriver --args serve`; skipping"
+                 run `./scripts/install-local.sh` and `cua-driver permissions grant`; skipping"
             );
             return None;
         }

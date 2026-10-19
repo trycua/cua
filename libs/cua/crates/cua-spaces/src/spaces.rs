@@ -322,6 +322,7 @@ impl SpacesBuilder {
                 hotspots: tokio::sync::Mutex::new(BTreeMap::new()),
                 #[cfg(feature = "spaces-agents")]
                 relay: std::sync::RwLock::new(self.relay),
+                resources: crate::resources::Hub::new(),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 relay_read: tokio::sync::Mutex::new(None),
@@ -530,6 +531,8 @@ pub(crate) struct Inner {
     pub(crate) hotspots: tokio::sync::Mutex<BTreeMap<String, crate::hotspot::Hotspot>>,
     #[cfg(feature = "spaces-agents")]
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
+    /// The resource sampler and its watchers ([`crate::resources`]).
+    pub(crate) resources: Arc<crate::resources::Hub>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
     /// What each relay machine's cua-spacesd said about itself when this
@@ -788,7 +791,7 @@ impl Spaces {
         self.relay_account().ok_or_else(|| {
             Error::host(
                 "cua.ai relay account",
-                "sign in to cua.ai (`cua auth login` or the app) to list your machines",
+                "sign in to cua.ai (`cua auth login` or the app) to list your computers",
             )
         })
     }
@@ -838,14 +841,14 @@ impl Spaces {
             Err(e) => {
                 return Err(Error::Relay(match e.tag() {
                     "unauthenticated" => cua_host::Error::Unauthenticated(
-                        "Relay authentication failed. Sign in again to refresh your machines."
+                        "Relay authentication failed. Sign in again to refresh your computers."
                             .into(),
                     ),
                     "permission_denied" => cua_host::Error::PermissionDenied(
-                        "This device could not list relay machines. Check its account access."
+                        "This device could not list relay computers. Check its account access."
                             .into(),
                     ),
-                    _ => cua_host::Error::Relay("Could not refresh relay machines.".into()),
+                    _ => cua_host::Error::Relay("Could not refresh relay computers.".into()),
                 }));
             }
         };
@@ -1861,7 +1864,7 @@ impl Spaces {
         }
         if on.is_existing_machine() {
             return Err(Error::invalid(format!(
-                "{on} is an existing machine: add it with add_space (url {}), create_space \
+                "{on} is an existing computer: add it with add_space (url {}), create_space \
                  makes a new one (on local or cloud)",
                 on.to_string().split_once(':').map_or("", |(_, a)| a)
             )));
@@ -2210,7 +2213,7 @@ impl Spaces {
                 }
                 let _ = self.inner.registry.forget_direct(&id.to_string());
                 format!(
-                    "Removed {id} (added by address, so only forgotten; the machine is untouched)."
+                    "Removed {id} (added by address, so only forgotten; the computer is untouched)."
                 )
             }
             SpaceId::Relay { machine_id } => {
@@ -2244,9 +2247,9 @@ impl Spaces {
                              owner can remove it from the relay directory)."
                         ),
                         Some(_) => format!(
-                            "Removed {id} (disconnected; it is one of your machines, so it stays \
+                            "Removed {id} (disconnected; it is one of your computers, so it stays \
                              in your relay directory: run `cua host remove` on it, or if that \
-                             machine is gone, `cua spaces relay-unregister {id}`)."
+                             computer is gone, `cua spaces relay-unregister {id}`)."
                         ),
                         None => format!("Removed {id} (disconnected)."),
                     },
@@ -2534,7 +2537,9 @@ impl Spaces {
                         self.drop_connection(&id).await;
                         self.power_on_host(&m, &host, on).await
                     }
-                    None => Err(refuse("relay (only a Space one of your machines provides)")),
+                    None => Err(refuse(
+                        "relay (only a Space one of your computers provides)",
+                    )),
                 }
             }
             // Cua Cloud has ended: there is no cloud Space to turn on or off.

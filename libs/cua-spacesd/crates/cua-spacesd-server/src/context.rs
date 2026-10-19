@@ -434,7 +434,7 @@ impl ServerContext {
             return Err("this driver joined a relay at start (cua-spacesd join)".into());
         }
         if !cua_relay::valid_machine_id(machine_id) {
-            return Err(format!("invalid machine id {machine_id:?}"));
+            return Err(format!("invalid computer id {machine_id:?}"));
         }
         if machine_token.is_empty() || relay_url.is_empty() || owner.is_empty() {
             return Err("relay_url, machine_token and owner are required".into());

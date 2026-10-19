@@ -66,7 +66,7 @@ Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua
 
 ## Cua Spaces
 
-Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other machines you own, and in [your own cloud account](https://cua.ai/docs/cua-sdk/guides/your-cloud) (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
+Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other machines you own, and in [your own cloud account](https://cua.ai/docs/cua-sdk/guides/local-runtimes#your-own-cloud) (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
 
 - **Teleport.** Move a signed-in app, such as Chrome or Slack, into a Space and it opens there still signed in. Your sessions stay in the Cua Keyvault, encrypted on your Mac, and reach a Space only after you approve.
 - **Multiplayer.** You and your agents work on the same desktop, each with your own cursor. Step in to make a choice, then hand the desktop back.
@@ -84,7 +84,7 @@ On macOS the installer selects the Cua Spaces app by default and adds the `cua` 
 
 Spaces is free for individuals. Pro is $18 a month and Teams is $30 per seat a month, available now from 1 seat. See [pricing](https://cua.ai/pricing). The app is source-available under [FSL-1.1-MIT](#licensing).
 
-**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac (relay, Tailscale or SSH)](https://cua.ai/docs/spaces/guides/host-spaces-on-your-spare-mac)** | **[Your own cloud](https://cua.ai/docs/cua-sdk/guides/your-cloud)** | **[App source](apps/cua-spaces-macos/README.md)**
+**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac (relay, Tailscale or SSH)](https://cua.ai/docs/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces)** | **[Your own cloud](https://cua.ai/docs/cua-sdk/guides/local-runtimes#your-own-cloud)** | **[App source](apps/cua-spaces-macos/README.md)**
 
 ---
 
@@ -224,7 +224,7 @@ uv tool run --from 'cua-bench[browser]' playwright install chromium
 
 ### Deprecated packages
 
-Cua no longer maintains these. They will not receive updates or fixes, and existing releases stay on npm and PyPI. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages).
+Cua no longer maintains these. They will not receive updates or fixes, and existing releases stay on npm and PyPI. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
 
 | Package                                                  | Registry | Use instead                                                                                                                                      |
 | -------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |

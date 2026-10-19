@@ -1688,10 +1688,17 @@ impl ToolRegistry {
         evidence: &TrustedInvocationEvidence,
     ) -> ToolResult {
         let seed = crate::recovery_hint::Seed::from_args(&args);
+        let session = args
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let in_batch = crate::step_pacing::in_batch();
         let mut result = self
             .invoke_authorized_unannotated(name, args, context, evidence)
             .await;
-        crate::recovery_hint::annotate(renamed_tool(name).unwrap_or(name), &seed, &mut result);
+        let tool = renamed_tool(name).unwrap_or(name);
+        crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
         result
     }
 
@@ -2302,6 +2309,7 @@ impl ToolRegistry {
         // Desktop pixels read off a capped get_desktop_state image are mapped
         // back to the uncapped capture before any platform interprets them.
         crate::desktop_capture_scale::map_desktop_args(&mut args);
+        crate::tool_activity::note_tool_activity();
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),

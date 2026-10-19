@@ -252,8 +252,8 @@ struct RelayUsageTests {
         let (m, _) = model(FixtureDevices())
         await m.readRelayUsage()
         let view = try #require(m.relayUsageView)
-        #expect(view.label == "Relay usage")
-        #expect(view.line == "Live sessions 1 of 2 \u{b7} Relay hours 6.5 of 20 this month")
+        #expect(view.label == "Remote use")
+        #expect(view.line == "Live sessions 1 of 2 \u{b7} Remote hours 6.5 of 20 this month")
         #expect(view.plan == "Free plan")
         #expect(m.relayNotice == nil)
     }
@@ -264,7 +264,7 @@ struct RelayUsageTests {
         let (m, defaults) = model(fixture)
         await m.readRelayUsage()
         let notice = try #require(m.relayNotice)
-        #expect(notice.text == "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more.")
+        #expect(notice.text == "You've reached the free plan's remote limit for this month. Your Spaces keep working. Pro gives you more.")
         #expect(notice.upgrade == "Upgrade")
         #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
         #expect(notice.level == "limit")
@@ -292,7 +292,7 @@ struct RelayUsageTests {
         await m.readRelayUsage()
         let notice = try #require(m.relayNotice)
         #expect(notice.level == "warn")
-        #expect(notice.text == "You've used 16.5 of 20 relay hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions.")
+        #expect(notice.text == "You've used 16.5 of 20 remote hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions.")
         #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
         #expect(notice.dismissKey == "2026-10:warn")
     }

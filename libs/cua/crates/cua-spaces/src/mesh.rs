@@ -316,7 +316,7 @@ pub(crate) async fn connect_options(
         Err(reason) if policy == MeshPolicy::Require => Err(crate::Error::host(
             "the mesh",
             format!(
-                "machine {machine_id} is not reachable over the mesh (CUA_MESH=require): {reason}"
+                "computer {machine_id} is not reachable over the mesh (CUA_MESH=require): {reason}"
             ),
         )),
         Err(reason) => {

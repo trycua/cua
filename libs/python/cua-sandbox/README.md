@@ -59,7 +59,7 @@ See the [wire contract](../../cua-driver/docs/mcp-envelope-carrier.md) for limit
 
 ## Any image, locally
 
-Cua Cloud has ended; use a local sandbox or your own machine. Three separate
+Cua Cloud has ended; use a local sandbox or your own computer. Three separate
 choices, each optional:
 
 - `on`: `"local"` (`on="cloud"` and `local=False` raise: Cua Cloud has ended).
@@ -171,7 +171,7 @@ Sidecars are addressed by name: the sandbox reaches `db:6379` and a
 sidecar reaches the sandbox at `main`. With sidecars, the service names `main`,
 `sidecars` and `sc` are reserved. Local sidecars need `runtime="runc"`, and
 local VM sandboxes refuse sidecars. See
-[Sidecars](https://cua.ai/docs/cua-sdk/guides/sidecars).
+[Sidecars](https://cua.ai/docs/cua-sdk/guides/services#sidecars).
 
 ## Ephemeral sandbox
 

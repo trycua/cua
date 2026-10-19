@@ -355,6 +355,7 @@ pub fn gather_background_facts(
         app_hidden,
         competing_keyboard_destinations,
         element: element.unwrap_or(ElementAncestry::NotAddressed),
+        screen_locked: crate::session::screen_locked(),
     }
 }
 

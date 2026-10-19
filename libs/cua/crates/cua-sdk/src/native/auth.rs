@@ -134,6 +134,8 @@ impl LoginAttempt {
             let creds = pending.complete().await?;
             let who = self.session.install(creds).await?;
             enroll_after_sign_in(&self.session).await;
+            #[cfg(feature = "host")]
+            super::telemetry::sync_account(&self.session).await;
             Ok(who.into())
         })
         .await
@@ -265,11 +267,14 @@ impl Auth {
         run(async move { Ok(session.access_token(force).await?) }).await
     }
 
-    /// Revokes (best effort) and removes the session. Returns whether one
-    /// existed.
+    /// Revokes (best effort) and removes the session, and unlinks usage
+    /// data from the account. Returns whether one existed.
     pub async fn logout(&self) -> Result<bool> {
         let session = self.session.clone();
-        run(async move { Ok(session.logout().await?.0) }).await
+        let existed = run(async move { Ok(session.logout().await?.0) }).await?;
+        // Signed out: usage data goes back to a new anonymous install id.
+        let _ = cua_telemetry::global().forget_account();
+        Ok(existed)
     }
 }
 

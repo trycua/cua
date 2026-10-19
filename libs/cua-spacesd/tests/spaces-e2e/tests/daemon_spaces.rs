@@ -547,7 +547,7 @@ async fn space_service_lists_the_accounts_relay_machines() {
     assert_eq!(error.code(), tonic::Code::Unauthenticated);
     assert_eq!(
         error.message(),
-        "Relay authentication failed. Sign in again to refresh your machines."
+        "Relay authentication failed. Sign in again to refresh your computers."
     );
     // Explicitly disabling relay discovery still permits a local-only list.
     rt.spaces().set_relay(None);

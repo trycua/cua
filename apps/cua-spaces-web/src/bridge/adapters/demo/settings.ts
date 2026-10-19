@@ -277,7 +277,7 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     // Works like the relay: one code per machine, 30 minutes, shown once.
     // The demo's other computer runs the command after a few reads.
     "devices.createPairingCode": async ({ team }) => {
-      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a machine", "signed_out");
+      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a computer", "signed_out");
       await wait(stepMs / 2);
       const t = Math.floor(now() / 1000);
       pairingSeq += 1;

@@ -22,7 +22,7 @@ Cua Bots is an example app for persistent bots. You create a bot, give it a name
 
 ## Features
 
-- Create a bot in three steps: name it, design its face (color, eyes, ears), and choose where its computer runs (this Mac or the cloud) and which agent drives it (Hermes, OpenClaw, Codex or Claude Code). It introduces itself when its computer is up.
+- Create a bot in three steps: name it, design its face (color, eyes, ears), and choose which of your computers it runs on (This Mac or a computer you [added](/spaces/guides/add-a-computer)) and which agent drives it (Hermes, OpenClaw, Codex or Claude Code). It introduces itself when its computer is up.
 - Its face changes with what it's doing: thinking, working, waiting for you, done or paused.
 - "Ada's computer": the bot's own Space, live beside the chat, framed in its color, with picture in picture. The bot has control until you take over; its face rides next to its pointer.
 - Memory in the Cua Volume layout at `agents/<name>/`: it outlives the bot's computer. Finished files land in `outputs/`, files you hand it in `inbox/`.
@@ -59,8 +59,8 @@ These are real runs against a local Space. The bot's agent is the real harness (
 
 | In the app | Cua underneath |
 |---|---|
-| A bot's computer | A Space per bot (`bot-<name>`), created with `Spaces.create` (`on: local` or `cloud`, `reuse`) |
-| The bot | A `cua agents` harness run in its Space (`Space.agentStart`), with its Volume home as the working directory |
+| A bot's computer | A Space per bot (`bot-<name>`), created with `Spaces.create` on your own computers (`on: local` for This Mac, `on: host:<computer>` for a computer you added; `reuse`) |
+| The bot | A `cua agents` harness run in its Space (`Space.agentStart`, the same call as [`startThread`](/spaces/guides/connect-your-agent#run-an-agent-inside-a-space)), with its Volume home as the working directory |
 | Memory, outputs, inbox | The Cua Volume layout, `agents/<name>/`, kept in a folder on the Mac and copied into the Space before a turn and back after it |
 | Watching and taking over | `LiveStreamSession` and `StreamPiPController`; the pointer from `SpacesdClient.cursorPosition()` |
 | Routines | The SDK's routine clock, `RoutineStore` |
@@ -83,7 +83,7 @@ swift build && .build/debug/CuaBots
 
 Give the app a model key for the agents you pick (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). The iPhone app is in `samples/cua-bots-ios`; its README covers the Xcode build and pairing.
 
-The app registers the Cua Spaces extensions at launch (`cuaSpacesRegister()`), so the runtime it embeds has persistent agents, the Keyvault and teleport. Because it links those Cua Spaces pieces, both samples are source-available under the FSL-1.1-MIT, like Cua Spaces; see [LICENSING.md](https://github.com/trycua/cua/blob/main/LICENSING.md). For examples in TypeScript and Rust (Tauri), see [Examples in other languages](/spaces/examples/other-languages).
+The app registers the Cua Spaces extensions at launch (`cuaSpacesRegister()`), so the runtime it embeds has persistent agents, the Keyvault and teleport. Because it links those Cua Spaces pieces, both samples are source-available under the FSL-1.1-MIT, like Cua Spaces; see [LICENSING.md](https://github.com/trycua/cua/blob/main/LICENSING.md). For examples in TypeScript and Rust (Tauri), see [Use Spaces from code](/spaces/guides/create-a-space-with-the-sdk#examples-in-other-languages).
 
 ## Limits
 

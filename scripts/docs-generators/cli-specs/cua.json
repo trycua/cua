@@ -33,7 +33,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Sign in from another device with a code (for SSH sessions and machines without a browser)",
+       "help": "Sign in from another device with a code (for SSH sessions and computers without a browser)",
        "hidden": false,
        "name": "remote",
        "repeatable": false,
@@ -362,7 +362,7 @@
    "usage": "cua auth [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "AI coding agents on this machine: install cua skills and configure the cua MCP server",
+   "abstract": "AI coding agents on this computer: install cua skills and configure the cua MCP server",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -1993,10 +1993,10 @@
       },
       {
        "default_value": null,
-       "help": "The machine's Space id (`cua host status` shows this machine's)",
+       "help": "The computer's Space id (`cua host status` shows this computer's)",
        "hidden": false,
        "is_optional": false,
-       "name": "MACHINE",
+       "name": "COMPUTER",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
@@ -2026,7 +2026,7 @@
      ],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua agent allow-computer [OPTIONS] <NAME> <MACHINE>"
+     "usage": "cua agent allow-computer [OPTIONS] <NAME> <COMPUTER>"
     },
     {
      "abstract": "Take a persistent agent's computer access back",
@@ -2048,7 +2048,7 @@
        "help": "",
        "hidden": false,
        "is_optional": true,
-       "name": "MACHINE",
+       "name": "COMPUTER",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
@@ -2061,7 +2061,7 @@
      "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua agent revoke-computer [OPTIONS] <NAME> [MACHINE]"
+     "usage": "cua agent revoke-computer [OPTIONS] <NAME> [COMPUTER]"
     },
     {
      "abstract": "Which agents may use which computers, and the audit log",
@@ -2146,7 +2146,7 @@
    "usage": "cua agent [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Sandboxes: local or an existing machine (direct)",
+   "abstract": "Sandboxes: local or an existing computer (direct)",
    "aliases": [
     "sb"
    ],
@@ -2160,7 +2160,7 @@
    "subcommands": [
     {
      "abstract": "Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>] [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`",
-     "after_help": "Examples:\n  # A Linux desktop on this machine (a gVisor container)\n  cua sb create linux --name dev\n  # A web server container, ready when its HTTP service answers\n  cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000\n  # The same Linux image as a VM\n  cua sb create linux --kind vm --name dev",
+     "after_help": "Examples:\n  # A Linux desktop on this computer (a gVisor container)\n  cua sb create linux --name dev\n  # A web server container, ready when its HTTP service answers\n  cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000\n  # The same Linux image as a VM\n  cua sb create linux --kind vm --name dev",
      "aliases": [],
      "arguments": [
       {
@@ -2260,7 +2260,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where it runs: local, direct:<addr> (an existing machine running cua-spacesd), or a registered provider. Default: `cua config get default.on` (`CUA_DEFAULT_ON`), else local",
+       "help": "Where it runs: local, direct:<addr> (an existing computer running cua-spacesd), or a registered provider. Default: `cua config get default.on` (`CUA_DEFAULT_ON`), else local",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -2276,7 +2276,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "What kind of machine: auto (from the image: a container when it has a container rootfs; macOS, Windows and disk-only images are VMs), container or vm",
+       "help": "What kind of computer: auto (from the image: a container when it has a container rootfs; macOS, Windows and disk-only images are VMs), container or vm",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -2810,7 +2810,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "What kind of machine: auto, container or vm",
+       "help": "What kind of computer: auto, container or vm",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -3798,7 +3798,7 @@
      "usage": "cua sandbox port-forward [OPTIONS] <NAME> <SPEC>"
     },
     {
-     "abstract": "Print a URL for a named service: usable from this machine (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; a token URL served by the cua daemon)",
+     "abstract": "Print a URL for a named service: usable from this computer (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; a token URL served by the cua daemon)",
      "after_help": "Examples:\n  cua sb url dev web\n  # A shareable URL for 10 minutes\n  cua sb url local:dev web --public --ttl 10m",
      "aliases": [],
      "arguments": [
@@ -4797,7 +4797,7 @@
     },
     {
      "abstract": "Write a setting to the config file",
-     "after_help": "Examples:\n  # Create sandboxes in your AWS account unless --on says otherwise\n  cua config set default.on aws\n  # Back to this machine\n  cua config set default.on local\n  # Prefer VMs when the image offers both\n  cua config set default.kind vm",
+     "after_help": "Examples:\n  # Create sandboxes in your AWS account unless --on says otherwise\n  cua config set default.on aws\n  # Back to this computer\n  cua config set default.on local\n  # Prefer VMs when the image offers both\n  cua config set default.kind vm",
      "aliases": [],
      "arguments": [
       {
@@ -4941,7 +4941,7 @@
    "subcommands": [
     {
      "abstract": "Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair",
-     "after_help": "Examples:\n  cua do switch dev\n  cua do switch relay:0123abcd4567ef89\n  # This machine (after `cua do-host-consent`)\n  cua do switch host",
+     "after_help": "Examples:\n  cua do switch dev\n  cua do switch relay:0123abcd4567ef89\n  # This computer (after `cua do-host-consent`)\n  cua do switch host",
      "aliases": [],
      "arguments": [
       {
@@ -6113,7 +6113,7 @@
   },
   {
    "abstract": "Grant consent for `cua do switch host`",
-   "after_help": "Examples:\n  # Allow `cua do` to act on this machine's desktop\n  cua do-host-consent",
+   "after_help": "Examples:\n  # Allow `cua do` to act on this computer's desktop\n  cua do-host-consent",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -6480,7 +6480,7 @@
        "help": "Only sessions of this target (sandbox name or `host`)",
        "hidden": false,
        "is_optional": true,
-       "name": "MACHINE",
+       "name": "TARGET",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
@@ -6493,7 +6493,7 @@
      "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua trajectory ls [OPTIONS] [MACHINE]"
+     "usage": "cua trajectory ls [OPTIONS] [TARGET]"
     },
     {
      "abstract": "Zip, serve on loopback and open the hosted viewer",
@@ -6590,7 +6590,9 @@
        "value_name": "DAYS"
       },
       {
-       "aliases": [],
+       "aliases": [
+        "computer"
+       ],
        "default_value": null,
        "env": null,
        "help": "Only sessions of this target",
@@ -6603,7 +6605,7 @@
        "short_name": null,
        "takes_value": true,
        "type": "string",
-       "value_name": "MACHINE"
+       "value_name": "COMPUTER"
       }
      ],
      "subcommand_optional": false,
@@ -8963,7 +8965,7 @@
    "usage": "cua doctor [OPTIONS] [TARGET]\n       cua doctor <COMMAND>"
   },
   {
-   "abstract": "Unattended access to this machine (setup, status, stop, start, remove)",
+   "abstract": "Unattended access to this computer (setup, status, stop, start, remove)",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -8974,8 +8976,8 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Set this machine up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port",
-     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare machine: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Serve on the LAN instead of the relay\n  cua host setup --direct 0.0.0.0:3211 --name studio-mac\n  # A spare Mac on your tailnet that runs Spaces, without the relay\n  # (prints the command that adds it on your laptop)\n  cua host setup --direct 100.101.102.103:3211 --profile spare\n  # Add this machine with a one-time code from the Cua Spaces app\n  # (Add a machine) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD",
+     "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account",
+     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Self-hosting teams: cua help advanced",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -8983,7 +8985,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "When sign-in is needed, use a device code to approve it in a browser on another machine. The account session is not saved",
+       "help": "When sign-in is needed, use a device code to approve it in a browser on another computer. The account session is not saved",
        "hidden": false,
        "name": "remote",
        "repeatable": false,
@@ -8994,7 +8996,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Share this machine's own desktop as a Space",
+       "help": "Share this computer's own desktop as a Space",
        "hidden": false,
        "name": "desktop",
        "repeatable": false,
@@ -9005,7 +9007,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Do not share this machine's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides",
+       "help": "Do not share this computer's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides",
        "hidden": false,
        "name": "no-desktop",
        "repeatable": false,
@@ -9016,7 +9018,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Create Spaces for your enrolled devices on this machine's runtimes (Lume macOS VMs, Docker Linux containers)",
+       "help": "Create Spaces for your enrolled devices on this computer's runtimes (Lume macOS VMs, Docker Linux containers)",
        "hidden": false,
        "name": "provide-spaces",
        "repeatable": false,
@@ -9038,8 +9040,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "With --direct and Spaces: take host calls, and connections to the Spaces this machine forwards, from any address (and allow a public --direct address). By default only loopback, Tailscale and private LAN addresses may. The direct listener is plaintext and its token is a shell on this machine: prefer Tailscale",
-       "hidden": false,
+       "help": "With --direct and Spaces: take host calls, and connections to the Spaces this computer forwards, from any address (and allow a public --direct address). By default only loopback, Tailscale and private LAN addresses may. The direct listener is plaintext and its token is a shell on this computer: prefer Tailscale",
+       "hidden": true,
        "name": "allow-any-address",
        "repeatable": false,
        "short_name": null,
@@ -9055,7 +9057,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production)",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -9070,7 +9072,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Join with a one-time pairing code (or add-machine link) made in the Cua Spaces app or with `cua host pair`, instead of signing in here. The machine joins the account (or team) that made it",
+       "help": "Join with a one-time pairing code (or add-machine link) made in the Cua Spaces app or with `cua host pair`, instead of signing in here. The computer joins the account (or team) that made it",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9087,7 +9089,7 @@
        "default_value": null,
        "env": null,
        "help": "Serve directly on ip:port with a local env token (LAN / port-forwarded) instead of joining a relay",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "direct",
@@ -9166,7 +9168,7 @@
        "aliases": [],
        "default_value": "desktop",
        "env": null,
-       "help": "What this machine is for: `desktop` (share this desktop; the default) or `spare` (do not share the desktop; provide Spaces)",
+       "help": "What this computer is for: `desktop` (share this desktop; the default) or `spare` (do not share the desktop; provide Spaces)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9204,7 +9206,7 @@
     },
     {
      "abstract": "Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. Codes work once and expire (30 minutes by default). Run from an enrolled device",
-     "after_help": "Examples:\n  cua host pair\n  cua host pair --name build-box --expires 60\n  cua host pair --list\n  cua host pair --revoke pc_0123456789abcdef\n  # Add the machine to a team: waits for it to join, then adds it\n  cua host pair --team AIGIS",
+     "after_help": "Examples:\n  cua host pair\n  cua host pair --name build-box --expires 60\n  cua host pair --list\n  cua host pair --revoke pc_0123456789abcdef\n  # Add the computer to a team: waits for it to join, then adds it\n  cua host pair --team AIGIS",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -9212,7 +9214,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "With --team: print the code and exit instead of waiting; add the machine later with `cua team add-machine <team> relay:<id>`",
+       "help": "With --team: print the code and exit instead of waiting; add the computer later with `cua team add-machine <team> relay:<id>`",
        "hidden": false,
        "name": "no-wait",
        "repeatable": false,
@@ -9239,7 +9241,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Add the machine to this team (id, alias or name; owner or admin): waits until the machine joins, then makes it a team machine",
+       "help": "Add the computer to this team (id, alias or name; owner or admin): waits until the computer joins, then makes it a team computer",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9255,7 +9257,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Name the machine gets (default: its own host name)",
+       "help": "Name the computer gets (default: its own host name)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9304,7 +9306,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production)",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -9321,7 +9323,7 @@
      "usage": "cua host pair [OPTIONS]"
     },
     {
-     "abstract": "Show or change what this machine shares: its own desktop, and whether it creates Spaces for your other devices",
+     "abstract": "Show or change what this computer shares: its own desktop, and whether it creates Spaces for your other devices",
      "after_help": "Examples:\n  cua host config\n  # Stop sharing this desktop; keep providing Spaces\n  cua host config --desktop off --provide-spaces on\n  cua host config --max-spaces 6",
      "aliases": [],
      "arguments": [],
@@ -9334,7 +9336,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Share this machine's own desktop: on | off",
+       "help": "Share this computer's own desktop: on | off",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9406,7 +9408,7 @@
      "usage": "cua host config [OPTIONS]"
     },
     {
-     "abstract": "Show whether this machine is set up, the service, and who is connected",
+     "abstract": "Show whether this computer is set up, the service, and who is connected",
      "after_help": "Examples:\n  cua host status",
      "aliases": [],
      "arguments": [],
@@ -9448,7 +9450,7 @@
      "usage": "cua host start [OPTIONS]"
     },
     {
-     "abstract": "Share a relay machine (this one, or `--machine`) with other cua.ai accounts (id or verified email). Run from an enrolled device; every change is in the owner's audit log (`cua devices audit`)",
+     "abstract": "Share a relay computer (this one, or `--machine`) with other cua.ai accounts (id or verified email). Run from an enrolled device; every change is in the owner's audit log (`cua devices audit`)",
      "after_help": "Examples:\n  cua host share friend@example.com\n  cua host share friend@example.com --machine 0123abcd4567ef89 --yes",
      "aliases": [],
      "arguments": [
@@ -9481,10 +9483,12 @@
      "name": "share",
      "options": [
       {
-       "aliases": [],
+       "aliases": [
+        "computer"
+       ],
        "default_value": null,
        "env": null,
-       "help": "Machine id (default: this machine)",
+       "help": "Computer id (default: this computer)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9494,14 +9498,14 @@
        "short_name": null,
        "takes_value": true,
        "type": "string",
-       "value_name": "MACHINE"
+       "value_name": "COMPUTER"
       },
       {
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Relay URL (default: the one this machine joined, else $CUA_RELAY_URL / https://relay.cua.ai)",
-       "hidden": false,
+       "help": "Relay URL (default: the one this computer joined, else $CUA_RELAY_URL / https://relay.cua.ai)",
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -9518,7 +9522,7 @@
      "usage": "cua host share [OPTIONS] <WHO>..."
     },
     {
-     "abstract": "Stop sharing a relay machine with accounts; their open connections are cut",
+     "abstract": "Stop sharing a relay computer with accounts; their open connections are cut",
      "after_help": "Examples:\n  cua host unshare friend@example.com",
      "aliases": [],
      "arguments": [
@@ -9539,10 +9543,12 @@
      "name": "unshare",
      "options": [
       {
-       "aliases": [],
+       "aliases": [
+        "computer"
+       ],
        "default_value": null,
        "env": null,
-       "help": "Machine id (default: this machine)",
+       "help": "Computer id (default: this computer)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9552,14 +9558,14 @@
        "short_name": null,
        "takes_value": true,
        "type": "string",
-       "value_name": "MACHINE"
+       "value_name": "COMPUTER"
       },
       {
        "aliases": [],
        "default_value": null,
        "env": null,
        "help": "Relay URL",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -9596,7 +9602,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "For an uninstall of Cua Spaces: turns off the Spaces this machine provides and takes them off the relay too, instead of refusing while it provides any. The Spaces and their data stay on this machine",
+       "help": "For an uninstall of Cua Spaces: turns off the Spaces this computer provides and takes them off the relay too, instead of refusing while it provides any. The Spaces and their data stay on this computer",
        "hidden": false,
        "name": "uninstalling",
        "repeatable": false,
@@ -9616,7 +9622,7 @@
    "usage": "cua host [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Spaces: registered ones and your machines on the relay",
+   "abstract": "Spaces: registered ones and your computers on the relay",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -9627,13 +9633,25 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Registered Spaces and your machines on the relay",
-     "after_help": "Examples:\n  cua spaces ls\n  cua spaces ls --json",
+     "abstract": "Registered Spaces and your computers on the relay",
+     "after_help": "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it\nuses now (the numbers the Cua Spaces app shows); for another of your\ncomputers they show what it last reported. Numbers only: no file names.\n\nExamples:\n  cua spaces ls\n  cua spaces ls --no-size\n  cua spaces ls --json",
      "aliases": [
       "list"
      ],
      "arguments": [],
-     "flags": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Do not measure what each Space takes on this computer's disk (that walk can take a moment with many Spaces)",
+       "hidden": false,
+       "name": "no-size",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
      "hidden": false,
      "hidden_aliases": [],
      "name": "ls",
@@ -9643,7 +9661,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production)",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -9661,7 +9679,7 @@
     },
     {
      "abstract": "Register a Space after a capabilities handshake with its cua-spacesd (or, for another URL, an MCP initialize). Re-adding an address updates it. The token is stored apart from the registry, 0600",
-     "after_help": "Examples:\n  cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio\n  cua spaces add local:my-sandbox\n  cua spaces add http://127.0.0.1:8765/mcp --service tools\n  # A machine that provides Spaces over Tailscale, without the relay\n  # (`cua host setup --direct ... --provide-spaces` on it prints this)\n  cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"",
+     "after_help": "Examples:\n  cua spaces add 10.0.0.5:3211 --token \"$TOKEN\" --name studio\n  cua spaces add local:my-sandbox\n  cua spaces add http://127.0.0.1:8765/mcp --service tools\n  # A computer that provides Spaces over Tailscale, without the relay\n  # (`cua host setup --direct ... --provide-spaces` on it prints this)\n  cua spaces add 100.101.102.103:3211 --host --name \"Mac mini (spare)\" --token \"$TOKEN\"",
      "aliases": [],
      "arguments": [
       {
@@ -9680,7 +9698,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "It is a machine that provides Spaces over its direct address (Tailscale or LAN): `--on host:<name>` finds it without the relay. Its token is stored like any direct Space's",
+       "help": "It is a computer that provides Spaces over its direct address (Tailscale or LAN): `--on host:<name>` finds it without the relay. Its token is stored like any direct Space's",
        "hidden": false,
        "name": "host",
        "repeatable": false,
@@ -9746,7 +9764,7 @@
      "usage": "cua spaces add [OPTIONS] <URL>"
     },
     {
-     "abstract": "Create Spaces: on this machine, on one of your machines that provides Spaces (`cua host setup --provide-spaces` there), or in your own cloud account",
+     "abstract": "Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --provide-spaces` there), or in your own cloud account",
      "after_help": "Examples:\n  cua spaces create linux\n  # Two macOS VMs on your spare Mac mini (matched by name)\n  cua spaces create macos:26 --on \"spare mac mini\" --count 2\n  cua spaces create --on host:0123abcd4567ef89 linux --json",
      "aliases": [],
      "arguments": [
@@ -9770,7 +9788,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where: `local`, `aws`, `gcp`, `host:<machine>`, or a machine name (`mac-mini`, \"spare mac mini\"). Default: your default location",
+       "help": "Where: `local`, `aws`, `gcp`, `host:<computer>`, or a computer name (`mac-mini`, \"spare mac mini\"). Default: your default location",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9941,7 +9959,7 @@
      "usage": "cua spaces cancel [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "The GPU options each runtime offers on this machine (or in your own cloud account)",
+     "abstract": "The GPU options each runtime offers on this computer (or in your own cloud account)",
      "after_help": "Examples:\n  cua spaces gpus\n  cua spaces gpus --json",
      "aliases": [],
      "arguments": [],
@@ -9972,7 +9990,7 @@
      "usage": "cua spaces gpus [OPTIONS]"
     },
     {
-     "abstract": "Delete a Space's sandbox (on this machine, on the machine that provides it, or in your own cloud account) and forget it (asks first)",
+     "abstract": "Delete a Space's sandbox (on this computer, on the computer that provides it, or in your own cloud account) and forget it (asks first)",
      "after_help": "Examples:\n  cua spaces delete relay:space-0123456789abcdef\n  cua spaces delete local:studio --force",
      "aliases": [],
      "arguments": [
@@ -10009,7 +10027,7 @@
      "usage": "cua spaces delete [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your machines provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`; compute billing stops). Modal sandboxes and Spaces added by address cannot be turned off",
+     "abstract": "Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your computers provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`; compute billing stops). Modal sandboxes and Spaces added by address cannot be turned off",
      "after_help": "Examples:\n  cua spaces stop local:studio\n  cua spaces stop relay:space-0123456789abcdef --json",
      "aliases": [],
      "arguments": [
@@ -10059,7 +10077,7 @@
      "usage": "cua spaces start [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Forget a registered Space and its stored token. The sandbox keeps running. The `relay:<machine>` record of a Space that registered itself and is gone (not connected) also leaves your relay directory",
+     "abstract": "Forget a registered Space and its stored token. The sandbox keeps running. The `relay:<computer>` record of a Space that registered itself and is gone (not connected) also leaves your relay directory",
      "after_help": "Examples:\n  cua spaces rm direct:10.0.0.5:3211\n  cua spaces rm studio",
      "aliases": [
       "remove"
@@ -10086,7 +10104,7 @@
      "usage": "cua spaces rm [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Let another cua.ai account watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<machine>`",
+     "abstract": "Let another cua.ai account watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`",
      "after_help": "Examples:\n  cua spaces share local:studio bob@example.com\n  cua spaces share local:studio bob@example.com --role editor\n  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer\n  # From a script or agent: confirm with Touch ID or your password here\n  cua spaces share local:studio bob@example.com --yes",
      "aliases": [],
      "arguments": [
@@ -10250,7 +10268,7 @@
      "usage": "cua spaces relay-register [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Take a Space off the relay (every share with it ends). With a `relay:<machine>` id, removes that machine's record from your relay directory: a Space that registered itself (also after it was deleted), or a machine of yours that is gone. Only its owner can",
+     "abstract": "Take a Space off the relay (every share with it ends). With a `relay:<computer>` id, removes that computer's record from your relay directory: a Space that registered itself (also after it was deleted), or a computer of yours that is gone. Only its owner can",
      "after_help": "Examples:\n  cua spaces relay-unregister local:studio\n  cua spaces relay-unregister relay:space-0123abcd4567ef89",
      "aliases": [],
      "arguments": [
@@ -10659,7 +10677,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production)",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -10676,7 +10694,7 @@
      "usage": "cua devices status [OPTIONS]"
     },
     {
-     "abstract": "Enroll this device. Right after a fresh `cua auth login` it enrolls at once (and replaces this machine's older device key, if any); otherwise it shows a one-time code to approve from an enrolled device (`cua devices approve <code>` or the Cua Spaces app)",
+     "abstract": "Enroll this device. Right after a fresh `cua auth login` it enrolls at once (and replaces this computer's older device key, if any); otherwise it shows a one-time code to approve from an enrolled device (`cua devices approve <code>` or the Cua Spaces app)",
      "after_help": "Examples:\n  cua devices enroll\n  cua devices enroll --name \"work laptop\" --wait",
      "aliases": [],
      "arguments": [],
@@ -10718,7 +10736,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -10788,7 +10806,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -10821,7 +10839,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -10873,7 +10891,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -10890,7 +10908,7 @@
      "usage": "cua devices rename [OPTIONS] <ID> <NAME>"
     },
     {
-     "abstract": "Revoke a device: it can no longer list or reach your machines",
+     "abstract": "Revoke a device: it can no longer list or reach your computers",
      "after_help": "Examples:\n  cua devices revoke dev_0123456789abcdef01234567",
      "aliases": [],
      "arguments": [
@@ -10927,7 +10945,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -10944,7 +10962,7 @@
      "usage": "cua devices revoke [OPTIONS] <ID>"
     },
     {
-     "abstract": "Who accessed what, and when: enrollments, device sessions, machine access (yours and by accounts you share with), sharing changes",
+     "abstract": "Who accessed what, and when: enrollments, device sessions, computer access (yours and by accounts you share with), sharing changes",
      "after_help": "Examples:\n  cua devices audit\n  cua devices audit --limit 20 --json",
      "aliases": [],
      "arguments": [],
@@ -10974,7 +10992,7 @@
        "default_value": null,
        "env": null,
        "help": "Relay URL",
-       "hidden": false,
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "relay",
@@ -10994,7 +11012,7 @@
    "usage": "cua devices [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Teams (organizations of your cua.ai account) share machines with every member and their agents. Owners and admins invite by email, approve member devices and add machines",
+   "abstract": "Teams (organizations of your cua.ai account) share computers with every member and their agents. Owners and admins invite by email, approve member devices and add computers",
    "after_help": "Examples:\n  cua team create AIGIS\n  cua team invite AIGIS dillon@example.com\n  cua team add-machine AIGIS local:build-box\n  cua team approve AIGIS dev_0123456789abcdef01234567\n  cua team show AIGIS",
    "aliases": [],
    "arguments": [],
@@ -11006,7 +11024,7 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Create a team; you are its owner. Buy Teams for it at app.cua.ai to add machines",
+     "abstract": "Create a team; you are its owner. Buy Teams for it at app.cua.ai to add computers",
      "after_help": "Examples:\n  cua team create \"AIGIS\"",
      "aliases": [],
      "arguments": [
@@ -11047,7 +11065,7 @@
      "usage": "cua team ls [OPTIONS]"
     },
     {
-     "abstract": "A team: plan, members, machines, open invites and devices",
+     "abstract": "A team: plan, members, computers, open invites and devices",
      "after_help": "Examples:\n  cua team show AIGIS",
      "aliases": [],
      "arguments": [
@@ -11260,7 +11278,7 @@
      "usage": "cua team set-role [OPTIONS] <TEAM> <WHO> <ROLE>"
     },
     {
-     "abstract": "Member devices and whether they may open team machines",
+     "abstract": "Member devices and whether they may open team computers",
      "after_help": "Examples:\n  cua team devices AIGIS",
      "aliases": [],
      "arguments": [
@@ -11285,7 +11303,7 @@
      "usage": "cua team devices [OPTIONS] <TEAM>"
     },
     {
-     "abstract": "Approve a member device so it can open team machines",
+     "abstract": "Approve a member device so it can open team computers",
      "after_help": "Examples:\n  cua team approve AIGIS dev_0123456789abcdef01234567",
      "aliases": [],
      "arguments": [
@@ -11320,7 +11338,7 @@
      "usage": "cua team approve [OPTIONS] <TEAM> <DEVICE>"
     },
     {
-     "abstract": "Decline a member device (it can no longer open team machines)",
+     "abstract": "Decline a member device (it can no longer open team computers)",
      "after_help": "Examples:\n  cua team deny AIGIS dev_0123456789abcdef01234567",
      "aliases": [],
      "arguments": [
@@ -11380,7 +11398,7 @@
      "usage": "cua team request [OPTIONS] <TEAM>"
     },
     {
-     "abstract": "Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. Macs, Linux and Windows machines all can. Each Space is added on its own: adding a host does not add the Spaces it provides",
+     "abstract": "Make a Space (or a computer you host) a team computer: every member and their agents see it and can open it. Macs, Linux and Windows computers all can. Each Space is added on its own: adding a host does not add the Spaces it provides",
      "after_help": "Examples:\n  cua team add-machine AIGIS local:build-box\n  cua team add-machine AIGIS relay:0123abcd4567ef89 --yes",
      "aliases": [],
      "arguments": [
@@ -11396,7 +11414,7 @@
       },
       {
        "default_value": null,
-       "help": "Space id or name (`relay:<id>` for a machine you host)",
+       "help": "Space id or name (`relay:<id>` for a computer you host)",
        "hidden": false,
        "is_optional": false,
        "name": "SPACE",
@@ -11427,7 +11445,7 @@
      "usage": "cua team add-machine [OPTIONS] <TEAM> <SPACE>"
     },
     {
-     "abstract": "Take a machine off the team",
+     "abstract": "Take a computer off the team",
      "after_help": "Examples:\n  cua team remove-machine AIGIS relay:0123abcd4567ef89",
      "aliases": [],
      "arguments": [
@@ -11443,10 +11461,10 @@
       },
       {
        "default_value": null,
-       "help": "The machine (`relay:<id>` or its id, as `cua team show` lists it)",
+       "help": "The computer (`relay:<id>` or its id, as `cua team show` lists it)",
        "hidden": false,
        "is_optional": false,
-       "name": "MACHINE",
+       "name": "COMPUTER",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
@@ -11459,7 +11477,7 @@
      "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua team remove-machine [OPTIONS] <TEAM> <MACHINE>"
+     "usage": "cua team remove-machine [OPTIONS] <TEAM> <COMPUTER>"
     },
     {
      "abstract": "The team's audit log. Audit export is coming soon; for now see the account app (app.cua.ai)",
@@ -11504,7 +11522,7 @@
      "usage": "cua team audit [OPTIONS] <TEAM>"
     },
     {
-     "abstract": "Delete a team (owner; cancel its subscription first). Its machines stay yours",
+     "abstract": "Delete a team (owner; cancel its subscription first). Its computers stay yours",
      "after_help": "Examples:\n  cua team delete AIGIS --yes",
      "aliases": [],
      "arguments": [
@@ -11544,7 +11562,7 @@
    "usage": "cua team [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Your relay allowance this month: live sessions, relay hours, and your plan. Spaces on your own network use none of it",
+   "abstract": "Your remote use this month: live sessions, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free",
    "after_help": "Examples:\n  cua usage\n  cua usage --json",
    "aliases": [],
    "arguments": [],
@@ -11558,7 +11576,7 @@
      "default_value": null,
      "env": null,
      "help": "Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production)",
-     "hidden": false,
+     "hidden": true,
      "is_optional": true,
      "multiple_values": false,
      "name": "relay",
@@ -11586,7 +11604,7 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "List the apps this machine can teleport (JSON)",
+     "abstract": "List the apps this computer can teleport (JSON)",
      "after_help": "Examples:\n  cua teleport providers",
      "aliases": [],
      "arguments": [],
@@ -12107,7 +12125,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "The app to import from (a teleport provider id: `chrome`, `firefox`, `slack`, ...; `cua teleport providers` lists every one on this machine)",
+       "help": "The app to import from (a teleport provider id: `chrome`, `firefox`, `slack`, ...; `cua teleport providers` lists every one on this computer)",
        "hidden": false,
        "is_optional": false,
        "multiple_values": false,
@@ -13157,7 +13175,7 @@
      "usage": "cua telemetry off [OPTIONS]"
     },
     {
-     "abstract": "Print the last events this machine queued or sent, exactly as sent",
+     "abstract": "Print the last events this computer queued or sent, exactly as sent",
      "after_help": "Examples:\n  cua telemetry show-last\n  cua telemetry show-last -n 5 --json",
      "aliases": [],
      "arguments": [],

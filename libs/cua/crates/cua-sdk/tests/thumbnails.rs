@@ -69,7 +69,7 @@ async fn a_host_that_does_not_share_its_desktop_is_never_asked_for_one() {
     let server = MockServer::start(Default::default()).await;
     server.state.withhold(
         "desktop_stream",
-        "this machine does not share its desktop (it only provides Spaces)",
+        "this computer does not share its desktop (it only provides Spaces)",
     );
     let shots = || server.state.observed.screenshots.lock().unwrap().len();
     let c = cua(&dir);

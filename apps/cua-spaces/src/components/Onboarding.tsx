@@ -111,7 +111,7 @@ export function Onboarding({
         ))}
       </div>
       <p className="host-setup-lede" data-testid="mode-later">
-        Change it later from This machine in your Spaces list.
+        Change it later from This computer in your Spaces list.
       </p>
       {view.notice && (
         <p className="onboarding-telemetry-notice" data-testid="telemetry-notice">

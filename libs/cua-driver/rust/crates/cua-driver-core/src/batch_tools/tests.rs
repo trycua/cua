@@ -19,6 +19,7 @@ use crate::{
 struct Probe {
     def: ToolDef,
     calls: Arc<Mutex<Vec<Value>>>,
+    pacings: Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>>,
 }
 
 #[async_trait]
@@ -29,6 +30,10 @@ impl Tool for Probe {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         self.calls.lock().unwrap().push(args.clone());
+        self.pacings
+            .lock()
+            .unwrap()
+            .push((self.def.name.clone(), crate::step_pacing::current()));
         if let Some(message) = args["fail_message"].as_str() {
             return ToolResult::error(message.to_owned());
         }
@@ -43,12 +48,14 @@ impl Tool for Probe {
 struct Harness {
     registry: Arc<ToolRegistry>,
     calls: std::collections::HashMap<&'static str, Arc<Mutex<Vec<Value>>>>,
+    pacings: Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>>,
 }
 
 impl Harness {
     fn new() -> Self {
         let mut registry = ToolRegistry::new();
         let mut calls = std::collections::HashMap::new();
+        let pacings: Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>> = Arc::default();
         for name in super::BATCHABLE_TOOLS.iter().copied().chain([
             "get_window_state",
             "zoom",
@@ -98,12 +105,17 @@ impl Harness {
                     open_world: false,
                 },
                 calls: log,
+                pacings: pacings.clone(),
             }));
         }
         registry.register_session_tools();
         let registry = Arc::new(registry);
         registry.init_self_weak();
-        Self { registry, calls }
+        Self {
+            registry,
+            calls,
+            pacings,
+        }
     }
 
     fn hits(&self, tool: &str) -> usize {
@@ -159,6 +171,49 @@ fn text(result: &ToolResult) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[tokio::test]
+async fn every_step_but_the_last_is_paced_as_a_batched_step() {
+    use crate::step_pacing::StepPacing::{Batched, Single};
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 42, "window_id": 7}},
+            {"tool": "type_text", "args": {"pid": 42, "text": "b"}},
+            {"tool": "press_key", "args": {"pid": 42}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let pacings: Vec<_> = harness
+        .pacings
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(tool, pacing)| (tool.clone(), *pacing))
+        .collect();
+    assert_eq!(
+        pacings,
+        vec![
+            ("click".to_owned(), Batched),
+            ("type_text".to_owned(), Batched),
+            ("press_key".to_owned(), Single),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_one_step_batch_keeps_the_full_waits() {
+    use crate::step_pacing::StepPacing::Single;
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 42, "window_id": 7}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let pacings = harness.pacings.lock().unwrap().clone();
+    assert_eq!(pacings, vec![("click".to_owned(), Single)]);
 }
 
 #[tokio::test]

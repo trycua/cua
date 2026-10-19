@@ -265,7 +265,7 @@ async fn view_only_shares_need_desktop_sharing_on() {
             .unwrap(),
     );
     assert!(
-        message.starts_with("this machine does not share its desktop"),
+        message.starts_with("this computer does not share its desktop"),
         "{message}"
     );
     // The capabilities probe still answers.

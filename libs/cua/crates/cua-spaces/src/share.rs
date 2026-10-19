@@ -184,11 +184,11 @@ fn team_err(e: cua_host::Error) -> Error {
             "that team (you are not in it, or it does not exist; a team joined a moment ago shows up after you sign in again)".into(),
         ),
         e if is_feature_required(&e) => Error::Relay(cua_host::Error::PermissionDenied(
-            "this team's plan does not include team machines (yet): finish the Teams checkout at app.cua.ai, then try again".into(),
+            "this team's plan does not include team computers (yet): finish the Teams checkout at app.cua.ai, then try again".into(),
         )),
         cua_host::Error::PermissionDenied(m) if m.contains("machine_limit") => {
             Error::Relay(cua_host::Error::PermissionDenied(
-                "the team has as many machines as its seats allow: add seats at app.cua.ai".into(),
+                "the team has as many computers as its seats allow: add seats at app.cua.ai".into(),
             ))
         }
         other => Error::Relay(other),
@@ -622,7 +622,7 @@ impl Spaces {
         let org = api.resolve_org(&token, team).await.map_err(team_err)?;
         if !org.manages() {
             return Err(Error::Relay(cua_host::Error::PermissionDenied(format!(
-                "only an owner or admin of {} can add machines to it",
+                "only an owner or admin of {} can add computers to it",
                 org.label()
             ))));
         }
@@ -834,7 +834,7 @@ impl Spaces {
             Err(e) => {
                 tracing::warn!(space = canonical, machine, "relay machine not removed: {e}");
                 Some(format!(
-                    "its relay machine relay:{machine} could not be removed ({e}); remove it with \
+                    "its relay computer relay:{machine} could not be removed ({e}); remove it with \
                      `cua spaces relay-unregister relay:{machine}`"
                 ))
             }

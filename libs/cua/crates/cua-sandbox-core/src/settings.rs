@@ -36,7 +36,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 9] = [
+pub const KEYS: [Key; 10] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -90,6 +90,12 @@ pub const KEYS: [Key; 9] = [
         env: "CUA_RUNTIME_LINUX",
         default: "auto",
         description: "the engine local Linux Spaces run on, on a Mac: auto (a working Docker engine on this Mac, else built-in; built-in once it exists), builtin (cua's own VM with Docker and gVisor, set up on first use) or system (only this Mac's own engine; nothing is downloaded)",
+    },
+    Key {
+        name: "nudges.risky_actions",
+        env: "CUA_NUDGE_RISKY_ACTIONS",
+        default: "off",
+        description: "before an agent does something risky on this Mac's own desktop through `cua mcp` (deleting files outside a project, emptying the Trash, uninstalling apps, system settings, passwords), the Cua app offers to run it in a separate Space (on, off). No answer in 30 s runs it here",
     },
 ];
 
@@ -363,7 +369,7 @@ impl Settings {
         let (on, src) = self.parsed(KEYS[0], On::parse)?;
         if on.is_existing_machine() {
             return Err(SettingsError(format!(
-                "default.on ({src}): {on} names one machine; the default location is local, cloud or a provider"
+                "default.on ({src}): {on} names one computer; the default location is local, cloud or a provider"
             )));
         }
         Ok((on, src))
@@ -392,7 +398,7 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             }
             if on.is_existing_machine() {
                 return Err(SettingsError(format!(
-                    "default.on: {on} names one machine; use local, cloud or a provider"
+                    "default.on: {on} names one computer; use local, cloud or a provider"
                 )));
             }
             on.to_string()
@@ -445,6 +451,15 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             })?
             .as_str()
             .to_string(),
+        "nudges.risky_actions" => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => "on".into(),
+            "0" | "false" | "no" | "off" => "off".into(),
+            _ => {
+                return Err(SettingsError(format!(
+                    "nudges.risky_actions: expected on or off, got {v:?}"
+                )));
+            }
+        },
         "telemetry.enabled" => match v.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => "on".into(),
             "0" | "false" | "no" | "off" => "off".into(),
@@ -671,7 +686,7 @@ mod tests {
         let e = s
             .set(key("default.on").unwrap(), "direct:1.2.3.4:3211")
             .unwrap_err();
-        assert!(e.0.contains("names one machine"), "{e}");
+        assert!(e.0.contains("names one computer"), "{e}");
         assert!(s.set(key("default.kind").unwrap(), "docker").is_err());
         assert!(s.set(key("cloud.warm").unwrap(), "maybe").is_err());
         assert!(s.set(key("cloud.max_pool_size").unwrap(), "0").is_err());

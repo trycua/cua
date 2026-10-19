@@ -446,7 +446,7 @@ pub fn run_setup(
         return Ok(fail_line(&outcomes));
     }
 
-    line(out, "AI coding agents on this machine:");
+    line(out, "AI coding agents on this computer:");
     print_agents(setup, &statuses, out);
     if ids.is_empty() {
         line(

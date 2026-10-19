@@ -505,7 +505,9 @@ export type ActionResult = {
     /**
      * What to do next, in one short sentence. Present when the effect is
      * `unverifiable` or `suspected_noop`, so an unconfirmed action points at
-     * the next step instead of leaving the agent to guess.
+     * the next step instead of leaving the agent to guess. Also carries a
+     * suggestion to chain steps with `run_steps` after several direct actions
+     * in a row.
      */
     hint?: string,
     /**

@@ -21,7 +21,7 @@ Clients use the SDK's [`SpacesdClient`](/cua-sdk/reference/spacesd) or `cua spac
 | TCP 3211 | Native gRPC (HTTP/2) and gRPC-Web (HTTP/1.1), gRPC reflection, and the HTTP routes below |
 | UDP 3212 | QUIC media datagrams (ALPN `rcdp/2`, certificate pinned through `StreamService.OpenMedia`) |
 
-The default bind is `0.0.0.0:3211` with a token and `127.0.0.1:3211` without one; a non-loopback bind without a token is refused. Clients send the env token as `authorization: Bearer <token>` or `x-cua-env-authorization: Bearer <token>` (the Fleet gateway consumes `authorization`). The token grants full control of the machine: never put it in a URL; browsers use tickets and signed URLs.
+The default bind is `0.0.0.0:3211` with a token and `127.0.0.1:3211` without one; a non-loopback bind without a token is refused. Clients send the env token as `authorization: Bearer <token>` or `x-cua-env-authorization: Bearer <token>` (the Fleet gateway consumes `authorization`). The token grants full control of the computer: never put it in a URL; browsers use tickets and signed URLs.
 
 | Route | Auth | Purpose |
 | --- | --- | --- |
@@ -38,23 +38,23 @@ Tickets go in `?ticket=` or the WebSocket subprotocol `cua.ticket.<ticket>`. Tic
 
 | Service | Package | Page | RPCs |
 | --- | --- | --- | --- |
-| [`SystemService`](/cua-sdk/reference/protocol/env-system#systemservice) | `cua.env.v1` | [System](/cua-sdk/reference/protocol/env-system) | 10 |
-| [`ProcessService`](/cua-sdk/reference/protocol/env-process#processservice) | `cua.env.v1` | [Processes](/cua-sdk/reference/protocol/env-process) | 8 |
-| [`FilesystemService`](/cua-sdk/reference/protocol/env-filesystem#filesystemservice) | `cua.env.v1` | [Filesystem](/cua-sdk/reference/protocol/env-filesystem) | 16 |
-| [`ComputerService`](/cua-sdk/reference/protocol/env-computer#computerservice) | `cua.env.v1` | [Computer and driver](/cua-sdk/reference/protocol/env-computer) | 7 |
-| [`DriverService`](/cua-sdk/reference/protocol/env-computer#driverservice) | `cua.env.v1` | [Computer and driver](/cua-sdk/reference/protocol/env-computer) | 2 |
-| [`WindowsService`](/cua-sdk/reference/protocol/env-windows#windowsservice) | `cua.env.v1` | [Windows and accessibility](/cua-sdk/reference/protocol/env-windows) | 11 |
-| [`AccessibilityService`](/cua-sdk/reference/protocol/env-windows#accessibilityservice) | `cua.env.v1` | [Windows and accessibility](/cua-sdk/reference/protocol/env-windows) | 3 |
-| [`StreamService`](/cua-sdk/reference/protocol/env-stream#streamservice) | `cua.env.v1` | [Streams and presence](/cua-sdk/reference/protocol/env-stream) | 5 |
-| [`PresenceService`](/cua-sdk/reference/protocol/env-stream#presenceservice) | `cua.env.v1` | [Streams and presence](/cua-sdk/reference/protocol/env-stream) | 3 |
-| [`TeleportService`](/cua-sdk/reference/protocol/env-teleport-tunnel#teleportservice) | `cua.env.v1` | [Teleport, tunnels and the volume](/cua-sdk/reference/protocol/env-teleport-tunnel) | 7 |
-| [`TunnelService`](/cua-sdk/reference/protocol/env-teleport-tunnel#tunnelservice) | `cua.env.v1` | [Teleport, tunnels and the volume](/cua-sdk/reference/protocol/env-teleport-tunnel) | 6 |
-| [`VolumeService`](/cua-sdk/reference/protocol/env-teleport-tunnel#volumeservice) | `cua.env.v1` | [Teleport, tunnels and the volume](/cua-sdk/reference/protocol/env-teleport-tunnel) | 3 |
-| [`HostSpacesService`](/cua-sdk/reference/protocol/env-host-spaces#hostspacesservice) | `cua.env.v1` | [Host Spaces](/cua-sdk/reference/protocol/env-host-spaces) | 6 |
-| [`SandboxService`](/cua-sdk/reference/protocol/daemon-sandboxes#sandboxservice) | `cua.daemon.v1` | [Daemon: sandboxes](/cua-sdk/reference/protocol/daemon-sandboxes) | 20 |
-| [`RuntimeService`](/cua-sdk/reference/protocol/daemon-runtimes#runtimeservice) | `cua.daemon.v1` | [Daemon: local runtimes](/cua-sdk/reference/protocol/daemon-runtimes) | 5 |
-| [`SpaceService`](/cua-sdk/reference/protocol/daemon-spaces#spaceservice) | `cua.daemon.v1` | [Daemon: Spaces](/cua-sdk/reference/protocol/daemon-spaces) | 17 |
-| [`DaemonService`](/cua-sdk/reference/protocol/daemon-service#daemonservice) | `cua.daemon.v1` | [Daemon: service](/cua-sdk/reference/protocol/daemon-service) | 3 |
+| [`SystemService`](/cua-sdk/reference/protocol/env-system#systemservice) | `cua.env.v1` | [System, diagnostics and shared types](/cua-sdk/reference/protocol/env-system) | 10 |
+| [`ProcessService`](/cua-sdk/reference/protocol/env-process#processservice) | `cua.env.v1` | [Processes and files](/cua-sdk/reference/protocol/env-process) | 8 |
+| [`FilesystemService`](/cua-sdk/reference/protocol/env-process#filesystemservice) | `cua.env.v1` | [Processes and files](/cua-sdk/reference/protocol/env-process) | 16 |
+| [`ComputerService`](/cua-sdk/reference/protocol/env-computer#computerservice) | `cua.env.v1` | [Computer, windows and accessibility](/cua-sdk/reference/protocol/env-computer) | 7 |
+| [`DriverService`](/cua-sdk/reference/protocol/env-computer#driverservice) | `cua.env.v1` | [Computer, windows and accessibility](/cua-sdk/reference/protocol/env-computer) | 2 |
+| [`WindowsService`](/cua-sdk/reference/protocol/env-computer#windowsservice) | `cua.env.v1` | [Computer, windows and accessibility](/cua-sdk/reference/protocol/env-computer) | 11 |
+| [`AccessibilityService`](/cua-sdk/reference/protocol/env-computer#accessibilityservice) | `cua.env.v1` | [Computer, windows and accessibility](/cua-sdk/reference/protocol/env-computer) | 3 |
+| [`StreamService`](/cua-sdk/reference/protocol/env-stream#streamservice) | `cua.env.v1` | [Streams, teleport, tunnels and host Spaces](/cua-sdk/reference/protocol/env-stream) | 5 |
+| [`PresenceService`](/cua-sdk/reference/protocol/env-stream#presenceservice) | `cua.env.v1` | [Streams, teleport, tunnels and host Spaces](/cua-sdk/reference/protocol/env-stream) | 3 |
+| [`TeleportService`](/cua-sdk/reference/protocol/env-stream#teleportservice) | `cua.env.v1` | [Streams, teleport, tunnels and host Spaces](/cua-sdk/reference/protocol/env-stream) | 7 |
+| [`TunnelService`](/cua-sdk/reference/protocol/env-stream#tunnelservice) | `cua.env.v1` | [Streams, teleport, tunnels and host Spaces](/cua-sdk/reference/protocol/env-stream) | 6 |
+| [`VolumeService`](/cua-sdk/reference/protocol/env-stream#volumeservice) | `cua.env.v1` | [Streams, teleport, tunnels and host Spaces](/cua-sdk/reference/protocol/env-stream) | 3 |
+| [`HostSpacesService`](/cua-sdk/reference/protocol/env-stream#hostspacesservice) | `cua.env.v1` | [Streams, teleport, tunnels and host Spaces](/cua-sdk/reference/protocol/env-stream) | 6 |
+| [`SandboxService`](/cua-sdk/reference/protocol/daemon#sandboxservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 20 |
+| [`RuntimeService`](/cua-sdk/reference/protocol/daemon#runtimeservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 5 |
+| [`SpaceService`](/cua-sdk/reference/protocol/daemon#spaceservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 19 |
+| [`DaemonService`](/cua-sdk/reference/protocol/daemon#daemonservice) | `cua.daemon.v1` | [Cua daemon](/cua-sdk/reference/protocol/daemon) | 3 |
 
 ## Metadata and HTTP routes
 
@@ -85,4 +85,4 @@ gRPC-Web cannot carry client streams, so every client-streaming RPC has a unary 
 
 ## Errors
 
-Errors are `google.rpc.Status` with typed details: spacesd packs [`ErrorInfo`](/cua-sdk/reference/protocol/env-common#errorinfo) and the daemon packs [`DaemonErrorInfo`](/cua-sdk/reference/protocol/daemon-service#daemonerrorinfo).
+Errors are `google.rpc.Status` with typed details: spacesd packs [`ErrorInfo`](/cua-sdk/reference/protocol/env-system#errorinfo) and the daemon packs [`DaemonErrorInfo`](/cua-sdk/reference/protocol/daemon#daemonerrorinfo).

@@ -69,10 +69,13 @@ impl SessionHandle {
 
     /// Starts a sign-in (browser, else device code).
     pub async fn begin_login(&self) -> Result<PendingLogin, String> {
-        self.session
+        let mut pending = self
+            .session
             .begin_login(Flow::Auto)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        pending.return_to = Some(cua_auth::ReturnTo::App("Cua Spaces".into()));
+        Ok(pending)
     }
 
     /// Stores freshly issued credentials; returns the display identity.

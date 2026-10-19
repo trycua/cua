@@ -193,13 +193,28 @@ async fn browser_login_with_pkce_then_refresh_and_logout() {
     assert!(p.user_code.is_none() && p.note.is_none());
     let u = url::Url::parse(&p.url).unwrap();
     let q: std::collections::HashMap<String, String> = u.query_pairs().into_owned().collect();
-    let cb = format!("{}?code=code-1&state={}", q["redirect_uri"], q["state"]);
-    let browser = tokio::spawn(async move { reqwest::get(cb).await.unwrap().status().as_u16() });
-    let creds = tokio::time::timeout(std::time::Duration::from_secs(20), p.complete())
+    let state = q["state"].clone();
+    let redirect = q["redirect_uri"].clone();
+    let done = tokio::spawn(tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        p.complete(),
+    ));
+    // An earlier attempt's tab gets the out-of-date page and is ignored.
+    let r = reqwest::get(format!("{redirect}?code=stale-code&state=stale-state"))
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(browser.await.unwrap(), 200);
+    assert_eq!(r.status().as_u16(), 400);
+    let page = r.text().await.unwrap();
+    assert!(page.contains("out of date"), "{page}");
+    assert!(!page.contains("stale-code") && !page.contains("stale-state"));
+    let cb = format!("{redirect}?code=code-1&state={state}");
+    let r = reqwest::get(cb).await.unwrap();
+    let (status, page) = (r.status().as_u16(), r.text().await.unwrap());
+    let creds = done.await.unwrap().unwrap().unwrap();
+    assert_eq!(status, 200);
+    // The page names the account but never echoes the code or state.
+    assert!(page.contains("You're signed in") && page.contains("t@example.com"));
+    assert!(!page.contains("code-1") && !page.contains(&state), "{page}");
     let id = s.install(creds).await.unwrap();
     assert_eq!(id.email.as_deref(), Some("t@example.com"));
     assert!(s.access_token(false).await.unwrap().contains('.'));

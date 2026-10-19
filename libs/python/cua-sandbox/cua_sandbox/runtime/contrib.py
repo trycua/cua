@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from cua_sandbox._sdk import local_runtime, native
-from cua_sandbox.image import Image, cloud_registry_image
+from cua_sandbox.image import Image, registry_image
 from cua_sandbox.runtime.base import RuntimeInfo
 from cua_sandbox.runtime.native import NativeRuntime
 
@@ -69,7 +69,7 @@ class ContribRuntime(NativeRuntime):
         self.runtime_type = self.on
 
     async def _image_ref(self, image: Image, name: str, **opts: Any) -> str:
-        ref = cloud_registry_image(image)
+        ref = registry_image(image)
         if ref is None:
             from cua_sandbox._sdk import Unsupported
 

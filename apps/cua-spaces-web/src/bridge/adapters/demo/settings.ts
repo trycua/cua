@@ -209,9 +209,11 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     },
 
     "update.get": () => ({ ...update }),
-    "update.install": () => {
+    "update.install": async () => {
       // Nothing downloaded: nothing to install, and the state says so.
       if (update.status !== "downloaded") return { ...update };
+      // Installing takes a moment before the relaunch.
+      await wait(stepMs);
       // The real host relaunches into the new version.
       update = { ...update, status: "idle", currentVersion: update.version ?? update.currentVersion, version: null, notesUrl: null };
       emit({ type: "update.changed" });

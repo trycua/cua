@@ -24,17 +24,6 @@ const subscribe = (l: () => void) => {
 };
 
 /**
- * Whether the allowance notice is on screen now. The update indicator
- * (`update-indicator.tsx`) steps back to an icon while it is, so the two
- * prompts are never both open at once.
- */
-export function useRelayAllowanceShowing(): boolean {
-  const notice = useRelayUsageView()?.notice;
-  const dismissed = useSyncExternalStore(subscribe, readDismissed, () => null);
-  return Boolean(notice) && dismissed !== notice?.dismissKey;
-}
-
-/**
  * The relay allowance for the month: one line above every page with
  * Upgrade, until dismissed (for that month and reason: the core's
  * `dismissKey`). At 80% of the hours it is a heads-up (`warn`: a prompt, held

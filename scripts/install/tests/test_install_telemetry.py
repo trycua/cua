@@ -150,7 +150,7 @@ class InstallTelemetry(unittest.TestCase):
 
     def check_runtime_completion(self, doctor_status, docker=False):
         cli = self.home / "cua"
-        cli.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "cua {VERSION}"; fi\nif [ "$*" = "runtime doctor" ]; then echo "doctor status {doctor_status}"; exit {doctor_status}; fi\nexit 0\n')
+        cli.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "cua {VERSION}"; fi\nif [ "$*" = "runtime doctor" ]; then echo "doctor status {doctor_status}"; exit {doctor_status}; fi\necho "$*" >> "{self.home}/cli.log"\nexit 0\n')
         cli.chmod(0o755)
         names = ("docker",) if docker else ("qemu-img", f"qemu-system-{os.uname().machine}")
         for name in names:
@@ -172,13 +172,17 @@ class InstallTelemetry(unittest.TestCase):
             self.assertFalse((self.home / "qemu-img").exists())
             script.write_text(script.read_text().replace(
                 'main "$@"',
-                'have() { case "$1" in qemu-img|qemu-system-*) return 1;; *) command -v "$1" >/dev/null 2>&1;; esac; }\nmain "$@"',
+                'has() { case "$1" in qemu-img|qemu-system-*) return 1;; *) command -v "$1" >/dev/null 2>&1;; esac; }\nmain "$@"',
             ))
-        p = subprocess.run(["sh", str(script), "--yes", "--no-onboarding", "--select", "spaces"],
+        p = subprocess.run(["sh", str(script), "--yes", "--verbose", "--no-onboarding", "--select", "spaces"],
                            env=e, capture_output=True, text=True, timeout=120)
         self.assertEqual(p.returncode, doctor_status, p.stdout + p.stderr)
         self.assertIn(f"doctor status {doctor_status}", p.stdout)
         self.assertIn("Next:", p.stdout)
+        if docker:
+            self.assertIn("VM runtime ok", p.stdout + p.stderr)
+            log = self.home / "cli.log"
+            self.assertNotIn("runtime setup qemu", log.read_text() if log.exists() else "")
         evs = self.events()
         self.assertEqual([e["properties"]["step"] for e in evs],
                          ["installer_started", "installer_failed" if doctor_status else "installer_completed"])

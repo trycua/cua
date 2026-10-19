@@ -508,10 +508,16 @@ impl<'a> Api<'a> {
                 .and_then(|value| value.get("code"))
                 .and_then(Value::as_str)
                 .unwrap_or("tool_error");
-            return Err(HostError::new(
-                clip(text.lines().next().unwrap_or("failed"), 500),
-                code,
-            ));
+            let mut message = clip(text.lines().next().unwrap_or("failed"), 500);
+            if let Some(hint) = result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("hint"))
+                .and_then(Value::as_str)
+            {
+                message = format!("{message} Hint: {hint}");
+            }
+            return Err(HostError::new(message, code));
         }
         let mut value = match result.structured_content {
             Some(Value::Object(object)) => Value::Object(object),

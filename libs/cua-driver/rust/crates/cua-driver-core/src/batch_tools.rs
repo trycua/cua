@@ -1019,6 +1019,17 @@ async fn run_step(
             {
                 report["code"] = Value::String(code.to_owned());
             }
+            // The step's own recovery hint and next call, so a failed batch
+            // says what to do next without a second tool call.
+            for key in ["hint", "next_call"] {
+                if let Some(value) = result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.get(key))
+                {
+                    report[key] = value.clone();
+                }
+            }
             return StepOutcome {
                 line: format!("{}. {label} ERROR (action): {message}", index + 1),
                 report: with_phase(report, Phase::Action),

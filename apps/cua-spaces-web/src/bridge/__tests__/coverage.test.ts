@@ -17,6 +17,7 @@ import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
 import { NUDGES_ARGS } from "../ops/nudges";
 import { RESOURCES_ARGS } from "../ops/resources";
+import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
@@ -133,6 +134,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...RELAY_USAGE_ARGS,
   ...NUDGES_ARGS,
   ...RESOURCES_ARGS,
+  ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
   ...PRESENCE_ARGS,
   ...RUNTIME_FIX_ARGS,

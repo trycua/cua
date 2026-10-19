@@ -352,14 +352,139 @@ public final class AppModel {
     /// the web UI lists too): This machine, the machines the Spaces list
     /// shows (one sharing its desktop, one that provides Spaces), then
     /// the account's devices that are none of them; each computer once.
-    public var machinePageRows: [AppMachinePageRow] {
+    public var machinePageRows: [AppMachinePageRow] { appMachinesPageRows(input: machinesPageInput) }
+
+    /// What the Machines page is listed from: the Spaces list, the
+    /// account's devices, the hostnames and who the relay sees connected.
+    var machinesPageInput: AppMachinesPageInput {
         let devices = self.devices.snapshot == nil ? [] : self.devices.input.devices.map {
             AppDeviceIn(id: $0.id, name: $0.name, platform: $0.platform ?? "", lastSeen: $0.lastSeen,
                         current: $0.current, state: $0.state)
         }
-        return appMachinesPageRows(input: AppMachinesPageInput(
+        return AppMachinesPageInput(
             hostOs: .macos, spaces: spaces, devices: devices, hostnames: relayHostnames,
-            presence: self.devices.relayOnline, now: self.devices.nowSecs))
+            presence: self.devices.relayOnline, now: self.devices.nowSecs)
+    }
+
+    /// The Machines page as every UI draws it (the core's
+    /// `machines_view::view`, which the New UI draws too): the list in
+    /// groups with one line each, and each machine's page.
+    public var machinesView: AppMachinesView {
+        let relay = (devices.snapshot?.machines ?? []).map {
+            AppMachinesViewRelay(id: $0.id, role: $0.role, team: $0.team, ownerEmail: $0.ownerEmail,
+                                 providesSpaces: $0.providesSpaces)
+        }
+        return appMachinesView(input: AppMachinesViewInput(
+            page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil,
+            health: machineHealth.keys.sorted().compactMap { machineHealth[$0] }))
+    }
+
+    /// What each machine's own daemon last reported of its health, by
+    /// Machines page row id (`checkMachineHealth`): the view's issues.
+    public var machineHealth: [String: AppMachinesViewHealth] = [:]
+    @ObservationIgnored private var healthCheck: Task<Void, Never>?
+
+    /// At most this many machines are checked at once.
+    static let healthConcurrency = 3
+    /// One machine's check may take this long.
+    static let healthTimeout: Double = 35
+
+    /// Checks the health of every machine the Machines page can check
+    /// (`healthTarget`: This Mac through its daemon, another of your
+    /// machines that is online through its own daemon over the relay or
+    /// mesh), a few at once, and keeps what each said. A machine that is
+    /// no longer checkable (offline, removed) loses its old result, so no
+    /// stale issue shows. One check at a time; a call during one waits for
+    /// it.
+    public func checkMachineHealth() async {
+        if let running = healthCheck {
+            await running.value
+            return
+        }
+        let task = Task { await self.runHealthChecks() }
+        healthCheck = task
+        await task.value
+        healthCheck = nil
+    }
+
+    private func runHealthChecks() async {
+        let targets = machinesView.machines.compactMap { m in m.healthTarget.map { (id: m.id, target: $0) } }
+        let wanted = Set(targets.map(\.id))
+        machineHealth = machineHealth.filter { wanted.contains($0.key) }
+        let backend = self.backend
+        var pending = targets[...]
+        while !pending.isEmpty {
+            let batch = pending.prefix(Self.healthConcurrency)
+            pending = pending.dropFirst(batch.count)
+            let results = await withTaskGroup(of: (String, AppMachinesViewHealth).self) { group in
+                for t in batch {
+                    group.addTask {
+                        let machine = t.target.isEmpty ? nil : t.target
+                        let r = await withTimeout(seconds: Self.healthTimeout) {
+                            try await backend.machineHealth(machine: machine)
+                        }
+                        switch r {
+                        case .success(var h):
+                            h.id = t.id
+                            return (t.id, h)
+                        case .failure(let error):
+                            let why = (error as? TimeoutError) != nil
+                                ? "it didn\u{2019}t answer within \(Int(Self.healthTimeout)) s"
+                                : LiveSpacesBackend.words(error)
+                            return (t.id, AppMachinesViewHealth(id: t.id, checks: [], cuaVersion: "", error: why))
+                        }
+                    }
+                }
+                var out: [(String, AppMachinesViewHealth)] = []
+                for await r in group { out.append(r) }
+                return out
+            }
+            for (id, h) in results where wanted.contains(id) { machineHealth[id] = h }
+        }
+    }
+
+    /// This Mac as the Machines page names it: its name, the app's
+    /// version and macOS's.
+    static let machinesAbout: AppMachinesViewAbout = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        let os = v.patchVersion == 0 ? "macOS \(v.majorVersion).\(v.minorVersion)"
+            : "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+        return AppMachinesViewAbout(
+            computerName: Foundation.Host.current().localizedName ?? "",
+            appVersion: info["CuaVersion"] as? String ?? info["CFBundleShortVersionString"] as? String ?? "",
+            osVersion: os)
+    }()
+
+    /// Renames a machine from the Machines page: `this-mac` is this Mac's
+    /// own relay registration (its host setup takes the name too).
+    public func renameMachine(id: String, name: String) async throws {
+        guard let clean = appDevicesCleanName(name: name) else {
+            throw CuaError.InvalidArgument(message: "A machine needs a name")
+        }
+        let machine = id == "this-mac" ? host.machineId : id
+        guard let machine, let relay = devices.devices else {
+            throw CuaError.InvalidArgument(message: "Renaming a machine needs a signed-in, enrolled Mac")
+        }
+        try await relay.renameMachine(id: machine, name: clean)
+        await host.refresh()
+        await devices.refresh()
+        await refresh()
+    }
+
+    /// Remove from account: `machine` leaves the relay directory, then
+    /// `device` is revoked. This Mac's own host setup is the host's
+    /// `remove` instead.
+    public func removeMachine(machine: String?, device: String?) async throws {
+        if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
+        if let device {
+            guard let relay = devices.devices else {
+                throw CuaError.InvalidArgument(message: "Revoking a device needs a signed-in Cua account")
+            }
+            try await relay.revoke(id: device)
+        }
+        await devices.refresh()
+        await refresh()
     }
 
     /// What each machine sharing its desktop (`relay:<machine>`) reported

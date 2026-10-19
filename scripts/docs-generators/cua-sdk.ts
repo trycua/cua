@@ -689,6 +689,15 @@ export const PAGES: PageSpec[] = [
     items: ['Devices', 'DevicesSnapshot', 'RelayDevice', 'RelayAuditEvent', 'DeviceEnrollment'],
   },
   {
+    slug: 'spaces/machine-health',
+    title: 'Computer health',
+    description: "A computer's health as its own cua daemon checks it: Local Network access, disk, virtualization, memory and permissions.",
+    intro:
+      '`Spaces.machine_health` asks a computer\'s cua daemon to check it (this computer with `None`, another of yours by id or name over the relay, the mesh or its direct address). The Computers page shows the warnings and failures as the computer\'s issues; `cua doctor --machine` prints them.',
+    members: [{ object: 'Spaces', title: 'Check a computer', methods: ['machine_health'] }],
+    items: ['MachineHealth', 'MachineHealthCheck'],
+  },
+  {
     slug: 'spaces/host',
     title: 'Host, relay and devices',
     description: 'Unattended host setup, the cua-relay directory client, and this device\'s enrollment on the relay.',
@@ -755,6 +764,7 @@ export const MERGED: Record<string, string> = {
   'spaces/cloud': 'spaces/persistent-agents',
   'spaces/volume-sync': 'spaces/volume',
   'spaces/devices': 'spaces/host',
+  'spaces/machine-health': 'spaces/host',
   'agent-setup': 'agents',
   telemetry: 'auth',
 };

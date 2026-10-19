@@ -1778,6 +1778,476 @@
         "limits"
       ]
     },
+    "MachinesView": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "collapsed": {
+                "type": "boolean"
+              },
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "removeAll": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "confirm": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "confirmLabel": {
+                        "type": "string"
+                      },
+                      "cancelLabel": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "message",
+                      "confirmLabel",
+                      "cancelLabel"
+                    ]
+                  },
+                  "removes": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/MachinesViewRemove"
+                    }
+                  }
+                },
+                "required": [
+                  "label",
+                  "confirm",
+                  "removes"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "collapsed",
+              "ids"
+            ]
+          }
+        },
+        "machines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "badge": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "health": {
+                "type": "string"
+              },
+              "healthTarget": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "issuesTitle": {
+                "type": "string"
+              },
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "level": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "hostAction": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "level",
+                    "text"
+                  ]
+                }
+              },
+              "os": {
+                "type": "string"
+              },
+              "current": {
+                "type": "boolean"
+              },
+              "team": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string"
+              },
+              "sharedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "rename": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "target": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "confirmLabel": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "id",
+                  "title",
+                  "confirmLabel"
+                ]
+              },
+              "notice": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "noticeAction": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "destructive": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "destructive"
+                ]
+              },
+              "toggles": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "help": {
+                      "type": "string"
+                    },
+                    "on": {
+                      "type": "boolean"
+                    },
+                    "editable": {
+                      "type": "boolean"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "actions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "setup": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "help",
+                    "on",
+                    "editable",
+                    "enabled",
+                    "actions"
+                  ]
+                }
+              },
+              "togglesNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "spacesTitle": {
+                "type": "string"
+              },
+              "spaces": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "os": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "running": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "os",
+                    "status",
+                    "running"
+                  ]
+                }
+              },
+              "spacesEmpty": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "newSpace": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "on": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "help": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "label",
+                  "on",
+                  "enabled"
+                ]
+              },
+              "detailsTitle": {
+                "type": "string"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "value"
+                  ]
+                }
+              },
+              "remove": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MachinesViewRemove"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "line",
+              "online",
+              "os",
+              "current",
+              "team",
+              "status",
+              "toggles",
+              "spacesTitle",
+              "spaces",
+              "newSpace",
+              "detailsTitle",
+              "details"
+            ]
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "groups",
+        "machines"
+      ]
+    },
+    "MachinesViewRemove": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "help": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host": {
+          "type": "boolean"
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confirm": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "confirmLabel": {
+              "type": "string"
+            },
+            "cancelLabel": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "message",
+            "confirmLabel",
+            "cancelLabel"
+          ]
+        }
+      },
+      "required": [
+        "label",
+        "enabled",
+        "host",
+        "confirm"
+      ]
+    },
     "NewSpaceOptions": {
       "type": "object",
       "properties": {
@@ -3890,6 +4360,16 @@
           "items": {
             "$ref": "#/$defs/MachinePageRow"
           }
+        },
+        "view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MachinesView"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -4866,11 +5346,20 @@
     "loginItem.set": {
       "$ref": "#/$defs/LoginItemReport"
     },
+    "machines.checkHealth": {
+      "type": "null"
+    },
     "machines.list": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/MachineRow"
       }
+    },
+    "machines.remove": {
+      "type": "null"
+    },
+    "machines.rename": {
+      "type": "null"
     },
     "notifications.list": {
       "type": "array",
@@ -6490,8 +6979,17 @@
     "loginItem.set": {
       "$ref": "#/$defs/LoginItemReport"
     },
+    "machines.checkHealth": {
+      "type": "null"
+    },
     "machines.list": {
       "$ref": "#/$defs/WkMachines"
+    },
+    "machines.remove": {
+      "type": "null"
+    },
+    "machines.rename": {
+      "type": "null"
     },
     "notifications.list": {
       "type": "array",

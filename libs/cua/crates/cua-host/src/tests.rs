@@ -1706,3 +1706,29 @@ fn the_service_gets_cua_mesh_only_when_setup_was_given_it() {
         serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
     assert_eq!(back.mesh.as_deref(), Some("prefer"));
 }
+
+/// A machine renamed on the relay from an enrolled device: this machine's
+/// host setup takes the name when it is this machine, and only then.
+#[tokio::test]
+async fn a_rename_on_the_relay_is_adopted_only_by_that_machine() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let status = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    let id = status.machine_id.clone().unwrap();
+    assert!(!host.adopt_name("some-other-machine", "Studio").unwrap());
+    assert!(!host.adopt_name(&id, "   ").unwrap());
+    assert_eq!(host.status().await.unwrap().name.as_deref(), Some("mini"));
+    assert!(host.adopt_name(&id, "  Ada's Studio ").unwrap());
+    assert_eq!(
+        host.status().await.unwrap().name.as_deref(),
+        Some("Ada's Studio")
+    );
+    // Not set up: nothing to take the name.
+    let other = fixture();
+    assert!(!other.host().adopt_name(&id, "x").unwrap());
+}

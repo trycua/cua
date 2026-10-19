@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Prepare platform tag
         id: platform
@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload digest artifact
         if: steps.push-check.outputs.push == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digests-${{ steps.platform.outputs.tag }}
           path: /tmp/digests/*.txt
@@ -172,7 +172,7 @@ jobs:
             type=raw,value=main-${{ needs.build.outputs.timestamp }},enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Download all digest artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: digests-*
           path: /tmp/digests

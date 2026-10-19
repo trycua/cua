@@ -69,7 +69,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown

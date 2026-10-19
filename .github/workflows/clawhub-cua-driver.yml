@@ -51,7 +51,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -87,7 +87,7 @@ jobs:
 
       - name: Upload dry-run result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: clawhub-driver-dry-run
           path: ${{ runner.temp }}/clawhub-dry-run.json
@@ -100,7 +100,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Validate release inputs
         env:
@@ -186,7 +186,7 @@ jobs:
 
       - name: Upload publish result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: clawhub-driver-publish-${{ inputs.version }}
           path: ${{ runner.temp }}/clawhub-publish.json

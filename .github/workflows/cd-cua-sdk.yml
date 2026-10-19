@@ -167,10 +167,10 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           targets: ${{ matrix.target }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: matrix.container == ''
         with:
           node-version: "22"
@@ -277,12 +277,12 @@ jobs:
           [ -f "$RUNNER_TEMP/signing.txt" ] || echo "${{ matrix.label }}: no OS code signing on Linux (Sigstore bundle only)" > "$RUNNER_TEMP/signing.txt"
           mkdir -p "$RUNNER_TEMP/signing" && cp "$RUNNER_TEMP/signing.txt" "$RUNNER_TEMP/signing/${{ matrix.label }}.txt"
           cat "$RUNNER_TEMP/signing.txt"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: native-${{ matrix.label }}
           path: libs/cua/native/${{ matrix.label }}
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signing-${{ matrix.label }}
           path: ${{ runner.temp }}/signing/${{ matrix.label }}.txt
@@ -311,7 +311,7 @@ jobs:
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: native-*
           path: native
@@ -332,7 +332,7 @@ jobs:
           VERSION="${{ needs.version.outputs.version }}"
           cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(fleet_from_env=False); sys.exit(v != sys.argv[1])" "$VERSION"
           test "$(cua --version | tr -d '\r')" = "cua $VERSION"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wheel-${{ matrix.platform }}-${{ matrix.arch }}
           path: libs/cua/python/dist/*.whl
@@ -343,15 +343,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           targets: wasm32-unknown-unknown
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: native-*
           path: ${{ runner.temp }}/downloads
@@ -377,7 +377,7 @@ jobs:
             --native-dir "$RUNNER_TEMP/native" \
             --output-dir "$RUNNER_TEMP/npm"
           ls -lh "$RUNNER_TEMP/npm"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: npm
           path: ${{ runner.temp }}/npm/*.tgz
@@ -394,7 +394,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
       - name: Build CuaSDKFFI.xcframework.zip
@@ -408,7 +408,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "12.0"
           IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         run: libs/cua/swift/scripts/build-xcframework.sh --ios --zip | tee xcframework.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: xcframework
           path: |
@@ -427,11 +427,11 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -598,7 +598,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: xcframework
           path: dist/xcframework

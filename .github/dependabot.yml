@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Actions are pinned to commit SHAs. Dependabot keeps the SHAs (and their
+  # trailing "# vN" comments) current in one grouped PR per month.
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"

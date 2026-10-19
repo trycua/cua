@@ -43,7 +43,7 @@ jobs:
     name: typecheck, tests, bridge contract, build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Rust, the wasm32 target and wasm-bindgen
         working-directory: apps/cua-spaces/core-wasm
         run: |
@@ -58,7 +58,7 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install (web UI, Electron shell)
@@ -88,7 +88,7 @@ jobs:
         host: [browser, electron]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Rust, the wasm32 target and wasm-bindgen
         working-directory: apps/cua-spaces/core-wasm
         run: |
@@ -103,7 +103,7 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install
@@ -127,7 +127,7 @@ jobs:
       # The parity table (parity-summary) and, for a failure, its traces.
       - name: Upload the Playwright results
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-spaces-web-parity-${{ matrix.host }}
           path: apps/cua-spaces-web/test-results/

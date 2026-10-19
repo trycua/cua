@@ -202,7 +202,11 @@ def _tccutil_calls(calls: Path) -> list[str]:
     return [line for line in calls.read_text(encoding="utf-8").splitlines() if line.startswith("tccutil:")]
 
 
-@pytest.mark.parametrize("flags", [(), ("--keep-tcc",), ("--purge",)])
+# `--purge` is left out on purpose: on macOS it runs the installed signed helper at
+# /Applications/CuaDriver.app to destroy Computer History, which a sandbox cannot
+# fake. It fails on a machine without that app (CI) and would run for real on one
+# with it. The purge flow has its own tests (uninstall-history-purge-test.sh).
+@pytest.mark.parametrize("flags", [(), ("--keep-tcc",)])
 def test_uninstall_keeps_macos_permissions_by_default(tmp_path: Path, flags: tuple[str, ...]) -> None:
     """Accessibility and Screen Recording survive an uninstall unless asked.
 

@@ -135,8 +135,8 @@ struct MainUIRouteTests {
         #expect(MainUIRouter.route(forNav: "nav.nope") == nil)
     }
 
-    /// Only the main UI gives way: the launch and the first run stay in
-    /// the native window.
+    /// Only the main UI gives way to New UI: the launch stays in the native
+    /// window, and the first run has its own rule (`opensFirstRun`).
     @Test func onlyTheMainUIGivesWayToNewUI() {
         #expect(MainWindowSwitch.replacesNative(webUi: true, ready: true, onboarded: true))
         #expect(!MainWindowSwitch.replacesNative(webUi: false, ready: true, onboarded: true))

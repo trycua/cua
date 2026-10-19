@@ -169,6 +169,9 @@ extension WebUIBridge {
             // signal here, before the SDK's own check.
             guard let telemetry = model.telemetrySink, telemetry.status().enabled else { return NSNull() }
             let signals = raw.compactMap(Self.telemetrySignal)
+            // The page's first run moved past Welcome: its usage notice was
+            // on screen, so events may be sent from here (this one included).
+            if raw.contains(where: Self.leftWelcome) { telemetry.acknowledgeNotice() }
             if !signals.isEmpty { telemetry.record(signals) }
             return NSNull()
 
@@ -393,6 +396,18 @@ extension WebUIBridge {
         }
         await devices.refresh()
         return NSNull()
+    }
+
+    /// The page's first run moved past Welcome (its usage notice was on
+    /// screen): any page left or shown other than Welcome being shown, or
+    /// "Set up later".
+    static func leftWelcome(_ raw: Any) -> Bool {
+        guard let s = raw as? [String: Any] else { return false }
+        switch s["type"] as? String {
+        case "onboarding-page": return !(s["page"] as? String == "welcome" && s["action"] as? String == "shown")
+        case "step": return s["step"] as? String == "onboarding_skipped"
+        default: return false
+        }
     }
 
     /// A usage event as the core's signal: known kinds with every field a

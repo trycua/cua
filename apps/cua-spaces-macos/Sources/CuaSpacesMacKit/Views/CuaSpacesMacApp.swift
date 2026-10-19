@@ -36,7 +36,8 @@ public struct CuaSpacesMacApp: App {
         }
         .defaultSize(width: 980, height: 660)
         // Open at every launch (see `ignoreSavedWindowState`), except while
-        // New UI is on: then its window opens instead (`AppDelegate.start`).
+        // New UI is on or the first run is due: then the New UI window opens
+        // instead (`AppDelegate.start`).
         .defaultLaunchBehavior(Self.opensWebUIAtLaunch(model) ? .suppressed : .presented)
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -76,14 +77,13 @@ public struct CuaSpacesMacApp: App {
         }
     }
 
-    /// New UI is on and the first run is done: a launch opens the New UI
-    /// window rather than the native main window (the first run itself
-    /// stays in the main window).
+    /// New UI is on, or the first run is due (it is the web UI's onboarding):
+    /// a launch opens the New UI window rather than the native main window.
     static func opensWebUIAtLaunch(_ model: AppModel) -> Bool {
         opensWebUIAtLaunch(webUi: model.settings.experiments.webUi, onboarded: model.onboarding.completed)
     }
 
-    static func opensWebUIAtLaunch(webUi: Bool, onboarded: Bool) -> Bool { webUi && onboarded }
+    static func opensWebUIAtLaunch(webUi: Bool, onboarded: Bool) -> Bool { webUi || !onboarded }
 }
 
 /// The menu bar icon. It is there from launch, so it also hands the New UI
@@ -108,7 +108,8 @@ struct MenuBarLabel: View {
     }
 }
 
-/// First run, else the main window.
+/// The main window. The first run is not drawn here: it is the shared web
+/// onboarding, in the New UI window (see `MainWindowSwitch`).
 struct RootView: View {
     @Bindable var model: AppModel
     @Environment(\.dismissWindow) private var dismissWindow
@@ -135,12 +136,13 @@ struct RootView: View {
                     MainWindowSwitch.nativeAppeared(nil, model: model)
                 }
         } else {
-            OnboardingView(onboarding: model.onboarding, onSignIn: model.account == nil ? nil : {
-                await model.beginSignIn()
-                return model.identity
-            }, signInPhase: model.signIn, onCancelSignIn: { model.cancelSignIn() }, signInURL: model.signInURL)
-                .toolbar(removing: .title)
-                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+            // First run: the web onboarding opens in this window's place.
+            Color.clear
+                .background(WindowReader { MainWindowSwitch.firstRunAppeared($0, model: model) })
+                .onAppear {
+                    WebUIWindowController.actions = .make(openWindow: openWindow)
+                    MainWindowSwitch.firstRunAppeared(nil, model: model)
+                }
         }
     }
 }
@@ -300,6 +302,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // New UI on and off: one window, its frame kept, never two.
         model.openWebUI = { MainWindowSwitch.switchToWebUI(model: model) }
         model.closeWebUI = { WebUIWindowController.closeShared() }
+        // "Show again" for the first run: the web onboarding's window.
+        model.openOnboarding = { WebUIWindowController.show(model: model, at: .onboarding) }
         let controller = NotchController(model: model.notch)
         controller.sidebar = model.dropTargets
         controller.pageTiles = model.pageDropTargets
@@ -377,11 +381,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘⇧Space from any app: the window of the UI in use, in front.
         GlobalShortcut.install(model)
         AppEnvironment.applyStartView(model, notch: controller)
-        // New UI on: its window is the one a launch opens (the main window
-        // is suppressed); not when opened at login.
-        if CuaSpacesMacApp.opensWebUIAtLaunch(model), !Self.launchedAtLogin,
-           DevHooks.value("CUA_SPACES_START_VIEW") == nil {
-            WebUIWindowController.show(model: model)
+        // New UI on, or the first run due: the New UI window is the one a
+        // launch opens (the main window is suppressed), the first run at
+        // `/onboarding`; not when opened at login.
+        if CuaSpacesMacApp.opensWebUIAtLaunch(model), !Self.launchedAtLogin {
+            if !model.onboarding.completed {
+                WebUIWindowController.show(model: model, at: .onboarding)
+            } else if DevHooks.value("CUA_SPACES_START_VIEW") == nil {
+                WebUIWindowController.show(model: model)
+            }
         }
         // The notch shows the Spaces (and takes drops on them) with the main
         // window closed: keep the roster, and so each tile's reachability,
@@ -400,8 +408,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // approval sheet) even with the window closed; this Mac's own
         // enrollment shows as the main window's banner. Nothing else asks.
         model.devices.notify = { DeviceNotifier.shared.post($0) }
-        // A click on one of the app's notifications: the main UI in use.
+        // A click on one of the app's notifications: the main UI in use
+        // (a Space that came up: its page).
         DeviceNotifier.shared.onOpen = { id in
+            if let spaceId = SpaceReadyNote.spaceId(fromIdentifier: id) {
+                model.select(spaceId)
+                router.open(.space(spaceId)) { WebUIWindowController.actions?.openMain() }
+                return
+            }
             router.open(id.hasPrefix("agent-") ? .agents : .home) { WebUIWindowController.actions?.openMain() }
         }
         // Persistent agents' answers and requests, from the daemon's feed,

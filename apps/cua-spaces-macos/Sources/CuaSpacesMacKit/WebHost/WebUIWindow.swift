@@ -32,6 +32,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     /// The traffic lights' width plus a gap, for `--titlebar-left-inset`.
     static let fallbackLeftInset: CGFloat = 78
     static let titlebarHeight: CGFloat = 48
+    static let windowIdentifier = NSUserInterfaceItemIdentifier("cua-new-ui")
     /// Where the window's frame is saved (the defaults' `NSWindow Frame <name>`).
     static let frameName = "CuaSpacesWebUI"
     static let devServer = URL(string: "http://localhost:5174/")!
@@ -67,15 +68,15 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     /// Opens the window (or brings it forward) at `route`. A drop on a
     /// notch tile is kept for the page, which asks for it by name
     /// (`spaces.droppedFiles`).
-    public static func show(model: AppModel, at route: MainUIRoute) {
+    public static func show(model: AppModel, at route: MainUIRoute, frame: NSRect? = nil) {
         notchDrop = route.dropped
         guard shared != nil else {
             // A new window loads the page there: a route asked for while it
             // starts could reach it before its router listens, and be lost.
-            show(model: model, frame: nil, startRoute: route.webPath)
+            show(model: model, frame: frame, startRoute: route.webPath)
             return
         }
-        show(model: model)
+        show(model: model, frame: frame)
         shared?.bridge.requestRoute(route.webPath)
     }
 
@@ -158,6 +159,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Cua Spaces"
+        // What the UI tests find this window by (the native one has none).
+        window.identifier = Self.windowIdentifier
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
@@ -263,7 +266,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
                         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { return decisionHandler(.cancel) }
         if isAppURL(url) || url.scheme == "about" { return decisionHandler(.allow) }
-        if action.navigationType == .linkActivated, ["http", "https", "mailto"].contains(url.scheme ?? "") {
+        if action.navigationType == .linkActivated, Self.opensOutside(url) {
             NSWorkspace.shared.open(url)
         }
         decisionHandler(.cancel)
@@ -271,10 +274,17 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
 
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme ?? "") {
+        if let url = action.request.url, Self.opensOutside(url) {
             NSWorkspace.shared.open(url)
         }
         return nil
+    }
+
+    /// What the page may hand to the system (`window.open`, a link): web
+    /// pages and mail, and System Settings' panes (`x-apple.systempreferences:`,
+    /// as Electron's `openExternal` allows).
+    static func opensOutside(_ url: URL) -> Bool {
+        ["http", "https", "mailto", "x-apple.systempreferences"].contains(url.scheme ?? "")
     }
 
     func isAppURL(_ url: URL) -> Bool {

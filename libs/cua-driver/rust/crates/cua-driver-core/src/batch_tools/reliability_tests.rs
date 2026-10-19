@@ -163,6 +163,15 @@ async fn a_step_whose_input_may_have_landed_is_never_replayed() {
                "escalation": escalation}),
         json!({"effect": "unverifiable", "route": "accessibility",
                "delivery": {"mode": "unknown"}}),
+        // Not a refusal either: a suspected no-op was still sent, and an
+        // effect this rule does not know cannot show that nothing was.
+        json!({"code": "background_unavailable", "effect": "suspected_noop",
+               "escalation": escalation}),
+        json!({"code": "background_unavailable", "effect": "not_yet_defined",
+               "suggestion": hint, "escalation": escalation}),
+        json!({"code": "background_unavailable", "effect": "refused",
+               "delivery": {"mode": "background", "delivered_count": 1},
+               "escalation": escalation}),
     ] {
         let before = harness.hits("click");
         let result = harness

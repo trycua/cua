@@ -3384,8 +3384,9 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 
 /// Resolve and invoke an application menu one live hierarchy level at a time.
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
-/// snapshot index is retained across mutations.
-pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
+/// snapshot index is retained across mutations. `Ok(false)`: the final
+/// action was sent and did not answer in time (see [`run_menu_command`]).
+pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<bool> {
     invoke_menu_path_in(pid, 0, path)
 }
 
@@ -3393,7 +3394,7 @@ pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
 /// menu path exists under several top-levels of the process (LibreOffice
 /// publishes every document window's menubar in one AT-SPI application),
 /// the hop under `xid`'s frame wins instead of the path being ambiguous.
-pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
+pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<bool> {
     bounded(
         async {
             let conn = shared_connection().await?;
@@ -3439,6 +3440,9 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
                     .action()
                     .await
                     .map_err(|error| anyhow!("Action unavailable: {error}"))?;
+                if depth + 1 == path.len() {
+                    return run_menu_command(&action, chosen as i32, depth).await;
+                }
                 let accepted = action
                     .do_action(chosen as i32)
                     .await
@@ -3446,14 +3450,31 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
                 if !accepted {
                     anyhow::bail!("menu path segment {depth} rejected its native action");
                 }
-                if depth + 1 != path.len() {
-                    tokio::time::sleep(Duration::from_millis(80)).await;
-                }
+                tokio::time::sleep(Duration::from_millis(80)).await;
             }
-            Ok(())
+            Ok(true)
         },
         || Err(anyhow!("invoke_menu timed out for pid {pid}")),
     )
+}
+
+/// Fire the menu item at the end of the path, the one that runs the command.
+/// `Ok(true)` when the toolkit accepted it, `Ok(false)` when it did not answer
+/// in time: an item whose command opens a dialog answers only once the dialog
+/// closes, so the command was sent and must not be refused (and invoked
+/// again). An error reply is [`InputMayHaveLanded`].
+async fn run_menu_command(
+    action: &atspi::proxy::action::ActionProxy<'_>,
+    index: i32,
+    depth: usize,
+) -> Result<bool> {
+    match do_action(action, index).await? {
+        Some(true) => Ok(true),
+        Some(false) => Err(anyhow!(
+            "menu path segment {depth} rejected its native action"
+        )),
+        None => Ok(false),
+    }
 }
 
 /// Several nodes matched one menu path segment inside the scoped frame.
@@ -3651,7 +3672,9 @@ async fn do_action(ap: &atspi::proxy::action::ActionProxy<'_>, index: i32) -> Re
 
 #[cfg(test)]
 mod input_dispatch_tests {
-    use super::{bounded_for, do_action, runtime, write_editable_text, InputMayHaveLanded};
+    use super::{
+        bounded_for, do_action, run_menu_command, runtime, write_editable_text, InputMayHaveLanded,
+    };
     use std::io::BufRead;
     use std::process::{Child, Command, Stdio};
     use std::sync::{Arc, Mutex};
@@ -3915,6 +3938,51 @@ mod input_dispatch_tests {
             &raised.context("context added by a caller")
         ));
         assert_eq!(take(), ["action:0", "action:1", "action:2"]);
+    }
+
+    #[test]
+    fn a_menu_command_that_was_sent_is_never_refused() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let Some((_bus, _service, client)) = fake_accessible(log.clone()) else {
+            return;
+        };
+        let action_at = |path: String| {
+            runtime().block_on(async {
+                atspi::proxy::action::ActionProxy::builder(&client)
+                    .destination(SERVICE)
+                    .unwrap()
+                    .path(path)
+                    .unwrap()
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await
+                    .unwrap()
+            })
+        };
+        let button = action_at(PATH.into());
+        let stalling = action_at(format!("{LABELS}/stalls"));
+        let run = |action: &atspi::proxy::action::ActionProxy<'_>, index: i32| {
+            bounded_for(
+                Duration::from_millis(600),
+                run_menu_command(action, index, 2),
+                || Err(anyhow::anyhow!("operation backstop")),
+            )
+        };
+
+        assert!(run(&button, 0).unwrap(), "an accepted command answered");
+        // A command that opens a dialog answers once it closes: it was sent,
+        // so it is not refused.
+        assert!(!run(&stalling, 0).unwrap());
+        // An error reply may follow the command.
+        assert!(landed(&run(&button, 2).unwrap_err()));
+        // Only a declined command is refused.
+        let declined = run(&button, 1).unwrap_err();
+        assert!(!landed(&declined));
+        assert!(declined.to_string().contains("rejected"), "{declined:#}");
+        assert_eq!(
+            std::mem::take(&mut *log.lock().unwrap()),
+            ["action:0", "label:stalls", "action:2", "action:1"]
+        );
     }
 
     #[test]

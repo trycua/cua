@@ -4581,13 +4581,19 @@ fn atspi_input_that_may_have_landed_is_reported_without_a_retry_hint() {
             atspi_click_outcome_unknown("the point (4.0, 5.0)", DeliveryMode::Background, &sent),
             "accessibility",
         ),
+        (
+            menu_command_outcome_unknown(DeliveryMode::Background, &sent),
+            "accessibility",
+        ),
         (element_ax_timeout(3), ""),
     ] {
         assert_eq!(result.is_error, Some(true));
         let wire = serde_json::to_value(&result).unwrap();
         let structured = &wire["structuredContent"];
-        // Neither the code nor an escalation invites a second delivery.
+        // Neither the code, a refusal nor an escalation invites a second
+        // delivery.
         assert_ne!(structured["code"], "background_unavailable", "{structured}");
+        assert!(structured.get("refusal").is_none(), "{structured}");
         assert!(structured.get("escalation").is_none(), "{structured}");
         assert!(structured.get("suggestion").is_none(), "{structured}");
         let text = wire["content"][0]["text"].as_str().unwrap();
@@ -14395,6 +14401,46 @@ fn menu_refusal(message: String) -> ToolResult {
     }))
 }
 
+/// The text for a menu command whose final action did not answer.
+fn menu_answer_note(answered: bool) -> &'static str {
+    if answered {
+        ""
+    } else {
+        "; it did not answer in time, as an item that opens a dialog answers only once the dialog closes"
+    }
+}
+
+fn menu_command_evidence(answered: bool) -> cua_driver_core::action_record::ActionEvidence {
+    cua_driver_core::action_record::ActionEvidence {
+        kind: cua_driver_core::action_record::EvidenceKind::NativeApiResult,
+        detail: if answered {
+            "Every menu hop resolved uniquely and AT-SPI accepted the final action"
+        } else {
+            "Every menu hop resolved uniquely; the final action was sent and did not answer in time"
+        }
+        .into(),
+    }
+}
+
+/// [`atspi_outcome_unknown`] for a menu command whose final action failed
+/// after it was sent ([`crate::atspi::InputMayHaveLanded`]): not a refusal,
+/// which would invite invoking the command again.
+fn menu_command_outcome_unknown(
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "invoke_menu: the final menu action was sent, but {error}; whether the command \
+             ran is unknown. Refresh state (get_window_state or a screenshot) before invoking \
+             it again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiAction,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
 #[async_trait]
 impl Tool for InvokeMenuTool {
     fn def(&self) -> &ToolDef {
@@ -14415,8 +14461,7 @@ impl Tool for InvokeMenuTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::action_record::{
-            ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
-            EvidenceKind, RequestedDelivery,
+            ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
         };
 
         // Menu paths are resolved and fired through AT-SPI, which needs no
@@ -14454,10 +14499,11 @@ impl Tool for InvokeMenuTool {
             })
             .await;
             return match outcome {
-                Ok(Ok(((), guard))) => attach_focus_guard(
-                    ToolResult::text(
-                        "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=background, focus untouched); verify the command's semantic effect from fresh state.",
-                    )
+                Ok(Ok((answered, guard))) => attach_focus_guard(
+                    ToolResult::text(format!(
+                        "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=background, focus untouched){}; verify the command's semantic effect from fresh state.",
+                        menu_answer_note(answered)
+                    ))
                     .with_structured(json!({
                         "path": "ax",
                         "verified": false,
@@ -14471,16 +14517,15 @@ impl Tool for InvokeMenuTool {
                             RequestedDelivery::Background,
                         )
                         .actual_delivery(ActualDelivery::Background)
-                        .evidence(ActionEvidence {
-                            kind: EvidenceKind::NativeApiResult,
-                            detail: "Every menu hop resolved uniquely and AT-SPI accepted the final action"
-                                .into(),
-                        })
+                        .evidence(menu_command_evidence(answered))
                         .build()
                         .expect("invoke_menu record is valid"),
                     ),
                     guard.as_ref(),
                 ),
+                Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                    menu_command_outcome_unknown(delivery, &error)
+                }
                 Ok(Err(error)) => menu_refusal(format!("invoke_menu: {error}")),
                 Err(error) => menu_refusal(format!("invoke_menu: blocking task failed: {error}")),
             };
@@ -14530,9 +14575,10 @@ impl Tool for InvokeMenuTool {
         .await;
 
         match outcome {
-            Ok(Ok(())) => ToolResult::text(
-                "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=foreground); verify the command's semantic effect from fresh state.",
-            )
+            Ok(Ok(answered)) => ToolResult::text(format!(
+                "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=foreground){}; verify the command's semantic effect from fresh state.",
+                menu_answer_note(answered)
+            ))
             .with_structured(json!({
                 "path": "ax",
                 "verified": false,
@@ -14546,14 +14592,13 @@ impl Tool for InvokeMenuTool {
                     RequestedDelivery::Foreground,
                 )
                 .actual_delivery(ActualDelivery::Foreground)
-                .evidence(ActionEvidence {
-                    kind: EvidenceKind::NativeApiResult,
-                    detail: "Every menu hop resolved uniquely and AT-SPI accepted the final action"
-                        .into(),
-                })
+                .evidence(menu_command_evidence(answered))
                 .build()
                 .expect("invoke_menu record is valid"),
             ),
+            Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                menu_command_outcome_unknown(delivery, &error)
+            }
             Ok(Err(error)) => menu_refusal(format!("invoke_menu: {error}")),
             Err(error) => menu_refusal(format!("invoke_menu: blocking task failed: {error}")),
         }

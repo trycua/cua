@@ -109,6 +109,7 @@ pub mod socket_io;
 pub mod text_sanitize;
 pub mod timestamp;
 pub mod tool;
+pub mod tool_activity;
 pub mod tool_args;
 pub mod tool_schema;
 pub mod video;

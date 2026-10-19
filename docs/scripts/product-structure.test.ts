@@ -11,8 +11,8 @@ const docs = path.resolve(__dirname, '..');
 const repo = path.resolve(docs, '..');
 const content = path.join(docs, 'content/docs');
 
-// In sidebar order, in four sections: Cua Spaces (the product), Cua Driver,
-// Reference (the CLI and the SDK) and More tools (Lume and Cua Bench).
+// In sidebar order: Cua Spaces (the product), Cua Driver, then one More tools
+// group (the CLI, the SDK, Lume and Cua Bench).
 const PRODUCTS: Array<[string, string]> = [
   ['spaces', 'Cua Spaces'],
   ['cua-driver', 'Cua Driver'],
@@ -21,16 +21,14 @@ const PRODUCTS: Array<[string, string]> = [
   ['lume', 'Lume'],
   ['cua-bench', 'Cua Bench'],
 ];
-// The root meta.json: the products in order, with the Reference and More tools
-// section separators.
+// The root meta.json: the products in order, with the More tools separator.
 const ROOT_ORDER = [
   'index',
   'spaces',
   'cua-driver',
-  '---Reference---',
+  '---More tools---',
   'cua-cli',
   'cua-sdk',
-  '---More tools---',
   'lume',
   'cua-bench',
 ];
@@ -78,7 +76,7 @@ function slugs(): Set<string> {
   );
 }
 
-test('the root lists the products in order, in four sections', () => {
+test('the root lists the products in order, with the CLI, SDK, Lume and Bench under More tools', () => {
   assert.deepEqual(meta('').pages, ROOT_ORDER);
   assert.deepEqual(
     ROOT_ORDER.filter((page) => page !== 'index' && !page.startsWith('---')),

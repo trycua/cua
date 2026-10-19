@@ -77,9 +77,7 @@ class TestBuiltinRegistryImages:
         monkeypatch.setenv(variable, "registry.example/linux:1")
         assert registry_image(Image.linux()) == "registry.example/linux:1"
         # Only the default version is overridden.
-        assert registry_image(Image.linux("ubuntu", "22.04")) == (
-            "ghcr.io/trycua/linux:22.04"
-        )
+        assert registry_image(Image.linux("ubuntu", "22.04")) == ("ghcr.io/trycua/linux:22.04")
 
     def test_linux_kind_defaults_to_the_image(self):
         assert Image.linux().kind is None

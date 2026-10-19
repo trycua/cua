@@ -1540,7 +1540,6 @@ dependencies = [
 name = "cua-sdk-e2e"
 version = "0.0.0"
 dependencies = [
- "base64 0.22.1",
  "cua-sdk",
  "cua-vmm",
  "serde_json",

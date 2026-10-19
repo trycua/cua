@@ -123,9 +123,7 @@ pub async fn run(spec: &Value, _spec_dir: &Path, lane: Lane) -> Result<ScenarioR
     let nonce = crate::nonce();
     let root = tempfile::tempdir()?;
     let marker = format!("openkoalabots-{nonce}");
-    let core = Core::new(
-        CoreConfig::in_dir(root.path().join("a")).with_cloud_from_env(lane.name == "cloud"),
-    )?;
+    let core = Core::new(CoreConfig::in_dir(root.path().join("a")))?;
     let mut ctx = Ctx {
         lane,
         model: spec.get("model").cloned().unwrap_or(Value::Null),
@@ -437,9 +435,7 @@ async fn presence(ctx: &mut Ctx, step: &Value) -> Result<Outcome> {
         return Err(Error::Invalid("presence.pair needs two clients".into()));
     }
     // A second, independent runtime with its own registry.
-    let core_b = Core::new(
-        CoreConfig::in_dir(ctx.root.path().join("b")).with_cloud_from_env(ctx.lane.name == "cloud"),
-    )?;
+    let core_b = Core::new(CoreConfig::in_dir(ctx.root.path().join("b")))?;
     let (url, token) = match ctx.lane.url.clone() {
         Some(u) => (u, ctx.lane.token.clone()),
         None => (id.clone(), space_a.env_token().map(str::to_string)),

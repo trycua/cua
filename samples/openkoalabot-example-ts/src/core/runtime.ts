@@ -27,8 +27,6 @@ import { sleep } from "./app.js"
 export interface RuntimeDirs {
   root: string
   teleportHome: string
-  /** Read Cua Cloud credentials from the environment. */
-  cloudFromEnv?: boolean
 }
 
 /** An embedded runtime rooted at `dirs.root`. */
@@ -38,7 +36,6 @@ export function openRuntime(dirs: RuntimeDirs): CuaLike {
     stateDir: join(dirs.root, "sandboxes"),
     spacesHome: join(dirs.root, "cua"),
     teleportHome: dirs.teleportHome,
-    fleetFromEnv: dirs.cloudFromEnv ?? false,
   })
 }
 

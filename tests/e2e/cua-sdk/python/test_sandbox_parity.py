@@ -1,5 +1,4 @@
-"""sandbox-parity: sidecars, env, private registry secrets and image layers
-with the same meaning local and in the cloud.
+"""sandbox-parity: sidecars, env, private registry secrets and image layers.
 
 Lanes:
 
@@ -12,9 +11,6 @@ Lanes:
   ``cua daemon`` on runc. The sandbox reaches ``db:6379`` by name and the
   relay reaches the sandbox at ``main``; refused on gVisor without an
   explicit runc.
-* fleet: skipped, Cua Cloud has ended. It ran the same group on Fleet gVisor
-  and Fleet KubeVirt (a companion pod), plus a ``processMode: Run`` command
-  with ``env`` serving HTTP on both runtimes.
 """
 
 from __future__ import annotations
@@ -27,15 +23,11 @@ import pytest
 import cua
 
 ROOTFS_IMAGE = "registry.example/mcp:docker-e2e"
-# Live Fleet: a container image for gVisor, the canonical VM disk for
-# KubeVirt (its guest has python3 and cloud-init).
-GVISOR_IMAGE = "docker.io/library/python:3.12-slim"
-KUBEVIRT_LIVE_IMAGE = "ghcr.io/trycua/linux:24.04"
 GREETING = "hi-from-env"
 
 # The sandbox's server: PINGs redis at db:6379 (by name), then serves
-# "<GREETING> <reply>" on 8000. One line (KubeVirt Run takes single-line
-# arguments), so the script travels base64-encoded.
+# "<GREETING> <reply>" on 8000. One line, so the script travels
+# base64-encoded.
 _SERVER = """
 import os, socket, time, http.server
 def ping(host):
@@ -85,7 +77,6 @@ def _relay() -> "cua.Container":
 
 def _opts(on: str, image: str, what: str, **kw) -> "cua.SandboxCreateOptions":
     kw.setdefault("cpus", 1)
-    # 512 MiB is the smallest cloud sandbox the SDK accepts (cua-fleet limits).
     kw.setdefault("memory_mb", 512)
     return cua.SandboxCreateOptions(on=on, image=image, name=e2e.name(what), **kw)
 
@@ -114,12 +105,12 @@ async def _expect_group(sb) -> None:
 
 
 @pytest.mark.e2e("sandbox-parity", "hermetic")
-def test_parity_cloud_ended_and_local_vm_refuses_layers(fixtures, fake_fleet, tmp_path):
+def test_parity_cloud_ended_and_local_vm_refuses_layers(fixtures, local_cua):
     async def body():
         # Cua Cloud has ended: sidecars, reserved service names and cloud
         # layer builds all fail with the one message, before anything is
-        # created (they used to reach Fleet's admission).
-        sbx = fake_fleet.sandboxes()
+        # created.
+        sbx = local_cua.sandboxes()
         for kw in (
             {"sidecars": [_redis("db")], "services": {"db": 6379}},
             {"sidecars": [_redis("db")], "services": {"main": 6379}},
@@ -136,12 +127,11 @@ def test_parity_cloud_ended_and_local_vm_refuses_layers(fixtures, fake_fleet, tm
         ):
             with pytest.raises(cua.CuaError.Unsupported, match=e2e.CLOUD_ENDED):
                 await sbx.create(_opts("cloud", ROOTFS_IMAGE, "parity", **kw))
-        await e2e.assert_cloud_ended(fake_fleet, sidecars=[_redis("db")])
+        await e2e.assert_cloud_ended(local_cua, sidecars=[_redis("db")])
         # Locally, layers build into the container engine (the container
         # lane runs that); a VM image takes none, refused before anything runs.
-        local = cua.embedded(state_dir=str(tmp_path / "local"), fleet_from_env=False)
         with pytest.raises(cua.CuaError.Unsupported):
-            await local.sandboxes().create(
+            await sbx.create(
                 _opts(
                     "local",
                     "vm:ghcr.io/trycua/linux:24.04-disk",
@@ -185,63 +175,3 @@ def test_parity_sidecars_by_name_through_the_daemon():
             assert not left.stdout.strip(), left.stdout
 
     e2e.run_async(body(), 600)
-
-
-async def _live(live_fleet, o) -> None:
-    sb = await live_fleet.sandboxes().create(o)
-    pool = sb.info().provider_details.get("pool", "")
-    try:
-        await _expect_group(sb) if o.sidecars else await _expect_env(sb)
-    finally:
-        await sb.delete()
-        if pool:
-            await live_fleet.fleet().pools().gc_pools([pool], 0)
-
-
-async def _expect_env(sb) -> None:
-    web = await sb.service("web").request("GET", "/", None, 60_000, None)
-    assert bytes(web.body).strip() == f"{GREETING} none".encode(), web.body
-
-
-def _fleet_group(runtime: str, image: str) -> "cua.SandboxCreateOptions":
-    return _group(
-        "cloud",
-        image,
-        f"parity-{runtime}",
-        cpus=2,
-        memory_mb=4096 if runtime == "kubevirt" else 1024,
-        ready_timeout_ms=1_500_000,
-        runtime=runtime,
-    )
-
-
-def _fleet_env(runtime: str, image: str) -> "cua.SandboxCreateOptions":
-    return _opts(
-        "cloud",
-        image,
-        f"parity-env-{runtime}",
-        cpus=2,
-        memory_mb=4096 if runtime == "kubevirt" else 1024,
-        command=SERVER,
-        env={"GREETING": GREETING},
-        services={"web": 8000},
-        wait_for=[cua.ReadinessProbe(port=0, service="web", http_path="/")],
-        ready_timeout_ms=1_500_000,
-        runtime=runtime,
-    )
-
-
-@pytest.mark.e2e("sandbox-parity", "fleet")
-@pytest.mark.parametrize(
-    "runtime,image", [("gvisor", GVISOR_IMAGE), ("kubevirt", KUBEVIRT_LIVE_IMAGE)]
-)
-def test_parity_fleet_sidecars_by_name(live_fleet, runtime, image):
-    e2e.run_async(_live(live_fleet, _fleet_group(runtime, image)), 1800)
-
-
-@pytest.mark.e2e("sandbox-parity", "fleet")
-@pytest.mark.parametrize(
-    "runtime,image", [("gvisor", GVISOR_IMAGE), ("kubevirt", KUBEVIRT_LIVE_IMAGE)]
-)
-def test_parity_fleet_run_command_with_env(live_fleet, runtime, image):
-    e2e.run_async(_live(live_fleet, _fleet_env(runtime, image)), 1800)

@@ -4849,6 +4849,39 @@
     "notifications.markRead": {
       "type": "null"
     },
+    "nudges.answer": {
+      "type": "null"
+    },
+    "nudges.pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "atMs": {
+            "type": "number"
+          },
+          "expiresMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "action",
+          "atMs",
+          "expiresMs"
+        ]
+      }
+    },
     "presence.join": {
       "type": "object",
       "properties": {
@@ -6423,6 +6456,39 @@
     },
     "notifications.markRead": {
       "type": "null"
+    },
+    "nudges.answer": {
+      "type": "null"
+    },
+    "nudges.pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "atMs": {
+            "type": "number"
+          },
+          "expiresMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "action",
+          "atMs",
+          "expiresMs"
+        ]
+      }
     },
     "onboarding.complete": {
       "$ref": "#/$defs/WkOnboarding"

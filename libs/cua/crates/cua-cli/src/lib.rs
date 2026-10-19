@@ -45,6 +45,7 @@ mod mcp;
 mod persistent_cmd;
 mod providers;
 mod resources_view;
+mod risky;
 pub mod sandbox;
 mod shell;
 mod skills;

@@ -14,12 +14,12 @@ tools below are missing, ask the user to run `cua agents setup` or
 | Tool | Use |
 |---|---|
 | `list_spaces` | See the Spaces you can use. Start here. |
-| `create_space` | A new Space: `on` = `local` (free, the user's machine), `cloud` (metered), or `host:<name>` (one of the user's machines set up with `cua host setup`); `reuse: true` returns a reachable one first. |
+| `create_space` | A new Space: `on` = `local` (free, the user's machine), `aws`, `gcp` or `modal` (the user's own cloud account, billed there), or `host:<name>` (one of the user's machines set up with `cua host setup`); `reuse: true` returns a reachable one first. |
 | `add_space` / `remove_space` | Register an existing machine by URL and token, or forget one without deleting it. |
-| `delete_space` | Delete a Space's sandbox and stop metering. |
+| `delete_space` | Delete a Space's sandbox and stop its cost. |
 | `stop_space` / `start_space` | Turn a local Space (or one your machines provide) off and back on: suspended or stopped, as `power` in `list_spaces` says. |
 
-Prefer an existing Space. A cloud Space costs money: delete the ones you
+Prefer an existing Space. A Space in the user's own cloud account costs money: delete the ones you
 created when the task ends.
 
 ## Work in it

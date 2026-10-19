@@ -113,8 +113,9 @@ impl Connection {
     }
 
     /// `create_space`: makes a new sandbox and registers it as a Space.
-    /// `options.on` says where: `cloud` is metered, `local` is free, and
-    /// unset is the user's default location (local unless configured).
+    /// `options.on` says where: a connected cloud account (`aws`, `gcp`,
+    /// `modal`) is billed there, `local` is free, and unset is the user's
+    /// default location (local unless configured).
     /// With `reuse`, a reachable registered Space in that location is
     /// returned instead.
     pub fn create_space(self: &Arc<Self>, options: CreateSpaceOptions) -> Result<Space> {

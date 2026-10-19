@@ -45,7 +45,6 @@ contributor notes** with the tag.
 | cua-bench-ui (PyPI) | `libs/python/bench-ui` | `bench-ui-v*` | `cd-py-bench-ui.yml` |
 | cua-som (PyPI) | `libs/python/som` | `som-v*` | `cd-py-som.yml` |
 | cua-sandbox-apps (PyPI) | `libs/python/cua-sandbox-apps` | `sandbox-apps-v*` | `cd-py-sandbox-apps.yml` |
-| cua-train (PyPI) | `libs/python/cua-train` | `train-v*` | `cd-py-train.yml` |
 | @trycua/core (npm) | `libs/typescript/core` | `npm-core-v*` | `cd-ts-core.yml` |
 | @trycua/playground (npm) | `libs/typescript/playground` | `npm-playground-v*` | `cd-ts-playground.yml` |
 | cuabot (npm) | `libs/cuabot` | `cuabot-v*` | `cd-ts-cuabot.yml` |

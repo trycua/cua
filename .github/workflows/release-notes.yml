@@ -25,7 +25,6 @@ on:
       - "bench-ui-v*"
       - "som-v*"
       - "sandbox-apps-v*"
-      - "train-v*"
       - "npm-core-v*"
       - "npm-playground-v*"
       - "cuabot-v*"

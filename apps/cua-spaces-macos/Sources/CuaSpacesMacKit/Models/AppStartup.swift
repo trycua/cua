@@ -631,6 +631,12 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func localStorage() async -> LocalStorage? { await b().localStorage() }
     public func cloudAvailable() async -> Bool { await b().cloudAvailable() }
     public func runningMacosVms() async -> Int? { await b().runningMacosVms() }
+    // The Machines page: Remove from account and each computer's health
+    // checks (the protocol's defaults would refuse them).
+    public func relayUnregister(id: String) async throws { try await b().relayUnregister(id: id) }
+    public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
+        try await b().machineHealth(machine: machine)
+    }
     public func cloudPricing() async -> AppCloudPricing? { await b().cloudPricing() }
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
         try await b().teleportContext(id: id)

@@ -27,7 +27,7 @@ Returned by [`Cua.auth`](/cua-sdk/reference/cua#cua).
 | [`access_token`](#authaccess_token) | A valid access token (refreshed when it expires within a minute, or when `force`). |
 | [`begin_login`](#authbegin_login) | Starts a sign-in. |
 | [`devices`](#authdevices) | This device on `relay_url` (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this machine's host setup, else `https://relay.cua.ai`) as the signed-in account, shown as `name` (default: this computer's name). |
-| [`logout`](#authlogout) | Revokes (best effort) and removes the session. |
+| [`logout`](#authlogout) | Revokes (best effort) and removes the session, and unlinks usage data from the account. |
 | [`status`](#authstatus) | The stored session (no network). |
 
 ### `Auth.access_token`
@@ -185,8 +185,8 @@ pub fn devices(&self, relay_url: Option<String>, name: Option<String>) -> Result
 
 ### `Auth.logout`
 
-Revokes (best effort) and removes the session. Returns whether one
-existed.
+Revokes (best effort) and removes the session, and unlinks usage
+data from the account. Returns whether one existed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">

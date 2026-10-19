@@ -595,6 +595,7 @@
     "cua-sdk/reference/spaces/app-core/keyvault-screens": "cua-sdk/reference/spaces",
     "cua-sdk/reference/spaces/app-core/new-space": "cua-sdk/reference/spaces",
     "cua-sdk/reference/spaces/app-core/notch": "cua-sdk/reference/spaces",
+    "cua-sdk/reference/spaces/app-core/onboarding-previews": "cua-sdk/reference/spaces",
     "cua-sdk/reference/spaces/app-core/onboarding-settings": "cua-sdk/reference/spaces",
     "cua-sdk/reference/spaces/app-core/power": "cua-sdk/reference/spaces",
     "cua-sdk/reference/spaces/app-core/run-on": "cua-sdk/reference/spaces",

@@ -1349,7 +1349,7 @@ Returned by [`Sandbox.open_media_bridge`](#sandboxopen_media_bridge).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `ws_url` / `wsUrl` | `String` |  | Loopback `ws://` URL carrying a short-lived bridge ticket. Speaks rcdp wire v2 unchanged; no Fleet bearer or env token is exposed. |
+| `ws_url` / `wsUrl` | `String` |  | Loopback `ws://` URL carrying a short-lived bridge ticket. Speaks rcdp wire v2 unchanged; no env token is exposed. |
 | `ticket` | `String` |  | The bridge ticket (also accepted as subprotocol `cua.ticket.<ticket>`). |
 | `open_media_response_json` / `openMediaResponseJson` | `String` |  | `cua.env.v1.OpenMediaResponse` as proto3 JSON (upstream ticket removed). |
 

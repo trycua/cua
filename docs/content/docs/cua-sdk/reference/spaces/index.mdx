@@ -1173,8 +1173,8 @@ as sandboxes.
 | `kind` | `Option<String>` | `None` | `auto` (default), `container` or `vm`. |
 | `runtime` | `Option<String>` | `None` | `auto` (default) or an engine the location offers for the kind. |
 | `name` | `Option<String>` | `None` | Name (default `space-<hex>`). |
-| `cpus` | `Option<u32>` | `None` | vCPUs. Local default 2; cloud 1-64 (most accounts run 1-8; Fleet decides), default the pool template's (4). |
-| `memory_mb` / `memoryMb` | `Option<u64>` | `None` | Memory in MiB. Local default 4096; cloud 512 up to 524288 (most accounts run 1024-32768; Fleet decides), default the pool template's (4096). |
+| `cpus` | `Option<u32>` | `None` | vCPUs. Local default 2. |
+| `memory_mb` / `memoryMb` | `Option<u64>` | `None` | Memory in MiB. Local default 4096. |
 | `disk_gb` / `diskGb` | `Option<u32>` | `None` | Grow the VM's disk to this many GiB (local VMs; default: the image's size, never smaller). Lume grows the macOS APFS container before the first boot; Linux images grow their root partition at boot. Containers and cloud Spaces refuse it. |
 | `timeout_ms` / `timeoutMs` | `Option<u64>` | `None` | Readiness budget (local; default 600 s). |
 | `wait` | `Option<bool>` | `None` | Wait until ready (default true). |
@@ -1293,7 +1293,7 @@ Returned by [`Spaces.gpu_support`](#spacesgpu_support).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `runtime` | `String` |  | `lume`, `qemu`, `container`, `gvisor`, `fleet`, a provider's name. |
+| `runtime` | `String` |  | `lume`, `qemu`, `container`, `gvisor`, a provider's name. |
 | `options` | [`Vec<GpuOption>`](#gpuoption-record) |  | Its options. |
 | `reason` | `String` |  | Why it has none. |
 

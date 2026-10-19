@@ -19,7 +19,7 @@ Usage::
 To control the local machine, use cua-driver (its SDK or MCP server).
 """
 
-__version__ = "0.9.0"  # x-release-please-version
+__version__ = "0.9.1"  # x-release-please-version
 
 # Retired Cua Cloud pools (every call raises CloudEnded).
 from cua_sandbox import pools  # noqa: E402

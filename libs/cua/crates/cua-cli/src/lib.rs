@@ -982,10 +982,7 @@ Examples:
 /// reference (`cua dump-docs`). Keep in step with [`exit_code`].
 pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     (0, "Success"),
-    (
-        1,
-        "Failure, or `cua do` / `cua runtime doctor` / `cua runtime setup` reported an error",
-    ),
+    (1, "Failure, or `cua do` reported an error"),
     (
         2,
         "Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`)",

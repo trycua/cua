@@ -13290,7 +13290,7 @@
   },
   {
    "code": 1,
-   "meaning": "Failure, or `cua do` / `cua runtime doctor` / `cua runtime setup` reported an error"
+   "meaning": "Failure, or `cua do` reported an error"
   },
   {
    "code": 2,

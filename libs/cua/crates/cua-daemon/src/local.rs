@@ -1256,7 +1256,7 @@ pub fn doctor_checks(r: &DoctorReport) -> Vec<cua_proto::daemon::v1::RuntimeChec
             let not_applicable = match b.backend {
                 BackendKind::Lume => !r.lume.supported_host,
                 BackendKind::Managed => !cua_vmm::managed::supported(),
-                _ => r.backends.iter().any(|other| other.ready),
+                _ => false,
             };
             let status = if b.ready {
                 CheckStatus::Ok
@@ -1967,7 +1967,7 @@ mod tests {
     }
 
     #[test]
-    fn healthy_linux_does_not_require_alternative_backends() {
+    fn doctor_preserves_backend_failures_when_docker_is_ready() {
         use cua_proto::daemon::v1::CheckStatus;
         use cua_vmm::auto::BackendStatus;
         let mut report = qemu_report(true);
@@ -1988,19 +1988,26 @@ mod tests {
         }
         let checks = super::doctor_checks(&report);
         assert_eq!(checks[0].status, CheckStatus::Ok as i32);
-        assert!(
-            checks[1..]
-                .iter()
-                .all(|c| c.status == CheckStatus::NotApplicable as i32)
+        assert_eq!(checks[1].status, CheckStatus::NotApplicable as i32);
+        assert_eq!(
+            checks[2].status,
+            if cua_vmm::managed::supported() {
+                CheckStatus::Error
+            } else {
+                CheckStatus::NotApplicable
+            } as i32
         );
-        // Docker alone is also a usable runtime, even without a QEMU installer.
+        assert_eq!(checks[3].status, CheckStatus::Error as i32);
         report.backends[0].ready = false;
         report.backends[0].provisionable = false;
         report.backends[3].ready = true;
-        assert!(
-            super::doctor_checks(&report)
-                .iter()
-                .all(|c| c.status != CheckStatus::Error as i32)
+        let checks = super::doctor_checks(&report);
+        assert_eq!(checks[0].status, CheckStatus::Error as i32);
+        assert_eq!(checks[3].status, CheckStatus::Ok as i32);
+        report.backends[0].provisionable = true;
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Installable as i32
         );
     }
 

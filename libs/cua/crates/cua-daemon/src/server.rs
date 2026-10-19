@@ -640,9 +640,8 @@ impl Svc {
 
     /// The env connection and WebSocket headers a media bridge for `name`
     /// relays to: a registered Space (a `relay:` or legacy `space://…` id, or
-    /// a name the Spaces
-    /// registry resolves when no sandbox has it), with its gateway headers
-    /// (Fleet bearer, claim, env token), else a sandbox.
+    /// a name the Spaces registry resolves when no sandbox has it), with its
+    /// gateway headers (relay or env token), else a sandbox.
     async fn media_upstream(
         &self,
         name: &str,

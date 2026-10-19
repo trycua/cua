@@ -12951,7 +12951,7 @@
      "usage": "cua volume status [OPTIONS]"
     },
     {
-     "abstract": "Which store the drive uses (fs, s3, cloud)",
+     "abstract": "Which store the drive uses (fs, s3)",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -13001,7 +13001,7 @@
          "aliases": [],
          "default_value": null,
          "env": null,
-         "help": "`fs` (default), `s3`, or `cloud` (off unless the Cua cloud enables it)",
+         "help": "`fs` (default) or `s3`",
          "hidden": false,
          "is_optional": false,
          "multiple_values": false,

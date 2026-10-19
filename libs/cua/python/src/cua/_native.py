@@ -669,13 +669,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_constructor_cua_connect() != 19646:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_constructor_cua_embedded() != 36838:
+    if lib.uniffi_cua_sdk_checksum_constructor_cua_embedded() != 26623:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_agent_setup() != 50422:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_auth() != 19106:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 40955:
+    if lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 45933:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_info() != 11159:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -683,13 +683,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_mode() != 63626:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 8394:
+    if lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 892:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() != 57559:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_spaces() != 35262:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 28670:
+    if lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_approve() != 49147:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -877,7 +877,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_portforward_local_addr() != 55098:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_portforward_url() != 43553:
+    if lib.uniffi_cua_sdk_checksum_method_portforward_url() != 60604:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_constructor_presenceview_new() != 9981:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -913,11 +913,11 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_agents() != 53699:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_delete() != 55409:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_delete() != 17492:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_detach() != 34045:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_detach() != 26534:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_forward() != 37775:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_forward() != 19019:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_guest_display() != 23945:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -933,7 +933,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_is_ephemeral() != 27021:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_keep_alive() != 63020:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_keep_alive() != 3593:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_kind() != 13493:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -943,7 +943,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_mcp() != 8773:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_mcp_config() != 43800:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_mcp_config() != 64194:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_name() != 58395:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -951,7 +951,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_overlay() != 32673:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_public_url() != 36853:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_public_url() != 6460:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_refresh() != 45835:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -981,15 +981,15 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_connect() != 12250:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_connect_url() != 55493:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_connect_url() != 19950:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_create() != 63062:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_create() != 52749:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_delete() != 43939:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_get() != 32181:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_list() != 18675:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_list() != 6497:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_list_all() != 9098:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1003,9 +1003,9 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_service_name() != 19159:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_service_public_url() != 16809:
+    if lib.uniffi_cua_sdk_checksum_method_service_public_url() != 37714:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_service_request() != 12324:
+    if lib.uniffi_cua_sdk_checksum_method_service_request() != 31558:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_service_url() != 25888:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -9101,9 +9101,8 @@ class _UniffiFfiConverterTypeContainer(_UniffiConverterRustBuffer):
 @dataclass
 class FleetSettings:
     """
-    Fleet credentials and endpoints. Unset fields fall back to the
-    environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
-    `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
+    Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
+    reads them any more. Kept so existing callers still compile.
 """
     def __init__(self, *, base_url:typing.Optional[str] = _DEFAULT, token_url:typing.Optional[str] = _DEFAULT, client_id:typing.Optional[str] = _DEFAULT, client_secret:typing.Optional[str] = _DEFAULT, token:typing.Optional[str] = _DEFAULT):
         if base_url is _DEFAULT:
@@ -14923,10 +14922,10 @@ class _UniffiFfiConverterSequenceTypeBuildFile(_UniffiConverterRustBuffer):
 @dataclass
 class ImageBuild:
     """
-    Image layers built on top of a sandbox's image. Cloud: a remote build
-    (Fleet images API). Local: a build into the container engine (container
-    images only; VM images take no layers here). Both are cached by the same
-    content hash (`cua-b-<hash>`), so an identical spec never rebuilds.
+    Image layers built on top of a sandbox's image. Local: a build into the
+    container engine (container images only; VM images take no layers here),
+    cached by a content hash (`cua-b-<hash>`), so an identical spec never
+    rebuilds. (Cua Cloud's remote build has ended.)
 """
     def __init__(self, *, layers:typing.List[ImageLayer] = _DEFAULT, env:dict[str, str] = _DEFAULT, ports:typing.List[int] = _DEFAULT, files:typing.List[BuildFile] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT):
         if layers is _DEFAULT:
@@ -21909,10 +21908,10 @@ class CuaError:  # type: ignore
     _UniffiTempCuaError.NotFound = NotFound # type: ignore
     class ProviderNotConfigured(_UniffiTempCuaError):
         """
-        The provider is not configured (for example no Fleet credentials).
+        The provider is not configured (for example no credentials for it).
 
-        Fix: Set `FLEETS_TOKEN`, or `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`, or
-        run `cua auth login` and create the client with `fleet_from_session`.
+        Fix: Set the credentials the message names (for a contrib provider, its
+        environment variable or `cua auth provider set <name>`).
 """
         def __repr__(self):
             return "CuaError.ProviderNotConfigured({})".format(repr(str(self)))
@@ -21949,23 +21948,22 @@ class CuaError:  # type: ignore
     _UniffiTempCuaError.Timeout = Timeout # type: ignore
     class Fleet(_UniffiTempCuaError):
         """
-        Fleet API failure.
+        Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
+        this.
 
-        Fix: Read the status in the message. Retry a transient failure; check
-        the credentials and the account's capacity otherwise.
+        Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+        ended guide.
 """
         def __repr__(self):
             return "CuaError.Fleet({})".format(repr(str(self)))
     _UniffiTempCuaError.Fleet = Fleet # type: ignore
     class FleetAdmissionDenied(_UniffiTempCuaError):
         """
-        Fleet's admission refused the request: a sandbox or pool size over
-        this account's limits, or a template its policy does not admit. The
-        message is Fleet's own and names the limit.
+        Fleet's admission refused the request. Cua Cloud has ended, so the SDK
+        no longer raises this.
 
-        Fix: Pick a size within the limit the message names (most accounts
-        run 1-8 vCPUs and 1-32 GiB per sandbox), or contact Cua support to
-        raise the account's limits.
+        Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+        ended guide.
 """
         def __repr__(self):
             return "CuaError.FleetAdmissionDenied({})".format(repr(str(self)))
@@ -22017,8 +22015,7 @@ class CuaError:  # type: ignore
         """
         Missing or wrong token or ticket.
 
-        Fix: Pass the sandbox's env token, refresh the Fleet credentials, or run
-        `cua auth login` again.
+        Fix: Pass the sandbox's env token, or run `cua auth login` again.
 """
         def __repr__(self):
             return "CuaError.Unauthenticated({})".format(repr(str(self)))
@@ -22100,9 +22097,10 @@ class CuaError:  # type: ignore
     class PoolSpecMismatch(_UniffiTempCuaError):
         """
         A named cloud pool's template differs from the requested sandbox
-        fields; the message holds the diff (pass `apply` to update it).
+        fields. Cua Cloud has ended, so the SDK no longer raises this.
 
-        Fix: Pass the pool's own fields, or pass `apply` to update its template.
+        Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+        ended guide.
 """
         def __repr__(self):
             return "CuaError.PoolSpecMismatch({})".format(repr(str(self)))
@@ -22110,10 +22108,11 @@ class CuaError:  # type: ignore
     class ClaimSecretsNotDelivered(_UniffiTempCuaError):
         """
         A claim bound but its per-claim secrets (the env token) never
-        reached the sandbox within the bounded wait; the claim was released.
+        reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
+        this.
 
-        Fix: Retry. If it keeps failing, check the pool's claim-secrets setup
-        and the Fleet status.
+        Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+        ended guide.
 """
         def __repr__(self):
             return "CuaError.ClaimSecretsNotDelivered({})".format(repr(str(self)))
@@ -25195,7 +25194,8 @@ class _UniffiFfiConverterOptionalTypeFleetUsagePricing(_UniffiConverterRustBuffe
 
 class FleetProtocol(typing.Protocol):
     """
-    Fleet control plane.
+    Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+    one, so none of its methods can be called.
 """
 
     async def acquire(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetSandbox:
@@ -25368,7 +25368,8 @@ class FleetProtocol(typing.Protocol):
 
 class Fleet(FleetProtocol):
     """
-    Fleet control plane.
+    Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+    one, so none of its methods can be called.
 """
 
     _handle: ctypes.c_uint64
@@ -26381,7 +26382,7 @@ class PortForwardProtocol(typing.Protocol):
         raise NotImplementedError
     def url(self, ) -> typing.Optional[str]:
         """
-        URL to use (loopback URL, or the Fleet gateway URL).
+        URL to use (a loopback URL).
 """
         raise NotImplementedError
 
@@ -26468,7 +26469,7 @@ class PortForward(PortForwardProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def url(self, ) -> typing.Optional[str]:
         """
-        URL to use (loopback URL, or the Fleet gateway URL).
+        URL to use (a loopback URL).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -27102,17 +27103,15 @@ class ServiceProtocol(typing.Protocol):
         """
         A shareable URL for this service that stops working after
         `ttl_seconds` (60 s to 24 h, default 1 h): the same as
-        `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
-        Local: a loopback URL with its own token, served by the cua daemon.
+        `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+        served by the cua daemon.
 """
         raise NotImplementedError
     async def request(self, method: str,path: str,body: typing.Optional[bytes],timeout_ms: typing.Optional[int],headers: typing.Union[object, typing.Optional[typing.List[HttpHeader]]] = _DEFAULT) -> HttpResponse:
         """
-        One HTTP request to `path` on the service. Credentials (Fleet bearer
-        and claim) are attached by the runtime. `headers` are sent as given
-        (for example `content-type`, or `accept` and `mcp-session-id` for
-        MCP over Fleet); `authorization` is refused on Fleet, where the
-        gateway bearer owns it.
+        One HTTP request to `path` on the service. Credentials are attached by
+        the runtime. `headers` are sent as given (for example `content-type`,
+        or `accept` and `mcp-session-id` for MCP).
 """
         raise NotImplementedError
     async def url(self, ) -> str:
@@ -27240,8 +27239,8 @@ class Service(ServiceProtocol):
         """
         A shareable URL for this service that stops working after
         `ttl_seconds` (60 s to 24 h, default 1 h): the same as
-        `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
-        Local: a loopback URL with its own token, served by the cua daemon.
+        `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+        served by the cua daemon.
 """
 
         if ttl_seconds is _DEFAULT:
@@ -27268,11 +27267,9 @@ class Service(ServiceProtocol):
         )
     async def request(self, method: str,path: str,body: typing.Optional[bytes],timeout_ms: typing.Optional[int],headers: typing.Union[object, typing.Optional[typing.List[HttpHeader]]] = _DEFAULT) -> HttpResponse:
         """
-        One HTTP request to `path` on the service. Credentials (Fleet bearer
-        and claim) are attached by the runtime. `headers` are sent as given
-        (for example `content-type`, or `accept` and `mcp-session-id` for
-        MCP over Fleet); `authorization` is refused on Fleet, where the
-        gateway bearer owns it.
+        One HTTP request to `path` on the service. Credentials are attached by
+        the runtime. `headers` are sent as given (for example `content-type`,
+        or `accept` and `mcp-session-id` for MCP).
 """
 
         _UniffiFfiConverterString.check_lower(method)
@@ -29477,22 +29474,21 @@ class SandboxProtocol(typing.Protocol):
         raise NotImplementedError
     async def delete(self, ) -> None:
         """
-        Deletes (Fleet: releases the claim and an ephemeral pool).
+        Deletes (local: removes it; direct: forgets it; your cloud: deletes
+        the machine).
 """
         raise NotImplementedError
     def detach(self, ) -> None:
         """
-        Managed Fleet claims: stop renewing the claim and forget the handle;
-        the claim runs until its current shutdown time. Embedded runtime
-        only (a daemon holds its claims by design).
+        Forgets the handle this runtime holds (a Cua Cloud claim used to
+        stop renewing; Cua Cloud has ended). Embedded runtime only.
 """
         raise NotImplementedError
     async def forward(self, port: int) -> PortForward:
         """
         Forwards a loopback port to guest `port`: a TCP forward locally (and
-        over cua-spacesd's tunnel when the image has it); in the cloud
-        without cua-spacesd, a loopback HTTP/WebSocket proxy through the
-        Fleet gateway. Either way `url()` is a loopback URL.
+        over cua-spacesd's tunnel when the image has it). `url()` is a
+        loopback URL.
 """
         raise NotImplementedError
     async def guest_display(self, ) -> GuestDisplay:
@@ -29543,7 +29539,7 @@ class SandboxProtocol(typing.Protocol):
         raise NotImplementedError
     async def keep_alive(self, seconds: int) -> None:
         """
-        Extends a Fleet lease by `seconds`.
+        Extends the sandbox's lease by `seconds`, for a provider that has one.
 """
         raise NotImplementedError
     def kind(self, ) -> str:
@@ -29574,9 +29570,8 @@ class SandboxProtocol(typing.Protocol):
         """
         Where the MCP server behind `service` is (URL of its endpoint at
         `path`, default `/mcp`, plus the headers every request needs), for
-        any MCP client. Embedded: the service route itself (loopback, or the
-        Fleet gateway with a fresh bearer and claim header). Daemon: the
-        daemon's streaming passthrough with its loopback bearer.
+        any MCP client. Embedded: the service route itself (loopback).
+        Daemon: the daemon's streaming passthrough with its loopback bearer.
 """
         raise NotImplementedError
     def name(self, ) -> str:
@@ -29604,9 +29599,8 @@ class SandboxProtocol(typing.Protocol):
     async def public_url(self, service: str,ttl_seconds: typing.Union[object, typing.Optional[int]] = _DEFAULT,label: typing.Union[object, typing.Optional[str]] = _DEFAULT) -> PublicUrl:
         """
         A shareable URL for `service` that stops working after `ttl_seconds`
-        (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
-        Local: a loopback URL with its own token, served by the cua daemon
-        (started if needed; `CUA_BIN` names the CLI).
+        (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+        by the cua daemon (started if needed; `CUA_BIN` names the CLI).
 """
         raise NotImplementedError
     async def refresh(self, ) -> SandboxInfo:
@@ -29732,7 +29726,8 @@ class Sandbox(SandboxProtocol):
         )
     async def delete(self, ) -> None:
         """
-        Deletes (Fleet: releases the claim and an ephemeral pool).
+        Deletes (local: removes it; direct: forgets it; your cloud: deletes
+        the machine).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -29749,9 +29744,8 @@ class Sandbox(SandboxProtocol):
         )
     def detach(self, ) -> None:
         """
-        Managed Fleet claims: stop renewing the claim and forget the handle;
-        the claim runs until its current shutdown time. Embedded runtime
-        only (a daemon holds its claims by design).
+        Forgets the handle this runtime holds (a Cua Cloud claim used to
+        stop renewing; Cua Cloud has ended). Embedded runtime only.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -29767,9 +29761,8 @@ class Sandbox(SandboxProtocol):
     async def forward(self, port: int) -> PortForward:
         """
         Forwards a loopback port to guest `port`: a TCP forward locally (and
-        over cua-spacesd's tunnel when the image has it); in the cloud
-        without cua-spacesd, a loopback HTTP/WebSocket proxy through the
-        Fleet gateway. Either way `url()` is a loopback URL.
+        over cua-spacesd's tunnel when the image has it). `url()` is a
+        loopback URL.
 """
 
         _UniffiFfiConverterUInt16.check_lower(port)
@@ -29919,7 +29912,7 @@ class Sandbox(SandboxProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def keep_alive(self, seconds: int) -> None:
         """
-        Extends a Fleet lease by `seconds`.
+        Extends the sandbox's lease by `seconds`, for a provider that has one.
 """
 
         _UniffiFfiConverterUInt32.check_lower(seconds)
@@ -30015,9 +30008,8 @@ class Sandbox(SandboxProtocol):
         """
         Where the MCP server behind `service` is (URL of its endpoint at
         `path`, default `/mcp`, plus the headers every request needs), for
-        any MCP client. Embedded: the service route itself (loopback, or the
-        Fleet gateway with a fresh bearer and claim header). Daemon: the
-        daemon's streaming passthrough with its loopback bearer.
+        any MCP client. Embedded: the service route itself (loopback).
+        Daemon: the daemon's streaming passthrough with its loopback bearer.
 """
 
         _UniffiFfiConverterString.check_lower(service)
@@ -30110,9 +30102,8 @@ class Sandbox(SandboxProtocol):
     async def public_url(self, service: str,ttl_seconds: typing.Union[object, typing.Optional[int]] = _DEFAULT,label: typing.Union[object, typing.Optional[str]] = _DEFAULT) -> PublicUrl:
         """
         A shareable URL for `service` that stops working after `ttl_seconds`
-        (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
-        Local: a loopback URL with its own token, served by the cua daemon
-        (started if needed; `CUA_BIN` names the CLI).
+        (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+        by the cua daemon (started if needed; `CUA_BIN` names the CLI).
 """
 
         _UniffiFfiConverterString.check_lower(service)
@@ -30420,14 +30411,14 @@ class SandboxesProtocol(typing.Protocol):
     async def connect_url(self, url: str,token: typing.Optional[str],name: typing.Optional[str]) -> Sandbox:
         """
         Connects directly to a machine by URL (`http(s)://host:port`, bare
-        `host:port`, a Fleet service URL or a relay URL) with an optional
-        spacesd token. No daemon is assumed and nothing is probed.
+        `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
 """
         raise NotImplementedError
     async def create(self, options: SandboxCreateOptions) -> Sandbox:
         """
-        Creates (Fleet, local) or connects (direct) a sandbox and waits for
-        the provider and every readiness probe.
+        Creates (local, your cloud, a provider) or connects (direct) a sandbox
+        and waits for the provider and every readiness probe. `on: "cloud"`
+        fails with the "Cua Cloud has ended" error.
 """
         raise NotImplementedError
     async def delete(self, name: str) -> None:
@@ -30446,10 +30437,8 @@ class SandboxesProtocol(typing.Protocol):
         all of them, local, direct and the account's live cloud sandboxes,
         whatever the default location is. `"local"`, `"cloud"` or
         `"direct"`: only those.
-        Cloud sandboxes never fail the listing: without Fleet credentials
-        they are left out silently, and when Fleet fails or takes longer than
-        5 s they are left out with a warning (logged here;
-        [`Sandboxes::list_with_warnings`] returns it).
+        Cua Cloud has ended: its sandboxes are never listed, and listing
+        never asks Fleet.
 """
         raise NotImplementedError
     async def list_all(self, ) -> typing.List[SandboxInfo]:
@@ -30549,8 +30538,7 @@ class Sandboxes(SandboxesProtocol):
     async def connect_url(self, url: str,token: typing.Optional[str],name: typing.Optional[str]) -> Sandbox:
         """
         Connects directly to a machine by URL (`http(s)://host:port`, bare
-        `host:port`, a Fleet service URL or a relay URL) with an optional
-        spacesd token. No daemon is assumed and nothing is probed.
+        `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
 """
 
         _UniffiFfiConverterString.check_lower(url)
@@ -30576,8 +30564,9 @@ class Sandboxes(SandboxesProtocol):
         )
     async def create(self, options: SandboxCreateOptions) -> Sandbox:
         """
-        Creates (Fleet, local) or connects (direct) a sandbox and waits for
-        the provider and every readiness probe.
+        Creates (local, your cloud, a provider) or connects (direct) a sandbox
+        and waits for the provider and every readiness probe. `on: "cloud"`
+        fails with the "Cua Cloud has ended" error.
 """
 
         _UniffiFfiConverterTypeSandboxCreateOptions.check_lower(options)
@@ -30641,10 +30630,8 @@ class Sandboxes(SandboxesProtocol):
         all of them, local, direct and the account's live cloud sandboxes,
         whatever the default location is. `"local"`, `"cloud"` or
         `"direct"`: only those.
-        Cloud sandboxes never fail the listing: without Fleet credentials
-        they are left out silently, and when Fleet fails or takes longer than
-        5 s they are left out with a warning (logged here;
-        [`Sandboxes::list_with_warnings`] returns it).
+        Cua Cloud has ended: its sandboxes are never listed, and listing
+        never asks Fleet.
 """
 
         _UniffiFfiConverterOptionalString.check_lower(location)
@@ -33832,8 +33819,8 @@ class _UniffiFfiConverterSequenceTypeDriveAccessRequest(_UniffiConverterRustBuff
 
 class SpacesProtocol(typing.Protocol):
     """
-    The Spaces registry: add a machine by URL, claim a Fleet Space,
-    provision a local one, and get [`Space`] handles.
+    The Spaces registry: add a machine by URL, provision a local one, and get
+    [`Space`] handles.
 """
 
     async def add(self, url: str,token: typing.Optional[str],name: typing.Optional[str]) -> SpaceInfo:
@@ -34225,8 +34212,8 @@ class SpacesProtocol(typing.Protocol):
 
 class Spaces(SpacesProtocol):
     """
-    The Spaces registry: add a machine by URL, claim a Fleet Space,
-    provision a local one, and get [`Space`] handles.
+    The Spaces registry: add a machine by URL, provision a local one, and get
+    [`Space`] handles.
 """
 
     _handle: ctypes.c_uint64
@@ -35779,8 +35766,8 @@ class _UniffiFfiConverterTypeSpaces:
 class CuaProtocol(typing.Protocol):
     """
     The entry point of the SDK: create one with `Cua::embedded` or
-    `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
-    through its accessors.
+    `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+    accessors.
 """
 
     def agent_setup(self, ) -> AgentSetup:
@@ -35797,9 +35784,8 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     def fleet(self, ) -> Fleet:
         """
-        Fleet pools, templates, claims and images. Always talks to Fleet
-        from this process with this SDK's credentials (in daemon mode, from
-        the environment).
+        Fleet pools, templates, claims and images. Cua Cloud has ended: this
+        always fails with the "Cua Cloud has ended" error and never connects.
 """
         raise NotImplementedError
     async def info(self, ) -> CuaInfo:
@@ -35820,7 +35806,7 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     def sandboxes(self, ) -> Sandboxes:
         """
-        Sandboxes (Fleet, local, direct).
+        Sandboxes (local, direct, your own cloud).
 """
         raise NotImplementedError
     async def shutdown_daemon(self, ) -> None:
@@ -35835,16 +35821,16 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     async def spacesd(self, url: str,token: typing.Optional[str]) -> SpacesdClient:
         """
-        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-        Fleet service URL or a relay URL) without a sandbox.
+        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+        relay URL) without a sandbox.
 """
         raise NotImplementedError
 
 class Cua(CuaProtocol):
     """
     The entry point of the SDK: create one with `Cua::embedded` or
-    `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
-    through its accessors.
+    `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+    accessors.
 """
 
     _handle: ctypes.c_uint64
@@ -35910,7 +35896,9 @@ class Cua(CuaProtocol):
     def embedded(cls, config: CuaConfig) -> Cua:
         """
         Runs the SDK runtime in this process. Performs no I/O beyond
-        reading the credential store when `fleet_from_session` is set.
+        reading the credential store when `fleet_from_session` is set (for
+        the relay account). It never builds a Fleet client: Cua Cloud has
+        ended.
 """
 
         _UniffiFfiConverterTypeCuaConfig.check_lower(config)
@@ -35987,9 +35975,8 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def fleet(self, ) -> Fleet:
         """
-        Fleet pools, templates, claims and images. Always talks to Fleet
-        from this process with this SDK's credentials (in daemon mode, from
-        the environment).
+        Fleet pools, templates, claims and images. Cua Cloud has ended: this
+        always fails with the "Cua Cloud has ended" error and never connects.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -36052,7 +36039,7 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def sandboxes(self, ) -> Sandboxes:
         """
-        Sandboxes (Fleet, local, direct).
+        Sandboxes (local, direct, your own cloud).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -36099,8 +36086,8 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def spacesd(self, url: str,token: typing.Optional[str]) -> SpacesdClient:
         """
-        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-        Fleet service URL or a relay URL) without a sandbox.
+        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+        relay URL) without a sandbox.
 """
 
         _UniffiFfiConverterString.check_lower(url)

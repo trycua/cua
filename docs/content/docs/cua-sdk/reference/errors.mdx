@@ -103,12 +103,12 @@ try {
 | [`InvalidArgument`](#invalidargument) | `invalid argument: <detail>` | Bad input. |
 | [`InvalidPlacement`](#invalidplacement) | `invalid placement: <detail>` | A location, kind or runtime that does not exist, or a combination of them (or with the image) that does not. |
 | [`NotFound`](#notfound) | `not found: <detail>` | No such sandbox, process, path, forward or session. |
-| [`ProviderNotConfigured`](#providernotconfigured) | `provider not configured: <detail>` | The provider is not configured (for example no Fleet credentials). |
+| [`ProviderNotConfigured`](#providernotconfigured) | `provider not configured: <detail>` | The provider is not configured (for example no credentials for it). |
 | [`Unsupported`](#unsupported) | `unsupported: <detail>` | Not supported by this provider, guest or build. |
 | [`SpacesdNotAvailable`](#spacesdnotavailable) | `cua-spacesd is not available: <detail>` | No cua-spacesd answered in the sandbox or at the URL. |
 | [`Timeout`](#timeout) | `timed out: <detail>` | A deadline elapsed. |
 | [`Fleet`](#fleet) | `fleet: <detail>` | Fleet API failure. |
-| [`FleetAdmissionDenied`](#fleetadmissiondenied) | `fleet admission denied: <detail>` | Fleet's admission refused the request: a sandbox or pool size over this account's limits, or a template its policy does not admit. |
+| [`FleetAdmissionDenied`](#fleetadmissiondenied) | `fleet admission denied: <detail>` | Fleet's admission refused the request. |
 | [`CloudCreditExhausted`](#cloudcreditexhausted) | `<detail>` | The account is out of Cua Cloud credit: no credit left, and no card or plan. |
 | [`Runtime`](#runtime) | `local runtime: <detail>` | Local runtime failure. |
 | [`Env`](#env) | `env: <detail>` | spacesd call failure. |
@@ -121,8 +121,8 @@ try {
 | [`CapabilityMissing`](#capabilitymissing) | `capability missing: <detail>` | The Space's spacesd reports a feature this call needs as unsupported (the message names it). |
 | [`HostCapabilityMissing`](#hostcapabilitymissing) | `host capability missing: <detail>` | A host-side prerequisite (app-session providers, an operator display, a local runtime) is not available. |
 | [`TeleportRefused`](#teleportrefused) | `teleport refused: <detail>` | The teleport consent gate refused (or the approver declined). |
-| [`PoolSpecMismatch`](#poolspecmismatch) | `pool spec mismatch: <detail>` | A named cloud pool's template differs from the requested sandbox fields; the message holds the diff (pass `apply` to update it). |
-| [`ClaimSecretsNotDelivered`](#claimsecretsnotdelivered) | `claim secrets not delivered: <detail>` | A claim bound but its per-claim secrets (the env token) never reached the sandbox within the bounded wait; the claim was released. |
+| [`PoolSpecMismatch`](#poolspecmismatch) | `pool spec mismatch: <detail>` | A named cloud pool's template differs from the requested sandbox fields. |
+| [`ClaimSecretsNotDelivered`](#claimsecretsnotdelivered) | `claim secrets not delivered: <detail>` | A claim bound but its per-claim secrets (the env token) never reached the sandbox. |
 | [`Internal`](#internal) | `internal: <detail>` | Bug or I/O failure. |
 | [`AmbiguousSandbox`](#ambiguoussandbox) | `ambiguous sandbox name: <detail>` | A bare sandbox name matches sandboxes in more than one location. |
 | [`InsufficientDisk`](#insufficientdisk) | `insufficient disk: <detail>` | A pull, build or VM create would leave less than the configured minimum free disk space (`CUA_DISK_MIN_FREE`, default 5 GiB); nothing was written. |
@@ -168,10 +168,10 @@ sandboxes this client can see.
 
 ## `ProviderNotConfigured`
 
-**Cause** The provider is not configured (for example no Fleet credentials).
+**Cause** The provider is not configured (for example no credentials for it).
 
-**Fix** Set `FLEETS_TOKEN`, or `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`, or
-run `cua auth login` and create the client with `fleet_from_session`.
+**Fix** Set the credentials the message names (for a contrib provider, its
+environment variable or `cua auth provider set <name>`).
 
 **Message** `provider not configured: <detail>`
 
@@ -208,22 +208,21 @@ the sandbox or service actually starts.
 
 ## `Fleet`
 
-**Cause** Fleet API failure.
+**Cause** Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
+this.
 
-**Fix** Read the status in the message. Retry a transient failure; check
-the credentials and the account's capacity otherwise.
+**Fix** Use a local sandbox or your own machine; see the Cua Cloud has
+ended guide.
 
 **Message** `fleet: <detail>`
 
 ## `FleetAdmissionDenied`
 
-**Cause** Fleet's admission refused the request: a sandbox or pool size over
-this account's limits, or a template its policy does not admit. The
-message is Fleet's own and names the limit.
+**Cause** Fleet's admission refused the request. Cua Cloud has ended, so the SDK
+no longer raises this.
 
-**Fix** Pick a size within the limit the message names (most accounts
-run 1-8 vCPUs and 1-32 GiB per sandbox), or contact Cua support to
-raise the account's limits.
+**Fix** Use a local sandbox or your own machine; see the Cua Cloud has
+ended guide.
 
 **Message** `fleet admission denied: <detail>`
 
@@ -272,8 +271,7 @@ HTTP.
 
 **Cause** Missing or wrong token or ticket.
 
-**Fix** Pass the sandbox's env token, refresh the Fleet credentials, or run
-`cua auth login` again.
+**Fix** Pass the sandbox's env token, or run `cua auth login` again.
 
 **Message** `unauthenticated: <detail>`
 
@@ -357,9 +355,10 @@ scope.
 ## `PoolSpecMismatch`
 
 **Cause** A named cloud pool's template differs from the requested sandbox
-fields; the message holds the diff (pass `apply` to update it).
+fields. Cua Cloud has ended, so the SDK no longer raises this.
 
-**Fix** Pass the pool's own fields, or pass `apply` to update its template.
+**Fix** Use a local sandbox or your own machine; see the Cua Cloud has
+ended guide.
 
 **Message** `pool spec mismatch: <detail>`
 
@@ -368,10 +367,11 @@ fields; the message holds the diff (pass `apply` to update it).
 ## `ClaimSecretsNotDelivered`
 
 **Cause** A claim bound but its per-claim secrets (the env token) never
-reached the sandbox within the bounded wait; the claim was released.
+reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
+this.
 
-**Fix** Retry. If it keeps failing, check the pool's claim-secrets setup
-and the Fleet status.
+**Fix** Use a local sandbox or your own machine; see the Cua Cloud has
+ended guide.
 
 **Message** `claim secrets not delivered: <detail>`
 

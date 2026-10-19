@@ -337,8 +337,8 @@ pub struct SpacesdHttpRequest {
     pub method: String,
     /// Absolute path under the endpoint, for example `/mcp`. Never a URL.
     pub path: String,
-    /// Extra headers. Credentials (`authorization`, the env and Fleet claim
-    /// headers) are the client's and cannot be set here.
+    /// Extra headers. Credentials (`authorization` and the env headers) are
+    /// the client's and cannot be set here.
     #[uniffi(default = [])]
     pub headers: Vec<SpacesdHttpHeader>,
     /// Request body (empty for none).
@@ -362,10 +362,10 @@ pub struct SpacesdHttpResponse {
     pub body: Vec<u8>,
 }
 
-/// Re-mints the WebSocket upgrade headers when a socket is opened. Fleet
-/// access tokens are short-lived (about five minutes), so a bearer taken when
-/// the client was created makes the gateway refuse (302) every media socket
-/// opened later on a long-lived client.
+/// Re-mints the WebSocket upgrade headers when a socket is opened. A gateway's
+/// access tokens are short-lived, so a bearer taken when the client was
+/// created makes the gateway refuse every media socket opened later on a
+/// long-lived client.
 pub(crate) type WsHeaderRefresh = Arc<
     dyn Fn() -> futures_util::future::BoxFuture<'static, Result<Vec<(String, String)>>>
         + Send
@@ -380,10 +380,11 @@ pub struct SpacesdClient {
     /// creation.
     #[cfg_attr(not(feature = "media"), allow(dead_code))]
     pub(crate) ws_headers: Vec<(String, String)>,
-    /// Fresh headers at use (cloud Spaces); `None` when they never expire.
+    /// Fresh headers at use (a Space behind a gateway); `None` when they never
+    /// expire.
     #[cfg_attr(not(feature = "media"), allow(dead_code))]
     pub(crate) ws_refresh: Option<WsHeaderRefresh>,
-    /// Where the spacesd runs (`local`, `cloud`, `direct`, `relay`), for
+    /// Where the spacesd runs (`local`, `direct`, `relay`, your cloud), for
     /// agent-run telemetry. `direct` (reached by address) unless set.
     pub(crate) location: String,
 }
@@ -408,7 +409,7 @@ impl SpacesdClient {
     }
 
     /// A client whose WebSocket headers are re-minted by `refresh` each time
-    /// a socket is opened (a cloud Space's Fleet bearer).
+    /// a socket is opened (a Space behind a gateway).
     pub(crate) fn with_ws_refresh(mut self, refresh: WsHeaderRefresh) -> Self {
         self.ws_refresh = Some(refresh);
         self
@@ -416,16 +417,16 @@ impl SpacesdClient {
 
     /// Rust hosts: headers WebSocket upgrades on this route need, as of
     /// creation. Prefer [`SpacesdClient::current_ws_headers`] for a socket
-    /// opened later: a cloud Space's bearer expires within minutes.
+    /// opened later: a gateway's bearer expires within minutes.
     pub fn ws_headers(&self) -> Vec<(String, String)> {
         self.ws_headers.clone()
     }
 
     /// Rust hosts: headers a WebSocket upgrade opened now needs, with a
-    /// fresh Fleet bearer for a cloud Space.
+    /// fresh bearer for a Space behind a gateway.
     pub async fn current_ws_headers(&self) -> Result<Vec<(String, String)>> {
         match &self.ws_refresh {
-            // On the SDK runtime: the refresh may do Fleet I/O.
+            // On the SDK runtime: the refresh may do I/O.
             Some(refresh) => run(refresh()).await,
             None => Ok(self.ws_headers.clone()),
         }
@@ -935,8 +936,8 @@ mod tests {
         }
     }
 
-    /// A long-lived client to a cloud Space: its Fleet bearer expires while
-    /// the client is held, so every media socket must carry the bearer
+    /// A long-lived client to a Space behind a gateway: its bearer expires
+    /// while the client is held, so every media socket must carry the bearer
     /// current when the socket opens, never the one from creation.
     #[tokio::test]
     async fn media_sockets_carry_the_bearer_current_at_open() {

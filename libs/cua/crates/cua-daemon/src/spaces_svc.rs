@@ -1,5 +1,5 @@
 //! `cua.daemon.v1.SpaceService`: a thin adapter over the runtime's
-//! [`cua_spaces::Spaces`]. The registry, Fleet claims, local provisioning
+//! [`cua_spaces::Spaces`]. The registry, local provisioning
 //! and every MCP tool are `cua-spaces` code; this module only converts
 //! messages. Without the `spaces` feature every call is `Unsupported`.
 

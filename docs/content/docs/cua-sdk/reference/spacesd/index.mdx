@@ -512,7 +512,7 @@ A plain-HTTP request to the spacesd port (for example MCP at `/mcp`).
 | --- | --- | --- | --- |
 | `method` | `String` |  | Method, for example `POST`. |
 | `path` | `String` |  | Absolute path under the endpoint, for example `/mcp`. Never a URL. |
-| `headers` | [`Vec<SpacesdHttpHeader>`](#spacesdhttpheader-record) | `[]` | Extra headers. Credentials (`authorization`, the env and Fleet claim headers) are the client's and cannot be set here. |
+| `headers` | [`Vec<SpacesdHttpHeader>`](#spacesdhttpheader-record) | `[]` | Extra headers. Credentials (`authorization` and the env headers) are the client's and cannot be set here. |
 | `body` | `Vec<u8>` |  | Request body (empty for none). |
 | `timeout_ms` / `timeoutMs` | `Option<u32>` | `None` | Whole-request timeout; 30 s when unset. |
 | `max_response_bytes` / `maxResponseBytes` | `Option<u64>` | `None` | Response body cap; 16 MiB when unset. |

@@ -1,8 +1,8 @@
 //! `cua daemon`: the cua SDK runtime hosted out of process.
 //!
 //! - [`Runtime`] is *the* SDK runtime: one [`cua_sandbox_core::Sandboxes`]
-//!   (Fleet, local, direct), a Fleet client, cached sandbox handles and
-//!   spacesd connections. `cua-sdk` embeds it in-process
+//!   (local, direct, your own cloud), cached sandbox handles and spacesd
+//!   connections. It never builds a Fleet client: Cua Cloud has ended. `cua-sdk` embeds it in-process
 //!   (`Cua::embedded`); the daemon hosts the same value.
 //! - [`server`] serves `cua.daemon.v1` on a Unix socket (`~/.cua/cua.sock`,
 //!   mode 0600, no token) and/or loopback TCP (bearer token). The loopback
@@ -13,7 +13,7 @@
 //!     daemon, including the `/media` WebSocket;
 //!   - the **media bridge** `/v1/bridge/media?ticket=<bridge ticket>` for
 //!     webviews: a short-lived bridge ticket from `OpenMediaBridge`, so a
-//!     browser never sees a Fleet bearer or an env token.
+//!     browser never sees an env token.
 //! - [`client::DaemonClient`] is the typed client `Cua::connect` uses.
 //!
 //! Errors cross the wire as `google.rpc.Status` with a packed
@@ -44,7 +44,6 @@ mod passthrough;
 mod runtime;
 #[cfg(feature = "server")]
 pub mod server;
-pub mod session;
 pub mod shares;
 #[cfg(feature = "server")]
 mod spaces_svc;
@@ -98,7 +97,7 @@ pub enum Error {
         /// The accepted values.
         valid: Vec<String>,
     },
-    /// Provider not configured (for example no Fleet credentials).
+    /// Provider not configured (for example a missing provider credential).
     #[error("provider not configured: {0}")]
     ProviderNotConfigured(String),
     /// The provider or this build cannot do this.

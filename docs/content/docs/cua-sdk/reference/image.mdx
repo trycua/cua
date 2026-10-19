@@ -433,10 +433,10 @@ Returned by [`Fleet.pool_image_info`](/cua-sdk/reference/fleet#fleetpool_image_i
 
 ## `ImageBuild` record
 
-Image layers built on top of a sandbox's image. Cloud: a remote build
-(Fleet images API). Local: a build into the container engine (container
-images only; VM images take no layers here). Both are cached by the same
-content hash (`cua-b-<hash>`), so an identical spec never rebuilds.
+Image layers built on top of a sandbox's image. Local: a build into the
+container engine (container images only; VM images take no layers here),
+cached by a content hash (`cua-b-<hash>`), so an identical spec never
+rebuilds. (Cua Cloud's remote build has ended.)
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |

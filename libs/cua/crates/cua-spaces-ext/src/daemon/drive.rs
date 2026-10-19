@@ -7,9 +7,9 @@
 //! The backend comes from `$CUA_HOME/volume/config.json` and `CUA_DRIVE_*`
 //! ([`cua_volume::config`]): the local store by default; an S3-compatible
 //! bucket with keys from the credential store (`drive-keys`) or the
-//! environment; or, only when configured, the Cua cloud's bucket with keys
-//! vended for the signed-in account. Nothing here does network I/O or reads
-//! a key at startup: S3 keys and cloud vends are fetched on first use.
+//! environment. A config that names the removed `cloud` backend (Cua Cloud
+//! has ended) is served as unavailable. Nothing here does network I/O or
+//! reads a key at startup: S3 keys are fetched on first use.
 //!
 //! A backend this build cannot serve (`s3` without the `s3` feature of cua-spaces-ext)
 //! is served as [`cua_volume::backend::Unavailable`], so every call names
@@ -105,28 +105,10 @@ mod s3 {
                 .map_err(|e| Error::Backend(format!("credential store: {e}")))
         }
     }
-
-    /// The Fleet client's bearer (the signed-in account, or client
-    /// credentials).
-    pub struct FleetTokens(pub cua_fleet::FleetClient);
-
-    #[async_trait::async_trait]
-    impl TokenSource for FleetTokens {
-        async fn token(&self) -> Result<String> {
-            self.0
-                .access_token(false)
-                .await
-                .map_err(|e| Error::Forbidden(format!("Cua cloud sign-in: {e}")))
-        }
-    }
 }
 
-/// The backend `config` names, for a runtime whose Fleet client is `fleet`.
-pub fn backend(
-    config: &DriveConfig,
-    home: &Path,
-    fleet: Option<&cua_fleet::FleetClient>,
-) -> Arc<dyn cua_volume::Backend> {
+/// The backend `config` names.
+pub fn backend(config: &DriveConfig, home: &Path) -> Arc<dyn cua_volume::Backend> {
     let data = cua_volume::state_dir(home).join("data");
     match config.backend {
         BackendKind::Fs => Arc::new(cua_volume::fs::FsBackend::new(data)),
@@ -150,36 +132,10 @@ pub fn backend(
                 Err(e) => Arc::new(cua_volume::backend::Unavailable(e.to_string())),
             }
         }
-        #[cfg(feature = "s3")]
-        BackendKind::Cloud => {
-            use cua_volume::s3::{CloudBackend, CloudVendor, VendRequest};
-            let Some(fleet) = fleet else {
-                return Arc::new(cua_volume::backend::Unavailable(
-                    "the drive is set to cloud but this runtime is not signed in to Cua (`cua auth login`)".into(),
-                ));
-            };
-            let vendor = CloudVendor::new(
-                &fleet.config().base_url,
-                Arc::new(s3::FleetTokens(fleet.clone())),
-                VendRequest {
-                    principal: "user".into(),
-                    space: None,
-                    ttl_secs: config.cloud_ttl_secs(),
-                },
-            );
-            match vendor {
-                Ok(v) => Arc::new(CloudBackend::new(Arc::new(v))),
-                Err(e) => Arc::new(cua_volume::backend::Unavailable(e.to_string())),
-            }
-        }
         #[cfg(not(feature = "s3"))]
-        other => {
-            let _ = fleet;
-            Arc::new(cua_volume::backend::Unavailable(format!(
-                "the drive is set to {} but this build has no S3 support; use the `cua` daemon",
-                other.as_str()
-            )))
-        }
+        BackendKind::S3 => Arc::new(cua_volume::backend::Unavailable(
+            "the drive is set to s3 but this build has no S3 support; use the `cua` daemon".into(),
+        )),
     }
 }
 
@@ -198,18 +154,19 @@ pub fn keys() -> Arc<dyn cua_volume::service::KeyStore> {
 
 /// The drive of the cua home `home`: the configured backend, grants and
 /// audit under `<home>/volume`, and `presence` for widening access.
-pub fn open(
-    home: &Path,
-    fleet: Option<&cua_fleet::FleetClient>,
-    presence: Arc<dyn Presence>,
-) -> Drive {
+pub fn open(home: &Path, presence: Arc<dyn Presence>) -> Drive {
     let backend: Arc<dyn cua_volume::Backend> = match DriveConfig::load(home) {
-        Ok(config) => backend(&config, home, fleet),
+        Ok(config) => backend(&config, home),
         Err(e) => {
             tracing::warn!(error = %e, "drive: config unreadable; the drive refuses every call");
-            Arc::new(cua_volume::backend::Unavailable(format!(
-                "drive/config.json: {e}"
-            )))
+            // The ended cloud backend says so in its own words.
+            let why = match &e {
+                cua_volume::Error::Invalid(m) if m == cua_volume::config::CLOUD_BACKEND_ENDED => {
+                    m.clone()
+                }
+                _ => format!("drive/config.json: {e}"),
+            };
+            Arc::new(cua_volume::backend::Unavailable(why))
         }
     };
     Drive::new(backend, cua_volume::state_dir(home)).with_presence(presence)
@@ -229,19 +186,37 @@ mod tests {
     #[test]
     fn the_local_store_is_the_default_and_bad_config_is_loud() {
         let home = tempfile::tempdir().unwrap();
-        let d = open(home.path(), None, Arc::new(Yes));
+        let d = open(home.path(), Arc::new(Yes));
         assert_eq!(d.backend().kind(), "fs");
         std::fs::create_dir_all(home.path().join("volume")).unwrap();
         std::fs::write(home.path().join("volume/config.json"), "{not json").unwrap();
-        let d = open(home.path(), None, Arc::new(Yes));
+        let d = open(home.path(), Arc::new(Yes));
         assert_eq!(d.backend().kind(), "unavailable");
+    }
+
+    /// A config that still names the removed `cloud` backend is served as
+    /// unavailable, with the reason in its own words (never another store).
+    #[tokio::test]
+    async fn the_ended_cloud_backend_is_unavailable_with_a_clear_message() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("volume")).unwrap();
         std::fs::write(
             home.path().join("volume/config.json"),
-            r#"{"backend":"cloud"}"#,
+            r#"{"backend":"cloud","cloud_ttl_secs":900}"#,
         )
         .unwrap();
-        let d = open(home.path(), None, Arc::new(Yes));
-        assert_eq!(d.backend().kind(), "unavailable", "cloud needs a sign-in");
+        let d = open(home.path(), Arc::new(Yes));
+        assert_eq!(d.backend().kind(), "unavailable");
+        let e = d
+            .backend()
+            .head("agents/ada/x")
+            .await
+            .expect_err("an unavailable backend refuses every call");
+        assert!(
+            e.to_string()
+                .contains("the Cua cloud drive backend has ended; use fs or s3"),
+            "{e}"
+        );
     }
 
     /// Opt-in (run by `crates/cua-volume/tests/run-minio.sh`, which sets a

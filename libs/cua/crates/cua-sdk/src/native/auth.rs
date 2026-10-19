@@ -208,7 +208,7 @@ impl Auth {
         Arc::new(Auth { session })
     }
 
-    /// The underlying session (Rust hosts: a Fleet token provider).
+    /// The underlying session (Rust hosts).
     pub fn session(&self) -> Arc<cua_auth::Session> {
         self.session.clone()
     }

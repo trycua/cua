@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use cua_sandbox_core::{
-    Error, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime,
-    LocalStartSpec, LocalState, LocalSummary, PortExposure, PowerControl, PowerState, Provider,
+    Error, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec,
+    LocalState, LocalSummary, PortExposure, PowerControl, PowerState, Provider,
     ProviderCapabilities, ProviderCreate, ProviderInstance, ProviderKind, Result, RunKind,
     RuntimeError, RuntimeResult, SandboxState, Sandboxes, ServiceEndpoint, Status, StopReason,
 };

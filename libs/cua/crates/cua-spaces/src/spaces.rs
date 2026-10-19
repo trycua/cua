@@ -1353,8 +1353,7 @@ impl Spaces {
                         // refreshed) per call; the relay checks both and
                         // swaps them for its signed identity assertion.
                         let bearer = crate::relay::RelayBearer { account: relay };
-                        let mut o =
-                            ConnectOptions::parse(&url)?.gateway(Arc::new(bearer));
+                        let mut o = ConnectOptions::parse(&url)?.gateway(Arc::new(bearer));
                         o.token = credential.token.clone();
                         (Some(o), None)
                     }
@@ -2817,5 +2816,4 @@ mod tests {
             assert!(!is_generated_name(other), "{other}");
         }
     }
-
 }

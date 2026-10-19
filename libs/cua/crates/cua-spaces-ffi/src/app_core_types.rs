@@ -3237,7 +3237,7 @@ pub struct AppPlacementOption {
 pub type AppGpuChoice = core::wizard::GpuChoice;
 #[uniffi::remote(Record)]
 pub struct AppGpuChoice {
-    /// `lume`, `qemu`, `container`, `gvisor`.
+    /// `lume`, `qemu`, `container`, `gvisor`, `cloud`.
     pub runtime: String,
     /// What the create passes as `gpu` (`paravirtual`).
     pub id: String,

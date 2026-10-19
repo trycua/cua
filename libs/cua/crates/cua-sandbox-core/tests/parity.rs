@@ -215,7 +215,6 @@ async fn local_image_layers_build_locally_then_run_the_built_image() {
     assert_eq!(rt.specs.lock().unwrap().len(), 1);
 }
 
-
 #[tokio::test]
 async fn network_none_reaches_the_local_runtime() {
     assert_eq!(NetworkMode::parse("").unwrap(), NetworkMode::Default);

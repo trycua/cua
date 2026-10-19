@@ -185,3 +185,12 @@ def test_configure_still_takes_the_retired_cloud_options():
 
     with pytest.warns(DeprecationWarning, match="Cua Cloud has ended"):
         configure(client_id="id", client_secret="secret")
+
+
+async def test_an_unknown_bare_name_is_not_found_locally(monkeypatch):
+    # A bare name used to fall through to the cloud; now it is a local lookup.
+    monkeypatch.setattr(sandbox_module, "_remove_orphan_container", lambda name: False)
+    with pytest.raises(ValueError, match="No local sandbox named 'nope'"):
+        await Sandbox.connect("nope")
+    with pytest.raises(ValueError, match="No local sandbox named 'nope'"):
+        await Sandbox.delete("nope")

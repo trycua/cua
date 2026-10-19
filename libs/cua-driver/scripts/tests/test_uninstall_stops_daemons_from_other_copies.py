@@ -218,6 +218,24 @@ def test_uninstaller_stops_a_daemon_from_another_copy_of_the_app(machine: Machin
     assert old.exists(), "stopping a daemon must not delete the app"
 
 
+def test_pid_file_daemon_from_another_copy_is_described_when_stopped(machine: Machine) -> None:
+    old = machine.bundle("Downloads/CuaDriver.app", version="0.34.0")
+    stray = machine.spawn(old)
+    pid_file = machine.root / "daemon.pid"
+    pid_file.write_text(f"{stray}\n", encoding="utf-8")
+    helper = machine.root / "trusted-helper"
+    machine._write(helper, '[ "$2" = "$STRAY" ] && kill "$2"')
+
+    result = machine.uninstall_shell(
+        f'DAEMON_PID_FILE="{pid_file}"\nDAEMON_STOP_HELPER="{helper}"\nexport STRAY={stray}\n'
+        "stop_release_daemon"
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert machine.wait_dead(stray)
+    assert f"stopped Cua Driver daemon (pid {stray}, version 0.34.0, {old})" in result.stdout
+
+
 def test_uninstaller_tries_a_graceful_stop_through_the_copys_own_cli_first(machine: Machine) -> None:
     old = machine.bundle(
         "Downloads/CuaDriver.app",

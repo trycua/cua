@@ -444,10 +444,18 @@ stop_stray_release_daemons() {
 }
 
 stop_release_daemon() {
-    local pid="" helper="${DAEMON_STOP_HELPER:-}" generation="" status=0 helper_stderr=""
+    local pid="" helper="${DAEMON_STOP_HELPER:-}" generation="" status=0 helper_stderr="" label="" bundle="" version=""
     if [[ -n "${DAEMON_PID_FILE:-}" ]] \
         && pid="$(read_daemon_pid "$DAEMON_PID_FILE" 2>/dev/null)" \
         && daemon_pid_alive "$pid"; then
+        # Describe the daemon now: once it has exited there is nothing left to read.
+        label="$(daemon_process_identity "$pid" 2>/dev/null || true)"
+        bundle="$(cua_driver_bundle_of_command "$label" || true)"
+        if [[ -n "$bundle" ]]; then
+            version="$(cua_driver_plist_string "$bundle/Contents/Info.plist" CFBundleShortVersionString || true)"
+            label="$bundle"
+        fi
+        label="pid $pid, ${version:+version $version, }${label:-unknown path}"
         daemon_pid_is_release "$pid" || status=$?
         if [[ "$status" == "2" ]]; then
             printf 'daemon_stop_incomplete: failed to identify live daemon pid %s safely.\n' "$pid" >&2
@@ -488,7 +496,7 @@ stop_release_daemon() {
                     fi
                 fi
             fi
-            log "stopped Cua Driver daemon pid $pid (pid-file daemon)"
+            log "stopped Cua Driver daemon ($label)"
         fi
     fi
     stop_stray_release_daemons

@@ -161,7 +161,14 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
                 seed.display()
             ),
         ]);
-        push(&["-device", "virtio-blk-pci,drive=cidata"]);
+        push(&[
+            "-device",
+            if windows_arm {
+                "usb-storage,drive=cidata,bus=xhci.0"
+            } else {
+                "virtio-blk-pci,drive=cidata"
+            },
+        ]);
     }
     if let Some(iso) = &cfg.install_iso {
         match cfg.arch {
@@ -201,18 +208,16 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
 
     // Display + input: a framebuffer for VNC/screendump and an absolute
     // pointer so QMP input-send-event `abs` coordinates work.
-    match (&cfg.virgl_render_node, cfg.arch, windows_arm) {
-        (_, _, true) => push(&["-device", "ramfb"]),
-        (Some(_), _, false) => push(&[
-            "-device",
-            "virtio-gpu-gl-pci",
-            "-device",
-            "qemu-xhci,id=xhci",
-        ]),
-        (None, Arch::Aarch64, false) => {
-            push(&["-device", "virtio-gpu-pci", "-device", "qemu-xhci,id=xhci"])
-        }
-        (None, Arch::X86_64, false) => push(&["-vga", "std", "-device", "qemu-xhci,id=xhci"]),
+    match (&cfg.virgl_render_node, cfg.arch) {
+        _ if windows_arm => push(&["-device", "ramfb"]),
+        // virgl: the guest's 3D goes to the host GPU; the headless EGL
+        // display still feeds VNC and screendump.
+        (Some(_), _) => push(&["-device", "virtio-gpu-gl-pci"]),
+        (None, Arch::Aarch64) => push(&["-device", "virtio-gpu-pci"]),
+        (None, Arch::X86_64) => push(&["-vga", "std"]),
+    }
+    if !windows_arm {
+        push(&["-device", "qemu-xhci,id=xhci"]);
     }
     push(&["-device", "usb-kbd", "-device", "usb-tablet"]);
     if let Some(socket) = &cfg.tpm_socket {
@@ -363,6 +368,27 @@ mod tests {
             );
             assert!(!arg.contains("tpm") && arg != "-chardev");
         }
+        c.seed_iso = Some("/seed.iso".into());
+        let seeded = build(&c);
+        assert!(has(
+            &seeded,
+            ["-device", "usb-storage,drive=cidata,bus=xhci.0"]
+        ));
+        assert!(!seeded.iter().any(|s| s == "virtio-blk-pci,drive=cidata"));
+        assert_eq!(
+            seeded.iter().filter(|s| *s == "qemu-xhci,id=xhci").count(),
+            1
+        );
+        assert!(
+            seeded
+                .iter()
+                .position(|s| s == "qemu-xhci,id=xhci")
+                .unwrap()
+                < seeded
+                    .iter()
+                    .position(|s| s == "usb-storage,drive=cidata,bus=xhci.0")
+                    .unwrap()
+        );
         for arch in [Arch::Aarch64, Arch::X86_64] {
             c.arch = arch;
             c.tpm_socket = Some("/vm/tpm/swtpm.sock".into());

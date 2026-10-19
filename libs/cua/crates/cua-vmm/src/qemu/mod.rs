@@ -372,17 +372,15 @@ impl QemuRuntime {
         })
         .ok_or_else(|| {
             VmmError::missing(
+                format!("UEFI firmware for {arch}"),
                 format!(
-                    "UEFI firmware for {arch}{}",
+                    "install edk2 (Homebrew qemu ships it; {}){}",
+                    QemuPackageManager::linux_hint(),
                     if windows_arm {
-                        " (Windows ARM requires Secure Boot CODE and Microsoft-enrolled VARS)"
+                        "; Windows ARM requires Secure Boot CODE and Microsoft-enrolled VARS"
                     } else {
                         ""
                     }
-                ),
-                format!(
-                    "install edk2 (Homebrew qemu ships it; {})",
-                    QemuPackageManager::linux_hint()
                 ),
             )
         })?;
@@ -1215,14 +1213,6 @@ impl Runtime for QemuRuntime {
             _ => spec,
         };
         validate_name(&spec.name)?;
-        if spec.os == GuestOs::Windows
-            && spec.effective_arch() == Arch::Aarch64
-            && (spec.memory_mb < 4096 || spec.cpus < 2)
-        {
-            return Err(VmmError::invalid(
-                "Windows ARM requires at least 4096 MiB memory and 2 CPUs",
-            ));
-        }
         crate::types::reject_sidecars(BackendKind::Qemu, spec)?;
         crate::cloudinit::check_guest_support(spec)?;
         let mut st = {

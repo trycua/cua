@@ -1234,6 +1234,13 @@ pub fn paint_cursor(
         }
     }
 
+    // Host-selected presentation: keep motion/targeting, omit semantic artwork and badges.
+    if crate::neutral_cursor::enabled() {
+        let scale = backing_scale.max(1.0) * (1.0 - core.effect_frame().squish as f32);
+        crate::neutral_cursor::paint(pm, tip_x as f32, tip_y as f32,
+                                    heading as f32, scale, alpha_scale);
+        return;
+    }
     let effects = core.effect_frame();
     let effect_rgb = effect_rgb(crate::session_fill_rgba(&core.cfg.cursor_id));
     let to_px = |x: f64, y: f64| (((x - origin_x) * s) as f32, ((y - origin_y) * s) as f32);

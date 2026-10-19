@@ -13,6 +13,7 @@ pub mod bezier;
 pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
+mod neutral_cursor;
 pub mod motion_defaults;
 pub mod path_planner;
 pub mod render_map;

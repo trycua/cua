@@ -70,6 +70,11 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
     // A browser can't open System Settings; the pane only has to be one.
     "host.openSettings": ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
+      // The demo plays the user turning it on in System Settings.
+      setTimeout(() => {
+        state.host = { ...state.host, permissions: state.host.permissions.map((p) => (p.settingsUrl === url ? { ...p, granted: true } : p)) };
+        emit({ type: "machines.changed" });
+      }, stepMs * 4);
       return null;
     },
   };

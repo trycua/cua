@@ -191,7 +191,7 @@ export interface HostOperations
     RuntimeFixOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
-  "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs }; result: SpaceRow };
+  "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs; notifyWhenReady?: boolean }; result: SpaceRow };
   "spaces.cancelCreate": { args: { pendingId: string }; result: CancelOutcome };
   "spaces.setPower": { args: { spaceId: string; on: boolean }; result: SpacePowerReport };
   /** Deletes the Space, or with `removeOnly` only forgets it here (a Space

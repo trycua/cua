@@ -291,6 +291,10 @@ pub const METHODS: &[&str] = &[
     "relayUsage.view",
     "upsell.prompt",
     "upsell.allows",
+    "firstRun.view",
+    "firstRun.todos",
+    "firstRun.agentUsed",
+    "firstRun.leadAgent",
     "telemetry.upsell",
 ];
 
@@ -495,6 +499,16 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             ))
         }
         "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
+        "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
+        "firstRun.agentUsed" => out(crate::first_run::agent_used(
+            &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,
+            a.get::<u64>("sinceMs")?,
+            &a.get::<String>("agentName")?,
+        )),
+        "firstRun.leadAgent" => out(crate::first_run::lead_agent(
+            &a.get::<Vec<crate::first_run::FirstRunAgent>>("agents")?,
+        )),
         "telemetry.upsell" => out(telemetry::upsell(
             &a.get::<String>("surface")?,
             &a.get::<String>("action")?,

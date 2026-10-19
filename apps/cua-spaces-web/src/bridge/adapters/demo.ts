@@ -86,7 +86,7 @@ export interface DemoOptions {
 
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
-/** `?demo=fresh` (signed out, first run), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
+/** `?demo=fresh` (signed out, first run), `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
@@ -94,6 +94,8 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
+    // `?demo=slow`: every answer takes a few seconds (the first run's "Checking" in screenshots).
+    ...(flags.has("slow") ? { latencyMs: 4000 } : {}),
     signedIn: !flags.has("fresh"),
     onboarded: !flags.has("fresh"),
     keyvaultLocked: flags.has("locked"),
@@ -477,6 +479,14 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       state.agentSetup = state.agentSetup.map((r) =>
         wanted(r) ? { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" } : r,
       );
+      // The demo plays the agent's first request a little later: a line in this computer's access log.
+      const used = state.agentSetup.find(wanted);
+      if (used && agents?.length === 1) {
+        setTimeout(() => {
+          const line = { atMs: now(), via: "token", who: used.name, what: "MCP" };
+          state.host = { ...state.host, recentAccess: [line, ...(state.host.recentAccess ?? [])] };
+        }, step * 30);
+      }
       return state.agentSetup.map((r) => ({ ...r }));
     },
     ...newSpaceDemoHandlers({ state, wait, emit, step, now }),

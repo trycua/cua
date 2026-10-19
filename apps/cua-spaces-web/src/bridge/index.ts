@@ -152,3 +152,19 @@ export {
   type UpsellSurface,
 } from "./upsell";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
+export {
+  FIRST_RUN_POLL_MS,
+  TEAMMATES_KEY,
+  UPSELL_DISMISSED_KEY,
+  firstRunTodos,
+  firstRunView,
+  noteTeammates,
+  readFirstRun,
+  resetFirstRunCache,
+  useFirstRun,
+  useFirstRunSaved,
+  writeFirstRun,
+  type FirstRunHook,
+  type FirstRunSaved,
+} from "./first-run";
+export type * from "./contracts/first-run";

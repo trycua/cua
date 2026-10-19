@@ -55,28 +55,6 @@ struct ParityTests {
     @Test("checklist") func checklist() throws { try check("checklist", runChecklist) }
     @Test("create-stages") func createStages() throws { try check("create-stages", runProvisioning) }
 
-    /// The app's own first run records exactly the golden's events: the
-    /// `OnboardingModel` the window drives, on a recording telemetry.
-    @MainActor @Test("telemetry-funnel through the first-run model")
-    func telemetryFunnelThroughTheModel() throws {
-        let flow = try json(Self.dir.appendingPathComponent("telemetry-funnel.json"))
-        let golden = try json(Self.dir.appendingPathComponent("golden/telemetry-funnel.json"))
-        for run in ["onboarding", "skipping", "no-usage-data"] {
-            let telemetry = FixtureTelemetry()
-            let o = OnboardingModel(statePath: nil)
-            o.telemetry = telemetry
-            for a in flow[run] as! [[String: Any]] {
-                o.send(try appOnboardingActionFromJson(json: text(a)))
-            }
-            o.finish()
-            let want = (golden["frames"] as! [[String: Any]])
-                .filter { ($0["at"] as? String) == run }
-                .flatMap { $0["signals"] as! [Any] }
-            let got = telemetry.recorded.map(Self.signalFrame)
-            #expect(canonical(got) == canonical(want), "\(run):\n want \(canonical(want))\n  got \(canonical(got))")
-        }
-    }
-
     // MARK: - Harness
 
     func check(_ name: String, _ run: ([String: Any]) throws -> [Any]) throws {

@@ -3647,6 +3647,24 @@
         "signedIn"
       ]
     },
+    "WkOnboarding": {
+      "type": "object",
+      "properties": {
+        "completed": {
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": [
+            "client",
+            "host"
+          ]
+        }
+      },
+      "required": [
+        "completed",
+        "mode"
+      ]
+    },
     "WkSession": {
       "type": "object",
       "properties": {
@@ -6150,6 +6168,12 @@
     },
     "notifications.markRead": {
       "type": "null"
+    },
+    "onboarding.complete": {
+      "$ref": "#/$defs/WkOnboarding"
+    },
+    "onboarding.get": {
+      "$ref": "#/$defs/WkOnboarding"
     },
     "relay.usage": {
       "type": [

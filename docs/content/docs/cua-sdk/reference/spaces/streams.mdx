@@ -119,10 +119,10 @@ pub async fn attach_stream(&self, ticket: SpaceStreamTicket, frames: Arc<dyn Fra
 | Parameter | Type | Default |
 | --- | --- | --- |
 | `ticket` | [`SpaceStreamTicket`](#spacestreamticket-record) | required |
-| `frames` | [`FrameSink`](/cua-sdk/reference/spacesd/media#framesink) | required |
-| `audio` | [`Option<AudioSink>`](/cua-sdk/reference/spacesd/media#audiosink) | required |
+| `frames` | [`FrameSink`](/cua-sdk/reference/spacesd/computer#framesink) | required |
+| `audio` | [`Option<AudioSink>`](/cua-sdk/reference/spacesd/computer#audiosink) | required |
 
-**Returns** [`MediaSession`](/cua-sdk/reference/spacesd/media#mediasession) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+**Returns** [`MediaSession`](/cua-sdk/reference/spacesd/computer#mediasession) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Space.stream_session`
 
@@ -174,8 +174,8 @@ pub async fn stream_session(&self, options: SpaceStreamOptions, frames: Arc<dyn 
 | Parameter | Type | Default |
 | --- | --- | --- |
 | `options` | [`SpaceStreamOptions`](#spacestreamoptions-record) | required |
-| `frames` | [`FrameSink`](/cua-sdk/reference/spacesd/media#framesink) | required |
-| `audio` | [`Option<AudioSink>`](/cua-sdk/reference/spacesd/media#audiosink) | required |
+| `frames` | [`FrameSink`](/cua-sdk/reference/spacesd/computer#framesink) | required |
+| `audio` | [`Option<AudioSink>`](/cua-sdk/reference/spacesd/computer#audiosink) | required |
 
 **Returns** [`SpaceStreamSession`](#spacestreamsession) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`HostCapabilityMissing`](/cua-sdk/reference/errors#hostcapabilitymissing))
 

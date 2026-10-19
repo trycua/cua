@@ -31,6 +31,7 @@ import {
   renderReferenceIndex,
 } from './lib/cli-mdx';
 import { readHeader } from './lib/headers';
+import { pageOfCategory, slugify, toolHref } from './spaces';
 import {
   type JsonSchema,
   type McpCategory,
@@ -160,11 +161,16 @@ export function spacesAnchors(manifest: {
   categories?: Array<{ id: string; title: string }>;
   tools: Array<{ name: string; category: string }>;
 }): SpacesLinks {
-  const titles = new Map((manifest.categories ?? []).map((c) => [c.id, c.title]));
+  const categories = manifest.categories ?? [];
+  const titles = new Map(categories.map((c) => [c.id, c.title]));
+  const pages = pageOfCategory(categories);
   return {
-    anchors: new Map(manifest.tools.map((t) => [t.name, `/spaces/reference/${t.category}#${t.name}`])),
+    anchors: new Map(manifest.tools.map((t) => [t.name, toolHref(pages, t)])),
     sections: new Map(
-      manifest.tools.map((t) => [t.name, { title: titles.get(t.category) ?? t.category, href: `/spaces/reference/${t.category}` }])
+      manifest.tools.map((t) => {
+        const title = titles.get(t.category) ?? t.category;
+        return [t.name, { title, href: `/spaces/reference/${pages.get(t.category)}#${slugify(title)}` }];
+      })
     ),
   };
 }

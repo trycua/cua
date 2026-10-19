@@ -433,7 +433,7 @@ function testGeneratorRouting(config: Config): void {
     [
       'libs/cua/crates/cua-spaces/src/client/model.rs',
       'scripts/docs-generators/rustdoc-json/src/main.rs',
-      'docs/content/docs/cua-sdk/reference/rust/cua-fleet.mdx',
+      'docs/content/docs/cua-sdk/reference/rust/cua-spacesd-client.mdx',
     ],
     ['cua-rust']
   );

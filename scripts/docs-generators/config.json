@@ -276,17 +276,7 @@
         },
         {
           "type": "api",
-          "outputFile": "sandbox/index.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "sandbox/lifecycle.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "sandbox/options.mdx",
+          "outputFile": "sandbox.mdx",
           "extractCommand": null
         },
         {
@@ -306,22 +296,12 @@
         },
         {
           "type": "api",
-          "outputFile": "spacesd/shell.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
           "outputFile": "spacesd/files.mdx",
           "extractCommand": null
         },
         {
           "type": "api",
           "outputFile": "spacesd/computer.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "spacesd/media.mdx",
           "extractCommand": null
         },
         {
@@ -341,11 +321,6 @@
         },
         {
           "type": "api",
-          "outputFile": "local.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
           "outputFile": "spaces/index.mdx",
           "extractCommand": null
         },
@@ -361,32 +336,12 @@
         },
         {
           "type": "api",
-          "outputFile": "spaces/agents.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "spaces/teleport.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "spaces/teleport-host.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
           "outputFile": "spaces/host.mdx",
           "extractCommand": null
         },
         {
           "type": "api",
           "outputFile": "auth.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "agent-setup.mdx",
           "extractCommand": null
         },
         {
@@ -406,7 +361,7 @@
         }
       ],
       "enabled": true,
-      "notes": "One page per object (PAGES in cua-sdk.ts) with Python/TypeScript/Swift/Kotlin/Rust signature tabs, plus the reference index, Errors, Types and the reference meta.json. Curated prose: headers/cua-sdk/<page>.md. Examples: examples/cua-sdk/<Target>.<ext>, each tagged with its docs lane and run from the page by the docs-blocks suite. Names are cross-checked against the committed bindings (with uniffi.toml renames) and the Rust source. The `spaces` pages (host teleport, app teleport, the Spaces app core) document the Cua Spaces app export (the `cua_spaces_ffi` namespace of libcua_spaces_ffi, source-available, FSL-1.1-MIT) with Swift and Rust tabs only, cross-checked against libs/spaces-app-swift/Sources/CuaSpacesFFI/CuaSpacesFFI.swift and the cua-spaces-ffi source."
+      "notes": "One page per module family (PAGES in cua-sdk.ts; MERGED folds a section into another page) with Python/TypeScript/Swift/Kotlin/Rust signature tabs, plus the reference index, Errors, Types and the reference meta.json. Curated prose: headers/cua-sdk/<page>.md. Examples: examples/cua-sdk/<Target>.<ext>, each tagged with its docs lane and run from the page by the docs-blocks suite. Names are cross-checked against the committed bindings (with uniffi.toml renames) and the Rust source. The Cua Spaces app export (`cua_spaces_ffi`, the apps' internals) has no pages."
     },
     "cua-sdk-python": {
       "name": "Python hand-written layers (cua, cua-sandbox)",
@@ -441,32 +396,12 @@
         },
         {
           "type": "api",
-          "outputFile": "cua-sdk/reference/python/image.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "cua-sdk/reference/python/pool.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
           "outputFile": "cua-sdk/reference/python/interfaces.mdx",
           "extractCommand": null
         },
         {
           "type": "api",
-          "outputFile": "cua-sdk/reference/python/services.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
           "outputFile": "cua-sdk/reference/python/runtimes.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "cua-sdk/reference/python/configuration.mdx",
           "extractCommand": null
         },
         {
@@ -509,23 +444,13 @@
           "extractCommand": null
         },
         {
-          "type": "api",
-          "outputFile": "spaces-transport.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "spaces-host.mdx",
-          "extractCommand": null
-        },
-        {
           "type": "nav",
           "outputFile": "meta.json",
           "extractCommand": null
         }
       ],
       "enabled": true,
-      "notes": "typedoc + typedoc-plugin-markdown (pinned in docs/package.json) over src/index.ts, spaces/index.ts, spaces/transport/index.ts and spaces/host.ts; declarations from src/native (UniFFI glue) are dropped. Needs `npm ci --ignore-scripts` in libs/cua/typescript first."
+      "notes": "typedoc + typedoc-plugin-markdown (pinned in docs/package.json) over src/index.ts, spaces/index.ts, spaces/transport/index.ts and spaces/host.ts; declarations from src/native (UniFFI glue) are dropped. The transport and host modules are sections of the index page (TS_MERGED). Needs `npm ci --ignore-scripts` in libs/cua/typescript first."
     },
     "cua-rust": {
       "name": "Rust crates (rustdoc JSON)",
@@ -594,38 +519,13 @@
           "extractCommand": null
         },
         {
-          "type": "reference",
-          "outputFile": "cua-fleet.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "cua-sandbox-core.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "cua-spaces.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "cua-spaces-client.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "cua-spaces-agents-mcp.mdx",
-          "extractCommand": null
-        },
-        {
           "type": "nav",
           "outputFile": "meta.json",
           "extractCommand": null
         }
       ],
       "enabled": true,
-      "notes": "Builds rustdoc JSON for the public crates with the nightly pinned in scripts/docs-generators/rustdoc-json/rust-toolchain.toml, then renders one page per crate (cua-spaces: three) and the Rust crates index (headers/cua-sdk/rust/index.md). The cua-sdk items the bindings export link to the Cua SDK object pages (read at generation time), whose Rust tabs document them."
+      "notes": "Builds rustdoc JSON for the stable crates (cua-sdk, cua-spacesd-client) with the nightly pinned in scripts/docs-generators/rustdoc-json/rust-toolchain.toml, then renders one page per crate and the Rust crates index (headers/cua-sdk/rust/index.md). The cua-sdk items the bindings export link to the Cua SDK object pages (read at generation time), whose Rust tabs document them."
     },
     "cua-proto": {
       "name": "cua gRPC contracts (spacesd and daemon)",
@@ -657,17 +557,7 @@
         },
         {
           "type": "reference",
-          "outputFile": "env-common.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
           "outputFile": "env-process.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "env-filesystem.mdx",
           "extractCommand": null
         },
         {
@@ -677,32 +567,12 @@
         },
         {
           "type": "reference",
-          "outputFile": "env-windows.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
           "outputFile": "env-stream.mdx",
           "extractCommand": null
         },
         {
           "type": "reference",
-          "outputFile": "env-teleport-tunnel.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "daemon-sandboxes.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "daemon-runtimes.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "daemon-spaces.mdx",
+          "outputFile": "daemon.mdx",
           "extractCommand": null
         },
         {
@@ -739,42 +609,12 @@
         },
         {
           "type": "reference",
-          "outputFile": "lifecycle.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "commands-and-files.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "streams-and-display.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "services.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
           "outputFile": "agents.mdx",
           "extractCommand": null
         },
         {
           "type": "reference",
-          "outputFile": "teleport.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "hotspot.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "errors.mdx",
+          "outputFile": "spaces.mdx",
           "extractCommand": null
         },
         {
@@ -784,7 +624,7 @@
         }
       ],
       "enabled": true,
-      "notes": "Renders the Spaces contract (libs/cua/spaces-contract/manifest.json, generated by cua-spaces-contract-gen and --check gated): one page per category with each tool's parameters, result, errors and approval, plus an errors page. The tool-error envelope and JSON-RPC codes are read from cua-spaces src/mcp/mod.rs and the permission rule from cua-cli src/mcp.rs; a change to either fails the generator. This is the canonical Spaces tool reference; the cua-cli MCP page covers the sandbox, computer and skills tools."
+      "notes": "Renders the Spaces contract (libs/cua/spaces-contract/manifest.json, generated by cua-spaces-contract-gen and --check gated): the index (with Space ids, approval and errors) and two tool pages grouping the categories (PAGES in spaces.ts), with each tool's parameters, result, errors and approval. The tool-error envelope and JSON-RPC codes are read from cua-spaces src/mcp/mod.rs and the permission rule from cua-cli src/mcp.rs; a change to either fails the generator. This is the canonical Spaces tool reference; the cua-cli MCP page covers the sandbox, computer and skills tools."
     }
   }
 }

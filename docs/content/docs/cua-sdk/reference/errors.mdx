@@ -14,7 +14,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 Every fallible call raises (throws) one error type, `CuaError`. Its variant says what went wrong; its message carries the detail; its doc URL links to the variant's entry on this page (`https://cua.ai/docs/cua-sdk/reference/errors#<variant in lower case>`).
 
-The Python high-level API raises its own exceptions (`SpacesdNotAvailable`, `PoolSpecMismatch`, ...), listed on [Python: configuration and errors](/cua-sdk/reference/python/configuration#errors). cua-spacesd answers RPCs with a `google.rpc.Status` carrying [`ErrorInfo`](/cua-sdk/reference/protocol/env-common#errorinfo); the SDK maps it to the variants below.
+The Python high-level API raises its own exceptions (`SpacesdNotAvailable`, `PoolSpecMismatch`, ...), listed on [Python: configuration and errors](/cua-sdk/reference/python/runtimes#errors). cua-spacesd answers RPCs with a `google.rpc.Status` carrying [`ErrorInfo`](/cua-sdk/reference/protocol/env-system#errorinfo); the SDK maps it to the variants below.
 
 | Language | Type | A variant | Doc URL |
 | --- | --- | --- | --- |
@@ -184,7 +184,7 @@ message names what is missing.
 
 **Message** `unsupported: <detail>`
 
-**Raised by** [`Sandbox.guest_sh`](/cua-sdk/reference/sandbox/without-spacesd#sandboxguest_sh), [`fleet_image_variant`](/cua-sdk/reference/fleet/images#fleet_image_variant), [`fleet_resolve_runtime`](/cua-sdk/reference/fleet/images#fleet_resolve_runtime), [`resolve_image`](/cua-sdk/reference/image#resolve_image)
+**Raised by** [`Sandbox.guest_sh`](/cua-sdk/reference/spacesd#sandboxguest_sh), [`fleet_image_variant`](/cua-sdk/reference/fleet/images#fleet_image_variant), [`fleet_resolve_runtime`](/cua-sdk/reference/fleet/images#fleet_resolve_runtime), [`resolve_image`](/cua-sdk/reference/image#resolve_image)
 
 ## `SpacesdNotAvailable`
 
@@ -350,7 +350,7 @@ scope.
 
 **Message** `teleport refused: <detail>`
 
-**Raised by** [`Space.teleport`](/cua-sdk/reference/spaces/teleport#spaceteleport)
+**Raised by** [`Space.teleport`](/cua-sdk/reference/spaces/space#spaceteleport)
 
 ## `PoolSpecMismatch`
 

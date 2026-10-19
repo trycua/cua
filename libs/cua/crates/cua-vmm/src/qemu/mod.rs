@@ -372,14 +372,7 @@ impl QemuRuntime {
         })
         .ok_or_else(|| {
             VmmError::missing(
-                format!(
-                    "UEFI firmware for {arch}{}",
-                    if windows_arm {
-                        " (Secure Boot CODE and Microsoft-enrolled VARS required)"
-                    } else {
-                        ""
-                    }
-                ),
+                format!("UEFI firmware for {arch} (Windows ARM requires Secure Boot CODE and Microsoft-enrolled VARS)"),
                 format!(
                     "install edk2 (Homebrew qemu ships it; {})",
                     QemuPackageManager::linux_hint()
@@ -513,11 +506,11 @@ impl QemuRuntime {
                     }
                 }
                 st.pid = None;
-                self.wait_tpm(st).await?;
+                self.stop_tpm(st);
                 self.launch_once(st, spec, loadvm, true).await
             }
             r => r,
-        }
+        }.inspect_err(|_| { self.stop_tpm(st); })
     }
 
     async fn launch_once(
@@ -553,7 +546,7 @@ impl QemuRuntime {
                     "swtpm is not available: install swtpm with TPM 2.0 support and add it to PATH",
                 )
             })?;
-            self.wait_tpm(st).await?;
+            self.stop_tpm(st);
             let socket = tpm_dir.join("swtpm.sock");
             if socket.as_os_str().len() > 103 {
                 return Err(VmmError::invalid(
@@ -665,14 +658,13 @@ impl QemuRuntime {
             let out = tokio::process::Command::new("/bin/sh")
                 .arg("-c")
                 .arg(if swtpm.is_some() {
-                    "( /bin/sh -c \"$CUA_TPM_SCRIPT\" \"$0\" \"$@\" ) &"
+                    TPM_LAUNCH
                 } else {
                     "\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!"
                 })
                 .arg(&bin)
                 .args(&argv)
                 .env("CUA_QEMU_LOG", &log_path)
-                .env("CUA_TPM_SCRIPT", include_str!("tpm.sh"))
                 .env("CUA_SWTPM", swtpm.as_deref().unwrap_or(Path::new("")))
                 .env("CUA_TPM_DIR", &tpm_dir)
                 .env("CUA_TPM_SOCKET", tpm_dir.join("swtpm.sock"))
@@ -898,36 +890,21 @@ impl QemuRuntime {
         Ok(())
     }
 
-    async fn wait_tpm(&self, st: &QemuState) -> Result<()> {
+    fn stop_tpm(&self, st: &QemuState) {
         let pidfile = self.dir(&st.name).join("swtpm.pid");
         if let Ok(pid) = std::fs::read_to_string(&pidfile) {
-            let pid = pid
-                .trim()
-                .parse()
-                .map_err(|_| VmmError::invalid("invalid swtpm pidfile"))?;
-            // Normally the supervisor reaps the helper; also recover a stale launch.
-            if !Self::wait_exit(pid, Duration::from_secs(2)).await {
-                host::signal(pid, "TERM");
-                if !Self::wait_exit(pid, Duration::from_secs(3)).await {
-                    return Err(VmmError::invalid("swtpm did not stop"));
-                }
-            }
-            // Socket removal precedes pidfile removal in the supervisor.
-            for _ in 0..20 {
-                if !pidfile.exists() {
-                    return Ok(());
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+            if let Ok(pid) = pid.trim().parse() {
+                host::signal(pid, "KILL");
             }
             let _ = std::fs::remove_file(pidfile);
         }
-        Ok(())
     }
 
     async fn force_stop(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
         let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) else {
             st.pid = None;
-            return self.wait_tpm(st).await;
+            self.stop_tpm(st);
+            return Ok(());
         };
         if !graceful.is_zero() {
             if let Ok(mut q) = self.qmp(&st.name).await {
@@ -935,7 +912,8 @@ impl QemuRuntime {
             }
             if Self::wait_exit(pid, graceful).await {
                 st.pid = None;
-                return self.wait_tpm(st).await;
+                self.stop_tpm(st);
+                return Ok(());
             }
         }
         if let Ok(mut q) = self.qmp(&st.name).await {
@@ -946,7 +924,8 @@ impl QemuRuntime {
             Self::wait_exit(pid, Duration::from_secs(5)).await;
         }
         st.pid = None;
-        self.wait_tpm(st).await
+        self.stop_tpm(st);
+        Ok(())
     }
 }
 
@@ -1605,6 +1584,22 @@ impl Runtime for QemuRuntime {
             .map(|s| Arc::new(SshExec::from_endpoint(s)) as Arc<dyn GuestExec>))
     }
 }
+
+#[cfg(unix)]
+const TPM_LAUNCH: &str = r#"
+"$CUA_SWTPM" socket --tpm2 --tpmstate "dir=$CUA_TPM_DIR" --ctrl "type=unixio,path=$CUA_TPM_SOCKET" --pid "file=$CUA_TPM_PID" </dev/null >>"$CUA_TPM_LOG" 2>&1 &
+tpm=$!
+i=0
+until [ -S "$CUA_TPM_SOCKET" ]; do
+    if ! kill -0 "$tpm" 2>/dev/null || [ "$i" -ge 100 ]; then
+        kill "$tpm" 2>/dev/null
+        exit 1
+    fi
+    i=$((i + 1))
+    sleep 0.05
+done
+"$0" "$@" </dev/null >>"$CUA_QEMU_LOG" 2>&1 & echo $!
+"#;
 
 #[cfg(all(test, unix))]
 mod tpm_tests;

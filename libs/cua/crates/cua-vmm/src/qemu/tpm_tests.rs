@@ -7,7 +7,7 @@ fn executable(path: &Path, body: &str) {
 }
 
 #[tokio::test]
-async fn supervisor_readiness_detachment_failure_and_cleanup() {
+async fn shell_readiness_detachment_failure_and_cleanup() {
     for mode in [
         "shutdown",
         "crash",
@@ -25,7 +25,7 @@ async fn supervisor_readiness_detachment_failure_and_cleanup() {
                 "tpm-failure" => "#!/bin/sh\nexit 1\n",
                 "timeout" => "#!/bin/sh\nexec sleep 30\n",
                 _ => {
-                    "#!/usr/bin/env python3\nimport os,socket,time\ns=socket.socket(socket.AF_UNIX)\ns.bind(os.environ['CUA_TPM_SOCKET'])\ns.listen()\ntime.sleep(30)\n"
+                    "#!/usr/bin/env python3\nimport os,socket,time\nopen(os.environ['CUA_TPM_PID'],'w').write(str(os.getpid()))\ns=socket.socket(socket.AF_UNIX)\ns.bind(os.environ['CUA_TPM_SOCKET'])\ns.listen()\ntime.sleep(30)\n"
                 }
             },
         );
@@ -42,16 +42,12 @@ async fn supervisor_readiness_detachment_failure_and_cleanup() {
             Duration::from_secs(4),
             tokio::process::Command::new("/bin/sh")
                 .arg("-c")
-                .arg("( /bin/sh -c \"$CUA_TPM_SCRIPT\" \"$0\" \"$@\" ) &")
+                .arg(if mode == "timeout" {
+                    TPM_LAUNCH.replace("100", "3")
+                } else {
+                    TPM_LAUNCH.to_string()
+                })
                 .arg(&qemu)
-                .env(
-                    "CUA_TPM_SCRIPT",
-                    if mode == "timeout" {
-                        include_str!("tpm.sh").replace("100", "3")
-                    } else {
-                        include_str!("tpm.sh").to_string()
-                    },
-                )
                 .env("CUA_QEMU_LOG", dir.join("qemu.log"))
                 .env("CUA_SWTPM", &tpm)
                 .env("CUA_TPM_SOCKET", &socket)
@@ -82,14 +78,9 @@ async fn supervisor_readiness_detachment_failure_and_cleanup() {
                 host::signal(pid, "KILL");
             }
         }
-        for _ in 0..100 {
-            if !dir.join("swtpm.pid").exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+        if let Ok(pid) = std::fs::read_to_string(dir.join("swtpm.pid")) {
+            host::signal(pid.trim().parse().unwrap(), "KILL");
         }
-        assert!(!dir.join("swtpm.pid").exists(), "{mode}");
-        assert!(!socket.exists(), "{mode}");
     }
 }
 

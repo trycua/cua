@@ -212,8 +212,6 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
         push(&["-device", "ramfb"]);
     } else {
         match (&cfg.virgl_render_node, cfg.arch) {
-            // virgl: the guest's 3D goes to the host GPU; the headless EGL
-            // display still feeds VNC and screendump.
             (Some(_), _) => push(&["-device", "virtio-gpu-gl-pci"]),
             (None, Arch::Aarch64) => push(&["-device", "virtio-gpu-pci"]),
             (None, Arch::X86_64) => push(&["-vga", "std"]),

@@ -10,10 +10,9 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
-from fastapi.testclient import TestClient  # noqa: E402
-
 from cua_agent import human_auth  # noqa: E402
 from cua_agent.human_tool import server  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 TOKEN = "test-token-for-human-tool"
 QUEUE_BODY = {"messages": [{"role": "user", "content": "delete it?"}], "model": "human"}

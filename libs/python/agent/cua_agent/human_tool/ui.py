@@ -9,7 +9,13 @@ import gradio as gr
 import requests
 from PIL import Image
 
-from ..human_auth import auth_headers, client_token, gradio_auth, is_loopback, resolve_host
+from ..human_auth import (
+    auth_headers,
+    client_token,
+    gradio_auth,
+    is_loopback,
+    resolve_host,
+)
 
 
 class HumanCompletionUI:

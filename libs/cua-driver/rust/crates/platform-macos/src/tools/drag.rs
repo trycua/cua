@@ -607,6 +607,13 @@ impl DragTool {
         foreground_args["delivery_mode"] = serde_json::json!("foreground");
         let mut result = self.invoke(foreground_args).await;
 
+        // The foreground drag leaves the pointer on the drop point; this step
+        // promised to hand it back, so put it where the user left it.
+        if let Some((x, y)) = pointer_before {
+            let _ =
+                tokio::task::spawn_blocking(move || crate::input::mouse::move_cursor_desktop(x, y))
+                    .await;
+        }
         let pointer_after = tokio::task::spawn_blocking(pointer_location)
             .await
             .ok()

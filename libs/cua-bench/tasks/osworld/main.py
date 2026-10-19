@@ -2,7 +2,7 @@
 
 369 tasks (xlang-ai/OSWorld at a pinned commit, Apache-2.0) on the
 ``bench-osworld`` image: the upstream Ubuntu 22.04 disk with cua-spacesd, as
-one index with a VM variant (QEMU / Fleet KubeVirt) and a container variant
+one index with a VM variant (QEMU) and a container variant
 (docker / gVisor; supervisord instead of systemd). The OSWorld server on
 :5000 does setup and feeds the evaluators exactly as upstream; the agent
 acts through cua-driver (``sb.mouse`` / ``sb.keyboard``), like on every
@@ -12,8 +12,7 @@ the server's ``/execute`` instead.
 ::
 
     cb run dataset libs/cua-bench/tasks/osworld --agent <agent> --max-variants 5
-    cb run dataset libs/cua-bench/tasks/osworld --kind vm               # QEMU / KubeVirt
-    cb run dataset libs/cua-bench/tasks/osworld --on cloud --kind container
+    cb run dataset libs/cua-bench/tasks/osworld --kind vm               # QEMU
     CUA_BENCH_OSWORLD_SPLIT=parity cb run dataset libs/cua-bench/tasks/osworld --oracle
 
 Splits (``CUA_BENCH_OSWORLD_SPLIT``): test_all (default), test_small,
@@ -78,7 +77,7 @@ class OSWorldEnv:
     """What ``DesktopEnv.evaluate`` / ``_set_task_info`` read, without a provider.
 
     Built per task; controllers point at ``host:port`` pairs that reach the
-    guest (published ports locally, loopback bridges on Fleet).
+    guest (published ports on this machine).
     """
 
     def __init__(self, de: Any, server: tuple, chromium: tuple, vlc: tuple, cache_dir: str,
@@ -145,7 +144,7 @@ class OSWorldAdapter(BenchAdapter):
     requires = frozenset({"egress"})
     server = ServerSpec(port=5000, health="/screenshot")
     ports = (CHROMIUM_PORT, VLC_PORT)
-    reset = "fresh-claim"
+    reset = "fresh-sandbox"
     action_mode = "driver"
     width, height = 1920, 1080
 

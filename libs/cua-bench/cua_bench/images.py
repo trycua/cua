@@ -5,7 +5,7 @@
 
 Each benchmark's Linux guest ships as two indexes linked by
 ``ai.cua.image.variants``: ``<ver>`` (rootfs: docker / gVisor) and
-``<ver>-disk`` (containerDisk: QEMU / KubeVirt). ``BENCH_<NAME>`` pins the
+``<ver>-disk`` (containerDisk: QEMU). ``BENCH_<NAME>`` pins the
 rootfs index by digest (the one its lock file records); the resolver follows
 its link to the disk index when ``--kind vm`` needs it. Override one for a
 run with ``CUA_BENCH_IMAGE_<NAME>`` (e.g. ``CUA_BENCH_IMAGE_BENCH_WEB``) or

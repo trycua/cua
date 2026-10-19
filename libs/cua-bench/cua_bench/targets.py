@@ -2,23 +2,21 @@
 
 One flag set drives every command:
 
-* ``--on local|cloud``: where. ``local`` runs sandboxes on this machine
-  through the cua SDK; ``cloud`` (Cua Cloud) has ended and fails.
+* ``--on local``: where. ``local`` runs sandboxes on this machine through
+  the cua SDK. ``cloud`` (Cua Cloud) has ended and fails with one message.
 * ``--kind auto|container|vm``: what kind. ``auto`` (the default) runs Linux
   as a container unless the task or the image's variant index says VM;
   Windows, macOS and Android are VM-only.
-* ``--runtime auto|gvisor|runc|qemu|lume|kubevirt``: which engine. Locally
-  ``gvisor``/``runc`` run containers and ``qemu``/``lume`` VMs; in the cloud
-  ``gvisor`` runs containers and ``kubevirt`` VMs. An engine implies its
-  kind; a combination that does not exist is an error listing the valid
-  values.
-* ``--cpu``, ``--memory``, ``--image``, ``--warm``, ``--claim-ttl`` and the
-  batch concurrency.
+* ``--runtime auto|gvisor|runc|qemu|lume``: which engine. Locally
+  ``gvisor``/``runc`` run containers and ``qemu``/``lume`` VMs. An engine
+  implies its kind; a combination that does not exist is an error listing
+  the valid values.
+* ``--cpu``, ``--memory``, ``--image`` and the batch concurrency.
 
 Unset ``--on``/``--kind``/``--runtime`` come from the user's defaults, the
 same as every cua surface: ``CUA_DEFAULT_ON``/``CUA_DEFAULT_KIND``/
 ``CUA_DEFAULT_RUNTIME``, then ``$CUA_HOME/config.toml`` (``cua config set
-default.on cloud``), then ``local``/``auto``/``auto``. A default kind or
+default.on local``), then ``local``/``auto``/``auto``. A default kind or
 engine that does not fit a task is skipped for it.
 
 The 0.2.11 flags still parse, with a deprecation notice: ``--platform
@@ -40,7 +38,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Optional
 
 from cua_bench._ended import CLOUD_ENDED
@@ -68,8 +66,9 @@ CONTRIB_ON = (
 #: build runs it joined to the cua.ai relay). Mirrors
 #: ``cua_sandbox_core::CLOUD_LOCATIONS``.
 YOUR_CLOUD_ON = ("aws", "gcp")
-#: Every ``--on`` location: this machine, Cua cloud, a contrib provider or
-#: your own cloud.
+#: Every ``--on`` location: this machine, a contrib provider or your own
+#: cloud. ``cloud`` (Cua Cloud) is still a word so that it fails with
+#: :class:`CloudEnded` and not with "invalid choice".
 ON_CHOICES = ("local", "cloud", *CONTRIB_ON, *YOUR_CLOUD_ON)
 KIND_CHOICES = ("container", "vm")
 #: What ``--kind`` accepts; ``auto`` (or no flag) picks per task.
@@ -78,17 +77,15 @@ KIND_FLAG_CHOICES = ("auto", *KIND_CHOICES)
 #: ``cua.locations()``).
 ENGINES = {
     "local": {"container": ("gvisor", "runc"), "vm": ("qemu", "lume")},
-    "cloud": {"container": ("gvisor",), "vm": ("kubevirt",)},
 }
 #: What ``--runtime`` accepts; ``auto`` (or no flag) lets the SDK pick.
-RUNTIME_FLAG_CHOICES = ("auto", "gvisor", "runc", "qemu", "lume", "kubevirt")
+RUNTIME_FLAG_CHOICES = ("auto", "gvisor", "runc", "qemu", "lume")
 #: The kind an engine runs.
 ENGINE_KIND = {
     "gvisor": "container",
     "runc": "container",
     "qemu": "vm",
     "lume": "vm",
-    "kubevirt": "vm",
 }
 #: The OSes that only run as VMs.
 VM_ONLY_OS = ("windows", "macos", "android")
@@ -177,20 +174,6 @@ def parse_memory_mb(value: Any) -> Optional[int]:
     return mb
 
 
-def parse_duration_s(value: Any) -> Optional[int]:
-    """``900``, ``"90s"``, ``"15m"``, ``"1h"`` to seconds."""
-    if value is None or value == "":
-        return None
-    if isinstance(value, bool):
-        raise TargetError(f"invalid duration: {value!r}")
-    if isinstance(value, (int, float)):
-        return int(value)
-    match = re.fullmatch(r"\s*(\d+)\s*([smhd]?)\s*", str(value).lower())
-    if not match:
-        raise TargetError(f"invalid duration: {value!r} (use e.g. 900, 90s, 15m or 1h)")
-    return int(match.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2) or "s"]
-
-
 @dataclass(frozen=True)
 class Target:
     """Where tasks run. Built with :func:`resolve_target`."""
@@ -198,26 +181,19 @@ class Target:
     on: str = "local"
     #: ``container``/``vm``; None ("auto"): per task and image (see resolve_env_spec).
     kind: Optional[str] = None
-    #: The engine (``gvisor``, ``runc``, ``qemu``, ``lume``, ``kubevirt``);
-    #: None ("auto"): the SDK picks.
+    #: The engine (``gvisor``, ``runc``, ``qemu``, ``lume``); None ("auto"):
+    #: the SDK picks.
     runtime: Optional[str] = None
     image: Optional[str] = None  # overrides every task's image
     cpu: Optional[int] = None
     memory_mb: Optional[int] = None
     concurrency: int = 4
-    warm: bool = False
-    claim_ttl_s: Optional[int] = None
     #: Where ``on`` came from: ``cli``, ``env``, ``config`` or ``default``.
     on_source: str = "cli"
     #: Where ``kind`` / ``runtime`` came from (``cli``, ``platform``, ``env``,
     #: ``config``); a defaulted one that does not fit a task is skipped.
     kind_source: str = "cli"
     runtime_source: str = "cli"
-
-    @property
-    def cloud(self) -> bool:
-        """Cua Cloud, which has ended (``resolve_target`` refuses it)."""
-        return self.on == "cloud"
 
     @property
     def contrib(self) -> bool:
@@ -336,8 +312,6 @@ def resolve_target(
     cpu: Any = None,
     memory: Any = None,
     concurrency: Any = None,
-    warm: bool = False,
-    claim_ttl: Any = None,
     environ: Optional[Mapping[str, str]] = None,
     config: Optional[Mapping[str, str]] = None,
 ) -> Target:
@@ -412,10 +386,6 @@ def resolve_target(
     if n < 1:
         raise TargetError("--max-parallel must be at least 1")
 
-    ttl = parse_duration_s(claim_ttl)
-    if ttl is not None and not 60 <= ttl <= 7 * 86400:
-        raise TargetError("--claim-ttl must be between 60s and 7d")
-
     return Target(
         on=on,
         kind=kind,
@@ -424,8 +394,6 @@ def resolve_target(
         cpu=cpu_n,
         memory_mb=parse_memory_mb(memory),
         concurrency=n,
-        warm=bool(warm),
-        claim_ttl_s=ttl,
         on_source=on_source,
         kind_source=kind_source,
         runtime_source=runtime_source,
@@ -451,17 +419,13 @@ class EnvSpec:
     #: (--platform), "task" (setup_config), "index" (the image's variant
     #: index), "env"/"config" (a user default), "default" (OS default).
     kind_source: str = "default"
-    #: The engine (gvisor, runc, qemu, lume, kubevirt); None: the SDK picks.
+    #: The engine (gvisor, runc, qemu, lume); None: the SDK picks.
     runtime: Optional[str] = None
     #: What the task needs from the target (``setup_config.requires``): kvm,
     #: egress, openai, hf-gated, env:NAME. Checked by ``cb run`` up front.
     requires: tuple = ()
-    #: ``--image pool:<name>``: claim from this existing Cua Cloud pool (its
-    #: template decides image, kind and runtime) instead of a managed pool.
-    pool: Optional[str] = None
     #: More guest ports the task reaches (``setup_config.ports``): exposed
-    #: like ``server_port`` (``sb.exposed_ports`` locally, a ``port-N``
-    #: service in the cloud), without readiness probing.
+    #: like ``server_port`` (``sb.exposed_ports``), without readiness probing.
     ports: tuple = ()
 
     #: The task declared the retired simulated provider (mapped to native).
@@ -471,33 +435,14 @@ class EnvSpec:
     def needs_sandbox(self) -> bool:
         return self.provider != "dataset"
 
-    @property
-    def pool_key(self) -> tuple:
-        """Sandboxes with equal keys are interchangeable (one managed pool)."""
-        return (
-            self.os_type,
-            self.kind,
-            self.runtime,
-            self.image,
-            self.server_port,
-            self.os_version,
-            self.pool,
-            self.ports,
-        )
-
     def backend(self, on: str) -> str:
         """What runs the sandbox, as ``<location>-<engine>``: ``local-gvisor``,
-        ``local-qemu``, ``cloud-gvisor``, ``cloud-kubevirt``, ..."""
+        ``local-qemu``, ``e2b-auto``, ..."""
         if not self.needs_sandbox:
             return "none"
-        if self.pool:
-            return f"cloud-pool:{self.pool}"
-        if on not in ("local", "cloud"):
-            # A contrib provider: the SDK picks the engine.
+        if on != "local":
+            # A contrib provider or your own cloud: the SDK picks the engine.
             return f"{on}-{self.runtime or 'auto'}"
-        if on == "cloud":
-            engine = self.runtime or ("gvisor" if self.kind == "container" else "kubevirt")
-            return f"cloud-{engine}"
         if self.runtime:
             return f"local-{self.runtime}"
         if self.kind == "container":
@@ -510,8 +455,6 @@ class EnvSpec:
     def image_label(self) -> str:
         if not self.needs_sandbox:
             return "no environment (dataset)"
-        if self.pool:
-            return f"pool:{self.pool}"
         if self.image:
             return self.image
         version = f" {self.os_version}" if self.os_version else ""
@@ -541,31 +484,6 @@ def parse_image_alias(value: Any) -> Optional[tuple[str, Optional[str]]]:
     if os_type is None:
         return None
     return os_type, (version or None)
-
-
-def parse_pool_image(value: Any) -> Optional[str]:
-    """The pool name of a ``pool:<name>`` image (``fleet:<name>``: deprecated).
-
-    ``pool:`` named an existing Cua Cloud pool (which has ended);
-    ``fleet:`` never names an image any more but still parses, with a warning.
-    """
-    if not isinstance(value, str):
-        return None
-    for prefix in ("pool:", "fleet:"):
-        if value.startswith(prefix) and "/" not in value:
-            name = value[len(prefix) :].strip()
-            if not name:
-                raise TargetError(f"{value!r}: missing pool name")
-            if prefix == "fleet:":
-                import warnings
-
-                warnings.warn(
-                    f"--image {value} is deprecated: use pool:{name}",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
-            return name
-    return None
 
 
 VariantResolver = Any  # Callable[[str, str], Optional[str]]: (ref, os_type) -> kind
@@ -690,7 +608,7 @@ def resolve_env_spec(
         raise TargetError(f"unsupported os_type {setup.get('os_type')!r}")
 
     image = target.image or setup.get("image") or default_image or None
-    if parse_pool_image(image) is not None:
+    if isinstance(image, str) and image.startswith("pool:") and "/" not in image:
         # `pool:<name>` named a Cua Cloud pool; Cua Cloud has ended.
         raise CloudEnded()
     os_version = None
@@ -701,16 +619,9 @@ def resolve_env_spec(
         image = None
 
     kind, source = _pick_kind(setup, target, os_type, image, variant_resolver)
-    if target.cloud and os_type in ("macos", "android"):
-        raise TargetError(
-            f"{os_type} sandboxes are not available on --on cloud; run them with --on local "
-            + ("(Lume on Apple Silicon)" if os_type == "macos" else "(Android emulator)")
-        )
 
     if image is None and kind == "container" and os_version is None:
         image = default_container_image()
-    if target.cloud and image is None and os_type not in ("linux", "windows"):
-        raise TargetError(f"no built-in cloud image for {os_type}; pass --image")
 
     server_port = setup.get("server_port")
     if server_port is not None:
@@ -789,9 +700,7 @@ def check_requirements(
         has_kvm = os.path.exists("/dev/kvm")
     problems: set[str] = set()
     for spec in specs:
-        problems.update(
-            unmet_requirements(spec.requires, cloud=target.cloud, environ=env, has_kvm=has_kvm)
-        )
+        problems.update(unmet_requirements(spec.requires, environ=env, has_kvm=has_kvm))
     if problems:
         raise TargetError("; ".join(sorted(problems)))
 
@@ -883,35 +792,3 @@ def default_container_image() -> str:
             or os.environ.get("CUA_SANDBOX_LINUX_CONTAINER_IMAGE")
             or _DEFAULT_LINUX_CONTAINER_IMAGE
         )
-
-
-@dataclass
-class PoolPlan:
-    """One group of interchangeable sandboxes (one managed pool in the cloud)."""
-
-    spec: EnvSpec
-    tasks: int
-    max_pool_size: int
-    job_ids: list = field(default_factory=list)
-
-
-def plan_claims(jobs: Iterable[tuple[Any, EnvSpec]], concurrency: int) -> list[PoolPlan]:
-    """Group jobs by pool key and size each pool for the batch.
-
-    Each group becomes one managed pool; its ``max_pool_size`` is the number
-    of sandboxes the batch can hold at once from it, ``min(concurrency,
-    tasks in the group)``, so KEDA scales the pool to the batch and back to
-    zero afterwards.
-    """
-    groups: dict[tuple, PoolPlan] = {}
-    for job_id, spec in jobs:
-        if not spec.needs_sandbox:
-            continue  # dataset tasks claim nothing
-        plan = groups.get(spec.pool_key)
-        if plan is None:
-            plan = groups[spec.pool_key] = PoolPlan(spec=spec, tasks=0, max_pool_size=0)
-        plan.tasks += 1
-        plan.job_ids.append(job_id)
-    for plan in groups.values():
-        plan.max_pool_size = max(1, min(int(concurrency), plan.tasks))
-    return list(groups.values())

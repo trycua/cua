@@ -229,13 +229,13 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'sandbox/lifecycle',
     title: 'Lifecycle',
-    description: 'Wait for, keep alive, suspend, resume, restart, detach and delete a sandbox.',
-    intro: 'Lifecycle calls on a `Sandbox` handle. They act on the container or VM, locally or in the cloud.',
+    description: 'Wait for, keep alive, suspend, resume, restart and delete a sandbox.',
+    intro: 'Lifecycle calls on a `Sandbox` handle. They act on the container or VM.',
     members: [
       {
         object: 'Sandbox',
         title: 'Lifecycle methods',
-        methods: ['wait_ready', 'refresh', 'keep_alive', 'suspend', 'resume', 'restart', 'detach', 'delete'],
+        methods: ['wait_ready', 'refresh', 'keep_alive', 'suspend', 'resume', 'restart', 'delete'],
       },
     ],
     items: [],
@@ -263,7 +263,7 @@ export const PAGES: PageSpec[] = [
     description: 'SandboxCreateOptions and what it holds: cloud options, readiness probes and sidecar containers.',
     intro:
       '`Sandboxes.create` takes one `SandboxCreateOptions`. Every field means the same thing locally and in the cloud; `on` picks where the sandbox runs, `kind` and `runtime` what runs it.',
-    items: ['SandboxCreateOptions', 'CloudOptions', 'ReadinessProbe', 'Container'],
+    items: ['SandboxCreateOptions', 'ReadinessProbe', 'Container'],
     python: [['`Sandbox.create` parameters', `${PY}/sandbox#sandboxcreate`]],
   },
   {
@@ -979,7 +979,7 @@ export const PAGES: PageSpec[] = [
     intro:
       'The apps take no payment details: the website handles credit and cards. `AppBillingStatus` is what Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space refused for want of credit shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it. `app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does); `app_relay_usage_view` derives the Settings row and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade. Nothing stops at the limit. `app_teams` turns the account\'s `AppTeamsInput` into the Teams rows of Settings: the signed-in state, each team with its people and the role of each.',
     items: ['AppCreditNotice'],
-    prefixes: ['AppBilling', 'app_billing_', 'AppRelay', 'app_relay_', 'AppTeam', 'app_teams'],
+    prefixes: ['AppBilling', 'AppRelay', 'app_relay_', 'AppTeam', 'app_teams'],
     catalog: true,
     spaces: true,
   },

@@ -81,7 +81,7 @@ Returned by [`Cua.spacesd`](/cua-sdk/reference/cua#cuaspacesd), [`Relay.connect`
 | [`diagnose`](#spacesdclientdiagnose) | Runs the image self-test (`SystemService.Diagnose`, the checks of `cua-spacesd doctor`) and returns the report as JSON (schema version 1, `libs/cua/proto/diagnose-report.schema.json`). |
 | [`has_feature`](#spacesdclienthas_feature) | Whether the guest supports `feature`. |
 | [`health`](#spacesdclienthealth) | `Health` as proto3 JSON. |
-| [`http`](#spacesdclienthttp) | Sends one plain-HTTP request to the spacesd port with this client's endpoint and credentials (through the Fleet gateway when the endpoint is a Fleet service). |
+| [`http`](#spacesdclienthttp) | Sends one plain-HTTP request to the spacesd port with this client's endpoint and credentials (through a gateway when the endpoint is behind one). |
 | [`agents`](/cua-sdk/reference/agents#spacesdclientagents) | Coding agents in this guest. |
 | [`attach`](/cua-sdk/reference/spacesd/shell#spacesdclientattach) | Attaches to a running process by pid or tag. |
 | [`click`](/cua-sdk/reference/spacesd/computer#spacesdclientclick) | Left click. |
@@ -424,8 +424,8 @@ pub async fn health(&self) -> Result<String, CuaError>
 ### `SpacesdClient.http`
 
 Sends one plain-HTTP request to the spacesd port with this
-client's endpoint and credentials (through the Fleet gateway when the
-endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+client's endpoint and credentials (through a gateway when the
+endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
 for example by typed cua-driver clients. Not retried.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>

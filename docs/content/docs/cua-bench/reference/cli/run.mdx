@@ -68,7 +68,7 @@ cb run task [OPTIONS] <task_path>
 | <span id="cb-run-task--max-steps"></span>`--max-steps` |  | integer | `100` | Maximum number of steps for agent execution (default: 100). |
 | <span id="cb-run-task--on"></span>`--on` |  | `local` \| `cloud` \| `e2b` \| `daytona` \| `modal` \| `cloudflare` \| `vercel` \| `morph` \| `runloop` \| `fly` \| `blaxel` \| `codesandbox` \| `northflank` \| `aws` \| `gcp` |  | Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local. |
 | <span id="cb-run-task--kind"></span>`--kind` |  | `auto` \| `container` \| `vm` |  | What kind of sandbox: container or vm. Default auto: Linux as a container unless the task or image says VM; Windows, macOS and Android are VM-only. Default: CUA_DEFAULT_KIND, else `cua config set default.kind`. |
-| <span id="cb-run-task--runtime"></span>`--runtime` |  | `auto` \| `gvisor` \| `runc` \| `qemu` \| `lume` \| `kubevirt` |  | Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`). |
+| <span id="cb-run-task--runtime"></span>`--runtime` |  | `auto` \| `gvisor` \| `runc` \| `qemu` \| `lume` |  | Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`). |
 | <span id="cb-run-task--image"></span>`--image` |  | string |  | Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/&lt;os&gt;, any registry ref or a digest. Env: CUA_BENCH_IMAGE. |
 | <span id="cb-run-task--cpu"></span>`--cpu` |  | integer |  | vCPUs per sandbox. |
 | <span id="cb-run-task--memory"></span>`--memory` |  | string |  | Memory per sandbox (e.g. 4096, 4G). |
@@ -110,7 +110,7 @@ cb run dataset [OPTIONS] <dataset_path>
 
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| <span id="cb-run-dataset--max-parallel"></span>`--max-parallel` | `-j` | integer | `4` | Variants running at once; in the cloud also the managed pool's max size (default: 4). |
+| <span id="cb-run-dataset--max-parallel"></span>`--max-parallel` | `-j` | integer | `4` | Variants running at once (default: 4). |
 | <span id="cb-run-dataset--max-variants"></span>`--max-variants` |  | integer |  | Maximum number of variants to run per task (default: all). |
 | <span id="cb-run-dataset--task-filter"></span>`--task-filter` |  | string |  | Filter tasks by name pattern (glob). |
 | <span id="cb-run-dataset--agent"></span>`--agent` |  | string |  | Agent to use for evaluation (e.g., cua-agent). |
@@ -119,7 +119,7 @@ cb run dataset [OPTIONS] <dataset_path>
 | <span id="cb-run-dataset--max-steps"></span>`--max-steps` |  | integer | `100` | Maximum number of steps for agent execution (default: 100). |
 | <span id="cb-run-dataset--on"></span>`--on` |  | `local` \| `cloud` \| `e2b` \| `daytona` \| `modal` \| `cloudflare` \| `vercel` \| `morph` \| `runloop` \| `fly` \| `blaxel` \| `codesandbox` \| `northflank` \| `aws` \| `gcp` |  | Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local. |
 | <span id="cb-run-dataset--kind"></span>`--kind` |  | `auto` \| `container` \| `vm` |  | What kind of sandbox: container or vm. Default auto: Linux as a container unless the task or image says VM; Windows, macOS and Android are VM-only. Default: CUA_DEFAULT_KIND, else `cua config set default.kind`. |
-| <span id="cb-run-dataset--runtime"></span>`--runtime` |  | `auto` \| `gvisor` \| `runc` \| `qemu` \| `lume` \| `kubevirt` |  | Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`). |
+| <span id="cb-run-dataset--runtime"></span>`--runtime` |  | `auto` \| `gvisor` \| `runc` \| `qemu` \| `lume` |  | Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`). |
 | <span id="cb-run-dataset--image"></span>`--image` |  | string |  | Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/&lt;os&gt;, any registry ref or a digest. Env: CUA_BENCH_IMAGE. |
 | <span id="cb-run-dataset--cpu"></span>`--cpu` |  | integer |  | vCPUs per sandbox. |
 | <span id="cb-run-dataset--memory"></span>`--memory` |  | string |  | Memory per sandbox (e.g. 4096, 4G). |
@@ -274,7 +274,7 @@ cb interact [OPTIONS] <env_path>
 | <span id="cb-interact--trace-out"></span>`--trace-out` | string |  | Record a trace and save it as a dataset to this path on exit. |
 | <span id="cb-interact--on"></span>`--on` | `local` \| `cloud` \| `e2b` \| `daytona` \| `modal` \| `cloudflare` \| `vercel` \| `morph` \| `runloop` \| `fly` \| `blaxel` \| `codesandbox` \| `northflank` \| `aws` \| `gcp` |  | Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local. |
 | <span id="cb-interact--kind"></span>`--kind` | `auto` \| `container` \| `vm` |  | What kind of sandbox: container or vm. Default auto: Linux as a container unless the task or image says VM; Windows, macOS and Android are VM-only. Default: CUA_DEFAULT_KIND, else `cua config set default.kind`. |
-| <span id="cb-interact--runtime"></span>`--runtime` | `auto` \| `gvisor` \| `runc` \| `qemu` \| `lume` \| `kubevirt` |  | Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`). |
+| <span id="cb-interact--runtime"></span>`--runtime` | `auto` \| `gvisor` \| `runc` \| `qemu` \| `lume` |  | Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`). |
 | <span id="cb-interact--image"></span>`--image` | string |  | Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/&lt;os&gt;, any registry ref or a digest. Env: CUA_BENCH_IMAGE. |
 | <span id="cb-interact--cpu"></span>`--cpu` | integer |  | vCPUs per sandbox. |
 | <span id="cb-interact--memory"></span>`--memory` | string |  | Memory per sandbox (e.g. 4096, 4G). |

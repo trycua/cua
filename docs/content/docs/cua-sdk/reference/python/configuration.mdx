@@ -17,24 +17,11 @@ Process-wide settings, sign-in helpers, transports and the typed errors of `cua-
 ### configure
 
 ```python
-def configure(
-    *,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-    fleet_base_url: Optional[str] = None,
-    token_url: Optional[str] = None,
-    client_id: Optional[str] = None,
-    client_secret: Optional[str] = None,
-    fleet_token: Optional[str] = None,
-) -> None
+def configure(*, api_key: Optional[str] = None, base_url: Optional[str] = None) -> None
 ```
 
-Set global configuration.
-
-`api_key` and `base_url` apply to the legacy `login()` and
-`whoami()` helpers. `fleet_base_url`, `token_url`, `client_id`,
-`client_secret` and `fleet_token` configured Cua Cloud, which has
-ended: they are accepted so existing calls keep working, and ignored.
+Set global configuration for the legacy `login()` and `whoami()`
+helpers.
 
 ### login
 
@@ -80,8 +67,8 @@ class InvalidArgument(ValueError)
 ```
 
 Contradictory or invalid options (the native SDK's
-`CuaError.InvalidArgument`), for example `local=True` together with
-`cloud=CloudOptions(...)`.
+`CuaError.InvalidArgument`), for example `on="local"` together with
+`local=False`.
 
 ### InvalidPlacement
 
@@ -91,8 +78,7 @@ class InvalidPlacement(InvalidArgument)
 
 A location, kind and runtime that do not go together (the native
 SDK's `CuaError.InvalidPlacement`), for example `kind="container"`
-with `runtime="qemu"`, or `runtime="kubevirt"` locally. The message
-lists the valid values.
+with `runtime="qemu"`. The message lists the valid values.
 
 ### Unsupported
 
@@ -105,14 +91,6 @@ The operation is not supported for this sandbox, image or provider
 so older `except NotImplementedError` handlers still catch it.
 
 ## Transports
-
-### CloudTransport
-
-```python
-class CloudTransport(Transport)
-```
-
-Retired: every Cua Cloud entry point raises `CloudEnded`.
 
 ### EnvTransport
 

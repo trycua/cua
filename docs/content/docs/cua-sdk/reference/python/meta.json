@@ -3,7 +3,6 @@
   "pages": [
     "sandbox",
     "image",
-    "pool",
     "interfaces",
     "services",
     "runtimes",

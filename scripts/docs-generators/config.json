@@ -441,11 +441,6 @@
         },
         {
           "type": "api",
-          "outputFile": "cua-sdk/reference/python/pool.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
           "outputFile": "cua-sdk/reference/python/interfaces.mdx",
           "extractCommand": null
         },

@@ -66,8 +66,7 @@ def linux(
 Linux: the canonical `ghcr.io/trycua/linux:<version>` image.
 
 `kind=None` (or `"auto"`) runs what the image is (the rootfs: a
-gVisor container locally and in the cloud); `kind="vm"` its
-`-disk` containerDisk (QEMU locally, KubeVirt in the cloud);
+gVisor container); `kind="vm"` its `-disk` containerDisk (QEMU);
 `kind="container"` the rootfs. `Sandbox.create(kind=...)`
 overrides it.
 
@@ -117,8 +116,8 @@ def omarchy(channel: Optional[str] = None) -> Image
 Omarchy (Arch Linux, Hyprland) with cua-spacesd:
 `ghcr.io/trycua/omarchy:edge` (or `"rc"`/`"stable"`).
 
-An amd64 VM: QEMU locally (emulated on arm64 hosts, so slow there),
-KubeVirt in the cloud. Until CI publishes it this raises
+An amd64 VM: QEMU (emulated on arm64 hosts, so slow there). Until CI
+publishes it this raises
 `CuaError.ImageNotPublished`; use
 `Image.from_registry("ghcr.io/trycua/omarchy:edge", kind="vm")` to
 run it anyway.
@@ -149,8 +148,7 @@ def from_registry(
 Create an image from a registry reference.
 
 `secret` (a `cua_sandbox.RegistrySecret`) pulls a private
-image, the same way locally (the pull) and in the cloud (a registry
-pull secret for the sandbox). It is never logged or saved.
+image. It is never logged or saved.
 
 os_type selects the firmware: Windows guest disks are built UEFI-only,
 so a Windows containerDisk pulled from a registry must say so or it is
@@ -345,29 +343,13 @@ def expose(port: int) -> Image
 
 Expose a port.
 
-#### Image.to_build_recipe
-
-```python
-def to_build_recipe(
-    *,
-    name: str,
-    namespace: str,
-    tags: Mapping[str, str] | None = None,
-    timeout_seconds: int | None = None,
-    disk_size: str | None = None,
-    file_references: Mapping[str, ImageFileReference] | None = None,
-) -> Dict[str, Any]
-```
-
-Return a CRD-validated Image custom-resource manifest.
-
 #### Image.to_dict
 
 ```python
 def to_dict() -> Dict[str, Any]
 ```
 
-Serialize to a plain dict suitable for JSON or cloud API.
+Serialize to a plain dict suitable for JSON.
 
 #### Image.to_cloud_init
 
@@ -541,16 +523,3 @@ def aws_ecr(region: Optional[str] = None) -> 'RegistrySecret'
 ```python
 def native() -> Any
 ```
-
-### ImageFileReference
-
-```python
-class ImageFileReference(BaseModel)
-```
-
-| Attribute | Type | Description |
-| --- | --- | --- |
-| `model_config` | `ConfigDict` |  |
-| `digest` | `constr(pattern='^sha256:[0-9a-f]{64}$')` |  |
-| `reference` | `constr(pattern='^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$', min_length=1, max_length=2048)` |  |
-| `size_bytes` | `conint(ge=0, le=9007199254740991)` |  |

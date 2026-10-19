@@ -1,6 +1,6 @@
 ---
 title: "Lifecycle"
-description: "Wait for, keep alive, suspend, resume, restart, detach and delete a sandbox."
+description: "Wait for, keep alive, suspend, resume, restart and delete a sandbox."
 ---
 
 {/*
@@ -12,7 +12,7 @@ description: "Wait for, keep alive, suspend, resume, restart, detach and delete 
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Lifecycle calls on a `Sandbox` handle. They act on the container or VM, locally or in the cloud.
+Lifecycle calls on a `Sandbox` handle. They act on the container or VM.
 
 Python programs usually use the high-level API instead: [`Sandbox` lifecycle](/cua-sdk/reference/python/sandbox#sandboxdestroy).
 
@@ -298,52 +298,6 @@ pub async fn restart(&self) -> Result<(), CuaError>
 </Tabs>
 
 **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Sandbox.detach`
-
-Forgets the handle this runtime holds (a Cua Cloud claim used to
-stop renewing; Cua Cloud has ended). Embedded runtime only.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-def detach(self) -> None
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-detach(): void
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func detach() throws
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-fun detach()
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn detach(&self) -> Result<(), CuaError>
-```
-
-</Tab>
-</Tabs>
-
-**Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Sandbox.delete`
 

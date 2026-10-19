@@ -10,7 +10,7 @@ description: "The hand-written helpers of @trycua/cua: embedded, connect, Image,
   Version: @trycua/cua 0.5.0
 */}
 
-Import from `@trycua/cua`. This page covers the hand-written TypeScript layer; the generated native binding (sandboxes, guest, fleet, spaces objects) is documented per object in the [Cua SDK reference](/cua-sdk/reference).
+Import from `@trycua/cua`. This page covers the hand-written TypeScript layer; the generated native binding (sandboxes, guest, spaces objects) is documented per object in the [Cua SDK reference](/cua-sdk/reference).
 
 `npm install @trycua/cua` (0.5.0) installs the Node package; native code ships as per-platform optional packages (`@trycua/cua-darwin-arm64`, `@trycua/cua-linux-x64-gnu`, ...).
 
@@ -18,7 +18,7 @@ Import from `@trycua/cua`. This page covers the hand-written TypeScript layer; t
 | --- | --- |
 | `@trycua/cua` | `embedded()`, `connect()`, every generated object, and the helpers on this page |
 | `@trycua/cua/spaces`, `/spaces/transport`, `/spaces/host` | Spaces threads, approvals and transports |
-| `@trycua/cua/browser` | A WebAssembly subset: cua-spacesd over gRPC-Web and a Fleet client with a static bearer. No sandboxes, local runtimes, Spaces, daemon, file transfer or media. Give it a short-lived token from your backend, never client secrets |
+| `@trycua/cua/browser` | A WebAssembly subset: cua-spacesd over gRPC-Web with a static bearer. No sandboxes, local runtimes, Spaces, daemon, file transfer or media. Give it a short-lived token from your backend, never client secrets |
 
 cua does not implement MCP: `connectMcp(await sb.mcpConfig(service, undefined))` hands the endpoint to the official SDK (`npm install @modelcontextprotocol/client`). Cloud bearers are short-lived, so fetch a config per connection.
 
@@ -87,26 +87,6 @@ variant a backend runs (rootfs, the `-disk` containerDisk, Lume).
 | <a id="property-omarchy"></a> `omarchy()` | (`channel?`) => `string` | Omarchy (Arch Linux, Hyprland) with cua-spacesd: an amd64 VM. |
 | <a id="property-resolve"></a> `resolve()` | (`reference`, `backend`, `arch?`) => `ResolvedImage` | - |
 | <a id="property-windows"></a> `windows()` | (`version?`, `tier?`) => `string` | - |
-
-***
-
-### Pool
-
-```ts
-const Pool: object;
-```
-
-`Pool.apply(fleet, name, spec, options)`: the one pool writer, the same
-call as `fleet.apply`. Named pools are compared against a spec with
-`fleet.checkPoolSpec` (raises `CuaError.PoolSpecMismatch` with a diff) and
-updated with `fleet.applyPoolTemplate`; `fleet.exportPool(name).terraform`
-prints the equivalent `fleets_pool` block.
-
-#### Type Declaration
-
-| Name | Type |
-| ------ | ------ |
-| <a id="property-apply"></a> `apply()` | (`fleet`, `name`, `spec`, `options`) => `Promise`\<`FleetPool`\> |
 
 ***
 
@@ -180,7 +160,7 @@ function connectMcp(config, clientInfo?): Promise<any>;
 ```
 
 Connects the official SDK's `Client` to `config` over streamable HTTP.
-Fleet bearers are short-lived: fetch a fresh config per connection.
+A provider's headers may be short-lived: fetch a fresh config per connection.
 
 #### Parameters
 
@@ -225,9 +205,9 @@ it as `docUrl`.
 function embedded(config?): CuaLike;
 ```
 
-An SDK runtime in this process (no I/O until the first call). Fleet uses
-`CUA_CLIENT_ID`/`CUA_CLIENT_SECRET` (or `FLEETS_TOKEN`); pass
-`fleetFromSession: true` to fall back to the `cua auth login` session.
+An SDK runtime in this process (no I/O until the first call). Pass
+`accountFromSession: true` to use the `cua auth login` session for the
+relay account the runtime lists "My machines" with.
 
 #### Parameters
 
@@ -279,56 +259,6 @@ The headers as a plain object.
 #### Returns
 
 `Record`\<`string`, `string`\>
-
-***
-
-### poolOptions()
-
-```ts
-function poolOptions(opts?): PoolOptions;
-```
-
-How a pool keeps capacity for a `SandboxSpec` (warm floor, size, TTLs, runtime).
-
-#### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `opts` | `Partial`\<`PoolOptions`\> |
-
-#### Returns
-
-`PoolOptions`
-
-***
-
-### sandboxSpec()
-
-```ts
-function sandboxSpec(image, opts?): SandboxSpec;
-```
-
-What a sandbox runs: the one model behind `Sandbox.create`, managed pools
-and `fleet.apply(name, spec, options)`. `env` and `services` take plain
-objects too. Unset fields keep Fleet's defaults (and are not compared by
-`fleet.checkPoolSpec`).
-
-```ts
-const spec = sandboxSpec("python:3.12-slim", {
-  command: ["python", "-m", "srv"], services: { mcp: 8765 }, readiness: http("mcp", "/health") })
-await c.fleet().apply("my-pool", spec, poolOptions({ warm: true, idleTtlSeconds: 3600 }))
-```
-
-#### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `image` | `string` |
-| `opts` | `Partial`\<`Omit`\<`SandboxSpec`, `"image"` \| `"env"` \| `"services"`\>\> & `object` |
-
-#### Returns
-
-`SandboxSpec`
 
 ***
 

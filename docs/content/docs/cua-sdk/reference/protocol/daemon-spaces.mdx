@@ -35,7 +35,6 @@ without touching it.
 | [`ListSpaces`](#spaceservicelistspaces) | [`ListSpacesRequest`](#listspacesrequest) | [`ListSpacesResponse`](#listspacesresponse) | unary |
 | [`RemoveSpace`](#spaceserviceremovespace) | [`RemoveSpaceRequest`](#removespacerequest) | [`RemoveSpaceResponse`](#removespaceresponse) | unary |
 | [`ResolveSpace`](#spaceserviceresolvespace) | [`ResolveSpaceRequest`](#resolvespacerequest) | [`ResolveSpaceResponse`](#resolvespaceresponse) | unary |
-| [`ClaimFleetSpace`](#spaceserviceclaimfleetspace) | [`ClaimFleetSpaceRequest`](#claimfleetspacerequest) | [`ClaimFleetSpaceResponse`](#claimfleetspaceresponse) | unary |
 | [`ProvisionLocalSpace`](#spaceserviceprovisionlocalspace) | [`ProvisionLocalSpaceRequest`](#provisionlocalspacerequest) | [`ProvisionLocalSpaceResponse`](#provisionlocalspaceresponse) | unary |
 | [`ReleaseSpace`](#spaceservicereleasespace) | [`ReleaseSpaceRequest`](#releasespacerequest) | [`ReleaseSpaceResponse`](#releasespaceresponse) | unary |
 | [`CreateSpace`](#spaceservicecreatespace) | [`CreateSpaceRequest`](#createspacerequest) | [`CreateSpaceResponse`](#createspaceresponse) | unary |
@@ -54,7 +53,7 @@ without touching it.
 `/cua.daemon.v1.SpaceService/AddSpace`, unary: [`AddSpaceRequest`](#addspacerequest) to [`AddSpaceResponse`](#addspaceresponse).
 
 Adds an existing machine as a Space by address (`host:port`, a direct
-`http(s)://host:port`, or a sandbox ref such as `cloud:<name>`) after a
+`http(s)://host:port`, or a sandbox ref such as `local:<name>`) after a
 `GetCapabilities` handshake.
 
 ### SpaceService.ListSpaces
@@ -74,14 +73,6 @@ Forgets a Space. Does not delete the underlying sandbox.
 `/cua.daemon.v1.SpaceService/ResolveSpace`, unary: [`ResolveSpaceRequest`](#resolvespacerequest) to [`ResolveSpaceResponse`](#resolvespaceresponse).
 
 Resolves any accepted spelling (id, legacy id, URL, name) to a Space.
-
-### SpaceService.ClaimFleetSpace
-
-`/cua.daemon.v1.SpaceService/ClaimFleetSpace`, unary: [`ClaimFleetSpaceRequest`](#claimfleetspacerequest) to [`ClaimFleetSpaceResponse`](#claimfleetspaceresponse).
-
-**Deprecated.**
-
-Deprecated: use `CreateSpace` with location "cloud".
 
 ### SpaceService.ProvisionLocalSpace
 
@@ -123,8 +114,8 @@ its status after the progress it made.
 Cancels a create that is still running, found by the caller's
 `create_id`, the id the Space will have (every progress event carries
 it in `space`) or its name: the work in flight stops (an image
-download, a boot, a claim, a relay registration) and what the create
-made is removed (its VM or container and disks, its cloud claim, its
+download, a boot, a relay registration) and what the create
+made is removed (its VM or container and disks, its
 relay machine, its registry entry). Nothing that existed before is
 touched; finished image downloads stay cached so the next create
 resumes. Returns once the clean-up is done; the create itself ends with
@@ -205,7 +196,7 @@ A registered Space.
 | `services` | 7 | repeated `string` | Services the Space declares (never "env"), for example "mcp". A Space without cua-spacesd has an empty feature list and reaches these through generic MCP (`list_tools` / `call_tool` with `service`). |
 | `os_name` | 8 | `string` | Guest OS product or distribution at the last handshake (GetCapabilities `os.name`), for example "Ubuntu" or "macOS"; empty when not reported. The Spaces app picks the OS icon from it. |
 | `os_pretty_name` | 9 | `string` | The guest's full OS string at the last handshake (GetCapabilities `os.pretty_name`), for example "Ubuntu 24.04.3 LTS"; empty when the driver does not report one. |
-| `image` | 10 | `string` | The image the sandbox runs, as requested (local and cloud Spaces), for example "ghcr.io/trycua/linux:24.04"; empty when unknown (a Space added by address). |
+| `image` | 10 | `string` | The image the sandbox runs, as requested (local Spaces), for example "ghcr.io/trycua/linux:24.04"; empty when unknown (a Space added by address). |
 | `image_digest` | 11 | `string` | The digest of the variant that runs ("sha256:..."), when known. |
 | `kind` | 12 | `string` | Container or virtual machine: "container" or "vm" (the guest's runtime at the last handshake, else the local sandbox's record); empty when unknown. |
 | `arch` | 13 | `string` | The guest's CPU architecture: "arm64" or "amd64" (GetCapabilities `arch` at the last handshake, else the local sandbox's record); empty when unknown. |
@@ -280,32 +271,6 @@ Response for `SpaceService.ResolveSpace`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `space` | 1 | [`Space`](#space) | The registered Space. |
-
-### ClaimFleetSpaceRequest
-
-Request for `SpaceService.ClaimFleetSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `image` | 1 | `string` | Image. Empty uses the default Spaces image for the runtime. |
-| `runtime` | 2 | `string` | Fleet runtime (`kubevirt`, `gvisor`). Empty picks from the image. |
-| `name` | 3 | `string` | Display name. |
-| `wait` | 4 | optional `bool` | Wait for the claim to bind (default true when unset). |
-| `reuse` | 5 | `bool` | Reuse a reachable registered Fleet Space for the same image first. |
-| `command` | 6 | repeated `string` | Entrypoint override (pod runtimes). Empty keeps the image's. |
-| `env` | 7 | map of `string` to `string` | Guest environment. |
-| `services` | 8 | map of `string` to `uint32` | Named services (name -&gt; guest port), for example &#123;"mcp": 8765&#125;. |
-| `spacesd` | 9 | optional `bool` | Whether the image runs cua-spacesd. Unset: yes for the Spaces images, no for any other image. |
-
-### ClaimFleetSpaceResponse
-
-Response for `SpaceService.ClaimFleetSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | [`Space`](#space) | The Space, once bound. |
-| `pending_json` | 2 | `string` | With `wait = false`: the pending claim as JSON (`{namespace, claim, pool, ...}`). |
-| `reused` | 3 | `bool` | A registered Space was reused. |
 
 ### ProvisionLocalSpaceRequest
 
@@ -418,9 +383,9 @@ Request for `SpaceService.CreateSpace`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `image` | 1 | `string` | Image. Empty uses the canonical Linux image. |
-| `location` | 2 | `string` | Where it runs: "local", "cloud" or a registered provider. Empty uses the default (`default.on` in the config, `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their side. |
+| `location` | 2 | `string` | Where it runs: "local" or a registered provider. Empty uses the default (`default.on` in the config, `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their side. |
 | `kind` | 3 | `string` | What kind of machine: "auto" (empty), "container" or "vm". |
-| `runtime` | 4 | `string` | Which engine: "auto" (empty), or one the location offers for the kind ("gvisor", "runc", "qemu", "lume" locally; "gvisor", "kubevirt" in the cloud). |
+| `runtime` | 4 | `string` | Which engine: "auto" (empty), or one the location offers for the kind ("gvisor", "runc", "qemu", "lume" locally). |
 | `name` | 5 | `string` | Name. Empty generates `space-<hex>`. |
 | `cpus` | 6 | `uint32` | vCPUs (0 = the default, 2). |
 | `memory_mb` | 7 | `uint64` | Memory in MiB (0 = the default, 4096). |
@@ -500,7 +465,7 @@ Request for `SpaceService.GetGpuSupport`.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `location` | 1 | `string` | "local" (empty) or "cloud". |
+| `location` | 1 | `string` | "local" (empty) or a registered provider. |
 
 ### GpuOption
 
@@ -514,7 +479,7 @@ One GPU option of a runtime.
 | `supported` | 4 | `bool` | Works on this host (and account) now. |
 | `reason` | 5 | `string` | Why not, one short line. |
 | `learn_more` | 6 | `string` | A page that explains it. |
-| `usd_per_hour` | 7 | optional `double` | Estimated cost per hour while it runs (cloud GPU types). |
+| `usd_per_hour` | 7 | optional `double` | Estimated cost per hour while it runs (a provider's GPU types). |
 
 ### GpuSupport
 
@@ -522,7 +487,7 @@ The GPU options of one runtime.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `runtime` | 1 | `string` | "lume", "qemu", "container", "gvisor", "fleet", a provider's name. |
+| `runtime` | 1 | `string` | "lume", "qemu", "container", "gvisor", a provider's name. |
 | `options` | 2 | repeated [`GpuOption`](#gpuoption) | Its options; empty: none. |
 | `reason` | 3 | `string` | Why it has none. |
 

@@ -284,14 +284,14 @@ println(normalizeImage("python:3.12-slim"))
 
 ## `resolve_image`
 
-Resolves `reference` for `backend` (`auto`, `local`, `fleet`,
+Resolves `reference` for `backend` (`auto`, `local`, `provider`,
 `container`/`docker`/`gvisor`, `vm`/`qemu`/`kubevirt`, `lume`)
-on `arch` (`amd64`/`arm64`; `None` = this host, or amd64 for `fleet`).
+on `arch` (`amd64`/`arm64`; `None` = this host).
 `reference` is literal (`ubuntu:24.04` is Docker Hub's image): no
 alias applies here; use `image_alias` or `canonical_image` first.
 Raises `NotFound` (no such image: e.g. a tag only the local engine has),
 `Unauthenticated` (the registry refused the credentials), `Unsupported`
-(no variant the backend runs, e.g. a macOS image on Fleet).
+(no variant the backend runs, e.g. a macOS image on a cloud provider).
 Blocks while the registry is read (cached for five minutes).
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
@@ -418,7 +418,7 @@ Returned by [`resolve_image`](#resolve_image), [`resolve_image_with_secret`](#re
 
 The image a sandbox runs, as resolved and pinned at create time.
 
-Returned by [`Fleet.pool_image_info`](/cua-sdk/reference/fleet#fleetpool_image_info), [`Sandbox.image_info`](/cua-sdk/reference/sandbox#sandbox).
+Returned by [`Sandbox.image_info`](/cua-sdk/reference/sandbox#sandbox).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -436,7 +436,7 @@ Returned by [`Fleet.pool_image_info`](/cua-sdk/reference/fleet#fleetpool_image_i
 Image layers built on top of a sandbox's image. Local: a build into the
 container engine (container images only; VM images take no layers here),
 cached by a content hash (`cua-b-<hash>`), so an identical spec never
-rebuilds. (Cua Cloud's remote build has ended.)
+rebuilds.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -527,9 +527,8 @@ A local file copied into a built image.
 
 ## `RegistrySecret` enum
 
-Credentials for a private registry image. Local sandboxes pull with
-them; cloud sandboxes store them as the sandbox's registry pull Secret.
-Never logged or persisted.
+Credentials for a private registry image, used for the pull. Never
+logged or persisted.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">

@@ -14,7 +14,6 @@ description: "Scaffold custom agents."
 | --- | --- |
 | [`cb agent init`](#cb-agent-init) | Create a new agent from template. |
 | [`cb agent build`](#cb-agent-build) | Deprecated: cb run executes agents in-process. |
-| [`cb agent push`](#cb-agent-push) | Deprecated: agent images are no longer used. |
 
 Every command also accepts the [global options](/cua-bench/reference/cli#global-options).
 
@@ -78,23 +77,6 @@ cb agent build [OPTIONS] <path>
 ```bash test="cli-shape" id="ref-cb-agent-build"
 # Build an agent image (deprecated)
 cb agent build ./my-agent --tag my-agent:dev
-```
-
-## `cb agent push`
-
-Deprecated: agent images are no longer used.
-
-Push a Docker image through the CUA API proxy with workspace namespacing.
-
-```text output
-cb agent push [OPTIONS] [<image_name>]
-```
-
-**Examples**
-
-```bash test="cli-shape" id="ref-cb-agent-push"
-# Push an agent image (deprecated)
-cb agent push my-agent:dev
 ```
 
 ## Exit codes

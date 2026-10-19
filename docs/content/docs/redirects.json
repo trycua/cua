@@ -442,6 +442,11 @@
     "spaces/teams/machines": "spaces/guides/teams/machines",
     "spaces/teams/faq": "spaces/guides/teams/faq",
     "cua-cli/reference/cli/fleet": "cua-sdk/guides/cua-cloud-ended",
-    "cua-sdk/guides/cloud": "cua-sdk/guides/cua-cloud-ended"
+    "cua-sdk/guides/cloud": "cua-sdk/guides/cua-cloud-ended",
+    "cua-sdk/reference/fleet": "cua-sdk/guides/cua-cloud-ended",
+    "cua-sdk/reference/fleet/claims": "cua-sdk/guides/cua-cloud-ended",
+    "cua-sdk/reference/fleet/images": "cua-sdk/guides/cua-cloud-ended",
+    "cua-sdk/reference/rust/cua-fleet": "cua-sdk/guides/cua-cloud-ended",
+    "cua-sdk/reference/python/pool": "cua-sdk/guides/cua-cloud-ended"
   }
 }

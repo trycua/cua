@@ -10,8 +10,6 @@
     "services",
     "local",
     "runtime-support",
-    "---Cloud capacity---",
-    "fleet",
     "---Inside a sandbox---",
     "spacesd",
     "agents",

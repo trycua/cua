@@ -280,7 +280,7 @@ Negotiated audio for a media session.
 ### QuicEndpoint
 
 Direct QUIC media endpoint. Only reachable when the client can reach the
-guest's UDP port directly (not through the Fleet gateway or relay).
+guest's UDP port directly (not through a gateway or the relay).
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
@@ -308,7 +308,7 @@ Response for `StreamService.OpenMedia`.
 | `media_session_id` | 1 | `string` | Media session id. |
 | `ticket` | 2 | `string` | Bearer ticket for the media socket. |
 | `ticket_expires_at` | 3 | `google.protobuf.Timestamp` | When the ticket stops being accepted for new attaches. |
-| `ws_path` | 4 | `string` | WebSocket path relative to the spacesd base URL, including the ticket, for example "/media?ticket=…". Works through the Fleet gateway and the relay. |
+| `ws_path` | 4 | `string` | WebSocket path relative to the spacesd base URL, including the ticket, for example "/media?ticket=…". Works through gateways and the relay. |
 | `quic` | 5 | [`QuicEndpoint`](#quicendpoint) | Direct QUIC endpoint, when requested and available. |
 | `codec` | 6 | [`MediaCodec`](#mediacodec) | Negotiated codec. |
 | `max_fps` | 7 | `uint32` | Effective frame rate cap. |

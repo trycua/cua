@@ -28,7 +28,6 @@ More of this crate: [client](/cua-sdk/reference/rust/cua-spaces-client), [agents
 - `exec`: Shell and literal-file primitives over the spacesd's ...
 - `extension`: Extension points for the capabilities that ship with ...
 - `files`: Moving files between this host and a Space.
-- `fleet_runtime`: The Fleet runtime ↔ image pairing for Spaces.
 - `groups`: Group chats: one human and two to six Bots in one ...
 - `host_spaces`: Spaces on your machines: a machine set up with cua ...
 - `hotspot`: Hotspot: a Space borrows this machine's network.
@@ -147,7 +146,6 @@ One thing a create made, recorded as soon as it exists.
 ```rust
 pub enum Made {
   LocalSandbox { name: String, fresh: bool },
-  FleetClaim { namespace: String, name: String },
   RelayMachine { id: String },
   HostSpace { host: String, machine: String },
 }
@@ -172,7 +170,6 @@ pub enum Error {
   Timeout(String),
   Stream(String),
   Env(Error),
-  Fleet(Error),
   Sandbox(Error),
   Io(Error),
   Json(Error),
@@ -1060,7 +1057,6 @@ pub struct Credential {
   pub url: Option<String>,
   pub token: Option<String>,
   pub service_urls: BTreeMap<String, String>,
-  pub namespace: Option<String>,
 }
 ```
 
@@ -1585,7 +1581,7 @@ A parsed Space id.
 
 ```rust
 pub enum SpaceId {
-  Cloud { name: String, namespace: Option<String> },
+  Cloud { name: String },
   Local { name: String },
   Direct { authority: String },
   Relay { machine_id: String },
@@ -1665,7 +1661,6 @@ impl Spaces {
   fn registry(&self) -> &Registry;
   fn sandboxes(&self) -> &Sandboxes;
   fn operator_display(&self) -> &Arc<dyn OperatorDisplay>;
-  fn fleet_namespace(&self) -> &str;
   fn list(&self) -> Result<Vec<SpaceInfo>>;
   async fn list_all(&self) -> Result<Vec<SpaceInfo>>;
   fn this_relay_machine_id(&self) -> Option<String>;
@@ -1687,7 +1682,6 @@ impl Spaces {
   async fn forget_connection(&self, space: &str) -> Result<()>;
   async fn create(&self, opts: SpaceCreate) -> Result<SpaceCreated>;
   async fn gpu_support(&self, on: &On) -> Vec<GpuSupport>;
-  fn fleet_pool_name(&self, runtime: FleetRuntime, image: &str) -> String;
   async fn recover_interrupted_creates(&self, budget: Duration) -> Vec<RecoveredCreate>;
   async fn delete(&self, space: &str) -> Result<String>;
   fn thumbnails(&self) -> &ThumbnailCache;
@@ -1729,10 +1723,8 @@ impl SpacesBuilder {
   fn extension(self, extension: Arc<dyn SpacesExtension>) -> Self;
   fn relay(self, relay: RelayAccount) -> Self;
   fn home(self, dir: impl Into<PathBuf>) -> Self;
-  fn fleet(self, fleet: FleetClient) -> Self;
   fn local_runtime(self, runtime: Arc<dyn LocalRuntime>) -> Self;
   fn sandboxes(self, sandboxes: Sandboxes) -> Self;
-  fn fleet_namespace(self, ns: impl Into<String>) -> Self;
   fn operator_display(self, display: Arc<dyn OperatorDisplay>) -> Self;
   fn probe_timeout(self, timeout: Duration) -> Self;
   fn download_dir(self, dir: impl Into<PathBuf>) -> Self;
@@ -2143,12 +2135,8 @@ pub struct WalkEntry {
 pub fn expects_spacesd(image: Option<&str>, explicit: Option<bool>) -> bool
 /// A name in the form `SpaceCreate::name` ...
 pub fn is_generated_name(name: &str) -> bool
-/// The key a Fleet pool is named after ...
-pub fn pool_key(image: &str, command: Option<&[String]>, env: &BTreeMap<String, String>, services: &BTreeMap<String, u16>) -> String
 /// Lowercase DNS label: `[a-z0-9-]` ...
 pub fn sanitize_label(value: &str) -> String
-/// `pool_key` plus the size ...
-pub fn sized_pool_key(image: &str, command: Option<&[String]>, env: &BTreeMap<String, String>, services: &BTreeMap<String, u16>, cpus: Option<u32>, memory_mb: Option<u32>) -> String
 
 // mod app_icon
 /// The guest script for a batch: looks ...
@@ -2185,24 +2173,6 @@ pub async fn check_host_readable(path: &Path) -> Result<()>
 pub fn downloads_subdir(target: Option<&str>, home: Option<&str>) -> Result<String>
 /// The macOS privacy-protected location ...
 pub fn protected_folder(path: &Path, home: Option<&Path>) -> Option<&'static str>
-
-// mod fleet_runtime
-/// `resolve` with the image evidence ...
-pub fn check(runtime: Option<FleetRuntime>, image: &str, evidence: &ImageEvidence) -> Result<RuntimeKind>
-/// The default Space image: the canonical ...
-pub fn default_image(_runtime: FleetRuntime) -> String
-/// The guest OS (`linux`, `windows` ...
-pub fn guest_os(image: &str, resolved_os: Option<&str>) -> String
-/// `guest_os` with the catalog lookup ...
-pub fn guest_os_with(image: &str, catalog_os: Option<String>, resolved_os: Option<&str>) -> String
-/// The tag of an image reference (see ...
-pub fn image_tag(image: &str) -> Option<&str>
-/// Parses the wire spelling of a runtime ...
-pub fn parse_runtime(value: &str) -> Result<FleetRuntime>
-/// Validates the runtime/image pairing ...
-pub async fn resolve(runtime: Option<FleetRuntime>, image: &str) -> Result<RuntimeKind>
-/// `resolve` returning the whole ...
-pub async fn resolve_image(runtime: Option<FleetRuntime>, image: &str) -> Result<FleetImage>
 
 // mod groups
 /// Whether a Create button should be ...

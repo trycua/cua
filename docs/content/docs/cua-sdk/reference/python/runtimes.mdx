@@ -518,7 +518,7 @@ Pull an OCI image into a stopped golden base VM, if it doesn't exist yet.
 
 Idempotent: if *base_name* already exists and is stopped, returns
 immediately.  Raises if the base VM is running, because cloning a live VM
-can produce dirty or inconsistent clones (same constraint as cloud snapshots).
+can produce dirty or inconsistent clones.
 The base VM is never started; it only serves as a fork source.
 
 #### LumeRuntime.fork
@@ -530,7 +530,7 @@ async def fork(base_name: str, new_name: str, **opts) -> None
 Clone a stopped VM *base_name* → *new_name* via APFS clonefile (instant).
 
 The source VM must be stopped before calling this: cloning a running VM
-risks dirty state or clone failures (mirrors cloud snapshot behaviour).
+risks dirty state or clone failures.
 
 #### LumeRuntime.checkpoint
 
@@ -540,8 +540,8 @@ async def checkpoint(name: str, checkpoint_name: str, **opts)
 
 Stop *name*, clone it into a checkpoint, then restart *name*.
 
-Mirrors the cloud behaviour (stop → snapshot → restart) so clones are
-always taken from a clean stopped state.
+Stops, clones and restarts, so clones are always taken from a clean
+stopped state.
 
 #### LumeRuntime.list_checkpoints
 

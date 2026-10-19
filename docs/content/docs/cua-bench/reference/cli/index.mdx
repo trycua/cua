@@ -1,6 +1,6 @@
 ---
 title: "cb"
-description: "cua-bench: run computer-use tasks and benchmark datasets on local and cloud sandboxes."
+description: "cua-bench: run computer-use tasks and benchmark datasets on sandboxes."
 ---
 
 {/*
@@ -68,14 +68,12 @@ View traces and agent trajectories. [Reference](/cua-bench/reference/cli/trace).
 
 ### Sandboxes and account
 
-Cloud pools and local sandboxes, sign-in, status and cleanup. [Reference](/cua-bench/reference/cli/env).
+Local sandboxes, status and cleanup. [Reference](/cua-bench/reference/cli/env).
 
 | Command | Description |
 | --- | --- |
-| <span id="cb-env"></span>[`cb env`](/cua-bench/reference/cli/env#cb-env) | List or garbage-collect sandboxes and pools. |
-| <span id="cb-env-ls"></span>[`cb env ls`](/cua-bench/reference/cli/env#cb-env-ls) | List managed cloud pools and claims. |
-| <span id="cb-env-gc"></span>[`cb env gc`](/cua-bench/reference/cli/env#cb-env-gc) | Delete idle managed pools and stuck claims. |
-| <span id="cb-login"></span>[`cb login`](/cua-bench/reference/cli/env#cb-login) | Removed: Cua Cloud has ended. |
+| <span id="cb-env"></span>[`cb env`](/cua-bench/reference/cli/env#cb-env) | List local sandboxes. |
+| <span id="cb-env-ls"></span>[`cb env ls`](/cua-bench/reference/cli/env#cb-env-ls) | List local sandboxes. |
 | <span id="cb-status"></span>[`cb status`](/cua-bench/reference/cli/env#cb-status) | Show system status dashboard. |
 | <span id="cb-prune"></span>[`cb prune`](/cua-bench/reference/cli/env#cb-prune) | Clean up cua-bench run data (and 0.2.x image leftovers). |
 
@@ -88,7 +86,6 @@ Scaffold custom agents. [Reference](/cua-bench/reference/cli/agent).
 | [`cb agent`](/cua-bench/reference/cli/agent#cb-agent) | Scaffold custom agents. |
 | <span id="cb-agent-init"></span>[`cb agent init`](/cua-bench/reference/cli/agent#cb-agent-init) | Create a new agent from template. |
 | <span id="cb-agent-build"></span>[`cb agent build`](/cua-bench/reference/cli/agent#cb-agent-build) | Deprecated: cb run executes agents in-process. |
-| <span id="cb-agent-push"></span>[`cb agent push`](/cua-bench/reference/cli/agent#cb-agent-push) | Deprecated: agent images are no longer used. |
 
 ### Images and platforms
 

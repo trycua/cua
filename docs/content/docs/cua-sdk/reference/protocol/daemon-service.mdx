@@ -38,7 +38,7 @@ Returns the daemon identity and its loopback endpoint.
 
 Opens a media session in a sandbox and returns a loopback WebSocket URL
 that relays it. The URL carries a short-lived bridge ticket; the
-browser never sees the Fleet bearer or the spacesd token.
+browser never sees the spacesd token.
 
 ### DaemonService.Shutdown
 
@@ -75,7 +75,7 @@ Response for `DaemonService.GetInfo`.
 | `socket_path` | 3 | `string` | Unix socket path, when listening on one. |
 | `loopback_url` | 4 | `string` | Loopback base URL (`http://127.0.0.1:<port>`) serving the same services, the env passthrough and the media bridge. |
 | `loopback_token` | 5 | `string` | Bearer token of the loopback listener. |
-| `features` | 6 | repeated `string` | Compiled-in SDK features, for example "env", "fleet", "local". |
+| `features` | 6 | repeated `string` | Compiled-in SDK features, for example "env", "sandboxes", "local". |
 | `started_at` | 7 | `google.protobuf.Timestamp` | When the daemon started. |
 | `executable` | 8 | `string` | The daemon's executable (symlinks resolved), so a client bound to an app bundle can tell its own daemon from another app's. Empty from daemons that predate it. |
 | `build_id` | 9 | `string` | The executable's build as it was when the daemon started (version, size and modification time), so a client can tell a daemon whose executable was rebuilt or updated since. Empty from daemons that predate it. |
@@ -122,11 +122,10 @@ Why a daemon call failed. Packed as `DaemonErrorInfo` in the
 | `DAEMON_ERROR_REASON_UNSPECIFIED` | 0 | Unknown. |
 | `DAEMON_ERROR_REASON_INVALID_ARGUMENT` | 1 | Bad input. |
 | `DAEMON_ERROR_REASON_NOT_FOUND` | 2 | No such sandbox, forward or bridge. |
-| `DAEMON_ERROR_REASON_PROVIDER_NOT_CONFIGURED` | 3 | The provider is not configured in the daemon (for example no Fleet credentials). |
+| `DAEMON_ERROR_REASON_PROVIDER_NOT_CONFIGURED` | 3 | The provider is not configured in the daemon (for example no local runtime). |
 | `DAEMON_ERROR_REASON_UNSUPPORTED` | 4 | The provider or build cannot do this. |
 | `DAEMON_ERROR_REASON_SPACESD_NOT_AVAILABLE` | 5 | No cua-spacesd answered in the sandbox. |
 | `DAEMON_ERROR_REASON_TIMEOUT` | 6 | A deadline elapsed. |
-| `DAEMON_ERROR_REASON_FLEET` | 7 | Fleet API failure. |
 | `DAEMON_ERROR_REASON_RUNTIME` | 8 | Local runtime failure. |
 | `DAEMON_ERROR_REASON_ENV` | 9 | spacesd call failure. |
 | `DAEMON_ERROR_REASON_HTTP` | 10 | HTTP failure talking to a sandbox service. |
@@ -135,12 +134,8 @@ Why a daemon call failed. Packed as `DaemonErrorInfo` in the
 | `DAEMON_ERROR_REASON_CAPABILITY_MISSING` | 13 | The Space's spacesd reports a feature the call needs as unsupported. |
 | `DAEMON_ERROR_REASON_HOST_CAPABILITY_MISSING` | 14 | A host-side prerequisite (app-session providers, an operator display, a local runtime) is not available. |
 | `DAEMON_ERROR_REASON_TELEPORT_REFUSED` | 15 | The teleport consent gate refused. |
-| `DAEMON_ERROR_REASON_POOL_SPEC_MISMATCH` | 16 | A named cloud pool's template differs from the requested sandbox fields (pass apply to update it). |
-| `DAEMON_ERROR_REASON_CLAIM_SECRETS_NOT_DELIVERED` | 17 | A claim bound but its per-claim secrets never reached the sandbox; the claim was released. |
 | `DAEMON_ERROR_REASON_AMBIGUOUS_SANDBOX` | 18 | A bare sandbox name matches sandboxes in more than one location. The qualified candidates are in `DaemonErrorInfo.metadata["candidates"]` (comma-separated, for example "local:box,cloud:box"). |
 | `DAEMON_ERROR_REASON_INSUFFICIENT_DISK` | 19 | A pull, build or VM create would leave less than the configured minimum free disk space; nothing was written (`cua cache prune` frees space). |
 | `DAEMON_ERROR_REASON_INVALID_PLACEMENT` | 20 | A location, kind or runtime that does not exist, or a combination of them (or with the image) that does not. The accepted values are in `DaemonErrorInfo.metadata["valid"]` (comma-separated, for example "auto,gvisor,runc") and the axis in `metadata["axis"]` ("on", "kind", "runtime" or "image"). |
-| `DAEMON_ERROR_REASON_FLEET_ADMISSION_DENIED` | 21 | Fleet's admission refused a write, for example a sandbox size over the account's limits. The message is Fleet's and names the limit. |
-| `DAEMON_ERROR_REASON_CLOUD_CREDIT_EXHAUSTED` | 22 | The account is out of Cua Cloud credit (no credit left, and no card or plan): new cloud sandboxes are refused, running ones keep running. The message ends with the website billing page's URL. |
 | `DAEMON_ERROR_REASON_CANCELLED` | 23 | The create was cancelled (`CancelCreateSpace`, or its caller went away); what it made is gone. The message says what was removed and what stays (finished image downloads stay cached). |
 | `DAEMON_ERROR_REASON_CLOUD` | 24 | Your own cloud account (AWS, Google Cloud, Modal) refused or failed a call Cua made there: a missing permission, a quota, a region without the machine type. The message names the cloud's own error. |

@@ -18,7 +18,7 @@ Source: `libs/cua/proto/cua/daemon/v1/sandboxes.proto`.
 
 `cua.daemon.v1.SandboxService`
 
-Sandbox lifecycle across providers (Fleet, local VMM, direct).
+Sandbox lifecycle across providers (local VMM, direct, contrib).
 
 Sandboxes are daemon-agnostic: nothing here assumes cua-spacesd is
 installed in the guest.
@@ -74,7 +74,7 @@ a `CreateSandbox` whose caller goes away.
 `/cua.daemon.v1.SandboxService/CancelCreateSandbox`, unary: [`CancelCreateSandboxRequest`](#cancelcreatesandboxrequest) to [`CancelCreateSandboxResponse`](#cancelcreatesandboxresponse).
 
 Cancels a `CreateSandbox` of a named sandbox still running: the work
-in flight stops (an image download, a boot, a claim) and what the
+in flight stops (an image download, a boot) and what the
 create made is deleted; a sandbox of that name that existed before is
 never touched. Finished image downloads stay cached. Returns once the
 clean-up is done. Idempotent: `cancelled` is false when no create of
@@ -97,14 +97,14 @@ Deletes (or releases, or detaches from) a sandbox.
 
 `/cua.daemon.v1.SandboxService/ConnectSandbox`, unary: [`ConnectSandboxRequest`](#connectsandboxrequest) to [`ConnectSandboxResponse`](#connectsandboxresponse).
 
-Reattaches to a sandbox by ref (a state file, a live cloud claim or an
-address) and keeps the handle in the daemon.
+Reattaches to a sandbox by ref (a state file or an address) and keeps
+the handle in the daemon.
 
 ### SandboxService.SuspendSandbox
 
 `/cua.daemon.v1.SandboxService/SuspendSandbox`, unary: [`SuspendSandboxRequest`](#suspendsandboxrequest) to [`SuspendSandboxResponse`](#suspendsandboxresponse).
 
-Suspends a sandbox (local: pause; Fleet: scale to zero).
+Suspends a sandbox (local: pause).
 
 ### SandboxService.ResumeSandbox
 
@@ -122,7 +122,7 @@ Restarts a sandbox.
 
 `/cua.daemon.v1.SandboxService/KeepAlive`, unary: [`KeepAliveRequest`](#keepaliverequest) to [`KeepAliveResponse`](#keepaliveresponse).
 
-Extends a Fleet claim lease.
+Extends the lifetime of a provider sandbox that expires.
 
 ### SandboxService.WaitReady
 
@@ -135,7 +135,7 @@ Waits until user-declared readiness probes pass.
 `/cua.daemon.v1.SandboxService/ServiceRequest`, unary: [`ServiceRequestRequest`](#servicerequestrequest) to [`ServiceRequestResponse`](#servicerequestresponse).
 
 Sends one HTTP request to a named service of a sandbox. Credentials
-(for example the Fleet bearer) stay in the daemon.
+(for example a provider's access token) stay in the daemon.
 
 ### SandboxService.ForwardPort
 
@@ -172,16 +172,14 @@ clients, SSE and anything else served over HTTP.
 `/cua.daemon.v1.SandboxService/GetServiceUrl`, unary: [`GetServiceUrlRequest`](#getserviceurlrequest) to [`GetServiceUrlResponse`](#getserviceurlresponse).
 
 Returns a URL for a named service usable from this machine without
-credentials: the published loopback port locally, a signed service URL
-in the cloud.
+credentials: the published loopback port locally.
 
 ### SandboxService.CreatePublicUrl
 
 `/cua.daemon.v1.SandboxService/CreatePublicUrl`, unary: [`CreatePublicUrlRequest`](#createpublicurlrequest) to [`CreatePublicUrlResponse`](#createpublicurlresponse).
 
-Creates a shareable URL for a named service that expires: a signed
-service URL in the cloud; locally a loopback proxy URL with its own
-token, served by the daemon.
+Creates a shareable URL for a named service that expires: a loopback
+proxy URL with its own token, served by the daemon.
 
 ### SandboxService.RevokePublicUrl
 
@@ -205,15 +203,15 @@ A sandbox.
 | `labels` | 6 | map of `string` to `string` | User labels. |
 | `created_at` | 7 | `google.protobuf.Timestamp` | Creation time. |
 | `error` | 8 | `string` | Failure reason when `state` is `SANDBOX_STATE_FAILED`. |
-| `runtime_type` | 9 | `string` | Runtime identifier as persisted in the state file (`fleet`, `direct`, `docker`, `qemu`, `lume`, ...). |
+| `runtime_type` | 9 | `string` | Runtime identifier as persisted in the state file (`direct`, `docker`, `qemu`, `lume`, ...). |
 | `ephemeral` | 10 | `bool` | True when the sandbox has no state file and is torn down on delete. |
-| `services` | 11 | map of `string` to `uint32` | Declared services: logical name to guest port (0 when only the name is known, for example on Fleet). |
+| `services` | 11 | map of `string` to `uint32` | Declared services: logical name to guest port (0 when only the name is known). |
 | `location` | 12 | `string` | Where the sandbox runs: "local", "cloud", "direct" (a machine reached by address) or "relay". |
-| `expires_at` | 13 | `google.protobuf.Timestamp` | When the sandbox expires unless kept alive. Unset when unknown or never (cloud sandboxes held by the daemon are renewed while held). |
-| `provider_details` | 14 | map of `string` to `string` | Provider internals for debugging (cloud: pool, namespace, claim; local: backend, container_id). Not part of the portable API. |
-| `id` | 15 | `string` | Qualified ref: "local:&lt;name&gt;", "cloud:&lt;name&gt;" or "direct:&lt;host:port&gt;". Every request's `name` accepts it (and a bare name when that name is unique across locations). |
-| `kind` | 16 | `string` | What kind of machine it runs as: "container" or "vm"; empty when not known (an existing machine, or a cloud sandbox this daemon did not create). |
-| `runtime` | 17 | `string` | The engine that runs it: "gvisor", "runc", "qemu", "lume" or "kubevirt"; empty when not known. |
+| `expires_at` | 13 | `google.protobuf.Timestamp` | When the sandbox expires unless kept alive. Unset when unknown or never. |
+| `provider_details` | 14 | map of `string` to `string` | Provider internals for debugging (local: backend, container_id). Not part of the portable API. |
+| `id` | 15 | `string` | Qualified ref: "local:&lt;name&gt;", "direct:&lt;host:port&gt;" or "&lt;provider&gt;:&lt;name&gt;". Every request's `name` accepts it (and a bare name when that name is unique across locations). |
+| `kind` | 16 | `string` | What kind of machine it runs as: "container" or "vm"; empty when not known (an existing machine). |
+| `runtime` | 17 | `string` | The engine that runs it: "gvisor", "runc", "qemu", "lume" or a provider's own; empty when not known. |
 | `stop_reason` | 18 | `string` | Why a local sandbox stopped without being asked to, in plain words: "out of memory", "killed", "exited" or "exited with code N". Empty otherwise, and once it is started again. |
 
 ### ReadinessProbe
@@ -231,7 +229,7 @@ as its provider reports it running.
 
 An extra container sharing a sandbox's network namespace: the sandbox
 reaches its ports on `localhost`, and `services` may name them. Local
-containers and cloud container (gVisor) sandboxes only.
+containers only.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
@@ -274,8 +272,8 @@ A local file copied into a built image.
 
 ### ImageBuild
 
-Image layers built on top of the sandbox's image. Cloud: a remote build
-through the images API, cached by content.
+Image layers built on top of the sandbox's image, built into the local
+container engine and cached by content.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
@@ -292,8 +290,7 @@ Request for `SandboxService.ListSandboxes`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `provider` | 1 | [`SandboxProvider`](#sandboxprovider) | Deprecated. Deprecated: use `location`. Only sandboxes of this provider. Unspecified lists all. |
-| `include_cloud` | 2 | optional `bool` | Also list the account's live Fleet claims (not only the ones this machine knows) when the provider filter allows cloud sandboxes. Unset means true. Without Fleet credentials nothing is added. |
-| `location` | 3 | `string` | Only sandboxes in this location: "local", "cloud" or "direct". Empty lists every location. Wins over `provider`. |
+| `location` | 3 | `string` | Only sandboxes in this location: "local" or "direct". Empty lists every location. Wins over `provider`. |
 
 ### ListSandboxesResponse
 
@@ -302,7 +299,7 @@ Response for `SandboxService.ListSandboxes`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `sandboxes` | 1 | repeated [`Sandbox`](#sandbox) | Sandboxes. |
-| `warnings` | 2 | repeated `string` | What the listing left out, for example "cloud sandboxes not listed: &lt;reason&gt;". The listing still succeeds. |
+| `warnings` | 2 | repeated `string` | What the listing left out. The listing still succeeds. |
 
 ### CreateSandboxRequest
 
@@ -312,36 +309,29 @@ Request for `SandboxService.CreateSandbox`.
 | --- | --- | --- | --- |
 | `name` | 1 | `string` | Desired name. Empty lets the daemon generate one. |
 | `provider` | 2 | [`SandboxProvider`](#sandboxprovider) | Deprecated. Deprecated: use `location`. Used only when `location` is empty. |
-| `image` | 3 | `string` | Image reference (local and cloud sandboxes). |
-| `pool` | 4 | `string` | Cloud: claim from this existing pool (Fleets advanced API). |
+| `image` | 3 | `string` | Image reference. |
 | `url` | 5 | `string` | Deprecated: use `location` "direct:&lt;addr&gt;". The address of an existing machine. |
 | `token` | 6 | `string` | Access token for the direct provider's spacesd, if any. |
 | `labels` | 7 | map of `string` to `string` | User labels. |
 | `os` | 8 | `string` | Guest OS: `linux` (default), `macos` or `windows`. |
 | `cpus` | 9 | `uint32` | vCPUs. 0 uses the provider default. |
 | `memory_mb` | 10 | `uint64` | Memory in MiB. 0 uses the provider default. |
-| `ports` | 11 | repeated `uint32` | Extra guest ports to publish (local) or expose as `port-<n>` services (Fleet). |
+| `ports` | 11 | repeated `uint32` | Extra guest ports to publish (local) or expose as `port-<n>` services. |
 | `services` | 12 | map of `string` to `uint32` | Named services: logical name to guest port. `env` defaults to 3211. |
 | `wait_for` | 13 | repeated [`ReadinessProbe`](#readinessprobe) | Readiness probes. |
 | `ready_timeout` | 14 | `google.protobuf.Duration` | Total readiness budget. Unset uses the provider default. |
-| `env` | 15 | map of `string` to `string` | Guest environment. Local: container environment or cloud-init; cloud: the template environment (hashed into the managed pool key). |
-| `fleet_runtime` | 16 | `string` | Deprecated. Deprecated: use `runtime`. Cloud runtime (`kubevirt`, `gvisor`), used when `runtime` is empty. |
-| `fleet_replicas` | 17 | `uint32` | Deprecated: initial replicas of a new managed Fleet pool (&gt; 0 means warm). 0 leaves it to `fleet_warm`. |
-| `fleet_ttl_seconds` | 18 | `uint32` | Fleet claim TTL in seconds after creation. 0 uses the default (managed pools: `CUA_FLEET_CLAIM_TTL`, renewed by the daemon while the sandbox is held). |
-| `fleet_warm` | 19 | optional `bool` | Managed Fleet pools (no `pool`): start a new pool with one warm replica. Unset uses `CUA_FLEET_WARM`. Existing pools are never resized. |
-| `fleet_max_pool_size` | 20 | `uint32` | Managed Fleet pools: autoscaling ceiling. 0 uses the default (`CUA_FLEET_MAX_POOL_SIZE`, 10). |
-| `command` | 21 | repeated `string` | The sandbox's command (argv), replacing the image's entrypoint. Empty lets the image decide. Local containers: ENTRYPOINT; local Linux VMs: run by cloud-init; cloud pod runtimes: the template command. Cloud VMs (KubeVirt) and macOS guests reject it. |
-| `sidecars` | 22 | repeated [`Sidecar`](#sidecar) | Sidecar containers sharing the sandbox's network namespace. Local containers and cloud container sandboxes; VMs reject them. |
-| `registry_secret` | 23 | [`RegistrySecret`](#registrysecret) | Credentials for a private `image` (and sidecar images on its registry): local pulls use them; the cloud stores them as the sandbox's registry pull Secret. Never logged or returned. |
+| `env` | 15 | map of `string` to `string` | Guest environment (container environment or cloud-init). |
+| `command` | 21 | repeated `string` | The sandbox's command (argv), replacing the image's entrypoint. Empty lets the image decide. Local containers: ENTRYPOINT; local Linux VMs: run by cloud-init. macOS guests reject it. |
+| `sidecars` | 22 | repeated [`Sidecar`](#sidecar) | Sidecar containers sharing the sandbox's network namespace. Local containers; VMs reject them. |
+| `registry_secret` | 23 | [`RegistrySecret`](#registrysecret) | Credentials for a private `image` (and sidecar images on its registry): local pulls use them. Never logged or returned. |
 | `build` | 24 | [`ImageBuild`](#imagebuild) | Image layers built on top of `image` before the sandbox starts. |
-| `container_runtime` | 25 | `string` | Deprecated. Deprecated: use `runtime`. Local container sandboxes: `runc` or `gvisor`, used when `runtime` is empty. Cloud sandboxes ignore it. |
-| `fleet_apply` | 26 | `bool` | With `pool`: update that pool's template to the sandbox fields given here (image, command, env, services, sidecars, cpus, memory) instead of failing with POOL_SPEC_MISMATCH when they differ. Managed pools refuse. |
+| `container_runtime` | 25 | `string` | Deprecated. Deprecated: use `runtime`. Local container sandboxes: `runc` or `gvisor`, used when `runtime` is empty. |
 | `owner_pid` | 27 | `uint32` | The client process that owns an ephemeral sandbox (no `name`). The daemon records it in the sandbox's lease, so a local ephemeral sandbox is reaped after its client dies even while the daemon runs. 0: the daemon itself owns it. |
-| `network` | 28 | `string` | Guest network: empty or `default` gives outbound network (like a Docker container); `none` cuts egress while published ports still work. Only local QEMU VMs honour `none`; containers, Lume and cloud sandboxes reject it. |
-| `location` | 29 | `string` | Where it runs: "local", "cloud", "direct:&lt;addr&gt;" (an existing machine running cua-spacesd), or a registered provider (SANDBOX_PROVIDER_CONTRIB, e.g. "e2b"). Empty uses the default (`default.on` in the config, `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their side and send it explicitly. |
+| `network` | 28 | `string` | Guest network: empty or `default` gives outbound network (like a Docker container); `none` cuts egress while published ports still work. Only local QEMU VMs honour `none`; containers and Lume reject it. |
+| `location` | 29 | `string` | Where it runs: "local", "direct:&lt;addr&gt;" (an existing machine running cua-spacesd), or a registered provider (SANDBOX_PROVIDER_CONTRIB, e.g. "e2b"). Empty uses the default (`default.on` in the config, `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their side and send it explicitly. |
 | `kind` | 30 | `string` | What kind of machine: "auto" (empty), "container" or "vm". Auto decides from the image: macOS and Windows images are VMs, an image with a container rootfs is a container, a disk-only image is a VM. |
-| `runtime` | 31 | `string` | Which engine: "auto" (empty) or one the location offers for the kind. Local: "gvisor", "runc" (containers), "qemu", "lume" (VMs). Cloud: "gvisor" (containers), "kubevirt" (VMs). A registered provider offers its own engines. Anything else is DAEMON_ERROR_REASON_INVALID_PLACEMENT, listing the valid values. |
-| `keep_on_failure` | 32 | `bool` | Keep a named sandbox whose readiness check fails (its cloud claim, VM or container, and its record) for debugging. False: a failed create deletes what it made and releases the claim. Ephemeral sandboxes are always deleted. |
+| `runtime` | 31 | `string` | Which engine: "auto" (empty) or one the location offers for the kind. Local: "gvisor", "runc" (containers), "qemu", "lume" (VMs). A registered provider offers its own engines. Anything else is DAEMON_ERROR_REASON_INVALID_PLACEMENT, listing the valid values. |
+| `keep_on_failure` | 32 | `bool` | Keep a named sandbox whose readiness check fails (its VM or container, and its record) for debugging. False: a failed create deletes what it made. Ephemeral sandboxes are always deleted. |
 | `gpu` | 33 | `string` | A GPU option of the runtime it runs on (`GetGpuSupport`): "paravirtual" (a macOS VM on Lume: GPU acceleration, experimental), "virgl" (QEMU on Linux), "nvidia" (a runc container on Linux), a contrib provider's GPU type; "auto" picks the runtime's own. Empty: no GPU. An option the runtime does not offer here is DAEMON_ERROR_REASON_INVALID_ARGUMENT or _UNSUPPORTED, saying why. |
 
 ### CreateSandboxResponse
@@ -526,7 +516,7 @@ Request for `SandboxService.ServiceRequest`.
 | `path` | 4 | `string` | Path (and query) under the service. |
 | `body` | 5 | `bytes` | Request body. |
 | `timeout` | 6 | `google.protobuf.Duration` | Timeout. Unset means 30 seconds. |
-| `headers` | 7 | repeated [`HttpHeader`](#httpheader) | Request headers (for example content-type, or accept and mcp-session-id for MCP). On Fleet the gateway bearer and claim header are added by the daemon and may not be set here. |
+| `headers` | 7 | repeated [`HttpHeader`](#httpheader) | Request headers (for example content-type, or accept and mcp-session-id for MCP). Headers a provider's route sets (access tokens) are added by the daemon and may not be set here. |
 
 ### ServiceRequestResponse
 
@@ -556,7 +546,7 @@ Response for `SandboxService.ForwardPort`.
 | `forward_id` | 1 | `string` | Forward id for `CloseForward`. Empty when no listener was started (the port is only reachable as `url`). |
 | `guest_port` | 2 | `uint32` | Guest port. |
 | `local_addr` | 3 | `string` | Loopback `host:port` accepting connections, when a TCP forward runs. |
-| `url` | 4 | `string` | URL to use (a loopback URL, or the Fleet gateway URL of the port's service). |
+| `url` | 4 | `string` | URL to use (a loopback URL). |
 
 ### CloseForwardRequest
 
@@ -637,7 +627,7 @@ A shareable, expiring URL of a sandbox service.
 | `expires_at` | 3 | `google.protobuf.Timestamp` | When it stops working. |
 | `sandbox` | 4 | `string` | Sandbox name. |
 | `service` | 5 | `string` | Logical service name. |
-| `provider_details` | 6 | map of `string` to `string` | Provider internals (cloud: namespace, claim; local: upstream). |
+| `provider_details` | 6 | map of `string` to `string` | Provider internals (local: upstream). |
 
 ### CreatePublicUrlRequest
 
@@ -648,7 +638,7 @@ Request for `SandboxService.CreatePublicUrl`.
 | `name` | 1 | `string` | Sandbox ref or unique name (with `upstream_url`, only recorded). |
 | `service` | 2 | `string` | Logical service name. |
 | `ttl` | 3 | `google.protobuf.Duration` | Lifetime, 60 s to 24 h. Unset means 1 h. |
-| `label` | 4 | `string` | Label shown in listings (cloud). |
+| `label` | 4 | `string` | Label shown in listings. |
 | `upstream_url` | 5 | `string` | Share this loopback `http://` URL instead of resolving `name` and `service` (an embedded SDK runtime asking the daemon to host its URL). |
 
 ### CreatePublicUrlResponse
@@ -683,7 +673,6 @@ providers; responses carry `Sandbox.location`.
 | Value | # | Description |
 | --- | --- | --- |
 | `SANDBOX_PROVIDER_UNSPECIFIED` | 0 | Not set. |
-| `SANDBOX_PROVIDER_FLEET` | 1 | Claimed from a Fleet pool. |
 | `SANDBOX_PROVIDER_LOCAL` | 2 | Run locally through cua-vmm (Lume, QEMU, container). |
 | `SANDBOX_PROVIDER_DIRECT` | 3 | An existing machine reached by URL and token. |
 | `SANDBOX_PROVIDER_CONTRIB` | 4 | A contrib provider (third-party platform). |

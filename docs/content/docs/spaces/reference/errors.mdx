@@ -30,7 +30,7 @@ Branch on `kind`; the message is for people. Every tool can return `invalid_argu
 | [`not_found`](#not_found) | No Space, run, window, service, tool or file with that id. |
 | [`spacesd_not_available`](#spacesd_not_available) | The machine answered but runs no cua-spacesd, so the spacesd primitives cannot work. |
 | [`capability_missing`](#capability_missing) | The Space's cua-spacesd reports a feature this tool needs as unsupported; the message names it and the driver's limitation. |
-| [`host_capability_missing`](#host_capability_missing) | A prerequisite on this machine is missing: Fleet credentials, a local runtime, an operator display or app-session providers. |
+| [`host_capability_missing`](#host_capability_missing) | A prerequisite on this machine is missing: a local runtime, an operator display or app-session providers. |
 | [`wrong_provider`](#wrong_provider) | The operation does not apply to this kind of Space. |
 | [`unauthenticated`](#unauthenticated) | The Space's spacesd or the cua.ai relay rejected the token. |
 | [`permission_denied`](#permission_denied) | The signed-in account may not reach that relay machine. |
@@ -45,9 +45,6 @@ Branch on `kind`; the message is for people. Every tool can return `invalid_argu
 | [`cancelled`](#cancelled) | The create was cancelled (cancel_create, or its caller went away); what it made is gone. |
 | [`stream`](#stream) | The media plane failed to open or run the stream. |
 | [`env`](#env) | A cua-spacesd call failed. |
-| [`fleet`](#fleet) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call. |
-| [`fleet_admission_denied`](#fleet_admission_denied) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit. |
-| [`cloud_credit_exhausted`](#cloud_credit_exhausted) | Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space. |
 | [`invalid_placement`](#invalid_placement) | The location, kind or runtime does not exist, or the combination (with the image) does not. |
 | [`sandbox`](#sandbox) | Starting, stopping or deleting the Space's sandbox failed. |
 | [`cloud`](#cloud) | Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error. |
@@ -92,7 +89,7 @@ Fix: Use a Space whose spacesd supports the feature (see the tool's `requires`).
 
 ### host_capability_missing
 
-A prerequisite on this machine is missing: Fleet credentials, a local runtime, an operator display or app-session providers.
+A prerequisite on this machine is missing: a local runtime, an operator display or app-session providers.
 
 Fix: Set up what the message names (see the tool's `host_requires`).
 
@@ -201,30 +198,6 @@ Listed by [`stream_endpoint`](/spaces/reference/streams-and-display#stream_endpo
 A cua-spacesd call failed.
 
 Fix: Retry; if it persists, check the spacesd log in the Space.
-
-### fleet
-
-Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call.
-
-Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
-
-Listed by [`create_space`](/spaces/reference/lifecycle#create_space), [`delete_space`](/spaces/reference/lifecycle#delete_space), [`agent_resume`](/spaces/reference/persistent-agents#agent_resume).
-
-### fleet_admission_denied
-
-Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit.
-
-Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
-
-Listed by [`create_space`](/spaces/reference/lifecycle#create_space).
-
-### cloud_credit_exhausted
-
-Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space.
-
-Fix: Create the Space locally or on one of your machines; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended.
-
-Listed by [`create_space`](/spaces/reference/lifecycle#create_space).
 
 ### invalid_placement
 

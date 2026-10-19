@@ -12,7 +12,7 @@ description: "Sign-in and the credential store the SDK, the CLI and the daemon s
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`cua.auth()` signs in and reads the shared session. Cloud calls use it when no Fleet token or client credentials are configured.
+`cua.auth()` signs in and reads the shared session. Your own cloud and the relay use it.
 
 Python programs usually use the high-level API instead: [`cua_sandbox.configure()`](/cua-sdk/reference/python/configuration#configure).
 
@@ -422,7 +422,7 @@ LoginMethod::Device
 | `Browser` | Open `url` in a browser on this machine; it redirects back here. |
 | `Device` | Open `url` on any device and enter `user_code`. |
 
-## `may_have_fleet_session`
+## `may_have_session`
 
 Whether a `cua auth login` session may be stored, decided without
 reading the OS credential vault (the non-secret session marker, or the
@@ -434,35 +434,35 @@ before markers existed writes the marker.
 <Tab value="Python">
 
 ```python
-def may_have_fleet_session() -> bool
+def may_have_session() -> bool
 ```
 
 </Tab>
 <Tab value="TypeScript">
 
 ```ts
-function mayHaveFleetSession(): boolean
+function mayHaveSession(): boolean
 ```
 
 </Tab>
 <Tab value="Swift">
 
 ```swift
-func mayHaveFleetSession() -> Bool
+func mayHaveSession() -> Bool
 ```
 
 </Tab>
 <Tab value="Kotlin">
 
 ```kotlin
-fun mayHaveFleetSession(): Boolean
+fun mayHaveSession(): Boolean
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn may_have_fleet_session() -> bool
+pub fn may_have_session() -> bool
 ```
 
 </Tab>

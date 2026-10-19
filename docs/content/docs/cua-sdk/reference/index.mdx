@@ -29,7 +29,7 @@ Pages marked *Cua Spaces app export* document the APIs the Cua Spaces apps are b
 | --- | --- |
 | [Cua client](/cua-sdk/reference/cua) | The Cua handle: embedded or daemon client, its configuration, and the SDK version. |
 | [Sandbox](/cua-sdk/reference/sandbox) | Create, find, connect to and control sandboxes, locally, in the cloud or by address. |
-| [Lifecycle](/cua-sdk/reference/sandbox/lifecycle) | Wait for, keep alive, suspend, resume, restart, detach and delete a sandbox. |
+| [Lifecycle](/cua-sdk/reference/sandbox/lifecycle) | Wait for, keep alive, suspend, resume, restart and delete a sandbox. |
 | [Without cua-spacesd](/cua-sdk/reference/sandbox/without-spacesd) | Run commands, take screenshots and open the display of a local Lume sandbox that has no cua-spacesd. |
 | [Create options](/cua-sdk/reference/sandbox/options) | SandboxCreateOptions and what it holds: cloud options, readiness probes and sidecar containers. |
 | [Image](/cua-sdk/reference/image) | Canonical images, image references, build layers and registry credentials. |
@@ -38,14 +38,6 @@ Pages marked *Cua Spaces app export* document the APIs the Cua Spaces apps are b
 | [Services](/cua-sdk/reference/services) | Named services, port forwards, public URLs and MCP clients of a sandbox. |
 | [Local runtimes](/cua-sdk/reference/local) | The container and VM runtimes this machine can host, their setup, and local images. |
 | [Runtime support](/cua-sdk/reference/runtime-support) | Which images run on which local runtime and in the cloud. |
-
-## Cloud capacity
-
-| Page | Covers |
-| --- | --- |
-| [Fleet](/cua-sdk/reference/fleet) | Cloud pools and templates: apply, check, export, scale and delete (advanced). |
-| [Claims](/cua-sdk/reference/fleet/claims) | Claim sandboxes from a cloud pool, keep them alive, release them, and sign service URLs. |
-| [Cloud images and runtimes](/cua-sdk/reference/fleet/images) | Fleet image resources and the runtime (gVisor or KubeVirt) each image runs on. |
 
 ## Inside a sandbox
 
@@ -97,8 +89,7 @@ Pages marked *Cua Spaces app export* document the APIs the Cua Spaces apps are b
 | [Notch](/cua-sdk/reference/spaces/app-core/notch) | The notch switcher: state, events, layout on the screen and motion. *Cua Spaces app export.* |
 | [Keyvault](/cua-sdk/reference/spaces/app-core/keyvault) | The Keyvault broker client and its overview: items, pending requests, grants, rules and audit. *Cua Spaces app export.* |
 | [Keyvault screens](/cua-sdk/reference/spaces/app-core/keyvault-screens) | The Keyvault page, sidebar, the vault list (apps, sites and items with their locks), the unlock prompt and the approval prompt. *Cua Spaces app export.* |
-| [Onboarding and settings](/cua-sdk/reference/spaces/app-core/onboarding-settings) | First-run onboarding, the settings file and the hotkey label. *Cua Spaces app export.* |
-| [Onboarding previews](/cua-sdk/reference/spaces/app-core/onboarding-previews) | The animated miniatures on the onboarding cards: the background computer-use card, the notch and the menu bar. *Cua Spaces app export.* |
+| [Onboarding and settings](/cua-sdk/reference/spaces/app-core/onboarding-settings) | First-run onboarding, its card miniatures, the settings file and the hotkey label. *Cua Spaces app export.* |
 | [About, updates and launch](/cua-sdk/reference/spaces/app-core/about) | The About window and its update channel, what the apps do once they launch (the bundled cua install), and the daemon and refresh reports they read. *Cua Spaces app export.* |
 | [App core: billing, relay usage and Teams](/cua-sdk/reference/spaces/account-app-core) | The Billing and Relay usage rows in Settings, the out-of-credit and relay allowance notices, and the Teams section. *Cua Spaces app export.* |
 | [This machine](/cua-sdk/reference/spaces/app-core/this-machine) | The This machine roster entry, its page and the host setup form. *Cua Spaces app export.* |
@@ -131,9 +122,9 @@ Pages marked *Cua Spaces app export* document the APIs the Cua Spaces apps are b
 
 | Page | Covers |
 | --- | --- |
-| [Python high-level API](/cua-sdk/reference/python) | `cua_sandbox`: `Sandbox`, `Image`, the computer interfaces, `Pool`, runtimes and configuration. |
+| [Python high-level API](/cua-sdk/reference/python) | `cua_sandbox`: `Sandbox`, `Image`, the computer interfaces, runtimes and configuration. |
 | [TypeScript additions](/cua-sdk/reference/typescript) | What `@trycua/cua` adds in TypeScript: `embedded()`, `Image`, helpers, and the Spaces modules. |
-| [Rust crates](/cua-sdk/reference/rust) | The public crates (`cua-sdk`, `cua-spacesd-client`, `cua-fleet`, `cua-sandbox-core`, `cua-spaces`), with stability tiers. |
+| [Rust crates](/cua-sdk/reference/rust) | The public crates (`cua-sdk`, `cua-spacesd-client`, `cua-sandbox-core`, `cua-spaces`), with stability tiers. |
 
 ## Protocol
 
@@ -141,6 +132,6 @@ Pages marked *Cua Spaces app export* document the APIs the Cua Spaces apps are b
 | --- | --- |
 | [Protocol](/cua-sdk/reference/protocol) | The gRPC contracts of cua-spacesd (`cua.env.v1`) and the cua daemon (`cua.daemon.v1`). |
 
-291 items, 385 methods. The [Types](/cua-sdk/reference/types) page lists them.
+266 items, 350 methods. The [Types](/cua-sdk/reference/types) page lists them.
 
-The Cua Spaces app export adds 783 items and 38 methods.
+The Cua Spaces app export adds 780 items and 38 methods.

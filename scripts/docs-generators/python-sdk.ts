@@ -133,7 +133,6 @@ export const SANDBOX_PAGES: PageSpec[] = [
       {
         title: 'Creation options',
         objects: [
-          `${SB}.options.CloudOptions`,
           `${SB}.options.Probe`,
           `${SB}.options.http`,
           `${SB}.options.tcp`,
@@ -156,48 +155,6 @@ export const SANDBOX_PAGES: PageSpec[] = [
         objects: [
           `${SB}.containers.Container`,
           `${SB}.containers.RegistrySecret`,
-          `${SB}.generated.image_models.ImageFileReference`,
-        ],
-      },
-    ],
-  },
-  {
-    file: 'pool',
-    title: 'Pool',
-    description: 'Pools, templates, sandbox specs and pool errors of cua-sandbox.',
-    intro:
-      '`Pool` keeps warm cloud capacity for a `SandboxSpec`. `Sandbox.create` uses shared capacity; a named pool is for dedicated capacity.',
-    sections: [
-      { title: 'Pools and templates', objects: [`${SB}.pool.Pool`, `${SB}.pool.Template`] },
-      {
-        title: 'Managed pools (cua_sandbox.pools)',
-        objects: [
-          `${SB}.pools`,
-          `${SB}.pools.list_pools`,
-          `${SB}.pools.list_claims`,
-          `${SB}.pools.gc`,
-          `${SB}.pools.gc_pools`,
-          `${SB}.pools.is_managed_pool_name`,
-          `${SB}.pools.ManagedPoolInfo`,
-          `${SB}.pools.ClaimInfo`,
-          `${SB}.pools.GcReport`,
-        ],
-      },
-      {
-        title: 'Specs',
-        objects: [
-          `${SB}.spec.SandboxSpec`,
-          `${SB}.spec.PoolOptions`,
-          `${SB}.spec.PoolExport`,
-          `${SB}.spec.generate_claim_token`,
-        ],
-      },
-      {
-        title: 'Errors',
-        objects: [
-          `${SB}.spec.PoolSpecMismatch`,
-          `${SB}.spec.ClaimSecretsNotDelivered`,
-          `${SB}.spec.PoolAccessDeniedError`,
         ],
       },
     ],
@@ -260,7 +217,6 @@ export const SANDBOX_PAGES: PageSpec[] = [
         objects: [
           `${SB}.interfaces.services.ServiceHandle`,
           `${SB}.interfaces.services.Services`,
-          `${SB}.interfaces.services.SignedServiceURL`,
         ],
       },
       {
@@ -339,7 +295,7 @@ export const SANDBOX_PAGES: PageSpec[] = [
       {
         title: 'Transports',
         hideInit: true,
-        objects: [`${SB}.transport.cloud.CloudTransport`, `${SB}.transport.env.EnvTransport`],
+        objects: [`${SB}.transport.env.EnvTransport`],
       },
     ],
   },
@@ -654,7 +610,7 @@ export function renderCuaPython(
   const root = modules.get('cua')!;
   const body: string[] = [];
   body.push(
-    'The high-level Python API: `cua_sandbox` (`Sandbox`, `Image`, the computer interfaces, `Pool`) and the helpers the `cua` package adds. It is a thin layer over the [Cua SDK objects](/cua-sdk/reference): the cloud, the local runtimes and cua-spacesd all go through `cua`, whose generated binding (`cua._native`) those pages document.',
+    'The high-level Python API: `cua_sandbox` (`Sandbox`, `Image`, the computer interfaces) and the helpers the `cua` package adds. It is a thin layer over the [Cua SDK objects](/cua-sdk/reference): the local runtimes and cua-spacesd all go through `cua`, whose generated binding (`cua._native`) those pages document.',
     ''
   );
   const header = readHeader('cua-sdk/python/index.md', { version, sandboxVersion });
@@ -776,14 +732,12 @@ export function buildFiles(
   return files;
 }
 
-/** Every public `cua_sandbox` name is documented or listed as a re-export. */
+/** Every public `cua_sandbox` name is documented. */
 export function assertCoverage(extracted: Extracted): void {
   const root = extracted.modules.find((m) => m.path === SB);
   if (!root) throw new Error('cua_sandbox module was not extracted');
   const documented = new Set(sandboxAnchors().keys());
-  const missing = root.all.filter(
-    (n) => !documented.has(n) && !root.imports[n]?.startsWith('fleet_sdk')
-  );
+  const missing = root.all.filter((n) => !documented.has(n));
   if (missing.length) {
     throw new Error(
       `cua_sandbox.__all__ names without a reference entry: ${missing.join(', ')}. Add them to SANDBOX_PAGES in python-sdk.ts.`

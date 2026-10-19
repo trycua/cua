@@ -96,6 +96,8 @@ tokio = { workspace = true, features = ["test-util"] }
 prost-types.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# The browser runs one thread: futures need not be `Send`.
+uniffi = { workspace = true, features = ["wasm-unstable-single-threaded"] }
 tonic = { workspace = true, default-features = false, features = ["codegen"] }
 tonic-prost.workspace = true
 tonic-web-wasm-client = "0.9"

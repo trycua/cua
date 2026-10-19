@@ -343,7 +343,7 @@ struct OnboardingTests {
         #expect(o.state.mode == .host)
         #expect(o.hostPermissions.map(\.id) == ["accessibility"])
         #expect(!o.showingHostForm)
-        #expect(o.view.summary.last?.value == "Set up for unattended access")
+        #expect(o.view.summary.last?.value == "Reachable from your other devices")
     }
 
     @Test func directSetupNeedsAnAddressAndSendsNoToken() async {

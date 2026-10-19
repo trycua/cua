@@ -27,7 +27,7 @@
           "Account: not signed in",
           "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Access other machines"
+          "This machine: Only used to open other computers"
         ],
         "title": "You're all set",
         "usage": null
@@ -61,7 +61,7 @@
           "Account: not signed in",
           "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Access other machines"
+          "This machine: Only used to open other computers"
         ],
         "title": "You're all set",
         "usage": null
@@ -95,7 +95,7 @@
           "Account: not signed in",
           "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Access other machines"
+          "This machine: Only used to open other computers"
         ],
         "title": "You're all set",
         "usage": null
@@ -129,7 +129,7 @@
           "Account: not signed in",
           "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Set up for unattended access"
+          "This machine: Reachable from your other devices"
         ],
         "title": "You're all set",
         "usage": null
@@ -163,7 +163,7 @@
           "Account: not signed in",
           "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Set up for unattended access"
+          "This machine: Reachable from your other devices"
         ],
         "title": "You're all set",
         "usage": null

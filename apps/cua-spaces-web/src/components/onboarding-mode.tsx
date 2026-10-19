@@ -88,7 +88,7 @@ export function ModeCard({ flow, view, host, choice }: { flow: OnboardingHook; v
           >
             <div className="text-[13px] font-semibold">{c.label}</div>
             {setUp ? (
-              <div className="mt-0.5 text-xs text-muted-foreground">Next: name this machine and choose who can reach it.</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">Next: name it and choose who else can use it.</div>
             ) : null}
           </button>
         );

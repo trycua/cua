@@ -14,10 +14,9 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
-from fastapi.testclient import TestClient  # noqa: E402
-
 from cua_agent.playground import server as playground_server  # noqa: E402
 from cua_agent.playground.server import PlaygroundServer  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 EVIL = "https://evil.example"
 

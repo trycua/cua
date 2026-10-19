@@ -889,12 +889,18 @@ decides how:
 - **Another window of the app the user is in** (the app is frontmost, the
   target is not its key window): the target is made key for the press through
   the in-app key-window record, with no raise and no activation, the item is
-  pressed without opening its menu, and key goes back to the user's window. When
+  pressed without opening its menu (after the same focused- and main-window
+  check as the background route), and key goes back to the user's window. When
   the target cannot be made key that way, the call is refused with
   `window_not_key` and nothing is invoked; if the user allows it,
-  `bring_to_front` the window first.
+  `bring_to_front` the window first. Refusals and results name this route, not
+  the background one.
 - **The frontmost app's key window:** the on-screen menu bar is already the
-  target's, so the menu is opened and the item pressed there.
+  target's, so the menu is opened and the item pressed there. When the app's
+  key window cannot be read, its frontmost window on screen counts as the
+  user's window and takes this route; any other window, or every window when
+  the window order cannot be read either, is refused with `window_not_key`
+  (it may be behind the user's window).
 
 It refuses missing, duplicate, disabled, or non-actionable segments and never
 falls back to pixels.

@@ -157,8 +157,9 @@ fn restore_target(
         .or_else(|| order_before.iter().copied().find(present))
 }
 
-/// `pid`'s on-screen layer-0 windows, front to back.
-fn app_window_order(pid: pid_t) -> Vec<u32> {
+/// `pid`'s on-screen layer-0 windows, front to back. Empty when WindowServer's
+/// window list cannot be read.
+pub(crate) fn app_window_order(pid: pid_t) -> Vec<u32> {
     let mut windows: Vec<_> = crate::windows::visible_windows()
         .into_iter()
         .filter(|w| w.pid == pid && w.layer == 0 && w.is_on_screen)

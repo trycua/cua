@@ -190,7 +190,7 @@ function MachineList({
           className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/70"
         />
       </label>
-      <div role="listbox" aria-label="Machines">
+      <div role="listbox" aria-label="Computers">
         {view.groups.map((g) => {
           const members = g.ids.map((id) => byId.get(id)).filter((m): m is MachinesViewMachine => Boolean(m));
           const visible = members.filter(matches);

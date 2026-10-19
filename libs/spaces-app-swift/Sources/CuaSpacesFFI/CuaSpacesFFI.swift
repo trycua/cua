@@ -14420,7 +14420,7 @@ public func FfiConverterTypeAppFileView_lower(_ value: AppFileView) -> RustBuffe
 
 public struct AppGpuChoice: Equatable, Hashable {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`.
+     * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
      */
     public var runtime: String
     /**
@@ -14452,7 +14452,7 @@ public struct AppGpuChoice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `lume`, `qemu`, `container`, `gvisor`.
+         * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
          */runtime: String,
         /**
          * What the create passes as `gpu` (`paravirtual`).

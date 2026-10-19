@@ -21203,7 +21203,7 @@ const FfiConverterTypeAppFact = (() => {
 
 export type AppGpuChoice = {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`.
+     * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
      */
     runtime: string,
     /**

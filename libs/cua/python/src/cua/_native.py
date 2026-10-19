@@ -797,7 +797,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_host_migrate_service() != 12365:
+    if lib.uniffi_cua_sdk_checksum_method_host_migrate_service() != 36386:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")

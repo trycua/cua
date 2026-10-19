@@ -3250,7 +3250,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_host_migrate_service() != 12365.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_host_migrate_service() != 36386.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338.toShort()) {

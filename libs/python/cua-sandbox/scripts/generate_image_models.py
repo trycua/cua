@@ -14,7 +14,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-CRD_PATH = REPO_ROOT / "clusters/base/cua-images/crd.yaml"
+CRD_PATH = REPO_ROOT / "libs/python/cua-sandbox/schemas/cua-images/crd.yaml"
 SCHEMA_PATH = PACKAGE_ROOT / "schemas/image-v1alpha1.schema.json"
 MODEL_PATH = PACKAGE_ROOT / "cua_sandbox/generated/image_models.py"
 API_VERSION = "images.cua.ai/v1alpha1"
@@ -217,7 +217,8 @@ class ImageResource(GeneratedImageResource):
 
 def _source_header() -> str:
     digest = hashlib.sha256(CRD_PATH.read_bytes()).hexdigest()
-    return f"# Source: clusters/base/cua-images/crd.yaml\n# Source SHA-256: {digest}\n"
+    source = CRD_PATH.relative_to(REPO_ROOT).as_posix()
+    return f"# Source: {source}\n# Source SHA-256: {digest}\n"
 
 
 def _write_or_check(path: Path, content: str, *, check: bool) -> None:

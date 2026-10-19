@@ -15,7 +15,7 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     workflow = yaml.safe_load(CI_WORKFLOW.read_text())
     pull_request_paths = workflow[True]["pull_request"]["paths"]
     push_paths = workflow[True]["push"]["paths"]
-    assert "clusters/base/cua-images/**" in pull_request_paths
+    assert "libs/python/cua-sandbox/schemas/cua-images/**" in pull_request_paths
     assert "libs/python/cua-sandbox/cua_sandbox/image.py" in pull_request_paths
     assert "libs/python/cua-sandbox/cua_sandbox/generated/**" in pull_request_paths
     assert "libs/python/cua-sandbox/schemas/**" in pull_request_paths
@@ -27,7 +27,7 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     assert "uv sync --project libs/python/cua-sandbox --group dev --extra dev" in commands
     assert "generate_image_models.py --check" in commands
     assert 'export PATH="$(go env GOPATH)/bin:$PATH"' in commands
-    assert "kustomize build clusters/base/cua-images" in commands
+    assert "kustomize build libs/python/cua-sandbox/schemas/cua-images" in commands
     assert "test_image_crd.py" in commands
     assert "test_image_model_generation.py" in commands
     assert "test_image_build_recipe.py" in commands
@@ -43,7 +43,7 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     assert "go install sigs.k8s.io/kind@v0.26.0" in commands
     assert "kind create cluster --name cua-image-api" in admission
     assert (
-        "kubectl apply --server-side --dry-run=server -f clusters/base/cua-images/crd.yaml"
+        "kubectl apply --server-side --dry-run=server -f libs/python/cua-sandbox/schemas/cua-images/crd.yaml"
         in admission
     )
 
@@ -128,7 +128,7 @@ def test_image_api_cd_uses_an_exact_immutable_artifact_destination_and_metadata(
         "artifact",
         "${ARTIFACT_DESTINATION}",
     ]
-    assert "--path=clusters/base/cua-images" in tokens
+    assert "--path=libs/python/cua-sandbox/schemas/cua-images" in tokens
     assert "--source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" in tokens
     assert "--revision=${RELEASE_TAG}@sha1:${COMMIT}" in tokens
 

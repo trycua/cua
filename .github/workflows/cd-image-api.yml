@@ -113,6 +113,6 @@ jobs:
             exit 1
           fi
           flux push artifact "${ARTIFACT_DESTINATION}" \
-            --path=clusters/base/cua-images \
+            --path=libs/python/cua-sandbox/schemas/cua-images \
             --source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --revision="${RELEASE_TAG}@sha1:${COMMIT}"

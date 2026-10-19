@@ -6,8 +6,8 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-CRD_PATH = REPO_ROOT / "clusters/base/cua-images/crd.yaml"
-KUSTOMIZATION_PATH = REPO_ROOT / "clusters/base/cua-images/kustomization.yaml"
+CRD_PATH = REPO_ROOT / "libs/python/cua-sandbox/schemas/cua-images/crd.yaml"
+KUSTOMIZATION_PATH = REPO_ROOT / "libs/python/cua-sandbox/schemas/cua-images/kustomization.yaml"
 
 
 def _crd() -> dict:

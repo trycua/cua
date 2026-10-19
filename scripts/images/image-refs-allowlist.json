@@ -3,17 +3,16 @@
   "exclude": [
     "libs/fleet/**",
     "blog/**",
-    "changelog/**",
+    "docs/changelog/**",
     "CHANGELOG*",
     "*/CHANGELOG*",
     "*.lock",
     "pnpm-lock.yaml",
     "*/package-lock.json",
-    "evidence/**",
     "*/evidence/**",
     ".github/release-backfill/**",
     "docs/superpowers/**",
-    "rfcs/**"
+    "docs/rfcs/**"
   ],
   "generated": [
     "docs/content/docs/cua-sdk/reference/os-image-catalog.mdx",
@@ -33,7 +32,7 @@
     "libs/cua/typescript/src/native/cua_sdk.ts",
     "libs/cua/typescript/src/native/cua_sdk-ffi.ts",
     "libs/cua/spaces-contract/manifest.json",
-    "samples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Spaces/SandboxImages.generated.swift",
+    "examples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Spaces/SandboxImages.generated.swift",
     "libs/cua-bench/cua_bench/images.py"
   ],
   "thirdParty": {

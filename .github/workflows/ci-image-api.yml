@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "clusters/base/cua-images/**"
+      - "libs/python/cua-sandbox/schemas/cua-images/**"
       - "libs/python/cua-sandbox/cua_sandbox/image.py"
       - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
       - "libs/python/cua-sandbox/cua_sandbox/generated/**"
@@ -18,7 +18,7 @@ on:
       - ".github/workflows/cd-image-api.yml"
   pull_request:
     paths:
-      - "clusters/base/cua-images/**"
+      - "libs/python/cua-sandbox/schemas/cua-images/**"
       - "libs/python/cua-sandbox/cua_sandbox/image.py"
       - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
       - "libs/python/cua-sandbox/cua_sandbox/generated/**"
@@ -110,7 +110,7 @@ jobs:
       - name: Render the CRD package
         run: |
           export PATH="$(go env GOPATH)/bin:$PATH"
-          kustomize build clusters/base/cua-images >/tmp/cua-image-crd.yaml
+          kustomize build libs/python/cua-sandbox/schemas/cua-images >/tmp/cua-image-crd.yaml
           grep -q '^kind: CustomResourceDefinition$' /tmp/cua-image-crd.yaml
           grep -q 'name: images.images.cua.ai' /tmp/cua-image-crd.yaml
 
@@ -118,7 +118,7 @@ jobs:
         run: |
           export PATH="$(go env GOPATH)/bin:$PATH"
           kind create cluster --name cua-image-api --wait 120s
-          kubectl apply --server-side --dry-run=server -f clusters/base/cua-images/crd.yaml
+          kubectl apply --server-side --dry-run=server -f libs/python/cua-sandbox/schemas/cua-images/crd.yaml
 
       - name: Delete temporary Kind cluster
         if: always()

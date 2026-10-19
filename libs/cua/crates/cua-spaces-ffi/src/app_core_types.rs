@@ -883,12 +883,19 @@ pub struct AppDetailCopy {
     pub teleport_symbol_active: String,
 }
 
-/// Memory and storage use of a Space (the SDK's `Space.usage`), for its
-/// Memory and Storage facts. A size shows only when it is the guest's own
+/// Processor, memory and storage use of a Space (the SDK's `Space.usage`),
+/// for its Memory and Storage facts and its resource panel
+/// ([`crate::resources`]). A size shows only when it is the guest's own
 /// limit (`*_limited`: a VM, a container's cgroup memory limit).
 pub type AppSpaceUsage = core::spaces::sidebar::SpaceUsage;
 #[uniffi::remote(Record)]
 pub struct AppSpaceUsage {
+    /// Cores the guest sees (0 from a guest that does not report it).
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    pub cpu_percent: f64,
+    /// 1-minute load average.
+    pub load_average_1m: f64,
     /// Memory in use, bytes.
     pub memory_used: u64,
     /// Memory size, bytes.
@@ -9674,4 +9681,255 @@ pub struct AppRelayUsageView {
     pub notice: Option<AppRelayAllowanceNotice>,
     /// Settings' plan card.
     pub plan_card: AppPlanCard,
+}
+
+/// How low the free disk is.
+pub type AppDiskLevel = core::resources::DiskLevel;
+#[uniffi::remote(Enum)]
+pub enum AppDiskLevel {
+    /// Plenty.
+    Ok,
+    /// Under 50 GB or 15% of the volume, whichever line is higher (never
+    /// above 100 GB).
+    Low,
+    /// Under the floor where creating a Space already fails.
+    Critical,
+}
+
+/// The low-disk signal.
+pub type AppDiskWarning = core::resources::DiskWarning;
+#[uniffi::remote(Record)]
+pub struct AppDiskWarning {
+    /// How low it is.
+    pub level: AppDiskLevel,
+    /// Free bytes on the volume that holds Spaces.
+    pub free: u64,
+    /// Size of that volume.
+    pub total: u64,
+    /// The line that was crossed (0 when ok).
+    pub threshold: u64,
+}
+
+/// A computer: this Mac, or one of your other computers.
+pub type AppComputerResources = core::resources::ComputerResources;
+#[uniffi::remote(Record)]
+pub struct AppComputerResources {
+    /// `this-mac`, or the relay machine id.
+    pub id: String,
+    /// Display name (empty for this Mac).
+    pub name: String,
+    /// Reachable now.
+    pub online: bool,
+    /// When the computer measured this, Unix ms.
+    pub sampled_at_ms: u64,
+    /// Processor cores.
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    pub cpu_percent: f64,
+    /// 1-minute load average.
+    pub load_average_1m: f64,
+    /// Memory size, bytes.
+    pub memory_total: u64,
+    /// Memory in use, bytes.
+    pub memory_used: u64,
+    /// Size of the volume that holds Spaces, bytes.
+    pub disk_total: u64,
+    /// Free bytes on it.
+    pub disk_free: u64,
+    /// Extra Spaces on it.
+    pub spaces_count: u32,
+    /// Of those, running.
+    pub spaces_running: u32,
+    /// Cores given to the running ones.
+    pub spaces_cpu_allocated: u32,
+    /// Memory given to the running ones, bytes.
+    pub spaces_memory_allocated: u64,
+    /// Memory the running guests report in use, bytes.
+    pub spaces_memory_used: u64,
+    /// Bytes all its extra Spaces take on it.
+    pub spaces_disk_bytes: u64,
+    /// False when some Space's disk could only be estimated.
+    pub spaces_disk_exact: bool,
+    /// The low-disk signal.
+    pub warning: AppDiskWarning,
+}
+
+/// What a Space's guest reports about itself.
+pub type AppGuestUsage = core::resources::GuestUsage;
+#[uniffi::remote(Record)]
+pub struct AppGuestUsage {
+    /// Cores the guest sees.
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    pub cpu_percent: f64,
+    /// 1-minute load average.
+    pub load_average_1m: f64,
+    /// Memory in use, bytes.
+    pub memory_used: u64,
+    /// Memory size, bytes.
+    pub memory_total: u64,
+    /// `memory_total` is the guest's own limit.
+    pub memory_limited: bool,
+    /// Disk in use, bytes.
+    pub disk_used: u64,
+    /// Disk size, bytes.
+    pub disk_total: u64,
+    /// `disk_total` is the guest's own disk.
+    pub disk_limited: bool,
+}
+
+/// What a Space costs this Mac's disk.
+pub type AppDiskOnHost = core::resources::DiskOnHost;
+#[uniffi::remote(Record)]
+pub struct AppDiskOnHost {
+    /// Bytes only this Space holds; none when they could not be measured.
+    pub bytes: Option<u64>,
+    /// Blocks its files occupy, clones counted in full.
+    pub allocated: u64,
+    /// Part of it is shared with other copies.
+    pub shares_space: bool,
+}
+
+/// One extra Space on this Mac.
+pub type AppSpaceResources = core::resources::SpaceResources;
+#[uniffi::remote(Record)]
+pub struct AppSpaceResources {
+    /// `local:<name>`.
+    pub id: String,
+    /// `running`, `stopped`, `suspended`, or empty when unknown.
+    pub power_state: String,
+    /// Cores given to it (0: unknown).
+    pub cpu_allocated: u32,
+    /// Memory given to it, bytes (0: unknown).
+    pub memory_allocated: u64,
+    /// Its disk's size limit, bytes (0: unknown).
+    pub disk_allocated: u64,
+    /// The guest's own numbers; none while it is off or unreachable.
+    pub usage: Option<AppGuestUsage>,
+    /// What it costs this Mac; none for a container.
+    pub disk_on_host: Option<AppDiskOnHost>,
+}
+
+/// One sample of everything (`Spaces.resources`).
+pub type AppResourcesSnapshot = core::resources::ResourcesSnapshot;
+#[uniffi::remote(Record)]
+pub struct AppResourcesSnapshot {
+    /// Grows by one per sample.
+    pub sequence: u64,
+    /// Unix ms.
+    pub sampled_at_ms: u64,
+    /// This Mac.
+    pub this_mac: AppComputerResources,
+    /// Extra Spaces on this Mac.
+    pub spaces: Vec<AppSpaceResources>,
+    /// Your other computers.
+    pub computers: Vec<AppComputerResources>,
+    /// This Mac's low-disk signal, for the menu bar.
+    pub warning: AppDiskWarning,
+}
+
+/// How a row's bar and value are coloured.
+pub type AppResourceTone = core::resources::ResourceTone;
+#[uniffi::remote(Enum)]
+pub enum AppResourceTone {
+    /// Nothing to say.
+    Normal,
+    /// Running low.
+    Warning,
+    /// Out.
+    Critical,
+}
+
+/// One line of a panel: "Processor: 12 cores · 38% busy" with its bar.
+pub type AppResourceRow = core::resources::ResourceRow;
+#[uniffi::remote(Record)]
+pub struct AppResourceRow {
+    /// "Processor", "Memory" or "Space for files".
+    pub label: String,
+    /// The numbers in words.
+    pub value: String,
+    /// How full the small bar is, 0 to 1; none for a row with no bar.
+    pub fraction: Option<f64>,
+    /// How to colour it.
+    pub tone: AppResourceTone,
+}
+
+/// The low-disk warning with its button.
+pub type AppWarningView = core::resources::WarningView;
+#[uniffi::remote(Record)]
+pub struct AppWarningView {
+    /// The sentence.
+    pub text: String,
+    /// The button ("See what's using space").
+    pub button: String,
+    /// Under the floor where creating a Space already fails.
+    pub critical: bool,
+}
+
+/// This Mac's panel.
+pub type AppThisMacView = core::resources::ThisMacView;
+#[uniffi::remote(Record)]
+pub struct AppThisMacView {
+    /// "This Mac".
+    pub title: String,
+    /// Processor, Memory, Space for files.
+    pub rows: Vec<AppResourceRow>,
+    /// "Your extra Spaces use: 6 cores, 12 GB of memory, about 25 GB for
+    /// files." None when there are no extra Spaces.
+    pub extra_spaces: Option<String>,
+    /// The warning, when the disk is low.
+    pub warning: Option<AppWarningView>,
+}
+
+/// One extra Space's panel.
+pub type AppSpaceResourcesView = core::resources::SpaceResourcesView;
+#[uniffi::remote(Record)]
+pub struct AppSpaceResourcesView {
+    /// The Space's id.
+    pub id: String,
+    /// Processor, Memory, Space for files: what it was given and, while it
+    /// runs, what it uses now.
+    pub rows: Vec<AppResourceRow>,
+    /// What it costs this Mac, not what the guest sees: "Uses about 31 GB
+    /// on this Mac (shares space with other copies)". None for a container.
+    pub on_this_mac: Option<String>,
+    /// The Space is off: "Stopped · uses about 6 GB on this Mac".
+    pub off_line: Option<String>,
+    /// Whether the numbers are live (the Space runs and answered).
+    pub live: bool,
+}
+
+/// Another of your computers' panel.
+pub type AppComputerView = core::resources::ComputerView;
+#[uniffi::remote(Record)]
+pub struct AppComputerView {
+    /// The computer's id.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// Reachable now.
+    pub online: bool,
+    /// "Offline, as of 5 min ago" or "Updated 2 min ago"; none when the
+    /// numbers are a moment old.
+    pub age: Option<String>,
+    /// Processor, Memory, Space for files.
+    pub rows: Vec<AppResourceRow>,
+    /// "Its extra Spaces use: ..." (see [`ThisMacView::extra_spaces`]).
+    pub extra_spaces: Option<String>,
+    /// The warning, when its disk is low.
+    pub warning: Option<AppWarningView>,
+}
+
+/// Everything the apps draw from one snapshot.
+pub type AppResourcesView = core::resources::ResourcesView;
+#[uniffi::remote(Record)]
+pub struct AppResourcesView {
+    /// This Mac.
+    pub this_mac: AppThisMacView,
+    /// Each extra Space.
+    pub spaces: Vec<AppSpaceResourcesView>,
+    /// Each other computer.
+    pub computers: Vec<AppComputerView>,
+    /// The menu bar's warning: none when the disk is fine.
+    pub warning: Option<AppWarningView>,
 }

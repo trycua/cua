@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package cua.daemon.v1;
 
+import "cua/daemon/v1/resources.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -87,6 +88,21 @@ service SpaceService {
   // `captured_at`, when the capture fails). Asking keeps the daemon
   // refreshing running Spaces' thumbnails in the background for a while.
   rpc GetSpaceThumbnail(GetSpaceThumbnailRequest) returns (GetSpaceThumbnailResponse);
+  // What this computer, its extra Spaces and your other computers use now:
+  // processor, memory and disk, as one snapshot. The daemon's single
+  // sampler measures it; a snapshot a few seconds old is returned as it is.
+  // With `visible`, the call also says a window shows the numbers for the
+  // next 30 seconds, so the sampler runs every 10 seconds (every 5 minutes
+  // otherwise). Numbers only: no names, paths or processes.
+  rpc GetResources(GetResourcesRequest) returns (GetResourcesResponse);
+  // The same numbers as a stream: one snapshot first, then an update with
+  // only the entries that changed by more than 1 point or 256 MB, and a
+  // `low_disk` event whenever the free-disk warning level changes
+  // (including back to `ok`). A hidden watcher (`visible` false) is
+  // sampled every 5 minutes and still hears `low_disk`, for the menu bar.
+  // Cancel the stream to stop; call again with the other `visible` to
+  // switch.
+  rpc WatchResources(WatchResourcesRequest) returns (stream WatchResourcesResponse);
 }
 
 // A registered Space.

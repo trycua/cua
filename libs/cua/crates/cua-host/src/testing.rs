@@ -78,6 +78,8 @@ struct State_ {
     /// Every machine read answers 503, as the proxy in front of the
     /// relay does while it has no backend.
     reads_down: bool,
+    /// A relay that predates meta patches: the key is ignored.
+    ignore_meta_patches: bool,
     /// Machine registrations received (including refused ones).
     register_calls: usize,
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
@@ -579,6 +581,20 @@ async fn patch(
         rec.machine.sharing = sh;
         if !sh {
             rec.machine.clients.clear();
+        }
+    }
+    let ignore_meta = st.ignore_meta_patches;
+    let rec = st.machines.get_mut(&id).unwrap();
+    if let Some(meta) = body["meta"].as_object().filter(|_| !ignore_meta) {
+        for (k, v) in meta {
+            match v.as_str() {
+                Some("") | None => {
+                    rec.machine.meta.remove(k);
+                }
+                Some(v) => {
+                    rec.machine.meta.insert(k.clone(), v.to_string());
+                }
+            }
         }
     }
     Json(rec.machine.clone()).into_response()
@@ -1208,6 +1224,12 @@ impl FakeRelay {
     /// (a relay deploy, as its proxy answers).
     pub fn set_reads_down(&self, down: bool) {
         self.state.lock().unwrap().reads_down = down;
+    }
+
+    /// While `on`, a PATCH with `meta` is accepted but its keys are
+    /// dropped, as a relay that predates them does.
+    pub fn set_ignore_meta_patches(&self, on: bool) {
+        self.state.lock().unwrap().ignore_meta_patches = on;
     }
 
     /// Machine registrations received so far (refused ones too).

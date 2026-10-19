@@ -62,7 +62,7 @@ Returned by [`Spaces.space`](/cua-sdk/reference/spaces#spacesspace).
 | [`teleport`](/cua-sdk/reference/spaces/space#spaceteleport) | Teleports `app`'s session into this Space. |
 | [`teleport_manifest`](/cua-sdk/reference/spaces/space#spaceteleport_manifest) | What teleporting `app` (`full` or `tabs`) would move from this host. |
 | [`thumbnail`](/cua-sdk/reference/spaces/space#spacethumbnail) | The Space's latest thumbnail (a small JPEG of its primary display) from the cache every client on this machine shares: returned at once when it is younger than `max_age_ms` (unset: any age), else captured fresh through cua-spacesd and kept for the next caller. |
-| [`usage`](/cua-sdk/reference/spaces/space#spaceusage) | Memory and storage use now (cheap: poll it at a low rate while a detail is visible). |
+| [`usage`](/cua-sdk/reference/spaces/space#spaceusage) | Processor, memory and storage use now (cheap: poll it at a low rate while a detail is visible). |
 | [`websocket_headers`](/cua-sdk/reference/spaces/streams#spacewebsocket_headers) | Headers a media WebSocket to this Space needs besides its ticket. |
 | [`window_thumbnail`](/cua-sdk/reference/spaces/space#spacewindow_thumbnail) | A small JPEG preview of one of the Space's windows (`window_id` and `epoch` from `windows`), at most `max_dimension` px, reused for a few seconds (the SDK's preview cache); `None` when the guest captured nothing. |
 | [`windows`](/cua-sdk/reference/spaces/streams#spacewindows) | Streamable windows, optionally of one app. |
@@ -1533,8 +1533,8 @@ pub async fn displays(&self) -> Result<Vec<SpaceDisplay>, CuaError>
 
 ### `Space.usage`
 
-Memory and storage use now (cheap: poll it at a low rate while a
-detail is visible).
+Processor, memory and storage use now (cheap: poll it at a low rate
+while a detail is visible).
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -1632,14 +1632,17 @@ Returned by [`Space.thumbnail`](#spacethumbnail).
 
 ## `SpaceUsage` record
 
-Memory and storage use (`Space.usage`). A size is the guest's own
-limit only when its `*_limited` flag says so (a VM's memory or disk, a
-container's cgroup memory limit).
+Processor, memory and storage use (`Space.usage`). A size is the
+guest's own limit only when its `*_limited` flag says so (a VM's memory
+or disk, a container's cgroup memory limit).
 
 Returned by [`Space.usage`](#spaceusage).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
+| `cpu_count` / `cpuCount` | `u32` | `0` | Cores the guest sees (0 from a guest that does not report it). |
+| `cpu_percent` / `cpuPercent` | `f64` | `0.0` | Busy now, 0 to 100. |
+| `load_average_1m` / `loadAverage1m` | `f64` | `0.0` | 1-minute load average. |
 | `memory_used` / `memoryUsed` | `u64` |  | Memory in use, bytes. |
 | `memory_total` / `memoryTotal` | `u64` |  | Memory size, bytes. |
 | `memory_limited` / `memoryLimited` | `bool` |  | `memory_total` is the guest's limit. |

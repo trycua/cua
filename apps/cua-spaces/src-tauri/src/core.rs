@@ -1445,11 +1445,15 @@ impl AppCore {
             .collect())
     }
 
-    /// Memory and storage use now (the app core's `SpaceUsage` shape).
+    /// Processor, memory and storage use now (the app core's `SpaceUsage`
+    /// shape).
     pub async fn space_usage(&self, space: &str) -> CmdResult<serde_json::Value> {
         let s = self.space(space).await?;
         let u = s.usage().await.map_err(msg)?;
         Ok(serde_json::json!({
+            "cpuCount": u.cpu_count,
+            "cpuPercent": u.cpu_percent,
+            "loadAverage1m": u.load_average_1m,
             "memoryUsed": u.memory_used,
             "memoryTotal": u.memory_total,
             "memoryLimited": u.memory_limited,

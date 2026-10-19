@@ -17,7 +17,7 @@ use crate::{
     CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
     drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
     machines, notch, notifications, onboarding, onboarding_preview, palette, paths, persistent,
-    presence, relay_usage, settings, share, telemetry, upsell, window, wizard,
+    presence, relay_usage, resources, settings, share, telemetry, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -289,6 +289,11 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "resources.view",
+    "resources.thisMac",
+    "resources.space",
+    "resources.computer",
+    "resources.warning",
     "upsell.prompt",
     "upsell.allows",
     "firstRun.view",
@@ -484,6 +489,17 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 _ => relay_usage::view(&usage),
             })
         }
+        // Processor, memory and disk: the rows, bars and warning the apps
+        // draw from the runtime's snapshot (`Spaces.resources`).
+        // `nowMs` is the shell's clock: the core has none (wasm).
+        "resources.view" => out(resources::view(&a.get("snapshot")?, a.get("nowMs")?)),
+        "resources.thisMac" => out(resources::this_mac_view(&a.get("computer")?)),
+        "resources.space" => out(resources::space_view(&a.get("space")?)),
+        "resources.computer" => out(resources::computer_view(
+            &a.get("computer")?,
+            a.get("nowMs")?,
+        )),
+        "resources.warning" => out(resources::warning_view(&a.get("warning")?)),
         // The Pro and Teams prompts: the rules and words are `upsell`'s.
         "upsell.prompt" => {
             let usage = a.get("usage")?;

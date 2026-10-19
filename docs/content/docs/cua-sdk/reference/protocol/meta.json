@@ -5,6 +5,7 @@
     "env-process",
     "env-computer",
     "env-stream",
-    "daemon"
+    "daemon",
+    "daemon-resources"
   ]
 }

@@ -629,6 +629,9 @@ internal interface UniffiCallbackInterfaceFrameSinkMethod0 : com.sun.jna.Callbac
 internal interface UniffiCallbackInterfaceFrameSinkMethod1 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`event`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
+internal interface UniffiCallbackInterfaceResourcesListenerMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`event`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 internal interface UniffiCallbackInterfaceSpaceCreateListenerMethod0 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`progress`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
@@ -672,6 +675,25 @@ internal open class UniffiVTableCallbackInterfaceFrameSink(
         `uniffiFree` = other.`uniffiFree`
         `uniffiClone` = other.`uniffiClone`
         `onFrame` = other.`onFrame`
+        `onEvent` = other.`onEvent`
+    }
+
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "onEvent")
+internal open class UniffiVTableCallbackInterfaceResourcesListener(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `onEvent`: UniffiCallbackInterfaceResourcesListenerMethod0? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `onEvent`: UniffiCallbackInterfaceResourcesListenerMethod0? = null,
+    ): UniffiVTableCallbackInterfaceResourcesListener(`uniffiFree`,`uniffiClone`,`onEvent`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceResourcesListener) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
         `onEvent` = other.`onEvent`
     }
 
@@ -1253,6 +1275,12 @@ external fun uniffi_cua_sdk_checksum_method_presenceview_shape_of(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_presenceview_upsert(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_resourceslistener_on_event(
+): Short
+external fun uniffi_cua_sdk_checksum_method_resourceswatch_set_visible(
+): Short
+external fun uniffi_cua_sdk_checksum_method_resourceswatch_stop(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_agent_events(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_agent_interrupt(
@@ -1449,6 +1477,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_remove(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_resolve(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_resources(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_space(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_start(
@@ -1504,6 +1534,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_volume_sync_status(
 external fun uniffi_cua_sdk_checksum_method_spaces_volume_unmount(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_volume_write(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_watch_resources(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_teleportapprover_approve(
 ): Short
@@ -1645,6 +1677,7 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "cua_sdk"))
         uniffiCallbackInterfaceAudioSink.register(this)
         uniffiCallbackInterfaceFrameSink.register(this)
+        uniffiCallbackInterfaceResourcesListener.register(this)
         uniffiCallbackInterfaceSpaceCreateListener.register(this)
         uniffiCallbackInterfaceTeleportApprover.register(this)
 
@@ -2169,6 +2202,22 @@ external fun uniffi_cua_sdk_fn_method_presenceview_shape_of(`ptr`: Long,`partici
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_presenceview_upsert(`ptr`: Long,`participant`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
+external fun uniffi_cua_sdk_fn_clone_resourceslistener(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cua_sdk_fn_free_resourceslistener(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener(`vtable`: UniffiVTableCallbackInterfaceResourcesListener,
+): Unit
+external fun uniffi_cua_sdk_fn_method_resourceslistener_on_event(`ptr`: Long,`event`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cua_sdk_fn_clone_resourceswatch(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cua_sdk_fn_free_resourceswatch(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cua_sdk_fn_method_resourceswatch_set_visible(`ptr`: Long,`visible`: Byte,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cua_sdk_fn_method_resourceswatch_stop(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
 external fun uniffi_cua_sdk_fn_clone_space(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cua_sdk_fn_free_space(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
@@ -2387,6 +2436,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_remove(`ptr`: Long,`space`: RustBuf
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_resolve(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_resources(`ptr`: Long,`visible`: Byte,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_space(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_start(`ptr`: Long,`space`: RustBuffer.ByValue,
@@ -2442,6 +2493,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_volume_sync_status(`ptr`: Long,
 external fun uniffi_cua_sdk_fn_method_spaces_volume_unmount(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_volume_write(`ptr`: Long,`path`: RustBuffer.ByValue,`content`: RustBuffer.ByValue,`ifEtag`: RustBuffer.ByValue,`createOnly`: Byte,`view`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_watch_resources(`ptr`: Long,`visible`: Byte,`listener`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cua_sdk_fn_clone_teleportapprover(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -3564,6 +3617,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_presenceview_upsert() != 29196.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_resourceslistener_on_event() != 32126.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_resourceswatch_set_visible() != 54652.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_resourceswatch_stop() != 52286.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_space_agent_events() != 25540.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -3684,7 +3746,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_space_upload() != 30524.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_space_usage() != 15261.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_space_usage() != 43925.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_websocket_headers() != 61370.toShort()) {
@@ -3858,6 +3920,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_resolve() != 9986.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_resources() != 12146.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_space() != 26355.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -3940,6 +4005,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_volume_write() != 64388.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_watch_resources() != 49660.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_teleportapprover_approve() != 36264.toShort()) {
@@ -14034,6 +14102,612 @@ public object FfiConverterTypeRelay: FfiConverter<Relay, Long> {
 
 
 /**
+ * Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
+ * Called on an SDK worker thread; return quickly.
+ */
+public interface ResourcesListener {
+
+    /**
+     * Something moved.
+     */
+    fun `onEvent`(`event`: ResourcesEvent)
+
+    companion object
+}
+
+/**
+ * Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
+ * Called on an SDK worker thread; return quickly.
+ */
+open class ResourcesListenerImpl: Disposable, AutoCloseable, ResourcesListener
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cua_sdk_fn_free_resourceslistener(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cua_sdk_fn_clone_resourceslistener(handle, status)
+        }
+    }
+
+
+    /**
+     * Something moved.
+     */override fun `onEvent`(`event`: ResourcesEvent)
+        =
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_method_resourceslistener_on_event(
+        it,
+        FfiConverterTypeResourcesEvent.lower(`event`),_status)
+}
+    }
+
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceResourcesListener {
+    internal object `onEvent`: UniffiCallbackInterfaceResourcesListenerMethod0 {
+        override fun callback(`uniffiHandle`: Long,`event`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeResourcesListener.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onEvent`(
+                    FfiConverterTypeResourcesEvent.lift(`event`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeResourcesListener.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeResourcesListener.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceResourcesListener.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `onEvent`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener(vtable)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeResourcesListener: FfiConverter<ResourcesListener, Long> {
+    internal val handleMap = UniffiHandleMap<ResourcesListener>()
+
+    override fun lower(value: ResourcesListener): Long {
+        if (value is ResourcesListenerImpl) {
+             // Rust-implemented object.  Clone the handle and return it
+            return value.uniffiCloneHandle()
+         } else {
+            // Kotlin object, generate a new vtable handle and return that.
+            return handleMap.insert(value)
+         }
+    }
+
+    override fun lift(value: Long): ResourcesListener {
+        if ((value and 1.toLong()) == 0.toLong()) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return ResourcesListenerImpl(UniffiWithHandle, value)
+        } else {
+            // Kotlin-generated handle, get the object from the handle map
+            return handleMap.remove(value)
+        }
+    }
+
+    override fun read(buf: ByteBuffer): ResourcesListener {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: ResourcesListener) = 8UL
+
+    override fun write(value: ResourcesListener, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * A running [`Spaces::watch_resources`]: tell it whether a window shows
+ * the numbers, and stop it when done. Dropping it also stops it.
+ */
+public interface ResourcesWatchInterface {
+
+    /**
+     * Whether a window shows the numbers: visible watchers are sampled
+     * every 10 seconds, hidden ones every 5 minutes (and still hear
+     * `LowDisk`, for the menu bar).
+     */
+    fun `setVisible`(`visible`: kotlin.Boolean)
+
+    /**
+     * Ends the watch. No event is delivered after this returns.
+     */
+    fun `stop`()
+
+    companion object
+}
+
+/**
+ * A running [`Spaces::watch_resources`]: tell it whether a window shows
+ * the numbers, and stop it when done. Dropping it also stops it.
+ */
+open class ResourcesWatch: Disposable, AutoCloseable, ResourcesWatchInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cua_sdk_fn_free_resourceswatch(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cua_sdk_fn_clone_resourceswatch(handle, status)
+        }
+    }
+
+
+    /**
+     * Whether a window shows the numbers: visible watchers are sampled
+     * every 10 seconds, hidden ones every 5 minutes (and still hear
+     * `LowDisk`, for the menu bar).
+     */override fun `setVisible`(`visible`: kotlin.Boolean)
+        =
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_method_resourceswatch_set_visible(
+        it,
+        FfiConverterBoolean.lower(`visible`),_status)
+}
+    }
+
+
+
+
+    /**
+     * Ends the watch. No event is delivered after this returns.
+     */override fun `stop`()
+        =
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_method_resourceswatch_stop(
+        it,
+        _status)
+}
+    }
+
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeResourcesWatch: FfiConverter<ResourcesWatch, Long> {
+    override fun lower(value: ResourcesWatch): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): ResourcesWatch {
+        return ResourcesWatch(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): ResourcesWatch {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: ResourcesWatch) = 8UL
+
+    override fun write(value: ResourcesWatch, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
  * A sandbox handle.
  */
 public interface SandboxInterface {
@@ -16480,8 +17154,8 @@ public interface SpaceInterface {
     suspend fun `upload`(`localPath`: kotlin.String, `dest`: kotlin.String?): SpaceTransferReport
 
     /**
-     * Memory and storage use now (cheap: poll it at a low rate while a
-     * detail is visible).
+     * Processor, memory and storage use now (cheap: poll it at a low rate
+     * while a detail is visible).
      */
     suspend fun `usage`(): SpaceUsage
 
@@ -17594,8 +18268,8 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
 
 
     /**
-     * Memory and storage use now (cheap: poll it at a low rate while a
-     * detail is visible).
+     * Processor, memory and storage use now (cheap: poll it at a low rate
+     * while a detail is visible).
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -19251,6 +19925,16 @@ public interface SpacesInterface {
     suspend fun `resolve`(`space`: kotlin.String): SpaceInfo
 
     /**
+     * What this Mac, its extra Spaces and your other computers use now:
+     * processor, memory and disk, as one snapshot (a few seconds old at
+     * most). With `visible`, the call also says a window shows the numbers
+     * for the next 30 seconds, so the runtime samples every 10 seconds
+     * instead of every 5 minutes: call it every 10 seconds while a window
+     * is visible and stop when it is hidden.
+     */
+    suspend fun `resources`(`visible`: kotlin.Boolean): ResourcesSnapshot
+
+    /**
      * A connected handle to a registered Space.
      */
     suspend fun `space`(`space`: kotlin.String): Space
@@ -19400,6 +20084,15 @@ public interface SpacesInterface {
      * compare-and-swap, `create_only` makes it create-only.
      */
     suspend fun `volumeWrite`(`path`: kotlin.String, `content`: kotlin.ByteArray, `ifEtag`: kotlin.String?, `createOnly`: kotlin.Boolean, `view`: DriveView?): DriveObject
+
+    /**
+     * The same numbers as events for `listener`: a snapshot first, then an
+     * update with only the entries that changed by more than 1 point or
+     * 256 MB, and `LowDisk` whenever the warning level changes. Reopens by
+     * itself if the daemon restarts (the snapshot comes again). Stop it
+     * with [`ResourcesWatch::stop`].
+     */
+    fun `watchResources`(`visible`: kotlin.Boolean, `listener`: ResourcesListener): ResourcesWatch
 
     companion object
 }
@@ -20465,6 +21158,35 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
 
     /**
+     * What this Mac, its extra Spaces and your other computers use now:
+     * processor, memory and disk, as one snapshot (a few seconds old at
+     * most). With `visible`, the call also says a window shows the numbers
+     * for the next 30 seconds, so the runtime samples every 10 seconds
+     * instead of every 5 minutes: call it every 10 seconds while a window
+     * is visible and stop when it is hidden.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `resources`(`visible`: kotlin.Boolean) : ResourcesSnapshot {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_resources(
+                uniffiHandle,
+                FfiConverterBoolean.lower(`visible`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeResourcesSnapshot.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * A connected handle to a registered Space.
      */
     @Throws(CuaException::class)
@@ -21148,6 +21870,26 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         CuaException.ErrorHandler,
     )
     }
+
+
+    /**
+     * The same numbers as events for `listener`: a snapshot first, then an
+     * update with only the entries that changed by more than 1 point or
+     * 256 MB, and `LowDisk` whenever the warning level changes. Reopens by
+     * itself if the daemon restarts (the snapshot comes again). Stop it
+     * with [`ResourcesWatch::stop`].
+     */override fun `watchResources`(`visible`: kotlin.Boolean, `listener`: ResourcesListener): ResourcesWatch {
+            return FfiConverterTypeResourcesWatch.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_resources(
+        it,
+        FfiConverterBoolean.lower(`visible`),FfiConverterTypeResourcesListener.lower(`listener`),_status)
+}
+    }
+    )
+    }
+
 
 
 
@@ -26195,6 +26937,191 @@ public object FfiConverterTypeComputerGrant: FfiConverterRustBuffer<ComputerGran
 
 
 /**
+ * A computer: this Mac, or one of your other computers (from the summary
+ * it published).
+ */
+data class ComputerResources (
+    /**
+     * `this-mac`, or the relay machine id.
+     */
+    var `id`: kotlin.String
+    ,
+    /**
+     * Display name (empty for this Mac).
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * Reachable now (always true for this Mac).
+     */
+    var `online`: kotlin.Boolean
+    ,
+    /**
+     * When the computer measured this, unix ms (another computer's can be
+     * minutes old).
+     */
+    var `sampledAtMs`: kotlin.ULong
+    ,
+    /**
+     * Processor cores.
+     */
+    var `cpuCount`: kotlin.UInt
+    ,
+    /**
+     * Busy now, 0 to 100.
+     */
+    var `cpuPercent`: kotlin.Double
+    ,
+    /**
+     * 1-minute load average.
+     */
+    var `loadAverage1m`: kotlin.Double
+    ,
+    /**
+     * Memory size, bytes.
+     */
+    var `memoryTotal`: kotlin.ULong
+    ,
+    /**
+     * Memory in use, bytes (without reclaimable cache).
+     */
+    var `memoryUsed`: kotlin.ULong
+    ,
+    /**
+     * Size of the volume that holds Spaces, bytes.
+     */
+    var `diskTotal`: kotlin.ULong
+    ,
+    /**
+     * Free bytes on it.
+     */
+    var `diskFree`: kotlin.ULong
+    ,
+    /**
+     * Extra Spaces on it.
+     */
+    var `spacesCount`: kotlin.UInt
+    ,
+    /**
+     * Of those, running.
+     */
+    var `spacesRunning`: kotlin.UInt
+    ,
+    /**
+     * Cores given to the running ones.
+     */
+    var `spacesCpuAllocated`: kotlin.UInt
+    ,
+    /**
+     * Memory given to the running ones, bytes.
+     */
+    var `spacesMemoryAllocated`: kotlin.ULong
+    ,
+    /**
+     * Memory the running guests report in use, bytes.
+     */
+    var `spacesMemoryUsed`: kotlin.ULong
+    ,
+    /**
+     * Bytes all its extra Spaces take on it.
+     */
+    var `spacesDiskBytes`: kotlin.ULong
+    ,
+    /**
+     * False when some Space's disk could only be estimated.
+     */
+    var `spacesDiskExact`: kotlin.Boolean
+    ,
+    /**
+     * The low-disk signal.
+     */
+    var `warning`: DiskWarning
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeComputerResources: FfiConverterRustBuffer<ComputerResources> {
+    override fun read(buf: ByteBuffer): ComputerResources {
+        return ComputerResources(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterTypeDiskWarning.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ComputerResources) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterBoolean.allocationSize(value.`online`) +
+            FfiConverterULong.allocationSize(value.`sampledAtMs`) +
+            FfiConverterUInt.allocationSize(value.`cpuCount`) +
+            FfiConverterDouble.allocationSize(value.`cpuPercent`) +
+            FfiConverterDouble.allocationSize(value.`loadAverage1m`) +
+            FfiConverterULong.allocationSize(value.`memoryTotal`) +
+            FfiConverterULong.allocationSize(value.`memoryUsed`) +
+            FfiConverterULong.allocationSize(value.`diskTotal`) +
+            FfiConverterULong.allocationSize(value.`diskFree`) +
+            FfiConverterUInt.allocationSize(value.`spacesCount`) +
+            FfiConverterUInt.allocationSize(value.`spacesRunning`) +
+            FfiConverterUInt.allocationSize(value.`spacesCpuAllocated`) +
+            FfiConverterULong.allocationSize(value.`spacesMemoryAllocated`) +
+            FfiConverterULong.allocationSize(value.`spacesMemoryUsed`) +
+            FfiConverterULong.allocationSize(value.`spacesDiskBytes`) +
+            FfiConverterBoolean.allocationSize(value.`spacesDiskExact`) +
+            FfiConverterTypeDiskWarning.allocationSize(value.`warning`)
+    )
+
+    override fun write(value: ComputerResources, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterBoolean.write(value.`online`, buf)
+            FfiConverterULong.write(value.`sampledAtMs`, buf)
+            FfiConverterUInt.write(value.`cpuCount`, buf)
+            FfiConverterDouble.write(value.`cpuPercent`, buf)
+            FfiConverterDouble.write(value.`loadAverage1m`, buf)
+            FfiConverterULong.write(value.`memoryTotal`, buf)
+            FfiConverterULong.write(value.`memoryUsed`, buf)
+            FfiConverterULong.write(value.`diskTotal`, buf)
+            FfiConverterULong.write(value.`diskFree`, buf)
+            FfiConverterUInt.write(value.`spacesCount`, buf)
+            FfiConverterUInt.write(value.`spacesRunning`, buf)
+            FfiConverterUInt.write(value.`spacesCpuAllocated`, buf)
+            FfiConverterULong.write(value.`spacesMemoryAllocated`, buf)
+            FfiConverterULong.write(value.`spacesMemoryUsed`, buf)
+            FfiConverterULong.write(value.`spacesDiskBytes`, buf)
+            FfiConverterBoolean.write(value.`spacesDiskExact`, buf)
+            FfiConverterTypeDiskWarning.write(value.`warning`, buf)
+    }
+}
+
+
+
+/**
  * One setting's effective value.
  */
 data class ConfigEntry (
@@ -26769,6 +27696,126 @@ public object FfiConverterTypeDevicesSnapshot: FfiConverterRustBuffer<DevicesSna
             FfiConverterSequenceTypeRelayAuditEvent.write(value.`audit`, buf)
             FfiConverterMapStringString.write(value.`machineNames`, buf)
             FfiConverterSequenceTypeRelayMachine.write(value.`machines`, buf)
+    }
+}
+
+
+
+/**
+ * What a Space costs this computer's disk, as opposed to what the guest
+ * sees.
+ */
+data class DiskOnHost (
+    /**
+     * Bytes only this Space holds (what deleting it frees); absent when
+     * they could not be measured.
+     */
+    var `bytes`: kotlin.ULong?
+    ,
+    /**
+     * Blocks its files occupy, clones counted in full: an upper bound.
+     */
+    var `allocated`: kotlin.ULong
+    ,
+    /**
+     * Part of it is shared with other copies.
+     */
+    var `sharesSpace`: kotlin.Boolean
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDiskOnHost: FfiConverterRustBuffer<DiskOnHost> {
+    override fun read(buf: ByteBuffer): DiskOnHost {
+        return DiskOnHost(
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DiskOnHost) = (
+            FfiConverterOptionalULong.allocationSize(value.`bytes`) +
+            FfiConverterULong.allocationSize(value.`allocated`) +
+            FfiConverterBoolean.allocationSize(value.`sharesSpace`)
+    )
+
+    override fun write(value: DiskOnHost, buf: ByteBuffer) {
+            FfiConverterOptionalULong.write(value.`bytes`, buf)
+            FfiConverterULong.write(value.`allocated`, buf)
+            FfiConverterBoolean.write(value.`sharesSpace`, buf)
+    }
+}
+
+
+
+/**
+ * The low-disk signal for the app and the menu bar.
+ */
+data class DiskWarning (
+    /**
+     * How low it is.
+     */
+    var `level`: DiskLevel
+    ,
+    /**
+     * Free bytes on the volume that holds Spaces.
+     */
+    var `free`: kotlin.ULong
+    ,
+    /**
+     * Size of that volume.
+     */
+    var `total`: kotlin.ULong
+    ,
+    /**
+     * The line that was crossed (0 when `ok`).
+     */
+    var `threshold`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDiskWarning: FfiConverterRustBuffer<DiskWarning> {
+    override fun read(buf: ByteBuffer): DiskWarning {
+        return DiskWarning(
+            FfiConverterTypeDiskLevel.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DiskWarning) = (
+            FfiConverterTypeDiskLevel.allocationSize(value.`level`) +
+            FfiConverterULong.allocationSize(value.`free`) +
+            FfiConverterULong.allocationSize(value.`total`) +
+            FfiConverterULong.allocationSize(value.`threshold`)
+    )
+
+    override fun write(value: DiskWarning, buf: ByteBuffer) {
+            FfiConverterTypeDiskLevel.write(value.`level`, buf)
+            FfiConverterULong.write(value.`free`, buf)
+            FfiConverterULong.write(value.`total`, buf)
+            FfiConverterULong.write(value.`threshold`, buf)
     }
 }
 
@@ -29765,6 +30812,109 @@ public object FfiConverterTypeGpuSupport: FfiConverterRustBuffer<GpuSupport> {
             FfiConverterString.write(value.`runtime`, buf)
             FfiConverterSequenceTypeGpuOption.write(value.`options`, buf)
             FfiConverterString.write(value.`reason`, buf)
+    }
+}
+
+
+
+/**
+ * What `SystemService.Metrics` reports from inside a Space.
+ */
+data class GuestUsage (
+    /**
+     * Cores the guest sees.
+     */
+    var `cpuCount`: kotlin.UInt
+    ,
+    /**
+     * Busy now, 0 to 100.
+     */
+    var `cpuPercent`: kotlin.Double
+    ,
+    /**
+     * 1-minute load average.
+     */
+    var `loadAverage1m`: kotlin.Double
+    ,
+    /**
+     * Memory in use, bytes.
+     */
+    var `memoryUsed`: kotlin.ULong
+    ,
+    /**
+     * Memory size, bytes.
+     */
+    var `memoryTotal`: kotlin.ULong
+    ,
+    /**
+     * `memory_total` is the guest's own limit.
+     */
+    var `memoryLimited`: kotlin.Boolean
+    ,
+    /**
+     * Disk in use, bytes.
+     */
+    var `diskUsed`: kotlin.ULong
+    ,
+    /**
+     * Disk size, bytes.
+     */
+    var `diskTotal`: kotlin.ULong
+    ,
+    /**
+     * `disk_total` is the guest's own disk.
+     */
+    var `diskLimited`: kotlin.Boolean
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeGuestUsage: FfiConverterRustBuffer<GuestUsage> {
+    override fun read(buf: ByteBuffer): GuestUsage {
+        return GuestUsage(
+            FfiConverterUInt.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: GuestUsage) = (
+            FfiConverterUInt.allocationSize(value.`cpuCount`) +
+            FfiConverterDouble.allocationSize(value.`cpuPercent`) +
+            FfiConverterDouble.allocationSize(value.`loadAverage1m`) +
+            FfiConverterULong.allocationSize(value.`memoryUsed`) +
+            FfiConverterULong.allocationSize(value.`memoryTotal`) +
+            FfiConverterBoolean.allocationSize(value.`memoryLimited`) +
+            FfiConverterULong.allocationSize(value.`diskUsed`) +
+            FfiConverterULong.allocationSize(value.`diskTotal`) +
+            FfiConverterBoolean.allocationSize(value.`diskLimited`)
+    )
+
+    override fun write(value: GuestUsage, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`cpuCount`, buf)
+            FfiConverterDouble.write(value.`cpuPercent`, buf)
+            FfiConverterDouble.write(value.`loadAverage1m`, buf)
+            FfiConverterULong.write(value.`memoryUsed`, buf)
+            FfiConverterULong.write(value.`memoryTotal`, buf)
+            FfiConverterBoolean.write(value.`memoryLimited`, buf)
+            FfiConverterULong.write(value.`diskUsed`, buf)
+            FfiConverterULong.write(value.`diskTotal`, buf)
+            FfiConverterBoolean.write(value.`diskLimited`, buf)
     }
 }
 
@@ -33400,6 +34550,165 @@ public object FfiConverterTypeResolvedImage: FfiConverterRustBuffer<ResolvedImag
 
 
 /**
+ * One sample of everything.
+ */
+data class ResourcesSnapshot (
+    /**
+     * Grows by one per sample.
+     */
+    var `sequence`: kotlin.ULong
+    ,
+    /**
+     * Unix ms.
+     */
+    var `sampledAtMs`: kotlin.ULong
+    ,
+    /**
+     * This Mac.
+     */
+    var `thisMac`: ComputerResources
+    ,
+    /**
+     * Extra Spaces on this Mac.
+     */
+    var `spaces`: List<SpaceResources>
+    ,
+    /**
+     * Your other computers, from the summaries they published.
+     */
+    var `computers`: List<ComputerResources>
+    ,
+    /**
+     * `this_mac.warning`, for the menu bar.
+     */
+    var `warning`: DiskWarning
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeResourcesSnapshot: FfiConverterRustBuffer<ResourcesSnapshot> {
+    override fun read(buf: ByteBuffer): ResourcesSnapshot {
+        return ResourcesSnapshot(
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterTypeComputerResources.read(buf),
+            FfiConverterSequenceTypeSpaceResources.read(buf),
+            FfiConverterSequenceTypeComputerResources.read(buf),
+            FfiConverterTypeDiskWarning.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ResourcesSnapshot) = (
+            FfiConverterULong.allocationSize(value.`sequence`) +
+            FfiConverterULong.allocationSize(value.`sampledAtMs`) +
+            FfiConverterTypeComputerResources.allocationSize(value.`thisMac`) +
+            FfiConverterSequenceTypeSpaceResources.allocationSize(value.`spaces`) +
+            FfiConverterSequenceTypeComputerResources.allocationSize(value.`computers`) +
+            FfiConverterTypeDiskWarning.allocationSize(value.`warning`)
+    )
+
+    override fun write(value: ResourcesSnapshot, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`sequence`, buf)
+            FfiConverterULong.write(value.`sampledAtMs`, buf)
+            FfiConverterTypeComputerResources.write(value.`thisMac`, buf)
+            FfiConverterSequenceTypeSpaceResources.write(value.`spaces`, buf)
+            FfiConverterSequenceTypeComputerResources.write(value.`computers`, buf)
+            FfiConverterTypeDiskWarning.write(value.`warning`, buf)
+    }
+}
+
+
+
+/**
+ * What changed since the last event: only entries that moved by more than
+ * 1 point or 256 MB. Replace entries by `id`; drop the `removed` ids.
+ */
+data class ResourcesUpdate (
+    /**
+     * The sample it brings you to.
+     */
+    var `sequence`: kotlin.ULong
+    ,
+    /**
+     * Unix ms.
+     */
+    var `sampledAtMs`: kotlin.ULong
+    ,
+    /**
+     * This Mac, when it changed.
+     */
+    var `thisMac`: ComputerResources?
+    ,
+    /**
+     * Extra Spaces that changed or appeared.
+     */
+    var `spaces`: List<SpaceResources>
+    ,
+    /**
+     * Other computers that changed or appeared.
+     */
+    var `computers`: List<ComputerResources>
+    ,
+    /**
+     * Ids (Spaces or computers) that are gone.
+     */
+    var `removed`: List<kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeResourcesUpdate: FfiConverterRustBuffer<ResourcesUpdate> {
+    override fun read(buf: ByteBuffer): ResourcesUpdate {
+        return ResourcesUpdate(
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalTypeComputerResources.read(buf),
+            FfiConverterSequenceTypeSpaceResources.read(buf),
+            FfiConverterSequenceTypeComputerResources.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ResourcesUpdate) = (
+            FfiConverterULong.allocationSize(value.`sequence`) +
+            FfiConverterULong.allocationSize(value.`sampledAtMs`) +
+            FfiConverterOptionalTypeComputerResources.allocationSize(value.`thisMac`) +
+            FfiConverterSequenceTypeSpaceResources.allocationSize(value.`spaces`) +
+            FfiConverterSequenceTypeComputerResources.allocationSize(value.`computers`) +
+            FfiConverterSequenceString.allocationSize(value.`removed`)
+    )
+
+    override fun write(value: ResourcesUpdate, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`sequence`, buf)
+            FfiConverterULong.write(value.`sampledAtMs`, buf)
+            FfiConverterOptionalTypeComputerResources.write(value.`thisMac`, buf)
+            FfiConverterSequenceTypeSpaceResources.write(value.`spaces`, buf)
+            FfiConverterSequenceTypeComputerResources.write(value.`computers`, buf)
+            FfiConverterSequenceString.write(value.`removed`, buf)
+    }
+}
+
+
+
+/**
  * A routine: a recurring turn of a persistent agent, fired by the daemon.
  */
 data class RoutineInfo (
@@ -35932,6 +37241,93 @@ public object FfiConverterTypeSpaceRelayRegistration: FfiConverterRustBuffer<Spa
 
 
 /**
+ * One extra Space on this Mac.
+ */
+data class SpaceResources (
+    /**
+     * `local:<name>`.
+     */
+    var `id`: kotlin.String
+    ,
+    /**
+     * `running`, `stopped`, `suspended`, or empty when unknown.
+     */
+    var `powerState`: kotlin.String
+    ,
+    /**
+     * Cores given to it (0: unknown).
+     */
+    var `cpuAllocated`: kotlin.UInt
+    ,
+    /**
+     * Memory given to it, bytes (0: unknown).
+     */
+    var `memoryAllocated`: kotlin.ULong
+    ,
+    /**
+     * Its disk's size limit, bytes (0: unknown).
+     */
+    var `diskAllocated`: kotlin.ULong
+    ,
+    /**
+     * The guest's own numbers; absent while it is off or unreachable.
+     */
+    var `usage`: GuestUsage?
+    ,
+    /**
+     * What it costs this Mac; absent for a container.
+     */
+    var `diskOnHost`: DiskOnHost?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceResources: FfiConverterRustBuffer<SpaceResources> {
+    override fun read(buf: ByteBuffer): SpaceResources {
+        return SpaceResources(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalTypeGuestUsage.read(buf),
+            FfiConverterOptionalTypeDiskOnHost.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceResources) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`powerState`) +
+            FfiConverterUInt.allocationSize(value.`cpuAllocated`) +
+            FfiConverterULong.allocationSize(value.`memoryAllocated`) +
+            FfiConverterULong.allocationSize(value.`diskAllocated`) +
+            FfiConverterOptionalTypeGuestUsage.allocationSize(value.`usage`) +
+            FfiConverterOptionalTypeDiskOnHost.allocationSize(value.`diskOnHost`)
+    )
+
+    override fun write(value: SpaceResources, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`powerState`, buf)
+            FfiConverterUInt.write(value.`cpuAllocated`, buf)
+            FfiConverterULong.write(value.`memoryAllocated`, buf)
+            FfiConverterULong.write(value.`diskAllocated`, buf)
+            FfiConverterOptionalTypeGuestUsage.write(value.`usage`, buf)
+            FfiConverterOptionalTypeDiskOnHost.write(value.`diskOnHost`, buf)
+    }
+}
+
+
+
+/**
  * Options for [`Space::send_file`].
  */
 data class SpaceSendFileOptions (
@@ -36910,11 +38306,26 @@ public object FfiConverterTypeSpaceTransferReport: FfiConverterRustBuffer<SpaceT
 
 
 /**
- * Memory and storage use ([`Space::usage`]). A size is the guest's own
- * limit only when its `*_limited` flag says so (a VM's memory or disk, a
- * container's cgroup memory limit).
+ * Processor, memory and storage use ([`Space::usage`]). A size is the
+ * guest's own limit only when its `*_limited` flag says so (a VM's memory
+ * or disk, a container's cgroup memory limit).
  */
 data class SpaceUsage (
+    /**
+     * Cores the guest sees (0 from a guest that does not report it).
+     */
+    var `cpuCount`: kotlin.UInt = 0u
+    ,
+    /**
+     * Busy now, 0 to 100.
+     */
+    var `cpuPercent`: kotlin.Double = 0.0
+    ,
+    /**
+     * 1-minute load average.
+     */
+    var `loadAverage1m`: kotlin.Double = 0.0
+    ,
     /**
      * Memory in use, bytes.
      */
@@ -36960,6 +38371,9 @@ data class SpaceUsage (
 public object FfiConverterTypeSpaceUsage: FfiConverterRustBuffer<SpaceUsage> {
     override fun read(buf: ByteBuffer): SpaceUsage {
         return SpaceUsage(
+            FfiConverterUInt.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterBoolean.read(buf),
@@ -36970,6 +38384,9 @@ public object FfiConverterTypeSpaceUsage: FfiConverterRustBuffer<SpaceUsage> {
     }
 
     override fun allocationSize(value: SpaceUsage) = (
+            FfiConverterUInt.allocationSize(value.`cpuCount`) +
+            FfiConverterDouble.allocationSize(value.`cpuPercent`) +
+            FfiConverterDouble.allocationSize(value.`loadAverage1m`) +
             FfiConverterULong.allocationSize(value.`memoryUsed`) +
             FfiConverterULong.allocationSize(value.`memoryTotal`) +
             FfiConverterBoolean.allocationSize(value.`memoryLimited`) +
@@ -36979,6 +38396,9 @@ public object FfiConverterTypeSpaceUsage: FfiConverterRustBuffer<SpaceUsage> {
     )
 
     override fun write(value: SpaceUsage, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`cpuCount`, buf)
+            FfiConverterDouble.write(value.`cpuPercent`, buf)
+            FfiConverterDouble.write(value.`loadAverage1m`, buf)
             FfiConverterULong.write(value.`memoryUsed`, buf)
             FfiConverterULong.write(value.`memoryTotal`, buf)
             FfiConverterBoolean.write(value.`memoryLimited`, buf)
@@ -39342,6 +40762,54 @@ public object FfiConverterTypeCuaMode: FfiConverterRustBuffer<CuaMode> {
 
 
 /**
+ * How low the free disk is.
+ */
+
+enum class DiskLevel {
+
+    /**
+     * Plenty.
+     */
+    OK,
+    /**
+     * Under 50 GB or 15% of the volume, whichever line is higher (the
+     * line never rises above 100 GB).
+     */
+    LOW,
+    /**
+     * Under the floor where creating a Space already fails (5 GiB).
+     */
+    CRITICAL;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDiskLevel: FfiConverterRustBuffer<DiskLevel> {
+    override fun read(buf: ByteBuffer) = try {
+        DiskLevel.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: DiskLevel) = 4UL
+
+    override fun write(value: DiskLevel, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
  * Screenshot encoding.
  */
 
@@ -39951,6 +41419,134 @@ public object FfiConverterTypeReplayMode : FfiConverterRustBuffer<ReplayMode>{
             is ReplayMode.FromOffset -> {
                 buf.putInt(4)
                 FfiConverterULong.write(value.`offset`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+/**
+ * What [`Spaces::watch_resources`] reports.
+ */
+sealed class ResourcesEvent {
+
+    /**
+     * Everything, at the start (and again after a reconnect).
+     */
+    data class Snapshot(
+        /**
+         * The sample.
+         */
+        val `snapshot`: ai.cua.sdk.ResourcesSnapshot) : ResourcesEvent()
+
+    {
+
+
+        companion object
+    }
+
+    /**
+     * Only what changed.
+     */
+    data class Update(
+        /**
+         * The changes.
+         */
+        val `update`: ai.cua.sdk.ResourcesUpdate) : ResourcesEvent()
+
+    {
+
+
+        companion object
+    }
+
+    /**
+     * The low-disk level changed (including back to `ok`).
+     */
+    data class LowDisk(
+        /**
+         * The warning now.
+         */
+        val `warning`: ai.cua.sdk.DiskWarning) : ResourcesEvent()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeResourcesEvent : FfiConverterRustBuffer<ResourcesEvent>{
+    override fun read(buf: ByteBuffer): ResourcesEvent {
+        return when(buf.getInt()) {
+            1 -> ResourcesEvent.Snapshot(
+                FfiConverterTypeResourcesSnapshot.read(buf),
+                )
+            2 -> ResourcesEvent.Update(
+                FfiConverterTypeResourcesUpdate.read(buf),
+                )
+            3 -> ResourcesEvent.LowDisk(
+                FfiConverterTypeDiskWarning.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: ResourcesEvent) = when(value) {
+        is ResourcesEvent.Snapshot -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeResourcesSnapshot.allocationSize(value.`snapshot`)
+            )
+        }
+        is ResourcesEvent.Update -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeResourcesUpdate.allocationSize(value.`update`)
+            )
+        }
+        is ResourcesEvent.LowDisk -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeDiskWarning.allocationSize(value.`warning`)
+            )
+        }
+    }
+
+    override fun write(value: ResourcesEvent, buf: ByteBuffer) {
+        when(value) {
+            is ResourcesEvent.Snapshot -> {
+                buf.putInt(1)
+                FfiConverterTypeResourcesSnapshot.write(value.`snapshot`, buf)
+                Unit
+            }
+            is ResourcesEvent.Update -> {
+                buf.putInt(2)
+                FfiConverterTypeResourcesUpdate.write(value.`update`, buf)
+                Unit
+            }
+            is ResourcesEvent.LowDisk -> {
+                buf.putInt(3)
+                FfiConverterTypeDiskWarning.write(value.`warning`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -40574,6 +42170,70 @@ public object FfiConverterOptionalTypeCloudOptions: FfiConverterRustBuffer<Cloud
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeComputerResources: FfiConverterRustBuffer<ComputerResources?> {
+    override fun read(buf: ByteBuffer): ComputerResources? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeComputerResources.read(buf)
+    }
+
+    override fun allocationSize(value: ComputerResources?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeComputerResources.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ComputerResources?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeComputerResources.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeDiskOnHost: FfiConverterRustBuffer<DiskOnHost?> {
+    override fun read(buf: ByteBuffer): DiskOnHost? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeDiskOnHost.read(buf)
+    }
+
+    override fun allocationSize(value: DiskOnHost?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeDiskOnHost.allocationSize(value)
+        }
+    }
+
+    override fun write(value: DiskOnHost?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeDiskOnHost.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeDriveCacheStats: FfiConverterRustBuffer<DriveCacheStats?> {
     override fun read(buf: ByteBuffer): DriveCacheStats? {
         if (buf.get().toInt() == 0) {
@@ -40852,6 +42512,38 @@ public object FfiConverterOptionalTypeFleetUsagePricing: FfiConverterRustBuffer<
         } else {
             buf.put(1)
             FfiConverterTypeFleetUsagePricing.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeGuestUsage: FfiConverterRustBuffer<GuestUsage?> {
+    override fun read(buf: ByteBuffer): GuestUsage? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeGuestUsage.read(buf)
+    }
+
+    override fun allocationSize(value: GuestUsage?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeGuestUsage.allocationSize(value)
+        }
+    }
+
+    override fun write(value: GuestUsage?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeGuestUsage.write(value, buf)
         }
     }
 }
@@ -42222,6 +43914,34 @@ public object FfiConverterSequenceTypeComputerGrant: FfiConverterRustBuffer<List
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeComputerResources: FfiConverterRustBuffer<List<ComputerResources>> {
+    override fun read(buf: ByteBuffer): List<ComputerResources> {
+        val len = buf.getInt()
+        return List<ComputerResources>(len) {
+            FfiConverterTypeComputerResources.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ComputerResources>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeComputerResources.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ComputerResources>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeComputerResources.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeConfigEntry: FfiConverterRustBuffer<List<ConfigEntry>> {
     override fun read(buf: ByteBuffer): List<ConfigEntry> {
         val len = buf.getInt()
@@ -43472,6 +45192,34 @@ public object FfiConverterSequenceTypeSpaceInfo: FfiConverterRustBuffer<List<Spa
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeSpaceInfo.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSpaceResources: FfiConverterRustBuffer<List<SpaceResources>> {
+    override fun read(buf: ByteBuffer): List<SpaceResources> {
+        val len = buf.getInt()
+        return List<SpaceResources>(len) {
+            FfiConverterTypeSpaceResources.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SpaceResources>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSpaceResources.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SpaceResources>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSpaceResources.write(it, buf)
         }
     }
 }

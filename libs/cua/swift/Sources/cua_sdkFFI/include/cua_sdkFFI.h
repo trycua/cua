@@ -264,6 +264,13 @@ typedef void (*UniffiCallbackInterfaceFrameSinkMethod1)(uint64_t, RustBuffer, vo
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_RESOURCES_LISTENER_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_RESOURCES_LISTENER_METHOD0
+typedef void (*UniffiCallbackInterfaceResourcesListenerMethod0)(uint64_t, RustBuffer, void* _Nonnull,
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_SPACE_CREATE_LISTENER_METHOD0
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_SPACE_CREATE_LISTENER_METHOD0
 typedef void (*UniffiCallbackInterfaceSpaceCreateListenerMethod0)(uint64_t, RustBuffer, void* _Nonnull,
@@ -295,6 +302,15 @@ typedef struct UniffiVTableCallbackInterfaceFrameSink {
     UniffiCallbackInterfaceFrameSinkMethod0 _Nonnull onFrame;
     UniffiCallbackInterfaceFrameSinkMethod1 _Nonnull onEvent;
 } UniffiVTableCallbackInterfaceFrameSink;
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_RESOURCES_LISTENER
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_RESOURCES_LISTENER
+typedef struct UniffiVTableCallbackInterfaceResourcesListener {
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+    UniffiCallbackInterfaceClone _Nonnull uniffiClone;
+    UniffiCallbackInterfaceResourcesListenerMethod0 _Nonnull onEvent;
+} UniffiVTableCallbackInterfaceResourcesListener;
 
 #endif
 #ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_SPACE_CREATE_LISTENER
@@ -1616,6 +1632,46 @@ RustBuffer uniffi_cua_sdk_fn_method_presenceview_shape_of(uint64_t ptr, RustBuff
 void uniffi_cua_sdk_fn_method_presenceview_upsert(uint64_t ptr, RustBuffer participant, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_RESOURCESLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_RESOURCESLISTENER
+uint64_t uniffi_cua_sdk_fn_clone_resourceslistener(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_RESOURCESLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_RESOURCESLISTENER
+void uniffi_cua_sdk_fn_free_resourceslistener(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_INIT_CALLBACK_VTABLE_RESOURCESLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_INIT_CALLBACK_VTABLE_RESOURCESLISTENER
+void uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener(const UniffiVTableCallbackInterfaceResourcesListener* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_RESOURCESLISTENER_ON_EVENT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_RESOURCESLISTENER_ON_EVENT
+void uniffi_cua_sdk_fn_method_resourceslistener_on_event(uint64_t ptr, RustBuffer event, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_RESOURCESWATCH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_RESOURCESWATCH
+uint64_t uniffi_cua_sdk_fn_clone_resourceswatch(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_RESOURCESWATCH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_RESOURCESWATCH
+void uniffi_cua_sdk_fn_free_resourceswatch(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_RESOURCESWATCH_SET_VISIBLE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_RESOURCESWATCH_SET_VISIBLE
+void uniffi_cua_sdk_fn_method_resourceswatch_set_visible(uint64_t ptr, int8_t visible, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_RESOURCESWATCH_STOP
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_RESOURCESWATCH_STOP
+void uniffi_cua_sdk_fn_method_resourceswatch_stop(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_SPACE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_SPACE
 uint64_t uniffi_cua_sdk_fn_clone_space(uint64_t handle, RustCallStatus *_Nonnull out_status
@@ -2161,6 +2217,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_remove(uint64_t ptr, RustBuffer space
 uint64_t uniffi_cua_sdk_fn_method_spaces_resolve(uint64_t ptr, RustBuffer space
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESOURCES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESOURCES
+uint64_t uniffi_cua_sdk_fn_method_spaces_resources(uint64_t ptr, int8_t visible
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SPACE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SPACE
 uint64_t uniffi_cua_sdk_fn_method_spaces_space(uint64_t ptr, RustBuffer space
@@ -2299,6 +2360,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_volume_unmount(uint64_t ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_VOLUME_WRITE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_VOLUME_WRITE
 uint64_t uniffi_cua_sdk_fn_method_spaces_volume_write(uint64_t ptr, RustBuffer path, RustBuffer content, RustBuffer if_etag, int8_t create_only, RustBuffer view
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_WATCH_RESOURCES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_WATCH_RESOURCES
+uint64_t uniffi_cua_sdk_fn_method_spaces_watch_resources(uint64_t ptr, int8_t visible, uint64_t listener, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_TELEPORTAPPROVER
@@ -4699,6 +4765,24 @@ uint16_t uniffi_cua_sdk_checksum_method_presenceview_upsert(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_RESOURCESLISTENER_ON_EVENT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_RESOURCESLISTENER_ON_EVENT
+uint16_t uniffi_cua_sdk_checksum_method_resourceslistener_on_event(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_RESOURCESWATCH_SET_VISIBLE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_RESOURCESWATCH_SET_VISIBLE
+uint16_t uniffi_cua_sdk_checksum_method_resourceswatch_set_visible(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_RESOURCESWATCH_STOP
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_RESOURCESWATCH_STOP
+uint16_t uniffi_cua_sdk_checksum_method_resourceswatch_stop(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_AGENT_EVENTS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_AGENT_EVENTS
 uint16_t uniffi_cua_sdk_checksum_method_space_agent_events(void
@@ -5287,6 +5371,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_resolve(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESOURCES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESOURCES
+uint16_t uniffi_cua_sdk_checksum_method_spaces_resources(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SPACE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SPACE
 uint16_t uniffi_cua_sdk_checksum_method_spaces_space(void
@@ -5452,6 +5542,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_volume_unmount(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_VOLUME_WRITE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_VOLUME_WRITE
 uint16_t uniffi_cua_sdk_checksum_method_spaces_volume_write(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_WATCH_RESOURCES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_WATCH_RESOURCES
+uint16_t uniffi_cua_sdk_checksum_method_spaces_watch_resources(void
 
 );
 #endif

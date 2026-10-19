@@ -1573,6 +1573,7 @@ impl Host {
                     allow: allow.clone(),
                     viewers: None,
                     sharing: None,
+                    meta: None,
                 },
             )
             .await?;

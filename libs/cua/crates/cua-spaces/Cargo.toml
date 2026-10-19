@@ -62,6 +62,8 @@ cua-agents = { workspace = true, optional = true }
 cua-auth = { workspace = true, optional = true }
 cua-fleet.workspace = true
 cua-image.workspace = true
+# Per-Space disk accounting (resources).
+cua-disk.workspace = true
 cua-sandbox-core.workspace = true
 cua-vmm.workspace = true
 # The cua-relay machine directory (`space://relay/<id>`) and AccountTokens.
@@ -86,6 +88,8 @@ tokio = { workspace = true }
 tonic = { workspace = true, default-features = false, features = ["codegen"] }
 tracing.workspace = true
 url.workspace = true
+# This computer's processor and memory (resources).
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 # Routines: daily and weekly slots in local time.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
@@ -98,6 +102,10 @@ tokio-tungstenite = { workspace = true, optional = true }
 # The host cache of pinned install archives (spaces-agents).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"], optional = true }
 axum = { workspace = true, optional = true, features = ["json"] }
+
+[target.'cfg(unix)'.dependencies]
+# APFS private size (getattrlist).
+libc = "0.2"
 
 [dev-dependencies]
 cua-mesh = { workspace = true, features = ["testing"] }

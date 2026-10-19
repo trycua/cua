@@ -42,6 +42,7 @@
 //! | [`drive_page`] | the Drive page: browse the Cua Volume, access requests (with presence) and grants, sync per device, conflicts, Open in Finder |
 //! | [`drive_settings`] | Settings, Storage: this machine or an S3-compatible bucket, the Finder volume (a mount on Linux), the block cache |
 //! | [`drive_mount_preview`] | the first run's Cua Volume page (its animated miniature) |
+//! | [`resources`] | processor, memory and disk of this Mac, each extra Space and your other computers: the rows, the bars, the low-disk warning |
 //! | [`notifications`] | which daemon notifications to post as system notifications, and the list |
 //! | [`share`] | who a Space is shared with (viewer or editor) and the Share sheet |
 //! | `installer` | the "Command line" step: plan and install the bundled `cua` (feature `installer`) |
@@ -85,6 +86,7 @@ pub mod paths;
 pub mod persistent;
 pub mod presence;
 pub mod relay_usage;
+pub mod resources;
 pub mod settings;
 pub mod share;
 pub mod spaces;

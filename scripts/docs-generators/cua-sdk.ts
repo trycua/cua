@@ -603,6 +603,28 @@ export const PAGES: PageSpec[] = [
     items: ['SpaceAppIcon', 'SpaceAppIconRequest', 'SpaceDisplay', 'SpaceThumbnail', 'SpaceUsage'],
   },
   {
+    slug: 'spaces/resources',
+    title: 'Processor, memory and disk',
+    description: 'What this Mac, its extra Spaces and your other computers use: one snapshot, a stream of changes and the low-disk warning.',
+    intro:
+      '`Spaces.resources` returns one `ResourcesSnapshot`: this Mac\'s cores, memory and free disk, each extra Space\'s allocation, use and cost on this Mac\'s disk, and the summary each of your other computers published. `Spaces.watch_resources` calls a `ResourcesListener` with a snapshot, then only the entries that changed by more than 1 point or 256 MB, and a `LowDisk` event when the free-disk level changes. Numbers only: counts, bytes and percentages.',
+    members: [{ object: 'Spaces', title: 'Resources', methods: ['resources', 'watch_resources'] }],
+    items: [
+      'ResourcesSnapshot',
+      'ComputerResources',
+      'SpaceResources',
+      'GuestUsage',
+      'DiskOnHost',
+      'DiskWarning',
+      'DiskLevel',
+      'ResourcesUpdate',
+      'ResourcesEvent',
+      'ResourcesListener',
+      'ResourcesWatch',
+    ],
+    catalog: true,
+  },
+  {
     slug: 'spaces/agents',
     title: 'Agents in a Space',
     description: 'Start, follow, message and stop coding-agent runs inside a Space.',

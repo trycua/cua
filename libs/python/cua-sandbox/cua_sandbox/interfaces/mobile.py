@@ -13,8 +13,7 @@ class Mobile:
     All touch coordinates are in screen pixels.  Single-touch methods use
     ``input tap/swipe`` via ``adb shell``.  Multi-touch gestures delegate to
     the ``multitouch_gesture`` transport action, which uses ``adb root`` +
-    MT Protocol B ``sendevent`` for reliable injection on both local and cloud
-    transports.
+    MT Protocol B ``sendevent`` for reliable injection.
     """
 
     def __init__(self, transport: Transport):
@@ -96,8 +95,7 @@ class Mobile:
             )
 
         Delegates to the ``multitouch_gesture`` transport action, which uses
-        ``adb root`` + MT Protocol B ``sendevent`` for reliable injection on
-        both local ADB and cloud HTTP transports.
+        ``adb root`` + MT Protocol B ``sendevent`` for reliable injection.
 
         Args:
             *finger_paths: Alternating start/end ``(x, y)`` tuples, two per finger.

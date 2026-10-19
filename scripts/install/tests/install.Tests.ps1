@@ -182,7 +182,7 @@ Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
         $env:CUA_DRIVER_RS_INSTALL_DIR | Should -BeNullOrEmpty
     }
 
-    It 'adds the MCP server without the skill with -NoSkills' {
+    It 'adds the MCP server without the skill with -NoSkills' -Skip:($IsWindows) {
         $root = Join-Path $env:CUA_TEST_ROOT 'noskills'
         $prefix = Join-Path $root 'prefix'
         New-Item -ItemType Directory -Force -Path $root | Out-Null

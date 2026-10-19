@@ -12,7 +12,7 @@ description: "Sign-in, the credential store the SDK, the CLI and the daemon shar
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`cua.auth()` signs in and reads the shared session. Your own cloud and the relay use it.
+`cua.auth()` signs in and reads the shared session. Cloud calls use it when no client credentials are configured.
 
 Python programs usually use the high-level API instead: [`cua_sandbox.configure()`](/cua-sdk/reference/python/runtimes#configure).
 

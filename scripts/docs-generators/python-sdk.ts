@@ -155,7 +155,6 @@ export const SANDBOX_PAGES: PageSpec[] = [
         objects: [
           `${SB}.containers.Container`,
           `${SB}.containers.RegistrySecret`,
-          `${SB}.generated.image_models.ImageFileReference`,
         ],
       },
     ],
@@ -644,7 +643,7 @@ export function renderCuaPython(
   const root = modules.get('cua')!;
   const body: string[] = [];
   body.push(
-    'The high-level Python API: `cua_sandbox` (`Sandbox`, `Image`, the computer interfaces) and the helpers the `cua` package adds. It is a thin layer over the [Cua SDK objects](/cua-sdk/reference): the cloud, the local runtimes and cua-spacesd all go through `cua`, whose generated binding (`cua._native`) those pages document.',
+    'The high-level Python API: `cua_sandbox` (`Sandbox`, `Image`, the computer interfaces) and the helpers the `cua` package adds. It is a thin layer over the [Cua SDK objects](/cua-sdk/reference): the local runtimes and cua-spacesd all go through `cua`, whose generated binding (`cua._native`) those pages document.',
     ''
   );
   const header = readHeader('cua-sdk/python/index.md', { version, sandboxVersion });

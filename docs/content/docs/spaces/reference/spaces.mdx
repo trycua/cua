@@ -135,11 +135,11 @@ Creates a new sandbox where `on` says (local: this machine, free; aws, gcp or mo
 | `count` | `integer` | none | How many Spaces to create, 1 to 8 (default 1), all with the same settings (a name gets `-2`, `-3`, ... suffixes). With more than one the result is an array. At least 0. |
 | `env` | `map of string` | none | Guest environment variables. |
 | `image` | `string` | none | Guest image. Default: the canonical Linux image (`ghcr.io/trycua/linux:24.04`), whose variant follows the kind. |
-| `kind` | `"auto" \| "container" \| "vm"` | `auto` | What kind of machine. Default `auto` (from the image). `auto`: From the image: macOS and Windows images are VMs, an image with a container rootfs is a container, a disk-only image is a VM. `container`: A container (gVisor, or runc locally). `vm`: A virtual machine (QEMU or Lume locally, KubeVirt in the cloud). |
+| `kind` | `"auto" \| "container" \| "vm"` | `auto` | What kind of machine. Default `auto` (from the image). `auto`: From the image: macOS and Windows images are VMs, an image with a container rootfs is a container, a disk-only image is a VM. `container`: A container (gVisor, or runc locally). `vm`: A virtual machine (QEMU or Lume locally, or one in your own cloud account). |
 | `name` | `string` | none | Name. Default: a generated `space-<hex>`. |
-| `on` | `string` | none | Where it runs: `local` (this machine, free), `cloud` (Cua cloud, metered), or `host:<machine>`: one of the user's own machines that provides Spaces (`cua host setup --provide-spaces` on it), named by id or by words from its name ("host:spare mac mini" matches "Mac mini (spare)" or `dillons-mac-mini`). Default: the user's default location (`cua config set default.on`, `CUA_DEFAULT_ON`), else `local`. Not `direct:<addr>`: that is one already-running Space at a fixed address, attached with `add_space`, not a host this can create on. An existing machine is added with `add_space`, not created. |
+| `on` | `string` | none | Where it runs: `local` (this machine, free), `aws`, `gcp` or `modal` (your own cloud account, connected with `cloud_connect` and billed there), or `host:<machine>`: one of the user's own machines that provides Spaces (`cua host setup --provide-spaces` on it), named by id or by words from its name ("host:spare mac mini" matches "Mac mini (spare)" or `dillons-mac-mini`). Default: the user's default location (`cua config set default.on`, `CUA_DEFAULT_ON`), else `local`. Not `direct:<addr>`: that is one already-running Space at a fixed address, attached with `add_space`, not a host this can create on. An existing machine is added with `add_space`, not created. |
 | `reuse` | `boolean` | `false` | Return a reachable registered Space in the same location that has the requested services instead of creating one (get-or-create). Default false. |
-| `runtime` | `string` | `auto` | Which engine. Default `auto`: the safest one for the location and kind. Local: `gvisor` or `runc` (containers), `qemu` or `lume` (VMs). Cloud: `gvisor` (containers), `kubevirt` (VMs). Anything else fails with `invalid_placement`, listing the valid values. |
+| `runtime` | `string` | `auto` | Which engine. Default `auto`: the safest one for the location and kind. Local: `gvisor` or `runc` (containers), `qemu` or `lume` (VMs). Anything else fails with `invalid_placement`, listing the valid values. |
 | `services` | `map of integer` | none | Named services (name to guest port), for example `{"mcp": 8765}`. Each is probed for readiness and reachable with `list_tools` / `call_tool` (`service=<name>`). |
 | `spacesd` | `boolean` | `true` | Whether the image runs cua-spacesd. Default: true for the canonical images (and no image), false for any other image. A Space without it has an empty capability set: only its services work. |
 | `timeout` | `integer` | `600` | Seconds to wait for readiness (local). Default 600. At least 0. |
@@ -151,11 +151,11 @@ JSON: the registered Space, `phase: "ready"` and `reused` (true when `reuse` ret
 
 #### Errors
 
-[`invalid_argument`](/spaces/reference#invalid_argument), [`invalid_placement`](/spaces/reference#invalid_placement), [`fleet`](/spaces/reference#fleet), [`fleet_admission_denied`](/spaces/reference#fleet_admission_denied), [`cloud_credit_exhausted`](/spaces/reference#cloud_credit_exhausted), [`sandbox`](/spaces/reference#sandbox), [`timeout`](/spaces/reference#timeout), [`ambiguous_host`](/spaces/reference#ambiguous_host), [`limit_exceeded`](/spaces/reference#limit_exceeded)
+[`invalid_argument`](/spaces/reference#invalid_argument), [`invalid_placement`](/spaces/reference#invalid_placement), [`sandbox`](/spaces/reference#sandbox), [`timeout`](/spaces/reference#timeout), [`ambiguous_host`](/spaces/reference#ambiguous_host), [`limit_exceeded`](/spaces/reference#limit_exceeded)
 
 #### Notes
 
-- Cloud needs Fleet credentials (`cua auth login`); local needs a container engine, QEMU or Lume (`cua runtime doctor`).
+- Local needs a container engine, QEMU or Lume (`cua runtime doctor`).
 
 ### delete_space
 
@@ -184,13 +184,13 @@ Text: what was deleted (`Deleted <id> (...)`), or `Removed <id> (...)` for a Spa
 
 #### Errors
 
-[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`fleet`](/spaces/reference#fleet), [`sandbox`](/spaces/reference#sandbox)
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`sandbox`](/spaces/reference#sandbox)
 
 ### stop_space
 
 Turn a Space off: suspend it (memory kept) or stop it (disk kept).
 
-Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your machines provides is stopped by that machine, which frees its memory, and a Space in your own cloud (on="aws", "gcp") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Fleet cloud Space, a Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.
+Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your machines provides is stopped by that machine, which frees its memory, and a Space in your own cloud (on="aws", "gcp") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.
 
 | | |
 | --- | --- |

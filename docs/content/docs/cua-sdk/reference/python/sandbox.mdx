@@ -836,8 +836,7 @@ def linux(
 Linux: the canonical `ghcr.io/trycua/linux:<version>` image.
 
 `kind=None` (or `"auto"`) runs what the image is (the rootfs: a
-gVisor container locally and in the cloud); `kind="vm"` its
-`-disk` containerDisk (QEMU locally, KubeVirt in the cloud);
+gVisor container); `kind="vm"` its `-disk` containerDisk (QEMU);
 `kind="container"` the rootfs. `Sandbox.create(kind=...)`
 overrides it.
 
@@ -887,8 +886,8 @@ def omarchy(channel: Optional[str] = None) -> Image
 Omarchy (Arch Linux, Hyprland) with cua-spacesd:
 `ghcr.io/trycua/omarchy:edge` (or `"rc"`/`"stable"`).
 
-An amd64 VM: QEMU locally (emulated on arm64 hosts, so slow there),
-KubeVirt in the cloud. Until CI publishes it this raises
+An amd64 VM: QEMU (emulated on arm64 hosts, so slow there). Until CI
+publishes it this raises
 `CuaError.ImageNotPublished`; use
 `Image.from_registry("ghcr.io/trycua/omarchy:edge", kind="vm")` to
 run it anyway.
@@ -919,8 +918,7 @@ def from_registry(
 Create an image from a registry reference.
 
 `secret` (a `cua_sandbox.RegistrySecret`) pulls a private
-image, the same way locally (the pull) and in the cloud (a registry
-pull secret for the sandbox). It is never logged or saved.
+image. It is never logged or saved.
 
 os_type selects the firmware: Windows guest disks are built UEFI-only,
 so a Windows containerDisk pulled from a registry must say so or it is
@@ -1115,29 +1113,13 @@ def expose(port: int) -> Image
 
 Expose a port.
 
-#### Image.to_build_recipe
-
-```python
-def to_build_recipe(
-    *,
-    name: str,
-    namespace: str,
-    tags: Mapping[str, str] | None = None,
-    timeout_seconds: int | None = None,
-    disk_size: str | None = None,
-    file_references: Mapping[str, ImageFileReference] | None = None,
-) -> Dict[str, Any]
-```
-
-Return a CRD-validated Image custom-resource manifest.
-
 #### Image.to_dict
 
 ```python
 def to_dict() -> Dict[str, Any]
 ```
 
-Serialize to a plain dict suitable for JSON or cloud API.
+Serialize to a plain dict suitable for JSON.
 
 #### Image.to_cloud_init
 
@@ -1312,19 +1294,6 @@ def aws_ecr(region: Optional[str] = None) -> 'RegistrySecret'
 def native() -> Any
 ```
 
-### ImageFileReference
-
-```python
-class ImageFileReference(BaseModel)
-```
-
-| Attribute | Type | Description |
-| --- | --- | --- |
-| `model_config` | `ConfigDict` |  |
-| `digest` | `constr(pattern='^sha256:[0-9a-f]{64}$')` |  |
-| `reference` | `constr(pattern='^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$', min_length=1, max_length=2048)` |  |
-| `size_bytes` | `conint(ge=0, le=9007199254740991)` |  |
-
 ## Services, tunnels and MCP
 
 Reach ports inside a sandbox: named services, tunnels, shareable URLs and MCP servers.
@@ -1339,9 +1308,8 @@ class ServiceHandle
 
 One named service of a sandbox (`sb.service("mcp")`).
 
-The same calls work local and in the cloud: requests carry your headers
-(the cloud gateway's credentials are added for you), `url()` is usable
-from this machine and `public_url()` can be shared.
+Requests carry your headers, `url()` is usable from this machine and
+`public_url()` can be shared.
 
 | Attribute | Type | Description |
 | --- | --- | --- |
@@ -1362,8 +1330,7 @@ async def request(
 ```
 
 One HTTP request to `path` on the service; returns an
-`httpx.Response`. `authorization` is refused in the cloud, where
-the gateway credentials own it.
+`httpx.Response`.
 
 #### ServiceHandle.url
 
@@ -1372,8 +1339,7 @@ async def url() -> str
 ```
 
 A URL for the service usable from this machine with no credentials
-(no trailing slash): the published loopback port locally, a signed
-URL (1 h, renewed on later calls) in the cloud.
+(no trailing slash): the published loopback port.
 
 #### ServiceHandle.public_url
 
@@ -1407,70 +1373,7 @@ async def request(
 
 Send a request to a named service on this sandbox.
 
-Prefer `sb.service(name).request(...)`, which works the same local
-and in the cloud.
-
-#### Services.create_signed_url
-
-```python
-async def create_signed_url(
-    name: str,
-    *,
-    expires_in_seconds: int,
-    label: str | None = None,
-) -> SignedServiceURL
-```
-
-Create a revocable public URL for a named cloud service.
-
-Prefer `sb.public_url(name, ttl=...)`, which also works locally.
-
-#### Services.list_signed_urls
-
-```python
-async def list_signed_urls() -> list[SignedServiceURL]
-```
-
-List signed service URLs created for this cloud sandbox.
-
-#### Services.revoke_signed_url
-
-```python
-async def revoke_signed_url(signed_url: SignedServiceURL) -> None
-```
-
-Revoke a previously created signed service URL.
-
-### SignedServiceURL
-
-```python
-class SignedServiceURL
-```
-
-A revocable public URL for one sandbox service.
-
-Provider internals (the cloud namespace and claim) live in `details`.
-
-| Attribute | Type | Description |
-| --- | --- | --- |
-| `id` | `str` |  |
-| `sandbox` | `str` |  |
-| `service` | `str` |  |
-| `label` | `str \| None` |  |
-| `url` | `str` |  |
-| `created_at` | `str` |  |
-| `expires_at` | `str` |  |
-| `revoked_at` | `str \| None` |  |
-| `details` | `dict` |  |
-| `namespace` | `str \| None` | Deprecated: `details["namespace"]`. |
-| `claim` | `str \| None` | Deprecated: `details["claim"]`. |
-
-#### SignedServiceURL.from_resource
-
-```python
-@classmethod
-def from_resource(resource: Any) -> 'SignedServiceURL'
-```
+Prefer `sb.service(name).request(...)`.
 
 ## Tunnels
 

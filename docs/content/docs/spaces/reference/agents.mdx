@@ -470,7 +470,7 @@ JSON: `files`, `bytes`, `unchanged`, `removed`, `blocked` (files the secret scan
 
 Pause a persistent agent: its run, its routines and its Space.
 
-One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended (Fleet has no per-claim pause), so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own machines are never suspended.
+One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended, so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own machines are never suspended.
 
 | | |
 | --- | --- |
@@ -523,7 +523,7 @@ JSON: `space` (it can change when a cloud Space is created again), `recreated`, 
 
 #### Errors
 
-[`invalid_argument`](/spaces/reference#invalid_argument), [`agent`](/spaces/reference#agent), [`sandbox`](/spaces/reference#sandbox), [`fleet`](/spaces/reference#fleet)
+[`invalid_argument`](/spaces/reference#invalid_argument), [`agent`](/spaces/reference#agent), [`sandbox`](/spaces/reference#sandbox)
 
 ### routine_add
 

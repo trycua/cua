@@ -36,7 +36,7 @@ Returned by [`Cua.sandboxes`](/cua-sdk/reference/cua#cua).
 
 | Method | Description |
 | --- | --- |
-| [`cancel_create`](#sandboxescancel_create) | Cancels the create of the named sandbox `name` that is still running (in this process or the daemon): the work in flight stops (an image download, a boot, a claim) and what the create made is deleted; a sandbox of that name that existed before is never touched. |
+| [`cancel_create`](#sandboxescancel_create) | Cancels the create of the named sandbox `name` that is still running (in this process or the daemon): the work in flight stops (an image download, a boot) and what the create made is deleted; a sandbox of that name that existed before is never touched. |
 | [`connect`](#sandboxesconnect) | Reattaches to a sandbox by ref (`local:<name>`, `cloud:<name>`, `direct:<host:port>`, a legacy id) or by a name that is unique across locations (else `AmbiguousSandbox`, listing the qualified refs). |
 | [`connect_url`](#sandboxesconnect_url) | Connects directly to a machine by URL (`http(s)://host:port`, bare `host:port` or a relay URL) with an optional spacesd token. |
 | [`create`](#sandboxescreate) | Creates (local, your cloud, a provider) or connects (direct) a sandbox and waits for the provider and every readiness probe. |
@@ -44,13 +44,13 @@ Returned by [`Cua.sandboxes`](/cua-sdk/reference/cua#cua).
 | [`get`](#sandboxesget) | One sandbox's info, by ref or unique name. |
 | [`list`](#sandboxeslist) | Sandboxes, each tagged with its `location`. |
 | [`list_all`](#sandboxeslist_all) | Deprecated: `Sandboxes.list` with no location lists everything. |
-| [`list_with_warnings`](#sandboxeslist_with_warnings) | `Sandboxes.list` with what the listing left out (for example "cloud sandboxes not listed: &lt;reason&gt;"). |
+| [`list_with_warnings`](#sandboxeslist_with_warnings) | `Sandboxes.list` with what the listing left out. |
 
 ### `Sandboxes.cancel_create`
 
 Cancels the create of the named sandbox `name` that is still
 running (in this process or the daemon): the work in flight stops
-(an image download, a boot, a claim) and what the create made is
+(an image download, a boot) and what the create made is
 deleted; a sandbox of that name that existed before is never
 touched. Finished image downloads stay cached. Returns what was
 removed, or `None` when no create of that name was running. The
@@ -514,11 +514,9 @@ pub async fn get(&self, name: String) -> Result<SandboxInfo, CuaError>
 ### `Sandboxes.list`
 
 Sandboxes, each tagged with its `location`. `None` (the default):
-all of them, local, direct and the account's live cloud sandboxes,
-whatever the default location is. `"local"`, `"cloud"` or
-`"direct"`: only those.
-Cua Cloud has ended: its sandboxes are never listed, and listing
-never asks Fleet.
+all of them, local and direct, whatever the default location is.
+`"local"` or `"direct"`: only those. Cua Cloud has ended, so
+`"cloud"` lists none.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -612,8 +610,7 @@ pub async fn list_all(&self) -> Result<Vec<SandboxInfo>, CuaError>
 
 ### `Sandboxes.list_with_warnings`
 
-`Sandboxes.list` with what the listing left out (for example
-"cloud sandboxes not listed: &lt;reason&gt;").
+`Sandboxes.list` with what the listing left out.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -673,7 +670,6 @@ Returned by [`Sandboxes.connect`](#sandboxesconnect), [`Sandboxes.connect_url`](
 | [`viewer_url`](#sandboxviewer_url) | A browser link to this sandbox's desktop in the cua-spacesd HTML5 viewer (`/viewer` on the `env` service): video, audio, input, clipboard, file drop and folder sharing, in any modern browser. |
 | [`agents`](/cua-sdk/reference/agents#sandboxagents) | Coding agents inside this sandbox (needs cua-spacesd): run a harness over ACP, stream normalized events, follow up, interrupt, collect results; runs outlive this handle. |
 | [`delete`](/cua-sdk/reference/sandbox#sandboxdelete) | Deletes (local: removes it; direct: forgets it; your cloud: deletes the machine). |
-| [`detach`](/cua-sdk/reference/sandbox#sandboxdetach) | Forgets the handle this runtime holds (a Cua Cloud claim used to stop renewing; Cua Cloud has ended). |
 | [`forward`](/cua-sdk/reference/services#sandboxforward) | Forwards a loopback port to guest `port`: a TCP forward locally (and over cua-spacesd's tunnel when the image has it). |
 | [`guest_display`](/cua-sdk/reference/spacesd#sandboxguest_display) | The guest display without cua-spacesd: the VM's VNC endpoint and a host command that opens it (`lume attach`). |
 | [`guest_screenshot`](/cua-sdk/reference/spacesd#sandboxguest_screenshot) | Captures the guest framebuffer as PNG without cua-spacesd. |
@@ -694,7 +690,7 @@ Returned by [`Sandboxes.connect`](#sandboxesconnect), [`Sandboxes.connect_url`](
 | Accessor | Returns | Description |
 | --- | --- | --- |
 | `id()` | `String` | Qualified ref (`local:<name>`, `cloud:<name>`, `direct:<host:port>`), the same kind of value local and in the cloud; it round-trips through `Sandboxes.connect`. |
-| `image_info()` | [`Option<ImageInfo>`](/cua-sdk/reference/image#imageinfo-record) | The image this sandbox runs, as resolved and pinned at create time: the digest and variant that actually ran. `None` for direct (URL) connections, claims on a named pool, images not resolved from a registry, and the daemon topology. |
+| `image_info()` | [`Option<ImageInfo>`](/cua-sdk/reference/image#imageinfo-record) | The image this sandbox runs, as resolved and pinned at create time: the digest and variant that actually ran. `None` for direct (URL) connections, images not resolved from a registry, and the daemon topology. |
 | `info()` | [`SandboxInfo`](#sandboxinfo-record) | Info as of creation / connection. |
 | `is_ephemeral()` | `bool` | Whether the sandbox is torn down on delete and has no state file. |
 | `kind()` | `String` | What kind of machine: `container` or `vm` (empty when not known). |
@@ -871,21 +867,21 @@ Returned by [`Sandbox.info`](#sandbox), [`Sandbox.refresh`](#sandboxrefresh), [`
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | `String` |  | Name. |
-| `kind` | `String` |  | What kind of machine: `container` or `vm` (empty when not known: an existing machine, or a cloud sandbox this client did not create). |
-| `runtime` | `String` |  | The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or `kubevirt` (empty when not known). |
-| `runtime_type` / `runtimeType` | `String` |  | `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet` for a record of the Cua Cloud that has ended); prefer `location`, `kind` and `runtime`. |
+| `kind` | `String` |  | What kind of machine: `container` or `vm` (empty when not known: an existing machine). |
+| `runtime` | `String` |  | The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a provider's own (empty when not known). |
+| `runtime_type` / `runtimeType` | `String` |  | `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...); prefer `location`, `kind` and `runtime`. |
 | `status` | [`SandboxStatus`](#sandboxstatus-enum) |  | Status. |
 | `status_detail` / `statusDetail` | `Option<String>` |  | Provider's word for an unknown status. |
 | `ephemeral` | `bool` |  | No state file; torn down on delete. |
 | `services` | `HashMap<String, u16>` |  | Declared services: name → guest port (0 = only the name is known). |
 | `endpoints` | `HashMap<String, String>` |  | Service base URLs by name. |
 | `image` | `Option<String>` |  | Image, when known. |
-| `id` | `String` |  | Qualified ref, the same kind of value local and in the cloud: `local:<name>`, `cloud:<name>` or `direct:<host:port>`. Every call that takes a sandbox name accepts it. |
+| `id` | `String` |  | Qualified ref: `local:<name>`, `direct:<host:port>` or `<provider>:<name>`. Every call that takes a sandbox name accepts it. |
 | `phase` | [`SandboxPhase`](#sandboxphase-enum) |  | Portable phase: provisioning, starting, ready or stopped. |
-| `location` | `String` |  | Where it runs: `local`, `cloud`, `direct` (a machine by address) or `relay`. |
+| `location` | `String` |  | Where it runs: `local`, `direct` (a machine by address), `relay` or a provider. |
 | `expires_at_unix` / `expiresAtUnix` | `Option<i64>` |  | When it expires unless kept alive (unix seconds), when known. |
-| `provider_details` / `providerDetails` | `HashMap<String, String>` |  | Provider internals (cloud: `pool`, `namespace`, `claim`; local: `backend`, `container_id`). Not part of the portable API. |
-| `image_info` / `imageInfo` | [`Option<ImageInfo>`](/cua-sdk/reference/image#imageinfo-record) | `None` | The image as resolved and pinned at create time (digest, variant). `None` for direct connections, named pools, images not resolved from a registry, and the daemon topology. |
+| `provider_details` / `providerDetails` | `HashMap<String, String>` |  | Provider internals (local: `backend`, `container_id`). Not part of the portable API. |
+| `image_info` / `imageInfo` | [`Option<ImageInfo>`](/cua-sdk/reference/image#imageinfo-record) | `None` | The image as resolved and pinned at create time (digest, variant). `None` for direct connections, images not resolved from a registry, and the daemon topology. |
 | `stop_reason` / `stopReason` | `Option<String>` | `None` | Why a local sandbox stopped without being asked to, in plain words ("out of memory", "killed", "exited with code 1"); `None` otherwise. |
 
 ## `SandboxListing` record
@@ -897,11 +893,11 @@ Returned by [`Sandboxes.list_with_warnings`](#sandboxeslist_with_warnings).
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `sandboxes` | [`Vec<SandboxInfo>`](#sandboxinfo-record) |  | Sandboxes, each with its `location`. |
-| `warnings` | `Vec<String>` |  | Sources left out, for example "cloud sandboxes not listed: ...". |
+| `warnings` | `Vec<String>` |  | Sources left out of the listing. |
 
 ## `SandboxPhase` enum
 
-Portable lifecycle phase, the same words local and in the cloud.
+Portable lifecycle phase, the same words on every provider.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -958,7 +954,7 @@ SandboxPhase::Stopped
 
 | Variant | Description |
 | --- | --- |
-| `Provisioning` | Being created (cloud: capacity is being provisioned). |
+| `Provisioning` | Being created. |
 | `Starting` | Booting; readiness probes have not passed yet. |
 | `Ready` | Running and ready. |
 | `Stopped` | Stopped or suspended. |
@@ -1037,8 +1033,7 @@ SandboxStatus::Unknown
 
 Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
 `direct:<host:port>`, `relay:<machine-id>`, a legacy spelling
-(`space://fleet/<ns>/<claim>`, `fleet:<ns>:<claim>`, `url:<addr>`, a
-URL), or a bare name.
+(`space://cloud/<name>`, `url:<addr>`, a URL), or a bare name.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -1092,7 +1087,7 @@ pub fn parse_sandbox_ref(input: String) -> Result<SandboxRefParts, CuaError>
 ```python test="docs" id="parse-sandbox-ref-py" session="parse-sandbox-ref-py"
 import cua
 
-print([cua.parse_sandbox_ref(r).id for r in ("space://fleet/ns/box", "url:10.0.0.5:3211", "box")])
+print([cua.parse_sandbox_ref(r).id for r in ("space://cloud/box", "url:10.0.0.5:3211", "box")])
 # ['cloud:box', 'direct:10.0.0.5:3211', 'box']
 ```
 
@@ -1364,7 +1359,7 @@ pub fn sandbox_locations() -> Vec<String>
 
 ## Lifecycle
 
-Lifecycle calls on a `Sandbox` handle. They act on the container or VM, locally or in the cloud.
+Lifecycle calls on a `Sandbox` handle. They act on the container or VM.
 
 Python programs usually use the high-level API instead: [`Sandbox` lifecycle](/cua-sdk/reference/python/sandbox#sandboxdestroy).
 
@@ -1650,52 +1645,6 @@ pub async fn restart(&self) -> Result<(), CuaError>
 </Tabs>
 
 **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Sandbox.detach`
-
-Forgets the handle this runtime holds (a Cua Cloud claim used to
-stop renewing; Cua Cloud has ended). Embedded runtime only.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-def detach(self) -> None
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-detach(): void
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func detach() throws
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-fun detach()
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn detach(&self) -> Result<(), CuaError>
-```
-
-</Tab>
-</Tabs>
-
-**Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Sandbox.delete`
 

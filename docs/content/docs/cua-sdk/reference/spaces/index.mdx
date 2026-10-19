@@ -1169,7 +1169,7 @@ as sandboxes.
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `image` | `Option<String>` | `None` | Image (default: the canonical Linux image). |
-| `on` | `Option<String>` | `None` | Where: `local` (free) or `cloud` (metered). `None`: the user default (`default.on`, `CUA_DEFAULT_ON`, else `local`). |
+| `on` | `Option<String>` | `None` | Where: `local` (free), a connected cloud account (`aws`, `gcp`, `modal`) or `host:<name>`. `None`: the user default (`default.on`, `CUA_DEFAULT_ON`, else `local`). |
 | `kind` | `Option<String>` | `None` | `auto` (default), `container` or `vm`. |
 | `runtime` | `Option<String>` | `None` | `auto` (default) or an engine the location offers for the kind. |
 | `name` | `Option<String>` | `None` | Name (default `space-<hex>`). |

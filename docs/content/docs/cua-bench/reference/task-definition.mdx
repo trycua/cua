@@ -200,21 +200,20 @@ One variant's outcome: the cua-bench fields of its `result.json`.
 | `evaluation` | `any` | What `@cb.evaluate_task` returned (commonly a list of floats). |
 | `error` | `str \| null` | The error message when the variant failed. |
 | `duration_s` | `float` | Wall time of the variant in seconds. |
-| `on` | `str` | Where it ran: `local` or `cloud`. |
-| `backend` | `str` | What ran it, `<location>-<engine>` (`local-gvisor`, `local-qemu`, `cloud-gvisor`, `cloud-kubevirt`, `cloud-pool:<name>`). |
+| `on` | `str` | Where it ran: `local`, or the provider of `--on`. |
+| `backend` | `str` | What ran it, `<location>-<engine>` (`local-gvisor`, `local-qemu`, `e2b-auto`). |
 | `image` | `str \| null` | The image as the task or `--image` named it. |
-| `pool` | `str \| null` | The pool that served the sandbox (unused: always `None` since Cua Cloud ended). |
 | `output_dir` | `str` | The variant's output directory. |
 | `extra` | `dict` | Extra values the task or agent reported. |
 | `kind` | `str \| null` | `container` or `vm`. |
-| `runtime` | `str \| null` | The engine (`gvisor`, `runc`, `qemu`, `lume`, `kubevirt`) when one was chosen; `None`: the SDK picked. |
+| `runtime` | `str \| null` | The engine (`gvisor`, `runc`, `qemu`, `lume`) when one was chosen; `None`: the SDK picked. |
 | `image_ref` | `str \| null` | The resolved image reference. |
 | `image_variant` | `str \| null` | The image variant that ran: `rootfs`, `containerdisk` or `lume`. |
 | `image_digest` | `str \| null` | The pinned `repo@sha256:...` when the SDK reports it. |
 | `arch` | `str \| null` | Guest architecture, when known. |
 | `attempt` | `int` | The `--attempts` repeat index (0 for the first). |
 | `retries` | `int` | How many infrastructure retries (`--retries`) the variant took. |
-| `sandbox` | `str \| null` | The sandbox's qualified ref (`local:<name>`, `cloud:<name>`), when known. |
+| `sandbox` | `str \| null` | The sandbox's qualified ref (`local:<name>`), when known. |
 | `id` | `str` | A random id for this trial. |
 | `task_name` | `str` | The task directory name. |
 | `trial_name` | `str` | `<task>_v<variant>`, with `_a<attempt>` for repeats. |
@@ -259,11 +258,10 @@ One row of `summary.json` `results`: a variant's outcome.
 | `results[].variant` | `int` | Variant index (`--variant-id`). |
 | `results[].status` | `str` | `completed`, `failed` or `cancelled`. |
 | `results[].reward` | `float \| null` | The mean of the evaluation's numbers (`true` counts as 1), or `null` when evaluation did not run. |
-| `results[].pool` | `str \| null` | The pool that served the sandbox (unused: always `None` since Cua Cloud ended). |
 | `results[].duration_s` | `float` | Wall time of the variant in seconds. |
 | `results[].error` | `str \| null` | The error message when the variant failed. |
 | `results[].kind` | `str \| null` | `container` or `vm`. |
-| `results[].runtime` | `str \| null` | The engine (gvisor, runc, qemu, lume, kubevirt) when one was chosen, else `null` (the SDK picked). |
+| `results[].runtime` | `str \| null` | The engine (gvisor, runc, qemu, lume) when one was chosen, else `null` (the SDK picked). |
 | `results[].image_variant` | `str \| null` | The image variant that ran: `rootfs`, `containerdisk` or `lume`. |
 | `results[].image_digest` | `str \| null` | The pinned `repo@sha256:...` when the SDK reports it. |
 | `results[].attempt` | `int` | The `--attempts` repeat index (0 for the first). |
@@ -283,9 +281,9 @@ Where variants ran: one row per (on, kind, runtime, image variant, image).
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `targets[].on` | `str` | Where it ran: `local` or `cloud`. |
+| `targets[].on` | `str` | Where it ran: `local`, or the provider of `--on`. |
 | `targets[].kind` | `str \| null` | `container` or `vm`. |
-| `targets[].runtime` | `str \| null` | The engine (`gvisor`, `runc`, `qemu`, `lume`, `kubevirt`) when one was chosen; `None`: the SDK picked. |
+| `targets[].runtime` | `str \| null` | The engine (`gvisor`, `runc`, `qemu`, `lume`) when one was chosen; `None`: the SDK picked. |
 | `targets[].image_variant` | `str \| null` | The image variant that ran: `rootfs`, `containerdisk` or `lume`. |
 | `targets[].image` | `str \| null` | The pinned digest when known, else the image reference. |
 | `targets[].count` | `int` | Variants that ran there. |

@@ -1,6 +1,6 @@
 ---
 title: "cb CLI"
-description: "cua-bench: run computer-use tasks and benchmark datasets on local and cloud sandboxes."
+description: "cua-bench: run computer-use tasks and benchmark datasets on sandboxes."
 ---
 
 {/*
@@ -40,16 +40,13 @@ Run `cb <command> --help` for the build you have.
 | [`cb trace`](#cb-trace) | View and analyze trace datasets. |
 | [`cb trace view`](#cb-trace-view) | View a single trace in browser. |
 | [`cb trace traj`](#cb-trace-traj) | View agent trajectories from a run in cua.ai/trajectory-viewer. |
-| [`cb env`](#cb-env) | List or garbage-collect sandboxes and pools. |
-| [`cb env ls`](#cb-env-ls) | List managed cloud pools and claims. |
-| [`cb env gc`](#cb-env-gc) | Delete idle managed pools and stuck claims. |
-| [`cb login`](#cb-login) | Removed: Cua Cloud has ended. |
+| [`cb env`](#cb-env) | List local sandboxes. |
+| [`cb env ls`](#cb-env-ls) | List local sandboxes. |
 | [`cb status`](#cb-status) | Show system status dashboard. |
 | [`cb prune`](#cb-prune) | Clean up cua-bench run data (and 0.2.x image leftovers). |
 | [`cb agent`](#cb-agent) | Scaffold custom agents. |
 | [`cb agent init`](#cb-agent-init) | Create a new agent from template. |
 | [`cb agent build`](#cb-agent-build) | Deprecated: cb run executes agents in-process. |
-| [`cb agent push`](#cb-agent-push) | Deprecated: agent images are no longer used. |
 | [`cb image`](#cb-image) | Show the canonical images (the local image store is deprecated). |
 | [`cb image list`](#cb-image-list) | List all images. |
 | [`cb image info`](#cb-image-info) | Show image details. |
@@ -574,11 +571,11 @@ cb trace traj 30c12572 --port 9000
 
 ## Sandboxes and account
 
-Cloud pools and local sandboxes, sign-in, status and cleanup.
+Local sandboxes, status and cleanup.
 
 ### `cb env`
 
-List or garbage-collect sandboxes and pools.
+List local sandboxes.
 
 ```text output
 cb env [COMMAND]
@@ -587,16 +584,13 @@ cb env [COMMAND]
 **Examples**
 
 ```bash test="cli-shape" id="ref-cb-env"
-# List managed cloud pools and claims
+# List local sandboxes
 cb env ls
-
-# Delete pools idle for an hour
-cb env gc --idle 1h
 ```
 
 #### `cb env ls`
 
-List managed cloud pools and claims.
+List local sandboxes.
 
 ```text output
 cb env ls [OPTIONS]
@@ -606,60 +600,13 @@ Alias: `cb env list`.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cb-env-ls--local"></span>`--local` | boolean | `false` | List local sandboxes instead. |
+| <span id="cb-env-ls--local"></span>`--local` | boolean | `false` | List local sandboxes (the default; kept as a no-op). |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cb-env-ls"
-# List managed cloud pools and claims
-cb env ls
-
 # List local sandboxes
-cb env ls --local
-```
-
-#### `cb env gc`
-
-Delete idle managed pools and stuck claims.
-
-```text output
-cb env gc [OPTIONS]
-```
-
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cb-env-gc--idle"></span>`--idle` | string | `30m` | Delete pools unused for this long (default 30m). |
-
-**Examples**
-
-```bash test="cli-shape" id="ref-cb-env-gc"
-# Delete pools unused for 30 minutes
-cb env gc
-
-# Delete pools idle for two hours
-cb env gc --idle 2h
-```
-
-### `cb login`
-
-Removed: Cua Cloud has ended.
-
-```text output
-cb login [OPTIONS]
-```
-
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cb-login--no-browser"></span>`--no-browser` | boolean | `false` | Print the sign-in URL only. |
-
-**Examples**
-
-```bash test="cli-shape" id="ref-cb-login"
-# Sign in with a browser
-cb login
-
-# Print the sign-in URL instead of opening a browser
-cb login --no-browser
+cb env ls
 ```
 
 ### `cb status`
@@ -773,23 +720,6 @@ cb agent build [OPTIONS] <path>
 ```bash test="cli-shape" id="ref-cb-agent-build"
 # Build an agent image (deprecated)
 cb agent build ./my-agent --tag my-agent:dev
-```
-
-### `cb agent push`
-
-Deprecated: agent images are no longer used.
-
-Push a Docker image through the CUA API proxy with workspace namespacing.
-
-```text output
-cb agent push [OPTIONS] [<image_name>]
-```
-
-**Examples**
-
-```bash test="cli-shape" id="ref-cb-agent-push"
-# Push an agent image (deprecated)
-cb agent push my-agent:dev
 ```
 
 ## Images and platforms

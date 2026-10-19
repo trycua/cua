@@ -385,6 +385,35 @@ fn harness_wpf_query_projects_structured_elements() {
                 Some(false),
                 "a depth bound that skips WPF descendants must report an incomplete snapshot"
             );
+
+            let verified = driver.call(
+                "verify_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "expect": [{"element": {
+                        "selector": {"label_contains": "__cua_missing_completeness_probe__"},
+                        "exists": true
+                    }}],
+                    "timeout_ms": 0,
+                    "stable_samples": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !verified.is_error(),
+                "verification failed: {}",
+                verified.text()
+            );
+            assert_eq!(
+                verified.structured()["status"],
+                "unknown",
+                "a structured projection that omits display-only nodes cannot prove absence"
+            );
+            assert_eq!(
+                verified.structured()["predicates"][0]["unknown_reason"],
+                "observation_unavailable"
+            );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );

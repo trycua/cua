@@ -1,0 +1,11 @@
+# Optional local git hooks, shared by people and agents.
+#   brew install lefthook gitleaks   (or: npx lefthook install)
+#   lefthook install
+# They only check what you are about to push; CI is still the gate.
+pre-push:
+  commands:
+    push-guard:
+      use_stdin: true
+      run: bash scripts/hooks/pre-push-guard.sh {1} {2}
+    actions-pinned:
+      run: bash .github/scripts/check_actions_pinned.sh

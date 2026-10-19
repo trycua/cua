@@ -170,6 +170,16 @@ uv run pre-commit install
 Mypy is configured but is not currently a pre-commit gate. Rust, TypeScript,
 Swift, and documentation checks remain component-owned.
 
+An optional pre-push hook (lefthook) checks what you are about to push: no push
+to `main`, no history from another repository, no unusually large push, no
+likely secrets or tailnet hostnames in the new commits, and no unpinned GitHub
+Actions. Install it with:
+
+```bash
+brew install lefthook gitleaks
+lefthook install
+```
+
 ## Desktop Behavior Changes
 
 cua-driver behavior must be verified through the canonical Rust harnesses. A

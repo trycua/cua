@@ -13,12 +13,12 @@ UNIFIED = (
     "cua-sdk/index",
     "cua-sdk/quickstart",
     "cua-sdk/guides/services",
-    "cua-sdk/guides/sidecars",
     "cua-sdk/guides/images",
     "cua-sdk/guides/lifecycle",
 )
-# Hand-written Cua SDK pages stay short.
-MAX_WORDS = 1000
+# Hand-written Cua SDK pages stay short. A guide that folds in related tasks
+# (services with sidecars and secrets, where sandboxes run) gets more room.
+MAX_WORDS = 3000
 
 
 def page(slug: str) -> str:

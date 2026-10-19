@@ -1,10 +1,10 @@
 ---
 title: Cua documentation
-description: Computers for you and your agents. Cua Spaces, Cua Driver, Lume and the developer tools, on your own machines.
+description: Docs for Cua Spaces and Cua Driver, plus the CLI, the SDK, Lume and Cua Bench.
 landing:
-  hero: Cua Developers
-  path: 'New to Cua? Open Cua Spaces for the five-minute quickstart. These walkthroughs cover the other products, from setup to a result you can check.'
-  products: [spaces, cua-driver, lume, cua-sdk]
+  hero: Cua docs
+  path: 'New to Cua? Start with the Cua Spaces quickstart. It takes about five minutes.'
+  products: [spaces, cua-driver]
   examples:
     - title: Cua Bots
       description: Persistent bots on Cua Spaces, each with its own computer, memory, routines and rules. A Mac and iPhone app in SwiftUI.
@@ -32,51 +32,40 @@ import { Card, Cards } from 'fumadocs-ui/components/card';
 
 <Cards>
   <Card title="Cua Spaces" href="/spaces">
-    Computers for you and your agents. Install the app, connect an agent and watch it work.
+    Computers for you and your agents. Install the app, connect an agent and watch it work. Start with the five-minute [quickstart](/spaces/quickstart).
   </Card>
   <Card title="Cua Driver" href="/cua-driver">
-    Let an agent drive native apps on macOS, Windows and Linux in the background.
-  </Card>
-  <Card title="Lume" href="/lume">
-    macOS and Linux VMs on Apple silicon.
+    Let an agent use the apps on your computer in the background, on macOS, Windows and Linux. Start with the [quickstart](/cua-driver/quickstart).
   </Card>
 </Cards>
 
-## Developers
-
-<Cards>
-  <Card title="Cua SDK" href="/cua-sdk">
-    Create and drive computers from your own code. Python, TypeScript, Swift and Rust.
-  </Card>
-  <Card title="Cua CLI" href="/cua-cli">
-    `cua`: sandboxes, auth, the daemon and MCP from the terminal.
-  </Card>
-  <Card title="Cua Bench" href="/cua-bench">
-    Run and score computer-use benchmarks on your machine.
-  </Card>
-</Cards>
-
-## Start with Cua Spaces
+## Cua Spaces
 
 - [Quickstart](/spaces/quickstart): install the app, connect your agent and run a first task in about five minutes.
 - [Connect your agent](/spaces/guides/connect-your-agent): add Spaces to Claude Code, Codex, Cursor and other agents.
-- [Add a machine](/spaces/guides/add-a-machine): connect another Mac, Linux or Windows computer you own.
-- [Plans](/spaces/guides/plans): what Free, Pro and Teams include.
+- [Add a computer](/spaces/guides/add-a-computer): connect another Mac, Linux or Windows computer you own.
+- [Teams](/spaces/guides/teams): share computers with your team, and what each plan includes.
+- [How Spaces works](/spaces/concepts/how-spaces-works): what runs where, in plain words.
 
-## More walkthroughs
+## Cua Driver
 
-- [Sandbox images](/start-here/sandbox-images): the desktop and benchmark images, and one line to start each.
-- [Drive your first app with Cua Driver](/start-here/drive-your-first-app): let your agent operate a native app on the machine you already have.
-- [Create a local macOS sandbox with the Cua CLI](/start-here/create-a-local-macos-sandbox): a macOS Tahoe sandbox on Apple silicon with `cua sb create macos`.
-- [Run a sandbox in GitHub Actions](/start-here/run-in-github-actions): a Linux sandbox per CI job, with logs and a screenshot as artifacts.
-- [Build your first Cua Bench task](/start-here/your-first-cua-bench-task): create a task, score it with its oracle, then hand it to an agent.
+- [Quickstart](/cua-driver/quickstart): install Cua Driver and have your agent use a calculator.
+- [Connect your agent](/cua-driver/guides/connect-your-agent): add Cua Driver to Claude Code, Codex and other agents.
+- [Tool reference](/cua-driver/reference): every command and every tool.
+
+## Reference
+
+- [Cua CLI](/cua-cli): the `cua` command for Spaces, sandboxes, sign-in and MCP.
+- [Cua SDK](/cua-sdk): create and drive computers from your own code, in Python, TypeScript, Swift and Rust.
+
+## More tools
+
+- [Lume](/lume): macOS and Linux virtual machines on Apple silicon.
+- [Cua Bench](/cua-bench): run and score computer-use tests on your machine.
 
 ## Examples
 
-- [Cua Bots](/spaces/examples/cua-bots): persistent bots on Cua Spaces, each with its own computer, in a Mac and iPhone app. The same kind of app in TypeScript, Rust (Tauri) and Swift is in [Examples in other languages](/spaces/examples/other-languages).
-- [Background computer-use with Cua Driver](/cua-driver/guides/recipes): an MCP tool for your agent. In this example, it builds and QAs a WPF app on Windows ([video](https://x.com/trycua/status/2059688966085853245)).
+- [Cua Bots](/spaces/examples/cua-bots): bots that each have their own computer, in a Mac and iPhone app. The same kind of app in TypeScript, Rust and Swift is in [Use Spaces from code](/spaces/guides/create-a-space-with-the-sdk).
+- [Background computer use with Cua Driver](/cua-driver/guides/recipes): your agent builds and tests a Windows app while you keep working ([video](https://x.com/trycua/status/2059688966085853245)).
 
 ![Cua Bots: a bot finished its research, with the result card, a notification and its profile](/img/cua-bots/cua-bots-mac-research-ready.png)
-
-Coding agents can read these docs as Markdown or query them over MCP: see [Docs for agents](/docs-for-agents).
-Service status: [status.cua.ai](https://status.cua.ai).

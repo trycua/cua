@@ -50,7 +50,7 @@ there -- unless a master password is set, which is refused rather than
 guessed at.) To actually sign in with a saved Chrome password, use the
 [Keyvault](/spaces/guides/keyvault) (`cua keyvault import-passwords`)
 instead: it decrypts on import and signs in through [site
-login](/spaces/guides/site-login), without ever exposing the password to an
+login](/spaces/guides/keyvault#let-an-agent-sign-in-to-a-site), without ever exposing the password to an
 agent. **Keep me signed in** (cookies) does not have this limitation on
 either browser.
 </Callout>
@@ -223,7 +223,7 @@ runs teleport; an SDK runtime without Cua Spaces raises
   </Tab>
 </Tabs>
 
-The Rust tab is from [the examples in other languages](/spaces/examples/other-languages); the Swift tab is from [Cua Bots](/spaces/examples/cua-bots), which teleports a saved sign-in the user picked.
+The Rust tab is from [the examples in other languages](/spaces/guides/create-a-space-with-the-sdk#examples-in-other-languages); the Swift tab is from [Cua Bots](/spaces/examples/cua-bots), which teleports a saved sign-in the user picked.
 Returning nothing raises `TeleportRefused`. Sensitive items need
 `acknowledge_sensitive=True`. MCP tools: `teleport_manifest`, `teleport_app`.
 

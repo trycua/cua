@@ -40,15 +40,15 @@ fails with `PermissionDenied` (`view-only share: <who> cannot call <method>`).
 
 ## How it works
 
-Sharing uses the relay and allowlist that [unattended access](/spaces/guides/unattended-access)
-uses:
+Sharing uses the same relay and allowlist as an
+[added computer](/spaces/guides/add-a-computer#add-a-computer-from-a-terminal):
 
 - A host (`relay:<id>` from `cua host setup`) is shared directly.
 - Any other Space is published on the relay on its first share. The owner's
   account registers a machine for it, and the Space's own driver dials out
   over WSS, so no inbound port opens.
 - The relay keeps two lists per machine: `allow` (editors) and `viewers`.
-- Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/unattended-access#reach-it-from-your-devices).
+- Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/add-a-computer#reach-it-from-your-other-devices).
 - Removing someone, or changing their role, cuts their open streams at once.
 
 ```rust test="excerpt" id="rs-share-space" source="libs/cua/crates/cua-spaces/tests/share_space_e2e.rs#rs-share-space"

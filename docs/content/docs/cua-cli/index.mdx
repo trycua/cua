@@ -3,9 +3,9 @@ title: Cua CLI
 description: 'The cua command: sign-in, sandboxes local and in your cloud, one-shot computer actions, MCP, Spaces, unattended access and teleport.'
 ---
 
-`cua` is one binary built on the [cua SDK](/cua-sdk). It creates and drives
-sandboxes on this machine or in your own cloud, serves them to AI agents over MCP,
-and manages Spaces.
+`cua` is one command-line tool built on the [cua SDK](/cua-sdk). It creates and
+drives sandboxes on this machine or in your own cloud, serves them to AI agents
+over MCP, and manages Spaces.
 
 ## Install
 
@@ -32,13 +32,13 @@ flags: [Install Cua Spaces](/spaces/guides/install).
 | `cua mcp` | `serve-mcp` | Stdio MCP server ([MCP server](/cua-cli/guides/mcp-server)). |
 | `cua daemon` | | Shared background runtime; `cua daemon mcp`. |
 | `cua spaces` | | Registered Spaces and your relay machines ([Cua Spaces](/spaces)). |
-| `cua cloud` | | Your own AWS, Google Cloud or Modal account as a location ([Use your own cloud](/cua-sdk/guides/your-cloud)). |
-| `cua host` | | [Unattended access](/spaces/guides/unattended-access) to this machine. |
+| `cua cloud` | | Your own AWS, Google Cloud or Modal account as a location ([Choose where sandboxes run](/cua-sdk/guides/local-runtimes#your-own-cloud)). |
+| `cua host` | | [Unattended access](/spaces/guides/add-a-computer#add-a-computer-from-a-terminal) to this machine. |
 | `cua teleport` | | [Move an app session](/spaces/guides/teleport-an-app) into a sandbox. |
 | `cua image` | `img` | Local OCI images. |
 | `cua spacesd` | | Talk to any cua-spacesd by URL. |
 | `cua runtime` | | Inspect or provision local runtimes. |
-| `cua cache` | | Disk used by images, sandboxes and logs, and its cleanup ([Disk usage](/cua-sdk/guides/disk-usage)). |
+| `cua cache` | | Disk used by images, sandboxes and logs, and its cleanup ([Disk usage](/cua-sdk/guides/lifecycle#disk-usage-and-cleanup)). |
 | `cua doctor` | | Check the host, an image and a sandbox's guest in one report. |
 | `cua skills`, `cua trajectory` | `traj` | Recorded demonstrations and `cua do` sessions. |
 
@@ -61,4 +61,4 @@ and the [CLI reference](/cua-cli/reference/cli) list every option.
 `cua sb exec` and `cua spacesd exec` exit with the command's own status. State
 lives in `~/.cua` (`CUA_HOME` moves it).
 
-Start with the [Quickstart](/cua-cli/quickstart).
+Start with the [Quickstart](/cua-cli/quickstart), which also creates a local macOS sandbox.

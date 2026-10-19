@@ -9,7 +9,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 A Space is one desktop on one of your computers. Ids are the sandbox refs
 `cua sb ls` prints (`local:<name>`, `aws:<name>`, `direct:<host:port>`,
 `relay:<machine-id>`); a bare name works when it matches one Space. To connect a
-whole computer first, see [Add a machine](/spaces/guides/add-a-machine).
+whole computer first, see [Add a computer](/spaces/guides/add-a-computer).
 
 ## Create a Space in the app
 
@@ -19,7 +19,7 @@ whole computer first, see [Add a machine](/spaces/guides/add-a-machine).
 3. Press **Create Space**. The Space appears in your list with a progress bar and
    is ready when the bar finishes.
 
-If the create fails, see [Troubleshoot a failed create](/spaces/guides/troubleshoot-create).
+If the create fails, see [Troubleshoot](/spaces/guides/troubleshoot).
 
 ## Add an existing machine by address
 
@@ -234,15 +234,14 @@ cua spaces rm studio
 A [Tailscale](https://tailscale.com) address works here too (its IP or
 MagicDNS name as the host:port): `cua spaces add` reaches it like any other
 address and the Space registers as `direct:<addr>`. That only attaches one
-already-running Space; hosting Spaces for `on="host:<name>"` still goes
-through the cua.ai relay, set up with
-[`cua host setup`](/spaces/guides/host-spaces-on-your-spare-mac).
+already-running Space. To host Spaces for `on="host:<name>"`, set the computer up
+with [`cua host setup`](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces).
 
- `spaces.delete(id)` deletes a
-Space's sandbox and forgets it (a Space added by address is only forgotten);
-`spaces.remove(id)` forgets a Space without touching it.
+`spaces.delete(id)` deletes a Space's sandbox and forgets it (a Space added by
+address is only forgotten). `spaces.remove(id)` forgets a Space without touching
+it.
 
 In TypeScript the methods are `create`, `delete_`, `add` and `remove`, with
 options from `@trycua/cua/spaces`. Agents use the MCP tools `create_space`,
 `delete_space`, `add_space` and `remove_space`
-([Use from an agent](/spaces/guides/use-from-an-agent)).
+([What your agent can do](/spaces/guides/connect-your-agent#what-your-agent-can-do)).

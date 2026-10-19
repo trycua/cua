@@ -161,9 +161,17 @@ stop_cua_driver_daemons() {
 # clean up everything. Prints nothing in the common case.
 show_cua_driver_daemon_survivors() {
     if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ]; then
-        local mac_survivors
-        mac_survivors=$(cua_driver_release_processes | awk -F '\t' '{ printf "%s%s", sep, $1; sep = ", " }')
-        [ -n "$mac_survivors" ] || return 0
+        # A stop request starts short-lived cua-driver processes of its own (the
+        # CLI re-executes itself); give them a moment before calling them
+        # survivors.
+        local mac_survivors waited=0 limit=$(( ${CUA_DRIVER_STOP_TIMEOUT:-5} * 2 ))
+        while :; do
+            mac_survivors=$(cua_driver_release_processes | awk -F '\t' '{ printf "%s%s", sep, $1; sep = ", " }')
+            [ -n "$mac_survivors" ] || return 0
+            [ "$waited" -lt "$limit" ] || break
+            sleep 0.5 2>/dev/null || sleep 1
+            waited=$((waited + 1))
+        done
         printf 'Note: Cua Driver process(es) still running after the stop attempt (pid: %s).\n' "$mac_survivors"
         printf '      They ignored SIGTERM and SIGKILL. Log out and back in, or run\n'
         printf '      `kill -9 <pid>` yourself, then re-run this installer.\n'
@@ -473,7 +481,7 @@ cua_driver_known_bundle_paths() {
 # Unregisters every other com.trycua.driver bundle and prints one summary line.
 # Best effort: never fails the install, never deletes anything.
 unregister_other_cua_driver_copies() {
-    local active="$1" lsregister active_real path real found=0 paths word
+    local active="$1" lsregister active_real path real found=0 paths word on_disk="" on_disk_count=0
     lsregister="$(cua_driver_lsregister_path)"
     [ -x "$lsregister" ] || return 0
     active_real="$(cd "$active" 2>/dev/null && pwd -P)" || active_real="$active"
@@ -492,6 +500,10 @@ unregister_other_cua_driver_copies() {
         if ! "$lsregister" -u "$path" >/dev/null 2>&1; then
             printf 'warning: could not unregister the old Cua Driver copy at %s\n' "$path" >&2
         fi
+        if [ -d "$path" ]; then
+            on_disk_count=$((on_disk_count + 1))
+            [ "$on_disk_count" -gt 3 ] || on_disk="${on_disk:+$on_disk, }$path"
+        fi
     done <<EOF
 $paths
 EOF
@@ -499,5 +511,9 @@ EOF
     word="copies"
     [ "$found" -ne 1 ] || word="copy"
     printf 'Found %s old Cua Driver %s; macOS will now only use %s\n' "$found" "$word" "$active"
+    if [ "$on_disk_count" -gt 0 ]; then
+        [ "$on_disk_count" -le 3 ] || on_disk="$on_disk and $((on_disk_count - 3)) more"
+        printf 'Their files were left in place (delete them when you no longer need them): %s\n' "$on_disk"
+    fi
     return 0
 }

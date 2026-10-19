@@ -128,6 +128,15 @@ class Machine:
         )
         return pid
 
+    def spawn_exit_after(self, pid: int, seconds: int) -> None:
+        """Make the fake process `pid` exit by itself after `seconds`."""
+        subprocess.Popen(
+            ["/bin/sh", "-c", f"sleep {seconds}; kill {pid}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
     def wait_dead(self, pid: int, seconds: float = 3.0) -> bool:
         deadline = time.time() + seconds
         while time.time() < deadline:
@@ -150,8 +159,8 @@ class Machine:
             PATH=f"{self.bin}:/usr/bin:/bin",
             CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY="1",
             CUA_DRIVER_STOP_TIMEOUT="1",
-            **extra,
         )
+        env.update(extra)
         return env
 
     def uninstall_shell(self, body: str) -> subprocess.CompletedProcess[str]:
@@ -325,6 +334,31 @@ def test_installer_survivor_note_names_the_pid(machine: Machine) -> None:
     result = machine.common_shell("show_cua_driver_daemon_survivors")
 
     assert f"(pid: {stray})" in result.stdout
+
+
+def test_a_short_lived_stop_helper_process_is_not_reported_as_a_survivor(machine: Machine) -> None:
+    """`cua-driver --expected-pid N stop` re-executes itself; it is not a daemon left behind."""
+    old = machine.bundle("tmp/CuaDriver.app")
+    helper = machine.spawn(old)  # exits by itself in ~1s, like the stop helper chain
+    machine.spawn_exit_after(helper, 1)
+    machine._write(machine.bin / "uname", "echo Darwin")
+
+    result = machine.common_shell("show_cua_driver_daemon_survivors", CUA_DRIVER_STOP_TIMEOUT="4")
+
+    assert result.stdout == ""
+    assert machine.wait_dead(helper)
+
+
+def test_uninstaller_waits_for_a_short_lived_helper_before_failing(machine: Machine) -> None:
+    old = machine.bundle("Downloads/CuaDriver.app")
+    helper = machine.spawn(old)
+    machine.spawn_exit_after(helper, 1)
+
+    result = machine.uninstall_shell(
+        "CUA_DRIVER_STOP_TIMEOUT=4\nverify_release_daemon_absent"
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def _function_body(script: Path, name: str) -> str:

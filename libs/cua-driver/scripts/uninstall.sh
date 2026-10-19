@@ -376,17 +376,24 @@ release_daemon_fallback_pids() {
 }
 
 verify_release_daemon_absent() {
-    local pids="" status=0
-    pids="$(release_daemon_fallback_pids 2>/dev/null)" || status=$?
-    if [[ "$status" != "0" ]]; then
-        printf 'daemon_stop_incomplete: process inspection failed while verifying release daemon shutdown.\n' >&2
-        return 1
-    fi
-    if [[ -n "$pids" ]]; then
-        printf 'daemon_stop_incomplete: Cua Driver process(es) still running after SIGTERM and SIGKILL (pid: %s).\n' \
-            "$(printf '%s' "$pids" | tr '\n' ' ' | sed 's/ *$//')" >&2
-        return 1
-    fi
+    local pids="" status=0 waited=0 limit=$(( ${CUA_DRIVER_STOP_TIMEOUT:-5} * 2 ))
+    while :; do
+        status=0
+        pids="$(release_daemon_fallback_pids 2>/dev/null)" || status=$?
+        if [[ "$status" != "0" ]]; then
+            printf 'daemon_stop_incomplete: process inspection failed while verifying release daemon shutdown.\n' >&2
+            return 1
+        fi
+        [[ -n "$pids" ]] || return 0
+        # A stop request starts short-lived cua-driver processes of its own (the
+        # CLI re-executes itself); give them a moment before failing.
+        [[ "$waited" -lt "$limit" ]] || break
+        sleep 0.5 2>/dev/null || sleep 1
+        waited=$((waited + 1))
+    done
+    printf 'daemon_stop_incomplete: Cua Driver process(es) still running after SIGTERM and SIGKILL (pid: %s).\n' \
+        "$(printf '%s' "$pids" | tr '\n' ' ' | sed 's/ *$//')" >&2
+    return 1
 }
 
 # Stop every Cua Driver process of this user that is not the pid-file daemon:

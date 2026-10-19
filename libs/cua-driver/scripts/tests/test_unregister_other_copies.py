@@ -124,9 +124,13 @@ def test_unregisters_every_other_copy_and_prints_one_line(fx: Fixture) -> None:
 
     assert result.returncode == 0, result.stderr
     assert sorted(fx.unregistered_paths()) == sorted([str(downloads), str(trash), str(bench)])
-    assert result.stdout.splitlines() == [
-        f"Found 3 old Cua Driver copies; macOS will now only use {fx.active}"
-    ]
+    lines = result.stdout.splitlines()
+    assert lines[0] == f"Found 3 old Cua Driver copies; macOS will now only use {fx.active}"
+    # Honest about the files: they are still where the user put them.
+    assert lines[1].startswith("Their files were left in place")
+    for path in (downloads, trash, bench):
+        assert str(path) in lines[1]
+    assert len(lines) == 2
     # `lsregister -u` forgets a copy; the files stay where the user put them.
     for path in (downloads, trash, bench, fx.active):
         assert path.exists()
@@ -144,7 +148,7 @@ def test_one_copy_reads_naturally(fx: Fixture) -> None:
 
     result = fx.run(f'unregister_other_cua_driver_copies "{fx.active}"', ls)
 
-    assert result.stdout.strip() == (
+    assert result.stdout.splitlines()[0] == (
         f"Found 1 old Cua Driver copy; macOS will now only use {fx.active}"
     )
 
@@ -241,3 +245,38 @@ def test_installer_forgets_the_unpacked_app_before_deleting_its_temp_dir() -> No
     helper = installer[installer.index("forget_staged_macos_app() {"):]
     helper = helper[: helper.index("\n}\n")]
     assert '"$lsregister" -u "$SRC_APP"' in helper
+
+
+def test_registrations_whose_files_are_gone_get_no_left_in_place_note(fx: Fixture) -> None:
+    gone = fx.root / "extracted-and-deleted/CuaDriver.app"  # never created on disk
+    ls = fx.fake_lsregister(
+        dump(
+            ("Cua Driver", str(fx.active), "com.trycua.driver"),
+            ("Cua Driver", str(gone), "com.trycua.driver"),
+        )
+    )
+    fx.fake_mdfind()
+
+    result = fx.run(f'unregister_other_cua_driver_copies "{fx.active}"', ls)
+
+    assert fx.unregistered_paths() == [str(gone)]
+    assert result.stdout.splitlines() == [
+        f"Found 1 old Cua Driver copy; macOS will now only use {fx.active}"
+    ]
+
+
+def test_many_leftover_copies_are_summarised(fx: Fixture) -> None:
+    olds = [fx.app(f"old{i}/CuaDriver.app") for i in range(5)]
+    ls = fx.fake_lsregister(
+        dump(
+            ("Cua Driver", str(fx.active), "com.trycua.driver"),
+            *[("Cua Driver", str(path), "com.trycua.driver") for path in olds],
+        )
+    )
+    fx.fake_mdfind()
+
+    result = fx.run(f'unregister_other_cua_driver_copies "{fx.active}"', ls)
+
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith("Found 5 old Cua Driver copies")
+    assert lines[1].endswith("and 2 more")

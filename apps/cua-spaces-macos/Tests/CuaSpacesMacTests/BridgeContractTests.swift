@@ -257,7 +257,7 @@ struct BridgeContractTests {
     /// must be in `cases`).
     static let skipped: [String: String] = [
         "session.signIn": "starts a device sign-in that waits for the browser",
-        "onboarding.get": "FirstRunTests covers it (its webkit shape is not in bridge-shapes.json yet)",
+        "onboarding.get": "FirstRunTests covers it (answers depend on the state file)",
         "onboarding.complete": "FirstRunTests covers it (writes the state file, hands the window over)",
         "spaces.create": "runs a create to the end; CreateOptionsTests and ViewModelTests cover it",
         "spaces.delete": "removes the fixture Space the later cases use",

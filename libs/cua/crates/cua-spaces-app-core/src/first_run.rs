@@ -520,7 +520,10 @@ fn agent_row(input: &FirstRunInput) -> CheckRow {
             "Checking that it can use Cua…".into(),
             None,
         ),
-        Some(None) | Some(Some(FirstRunAgent { configured: false, .. })) => {
+        Some(None)
+        | Some(Some(FirstRunAgent {
+            configured: false, ..
+        })) => {
             if input.connecting {
                 return row(
                     RowState::Checking,
@@ -611,7 +614,14 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
                 || format!("Cua needs to add {place} to your account. It takes a few seconds."),
                 |e| format!("Setting it up didn't work: {e}"),
             ),
-            Some(button("set-up", if host.error.is_some() { "Try again" } else { "Set up" })),
+            Some(button(
+                "set-up",
+                if host.error.is_some() {
+                    "Try again"
+                } else {
+                    "Set up"
+                },
+            )),
         );
     }
     if !host.running {
@@ -626,16 +636,34 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
         (
             "accessibility",
             format!("Let Cua control {place}"),
-            format!("So your agent can click and type. {} asks you once.", os_name(&input.host_os)),
+            format!(
+                "So your agent can click and type. {} asks you once.",
+                os_name(&input.host_os)
+            ),
         ),
         (
             "screen-recording",
-            format!("Let Cua see {}", if input.host_os == "macos" { "this screen" } else { "the screen" }),
-            format!("So your agent can see what's on {place}. {} asks you once.", os_name(&input.host_os)),
+            format!(
+                "Let Cua see {}",
+                if input.host_os == "macos" {
+                    "this screen"
+                } else {
+                    "the screen"
+                }
+            ),
+            format!(
+                "So your agent can see what's on {place}. {} asks you once.",
+                os_name(&input.host_os)
+            ),
         ),
     ] {
         if let Some(p) = missing_permission(host, id) {
-            let mut r = row(RowState::Fix, title, &note, Some(button("open-settings", "Open Settings")));
+            let mut r = row(
+                RowState::Fix,
+                title,
+                &note,
+                Some(button("open-settings", "Open Settings")),
+            );
             r.settings_url = p.settings_url;
             return r;
         }
@@ -973,7 +1001,10 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     items.push(FirstRunTodo {
         id: "prompt".into(),
         title: "Try your first request".into(),
-        note: format!("Ask {name}: \u{201c}{}\u{201d}", first_prompt(&input.host_os)),
+        note: format!(
+            "Ask {name}: \u{201c}{}\u{201d}",
+            first_prompt(&input.host_os)
+        ),
         done: used,
         optional: false,
         action: (!used).then(|| button("copy", "Copy")),
@@ -1172,18 +1203,25 @@ mod tests {
     fn fixes_turn_done_into_finish_later() {
         let mut i = setup();
         i.host.as_mut().unwrap().permissions[0].granted = false;
-        i.host.as_mut().unwrap().permissions[0].settings_url = Some("x-apple.systempreferences:a".into());
+        i.host.as_mut().unwrap().permissions[0].settings_url =
+            Some("x-apple.systempreferences:a".into());
         let v = view(&i);
         let s = s(&v);
         assert_eq!(s.title, "One step left.");
         assert_eq!(s.rows[1].title, "Let Cua control this Mac");
-        assert_eq!(s.rows[1].settings_url.as_deref(), Some("x-apple.systempreferences:a"));
+        assert_eq!(
+            s.rows[1].settings_url.as_deref(),
+            Some("x-apple.systempreferences:a")
+        );
         assert_eq!(s.primary.id, "finish-later");
 
         let mut i = setup();
         i.signed_in = false;
         assert_eq!(s_title(&i), "One step left.");
-        assert_eq!(view(&i).setup.unwrap().rows[1].action.as_ref().unwrap().id, "sign-in");
+        assert_eq!(
+            view(&i).setup.unwrap().rows[1].action.as_ref().unwrap().id,
+            "sign-in"
+        );
 
         let mut i = setup();
         i.agent_open_before_setup = Some(true);
@@ -1224,7 +1262,10 @@ mod tests {
         let v = view(&i);
         let u = s(&v).upsell.clone().unwrap();
         assert_eq!(u.plan, "pro");
-        assert_eq!(u.lines[1], "Pro: 200 remote hours a month · 5 connections at once");
+        assert_eq!(
+            u.lines[1],
+            "Pro: 200 remote hours a month · 5 connections at once"
+        );
         assert!(!u.title.to_lowercase().contains("sleep"));
         assert_eq!(s(&v).rows[0].note, "It used Cua at 18:12.");
         i.plan.as_mut().unwrap().teammates = true;
@@ -1249,7 +1290,10 @@ mod tests {
         ];
         assert_eq!(agent_used(&lines, 2, "Claude Code"), Some(5));
         assert_eq!(agent_used(&lines, 6, "Claude Code"), None);
-        assert_eq!(agent_used(&[line(7, "local", "DesktopService")], 2, "Claude Code"), Some(7));
+        assert_eq!(
+            agent_used(&[line(7, "local", "DesktopService")], 2, "Claude Code"),
+            Some(7)
+        );
     }
 
     #[test]
@@ -1270,7 +1314,15 @@ mod tests {
         let mut i = setup();
         i.extra.phase = "creating".into();
         let all = serde_json::to_string(&view(&i)).unwrap().to_lowercase();
-        for word in ["vm", "virtual machine", "container", "mcp", "daemon", "host", "your space is ready"] {
+        for word in [
+            "vm",
+            "virtual machine",
+            "container",
+            "mcp",
+            "daemon",
+            "host",
+            "your space is ready",
+        ] {
             assert!(!all.contains(&format!(" {word}")), "{word}");
         }
     }

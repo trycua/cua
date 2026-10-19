@@ -253,7 +253,7 @@
           "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
         ],
         "title": "Your agent can use this Mac.",
-        "upsell": "pro | Reach your computers from anywhere for longer | Free: 20 remote hours a month · 2 connections at once / Pro: 200 remote hours a month · 5 connections at once | $18 a month | upsell:Try Pro"
+        "upsell": "pro | More remote hours with Pro | Free: 20 remote hours a month · 2 connections at once / Pro: 200 remote hours a month · 5 connections at once | $18 a month | upsell:Try Pro"
       },
       "step": "setup"
     },

@@ -3141,7 +3141,13 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
         let input = patched(&f["base"], &case["patch"]);
         let v = c(h, "firstRun.view", json!({ "input": input }))?;
         let s = |v: &Value| v.as_str().unwrap_or("").to_string();
-        let btn = |b: &Value| if b.is_object() { format!("{}:{}", s(&b["id"]), s(&b["label"])) } else { String::new() };
+        let btn = |b: &Value| {
+            if b.is_object() {
+                format!("{}:{}", s(&b["id"]), s(&b["label"]))
+            } else {
+                String::new()
+            }
+        };
         let mut frame = json!({
             "case": case["name"],
             "step": v["step"],
@@ -3149,7 +3155,12 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
         });
         if v["connect"].is_object() {
             let k = &v["connect"];
-            let others: Vec<String> = k["others"].as_array().into_iter().flatten().map(|o| s(&o["name"])).collect();
+            let others: Vec<String> = k["others"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|o| s(&o["name"]))
+                .collect();
             frame["connect"] = json!({
                 "title": k["title"],
                 "lede": k["lede"],
@@ -3164,14 +3175,37 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|r| format!("[{}] {} — {}{}", s(&r["state"]), s(&r["title"]), s(&r["note"]), if r["action"].is_object() { format!(" ({})", btn(&r["action"])) } else { String::new() }))
+                .map(|r| {
+                    format!(
+                        "[{}] {} — {}{}",
+                        s(&r["state"]),
+                        s(&r["title"]),
+                        s(&r["note"]),
+                        if r["action"].is_object() {
+                            format!(" ({})", btn(&r["action"]))
+                        } else {
+                            String::new()
+                        }
+                    )
+                })
                 .collect();
             let x = &k["extra"];
             let choices: Vec<String> = x["choices"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|o| format!("{}: {}{}", s(&o["label"]), s(&o["detail"]), if o["blocked"].is_string() { format!(" (blocked: {})", s(&o["blocked"])) } else { String::new() }))
+                .map(|o| {
+                    format!(
+                        "{}: {}{}",
+                        s(&o["label"]),
+                        s(&o["detail"]),
+                        if o["blocked"].is_string() {
+                            format!(" (blocked: {})", s(&o["blocked"]))
+                        } else {
+                            String::new()
+                        }
+                    )
+                })
                 .collect();
             frame["setup"] = json!({
                 "title": k["title"],
@@ -3199,7 +3233,23 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|i| format!("[{}] {} — {}{}", if i["done"].as_bool() == Some(true) { "x" } else { " " }, s(&i["title"]), s(&i["note"]), if i["action"].is_object() { format!(" ({})", btn(&i["action"])) } else { String::new() }))
+                .map(|i| {
+                    format!(
+                        "[{}] {} — {}{}",
+                        if i["done"].as_bool() == Some(true) {
+                            "x"
+                        } else {
+                            " "
+                        },
+                        s(&i["title"]),
+                        s(&i["note"]),
+                        if i["action"].is_object() {
+                            format!(" ({})", btn(&i["action"]))
+                        } else {
+                            String::new()
+                        }
+                    )
+                })
                 .collect();
             frame["todos"] = json!({ "lede": t["lede"], "progress": t["progress"], "items": items, "complete": t["complete"] });
         }

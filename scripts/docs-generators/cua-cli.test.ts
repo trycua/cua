@@ -72,10 +72,10 @@ test('Spaces tools link to their one entry in the Spaces reference instead of re
   const page = (rel: string) => [...files].find(([p]) => p.endsWith(join('reference', ...rel.split('/'))))?.[1];
   // Every tool is on one page; the Spaces tools are tables linking to their entries.
   const tools = page('mcp-tools.mdx')!;
-  assert.ok(tools.includes('| <span id="add_space"></span>[`add_space`](/spaces/reference/lifecycle#add_space) | Register a Space. |'));
-  assert.ok(tools.includes('[`space_bash`](/spaces/reference/commands-and-files#space_bash)'));
+  assert.ok(tools.includes('| <span id="add_space"></span>[`add_space`](/spaces/reference/spaces#add_space) | Register a Space. |'));
+  assert.ok(tools.includes('[`space_bash`](/spaces/reference/spaces#space_bash)'));
   assert.ok(tools.includes('[`agent_start`](/spaces/reference/agents#agent_start)'));
-  assert.ok(tools.includes('### Space lifecycle\n\nFull entries: [Space lifecycle](/spaces/reference/lifecycle).'));
+  assert.ok(tools.includes('### Space lifecycle\n\nFull entries: [Space lifecycle](/spaces/reference/spaces#space-lifecycle).'));
   assert.ok(!tools.includes('### `add_space`'), 'no repeated Spaces entries');
   assert.ok(tools.includes('## Permissions') && tools.includes('`sandbox:all`'));
   assert.ok(tools.includes('### `sandbox_list`'));

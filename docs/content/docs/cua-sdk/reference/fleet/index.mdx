@@ -14,8 +14,6 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 `cua.fleet()` manages cloud capacity directly: named pools, [claims](/cua-sdk/reference/fleet/claims) and [images](/cua-sdk/reference/fleet/images). Most programs only need `Sandboxes.create` with `on: "cloud"`, which manages pools for you.
 
-Python programs usually use the high-level API instead: [`cua_sandbox.Pool`](/cua-sdk/reference/python/pool#pool).
-
 ## `Fleet`
 
 Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
@@ -931,11 +929,11 @@ not compared by `Fleet.check_pool_spec`).
 | `args` | `Option<Vec<String>>` | `None` | Arguments replacing the image CMD. |
 | `env` | `HashMap<String, String>` | `[:]` | Plain environment variables (not secrets). |
 | `services` | `HashMap<String, u16>` | `[:]` | Named services (name → guest port). |
-| `readiness` | [`Option<ReadinessProbe>`](/cua-sdk/reference/sandbox/options#readinessprobe-record) | `None` | Readiness probe (`port`, or a declared `service`; `http_path` for HTTP). A replica binds a claim only once it passes. |
+| `readiness` | [`Option<ReadinessProbe>`](/cua-sdk/reference/image#readinessprobe-record) | `None` | Readiness probe (`port`, or a declared `service`; `http_path` for HTTP). A replica binds a claim only once it passes. |
 | `cpu` | `Option<u32>` | `None` | vCPUs. |
 | `memory_mb` / `memoryMb` | `Option<u32>` | `None` | Memory (MiB). |
 | `efi` | `bool` | `false` | UEFI firmware (Windows images). |
-| `sidecars` | [`Vec<Container>`](/cua-sdk/reference/sandbox/options#container-record) | `[]` | Extra containers sharing the sandbox's network namespace. |
+| `sidecars` | [`Vec<Container>`](/cua-sdk/reference/image#container-record) | `[]` | Extra containers sharing the sandbox's network namespace. |
 | `registry_secret` / `registrySecret` | [`Option<RegistrySecret>`](/cua-sdk/reference/image#registrysecret-enum) | `None` | Credentials for a private image: stored as the pool's `cua-registry-*` pull Secret. |
 | `registry_secret_name` / `registrySecretName` | `Option<String>` | `None` | An existing `cua-registry-*` pull Secret in the pool namespace (instead of `registry_secret`). |
 | `process_mode` / `processMode` | `Option<String>` | `None` | `Legacy` or `Run` (`vmTemplate.processMode`). |

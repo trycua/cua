@@ -75,8 +75,8 @@ test('classes render a signature fence, attributes table and one heading per met
 
 test('every page section maps to a unique anchor on its page', () => {
   const anchors = sandboxAnchors();
-  assert.equal(anchors.get('Image'), '/cua-sdk/reference/python/image#image');
-  assert.equal(anchors.get('Pool'), '/cua-sdk/reference/python/pool#pool');
+  assert.equal(anchors.get('Image'), '/cua-sdk/reference/python/sandbox#image');
+  assert.equal(anchors.get('Pool'), undefined);
   assert.equal(anchors.get('Shell'), '/cua-sdk/reference/python/interfaces#shell');
   const names = SANDBOX_PAGES.flatMap((p) =>
     p.sections.flatMap((s) => s.objects.map((o) => o.split('.').at(-1)))

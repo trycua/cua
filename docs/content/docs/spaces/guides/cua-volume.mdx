@@ -85,7 +85,7 @@ print([e.path for e in (await spaces.volume_ls("agents/", ada)).entries])
 ```
 
 Every tool is also on the Spaces MCP server (`volume_ls`, `volume_read`,
-`volume_write`, ...): see the [volume tools reference](/spaces/reference/volume)
+`volume_write`, ...): see the [volume tools reference](/spaces/reference/agents#cua-volume)
 and the [SDK reference](/cua-sdk/reference/spaces/volume).
 
 ## Secrets stay in the Keyvault
@@ -258,7 +258,7 @@ From [the examples in other languages](/spaces/guides/create-a-space-with-the-sd
 
 Python: `await space.send_file(path, cua.SpaceSendFileOptions(target_directory="inbox"))`.
 Agents use the MCP tool `send_file` ([what your agent can do](/spaces/guides/connect-your-agent#what-your-agent-can-do)).
-The options are in the [`send_file` reference](/spaces/reference/commands-and-files#send_file).
+The options are in the [`send_file` reference](/spaces/reference/spaces#send_file).
 
 ## Sync across devices
 

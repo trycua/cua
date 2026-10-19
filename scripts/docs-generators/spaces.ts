@@ -39,6 +39,48 @@ const OUT_DIR = path.join(DOCS_CONTENT, 'spaces', 'reference');
 const REGENERATE = 'pnpm --dir docs docs:generate:spaces';
 const R = (...p: string[]) => path.join(REPO_ROOT, ...p);
 
+/**
+ * The tool pages: each groups whole categories, in manifest order. Every
+ * category lands on exactly one page; an unlisted one fails the generator.
+ * Errors, Space ids and approval live on the index.
+ */
+export const PAGES: Array<{ slug: string; title: string; description: string; categories: string[] }> = [
+  {
+    slug: 'spaces',
+    title: 'Spaces tools',
+    description: 'Create, run, stream, share and serve from a Space: the Spaces tools with their parameters, results and errors.',
+    categories: ['lifecycle', 'commands-and-files', 'streams-and-display', 'services', 'hotspot', 'sharing', 'cloud'],
+  },
+  {
+    slug: 'agents',
+    title: 'Agent, teleport and storage tools',
+    description: 'Run agents in a Space, teleport apps, and use Keyvault and Cua Volume: the tools with their parameters, results and errors.',
+    categories: ['agents', 'persistent-agents', 'teleport', 'keyvault', 'volume'],
+  },
+];
+
+/** Category id -> the page that documents it. */
+export function pageOfCategory(categories: Array<{ id: string }>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const page of PAGES)
+    for (const id of page.categories) {
+      if (out.has(id)) throw new Error(`category ${id} is on two pages`);
+      out.set(id, page.slug);
+    }
+  for (const c of categories) if (!out.has(c.id)) throw new Error(`category ${c.id} is on no page in spaces.ts PAGES`);
+  return out;
+}
+
+/** The heading id the docs renderer gives a plain-text heading (github-slugger). */
+export function slugify(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+}
+
+/** A tool's entry: `/spaces/reference/<page>#<tool>`. */
+export function toolHref(pages: Map<string, string>, tool: { name: string; category: string }): string {
+  return `/spaces/reference/${pages.get(tool.category)}#${tool.name}`;
+}
+
 export const SOURCES = {
   manifest: R('libs', 'cua', 'spaces-contract', 'manifest.json'),
   contract: R('libs', 'cua', 'crates', 'cua-spaces-contract', 'src', 'lib.rs'),
@@ -171,12 +213,12 @@ export function errorKinds(tool: Tool): string[] {
 }
 
 function errorLink(kind: string): string {
-  return `[\`${kind}\`](/spaces/reference/errors#${kind})`;
+  return `[\`${kind}\`](/spaces/reference#${kind})`;
 }
 
 function toolSection(tool: Tool, manifest: Manifest): string[] {
   const known = new Set(manifest.error_kinds.map((k) => k.kind));
-  const out = [`## ${tool.name}`, '', escapeMdxText(tool.description), ''];
+  const out = [`### ${tool.name}`, '', escapeMdxText(tool.description), ''];
   if (tool.instructions) out.push(escapeMdxText(tool.instructions), '');
   const facts: Array<[string, string]> = [
     [
@@ -198,31 +240,32 @@ function toolSection(tool: Tool, manifest: Manifest): string[] {
   facts.push(['Rust', codeCell(tool.rust_symbol)]);
   out.push('| | |', '| --- | --- |');
   for (const [k, v] of facts) out.push(`| ${k} | ${v.includes('`') ? v : escapeTableCell(v)} |`);
-  out.push('', '### Parameters', '', ...paramsTable(tool.input_schema));
-  out.push('### Result', '', escapeMdxText(tool.result), '');
+  out.push('', '#### Parameters', '', ...paramsTable(tool.input_schema));
+  out.push('#### Result', '', escapeMdxText(tool.result), '');
   const kinds = errorKinds(tool);
   for (const k of kinds) if (!known.has(k)) throw new Error(`${tool.name}: error kind ${k} is not in error_kinds`);
-  out.push('### Errors', '', kinds.map(errorLink).join(', '), '');
+  out.push('#### Errors', '', kinds.map(errorLink).join(', '), '');
   if (tool.notes.length) {
-    out.push('### Notes', '');
+    out.push('#### Notes', '');
     for (const n of tool.notes) out.push(`- ${escapeMdxText(n.replace(/\s*FRICTION\.md( §)?\s*\d+\.?/g, '').trim())}`);
     out.push('');
   }
   return out;
 }
 
-function categoryPage(manifest: Manifest, cat: Manifest['categories'][number]): string {
-  const tools = manifest.tools.filter((t) => t.category === cat.id);
-  const body = [
-    '| Tool | Description |',
-    '| --- | --- |',
-    ...tools.map((t) => `| [\`${t.name}\`](#${t.name}) | ${escapeTableCell(t.description)} |`),
-    '',
-  ];
-  for (const t of tools) body.push(...toolSection(t, manifest));
+function toolsPage(manifest: Manifest, page: (typeof PAGES)[number]): string {
+  const cats = page.categories.map((id) => manifest.categories.find((c) => c.id === id)!);
+  const body: string[] = [];
+  for (const cat of cats) {
+    const tools = manifest.tools.filter((t) => t.category === cat.id);
+    body.push(`## ${cat.title}`, '', escapeMdxText(cat.description), '');
+    body.push('| Tool | Description |', '| --- | --- |');
+    body.push(...tools.map((t) => `| [\`${t.name}\`](#${t.name}) | ${escapeTableCell(t.description)} |`), '');
+    for (const t of tools) body.push(...toolSection(t, manifest));
+  }
   return renderPage({
-    title: cat.title,
-    description: cat.description,
+    title: page.title,
+    description: page.description,
     generator: REGENERATE,
     source: 'libs/cua/spaces-contract/manifest.json',
     version: manifest.contract_version,
@@ -230,7 +273,8 @@ function categoryPage(manifest: Manifest, cat: Manifest['categories'][number]): 
   });
 }
 
-function indexPage(manifest: Manifest): string {
+function indexPage(manifest: Manifest, protocol: Protocol): string {
+  const pages = pageOfCategory(manifest.categories);
   const body: string[] = [
     `The Spaces contract: ${manifest.tool_count} tools with the same names and schemas on every surface: \`cua mcp\`, \`cua daemon mcp\` and the Spaces SDKs. Contract ${manifest.contract_version}, MCP protocol revision ${manifest.mcp_protocol_version}, transports ${manifest.transports.map((t) => `\`${t}\``).join(' and ')}.${manifest.experimental ? ' Experimental: names and shapes can change between minor versions.' : ''}`,
     '',
@@ -238,11 +282,11 @@ function indexPage(manifest: Manifest): string {
     '',
   ];
   for (const cat of manifest.categories) {
-    body.push(`### [${cat.title}](/spaces/reference/${cat.id})`, '', escapeMdxText(cat.description), '');
+    body.push(`### [${cat.title}](/spaces/reference/${pages.get(cat.id)}#${slugify(cat.title)})`, '', escapeMdxText(cat.description), '');
     body.push('| Tool | Description | Effect |', '| --- | --- | --- |');
     for (const t of manifest.tools.filter((x) => x.category === cat.id))
       body.push(
-        `| [\`${t.name}\`](/spaces/reference/${cat.id}#${t.name}) | ${escapeTableCell(t.description)} | ${effect(t.annotations)}${t.metering === 'metered' ? ', metered' : ''} |`
+        `| [\`${t.name}\`](${toolHref(pages, t)}) | ${escapeTableCell(t.description)} | ${effect(t.annotations)}${t.metering === 'metered' ? ', metered' : ''} |`
       );
     body.push('');
   }
@@ -267,10 +311,7 @@ function indexPage(manifest: Manifest): string {
     `- Metered tools (${manifest.tools.filter((t) => t.metering === 'metered').map((t) => `\`${t.name}\``).join(', ')}) allocate or extend a billed cloud Space. Everything else is free.`,
     '- Agent runs are auto-approved inside the Space: the Space is the sandbox. A session teleport needs an approval minted from its manifest, and `acknowledge_sensitive` for sensitive items.',
     '',
-    '## Errors',
-    '',
-    'A failed call returns a tool result with `isError: true` and a machine `kind`. See [Errors](/spaces/reference/errors).',
-    ''
+    ...errorsSection(manifest, protocol, pages)
   );
   return renderPage({
     title: 'Reference',
@@ -282,8 +323,10 @@ function indexPage(manifest: Manifest): string {
   });
 }
 
-function errorsPage(manifest: Manifest, protocol: Protocol): string {
+function errorsSection(manifest: Manifest, protocol: Protocol, pages: Map<string, string>): string[] {
   const body: string[] = [
+    '## Errors',
+    '',
     'A tool that fails returns a normal result with `isError: true`, never a protocol error:',
     '',
     '```json',
@@ -296,7 +339,7 @@ function errorsPage(manifest: Manifest, protocol: Protocol): string {
     '',
     'Branch on `kind`; the message is for people. Every tool can return `invalid_argument`. A tool that takes `space` can also return `not_found` and `ambiguous_sandbox`; one with spacesd `requires`, `spacesd_not_available` and `capability_missing`; one with host requirements, `host_capability_missing`. Each tool lists the rest.',
     '',
-    '## Error kinds',
+    '### Error kinds',
     '',
     '| Kind | Meaning |',
     '| --- | --- |',
@@ -305,34 +348,29 @@ function errorsPage(manifest: Manifest, protocol: Protocol): string {
   ];
   for (const k of manifest.error_kinds) {
     const tools = manifest.tools.filter((t) => t.errors.includes(k.kind));
-    body.push(`### ${k.kind}`, '', escapeMdxText(k.meaning), '', `Fix: ${escapeMdxText(k.fix)}`, '');
+    body.push(`#### ${k.kind}`, '', escapeMdxText(k.meaning), '', `Fix: ${escapeMdxText(k.fix)}`, '');
     if (tools.length)
       body.push(
-        `Listed by ${tools.map((t) => `[\`${t.name}\`](/spaces/reference/${t.category}#${t.name})`).join(', ')}.`,
+        `Listed by ${tools.map((t) => `[\`${t.name}\`](${toolHref(pages, t)})`).join(', ')}.`,
         ''
       );
   }
-  body.push('## Protocol errors', '', 'JSON-RPC errors are about the message, not the tool.', '', '| Code | Name | When |', '| --- | --- | --- |');
+  body.push('### Protocol errors', '', 'JSON-RPC errors are about the message, not the tool.', '', '| Code | Name | When |', '| --- | --- | --- |');
   for (const c of protocol.codes) body.push(`| \`${c.code}\` | \`${c.name}\` | ${escapeTableCell(c.doc)} |`);
   body.push('');
-  return renderPage({
-    title: 'Errors',
-    description: 'Tool error kinds and JSON-RPC protocol errors of the Spaces tools.',
-    generator: REGENERATE,
-    source: 'libs/cua/spaces-contract/manifest.json; cua-spaces src/mcp/mod.rs',
-    version: manifest.contract_version,
-    body: body.join('\n'),
-  });
+  return body;
 }
 
 export function renderAll(manifest: Manifest, protocol: Protocol): Map<string, string> {
   const ids = new Set(manifest.categories.map((c) => c.id));
   for (const t of manifest.tools) if (!ids.has(t.category)) throw new Error(`${t.name}: unknown category ${t.category}`);
+  pageOfCategory(manifest.categories);
+  for (const page of PAGES)
+    for (const id of page.categories) if (!ids.has(id)) throw new Error(`spaces.ts PAGES lists unknown category ${id}`);
   const files = new Map<string, string>();
-  files.set(path.join(OUT_DIR, 'index.mdx'), indexPage(manifest));
-  for (const cat of manifest.categories) files.set(path.join(OUT_DIR, `${cat.id}.mdx`), categoryPage(manifest, cat));
-  files.set(path.join(OUT_DIR, 'errors.mdx'), errorsPage(manifest, protocol));
-  files.set(path.join(OUT_DIR, 'meta.json'), metaJson('Reference', ['index', ...manifest.categories.map((c) => c.id), 'errors']));
+  files.set(path.join(OUT_DIR, 'index.mdx'), indexPage(manifest, protocol));
+  for (const page of PAGES) files.set(path.join(OUT_DIR, `${page.slug}.mdx`), toolsPage(manifest, page));
+  files.set(path.join(OUT_DIR, 'meta.json'), metaJson('Reference', ['index', ...PAGES.map((p) => p.slug)]));
   return files;
 }
 

@@ -64,7 +64,7 @@ pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,
     refusal_envelope_schema, ActionDelivery, ActionDeliveryMode, ActionEffect, ActionError,
     ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
-    ActionEvidenceKind, ActionResult, ActionResultValidationError, ActionRoute,
+    ActionEvidenceKind, ActionNextCall, ActionResult, ActionResultValidationError, ActionRoute,
     AgentOverlayCapture, AgentOverlayCaptureStatus, ClipboardReadOutput, ClipboardWriteOutput,
     CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
     CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,

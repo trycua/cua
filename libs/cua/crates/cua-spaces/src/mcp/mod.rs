@@ -391,7 +391,14 @@ impl McpServer {
                     ));
                 }
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                self.call_any(name, args).await.to_result()
+                let out = self.call_any(name, args).await;
+                // Only an MCP client (an AI agent) gets here; the app calls
+                // tools through `call`. Anonymous: the tool's kind, once per
+                // install per day (`cua_agent_used_space`).
+                if !out.is_error && cua_telemetry::events::space_tool_group(name).is_some() {
+                    cua_telemetry::global().capture_agent_used_space(name);
+                }
+                out.to_result()
             }
             other => {
                 return Some(error(
@@ -428,7 +435,7 @@ pub const SPACE_SCOPED_TOOLS: &[&str] = &[
 ];
 
 /// Server instructions sent in `initialize`.
-pub const INSTRUCTIONS: &str = "Cua Spaces: isolated sandboxes. Any image is a Space; the computer-use and file tools need one that runs cua-spacesd (the Spaces images), and every Space reaches the MCP servers it declares with list_tools/call_tool(service=...). Start with list_spaces; create one with create_space(on=\"local\" (free) or \"cloud\" (metered); reuse=true returns a reachable one), or add an existing machine with add_space(url, token). delete_space deletes a Space you created. Then work inside it with space_bash, space_write, upload/send_file/download, and its computer-use tools via list_tools/call_tool. agent_start runs a coding agent inside a Space. Tools marked FOR THE HUMAN draw on the user's own desktop; call them only when asked.";
+pub const INSTRUCTIONS: &str = "Cua Spaces: isolated sandboxes. Any image is a Space; the computer-use and file tools need one that runs cua-spacesd (the Spaces images), and every Space reaches the MCP servers it declares with list_tools/call_tool(service=...). Start with list_spaces; create one with create_space(on=\"local\" (free) or \"cloud\" (metered); reuse=true returns a reachable one), or add an existing computer with add_space(url, token). delete_space deletes a Space you created. Then work inside it with space_bash, space_write, upload/send_file/download, and its computer-use tools via list_tools/call_tool. agent_start runs a coding agent inside a Space. Tools marked FOR THE HUMAN draw on the user's own desktop; call them only when asked.";
 
 pub(crate) fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})

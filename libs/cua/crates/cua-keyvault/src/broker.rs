@@ -636,6 +636,49 @@ pub struct AccessRequest {
     /// authority: the grant is still bound to the verified caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    /// For a whole-app (`Selector::App`) request: the exact bundle-relative
+    /// manifest paths the requester selected (the same `rel_path`s
+    /// [`ImportSpec::paths`] takes). The request is then for THOSE parts of
+    /// the app and nothing else: it never resolves to the items the vault
+    /// already holds for the app (they are not keyed by manifest path), so
+    /// approval always captures exactly these paths, and the grant covers
+    /// only what that capture produced. `None` keeps the whole-app request.
+    /// Only a single `Selector::App` may carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
+}
+
+/// Most manifest paths one request may name.
+const MAX_REQUEST_PATHS: usize = 256;
+/// Longest manifest path a request may name, in bytes.
+const MAX_REQUEST_PATH_LEN: usize = 1024;
+
+/// Checks the `paths` a request carries: they narrow exactly one whole-app
+/// selector, are plain non-empty relative names, and are bounded.
+fn validate_request_paths(req: &AccessRequest) -> Result<()> {
+    let Some(paths) = &req.paths else {
+        return Ok(());
+    };
+    if paths.is_empty() {
+        return Err(Error::Invalid(
+            "an empty path selection is ambiguous: name the parts to send".into(),
+        ));
+    }
+    if paths.len() > MAX_REQUEST_PATHS {
+        return Err(Error::Invalid("request too large".into()));
+    }
+    if !matches!(req.selectors.as_slice(), [Selector::App { .. }]) {
+        return Err(Error::Invalid(
+            "a path selection narrows exactly one whole-app selector".into(),
+        ));
+    }
+    for p in paths {
+        if p.trim().is_empty() || p.len() > MAX_REQUEST_PATH_LEN || p.chars().any(char::is_control)
+        {
+            return Err(Error::Invalid("a selected path is not valid".into()));
+        }
+    }
+    Ok(())
 }
 
 /// A pending request, as the consent UI sees it.
@@ -681,13 +724,12 @@ pub struct ApproveOptions {
     #[serde(default)]
     pub include_storage: bool,
     /// For a whole-app (`Selector::App`) request: the exact bundle-relative
-    /// paths to capture, same meaning as [`ImportSpec::paths`]. `None` keeps
-    /// the existing default (a provider's login-only selection). This is
-    /// the approver's OWN choice, set when a human reviews and widens what
-    /// an agent's `teleport_app` request asked for (shown to them as
-    /// `would_send` when they decide) -- never the requester's own
-    /// unverified `include`, which only ever reaches this call as text on
-    /// the consent screen.
+    /// paths to capture, same meaning as [`ImportSpec::paths`]. This is the
+    /// approver's OWN choice, set when a human reviews and widens or narrows
+    /// what an agent's `teleport_app` request asked for. `None` keeps what
+    /// the request itself named ([`AccessRequest::paths`], the selection the
+    /// requester made, which the daemon validated), and failing that the
+    /// existing default (a provider's login-only selection).
     #[serde(default)]
     pub paths: Option<Vec<String>>,
 }
@@ -1856,7 +1898,7 @@ impl Broker {
                 f(s);
             }
         };
-        policy::require_first_party(caller, "teleporting from this machine")?;
+        policy::require_first_party(caller, "teleporting from this computer")?;
         {
             let st = self.state.lock().await;
             if Self::settings(&st)?.disabled {
@@ -2343,6 +2385,7 @@ impl Broker {
         if req.selectors.len() > 32 || req.targets.len() > 8 || req.reason.len() > 500 {
             return Err(Error::Invalid("request too large".into()));
         }
+        validate_request_paths(&req)?;
         for t in &req.targets {
             validate_target(t)?;
         }
@@ -2411,6 +2454,14 @@ impl Broker {
         let mut items: Vec<ItemMeta> = Vec::new();
         let mut needs_import = Vec::new();
         for s in &req.selectors {
+            // A path selection never resolves to what the vault already
+            // holds for the app: those items are not keyed by manifest path,
+            // so the whole stored session would be granted. It is imported
+            // on approval instead, exactly as selected.
+            if req.paths.is_some() {
+                needs_import.push(s.clone());
+                continue;
+            }
             let found: Vec<&ItemMeta> = meta.items.values().filter(|i| s.matches(i)).collect();
             if found.is_empty() {
                 match s {
@@ -2768,7 +2819,7 @@ impl Broker {
 
         // Import what the request named but the vault does not hold yet.
         let mut item_ids: Vec<String> = view.items.iter().map(|i| i.id.clone()).collect();
-        for spec in imports_for(&view.needs_import, &opts) {
+        for spec in imports_for(&view.needs_import, &opts, view.request.paths.as_deref()) {
             for it in self.import_confirmed(caller, spec).await? {
                 if !item_ids.contains(&it.id) {
                     item_ids.push(it.id);
@@ -3851,6 +3902,22 @@ fn describe_selection(view: &PendingView) -> String {
     for s in &view.needs_import {
         match s {
             Selector::Site { app, site } => parts.push(format!("{site} ({app}, import)")),
+            // A path selection says which parts (the prompt is the only
+            // place some platforms can show them).
+            Selector::App { app } if view.request.paths.is_some() => {
+                let paths = view.request.paths.as_deref().unwrap_or_default();
+                let shown: Vec<&str> = paths.iter().take(3).map(String::as_str).collect();
+                let more = paths.len().saturating_sub(shown.len());
+                parts.push(format!(
+                    "only {app}: {}{} (import)",
+                    shown.join(", "),
+                    if more > 0 {
+                        format!(" and {more} more")
+                    } else {
+                        String::new()
+                    }
+                ));
+            }
             Selector::App { app } => parts.push(format!("the whole {app} session (import)")),
             Selector::Item { id } => parts.push(id.clone()),
             Selector::Login { site } => parts.push(format!("the saved password for {site}")),
@@ -3892,7 +3959,14 @@ fn import_reason(spec: &ImportSpec, caller: &CallerIdentity) -> String {
     )
 }
 
-fn imports_for(needs: &[Selector], opts: &ApproveOptions) -> Vec<ImportSpec> {
+/// The imports approval runs for `needs`. A whole-app import captures the
+/// approver's own `paths` when they set them, else exactly the `requested`
+/// ones, else the provider's login-only default.
+fn imports_for(
+    needs: &[Selector],
+    opts: &ApproveOptions,
+    requested: Option<&[String]>,
+) -> Vec<ImportSpec> {
     let mut by_app: BTreeMap<String, ImportSpec> = BTreeMap::new();
     for s in needs {
         match s {
@@ -3914,7 +3988,10 @@ fn imports_for(needs: &[Selector], opts: &ApproveOptions) -> Vec<ImportSpec> {
                     .or_insert_with(|| ImportSpec {
                         app: app.clone(),
                         whole_app: true,
-                        paths: opts.paths.clone(),
+                        paths: opts
+                            .paths
+                            .clone()
+                            .or_else(|| requested.map(<[String]>::to_vec)),
                         ..Default::default()
                     });
             }

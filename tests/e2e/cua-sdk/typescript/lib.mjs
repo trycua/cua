@@ -1,6 +1,7 @@
 // Shared helpers for the cua SDK e2e suite (TypeScript / Node). Mirrors
 // ../python/e2e.py: cua-e2e-<run>-* names, env-gated lanes, bounded polls,
 // results appended to $CUA_E2E_RESULTS/ts.jsonl.
+import assert from "node:assert/strict"
 import { execFileSync, spawn, spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
@@ -50,6 +51,29 @@ export function binary(env, exe) {
 const flag = (v) => process.env[v] === "1"
 const hasDocker = () => spawnSync("docker", ["version", "--format", "{{.Server.Version}}"]).status === 0
 
+// Cua Cloud has ended: `Cua.fleet()` and every cloud create fail with this
+// message (`CLOUD_ENDED` in cua-sandbox-core). The live Fleet lanes skip with
+// CLOUD_ENDED_SKIP, which run.py allows under --strict.
+export const CLOUD_ENDED_SKIP = "Cua Cloud has ended (CUA-1854): there is no live Fleet lane"
+export const isCloudEnded = (err) =>
+  cua.CuaError.Unsupported.instanceOf(err) && /Cua Cloud has ended/.test(err.message)
+
+/**
+ * `c.fleet()` and a cloud create (`on: "cloud"`, plus `extra`'s options) fail
+ * with the one `Unsupported` message, even when `c` holds Fleet credentials;
+ * nothing is created.
+ */
+export async function assertCloudEnded(c, extra = {}) {
+  assert.throws(() => c.fleet(), isCloudEnded)
+  await assert.rejects(
+    c.sandboxes().create(
+      cua.SandboxCreateOptions.create({ on: "cloud", image: "registry.test/cua-e2e:fake", ...extra }),
+    ),
+    isCloudEnded,
+  )
+  assert.deepEqual((await c.sandboxes().listWithWarnings("cloud")).sandboxes, [])
+}
+
 /** `undefined` when `lane` can run here, else the skip reason. */
 export function laneEnabled(lane) {
   switch (lane) {
@@ -63,15 +87,9 @@ export function laneEnabled(lane) {
     case "lume":
       return flag("CUA_E2E_LUME") ? undefined : "set CUA_E2E_LUME=1 for the Lume lane"
     case "fleet":
-      if (!flag("CUA_E2E_FLEET")) return "set CUA_E2E_FLEET=1 for live Fleet"
-      return process.env.FLEETS_TOKEN || process.env.CUA_CLIENT_ID ? undefined : "no Fleet credentials"
     case "fleet-env":
-      return (
-        laneEnabled("fleet") ??
-        (process.env.CUA_E2E_FLEET_ENV_IMAGE
-          ? undefined
-          : "CUA_E2E_FLEET_ENV_IMAGE is unset: no linux (spacesd) image in a registry Fleet can pull")
-      )
+      // Cua Cloud has ended (CUA-1854): there is no live Fleet to run on.
+      return CLOUD_ENDED_SKIP
     case "cua-sandbox":
       return flag("CUA_E2E_CUA_SANDBOX") ? undefined : "set CUA_E2E_CUA_SANDBOX=1"
     default:

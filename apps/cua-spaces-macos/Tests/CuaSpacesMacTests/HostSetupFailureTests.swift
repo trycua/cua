@@ -95,23 +95,18 @@ struct HostSetupFailureTests {
 
     // MARK: - The model
 
-    @MainActor func onboarding(_ host: HostRunning) -> OnboardingModel {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-tests-\(UUID().uuidString)")
-        return OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path, host: host)
-    }
-
     @MainActor @Test func aFailedSetupKeepsTheRawErrorAsDetails() async {
         let host = FixtureHost()
         host.failSetup = Self.missingRelease + "\ncaused by: 404"
-        let model = onboarding(host)
-        model.host.openForm()
-        await model.setUpHost()
-        let failure = model.host.setupFailure
+        let model = HostModel(host: host)
+        model.openForm()
+        await model.submit()
+        let failure = model.setupFailure
         #expect(failure?.kind == .download)
         #expect(failure?.details == Self.missingRelease + "\ncaused by: 404", "the whole error, every line")
-        #expect(model.host.formView?.canSubmit == true, "Retry can run")
-        #expect(!model.host.settingUp)
-        #expect(model.showingHostForm)
+        #expect(model.formView?.canSubmit == true, "Retry can run")
+        #expect(!model.settingUp)
+        #expect(model.form != nil)
     }
 
     /// A page button that fails (the first post-launch user turned a
@@ -137,54 +132,54 @@ struct HostSetupFailureTests {
     @MainActor @Test func retryRunsTheSameChoiceAndClearsOnSuccess() async {
         let host = FixtureHost()
         host.failSetup = Self.missingRelease
-        let model = onboarding(host)
-        model.host.openForm()
-        model.host.send(.setProfile(profile: "spare"))
-        await model.setUpHost()
-        #expect(model.host.setupFailure != nil)
-        #expect(model.host.formView?.request?.profile == "spare", "the choice survives the failure")
+        let model = HostModel(host: host)
+        model.openForm()
+        model.send(.setProfile(profile: "spare"))
+        await model.submit()
+        #expect(model.setupFailure != nil)
+        #expect(model.formView?.request?.profile == "spare", "the choice survives the failure")
 
         host.failSetup = nil
-        await model.setUpHost()
+        await model.submit()
         #expect(host.calls.count == 2)
         #expect(host.calls[0] == host.calls[1], "the retry sends the same request")
-        #expect(model.host.setupFailure == nil)
-        #expect(!model.showingHostForm)
-        #expect(model.host.state?.configured == true)
+        #expect(model.setupFailure == nil)
+        #expect(model.form == nil)
+        #expect(model.state?.configured == true)
     }
 
     @MainActor @Test func whileRetryingTheFailureStaysAndSetupIsBusy() async {
         let gate = GatedHost()
-        let model = onboarding(gate)
-        model.host.openForm()
+        let model = HostModel(host: gate)
+        model.openForm()
         gate.fail = "no GUI session"
-        await model.setUpHost()
-        #expect(model.host.setupFailure?.kind == .guiSession)
+        await model.submit()
+        #expect(model.setupFailure?.kind == .guiSession)
 
         gate.fail = nil
         gate.hold = true
-        let retry = Task { await model.setUpHost() }
+        let retry = Task { await model.submit() }
         await gate.waitUntilCalled(times: 2)
-        #expect(model.host.settingUp, "Retry shows progress and is disabled")
-        #expect(model.host.formView?.canSubmit == false, "no second setup while one runs")
-        #expect(model.host.setupFailure?.kind == .guiSession, "the failure stays while retrying")
+        #expect(model.settingUp, "Retry shows progress and is disabled")
+        #expect(model.formView?.canSubmit == false, "no second setup while one runs")
+        #expect(model.setupFailure?.kind == .guiSession, "the failure stays while retrying")
         gate.release()
         await retry.value
-        #expect(!model.host.settingUp)
-        #expect(model.host.setupFailure == nil)
+        #expect(!model.settingUp)
+        #expect(model.setupFailure == nil)
     }
 
     @MainActor @Test func closingTheFormClearsTheFailure() async {
         let host = FixtureHost()
         host.failSetup = "boom"
-        let model = onboarding(host)
-        model.host.openForm()
-        await model.setUpHost()
-        #expect(model.host.setupFailure != nil)
-        model.host.closeForm()
-        #expect(model.host.setupFailure == nil)
-        model.host.openForm()
-        #expect(model.host.setupFailure == nil)
+        let model = HostModel(host: host)
+        model.openForm()
+        await model.submit()
+        #expect(model.setupFailure != nil)
+        model.closeForm()
+        #expect(model.setupFailure == nil)
+        model.openForm()
+        #expect(model.setupFailure == nil)
     }
 }
 

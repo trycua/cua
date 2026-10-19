@@ -56,14 +56,11 @@ BASELINE = REPO / "docs" / "code-block-baseline.json"
 # Guides with self-contained runnable blocks; `--strict` (and the suite's
 # test_guides_are_tagged) fails if one loses its tags. The Omarchy noVNC and
 # Minecraft flows only have fragments or in-guest shell steps; their behaviour
-# is covered by the SDK scenario tests instead. The Fleets quickstart downloads
-# its example from docs/public/scripts (a pinned, published cua-sandbox).
+# is covered by the SDK scenario tests instead.
 GUIDES = [
-    "fleets/guides/terraform.mdx",
-    "fleets/guides/capacity-and-claims.mdx",
     "cua-sdk/guides/agent-frameworks.mdx",
     "cua-sdk/guides/images.mdx",
-    "cua-sdk/reference/sandbox/index.mdx",
+    "cua-sdk/reference/sandbox.mdx",
 ]
 
 FENCE = re.compile(r"^(?P<indent>[ \t]*)(?P<fence>```+|~~~+)(?P<info>.*)$")

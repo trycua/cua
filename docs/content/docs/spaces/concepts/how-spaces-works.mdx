@@ -1,0 +1,65 @@
+---
+title: How Spaces works
+description: 'Computers and Spaces, bring-your-own compute, where a Space can run, and how you and your agents reach it directly or through the relay.'
+---
+
+Cua Spaces connects three things: the computers you own, the Spaces on them, and
+the people and agents who use those Spaces.
+
+## Computers and Spaces
+
+A **computer** is a Mac, Windows or Linux computer
+you own or rent. A **Space** is one desktop on a computer, set up for a task. A
+Space is a container or a VM, or the computer's own desktop.
+
+Cua doesn't rent computers. You bring them, and your cloud provider bills you for
+any VM you run in your own account. Cua provides the app, sharing and the relay
+that lets your devices reach your computers.
+
+## Where a Space runs
+
+| Location | What it is |
+|---|---|
+| This computer | A container or VM on the Mac, Windows or Linux PC you are using. |
+| Another of your computers | A computer you [added](/spaces/guides/add-a-computer) that provides Spaces, such as a [spare Mac mini](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces). |
+| Your own cloud | A VM in your own AWS, Google Cloud or Modal account. See [Choose where sandboxes run](/cua-sdk/guides/local-runtimes#your-own-cloud). |
+
+Cua Cloud, the hosted option, has ended. See
+[Cua Cloud (Fleets) has ended](/cua-sdk/guides/cua-cloud-ended).
+
+Every Space runs `cua-spacesd`. It streams the screen, takes input through
+[Cua Driver](/cua-driver), and receives teleported apps and files.
+
+## How you reach a Space
+
+- **Directly.** On the same network, or over Tailscale, your device connects to
+  the Space with its address and a token. No account is needed, and the traffic
+  doesn't use the relay.
+- **Through the relay.** A computer set up with `cua host setup` joins the cua.ai
+  relay with an outbound connection, so you don't open ports. Your enrolled
+  devices, and people you share a Space with, reach it through the relay. Relay
+  use counts toward your [plan's](/spaces/guides/teams#plans) live sessions and
+  remote hours.
+
+For what the relay can and can't see, see
+[What the relay can see](/spaces/guides/relay-security).
+
+## Space ids
+
+| Kind | Id | Comes from |
+|------|----|------------|
+| Local | `local:<name>` | `spaces.create(options)`: a new Space, on this computer by default |
+| Direct | `direct:<host:port>` | `spaces.add(url, token)`: an existing computer |
+| Relay | `relay:<machine-id>` | Your computers set up with `cua host setup`, listed automatically |
+
+The app, the `cua` CLI, the SDKs and `cua daemon` share one registry
+(`~/.cua/spaces.json`). Relay computers come from your account's directory and
+are never written to `spaces.json`.
+
+## Who can do what
+
+You own your computers and the Spaces on them. You can
+[share a Space](/spaces/guides/share-a-space) with another account as a viewer or
+an editor, and with [Teams](/spaces/guides/teams) a computer can belong to the
+team instead of one person. Your agents act through the `cua` MCP server, and you
+choose what each one may do. See [Connect your agent](/spaces/guides/connect-your-agent).

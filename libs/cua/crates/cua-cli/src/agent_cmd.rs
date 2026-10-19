@@ -24,7 +24,7 @@ pub enum AgentCmd {
     /// Start a coding agent in a sandbox (returns at once unless --follow).
     #[command(after_help = "Examples:
   cua agent run local:dev claude-code \"fix the failing test\" --env-from-host ANTHROPIC_API_KEY -f
-  cua agent run cloud:ci openai-codex \"add tests\" --repo https://github.com/org/repo --exit-when-idle")]
+  cua agent run local:ci openai-codex \"add tests\" --repo https://github.com/org/repo --exit-when-idle")]
     Run(Box<RunArgs>),
     /// List runs in a sandbox.
     #[command(
@@ -35,7 +35,7 @@ pub enum AgentCmd {
     Ls {
         #[command(flatten)]
         at: Narrow,
-        /// Sandbox (`local:NAME`, `cloud:NAME`, `direct:HOST:PORT`, or NAME).
+        /// Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME).
         sandbox: String,
     },
     /// Print a run's normalized events (--follow to stream).
@@ -135,7 +135,7 @@ pub enum AgentCmd {
 pub struct RunArgs {
     #[command(flatten)]
     at: Narrow,
-    /// Sandbox (`local:NAME`, `cloud:NAME`, `direct:HOST:PORT`, or NAME).
+    /// Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME).
     sandbox: String,
     /// Harness (`cua agent harnesses`).
     harness: String,

@@ -1,4 +1,4 @@
-"""Browse the web from an agent with Cua (guide: cua-sdk/guides/browse-the-web).
+"""Browse the web from an agent with Cua (guide: cua-sdk/guides/desktop#give-an-agent-a-browser).
 
 A fresh-agent session driven ONLY through the host `cua mcp` server with the
 official MCP Python SDK (tests/e2e/browse/e2e_browse.py), no LLM:
@@ -30,7 +30,7 @@ sys.path.insert(0, str(BROWSE))
 mcp = pytest.importorskip("mcp", reason="the MCP Python SDK is not installed (pip install mcp)")
 import e2e_browse  # noqa: E402
 
-GUIDE = "cua-sdk/guides/browse-the-web.mdx"
+GUIDE = "cua-sdk/guides/desktop.mdx"
 
 
 def _cua() -> str:

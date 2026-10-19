@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! The pre-consolidation daemon modes (Unix-socket RCDP, the Fleet-facing
+//! The pre-consolidation daemon modes (Unix-socket RCDP, the gateway-facing
 //! WebSocket, QUIC, Tailscale remote shares). Reachable as
 //! `cua-spacesd legacy …` until the desktop provider serves the same
 //! functionality through `cua-spacesd-server`.
@@ -240,11 +240,10 @@ async fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send +
         return Err("Tailscale share options require --remote-listen".into());
     }
 
-    // Linux guests default to a Fleet-facing WebSocket. The daemon sits behind
-    // the Fleet gateway (wss://run.cua.ai/api/svc/{ns}/{sandbox}-rcdp/ws), which
-    // authenticates at the edge, so anonymous connections are accepted unless a
-    // shared token is configured. Any explicit transport flag opts back out into
-    // the shared CLI handling below.
+    // Linux guests default to a gateway-facing WebSocket. The daemon sits behind
+    // a gateway or proxy that authenticates at the edge, so anonymous
+    // connections are accepted unless a shared token is configured. Any
+    // explicit transport flag opts back out into the shared CLI handling below.
     #[cfg(target_os = "linux")]
     if socket.is_none() && listen.is_none() && quic_listen.is_none() {
         return serve_linux_default(apps_path, application_id).await;
@@ -401,7 +400,7 @@ async fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send +
     unreachable!("non-Unix platforms select the WebSocket transport")
 }
 
-/// Serve the Fleet-facing WebSocket used on Linux guests.
+/// Serve the gateway-facing WebSocket used on Linux guests.
 ///
 /// Binds `0.0.0.0:$CUA_ENV_PORT` (default `DEFAULT_PORT`, 3211). The `tokio-tungstenite` acceptor
 /// upgrades any request path, so clients reach it at `/ws` (or root) through the

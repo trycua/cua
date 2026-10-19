@@ -264,6 +264,7 @@ pub use check_permissions::{
 };
 
 pub use cua_driver_core::snapshot_store::ZoomContext;
+pub(crate) use health_report::current_bundle_identifier as main_bundle_identifier;
 pub(crate) use health_report::sw_vers_product_version as macos_product_version;
 
 /// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
@@ -304,7 +305,7 @@ pub(crate) fn background_refusal_result(
 }
 
 /// Hint shown with every `windowserver_connection_invalid` refusal.
-pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `open -n -g -a CuaDriver --args serve`.";
+pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `cua-driver permissions grant`.";
 
 /// Structured refusal for a background action whose no-raise focus step got
 /// `SLPSPostEventRecordTo` status 1002 (invalid connection). Nothing was sent
@@ -1406,6 +1407,6 @@ mod windowserver_refusal_tests {
         assert!(structured["hint"]
             .as_str()
             .unwrap()
-            .contains("open -n -g -a CuaDriver --args serve"));
+            .contains("cua-driver permissions grant"));
     }
 }

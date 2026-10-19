@@ -141,7 +141,7 @@ async def _execute_native_interactive(
     """Open the task's sandbox (local or cloud), run setup and hand it to the user."""
     from cua_bench import make
     from cua_bench.computers.remote import RemoteDesktopSession
-    from cua_bench.sandboxes import CloudAuthError, cloud_auth_source, explain_error, open_sandbox
+    from cua_bench.sandboxes import explain_error, open_sandbox
     from cua_bench.targets import TargetError, resolve_env_spec
 
     from .run import target_from_args
@@ -167,9 +167,7 @@ async def _execute_native_interactive(
         from cua_bench.targets import check_requirements
 
         check_requirements([spec], target)
-        if target.cloud:
-            cloud_auth_source()
-    except (TargetError, CloudAuthError) as error:
+    except TargetError as error:
         print(f"{RED}{error}{RESET}")
         return 1
 

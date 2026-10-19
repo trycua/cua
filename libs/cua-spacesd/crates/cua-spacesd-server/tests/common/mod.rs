@@ -14,10 +14,10 @@
 //! (a container, or through `cua-relay` with `/m/<machine-id>`). Tests that
 //! need in-process fakes skip themselves in that mode.
 //!
-//! Fleet gateway mode: also set `CUA_ENV_TEST_GATEWAY_BEARER` (a Fleet access
-//! token) and optionally `CUA_ENV_TEST_GATEWAY_CLAIM` with `CUA_ENV_TEST_TARGET`
-//! = the claim's gateway service URL (`https://<fleet>/api/svc/<ns>/<sbx>-env`).
-//! SDK clients then go through `ConnectOptions::fleet_gateway` (the Fleet
+//! Gateway mode: also set `CUA_ENV_TEST_GATEWAY_BEARER` (an access token for
+//! the gateway) and optionally `CUA_ENV_TEST_GATEWAY_CLAIM` with
+//! `CUA_ENV_TEST_TARGET` = the URL the gateway serves the driver at.
+//! SDK clients then go through `ConnectOptions::fleet_gateway` (the gateway
 //! bearer in `authorization`, the env token in `x-cua-env-authorization`), and
 //! raw HTTP/WebSocket requests get the same headers.
 //! For runs longer than the bearer's lifetime set
@@ -125,7 +125,7 @@ pub fn remote() -> Option<(String, String)> {
     Some((url, token))
 }
 
-/// A file holding the current Fleet bearer, rewritten by the runner before
+/// A file holding the current gateway bearer, rewritten by the runner before
 /// the bearer expires (`CUA_ENV_TEST_GATEWAY_BEARER_FILE`).
 fn gateway_bearer_file() -> Option<PathBuf> {
     std::env::var_os("CUA_ENV_TEST_GATEWAY_BEARER_FILE")
@@ -137,7 +137,7 @@ fn read_bearer_file(path: &std::path::Path) -> std::io::Result<String> {
     Ok(std::fs::read_to_string(path)?.trim().to_owned())
 }
 
-/// The current Fleet bearer: the bearer file when set (read fresh), else
+/// The current gateway bearer: the bearer file when set (read fresh), else
 /// `CUA_ENV_TEST_GATEWAY_BEARER`.
 fn gateway_bearer() -> Option<String> {
     match gateway_bearer_file() {
@@ -147,7 +147,7 @@ fn gateway_bearer() -> Option<String> {
     .filter(|s| !s.is_empty())
 }
 
-/// Fleet gateway credentials (`CUA_ENV_TEST_GATEWAY_BEARER` or
+/// Gateway credentials (`CUA_ENV_TEST_GATEWAY_BEARER` or
 /// `CUA_ENV_TEST_GATEWAY_BEARER_FILE`, optional `CUA_ENV_TEST_GATEWAY_CLAIM`)
 /// when the remote target is a gateway URL.
 pub fn gateway() -> Option<(String, Option<String>)> {
@@ -161,7 +161,7 @@ pub fn gateway() -> Option<(String, Option<String>)> {
 
 /// Adds the gateway headers to a raw request: an env token already in
 /// `authorization` moves to `x-cua-env-authorization` (the gateway strips
-/// `authorization`), which then carries the Fleet bearer.
+/// `authorization`), which then carries the gateway bearer.
 pub fn apply_gateway(headers: &mut http::HeaderMap) {
     let Some((bearer, claim)) = gateway() else {
         return;
@@ -337,9 +337,9 @@ impl Target {
         transport: TransportPreference,
         token: Option<String>,
     ) -> SpacesdClient {
-        // The Fleet gateway fronts the driver with nginx over HTTP/1.1:
-        // native gRPC (h2c) is not proxied yet, so gateway mode speaks
-        // gRPC-Web on both "transports", like the SDK's Fleet connector.
+        // A gateway in front of the driver can be an HTTP/1.1 proxy (nginx)
+        // that does not carry native gRPC (h2c), so gateway mode speaks
+        // gRPC-Web on both "transports", like the SDK's gateway connector.
         let transport = if gateway().is_some() {
             TransportPreference::GrpcWeb
         } else {
@@ -438,7 +438,7 @@ pub fn pattern_sha(seed: u64, len: u64) -> String {
 type HttpBody = http_body_util::combinators::BoxBody<bytes::Bytes, std::io::Error>;
 
 /// Minimal HTTP/1.1 client for `/files`, `/health` and `/mcp` (http or
-/// https; adds the Fleet gateway headers in gateway mode).
+/// https; adds the gateway headers in gateway mode).
 pub struct TestHttp(
     hyper_util::client::legacy::Client<
         hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,

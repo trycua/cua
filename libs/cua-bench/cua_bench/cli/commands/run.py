@@ -7,7 +7,7 @@ Usage:
     cb run list | info <id> | watch <id> | logs <id> | stop <id>
 
 Both targets use the same runner: each variant gets a cua-sandbox sandbox
-(local gVisor container / QEMU / Lume, or a claim on a managed Fleet pool),
+(a local gVisor container / QEMU / Lume, or a machine of your own cloud),
 the task's setup, the oracle or agent, and evaluate() run in this process,
 and results land in ``$XDG_DATA_HOME/cua-bench/runs/<run id>/``.
 """
@@ -68,7 +68,7 @@ def add_target_args(parser) -> None:
         "--on",
         choices=list(ON_CHOICES),
         default=None,
-        help="Where sandboxes run: local (this machine), cloud, your own cloud account "
+        help="Where sandboxes run: local (this machine), your own cloud account "
         "(aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a "
         "contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). "
         "Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
@@ -85,28 +85,21 @@ def add_target_args(parser) -> None:
         "--runtime",
         choices=["auto", "gvisor", "runc", "qemu", "lume", "kubevirt"],
         default=None,
-        help="Which engine: gvisor or runc (local containers), qemu or lume (local VMs), "
-        "gvisor or kubevirt (cloud containers, VMs). Implies its kind. Default auto: the "
-        "SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
+        help="Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its "
+        "kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else "
+        "`cua config set default.runtime`)",
     )
     group.add_argument(
         "--image",
         help="Image for every task (overrides the task's setup_config.image): an OS alias "
-        "(linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest, "
-        "or pool:<name> for an existing Fleet pool. Env: CUA_BENCH_IMAGE",
+        "(linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest. "
+        "Env: CUA_BENCH_IMAGE",
     )
     group.add_argument("--cpu", type=int, help="vCPUs per sandbox")
     group.add_argument("--memory", help="Memory per sandbox (e.g. 4096, 4G)")
-    group.add_argument(
-        "--warm",
-        action="store_true",
-        help="cloud: keep one replica ready when the managed pool is first created",
-    )
-    group.add_argument(
-        "--claim-ttl",
-        dest="claim_ttl",
-        help="cloud: how long a claim outlives a crashed run (default 15m; renewed while running)",
-    )
+    # Deprecated no-ops: they configured Cua Cloud's managed pools, which have ended.
+    group.add_argument("--warm", action="store_true", help=argparse.SUPPRESS)
+    group.add_argument("--claim-ttl", dest="claim_ttl", help=argparse.SUPPRESS)
     # cua-bench 0.2.11 flags, deprecated (a notice names the new flags).
     group.add_argument(
         "--platform",
@@ -197,26 +190,15 @@ class ConsoleReporter:
                 pass
 
     def plan(self, target, jobs, plans) -> None:
-        sandboxed = sum(1 for job in jobs if job.spec.needs_sandbox)
         backends = sorted({job.spec.backend(target.on) for job in jobs})
         self.line(
             f"{len(jobs)} variant(s) on {self._c(BOLD, target.on)} "
             f"({', '.join(backends)}), up to {target.concurrency} at a time"
         )
         for plan in plans:
-            where = "managed pool" if target.cloud else "local sandboxes"
             self.line(
-                f"  {plan.spec.image_label}  {plan.tasks} variant(s), {where} "
+                f"  {plan.spec.image_label}  {plan.tasks} variant(s), sandboxes "
                 f"max {plan.max_pool_size}"
-            )
-        if target.cloud and sandboxed:
-            self.line(
-                self._c(
-                    GREY,
-                    "  Managed pools autoscale from zero: an idle pool takes about a minute "
-                    "(VMs several) to start its first sandbox, and scales back down after "
-                    "the run.",
-                )
             )
 
     def started(self, job, index, total) -> None:
@@ -426,7 +408,6 @@ def cmd_run_dataset(args) -> int:
 
 
 def _cmd_execute(args, kind: str) -> int:
-    from cua_bench.sandboxes import CloudAuthError, cloud_auth_source
     from cua_bench.sessions import manager
     from cua_bench.targets import TargetError
 
@@ -453,14 +434,6 @@ def _cmd_execute(args, kind: str) -> int:
     if getattr(args, "dry_run", False):
         return _print_dry_run(target, jobs)
 
-    auth = None
-    if target.cloud and any(job.spec.needs_sandbox for job in jobs):
-        try:
-            auth = cloud_auth_source()
-        except CloudAuthError as error:
-            print(f"{RED}{error}{RESET}")
-            return 1
-
     agent_display = opts.label
     output_dir.mkdir(parents=True, exist_ok=True)
     for job in jobs:
@@ -485,8 +458,6 @@ def _cmd_execute(args, kind: str) -> int:
 
     print(f"\n  {BOLD}Run ID:{RESET}  {run_id}")
     print(f"  {BOLD}Output:{RESET}  {output_dir}")
-    if auth is not None:
-        print(f"  {BOLD}Auth:{RESET}    {auth}")
 
     if getattr(args, "detach", False):
         return _spawn_detached(args, run_id, output_dir, jobs)
@@ -709,7 +680,7 @@ def _print_dry_run(target, jobs) -> int:
     reporter.plan(
         target, jobs, plan_claims(((j.session_id, j.spec) for j in jobs), target.concurrency)
     )
-    where = "Fleet" if target.cloud else "local"
+    where = target.on
     for job in jobs:
         spec = job.spec
         note = {

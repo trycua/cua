@@ -97,8 +97,9 @@ pub struct SandboxInfo {
     /// The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or
     /// `kubevirt` (empty when not known).
     pub runtime: String,
-    /// `runtime_type` as persisted (`fleet`, `direct`, `gvisor`, `qemu`,
-    /// ...); prefer `location`, `kind` and `runtime`.
+    /// `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
+    /// for a record of the Cua Cloud that has ended); prefer `location`,
+    /// `kind` and `runtime`.
     pub runtime_type: String,
     /// Status.
     pub status: SandboxStatus,
@@ -108,8 +109,7 @@ pub struct SandboxInfo {
     pub ephemeral: bool,
     /// Declared services: name → guest port (0 = only the name is known).
     pub services: HashMap<String, u16>,
-    /// Service base URLs by name (Fleet: gateway URLs that need the Fleet
-    /// bearer).
+    /// Service base URLs by name.
     pub endpoints: HashMap<String, String>,
     /// Image, when known.
     pub image: Option<String>,
@@ -270,8 +270,7 @@ pub struct CloudOptions {
     #[uniffi(default = None)]
     pub pool: Option<String>,
     /// With `pool`: update the pool's template to the given fields instead
-    /// of failing on a mismatch (`Fleet.apply` semantics for the template;
-    /// the pool's capacity is kept). Managed pools refuse it.
+    /// of failing on a mismatch. Cua Cloud has ended: ignored.
     #[uniffi(default = false)]
     pub apply: bool,
 }
@@ -506,10 +505,10 @@ pub struct BuildFile {
     pub destination: String,
 }
 
-/// Image layers built on top of a sandbox's image. Cloud: a remote build
-/// (Fleet images API). Local: a build into the container engine (container
-/// images only; VM images take no layers here). Both are cached by the same
-/// content hash (`cua-b-<hash>`), so an identical spec never rebuilds.
+/// Image layers built on top of a sandbox's image. Local: a build into the
+/// container engine (container images only; VM images take no layers here),
+/// cached by a content hash (`cua-b-<hash>`), so an identical spec never
+/// rebuilds. (Cua Cloud's remote build has ended.)
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct ImageBuild {
     /// Steps, in order.
@@ -585,9 +584,8 @@ pub struct SandboxCreateOptions {
     /// spacesd token.
     #[uniffi(default = None)]
     pub token: Option<String>,
-    /// Fleet: claim from this existing (user-owned) pool. Unset: a managed,
-    /// autoscaled pool keyed by image and shape. Local (with an empty
-    /// image): run this Fleet pool's template locally.
+    /// Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
+    /// error.
     #[uniffi(default = None)]
     pub pool: Option<String>,
     /// Guest OS (`linux`, `macos`, `windows`).
@@ -599,7 +597,7 @@ pub struct SandboxCreateOptions {
     /// Memory (MiB).
     #[uniffi(default = None)]
     pub memory_mb: Option<u64>,
-    /// Extra guest ports (local: published; Fleet: `port-<n>` services).
+    /// Extra guest ports (local: published).
     #[uniffi(default = [])]
     pub ports: Vec<u16>,
     /// Named services (name → guest port). `env` defaults to 3211.
@@ -611,12 +609,12 @@ pub struct SandboxCreateOptions {
     /// Readiness budget (default 10 min).
     #[uniffi(default = None)]
     pub ready_timeout_ms: Option<u32>,
-    /// Guest environment (local: container environment or cloud-init;
-    /// cloud: the template environment with `processMode: Run`, on gVisor
-    /// and KubeVirt; values are not secrets).
+    /// Guest environment (local: container environment or cloud-init; values
+    /// are not secrets).
     #[uniffi(default)]
     pub env: HashMap<String, String>,
-    /// Deprecated: initial replicas of a new managed pool (> 0 = warm).
+    /// Deprecated, and Cua Cloud has ended: initial replicas of a new
+    /// managed pool (> 0 = warm).
     #[uniffi(default = None)]
     pub fleet_replicas: Option<u32>,
     /// Deprecated: use `cloud.claim_ttl_seconds`.
@@ -776,6 +774,9 @@ impl SandboxCreateOptions {
         let r = settings
             .resolve(on, kind, runtime)
             .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
+        if r.on == On::Cloud {
+            return Err(CuaError::Unsupported(cua_sandbox_core::CLOUD_ENDED.into()));
+        }
         cua_sandbox_core::placement::validate(&r.on, r.kind, &r.runtime).map_err(place)?;
         Ok(r)
     }
@@ -958,7 +959,7 @@ impl From<cua_daemon::shares::PublicUrl> for PublicUrl {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MediaBridge {
     /// Loopback `ws://` URL carrying a short-lived bridge ticket. Speaks
-    /// rcdp wire v2 unchanged; no Fleet bearer or env token is exposed.
+    /// rcdp wire v2 unchanged; no env token is exposed.
     pub ws_url: String,
     /// The bridge ticket (also accepted as subprotocol
     /// `cua.ticket.<ticket>`).
@@ -1030,8 +1031,9 @@ impl Sandboxes {
 
 #[uniffi::export]
 impl Sandboxes {
-    /// Creates (Fleet, local) or connects (direct) a sandbox and waits for
-    /// the provider and every readiness probe.
+    /// Creates (local, your cloud, a provider) or connects (direct) a sandbox
+    /// and waits for the provider and every readiness probe. `on: "cloud"`
+    /// fails with the "Cua Cloud has ended" error.
     pub async fn create(&self, options: SandboxCreateOptions) -> Result<Arc<Sandbox>> {
         self.create_reported(options, None).await
     }
@@ -1099,8 +1101,7 @@ impl Sandboxes {
 #[uniffi::export]
 impl Sandboxes {
     /// Connects directly to a machine by URL (`http(s)://host:port`, bare
-    /// `host:port`, a Fleet service URL or a relay URL) with an optional
-    /// spacesd token. No daemon is assumed and nothing is probed.
+    /// `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
     pub async fn connect_url(
         &self,
         url: String,
@@ -1140,10 +1141,8 @@ impl Sandboxes {
     /// all of them, local, direct and the account's live cloud sandboxes,
     /// whatever the default location is. `"local"`, `"cloud"` or
     /// `"direct"`: only those.
-    /// Cloud sandboxes never fail the listing: without Fleet credentials
-    /// they are left out silently, and when Fleet fails or takes longer than
-    /// 5 s they are left out with a warning (logged here;
-    /// [`Sandboxes::list_with_warnings`] returns it).
+    /// Cua Cloud has ended: its sandboxes are never listed, and listing
+    /// never asks Fleet.
     pub async fn list(&self, location: Option<String>) -> Result<Vec<SandboxInfo>> {
         let listing = self.list_with_warnings(location).await?;
         for w in &listing.warnings {
@@ -1222,8 +1221,7 @@ impl Sandboxes {
 
 impl Sandboxes {
     /// The sandboxes this machine knows (state files, local backends,
-    /// connected URLs, Fleet claims it holds) of `provider` (all when
-    /// `None`), without asking Fleet for live claims. Rust only; the CLI's
+    /// connected URLs) of `provider` (all when `None`). Rust only; the CLI's
     /// `cua do ls` uses it.
     pub async fn list_known(&self, location: Option<&str>) -> Result<Vec<SandboxInfo>> {
         let backend = self.backend.clone();
@@ -1352,20 +1350,9 @@ impl Sandbox {
             match &backend {
                 Backend::Embedded(rt) => {
                     let a = rt.env(&name, timeout).await?;
-                    let fleet = !a.ws_headers.is_empty();
-                    let client = SpacesdClient::new(a.client, a.ws_headers).at(&location);
-                    if !fleet {
-                        return Ok(Arc::new(client));
-                    }
-                    // A cloud Space: the Fleet bearer in the headers expires
-                    // within minutes, so each socket re-reads the attachment,
-                    // which re-mints it (cached until it expires).
-                    let (rt, name) = (rt.clone(), name.clone());
-                    let refresh: super::spacesd::WsHeaderRefresh = Arc::new(move || {
-                        let (rt, name) = (rt.clone(), name.clone());
-                        Box::pin(async move { Ok(rt.env(&name, timeout).await?.ws_headers) })
-                    });
-                    Ok(Arc::new(client.with_ws_refresh(refresh)))
+                    Ok(Arc::new(
+                        SpacesdClient::new(a.client, a.ws_headers).at(&location),
+                    ))
                 }
                 Backend::Daemon(d) => {
                     let ep = d.env_endpoint(&name, timeout).await?;
@@ -1475,9 +1462,8 @@ impl Sandbox {
 
     /// Where the MCP server behind `service` is (URL of its endpoint at
     /// `path`, default `/mcp`, plus the headers every request needs), for
-    /// any MCP client. Embedded: the service route itself (loopback, or the
-    /// Fleet gateway with a fresh bearer and claim header). Daemon: the
-    /// daemon's streaming passthrough with its loopback bearer.
+    /// any MCP client. Embedded: the service route itself (loopback).
+    /// Daemon: the daemon's streaming passthrough with its loopback bearer.
     #[uniffi::method(default(path = None))]
     pub async fn mcp_config(
         &self,
@@ -1499,9 +1485,8 @@ impl Sandbox {
     }
 
     /// A shareable URL for `service` that stops working after `ttl_seconds`
-    /// (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
-    /// Local: a loopback URL with its own token, served by the cua daemon
-    /// (started if needed; `CUA_BIN` names the CLI).
+    /// (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+    /// by the cua daemon (started if needed; `CUA_BIN` names the CLI).
     #[uniffi::method(default(ttl_seconds = None, label = None))]
     pub async fn public_url(
         &self,
@@ -1536,9 +1521,8 @@ impl Sandbox {
     }
 
     /// Forwards a loopback port to guest `port`: a TCP forward locally (and
-    /// over cua-spacesd's tunnel when the image has it); in the cloud
-    /// without cua-spacesd, a loopback HTTP/WebSocket proxy through the
-    /// Fleet gateway. Either way `url()` is a loopback URL.
+    /// over cua-spacesd's tunnel when the image has it). `url()` is a
+    /// loopback URL.
     pub async fn forward(&self, port: u16) -> Result<Arc<PortForward>> {
         let started = std::time::Instant::now();
         let r: Result<Arc<PortForward>> = async move {
@@ -1583,7 +1567,7 @@ impl Sandbox {
         .await
     }
 
-    /// Extends a Fleet lease by `seconds`.
+    /// Extends the sandbox's lease by `seconds`, for a provider that has one.
     pub async fn keep_alive(&self, seconds: u32) -> Result<()> {
         let backend = self.backend.clone();
         let name = self.info.id.clone();
@@ -1612,9 +1596,8 @@ impl Sandbox {
         self.lifecycle(Op::Restart).await
     }
 
-    /// Managed Fleet claims: stop renewing the claim and forget the handle;
-    /// the claim runs until its current shutdown time. Embedded runtime
-    /// only (a daemon holds its claims by design).
+    /// Forgets the handle this runtime holds (a Cua Cloud claim used to
+    /// stop renewing; Cua Cloud has ended). Embedded runtime only.
     pub fn detach(&self) -> Result<()> {
         match &self.backend {
             Backend::Embedded(rt) => {
@@ -1623,12 +1606,13 @@ impl Sandbox {
                 Ok(())
             }
             Backend::Daemon(_) => Err(CuaError::Unsupported(
-                "detach: the cua daemon holds Fleet claims; use delete or keep_alive".into(),
+                "detach: the cua daemon holds the handles; use delete or keep_alive".into(),
             )),
         }
     }
 
-    /// Deletes (Fleet: releases the claim and an ephemeral pool).
+    /// Deletes (local: removes it; direct: forgets it; your cloud: deletes
+    /// the machine).
     pub async fn delete(&self) -> Result<()> {
         let backend = self.backend.clone();
         let name = self.info.id.clone();
@@ -1930,8 +1914,8 @@ impl Service {
 
     /// A shareable URL for this service that stops working after
     /// `ttl_seconds` (60 s to 24 h, default 1 h): the same as
-    /// `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
-    /// Local: a loopback URL with its own token, served by the cua daemon.
+    /// `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+    /// served by the cua daemon.
     #[uniffi::method(default(ttl_seconds = None, label = None))]
     pub async fn public_url(
         &self,
@@ -2002,11 +1986,9 @@ impl Service {
         .await
     }
 
-    /// One HTTP request to `path` on the service. Credentials (Fleet bearer
-    /// and claim) are attached by the runtime. `headers` are sent as given
-    /// (for example `content-type`, or `accept` and `mcp-session-id` for
-    /// MCP over Fleet); `authorization` is refused on Fleet, where the
-    /// gateway bearer owns it.
+    /// One HTTP request to `path` on the service. Credentials are attached by
+    /// the runtime. `headers` are sent as given (for example `content-type`,
+    /// or `accept` and `mcp-session-id` for MCP).
     #[uniffi::method(default(headers = None))]
     pub async fn request(
         &self,
@@ -2080,7 +2062,7 @@ impl PortForward {
         self.info.local_addr.clone()
     }
 
-    /// URL to use (loopback URL, or the Fleet gateway URL).
+    /// URL to use (a loopback URL).
     pub fn url(&self) -> Option<String> {
         self.info.url.clone()
     }
@@ -2167,24 +2149,27 @@ mod tests {
         let r = o.to_request().unwrap();
         assert_eq!(r.location.as_deref(), Some("local"));
         assert_eq!(r.provider, Some(CoreProvider::Local));
-        // Cloud options imply the cloud.
+        // Cloud options imply the cloud, and Cua Cloud has ended.
         o.cloud = Some(CloudOptions::default());
-        assert_eq!(o.placement().unwrap().on, On::Cloud);
-        assert_eq!(o.to_request().unwrap().provider, Some(CoreProvider::Fleet));
+        let e = o.placement().unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            format!("unsupported: {}", cua_sandbox_core::CLOUD_ENDED)
+        );
         // ...and contradict an explicit local.
         o.on = Some("local".into());
         assert!(matches!(o.placement(), Err(CuaError::InvalidArgument(_))));
         // A deprecated flat cloud field implies the cloud too.
         let mut o = SandboxCreateOptions::auto("x");
         o.warm = Some(true);
-        assert_eq!(o.placement().unwrap().on, On::Cloud);
+        assert!(matches!(o.placement(), Err(CuaError::Unsupported(_))));
         // direct:<addr> carries the address.
         let o = SandboxCreateOptions::new("direct:127.0.0.1:3211", "");
         let r = o.to_request().unwrap();
         assert_eq!(r.url.as_deref(), Some("127.0.0.1:3211"));
         assert_eq!(r.location.as_deref(), Some("direct:127.0.0.1:3211"));
         // kind and runtime go out resolved.
-        let mut o = SandboxCreateOptions::new("cloud", "img");
+        let mut o = SandboxCreateOptions::new("local", "img");
         o.kind = Some("vm".into());
         let p = o.placement().unwrap();
         assert_eq!((p.kind, p.runtime), (Kind::Vm, Runtime::Auto));
@@ -2194,13 +2179,13 @@ mod tests {
     #[test]
     fn invalid_placements_are_typed_and_list_the_valid_values() {
         let _env = super::super::test_env::EnvGuard::isolated();
-        let mut o = SandboxCreateOptions::new("cloud", "img");
-        o.runtime = Some("qemu".into());
+        let mut o = SandboxCreateOptions::new("local", "img");
+        o.runtime = Some("kubevirt".into());
         let e = o.placement().unwrap_err();
         let CuaError::InvalidPlacement(m) = &e else {
             panic!("{e:?}")
         };
-        assert!(m.ends_with("valid runtime: auto, gvisor, kubevirt"), "{m}");
+        assert!(m.contains("valid runtime: auto"), "{m}");
         assert_eq!(e.variant(), "InvalidPlacement");
         let mut o = SandboxCreateOptions::new("local", "img");
         o.kind = Some("container".into());
@@ -2219,20 +2204,23 @@ mod tests {
         let mut s = cua_sandbox_core::settings::Settings::load().unwrap();
         s.set(
             cua_sandbox_core::settings::key("default.on").unwrap(),
-            "cloud",
+            "aws",
         )
         .unwrap();
         let o = SandboxCreateOptions::auto("img");
         let p = o.placement().unwrap();
-        assert_eq!(p.on, On::Cloud);
+        assert_eq!(p.on, On::Provider("aws".into()));
         assert!(matches!(
             p.on_source,
             cua_sandbox_core::settings::Source::Config(_)
         ));
         env.set("CUA_DEFAULT_ON", "local");
         assert_eq!(o.placement().unwrap().on, On::Local);
+        let o = SandboxCreateOptions::new("local", "img");
+        assert_eq!(o.placement().unwrap().on, On::Local);
+        // Cua Cloud has ended.
         let o = SandboxCreateOptions::new("cloud", "img");
-        assert_eq!(o.placement().unwrap().on, On::Cloud);
+        assert!(matches!(o.placement(), Err(CuaError::Unsupported(_))));
     }
 
     #[test]
@@ -2243,7 +2231,7 @@ mod tests {
         assert_eq!(r.provider, Some(CoreProvider::Contrib));
         assert_eq!(r.location.as_deref(), Some("e2b"));
         o.on = Some("cloud".into());
-        assert_eq!(o.to_request().unwrap().provider, Some(CoreProvider::Fleet));
+        assert!(matches!(o.to_request(), Err(CuaError::Unsupported(_))));
         o.on = Some("direct:127.0.0.1:3211".into());
         assert_eq!(
             o.to_request().unwrap().url.as_deref(),
@@ -2252,39 +2240,6 @@ mod tests {
         o.on = Some("nosuchcloud".into());
         let err = o.to_request().unwrap_err().to_string();
         assert!(err.contains("daytona"), "{err}");
-    }
-
-    #[test]
-    fn cloud_options_win_over_the_deprecated_flat_fields() {
-        let mut o = SandboxCreateOptions::new("cloud", "python:3.12-slim");
-        o.warm = Some(false);
-        o.max_pool_size = Some(2);
-        o.command = Some(vec!["python".into(), "/srv.py".into()]);
-        o.services.insert("mcp".into(), 8765);
-        o.wait_for = vec![ReadinessProbe::tcp("mcp")];
-        let r = o.to_request().unwrap();
-        assert_eq!(r.fleet_warm, Some(false));
-        assert_eq!(r.fleet_max_pool_size, Some(2));
-        assert_eq!(r.command, o.command);
-        assert_eq!(r.wait_for, vec![Probe::Tcp(8765)]);
-        o.cloud = Some(CloudOptions {
-            warm: Some(true),
-            max_pool_size: Some(5),
-            claim_ttl_seconds: Some(600),
-            pool: None,
-            apply: true,
-        });
-        o.runtime = Some("gvisor".into());
-        let r = o.to_request().unwrap();
-        assert!(r.fleet_apply);
-        assert_eq!(
-            (r.fleet_warm, r.fleet_max_pool_size, r.fleet_ttl_seconds),
-            (Some(true), Some(5), Some(600))
-        );
-        assert_eq!(r.runtime.as_deref(), Some("gvisor"));
-        // An empty argv is no command.
-        o.command = Some(vec![]);
-        assert_eq!(o.to_request().unwrap().command, None);
     }
 
     #[test]
@@ -2326,7 +2281,8 @@ pub struct SandboxRefParts {
 /// includes that provider (see [`contrib_providers_built`]).
 #[uniffi::export]
 pub fn sandbox_locations() -> Vec<String> {
-    let mut out: Vec<String> = ["local", "cloud"]
+    // Cua Cloud (`cloud`) has ended and is no longer offered.
+    let mut out: Vec<String> = ["local"]
         .into_iter()
         .chain(cua_sandbox_core::CONTRIB_LOCATIONS.iter().copied())
         .map(str::to_string)

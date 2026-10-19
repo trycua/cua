@@ -1103,7 +1103,7 @@
           "const": true,
           "default": false,
           "dest": "warm",
-          "hidden": false,
+          "hidden": true,
           "metavar": null,
           "nargs": 0,
           "options": [
@@ -1118,7 +1118,7 @@
           "const": null,
           "default": null,
           "dest": "claim_ttl",
-          "hidden": false,
+          "hidden": true,
           "metavar": null,
           "nargs": null,
           "options": [
@@ -1651,7 +1651,7 @@
               "const": true,
               "default": false,
               "dest": "warm",
-              "hidden": false,
+              "hidden": true,
               "metavar": null,
               "nargs": 0,
               "options": [
@@ -1666,7 +1666,7 @@
               "const": null,
               "default": null,
               "dest": "claim_ttl",
-              "hidden": false,
+              "hidden": true,
               "metavar": null,
               "nargs": null,
               "options": [
@@ -2228,7 +2228,7 @@
               "const": true,
               "default": false,
               "dest": "warm",
-              "hidden": false,
+              "hidden": true,
               "metavar": null,
               "nargs": 0,
               "options": [
@@ -2243,7 +2243,7 @@
               "const": null,
               "default": null,
               "dest": "claim_ttl",
-              "hidden": false,
+              "hidden": true,
               "metavar": null,
               "nargs": null,
               "options": [

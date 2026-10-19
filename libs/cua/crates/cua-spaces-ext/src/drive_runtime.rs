@@ -270,9 +270,16 @@ impl SpacesDrive for Spaces {
                 // capabilities, not a guest without the volume. Connect
                 // afresh next time, and fail so the supervisor retries.
                 let _ = self.forget_connection(&id).await;
-                let why = "its cua-spacesd is not answering yet (the Space is still starting); \
-                           Cua Volume mounts once it does";
-                ext.runtime.note_unavailable(&id, Some(why.into()));
+                // No route to the VM is not "still starting": macOS Local
+                // Network privacy blocks this process, and waiting does not
+                // help until the named app is allowed (CUA-1807).
+                let why = match s.spacesd_unreachable_cause() {
+                    Some(cause) => format!("its cua-spacesd can't be reached: {cause}"),
+                    None => "its cua-spacesd is not answering yet (the Space is still starting); \
+                             Cua Volume mounts once it does"
+                        .into(),
+                };
+                ext.runtime.note_unavailable(&id, Some(why.clone()));
                 return Err(Error::extension("precondition_failed", why));
             }
             let why = s

@@ -282,6 +282,11 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     // (the Spaces apps' notch and previews, SDK scripts); idle otherwise.
     #[cfg(feature = "spaces")]
     let _thumbnails = runtime.spaces().spawn_thumbnail_refresh();
+    // This computer's processor, memory and disk, sampled every five
+    // minutes while nobody watches (the menu bar warning), and published
+    // into its relay machine record when it is one.
+    #[cfg(feature = "spaces")]
+    let _resources = runtime.spaces().spawn_resources_publisher();
     // A local Space that stops on its own (out of memory, a crash) is
     // recorded as stopped, and why, for every client.
     let _stop_watch = runtime.sandboxes().spawn_stop_watch();
@@ -640,9 +645,8 @@ impl Svc {
 
     /// The env connection and WebSocket headers a media bridge for `name`
     /// relays to: a registered Space (a `relay:` or legacy `space://…` id, or
-    /// a name the Spaces
-    /// registry resolves when no sandbox has it), with its gateway headers
-    /// (Fleet bearer, claim, env token), else a sandbox.
+    /// a name the Spaces registry resolves when no sandbox has it), with its
+    /// gateway headers (relay or env token), else a sandbox.
     async fn media_upstream(
         &self,
         name: &str,
@@ -1128,11 +1132,7 @@ impl SandboxService for Svc {
 #[tonic::async_trait]
 impl RuntimeService for Svc {
     async fn doctor(&self, _: tonic::Request<pb::DoctorRequest>) -> R<pb::DoctorResponse> {
-        let report = crate::local::doctor_report().await;
-        ok(pb::DoctorResponse {
-            checks: crate::local::doctor_checks(&report),
-            report_json: serde_json::to_string(&report).unwrap_or_default(),
-        })
+        ok(crate::local::doctor_response().await)
     }
 
     async fn setup(&self, req: tonic::Request<pb::SetupRequest>) -> R<pb::SetupResponse> {

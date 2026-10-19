@@ -479,7 +479,7 @@ impl DaemonClient {
     }
 
     /// `ListSandboxes`: the known sandboxes of `provider` (all when
-    /// `None`), plus live Fleet claims with `include_cloud` (see
+    /// `None`). `include_cloud` is ignored: Cua Cloud has ended (see
     /// [`crate::Runtime::list_filtered`]).
     #[allow(deprecated)]
     pub async fn list_filtered(
@@ -507,7 +507,7 @@ impl DaemonClient {
         })
     }
 
-    /// `ListSandboxes` of the known sandboxes only (no live Fleet listing).
+    /// `ListSandboxes` of the known sandboxes only.
     pub async fn list(&self, provider: Option<ProviderKind>) -> Result<Vec<SandboxRecord>> {
         Ok(self.list_filtered(provider, false).await?.sandboxes)
     }

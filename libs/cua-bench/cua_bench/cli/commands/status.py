@@ -6,6 +6,8 @@ Usage:
     cb status                           # Show system overview
 """
 
+from cua_bench._ended import CLOUD_ENDED
+
 from ._help import examples
 import asyncio
 import os
@@ -33,17 +35,6 @@ def _check(label: str, ok: bool, good: str, bad: str) -> None:
     print(f"  {label:<9}{mark}")
 
 
-def _cloud_auth() -> str:
-    """The credential source, without reading the OS credential vault: a
-    dashboard is not an explicit sign-in check (``cb run --on cloud`` is)."""
-    try:
-        from cua_sandbox import fleet_auth_source
-
-        return fleet_auth_source(read_session=False) or ""
-    except Exception:  # noqa: BLE001 - SDK not loadable
-        return ""
-
-
 async def _execute_async(args) -> int:
     """Execute status command asynchronously."""
     print("\ncua-bench Status")
@@ -58,10 +49,9 @@ async def _execute_async(args) -> int:
     if system == "Darwin":
         _check("Lume:", shutil.which("lume") is not None, "installed", "not installed (macOS VMs)")
 
-    print(f"\n{BOLD}Cloud{RESET} (--on cloud)")
+    print(f"\n{BOLD}Cloud{RESET}")
     print("-" * 70)
-    source = _cloud_auth()
-    _check("Auth:", bool(source), source, "not signed in (cua auth login)")
+    print(f"  {YELLOW}{CLOUD_ENDED}{RESET}")
 
     print(f"\n{BOLD}Images{RESET} (canonical; any registry image works with --image)")
     print("-" * 70)

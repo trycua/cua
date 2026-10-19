@@ -32,7 +32,7 @@ RCDP messages and framing) is open source, so any client can attach to a
 ticket.
 
 The same calls in TypeScript, Rust and Swift, from
-[the examples in other languages](/spaces/examples/other-languages). The first frame is a keyframe.
+[the examples in other languages](/spaces/guides/create-a-space-with-the-sdk#examples-in-other-languages). The first frame is a keyframe.
 
 <Tabs items={['TypeScript', 'Rust', 'Swift']}>
   <Tab value="TypeScript">
@@ -92,7 +92,7 @@ Agents use the MCP tool `stream_endpoint`. A Space without `desktop_stream`,
 
 | | Details |
 |---|---|
-| WebSocket `/media?ticket=...` on 3211 | Default. Works through the Fleet gateway, the relay and browsers. |
+| WebSocket `/media?ticket=...` on 3211 | Default. Works through the relay and browsers. |
 | QUIC (ALPN `rcdp/2`) on UDP 3212 | Lower latency when you reach the guest directly; certificate pinned from `OpenMedia`. |
 | Video | H.264 (Annex B, SPS/PPS on every keyframe). Encode: VideoToolbox (hardware) on macOS, OpenH264 (software) in Linux Spaces. SDK decode: VideoToolbox (hardware) on macOS, OpenH264 elsewhere. Browser viewers decode with WebCodecs. |
 | Audio | Opus 48 kHz stereo, 20 ms frames, same clock as video (A/V skew within ±40 ms). |

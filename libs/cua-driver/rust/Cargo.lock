@@ -3586,6 +3586,7 @@ dependencies = [
  "clipboard-rs",
  "core-foundation",
  "core-graphics",
+ "cua-cursor-motion",
  "cua-driver-contract",
  "cua-driver-core",
  "cursor-overlay",

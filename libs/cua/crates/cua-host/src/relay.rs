@@ -235,6 +235,10 @@ pub struct MachinePatch {
     /// Sharing on/off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sharing: Option<bool>,
+    /// Meta keys to set (merged into the machine's [`Machine::meta`]; an
+    /// empty value removes the key). Older relays ignore it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// `GET /v1/info`.

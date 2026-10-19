@@ -720,8 +720,12 @@ impl SystemService for Svc {
         &self,
         _: tonic::Request<pb::MetricsRequest>,
     ) -> Result<tonic::Response<pb::MetricsResponse>, Status> {
-        // A 4 GiB guest with a 32 GiB disk, both its own.
+        // A 4-core guest at 12.5% with a 4 GiB memory and a 32 GiB disk, both
+        // its own.
         Ok(tonic::Response::new(pb::MetricsResponse {
+            cpu_count: 4,
+            cpu_percent: 12.5,
+            load_average_1m: 0.75,
             memory_total_bytes: 4 << 30,
             memory_used_bytes: 1_610_612_736,
             memory_limited: true,

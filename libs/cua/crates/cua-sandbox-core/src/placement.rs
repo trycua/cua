@@ -92,8 +92,8 @@ impl On {
                             "{prefix} needs an address, for example {prefix}{}",
                             match prefix {
                                 "direct:" => "127.0.0.1:3211",
-                                "host:" => "<machine name or id>",
-                                _ => "<machine-id>",
+                                "host:" => "<computer name or id>",
+                                _ => "<computer-id>",
                             }
                         ),
                         valid_on(),
@@ -119,7 +119,7 @@ impl On {
             return Ok(On::Provider(lower));
         }
         let hint = match lower.as_str() {
-            "fleet" => " (the cloud location is `cloud`)".to_string(),
+            "fleet" => " (Cua Cloud has ended)".to_string(),
             "docker" | "container" => {
                 " (`--on` says where it runs; use `--kind container`)".to_string()
             }
@@ -459,7 +459,7 @@ impl Capabilities {
 pub fn local_capabilities() -> Capabilities {
     Capabilities {
         name: "local".into(),
-        description: "this machine: a container (gVisor or runc) or a VM (QEMU or Lume)".into(),
+        description: "this computer: a container (gVisor or runc) or a VM (QEMU or Lume)".into(),
         kinds: vec![
             KindSupport {
                 kind: Kind::Container,
@@ -532,9 +532,11 @@ pub fn provider(name: &str) -> Option<Capabilities> {
         .cloned()
 }
 
-/// Every location: `local`, `cloud`, then the registered providers.
+/// Every location: `local`, then the registered providers. Cua Cloud
+/// (`cloud`) has ended and is no longer listed; it still parses, and a
+/// create there fails with [`crate::CLOUD_ENDED`].
 pub fn locations() -> Vec<Capabilities> {
-    let mut v = vec![local_capabilities(), cloud_capabilities()];
+    let mut v = vec![local_capabilities()];
     v.extend(
         providers_lock()
             .read()
@@ -558,7 +560,7 @@ fn valid_on() -> Vec<String> {
         }
     }
     v.push("direct:<addr>".into());
-    v.push("host:<machine>".into());
+    v.push("host:<computer>".into());
     v
 }
 
@@ -576,12 +578,12 @@ pub fn capabilities(on: &On) -> Capabilities {
         // the host itself refuses what its runtimes cannot do.
         On::Host(_) => Capabilities {
             name: "host".into(),
-            description: "one of your machines that provides Spaces".into(),
+            description: "one of your computers that provides Spaces".into(),
             ..local_capabilities()
         },
         On::Direct(_) | On::Relay(_) => Capabilities {
             name: on.location().into(),
-            description: "an existing machine".into(),
+            description: "an existing computer".into(),
             kinds: vec![],
         },
     }
@@ -674,7 +676,9 @@ pub fn validate(on: &On, kind: Kind, runtime: &Runtime) -> Result<Kind, Placemen
             return Err(PlacementError::new(
                 Axis::Kind,
                 kind.as_str(),
-                format!("--kind {kind} does not apply to {on}: it connects to an existing machine"),
+                format!(
+                    "--kind {kind} does not apply to {on}: it connects to an existing computer"
+                ),
                 vec!["auto".into()],
             ));
         }
@@ -683,7 +687,7 @@ pub fn validate(on: &On, kind: Kind, runtime: &Runtime) -> Result<Kind, Placemen
                 Axis::Runtime,
                 runtime.as_str(),
                 format!(
-                    "--runtime {runtime} does not apply to {on}: it connects to an existing machine"
+                    "--runtime {runtime} does not apply to {on}: it connects to an existing computer"
                 ),
                 vec!["auto".into()],
             ));
@@ -770,7 +774,7 @@ pub fn select(
             on: on.clone(),
             kind: Kind::Auto,
             runtime: Runtime::Auto,
-            reason: "an existing machine".into(),
+            reason: "an existing computer".into(),
         });
     }
     let caps = capabilities(on);
@@ -1037,13 +1041,13 @@ mod tests {
             ("gvisor", "--runtime gvisor"),
             ("docker", "--kind container"),
             ("vm", "--kind vm"),
-            ("fleet", "`cloud`"),
+            ("fleet", "Cua Cloud has ended"),
         ] {
             let e = On::parse(word).unwrap_err();
             assert_eq!(e.axis, Axis::On, "{word}");
             assert!(e.message.contains(hint), "{word}: {}", e.message);
             assert!(e.valid.contains(&"local".to_string()), "{word}");
-            assert!(e.valid.contains(&"cloud".to_string()), "{word}");
+            assert!(!e.valid.contains(&"cloud".to_string()), "{word}");
         }
         assert!(
             On::parse("direct:")

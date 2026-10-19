@@ -78,6 +78,8 @@ struct State_ {
     /// Every machine read answers 503, as the proxy in front of the
     /// relay does while it has no backend.
     reads_down: bool,
+    /// A relay that predates meta patches: the key is ignored.
+    ignore_meta_patches: bool,
     /// Machine registrations received (including refused ones).
     register_calls: usize,
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
@@ -312,7 +314,7 @@ async fn register(
                 return err(StatusCode::UNAUTHORIZED, "this pairing code is not valid");
             };
             if id.len() < 8 {
-                return err(StatusCode::BAD_REQUEST, "invalid machine id");
+                return err(StatusCode::BAD_REQUEST, "invalid computer id");
             }
             p.used_at = Some(now_secs());
             p.machine = Some(id.clone());
@@ -326,12 +328,12 @@ async fn register(
         },
     };
     if id.len() < 8 {
-        return err(StatusCode::BAD_REQUEST, "invalid machine id");
+        return err(StatusCode::BAD_REQUEST, "invalid computer id");
     }
     if let Some(existing) = st.machines.get(&id)
         && existing.machine.owner.id != who.id
     {
-        return err(StatusCode::CONFLICT, "machine id owned by another account");
+        return err(StatusCode::CONFLICT, "computer id owned by another account");
     }
     let allow: Vec<String> = body["allow"]
         .as_array()
@@ -512,7 +514,7 @@ fn authorize<'a>(
 ) -> Result<(Machine, &'a Record), Response> {
     st.gate(headers)?;
     let Some(record) = st.machines.get(id) else {
-        return Err(err(StatusCode::NOT_FOUND, "no such machine"));
+        return Err(err(StatusCode::NOT_FOUND, "no such computer"));
     };
     match caller(st, headers) {
         Some(Caller::Machine(m)) if m == id => {
@@ -523,7 +525,7 @@ fn authorize<'a>(
         Some(Caller::Account(who)) => match view(record, &who) {
             Some(v) if !owner_only || v.role == "owner" => Ok((v, record)),
             Some(_) => Err(err(StatusCode::FORBIDDEN, "owner only")),
-            None => Err(err(StatusCode::NOT_FOUND, "no such machine")),
+            None => Err(err(StatusCode::NOT_FOUND, "no such computer")),
         },
         _ => Err(err(StatusCode::UNAUTHORIZED, "credential required")),
     }
@@ -579,6 +581,20 @@ async fn patch(
         rec.machine.sharing = sh;
         if !sh {
             rec.machine.clients.clear();
+        }
+    }
+    let ignore_meta = st.ignore_meta_patches;
+    let rec = st.machines.get_mut(&id).unwrap();
+    if let Some(meta) = body["meta"].as_object().filter(|_| !ignore_meta) {
+        for (k, v) in meta {
+            match v.as_str() {
+                Some("") | None => {
+                    rec.machine.meta.remove(k);
+                }
+                Some(v) => {
+                    rec.machine.meta.insert(k.clone(), v.to_string());
+                }
+            }
         }
     }
     Json(rec.machine.clone()).into_response()
@@ -706,7 +722,7 @@ async fn device_register(
             StatusCode::FORBIDDEN,
             &match &entry.superseded_by {
                 Some(by) => format!(
-                    "this device key was replaced by {by} on the same machine; create a new device key to enroll again"
+                    "this device key was replaced by {by} on the same computer; create a new device key to enroll again"
                 ),
                 None => "this device was revoked; create a new device key to enroll again".into(),
             },
@@ -1016,7 +1032,7 @@ fn proxied_record(
     // As the real relay: a machine that stopped sharing refuses everything
     // but its health check (a gRPC caller gets a gRPC status).
     if st.machines.get(&id).is_some_and(|r| !r.machine.sharing) && !is_health {
-        let message = "the host stopped sharing this machine";
+        let message = "the host stopped sharing this computer";
         if content_type.starts_with("application/grpc") {
             let r = Response::builder()
                 .status(StatusCode::OK)
@@ -1208,6 +1224,12 @@ impl FakeRelay {
     /// (a relay deploy, as its proxy answers).
     pub fn set_reads_down(&self, down: bool) {
         self.state.lock().unwrap().reads_down = down;
+    }
+
+    /// While `on`, a PATCH with `meta` is accepted but its keys are
+    /// dropped, as a relay that predates them does.
+    pub fn set_ignore_meta_patches(&self, on: bool) {
+        self.state.lock().unwrap().ignore_meta_patches = on;
     }
 
     /// Machine registrations received so far (refused ones too).

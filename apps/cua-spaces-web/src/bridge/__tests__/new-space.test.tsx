@@ -415,7 +415,7 @@ describe.skipIf(!wasmBuilt)("A create on one of your machines (wasm core)", () =
       return r!;
     });
     expect(row).toMatchObject({ provider: "relay", hostName: "Mac mini" });
-    expect(row.detail.startsWith("Another machine")).toBe(true);
+    expect(row.detail.startsWith("Another computer")).toBe(true);
     let space: { id: string } | null = null;
     await act(async () => {
       space = await created;

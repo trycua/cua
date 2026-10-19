@@ -44,7 +44,7 @@ pub enum Error {
         /// The driver's own limitation text, if any.
         limitation: String,
     },
-    /// A host-side prerequisite (Fleet credentials, a local runtime, an
+    /// A host-side prerequisite (a local runtime, an
     /// operator display, app-session providers) is not configured.
     #[error("{what} is not available on this host: {why}")]
     HostCapabilityMissing {
@@ -83,7 +83,7 @@ pub enum Error {
     /// spacesd RPC failure.
     #[error(transparent)]
     Env(#[from] cua_spacesd_client::Error),
-    /// Fleet control-plane failure.
+    /// Fleet control-plane failure. Cua Cloud has ended: no longer raised.
     #[error(transparent)]
     Fleet(#[from] cua_fleet::Error),
     /// Sandbox lifecycle failure.

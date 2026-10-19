@@ -210,10 +210,10 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     const problems: string[] = [];
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
-    // Every method of this area has its case (the Electron-only ones are checked below).
+    // Every method of this area has its case (the first run's are checked below).
     // (host.joinWithCode runs the bundled cua: join-with-code.test.ts.)
-    const electronOnly = new Set(["onboarding.get", "onboarding.complete", "host.joinWithCode"]);
-    expect(HOST_METHODS.filter((m) => !electronOnly.has(m) && !cases.some(([c]) => c === m))).toEqual([]);
+    const checkedBelow = new Set(["onboarding.get", "onboarding.complete", "host.joinWithCode"]);
+    expect(HOST_METHODS.filter((m) => !checkedBelow.has(m) && !cases.some(([c]) => c === m))).toEqual([]);
     expect(HOST_METHODS.filter((m) => NOT_YET.includes(m))).toEqual([]);
   });
 
@@ -511,7 +511,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await call("settings.choose", { row: "team-current", option: "org-2" });
     expect(model.settings.currentTeamId).toBe("org-2");
     await call("settings.choose", { row: "default-location", option: "cloud" });
-    expect(model.settings.defaultLocation).toBe(native.AppLocation.Cloud);
+    // Cua Cloud has ended: the default stays on this machine.
+    expect(model.settings.defaultLocation).toBe(native.AppLocation.Local);
     await call("settings.choose", { row: "telemetry", option: "off" });
     expect(model.telemetry?.status().enabled).toBe(false);
     await call("settings.choose", { row: "launch-at-login", option: "on" });
@@ -802,6 +803,27 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.launchAtLogin).toBe(true);
     expect(events.some((e) => e.event === "session.changed")).toBe(true);
     expect(await code("onboarding.complete", { mode: "server" })).toBe("bad_args");
+  });
+
+  it("posts \"<Space> is ready\" for a create the first run started, and for no other", async () => {
+    const config = { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "local" };
+    await call("spaces.create", { pendingId: "pending:n1", config: { ...config, name: "quiet" }, os: "linux" });
+    await call("spaces.create", { pendingId: "pending:n2", config: { ...config, name: "no" }, os: "linux", notifyWhenReady: false });
+    expect(system.notes).toEqual([]);
+    await call("spaces.create", { pendingId: "pending:n3", config: { ...config, name: "dev" }, os: "linux", notifyWhenReady: true });
+    expect(system.notes).toEqual([
+      {
+        id: "space-ready-local:dev",
+        title: "dev is ready",
+        body: "A fresh Linux computer inside this Mac. Your agent can use it now.",
+        route: "/spaces/local%3Adev",
+        icon: "cua-key-128.png",
+      },
+    ]);
+    // Without a system side (a build that has none) the create still answers.
+    await make({ system: null });
+    const made = (await call("spaces.create", { pendingId: "pending:n4", config: { ...config, name: "bare" }, os: "linux", notifyWhenReady: true })) as { id: string };
+    expect(made.id).toBe("local:bare");
   });
 
   it("the page reads the first run from the session (Electron), and finishes it", async () => {

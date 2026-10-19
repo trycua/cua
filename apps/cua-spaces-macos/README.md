@@ -11,10 +11,10 @@ render and do platform glue.
 | Main window | Sidebar with Spaces (one section per location; a dragged window drops on a row) and the Keyvault (All, Waiting, Access, Recent, one row per site) with the global Keyvault switch; Space detail with the live desktop, per-window streams, picture in picture, agent runs and the Teleport drop well |
 | New Space | Step-by-step sheet: System, Resources, Options, Summary; Connect by address |
 | Keyvault | Sidebar and list: categories, a site's accounts with their unattended switches, approval sheets |
-| Onboarding | Paged setup with the stacked Cua mark and page dots; installs the bundled `cua` and sets up host access through the shared core |
+| Onboarding | The shared web onboarding (`/onboarding` in `apps/cua-spaces-web`), in the New UI window, whether or not the New UI setting is on; the app draws none of its own. The page asks and finishes it through `onboarding.get` and `onboarding.complete` (the state is `onboarding.json`); a Space it creates posts a "<Space> is ready" notification (`notifyWhenReady`) that opens the Space. With the New UI off, the window gives way to the native one when the first run ends |
 | Devices | Settings → Devices: this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too; Approve asks for Touch ID or the login password), and a banner in the main window when this Mac needs enrolling |
 | Menu bar | The Cua mark (template); status line, Open, New Space, Settings, Quit |
-| Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
+| Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page (the web onboarding's) ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
 | Join with a code | `host.joinWithCode` runs the bundled `cua host setup --pair <code>` (3 minute limit); `cua://add/<CODE>` opens Machines at `?join=<CODE>` and the page asks before joining |
 | Notch panel | The "N Spaces" tab, Space tiles with live thumbnails, and the Teleport prompt; hover opens it after 300 ms, a dragged window or file drops on a tile. Window drags need Accessibility; the panel says so with an Open Settings button |
 
@@ -71,6 +71,7 @@ pressed look; `CUA_SPACES_UPDATER=live` runs Sparkle in a fixtures run (the feed
 Info.plist; use a test bundle identifier and a local feed), `CUA_SPACES_UPDATE_CHECK=background`
 checks at launch, and `CUA_SPACES_REFRESH=1` runs the after-update refresh in a fixtures
 run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Support/com.trycua.spaces.macos`.
+`CUA_SPACES_OFFSCREEN=1` runs with nothing on screen, for captures on a Mac in use (`OffscreenRun`): an accessory app (no Dock icon or menu bar), no menu bar item, notch or global shortcut, no activation, and transparent click-through windows that still paint, so `CUA_SPACES_WEBUI_CAPTURE` works (with fixtures and a throwaway `HOME`, a first run captures `/onboarding`).
 `CuaSpacesMac --check-launch-only` loads the app's libraries, prints its version and exits
 (`scripts/check-launch.sh`; release builds too).
 
@@ -226,7 +227,10 @@ around each of its keychain calls then): a read that would need a prompt
 fails at once as "needs access", so the in-process SDK and the daemon start
 signed out instead of hanging, and the window asks. Only the clicked
 `cua auth keychain --prompt` runs without it. A `cua` run from a terminal
-stays interactive.
+stays interactive; one without a terminal (an agent, a script) is
+non-interactive unless `CUA_KEYCHAIN_NONINTERACTIVE=0`, and a call macOS does
+not answer within `CUA_KEYCHAIN_TIMEOUT_SECS` (default 5) fails as "needs
+access" too.
 
 New UI shows the same states and words through the bridge (`startup.get`,
 `startup.act`, `startup.changed`; `WebHost/WebUIBridge+Startup.swift` and
@@ -324,9 +328,11 @@ the key was, so installing is dragging the key into its place.
 `package-dmg.sh` lays the window out with a pinned
 [dmgbuild](https://github.com/dmgbuild/dmgbuild) (`scripts/dmg-settings.py`)
 and makes the alias with `scripts/make-alias.swift`. The art in
-`Support/dmg` and the app icon `Support/AppIcon.icns` are drawn from the
-site's keycap sprites by `scripts/dmg-art/render.sh` (headless Chrome); rerun
-it only when the art changes.
+`Support/dmg` and the app icon `Support/AppIcon.icns` (the key with the Spaces
+mark, the Cua mark in stacked squares, on a slate tile) are drawn from the site's keycap sprites by
+`scripts/dmg-art/render.sh` (headless Chrome), which also writes the same icon
+to `apps/cua-spaces/src-tauri/icons` for the other apps; rerun it only when
+the art changes.
 
 ## Updates (Sparkle)
 

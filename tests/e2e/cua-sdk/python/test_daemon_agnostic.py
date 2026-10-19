@@ -74,32 +74,14 @@ async def _plain_local(
 
 
 @pytest.mark.e2e("daemon-agnostic", "hermetic")
-def test_agnostic_fake_fleet_and_direct(fixtures, fake_fleet):
+def test_agnostic_cloud_ended_and_direct(fixtures, fake_fleet, local_cua):
     async def body():
-        pool = e2e.name("agnostic")
-        fleet = fake_fleet.fleet()
-        await fleet.apply_pool(
-            cua.FleetPoolSpec(name=pool, image="img:plain", services={"server": 8000})
-        )
-        sb = None
-        try:
-            sb = await fake_fleet.sandboxes().create(
-                cua.SandboxCreateOptions(on="cloud", pool=pool, name=f"{pool}-c")
-            )
-            # NOTE: sb.services() reports the create options' default
-            # {"env": 3211}, not the pool's services (SDK bug, see report);
-            # env() correctly consults the bound sandbox's services.
-            resp = await sb.service("server").request("GET", "/status", None, 5_000)
-            assert resp.status == 200
-            with pytest.raises(cua.CuaError.SpacesdNotAvailable):
-                await sb.spacesd(2_000)
-        finally:
-            if sb is not None:
-                await sb.delete()
-            await fleet.delete_pool(pool)
+        # Cua Cloud has ended: no pool, no cloud claim.
+        await e2e.assert_cloud_ended(fake_fleet, pool=e2e.name("agnostic"))
 
-        # Direct URL where no spacesd answers (the fake Fleet API).
-        d = await fake_fleet.sandboxes().connect_url(
+        # Direct URL where no spacesd answers (the fake Fleet API's HTTP
+        # server): a typed error, never a hang.
+        d = await local_cua.sandboxes().connect_url(
             fixtures["fleet_base_url"], "t", e2e.name("nodriver")
         )
         with pytest.raises(cua.CuaError.SpacesdNotAvailable):

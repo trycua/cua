@@ -2,6 +2,8 @@
 
 _Published on June 24, 2026 by Francesco Bonacci and Dillon DuPont_
 
+> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+
 <img width="940" height="527" alt="hero" src="https://github.com/user-attachments/assets/8f381915-b176-42bd-924c-0471e068e248" />
 
 **TL;DR:**
@@ -103,7 +105,7 @@ cua-driver --version
 **macOS**
 
 ```bash
-open -n -g -a CuaDriver --args serve
+cua-driver permissions grant
 ```
 
 **Linux (pre-release)**

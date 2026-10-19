@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/settings/devices")({ component: DevicesPage });
 
 /** `devices::labels().signed_out`, for before the core's view exists. */
-const SIGNED_OUT = "Sign in to Cua to see the devices that can reach your machines.";
+const SIGNED_OUT = "Sign in to Cua to see the devices that can reach your computers.";
 
 /**
  * Settings, Devices: this device's enrollment, new machines to confirm, the

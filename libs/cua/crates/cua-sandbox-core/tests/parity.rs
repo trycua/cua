@@ -195,6 +195,7 @@ async fn local_image_layers_build_locally_then_run_the_built_image() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn cloud_vm_images_carry_sidecars_addressed_by_name() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -223,6 +224,7 @@ async fn cloud_vm_images_carry_sidecars_addressed_by_name() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn reserved_names_and_bad_sidecars_fail_before_anything_starts() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -234,7 +236,7 @@ async fn reserved_names_and_bad_sidecars_fail_before_anything_starts() {
         .build();
     cua_fleet::testing::set_image_variant(ROOTFS, cua_fleet::ImageVariant::Rootfs);
     for provider in [ProviderKind::Local, ProviderKind::Fleet] {
-        for reserved in cua_fleet::RESERVED_SERVICE_NAMES {
+        for reserved in cua_image::sidecar::RESERVED_SERVICE_NAMES {
             let mut o = CreateOptions::new(provider, ROOTFS)
                 .sidecar(redis())
                 .service(reserved, 8080);
@@ -264,6 +266,7 @@ async fn reserved_names_and_bad_sidecars_fail_before_anything_starts() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn cloud_sidecars_and_private_images() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -299,6 +302,7 @@ async fn cloud_sidecars_and_private_images() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn canonical_images_start_warm_by_default_and_others_do_not() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -342,6 +346,7 @@ async fn canonical_images_start_warm_by_default_and_others_do_not() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn cloud_image_layers_build_remotely_then_run_the_built_image() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeFleet::new();
@@ -384,6 +389,7 @@ async fn cloud_image_layers_build_remotely_then_run_the_built_image() {
 }
 
 #[tokio::test]
+#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
 async fn network_none_reaches_the_local_runtime_and_the_cloud_refuses_it() {
     assert_eq!(NetworkMode::parse("").unwrap(), NetworkMode::Default);
     assert_eq!(NetworkMode::parse("Default").unwrap(), NetworkMode::Default);

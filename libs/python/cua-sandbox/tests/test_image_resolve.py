@@ -1,19 +1,17 @@
 """The unified image path: one native resolver, canonical images, the P0 fixes.
 
 Hermetic: ``native().resolve_image`` is replaced by a fake (conftest switches
-real registry reads off with ``CUA_IMAGE_RESOLVE=0``), runtimes are
-recorders, and the session tests use a file credential store in tmp.
+real registry reads off with ``CUA_IMAGE_RESOLVE=0``) and runtimes are
+recorders.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 from cua_sandbox import Image, Sandbox, _sdk
-from cua_sandbox._config import FLEET_CREDENTIALS_MISSING, has_fleet_session
 from cua_sandbox.image import resolve_image_kind
 from cua_sandbox.transport.env import EnvTransport
 
@@ -165,29 +163,3 @@ async def test_request_service_passes_headers():
         ("accept", "application/json, text/event-stream"),
         ("content-type", "application/json"),
     }
-
-
-# ── Missing Fleet credentials and the `cua auth login` session ─────────────
-
-
-async def test_no_credentials_names_every_way_out():
-    with pytest.raises(Exception) as info:
-        await Sandbox.create(Image.from_registry("python:3.12-slim"), local=False)
-    assert FLEET_CREDENTIALS_MISSING in str(info.value)
-    assert "cua auth login" in FLEET_CREDENTIALS_MISSING
-    assert "local=True" in FLEET_CREDENTIALS_MISSING
-
-
-def test_the_cua_auth_login_session_counts_as_fleet_access(monkeypatch, tmp_path):
-    monkeypatch.setenv("CUA_HOME", str(tmp_path))
-    monkeypatch.setenv("CUA_CREDENTIAL_STORE", "file")
-    monkeypatch.delenv("CUA_FLEET_SESSION", raising=False)
-    assert has_fleet_session() is False
-    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-    (tmp_path / "credentials.json").write_text(
-        json.dumps({"access_token": "tok", "expires_at": expires})
-    )
-    assert has_fleet_session() is True
-    assert Sandbox._uses_fleet(None) is True
-    monkeypatch.setenv("CUA_FLEET_SESSION", "0")
-    assert has_fleet_session() is False

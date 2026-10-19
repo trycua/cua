@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::config::{self, Decision};
 use crate::events::Event;
 use crate::identity::{self, Identity};
+use crate::link::{self, LinkState};
 use crate::schema;
 use crate::sink::{self, HttpSink, SendError, Sink};
 use crate::{fsutil, notice};
@@ -43,6 +44,8 @@ const FIRST_RUN_FILE: &str = "first_run_recorded";
 const FUNNEL_DIR: &str = "funnel";
 /// The UTC day (days since the epoch) `cua_app_active` was last sent.
 const ACTIVE_DAY_FILE: &str = "active_day";
+/// The UTC day of the last `cua_agent_used_space`.
+const AGENT_USED_SPACE_FILE: &str = "agent_used_space_day";
 /// The Spaces app's experiments that are on (`cua_volume+sharing`, `none`).
 const EXPERIMENTS_FILE: &str = "experiments_on";
 
@@ -106,6 +109,8 @@ struct Inner {
     first_run_checked: AtomicBool,
     /// This process showed the first-run notice: it sends nothing.
     notice_shown_here: AtomicBool,
+    /// This process showed the linking notice: it links nothing.
+    link_notice_shown_here: AtomicBool,
 }
 
 /// A telemetry client. Cheap to clone.
@@ -211,6 +216,7 @@ impl Builder {
                 background: self.background,
                 first_run_checked: AtomicBool::new(false),
                 notice_shown_here: AtomicBool::new(false),
+                link_notice_shown_here: AtomicBool::new(false),
             }),
         }
     }
@@ -324,16 +330,30 @@ impl Telemetry {
             lock(&self.inner.queue).events.clear();
             if let Some(dir) = self.state_dir() {
                 fsutil::remove(&dir.join(SPOOL_FILE))?;
+                // Off also stops linking; the next sign-in offers it again.
+                fsutil::remove(&dir.join(link::ACCOUNT_FILE))?;
+                fsutil::remove(&dir.join(link::LINKED_FILE))?;
             }
         }
         Ok(path)
     }
 
-    /// Deletes the install id and salt; the next event gets new ones.
+    /// Deletes the install id and salt; the next event gets new ones. It
+    /// also unlinks the account (the next sign-in offers it again).
     pub fn reset_id(&self) -> std::io::Result<Vec<PathBuf>> {
         *lock(&self.inner.identity) = None;
         match self.state_dir() {
-            Some(dir) => identity::reset(&dir),
+            Some(dir) => {
+                let mut removed = identity::reset(&dir)?;
+                for f in [link::ACCOUNT_FILE, link::LINKED_FILE] {
+                    let p = dir.join(f);
+                    if p.exists() {
+                        fsutil::remove(&p)?;
+                        removed.push(p);
+                    }
+                }
+                Ok(removed)
+            }
             None => Ok(vec![]),
         }
     }
@@ -345,27 +365,184 @@ impl Telemetry {
     }
 
     /// Records that the notice was shown (the app calls this after showing
-    /// it in its UI).
+    /// it in its UI). The first-run notice says that a signed-in install's
+    /// usage data is linked to its account, so a machine that sees it for
+    /// the first time has also seen the linking notice. A machine that saw
+    /// an older notice gets the one-time linking notice instead.
     pub fn acknowledge_notice(&self) {
         if let Some(d) = self.state_dir() {
-            let _ = fsutil::create_once(&d.join(notice::MARKER), b"1\n");
+            let marker = d.join(notice::MARKER);
+            let fresh = !marker.exists();
+            let _ = fsutil::create_once(&marker, b"1\n");
+            if fresh {
+                let _ = fsutil::create_once(&d.join(link::NOTICE_MARKER), b"1\n");
+            }
         }
+    }
+
+    /// Whether this machine showed the linking notice.
+    pub fn link_notice_shown(&self) -> bool {
+        self.state_dir()
+            .is_some_and(|d| d.join(link::NOTICE_MARKER).exists())
+    }
+
+    /// Records that the one-time linking notice was shown (the app calls
+    /// this when the person closes it, with either button). Linking starts
+    /// with the next process's events, never this one's: this process
+    /// keeps sending as before.
+    pub fn acknowledge_link_notice(&self) {
+        if let Some(d) = self.state_dir() {
+            let _ = fsutil::create_once(&d.join(link::NOTICE_MARKER), b"1\n");
+        }
+    }
+
+    fn read_id(&self, file: &str) -> Option<String> {
+        let dir = self.state_dir()?;
+        std::fs::read_to_string(dir.join(file))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| link::valid_account_id(s))
+    }
+
+    /// The server offered `account_id` for the signed-in account (the
+    /// `analytics_id` of `GET /v1/me`), or none: not signed in, or linking
+    /// is off on the server. None (or anything that is not an account id)
+    /// unlinks. Nothing is written while usage data is off.
+    pub fn offer_account(&self, account_id: Option<&str>) -> LinkState {
+        let Some(dir) = self.state_dir() else {
+            return LinkState::NotOffered;
+        };
+        let id = account_id
+            .map(str::trim)
+            .filter(|id| link::valid_account_id(id));
+        let Some(id) = id else {
+            let _ = fsutil::remove(&dir.join(link::ACCOUNT_FILE));
+            let _ = fsutil::remove(&dir.join(link::LINKED_FILE));
+            return self.link_state();
+        };
+        if !self.is_enabled() {
+            return LinkState::Off;
+        }
+        if self.read_id(link::ACCOUNT_FILE).as_deref() != Some(id) {
+            // Another account was linked here (a sign-in without a sign-out
+            // first): start from a new install id so the two never merge.
+            if self.read_id(link::LINKED_FILE).is_some() {
+                let _ = self.forget_account();
+            }
+            let _ =
+                fsutil::write_replace(&dir.join(link::ACCOUNT_FILE), format!("{id}\n").as_bytes());
+        }
+        self.link_state()
+    }
+
+    /// Signed out: unlinks, and when something was linked, starts over with
+    /// a new install id (PostHog's `reset`), so whoever signs in next on
+    /// this machine is not merged with the last account.
+    pub fn forget_account(&self) -> std::io::Result<()> {
+        let Some(dir) = self.state_dir() else {
+            return Ok(());
+        };
+        let was_linked = dir.join(link::LINKED_FILE).exists();
+        fsutil::remove(&dir.join(link::ACCOUNT_FILE))?;
+        fsutil::remove(&dir.join(link::LINKED_FILE))?;
+        if was_linked {
+            *lock(&self.inner.identity) = None;
+            identity::reset(&dir)?;
+        }
+        Ok(())
+    }
+
+    /// Where linking stands on this machine.
+    pub fn link_state(&self) -> LinkState {
+        if !self.is_enabled() {
+            return LinkState::Off;
+        }
+        if self.read_id(link::ACCOUNT_FILE).is_none() {
+            return LinkState::NotOffered;
+        }
+        if !self.link_notice_shown() {
+            return LinkState::NoticeDue;
+        }
+        LinkState::Linked
+    }
+
+    /// Whether the app should show the one-time linking notice now.
+    pub fn link_notice_due(&self) -> bool {
+        self.link_state() == LinkState::NoticeDue
+    }
+
+    /// The account id events from this process carry, if linked.
+    fn linked_account(&self) -> Option<String> {
+        if self.inner.link_notice_shown_here.load(Ordering::SeqCst) || !self.link_notice_shown() {
+            return None;
+        }
+        let account = self.read_id(link::ACCOUNT_FILE)?;
+        (self.read_id(link::LINKED_FILE).as_deref() == Some(account.as_str())).then_some(account)
+    }
+
+    /// Sends `$identify` once for an offered account whose notice was
+    /// shown: merges this install's events into the account.
+    fn identify_if_needed(&self) {
+        if self.inner.link_notice_shown_here.load(Ordering::SeqCst) || !self.link_notice_shown() {
+            return;
+        }
+        let Some(account) = self.read_id(link::ACCOUNT_FILE) else {
+            return;
+        };
+        if self.read_id(link::LINKED_FILE).as_deref() == Some(account.as_str()) {
+            return;
+        }
+        let Some(dir) = self.state_dir() else { return };
+        let identity = self.identity();
+        let payload = serde_json::json!({
+            "event": "$identify",
+            "distinct_id": account,
+            "uuid": random_uuid(),
+            "timestamp": rfc3339(SystemTime::now()),
+            "properties": {
+                "$anon_distinct_id": identity.id,
+                "product": self.product(),
+                "$geoip_disable": true,
+                "$lib": "cua-telemetry",
+                "$lib_version": env!("CARGO_PKG_VERSION"),
+            },
+        });
+        if fsutil::write_replace(
+            &dir.join(link::LINKED_FILE),
+            format!("{account}\n").as_bytes(),
+        )
+        .is_err()
+        {
+            return;
+        }
+        self.enqueue(payload);
     }
 
     /// Shows the first-run notice on stderr if it has not been shown and
     /// telemetry is on. Returns whether it printed. The CLI calls this at
     /// startup; SDK processes get it on their first event.
     pub fn show_notice_if_needed(&self) -> bool {
-        if !self.is_enabled() || self.notice_shown() {
+        if !self.is_enabled() {
             return false;
         }
         if *lock(&self.inner.notice_mode) == NoticeMode::External {
             return false;
         }
-        eprintln!("{}", notice::TEXT);
-        self.acknowledge_notice();
-        self.inner.notice_shown_here.store(true, Ordering::SeqCst);
-        true
+        if !self.notice_shown() {
+            eprintln!("{}", notice::TEXT);
+            self.acknowledge_notice();
+            self.inner.notice_shown_here.store(true, Ordering::SeqCst);
+            return true;
+        }
+        if self.link_notice_due() {
+            eprintln!("{}", link::NOTICE_TEXT);
+            self.acknowledge_link_notice();
+            self.inner
+                .link_notice_shown_here
+                .store(true, Ordering::SeqCst);
+            return true;
+        }
+        false
     }
 
     fn identity(&self) -> Identity {
@@ -478,6 +655,7 @@ impl Telemetry {
             return Captured::NoticePending;
         }
         self.record_first_run();
+        self.identify_if_needed();
         self.capture_inner(event)
     }
 
@@ -506,10 +684,15 @@ impl Telemetry {
         if let Err(e) = schema::validate(event.name, &props) {
             return Captured::Invalid(e.to_string());
         }
-        let identity = self.identity();
+        let account = self.linked_account();
+        if account.is_some() {
+            // A linked event belongs to the account's person in PostHog.
+            props.insert("$process_person_profile".into(), Value::Bool(true));
+        }
+        let distinct_id = account.unwrap_or_else(|| self.identity().id);
         let payload = serde_json::json!({
             "event": event.name,
-            "distinct_id": identity.id,
+            "distinct_id": distinct_id,
             "uuid": random_uuid(),
             "timestamp": rfc3339(SystemTime::now()),
             "properties": props,
@@ -522,6 +705,11 @@ impl Telemetry {
         {
             eprintln!("[cua telemetry] {payload}");
         }
+        self.enqueue(payload);
+        Captured::Queued
+    }
+
+    fn enqueue(&self, payload: Value) {
         self.log_last(&payload, "queued");
         {
             let mut q = lock(&self.inner.queue);
@@ -532,7 +720,6 @@ impl Telemetry {
         }
         self.start_sender();
         self.inner.cond.notify_all();
-        Captured::Queued
     }
 
     /// Records `cua_first_run` once per install (after the notice).
@@ -628,6 +815,46 @@ impl Telemetry {
         let experiments = std::fs::read_to_string(dir.join(EXPERIMENTS_FILE)).unwrap_or_default();
         let ids: Vec<&str> = experiments.trim().split('+').collect();
         let r = self.capture(crate::events::app_active_with(&ids));
+        if r == Captured::Queued {
+            let _ = fsutil::write_replace(&marker, today.as_bytes());
+        }
+        r
+    }
+
+    /// Captures `cua_agent_used_space` when an AI agent's tool call `tool`
+    /// reached a Space and worked: at most once per install per UTC day.
+    /// Tools that do not act inside a Space are ignored.
+    pub fn capture_agent_used_space(&self, tool: &str) -> Captured {
+        let day = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86_400)
+            .unwrap_or(0);
+        self.capture_agent_used_space_on(day, tool)
+    }
+
+    /// [`Self::capture_agent_used_space`] for a given UTC day (days since
+    /// the epoch).
+    pub fn capture_agent_used_space_on(&self, day: u64, tool: &str) -> Captured {
+        let Some(ev) = crate::events::agent_used_space(tool) else {
+            return Captured::Invalid(format!("{tool} does not act inside a Space"));
+        };
+        if !self.is_enabled() {
+            return Captured::Disabled;
+        }
+        // A sandbox's cua-spacesd is not an install, and a Cua program inside
+        // an agent run's Space is not the install the agent works for.
+        if self.product() == "spacesd" || self.in_agent_run() {
+            return Captured::Disabled;
+        }
+        let Some(dir) = self.state_dir() else {
+            return Captured::Disabled;
+        };
+        let marker = dir.join(FUNNEL_DIR).join(AGENT_USED_SPACE_FILE);
+        let today = format!("{day}\n");
+        if std::fs::read_to_string(&marker).is_ok_and(|s| s == today) {
+            return Captured::AlreadyRecorded;
+        }
+        let r = self.capture(ev);
         if r == Captured::Queued {
             let _ = fsutil::write_replace(&marker, today.as_bytes());
         }
@@ -884,7 +1111,7 @@ impl Telemetry {
                     .is_some_and(|t| t >= oldest.as_str())
                     && v["event"]
                         .as_str()
-                        .is_some_and(|e| schema::spec(e).is_some())
+                        .is_some_and(|e| e == "$identify" || schema::spec(e).is_some())
             })
             .collect()
     }
@@ -915,6 +1142,7 @@ impl Telemetry {
                 .and_then(|d| Identity::peek(&d))
                 .map(|i| identity::redact(&i)),
             notice_shown: self.notice_shown(),
+            link: self.link_state().as_str().to_string(),
             endpoint: self.endpoint(),
             product: self.product().to_string(),
             state_dir: self
@@ -943,6 +1171,9 @@ pub struct Status {
     /// First 8 characters of the install id, if one exists.
     pub install_id: Option<String>,
     pub notice_shown: bool,
+    /// Whether usage data is linked to the signed-in account: `off`,
+    /// `not_offered`, `notice_due` or `linked`.
+    pub link: String,
     pub endpoint: String,
     pub product: String,
     pub state_dir: String,

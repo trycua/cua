@@ -3,13 +3,12 @@
 //! The subset that makes sense in a browser tab, with the same names as the
 //! native API:
 //!
-//! - `Cua.embedded(config)`: Fleet settings only (static bearer; OAuth client
-//!   secrets never belong in a browser);
+//! - `Cua.embedded(config)`: the browser runtime;
 //! - `Cua.spacesd(url, token)` → [`SpacesdClient`] over gRPC-Web (`fetch`):
 //!   capabilities, health, run/sh, screenshot, pointer and keyboard,
 //!   clipboard and the proto3-JSON escape hatch for every unary RPC;
-//! - `Cua.fleet()` → [`Fleet`]: pools, claims and service URLs through
-//!   cyclops-sdk over `globalThis.fetch` (pages, workers and Node).
+//! - `Cua.fleet()` → [`Fleet`]: Cua Cloud has ended, so it always fails
+//!   with the "Cua Cloud has ended" error and never connects.
 //!
 //! Media in the browser goes through WebCodecs on the page, fed by the
 //! daemon's media bridge or the spacesd's `/media` socket directly.
@@ -24,8 +23,9 @@ use cua_proto::env::v1::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-#[cfg(target_arch = "wasm32")]
-mod fetch;
+/// `cua_sandbox_core::CLOUD_ENDED` (that crate does not build for wasm32).
+const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own computer. \
+     See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
 
 /// On wasm32 futures need not be `Send` (single-threaded). On the host this
 /// module is only compiled for binding metadata (feature `web`), where
@@ -92,13 +92,13 @@ fn status(e: tonic::Status) -> CuaError {
     }
 }
 
-/// Fleet settings for the browser (static bearer only).
+/// Fleet settings for the browser. Ignored: Cua Cloud has ended.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct FleetSettings {
-    /// Fleet API base URL.
+    /// Ignored.
     #[uniffi(default = None)]
     pub base_url: Option<String>,
-    /// Bearer token.
+    /// Ignored.
     #[uniffi(default = None)]
     pub token: Option<String>,
 }
@@ -106,23 +106,22 @@ pub struct FleetSettings {
 /// Configuration of the browser SDK.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct CuaConfig {
-    /// Fleet settings.
+    /// Ignored: Cua Cloud has ended.
     #[uniffi(default = None)]
     pub fleet: Option<FleetSettings>,
 }
 
 /// The cua SDK (browser build).
 #[derive(uniffi::Object)]
-pub struct Cua {
-    config: CuaConfig,
-}
+pub struct Cua {}
 
 #[uniffi::export]
 impl Cua {
     /// The browser runtime.
     #[uniffi::constructor]
     pub fn embedded(config: CuaConfig) -> Arc<Self> {
-        Arc::new(Self { config })
+        let _ = config;
+        Arc::new(Self {})
     }
 
     /// Connects to cua-spacesd at `url` over gRPC-Web.
@@ -151,36 +150,10 @@ impl Cua {
         .await
     }
 
-    /// Fleet control plane.
+    /// Cua Cloud has ended: always fails with the "Cua Cloud has ended"
+    /// error.
     pub fn fleet(&self) -> Result<Arc<Fleet>> {
-        let f = self.config.fleet.clone().unwrap_or_default();
-        let token = f.token.filter(|t| !t.is_empty()).ok_or_else(|| {
-            CuaError::ProviderNotConfigured("the browser Fleet client needs a token".into())
-        })?;
-        let cfg = cyclops_sdk::CyclopsTokenProviderConfiguration {
-            base_url: f
-                .base_url
-                .unwrap_or_else(|| "https://run.cua.ai".into())
-                .trim_end_matches('/')
-                .to_string(),
-            pool_poll_interval_ms: 2000,
-            pool_poll_limit: 300,
-            claim_poll_interval_ms: 2000,
-            claim_poll_limit: 300,
-        };
-        // globalThis.fetch, not window.fetch: the same build runs in Node
-        // and in workers.
-        #[cfg(target_arch = "wasm32")]
-        let sdk = cyclops_sdk::CyclopsClient::connect_with_access_token(
-            cfg,
-            token,
-            Arc::new(fetch::GlobalFetch),
-        )
-        .map_err(|e| CuaError::Fleet(e.to_string()))?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let sdk = cyclops_sdk::CyclopsClient::connect_browser_with_access_token(cfg, token)
-            .map_err(|e| CuaError::Fleet(e.to_string()))?;
-        Ok(Arc::new(Fleet { sdk }))
+        Err(CuaError::Unsupported(CLOUD_ENDED.into()))
     }
 }
 
@@ -571,7 +544,8 @@ pub struct FleetSandbox {
     pub services: Vec<String>,
 }
 
-/// Fleet control plane (browser transport).
+/// Fleet control plane (browser transport). Cua Cloud has ended:
+/// [`Cua::fleet`] never returns one.
 #[derive(uniffi::Object)]
 pub struct Fleet {
     sdk: Arc<cyclops_sdk::CyclopsClient>,

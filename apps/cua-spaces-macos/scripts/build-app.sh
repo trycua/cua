@@ -6,7 +6,7 @@
 # Cua Spaces app export dylib (libcua_spaces_ffi, which carries the cua SDK;
 # staged as libs/cua/swift/lib/libcua_sdk.dylib by
 # libs/spaces-app-swift/scripts/stage-library.sh), the app icon
-# (Support/AppIcon.icns, the blue Cua Spaces key; scripts/dmg-art draws it)
+# (Support/AppIcon.icns, the blue Cua key on slate; scripts/dmg-art draws it)
 # and the menu bar template the Tauri app ships (apps/cua-spaces/src-tauri/
 # icons), plus the `cua` CLI next to the executable when one is built
 # (the app installs it onto PATH on first launch, like the Tauri app's

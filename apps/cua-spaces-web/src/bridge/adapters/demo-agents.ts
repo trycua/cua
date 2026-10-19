@@ -151,7 +151,7 @@ I kept the structure and only changed the words. Three screens change:
 + <p>Set up takes about a minute.</p>
 
 - <p>Sign in to sync your Spaces across all your devices!</p>
-+ <p>Sign in to see your Spaces on every machine you use.</p>
++ <p>Sign in to see your Spaces on every computer you use.</p>
 \`\`\`
 
 The longest sentence went from 31 words to 14. Nothing else in \`routes/onboarding\` reads the old strings, and \`pnpm test\` still passes.
@@ -165,7 +165,7 @@ function adaRun(t0: number): DemoRunRecord {
     .tool("read", "Read apps/cua-spaces-web/src/routes/spaces/index.tsx")
     .tool("execute", 'rg -n "shrink|min-w" apps/cua-spaces-web/src/components', "completed", "3 matches in 2 files")
     .say(
-      "The overflow comes from the state label. `StateLabel` sits in a flex row next to the Space name, and it has no `shrink-0`, so a long machine name pushes it out of the tile instead of truncating.\n\nThe name already has `truncate`, but its wrapper needs `min-w-0` for that to work inside flex:\n\n```tsx\n<div className=\"min-w-0 flex-1\">\n  <div className=\"truncate\">{space.name}</div>\n</div>\n```\n\nI haven't changed anything yet.",
+      "The overflow comes from the state label. `StateLabel` sits in a flex row next to the Space name, and it has no `shrink-0`, so a long computer name pushes it out of the tile instead of truncating.\n\nThe name already has `truncate`, but its wrapper needs `min-w-0` for that to work inside flex:\n\n```tsx\n<div className=\"min-w-0 flex-1\">\n  <div className=\"truncate\">{space.name}</div>\n</div>\n```\n\nI haven't changed anything yet.",
     )
     .usage()
     .end()

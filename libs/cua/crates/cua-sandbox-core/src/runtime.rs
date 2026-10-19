@@ -445,8 +445,8 @@ pub trait LocalRuntime: Send + Sync {
     /// ([`RuntimeError::UnsupportedImage`]).
     async fn build_image(
         &self,
-        spec: &cua_fleet::BuildSpec,
-        creds: Option<&cua_fleet::RegistryCredentials>,
+        spec: &cua_image::build::BuildSpec,
+        creds: Option<&cua_image::RegistryCredentials>,
     ) -> RuntimeResult<String> {
         let _ = (spec, creds);
         Err(RuntimeError::Unsupported {

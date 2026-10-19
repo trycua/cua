@@ -4,7 +4,7 @@
 /* eslint-disable */
 // @ts-nocheck
 import nativeModule from "./cua_sdk-ffi.js";
-import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSdkAudioSink, type UniffiVTableCallbackInterfaceCuaSdkFrameSink, type UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener, type UniffiVTableCallbackInterfaceCuaSdkTeleportApprover,
+import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSdkAudioSink, type UniffiVTableCallbackInterfaceCuaSdkFrameSink, type UniffiVTableCallbackInterfaceCuaSdkResourcesListener, type UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener, type UniffiVTableCallbackInterfaceCuaSdkTeleportApprover,
 } from "./cua_sdk-ffi.js";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterFloat64, FfiConverterInt32, FfiConverterInt64, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
@@ -909,6 +909,18 @@ export function spacesToolMethods(): Array<SpacesToolMethod> {
     }
 
 /**
+ * The person closed the linking notice (either button). Linking starts
+ * with the app's next launch, never in the process that showed it.
+ */
+export function telemetryAcknowledgeLinkNotice(): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+/**
  * Records that the first-run notice was shown in the app's UI (nothing is
  * sent from a machine before that). Apps that show the notice themselves
  * call [`telemetry_use_app_notice`] first so the SDK does not print it.
@@ -932,6 +944,58 @@ export function telemetryFlush(timeoutMs: number): void {uniffiCaller.rustCall(
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
+    }
+
+/**
+ * The one-time linking notice's words.
+ */
+export function telemetryLinkNotice(): TelemetryLinkNotice {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeTelemetryLinkNotice.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_telemetry_link_notice(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Whether the app should show the one-time linking notice now: usage data
+ * is on, the account offered linking, and this machine has not shown it.
+ */
+export function telemetryLinkNoticeDue(): boolean {
+    return FfiConverterBool.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_telemetry_link_notice_due(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+ */
+export function telemetryLinkState(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_telemetry_link_state(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
     }
 
 /**
@@ -1127,6 +1191,43 @@ export function telemetryStatus(): TelemetryStatus {
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
+    }
+
+/**
+ * Asks the Spaces API for the signed-in account's opaque id and hands it
+ * to telemetry (none unlinks). Call at launch and after a sign-in; the
+ * SDK's own sign-in already does. Returns the link state. Best effort:
+ * offline or signed out, nothing changes.
+ */
+export async function telemetrySyncAccount(asyncOpts_?: { signal: AbortSignal }): Promise<string> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_func_telemetry_sync_account(
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
     }
 
 /**
@@ -3637,8 +3738,7 @@ export type CloudOptions = {
     pool?: string,
     /**
      * With `pool`: update the pool's template to the given fields instead
-     * of failing on a mismatch (`Fleet.apply` semantics for the template;
-     * the pool's capacity is kept). Managed pools refuse it.
+     * of failing on a mismatch. Cua Cloud has ended: ignored.
      */
     apply: boolean
 }
@@ -4050,6 +4150,290 @@ const FfiConverterTypeComputerGrant = (() => {
 })();
 
 /**
+ * How low the free disk is.
+ */
+export enum DiskLevel {
+    /**
+     * Plenty.
+     */
+    Ok,
+    /**
+     * Under 50 GB or 15% of the volume, whichever line is higher (the
+     * line never rises above 100 GB).
+     */
+    Low,
+    /**
+     * Under the floor where creating a Space already fails (5 GiB).
+     */
+    Critical
+}
+
+const FfiConverterTypeDiskLevel = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = DiskLevel;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return DiskLevel.Ok;
+                case 2: return DiskLevel.Low;
+                case 3: return DiskLevel.Critical;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case DiskLevel.Ok: return ordinalConverter.write(1, into);
+                case DiskLevel.Low: return ordinalConverter.write(2, into);
+                case DiskLevel.Critical: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * The low-disk signal for the app and the menu bar.
+ */
+export type DiskWarning = {
+    /**
+     * How low it is.
+     */
+    level: DiskLevel,
+    /**
+     * Free bytes on the volume that holds Spaces.
+     */
+    free: bigint,
+    /**
+     * Size of that volume.
+     */
+    total: bigint,
+    /**
+     * The line that was crossed (0 when `ok`).
+     */
+    threshold: bigint
+}
+
+/**
+ * Generated factory for {@link DiskWarning} record objects.
+ */
+export const DiskWarning = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<DiskWarning, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<DiskWarning>,
+    });
+})();
+
+const FfiConverterTypeDiskWarning = (() => {
+    type TypeName = DiskWarning;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                level: FfiConverterTypeDiskLevel.read(from),
+                free: FfiConverterUInt64.read(from),
+                total: FfiConverterUInt64.read(from),
+                threshold: FfiConverterUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeDiskLevel.write(value.level, into);
+            FfiConverterUInt64.write(value.free, into);
+            FfiConverterUInt64.write(value.total, into);
+            FfiConverterUInt64.write(value.threshold, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeDiskLevel.allocationSize(value.level) +
+             FfiConverterUInt64.allocationSize(value.free) +
+             FfiConverterUInt64.allocationSize(value.total) +
+             FfiConverterUInt64.allocationSize(value.threshold);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A computer: this Mac, or one of your other computers (from the summary
+ * it published).
+ */
+export type ComputerResources = {
+    /**
+     * `this-mac`, or the relay machine id.
+     */
+    id: string,
+    /**
+     * Display name (empty for this Mac).
+     */
+    name: string,
+    /**
+     * Reachable now (always true for this Mac).
+     */
+    online: boolean,
+    /**
+     * When the computer measured this, unix ms (another computer's can be
+     * minutes old).
+     */
+    sampledAtMs: bigint,
+    /**
+     * Processor cores.
+     */
+    cpuCount: number,
+    /**
+     * Busy now, 0 to 100.
+     */
+    cpuPercent: number,
+    /**
+     * 1-minute load average.
+     */
+    loadAverage1m: number,
+    /**
+     * Memory size, bytes.
+     */
+    memoryTotal: bigint,
+    /**
+     * Memory in use, bytes (without reclaimable cache).
+     */
+    memoryUsed: bigint,
+    /**
+     * Size of the volume that holds Spaces, bytes.
+     */
+    diskTotal: bigint,
+    /**
+     * Free bytes on it.
+     */
+    diskFree: bigint,
+    /**
+     * Extra Spaces on it.
+     */
+    spacesCount: number,
+    /**
+     * Of those, running.
+     */
+    spacesRunning: number,
+    /**
+     * Cores given to the running ones.
+     */
+    spacesCpuAllocated: number,
+    /**
+     * Memory given to the running ones, bytes.
+     */
+    spacesMemoryAllocated: bigint,
+    /**
+     * Memory the running guests report in use, bytes.
+     */
+    spacesMemoryUsed: bigint,
+    /**
+     * Bytes all its extra Spaces take on it.
+     */
+    spacesDiskBytes: bigint,
+    /**
+     * False when some Space's disk could only be estimated.
+     */
+    spacesDiskExact: boolean,
+    /**
+     * The low-disk signal.
+     */
+    warning: DiskWarning
+}
+
+/**
+ * Generated factory for {@link ComputerResources} record objects.
+ */
+export const ComputerResources = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ComputerResources, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ComputerResources>,
+    });
+})();
+
+const FfiConverterTypeComputerResources = (() => {
+    type TypeName = ComputerResources;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                online: FfiConverterBool.read(from),
+                sampledAtMs: FfiConverterUInt64.read(from),
+                cpuCount: FfiConverterUInt32.read(from),
+                cpuPercent: FfiConverterFloat64.read(from),
+                loadAverage1m: FfiConverterFloat64.read(from),
+                memoryTotal: FfiConverterUInt64.read(from),
+                memoryUsed: FfiConverterUInt64.read(from),
+                diskTotal: FfiConverterUInt64.read(from),
+                diskFree: FfiConverterUInt64.read(from),
+                spacesCount: FfiConverterUInt32.read(from),
+                spacesRunning: FfiConverterUInt32.read(from),
+                spacesCpuAllocated: FfiConverterUInt32.read(from),
+                spacesMemoryAllocated: FfiConverterUInt64.read(from),
+                spacesMemoryUsed: FfiConverterUInt64.read(from),
+                spacesDiskBytes: FfiConverterUInt64.read(from),
+                spacesDiskExact: FfiConverterBool.read(from),
+                warning: FfiConverterTypeDiskWarning.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterBool.write(value.online, into);
+            FfiConverterUInt64.write(value.sampledAtMs, into);
+            FfiConverterUInt32.write(value.cpuCount, into);
+            FfiConverterFloat64.write(value.cpuPercent, into);
+            FfiConverterFloat64.write(value.loadAverage1m, into);
+            FfiConverterUInt64.write(value.memoryTotal, into);
+            FfiConverterUInt64.write(value.memoryUsed, into);
+            FfiConverterUInt64.write(value.diskTotal, into);
+            FfiConverterUInt64.write(value.diskFree, into);
+            FfiConverterUInt32.write(value.spacesCount, into);
+            FfiConverterUInt32.write(value.spacesRunning, into);
+            FfiConverterUInt32.write(value.spacesCpuAllocated, into);
+            FfiConverterUInt64.write(value.spacesMemoryAllocated, into);
+            FfiConverterUInt64.write(value.spacesMemoryUsed, into);
+            FfiConverterUInt64.write(value.spacesDiskBytes, into);
+            FfiConverterBool.write(value.spacesDiskExact, into);
+            FfiConverterTypeDiskWarning.write(value.warning, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterBool.allocationSize(value.online) +
+             FfiConverterUInt64.allocationSize(value.sampledAtMs) +
+             FfiConverterUInt32.allocationSize(value.cpuCount) +
+             FfiConverterFloat64.allocationSize(value.cpuPercent) +
+             FfiConverterFloat64.allocationSize(value.loadAverage1m) +
+             FfiConverterUInt64.allocationSize(value.memoryTotal) +
+             FfiConverterUInt64.allocationSize(value.memoryUsed) +
+             FfiConverterUInt64.allocationSize(value.diskTotal) +
+             FfiConverterUInt64.allocationSize(value.diskFree) +
+             FfiConverterUInt32.allocationSize(value.spacesCount) +
+             FfiConverterUInt32.allocationSize(value.spacesRunning) +
+             FfiConverterUInt32.allocationSize(value.spacesCpuAllocated) +
+             FfiConverterUInt64.allocationSize(value.spacesMemoryAllocated) +
+             FfiConverterUInt64.allocationSize(value.spacesMemoryUsed) +
+             FfiConverterUInt64.allocationSize(value.spacesDiskBytes) +
+             FfiConverterBool.allocationSize(value.spacesDiskExact) +
+             FfiConverterTypeDiskWarning.allocationSize(value.warning);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * One setting's effective value.
  */
 export type ConfigEntry = {
@@ -4225,29 +4609,28 @@ const FfiConverterTypeContainer = (() => {
 })();
 
 /**
- * Fleet credentials and endpoints. Unset fields fall back to the
- * environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
- * `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
+ * Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
+ * reads them any more. Kept so existing callers still compile.
  */
 export type FleetSettings = {
     /**
-     * Fleet API base URL.
+     * Ignored.
      */
     baseUrl?: string,
     /**
-     * OAuth token URL.
+     * Ignored.
      */
     tokenUrl?: string,
     /**
-     * OAuth client id.
+     * Ignored.
      */
     clientId?: string,
     /**
-     * OAuth client secret.
+     * Ignored.
      */
     clientSecret?: string,
     /**
-     * Static Fleet token (wins over client credentials).
+     * Ignored.
      */
     token?: string
 }
@@ -4313,11 +4696,11 @@ export type CuaConfig = {
      */
     stateDir?: string,
     /**
-     * Fleet settings (merged over the environment).
+     * Ignored: Cua Cloud has ended.
      */
     fleet?: FleetSettings,
     /**
-     * Read Fleet settings from the environment.
+     * Ignored: Cua Cloud has ended.
      */
     fleetFromEnv: boolean,
     /**
@@ -4334,14 +4717,15 @@ export type CuaConfig = {
      */
     teleportHome?: string,
     /**
-     * When the settings and environment carry no Fleet credentials, use
-     * the signed-in session (`Cua.auth()`, `cua auth login`) from the
-     * shared credential store, refreshed as needed.
+     * Use the signed-in session (`Cua.auth()`, `cua auth login`) from the
+     * shared credential store, refreshed as needed, for the relay account
+     * the runtime lists the account's machines with ("My machines"). The
+     * name is historical: it no longer builds a Fleet client, because Cua
+     * Cloud has ended.
      */
     fleetFromSession: boolean,
     /**
-     * Where managed Fleet pools keep their name cache and machine-wide GC
-     * lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+     * Ignored: Cua Cloud has ended, so there are no managed pools.
      */
     fleetPoolHome?: string
 }
@@ -5138,6 +5522,67 @@ const FfiConverterTypeDevicesSnapshot = (() => {
              FfiConverterSequenceTypeRelayAuditEvent.allocationSize(value.audit) +
              FfiConverterMapStringString.allocationSize(value.machineNames) +
              FfiConverterSequenceTypeRelayMachine.allocationSize(value.machines);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What a Space costs this computer's disk, as opposed to what the guest
+ * sees.
+ */
+export type DiskOnHost = {
+    /**
+     * Bytes only this Space holds (what deleting it frees); absent when
+     * they could not be measured.
+     */
+    bytes?: bigint,
+    /**
+     * Blocks its files occupy, clones counted in full: an upper bound.
+     */
+    allocated: bigint,
+    /**
+     * Part of it is shared with other copies.
+     */
+    sharesSpace: boolean
+}
+
+/**
+ * Generated factory for {@link DiskOnHost} record objects.
+ */
+export const DiskOnHost = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<DiskOnHost, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<DiskOnHost>,
+    });
+})();
+
+const FfiConverterTypeDiskOnHost = (() => {
+    type TypeName = DiskOnHost;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                bytes: FfiConverterOptionalUInt64.read(from),
+                allocated: FfiConverterUInt64.read(from),
+                sharesSpace: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalUInt64.write(value.bytes, into);
+            FfiConverterUInt64.write(value.allocated, into);
+            FfiConverterBool.write(value.sharesSpace, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalUInt64.allocationSize(value.bytes) +
+             FfiConverterUInt64.allocationSize(value.allocated) +
+             FfiConverterBool.allocationSize(value.sharesSpace);
 
         }
     };
@@ -8768,7 +9213,7 @@ const FfiConverterTypeGpuOption = (() => {
  */
 export type GpuSupport = {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`, `fleet`, a provider's name.
+     * `lume`, `qemu`, `container`, `gvisor`, a provider's name.
      */
     runtime: string,
     /**
@@ -8816,6 +9261,107 @@ const FfiConverterTypeGpuSupport = (() => {
             return FfiConverterString.allocationSize(value.runtime) +
              FfiConverterSequenceTypeGpuOption.allocationSize(value.options) +
              FfiConverterString.allocationSize(value.reason);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What `SystemService.Metrics` reports from inside a Space.
+ */
+export type GuestUsage = {
+    /**
+     * Cores the guest sees.
+     */
+    cpuCount: number,
+    /**
+     * Busy now, 0 to 100.
+     */
+    cpuPercent: number,
+    /**
+     * 1-minute load average.
+     */
+    loadAverage1m: number,
+    /**
+     * Memory in use, bytes.
+     */
+    memoryUsed: bigint,
+    /**
+     * Memory size, bytes.
+     */
+    memoryTotal: bigint,
+    /**
+     * `memory_total` is the guest's own limit.
+     */
+    memoryLimited: boolean,
+    /**
+     * Disk in use, bytes.
+     */
+    diskUsed: bigint,
+    /**
+     * Disk size, bytes.
+     */
+    diskTotal: bigint,
+    /**
+     * `disk_total` is the guest's own disk.
+     */
+    diskLimited: boolean
+}
+
+/**
+ * Generated factory for {@link GuestUsage} record objects.
+ */
+export const GuestUsage = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<GuestUsage, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<GuestUsage>,
+    });
+})();
+
+const FfiConverterTypeGuestUsage = (() => {
+    type TypeName = GuestUsage;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                cpuCount: FfiConverterUInt32.read(from),
+                cpuPercent: FfiConverterFloat64.read(from),
+                loadAverage1m: FfiConverterFloat64.read(from),
+                memoryUsed: FfiConverterUInt64.read(from),
+                memoryTotal: FfiConverterUInt64.read(from),
+                memoryLimited: FfiConverterBool.read(from),
+                diskUsed: FfiConverterUInt64.read(from),
+                diskTotal: FfiConverterUInt64.read(from),
+                diskLimited: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.cpuCount, into);
+            FfiConverterFloat64.write(value.cpuPercent, into);
+            FfiConverterFloat64.write(value.loadAverage1m, into);
+            FfiConverterUInt64.write(value.memoryUsed, into);
+            FfiConverterUInt64.write(value.memoryTotal, into);
+            FfiConverterBool.write(value.memoryLimited, into);
+            FfiConverterUInt64.write(value.diskUsed, into);
+            FfiConverterUInt64.write(value.diskTotal, into);
+            FfiConverterBool.write(value.diskLimited, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt32.allocationSize(value.cpuCount) +
+             FfiConverterFloat64.allocationSize(value.cpuPercent) +
+             FfiConverterFloat64.allocationSize(value.loadAverage1m) +
+             FfiConverterUInt64.allocationSize(value.memoryUsed) +
+             FfiConverterUInt64.allocationSize(value.memoryTotal) +
+             FfiConverterBool.allocationSize(value.memoryLimited) +
+             FfiConverterUInt64.allocationSize(value.diskUsed) +
+             FfiConverterUInt64.allocationSize(value.diskTotal) +
+             FfiConverterBool.allocationSize(value.diskLimited);
 
         }
     };
@@ -9962,10 +10508,10 @@ const FfiConverterTypeImageLayer = (() => {
 })();
 
 /**
- * Image layers built on top of a sandbox's image. Cloud: a remote build
- * (Fleet images API). Local: a build into the container engine (container
- * images only; VM images take no layers here). Both are cached by the same
- * content hash (`cua-b-<hash>`), so an identical spec never rebuilds.
+ * Image layers built on top of a sandbox's image. Local: a build into the
+ * container engine (container images only; VM images take no layers here),
+ * cached by a content hash (`cua-b-<hash>`), so an identical spec never
+ * rebuilds. (Cua Cloud's remote build has ended.)
  */
 export type ImageBuild = {
     /**
@@ -10478,7 +11024,7 @@ const FfiConverterTypeMcpConfig = (() => {
 export type MediaBridge = {
     /**
      * Loopback `ws://` URL carrying a short-lived bridge ticket. Speaks
-     * rcdp wire v2 unchanged; no Fleet bearer or env token is exposed.
+     * rcdp wire v2 unchanged; no env token is exposed.
      */
     wsUrl: string,
     /**
@@ -12327,6 +12873,254 @@ const FfiConverterTypeResolvedImage = (() => {
 })();
 
 /**
+ * One extra Space on this Mac.
+ */
+export type SpaceResources = {
+    /**
+     * `local:<name>`.
+     */
+    id: string,
+    /**
+     * `running`, `stopped`, `suspended`, or empty when unknown.
+     */
+    powerState: string,
+    /**
+     * Cores given to it (0: unknown).
+     */
+    cpuAllocated: number,
+    /**
+     * Memory given to it, bytes (0: unknown).
+     */
+    memoryAllocated: bigint,
+    /**
+     * Its disk's size limit, bytes (0: unknown).
+     */
+    diskAllocated: bigint,
+    /**
+     * The guest's own numbers; absent while it is off or unreachable.
+     */
+    usage?: GuestUsage,
+    /**
+     * What it costs this Mac; absent for a container.
+     */
+    diskOnHost?: DiskOnHost
+}
+
+/**
+ * Generated factory for {@link SpaceResources} record objects.
+ */
+export const SpaceResources = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceResources, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceResources>,
+    });
+})();
+
+const FfiConverterTypeSpaceResources = (() => {
+    type TypeName = SpaceResources;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                powerState: FfiConverterString.read(from),
+                cpuAllocated: FfiConverterUInt32.read(from),
+                memoryAllocated: FfiConverterUInt64.read(from),
+                diskAllocated: FfiConverterUInt64.read(from),
+                usage: FfiConverterOptionalTypeGuestUsage.read(from),
+                diskOnHost: FfiConverterOptionalTypeDiskOnHost.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.powerState, into);
+            FfiConverterUInt32.write(value.cpuAllocated, into);
+            FfiConverterUInt64.write(value.memoryAllocated, into);
+            FfiConverterUInt64.write(value.diskAllocated, into);
+            FfiConverterOptionalTypeGuestUsage.write(value.usage, into);
+            FfiConverterOptionalTypeDiskOnHost.write(value.diskOnHost, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.powerState) +
+             FfiConverterUInt32.allocationSize(value.cpuAllocated) +
+             FfiConverterUInt64.allocationSize(value.memoryAllocated) +
+             FfiConverterUInt64.allocationSize(value.diskAllocated) +
+             FfiConverterOptionalTypeGuestUsage.allocationSize(value.usage) +
+             FfiConverterOptionalTypeDiskOnHost.allocationSize(value.diskOnHost);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * One sample of everything.
+ */
+export type ResourcesSnapshot = {
+    /**
+     * Grows by one per sample.
+     */
+    sequence: bigint,
+    /**
+     * Unix ms.
+     */
+    sampledAtMs: bigint,
+    /**
+     * This Mac.
+     */
+    thisMac: ComputerResources,
+    /**
+     * Extra Spaces on this Mac.
+     */
+    spaces: Array<SpaceResources>,
+    /**
+     * Your other computers, from the summaries they published.
+     */
+    computers: Array<ComputerResources>,
+    /**
+     * `this_mac.warning`, for the menu bar.
+     */
+    warning: DiskWarning
+}
+
+/**
+ * Generated factory for {@link ResourcesSnapshot} record objects.
+ */
+export const ResourcesSnapshot = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ResourcesSnapshot, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ResourcesSnapshot>,
+    });
+})();
+
+const FfiConverterTypeResourcesSnapshot = (() => {
+    type TypeName = ResourcesSnapshot;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                sequence: FfiConverterUInt64.read(from),
+                sampledAtMs: FfiConverterUInt64.read(from),
+                thisMac: FfiConverterTypeComputerResources.read(from),
+                spaces: FfiConverterSequenceTypeSpaceResources.read(from),
+                computers: FfiConverterSequenceTypeComputerResources.read(from),
+                warning: FfiConverterTypeDiskWarning.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt64.write(value.sequence, into);
+            FfiConverterUInt64.write(value.sampledAtMs, into);
+            FfiConverterTypeComputerResources.write(value.thisMac, into);
+            FfiConverterSequenceTypeSpaceResources.write(value.spaces, into);
+            FfiConverterSequenceTypeComputerResources.write(value.computers, into);
+            FfiConverterTypeDiskWarning.write(value.warning, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt64.allocationSize(value.sequence) +
+             FfiConverterUInt64.allocationSize(value.sampledAtMs) +
+             FfiConverterTypeComputerResources.allocationSize(value.thisMac) +
+             FfiConverterSequenceTypeSpaceResources.allocationSize(value.spaces) +
+             FfiConverterSequenceTypeComputerResources.allocationSize(value.computers) +
+             FfiConverterTypeDiskWarning.allocationSize(value.warning);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What changed since the last event: only entries that moved by more than
+ * 1 point or 256 MB. Replace entries by `id`; drop the `removed` ids.
+ */
+export type ResourcesUpdate = {
+    /**
+     * The sample it brings you to.
+     */
+    sequence: bigint,
+    /**
+     * Unix ms.
+     */
+    sampledAtMs: bigint,
+    /**
+     * This Mac, when it changed.
+     */
+    thisMac?: ComputerResources,
+    /**
+     * Extra Spaces that changed or appeared.
+     */
+    spaces: Array<SpaceResources>,
+    /**
+     * Other computers that changed or appeared.
+     */
+    computers: Array<ComputerResources>,
+    /**
+     * Ids (Spaces or computers) that are gone.
+     */
+    removed: Array<string>
+}
+
+/**
+ * Generated factory for {@link ResourcesUpdate} record objects.
+ */
+export const ResourcesUpdate = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ResourcesUpdate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ResourcesUpdate>,
+    });
+})();
+
+const FfiConverterTypeResourcesUpdate = (() => {
+    type TypeName = ResourcesUpdate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                sequence: FfiConverterUInt64.read(from),
+                sampledAtMs: FfiConverterUInt64.read(from),
+                thisMac: FfiConverterOptionalTypeComputerResources.read(from),
+                spaces: FfiConverterSequenceTypeSpaceResources.read(from),
+                computers: FfiConverterSequenceTypeComputerResources.read(from),
+                removed: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt64.write(value.sequence, into);
+            FfiConverterUInt64.write(value.sampledAtMs, into);
+            FfiConverterOptionalTypeComputerResources.write(value.thisMac, into);
+            FfiConverterSequenceTypeSpaceResources.write(value.spaces, into);
+            FfiConverterSequenceTypeComputerResources.write(value.computers, into);
+            FfiConverterSequenceString.write(value.removed, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt64.allocationSize(value.sequence) +
+             FfiConverterUInt64.allocationSize(value.sampledAtMs) +
+             FfiConverterOptionalTypeComputerResources.allocationSize(value.thisMac) +
+             FfiConverterSequenceTypeSpaceResources.allocationSize(value.spaces) +
+             FfiConverterSequenceTypeComputerResources.allocationSize(value.computers) +
+             FfiConverterSequenceString.allocationSize(value.removed);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A routine: a recurring turn of a persistent agent, fired by the daemon.
  */
 export type RoutineInfo = {
@@ -12454,9 +13248,8 @@ export type SandboxCreateOptions = {
      */
     token?: string,
     /**
-     * Fleet: claim from this existing (user-owned) pool. Unset: a managed,
-     * autoscaled pool keyed by image and shape. Local (with an empty
-     * image): run this Fleet pool's template locally.
+     * Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
+     * error.
      */
     pool?: string,
     /**
@@ -12472,7 +13265,7 @@ export type SandboxCreateOptions = {
      */
     memoryMb?: bigint,
     /**
-     * Extra guest ports (local: published; Fleet: `port-<n>` services).
+     * Extra guest ports (local: published).
      */
     ports: Array<number>,
     /**
@@ -12488,13 +13281,13 @@ export type SandboxCreateOptions = {
      */
     readyTimeoutMs?: number,
     /**
-     * Guest environment (local: container environment or cloud-init;
-     * cloud: the template environment with `processMode: Run`, on gVisor
-     * and KubeVirt; values are not secrets).
+     * Guest environment (local: container environment or cloud-init; values
+     * are not secrets).
      */
     env: Map<string, string>,
     /**
-     * Deprecated: initial replicas of a new managed pool (> 0 = warm).
+     * Deprecated, and Cua Cloud has ended: initial replicas of a new
+     * managed pool (> 0 = warm).
      */
     fleetReplicas?: number,
     /**
@@ -12835,8 +13628,9 @@ export type SandboxInfo = {
      */
     runtime: string,
     /**
-     * `runtime_type` as persisted (`fleet`, `direct`, `gvisor`, `qemu`,
-     * ...); prefer `location`, `kind` and `runtime`.
+     * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
+     * for a record of the Cua Cloud that has ended); prefer `location`,
+     * `kind` and `runtime`.
      */
     runtimeType: string,
     /**
@@ -12856,8 +13650,7 @@ export type SandboxInfo = {
      */
     services: Map<string, number>,
     /**
-     * Service base URLs by name (Fleet: gateway URLs that need the Fleet
-     * bearer).
+     * Service base URLs by name.
      */
     endpoints: Map<string, string>,
     /**
@@ -14009,14 +14802,11 @@ export type SpaceCreateOptions = {
      */
     name?: string,
     /**
-     * vCPUs. Local default 2; cloud 1-64 (most accounts run 1-8; Fleet
-     * decides), default the pool template's (4).
+     * vCPUs. Local default 2.
      */
     cpus?: number,
     /**
-     * Memory in MiB. Local default 4096; cloud 512 up to 524288 (most
-     * accounts run 1024-32768; Fleet decides), default the pool
-     * template's (4096).
+     * Memory in MiB. Local default 4096.
      */
     memoryMb?: bigint,
     /**
@@ -15469,8 +16259,8 @@ export type SpaceStreamTicket = {
      */
     height: number,
     /**
-     * Attaching needs [`Space::websocket_headers`] (Fleet gateway or the
-     * daemon passthrough).
+     * Attaching needs [`Space::websocket_headers`] (a gateway or the daemon
+     * passthrough).
      */
     needsHeaders: boolean
 }
@@ -15852,11 +16642,23 @@ const FfiConverterTypeSpaceTransferReport = (() => {
 })();
 
 /**
- * Memory and storage use ([`Space::usage`]). A size is the guest's own
- * limit only when its `*_limited` flag says so (a VM's memory or disk, a
- * container's cgroup memory limit).
+ * Processor, memory and storage use ([`Space::usage`]). A size is the
+ * guest's own limit only when its `*_limited` flag says so (a VM's memory
+ * or disk, a container's cgroup memory limit).
  */
 export type SpaceUsage = {
+    /**
+     * Cores the guest sees (0 from a guest that does not report it).
+     */
+    cpuCount: number,
+    /**
+     * Busy now, 0 to 100.
+     */
+    cpuPercent: number,
+    /**
+     * 1-minute load average.
+     */
+    loadAverage1m: number,
     /**
      * Memory in use, bytes.
      */
@@ -15888,6 +16690,9 @@ export type SpaceUsage = {
  */
 export const SpaceUsage = (() => {
     const defaults = () => ({
+        cpuCount: 0,
+        cpuPercent: 0.0,
+        loadAverage1m: 0.0,
     });
     const create = (() => {
         return uniffiCreateRecord<SpaceUsage, ReturnType<typeof defaults>>(defaults);
@@ -15904,6 +16709,9 @@ const FfiConverterTypeSpaceUsage = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
+                cpuCount: FfiConverterUInt32.read(from),
+                cpuPercent: FfiConverterFloat64.read(from),
+                loadAverage1m: FfiConverterFloat64.read(from),
                 memoryUsed: FfiConverterUInt64.read(from),
                 memoryTotal: FfiConverterUInt64.read(from),
                 memoryLimited: FfiConverterBool.read(from),
@@ -15913,6 +16721,9 @@ const FfiConverterTypeSpaceUsage = (() => {
             };
         }
         write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.cpuCount, into);
+            FfiConverterFloat64.write(value.cpuPercent, into);
+            FfiConverterFloat64.write(value.loadAverage1m, into);
             FfiConverterUInt64.write(value.memoryUsed, into);
             FfiConverterUInt64.write(value.memoryTotal, into);
             FfiConverterBool.write(value.memoryLimited, into);
@@ -15921,7 +16732,10 @@ const FfiConverterTypeSpaceUsage = (() => {
             FfiConverterBool.write(value.diskLimited, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterUInt64.allocationSize(value.memoryUsed) +
+            return FfiConverterUInt32.allocationSize(value.cpuCount) +
+             FfiConverterFloat64.allocationSize(value.cpuPercent) +
+             FfiConverterFloat64.allocationSize(value.loadAverage1m) +
+             FfiConverterUInt64.allocationSize(value.memoryUsed) +
              FfiConverterUInt64.allocationSize(value.memoryTotal) +
              FfiConverterBool.allocationSize(value.memoryLimited) +
              FfiConverterUInt64.allocationSize(value.diskUsed) +
@@ -16662,8 +17476,8 @@ export type SpacesdHttpRequest = {
      */
     path: string,
     /**
-     * Extra headers. Credentials (`authorization`, the env and Fleet claim
-     * headers) are the client's and cannot be set here.
+     * Extra headers. Credentials (`authorization` and the env headers) are
+     * the client's and cannot be set here.
      */
     headers: Array<SpacesdHttpHeader>,
     /**
@@ -16867,6 +17681,79 @@ const FfiConverterTypeStreamStatsReport = (() => {
              FfiConverterOptionalFloat64.allocationSize(value.p95LatencyMs) +
              FfiConverterUInt32.allocationSize(value.height) +
              FfiConverterUInt64.allocationSize(value.durationMs);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * The one-time notice for machines that saw the older "anonymous" wording,
+ * shown before anything is linked to the account. Both buttons close it;
+ * the second also turns usage data off.
+ */
+export type TelemetryLinkNotice = {
+    title: string,
+    body: string,
+    /**
+     * Keeps usage data on ("Got it").
+     */
+    okLabel: string,
+    /**
+     * Turns usage data off ("Turn off usage data").
+     */
+    turnOffLabel: string,
+    /**
+     * The link to what is collected.
+     */
+    detailsLabel: string,
+    docsUrl: string
+}
+
+/**
+ * Generated factory for {@link TelemetryLinkNotice} record objects.
+ */
+export const TelemetryLinkNotice = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<TelemetryLinkNotice, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<TelemetryLinkNotice>,
+    });
+})();
+
+const FfiConverterTypeTelemetryLinkNotice = (() => {
+    type TypeName = TelemetryLinkNotice;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                title: FfiConverterString.read(from),
+                body: FfiConverterString.read(from),
+                okLabel: FfiConverterString.read(from),
+                turnOffLabel: FfiConverterString.read(from),
+                detailsLabel: FfiConverterString.read(from),
+                docsUrl: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.title, into);
+            FfiConverterString.write(value.body, into);
+            FfiConverterString.write(value.okLabel, into);
+            FfiConverterString.write(value.turnOffLabel, into);
+            FfiConverterString.write(value.detailsLabel, into);
+            FfiConverterString.write(value.docsUrl, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.title) +
+             FfiConverterString.allocationSize(value.body) +
+             FfiConverterString.allocationSize(value.okLabel) +
+             FfiConverterString.allocationSize(value.turnOffLabel) +
+             FfiConverterString.allocationSize(value.detailsLabel) +
+             FfiConverterString.allocationSize(value.docsUrl);
 
         }
     };
@@ -17824,10 +18711,10 @@ export const CuaError = (() => {
         }
     }
     /**
-     * The provider is not configured (for example no Fleet credentials).
+     * The provider is not configured (for example no credentials for it).
      *
-     * Fix: Set `FLEETS_TOKEN`, or `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`, or
-     * run `cua auth login` and create the client with `fleet_from_session`.
+     * Fix: Set the credentials the message names (for a contrib provider, its
+     * environment variable or `cua auth provider set <name>`).
      */
     class ProviderNotConfigured extends UniffiError {
         /**
@@ -17944,10 +18831,11 @@ export const CuaError = (() => {
         }
     }
     /**
-     * Fleet API failure.
+     * Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
+     * this.
      *
-     * Fix: Read the status in the message. Retry a transient failure; check
-     * the credentials and the account's capacity otherwise.
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
+     * ended guide.
      */
     class Fleet extends UniffiError {
         /**
@@ -17974,13 +18862,11 @@ export const CuaError = (() => {
         }
     }
     /**
-     * Fleet's admission refused the request: a sandbox or pool size over
-     * this account's limits, or a template its policy does not admit. The
-     * message is Fleet's own and names the limit.
+     * Fleet's admission refused the request. Cua Cloud has ended, so the SDK
+     * no longer raises this.
      *
-     * Fix: Pick a size within the limit the message names (most accounts
-     * run 1-8 vCPUs and 1-32 GiB per sandbox), or contact Cua support to
-     * raise the account's limits.
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
+     * ended guide.
      */
     class FleetAdmissionDenied extends UniffiError {
         /**
@@ -18132,8 +19018,7 @@ export const CuaError = (() => {
     /**
      * Missing or wrong token or ticket.
      *
-     * Fix: Pass the sandbox's env token, refresh the Fleet credentials, or run
-     * `cua auth login` again.
+     * Fix: Pass the sandbox's env token, or run `cua auth login` again.
      */
     class Unauthenticated extends UniffiError {
         /**
@@ -18317,7 +19202,7 @@ export const CuaError = (() => {
      * display, a local runtime) is not available.
      *
      * Fix: Install or start the prerequisite the message names on this
-     * machine.
+     * computer.
      */
     class HostCapabilityMissing extends UniffiError {
         /**
@@ -18375,9 +19260,10 @@ export const CuaError = (() => {
     }
     /**
      * A named cloud pool's template differs from the requested sandbox
-     * fields; the message holds the diff (pass `apply` to update it).
+     * fields. Cua Cloud has ended, so the SDK no longer raises this.
      *
-     * Fix: Pass the pool's own fields, or pass `apply` to update its template.
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
+     * ended guide.
      */
     class PoolSpecMismatch extends UniffiError {
         /**
@@ -18405,10 +19291,11 @@ export const CuaError = (() => {
     }
     /**
      * A claim bound but its per-claim secrets (the env token) never
-     * reached the sandbox within the bounded wait; the claim was released.
+     * reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
+     * this.
      *
-     * Fix: Retry. If it keeps failing, check the pool's claim-secrets setup
-     * and the Fleet status.
+     * Fix: Use a local sandbox or your own computer; see the Cua Cloud has
+     * ended guide.
      */
     class ClaimSecretsNotDelivered extends UniffiError {
         /**
@@ -19062,6 +19949,204 @@ const FfiConverterTypeReplayMode = (() => {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(4);
                     size += FfiConverterUInt64.allocationSize(inner.offset);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: ResourcesEvent
+export enum ResourcesEvent_Tags {
+    Snapshot = "Snapshot",
+    Update = "Update",
+    LowDisk = "LowDisk"
+}
+/**
+ * What [`Spaces::watch_resources`] reports.
+ */
+export const ResourcesEvent = (() => {
+
+    type Snapshot__interface = {
+        tag: ResourcesEvent_Tags.Snapshot;
+        inner:
+Readonly<{snapshot: ResourcesSnapshot}>
+    };
+    /**
+     * Everything, at the start (and again after a reconnect).
+     */
+    class Snapshot_ extends UniffiEnum implements Snapshot__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ResourcesEvent";
+        readonly tag = ResourcesEvent_Tags.Snapshot;
+        readonly inner:
+Readonly<{snapshot: ResourcesSnapshot}>;
+        constructor(
+inner: {snapshot: ResourcesSnapshot }) {
+            super("ResourcesEvent", "Snapshot");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {snapshot: ResourcesSnapshot }): Snapshot_ {
+            return new Snapshot_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Snapshot_ {
+            return obj.tag === ResourcesEvent_Tags.Snapshot;
+        }
+
+    }
+
+    type Update__interface = {
+        tag: ResourcesEvent_Tags.Update;
+        inner:
+Readonly<{update: ResourcesUpdate}>
+    };
+    /**
+     * Only what changed.
+     */
+    class Update_ extends UniffiEnum implements Update__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ResourcesEvent";
+        readonly tag = ResourcesEvent_Tags.Update;
+        readonly inner:
+Readonly<{update: ResourcesUpdate}>;
+        constructor(
+inner: {update: ResourcesUpdate }) {
+            super("ResourcesEvent", "Update");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {update: ResourcesUpdate }): Update_ {
+            return new Update_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Update_ {
+            return obj.tag === ResourcesEvent_Tags.Update;
+        }
+
+    }
+
+    type LowDisk__interface = {
+        tag: ResourcesEvent_Tags.LowDisk;
+        inner:
+Readonly<{warning: DiskWarning}>
+    };
+    /**
+     * The low-disk level changed (including back to `ok`).
+     */
+    class LowDisk_ extends UniffiEnum implements LowDisk__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ResourcesEvent";
+        readonly tag = ResourcesEvent_Tags.LowDisk;
+        readonly inner:
+Readonly<{warning: DiskWarning}>;
+        constructor(
+inner: {warning: DiskWarning }) {
+            super("ResourcesEvent", "LowDisk");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {warning: DiskWarning }): LowDisk_ {
+            return new LowDisk_(inner);
+        }
+
+        static instanceOf(obj: any): obj is LowDisk_ {
+            return obj.tag === ResourcesEvent_Tags.LowDisk;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is ResourcesEvent {
+        return obj[uniffiTypeNameSymbol] === "ResourcesEvent";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Snapshot: Snapshot_,
+  Update: Update_,
+  LowDisk: LowDisk_
+    });
+
+})();
+/**
+ * What [`Spaces::watch_resources`] reports.
+ */
+export type ResourcesEvent = InstanceType<
+    typeof ResourcesEvent['Snapshot' | 'Update' | 'LowDisk']
+>;
+
+// FfiConverter for enum ResourcesEvent
+const FfiConverterTypeResourcesEvent = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ResourcesEvent;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new ResourcesEvent.Snapshot({snapshot: FfiConverterTypeResourcesSnapshot.read(from) });
+                case 2: return new ResourcesEvent.Update({update: FfiConverterTypeResourcesUpdate.read(from) });
+                case 3: return new ResourcesEvent.LowDisk({warning: FfiConverterTypeDiskWarning.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case ResourcesEvent_Tags.Snapshot: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterTypeResourcesSnapshot.write(inner.snapshot, into);
+                    return;
+                }
+                case ResourcesEvent_Tags.Update: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterTypeResourcesUpdate.write(inner.update, into);
+                    return;
+                }
+                case ResourcesEvent_Tags.LowDisk: {
+                    ordinalConverter.write(3, into);
+                    const inner = value.inner;
+                    FfiConverterTypeDiskWarning.write(inner.warning, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that ResourcesEvent_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case ResourcesEvent_Tags.Snapshot: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterTypeResourcesSnapshot.allocationSize(inner.snapshot);
+                    return size;
+                }
+                case ResourcesEvent_Tags.Update: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterTypeResourcesUpdate.allocationSize(inner.update);
+                    return size;
+                }
+                case ResourcesEvent_Tags.LowDisk: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
+                    size += FfiConverterTypeDiskWarning.allocationSize(inner.warning);
                     return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
@@ -21586,8 +22671,8 @@ export interface AuthLike {
  */
     devices(relayUrl: string | undefined, name: string | undefined) /*throws*/: DevicesLike;
 /**
- * Revokes (best effort) and removes the session. Returns whether one
- * existed.
+ * Revokes (best effort) and removes the session, and unlinks usage
+ * data from the account. Returns whether one existed.
  */
     logout(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<boolean>;
 /**
@@ -21712,8 +22797,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Revokes (best effort) and removes the session. Returns whether one
- * existed.
+ * Revokes (best effort) and removes the session, and unlinks usage
+ * data from the account. Returns whether one existed.
  */
     async logout(asyncOpts_?: { signal: AbortSignal }): Promise<boolean> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22086,7 +23171,8 @@ const uniffiTypeFleetPoolsObjectFactory: UniffiObjectFactory<FleetPoolsLike> = (
 const FfiConverterTypeFleetPools = new FfiConverterObject(uniffiTypeFleetPoolsObjectFactory);
 
 /**
- * Fleet control plane.
+ * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+ * one, so none of its methods can be called.
  */
 export interface FleetLike {
 
@@ -22235,7 +23321,8 @@ export type FleetInterface = FleetLike;
 
 
 /**
- * Fleet control plane.
+ * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+ * one, so none of its methods can be called.
  */
 export class Fleet extends UniffiAbstractObject implements FleetLike {
 
@@ -23691,7 +24778,7 @@ export interface PortForwardLike {
  */
     localAddr(): string | undefined;
 /**
- * URL to use (loopback URL, or the Fleet gateway URL).
+ * URL to use (a loopback URL).
  */
     url(): string | undefined;
 }
@@ -23784,7 +24871,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * URL to use (loopback URL, or the Fleet gateway URL).
+ * URL to use (a loopback URL).
  */
     url(): string | undefined {
     return ((__rb: Uint8Array) => {
@@ -24620,16 +25707,14 @@ export interface ServiceLike {
 /**
  * A shareable URL for this service that stops working after
  * `ttl_seconds` (60 s to 24 h, default 1 h): the same as
- * `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
- * Local: a loopback URL with its own token, served by the cua daemon.
+ * `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+ * served by the cua daemon.
  */
     publicUrl(ttlSeconds: number | undefined, label: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PublicUrl>;
 /**
- * One HTTP request to `path` on the service. Credentials (Fleet bearer
- * and claim) are attached by the runtime. `headers` are sent as given
- * (for example `content-type`, or `accept` and `mcp-session-id` for
- * MCP over Fleet); `authorization` is refused on Fleet, where the
- * gateway bearer owns it.
+ * One HTTP request to `path` on the service. Credentials are attached by
+ * the runtime. `headers` are sent as given (for example `content-type`,
+ * or `accept` and `mcp-session-id` for MCP).
  */
     request(method: string, path: string, body: ArrayBuffer | undefined, timeoutMs: number | undefined, headers: Array<HttpHeader> | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
 /**
@@ -24794,8 +25879,8 @@ private constructor(pointer: UniffiHandle) {
 /**
  * A shareable URL for this service that stops working after
  * `ttl_seconds` (60 s to 24 h, default 1 h): the same as
- * `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
- * Local: a loopback URL with its own token, served by the cua daemon.
+ * `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+ * served by the cua daemon.
  */
     async publicUrl(ttlSeconds: number | undefined = undefined, label: string | undefined = undefined, asyncOpts_?: { signal: AbortSignal }): Promise<PublicUrl> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -24830,11 +25915,9 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * One HTTP request to `path` on the service. Credentials (Fleet bearer
- * and claim) are attached by the runtime. `headers` are sent as given
- * (for example `content-type`, or `accept` and `mcp-session-id` for
- * MCP over Fleet); `authorization` is refused on Fleet, where the
- * gateway bearer owns it.
+ * One HTTP request to `path` on the service. Credentials are attached by
+ * the runtime. `headers` are sent as given (for example `content-type`,
+ * or `accept` and `mcp-session-id` for MCP).
  */
     async request(method: string, path: string, body: ArrayBuffer | undefined, timeoutMs: number | undefined, headers: Array<HttpHeader> | undefined = undefined, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -27719,20 +28802,19 @@ export interface SandboxLike {
  */
     agents(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<AgentsLike>;
 /**
- * Deletes (Fleet: releases the claim and an ephemeral pool).
+ * Deletes (local: removes it; direct: forgets it; your cloud: deletes
+ * the machine).
  */
     delete_(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Managed Fleet claims: stop renewing the claim and forget the handle;
- * the claim runs until its current shutdown time. Embedded runtime
- * only (a daemon holds its claims by design).
+ * Forgets the handle this runtime holds (a Cua Cloud claim used to
+ * stop renewing; Cua Cloud has ended). Embedded runtime only.
  */
     detach() /*throws*/: void;
 /**
  * Forwards a loopback port to guest `port`: a TCP forward locally (and
- * over cua-spacesd's tunnel when the image has it); in the cloud
- * without cua-spacesd, a loopback HTTP/WebSocket proxy through the
- * Fleet gateway. Either way `url()` is a loopback URL.
+ * over cua-spacesd's tunnel when the image has it). `url()` is a
+ * loopback URL.
  */
     forward(port: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PortForwardLike>;
 /**
@@ -27775,7 +28857,7 @@ export interface SandboxLike {
  */
     isEphemeral(): boolean;
 /**
- * Extends a Fleet lease by `seconds`.
+ * Extends the sandbox's lease by `seconds`, for a provider that has one.
  */
     keepAlive(seconds: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
@@ -27801,9 +28883,8 @@ export interface SandboxLike {
 /**
  * Where the MCP server behind `service` is (URL of its endpoint at
  * `path`, default `/mcp`, plus the headers every request needs), for
- * any MCP client. Embedded: the service route itself (loopback, or the
- * Fleet gateway with a fresh bearer and claim header). Daemon: the
- * daemon's streaming passthrough with its loopback bearer.
+ * any MCP client. Embedded: the service route itself (loopback).
+ * Daemon: the daemon's streaming passthrough with its loopback bearer.
  */
     mcpConfig(service: string, path: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<McpConfig>;
 /**
@@ -27827,9 +28908,8 @@ export interface SandboxLike {
     overlay(overlays: Array<Overlay>, timeoutMs: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<OverlayResult>>;
 /**
  * A shareable URL for `service` that stops working after `ttl_seconds`
- * (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
- * Local: a loopback URL with its own token, served by the cua daemon
- * (started if needed; `CUA_BIN` names the CLI).
+ * (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+ * by the cua daemon (started if needed; `CUA_BIN` names the CLI).
  */
     publicUrl(service: string, ttlSeconds: number | undefined, label: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PublicUrl>;
 /**
@@ -27950,7 +29030,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Deletes (Fleet: releases the claim and an ephemeral pool).
+ * Deletes (local: removes it; direct: forgets it; your cloud: deletes
+ * the machine).
  */
     async delete_(asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -27980,9 +29061,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Managed Fleet claims: stop renewing the claim and forget the handle;
- * the claim runs until its current shutdown time. Embedded runtime
- * only (a daemon holds its claims by design).
+ * Forgets the handle this runtime holds (a Cua Cloud claim used to
+ * stop renewing; Cua Cloud has ended). Embedded runtime only.
  */
     detach(): void /*throws*/ {uniffiCaller.rustCallWithError(
             /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
@@ -27996,9 +29076,8 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Forwards a loopback port to guest `port`: a TCP forward locally (and
- * over cua-spacesd's tunnel when the image has it); in the cloud
- * without cua-spacesd, a loopback HTTP/WebSocket proxy through the
- * Fleet gateway. Either way `url()` is a loopback URL.
+ * over cua-spacesd's tunnel when the image has it). `url()` is a
+ * loopback URL.
  */
     async forward(port: number, asyncOpts_?: { signal: AbortSignal }): Promise<PortForwardLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -28223,7 +29302,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Extends a Fleet lease by `seconds`.
+ * Extends the sandbox's lease by `seconds`, for a provider that has one.
  */
     async keepAlive(seconds: number, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -28348,9 +29427,8 @@ private constructor(pointer: UniffiHandle) {
 /**
  * Where the MCP server behind `service` is (URL of its endpoint at
  * `path`, default `/mcp`, plus the headers every request needs), for
- * any MCP client. Embedded: the service route itself (loopback, or the
- * Fleet gateway with a fresh bearer and claim header). Daemon: the
- * daemon's streaming passthrough with its loopback bearer.
+ * any MCP client. Embedded: the service route itself (loopback).
+ * Daemon: the daemon's streaming passthrough with its loopback bearer.
  */
     async mcpConfig(service: string, path: string | undefined = undefined, asyncOpts_?: { signal: AbortSignal }): Promise<McpConfig> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -28483,9 +29561,8 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * A shareable URL for `service` that stops working after `ttl_seconds`
- * (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
- * Local: a loopback URL with its own token, served by the cua daemon
- * (started if needed; `CUA_BIN` names the CLI).
+ * (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+ * by the cua daemon (started if needed; `CUA_BIN` names the CLI).
  */
     async publicUrl(service: string, ttlSeconds: number | undefined = undefined, label: string | undefined = undefined, asyncOpts_?: { signal: AbortSignal }): Promise<PublicUrl> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -28960,13 +30037,13 @@ export interface SandboxesLike {
     connect(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxLike>;
 /**
  * Connects directly to a machine by URL (`http(s)://host:port`, bare
- * `host:port`, a Fleet service URL or a relay URL) with an optional
- * spacesd token. No daemon is assumed and nothing is probed.
+ * `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
  */
     connectUrl(url: string, token: string | undefined, name: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxLike>;
 /**
- * Creates (Fleet, local) or connects (direct) a sandbox and waits for
- * the provider and every readiness probe.
+ * Creates (local, your cloud, a provider) or connects (direct) a sandbox
+ * and waits for the provider and every readiness probe. `on: "cloud"`
+ * fails with the "Cua Cloud has ended" error.
  */
     create(options: SandboxCreateOptions, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxLike>;
 /**
@@ -28982,10 +30059,8 @@ export interface SandboxesLike {
  * all of them, local, direct and the account's live cloud sandboxes,
  * whatever the default location is. `"local"`, `"cloud"` or
  * `"direct"`: only those.
- * Cloud sandboxes never fail the listing: without Fleet credentials
- * they are left out silently, and when Fleet fails or takes longer than
- * 5 s they are left out with a warning (logged here;
- * [`Sandboxes::list_with_warnings`] returns it).
+ * Cua Cloud has ended: its sandboxes are never listed, and listing
+ * never asks Fleet.
  */
     list(location: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SandboxInfo>>;
 /**
@@ -29102,8 +30177,7 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Connects directly to a machine by URL (`http(s)://host:port`, bare
- * `host:port`, a Fleet service URL or a relay URL) with an optional
- * spacesd token. No daemon is assumed and nothing is probed.
+ * `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
  */
     async connectUrl(url: string, token: string | undefined, name: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SandboxLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -29138,8 +30212,9 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Creates (Fleet, local) or connects (direct) a sandbox and waits for
- * the provider and every readiness probe.
+ * Creates (local, your cloud, a provider) or connects (direct) a sandbox
+ * and waits for the provider and every readiness probe. `on: "cloud"`
+ * fails with the "Cua Cloud has ended" error.
  */
     async create(options: SandboxCreateOptions, asyncOpts_?: { signal: AbortSignal }): Promise<SandboxLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -29243,10 +30318,8 @@ private constructor(pointer: UniffiHandle) {
  * all of them, local, direct and the account's live cloud sandboxes,
  * whatever the default location is. `"local"`, `"cloud"` or
  * `"direct"`: only those.
- * Cloud sandboxes never fail the listing: without Fleet credentials
- * they are left out silently, and when Fleet fails or takes longer than
- * 5 s they are left out with a warning (logged here;
- * [`Sandboxes::list_with_warnings`] returns it).
+ * Cua Cloud has ended: its sandboxes are never listed, and listing
+ * never asks Fleet.
  */
     async list(location: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<Array<SandboxInfo>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -30952,8 +32025,8 @@ export interface SpaceLike {
  */
     upload(localPath: string, dest: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceTransferReport>;
 /**
- * Memory and storage use now (cheap: poll it at a low rate while a
- * detail is visible).
+ * Processor, memory and storage use now (cheap: poll it at a low rate
+ * while a detail is visible).
  */
     usage(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceUsage>;
 /**
@@ -32358,8 +33431,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Memory and storage use now (cheap: poll it at a low rate while a
- * detail is visible).
+ * Processor, memory and storage use now (cheap: poll it at a low rate
+ * while a detail is visible).
  */
     async usage(asyncOpts_?: { signal: AbortSignal }): Promise<SpaceUsage> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -32617,8 +33690,328 @@ const uniffiTypeSpaceObjectFactory: UniffiObjectFactory<SpaceLike> = (() => {
 const FfiConverterTypeSpace = new FfiConverterObject(uniffiTypeSpaceObjectFactory);
 
 /**
- * The Spaces registry: add a machine by URL, claim a Fleet Space,
- * provision a local one, and get [`Space`] handles.
+ * Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
+ * Called on an SDK worker thread; return quickly.
+ */
+export interface ResourcesListener {
+
+/**
+ * Something moved.
+ */
+    onEvent(event: ResourcesEvent): void;
+}
+
+
+/**
+ * Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
+ * Called on an SDK worker thread; return quickly.
+ */
+export class ResourcesListenerImpl extends UniffiAbstractObject implements ResourcesListener {
+
+    readonly [uniffiTypeNameSymbol] = "ResourcesListenerImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeResourcesListenerImplObjectFactory.bless(pointer);
+}
+
+
+
+
+/**
+ * Something moved.
+ */
+    onEvent(event: ResourcesEvent): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_resourceslistener_on_event(
+                uniffiTypeResourcesListenerImplObjectFactory.clonePointer(this),
+        FfiConverterTypeResourcesEvent.lower(event, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeResourcesListenerImplObjectFactory.pointer(this);
+            uniffiTypeResourcesListenerImplObjectFactory.freePointer(pointer);
+            uniffiTypeResourcesListenerImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is ResourcesListenerImpl {
+        return uniffiTypeResourcesListenerImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeResourcesListenerImplObjectFactory: UniffiObjectFactory<ResourcesListener> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeResourcesListenerImplObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): ResourcesListener {
+        const instance = Object.create(ResourcesListenerImpl.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "ResourcesListenerImpl";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: ResourcesListener): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: ResourcesListener): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_resourceslistener(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_resourceslistener(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is ResourcesListener {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "ResourcesListenerImpl";
+    },
+}})();
+const FfiConverterTypeResourcesListener = new FfiConverterObjectWithCallbacks(uniffiTypeResourcesListenerImplObjectFactory);
+
+// Add a vtable for the callbacks that go in ResourcesListener.
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+const uniffiCallbackInterfaceResourcesListener: { vtable: any; register: () => void; } = {
+    // Create the VTable using a series of closures.
+    // ts automatically converts these into C callback functions.
+    vtable: {
+        on_event: (
+            uniffiHandle: bigint,
+            event: Uint8Array,) => {
+            const uniffiMakeCall =
+            ()
+            : void => {
+                const jsCallback = FfiConverterTypeResourcesListener.lift(uniffiHandle);
+                return jsCallback.onEvent(
+                    FfiConverterTypeResourcesEvent.lift(event)
+                )
+            };
+            const uniffiResult = UniffiResult.ready<void>();
+            const uniffiHandleSuccess = (obj: any) => {};
+            const uniffiHandleError = (code: number, errBuf: UniffiByteArray) => {
+                UniffiResult.writeError(uniffiResult, code, errBuf);
+            };
+            uniffiTraitInterfaceCall(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            )
+            return uniffiResult;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeResourcesListener.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeResourcesListener.clone(uniffiHandle);
+        }
+    },
+    register: () => {nativeModule().uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener(
+            uniffiCallbackInterfaceResourcesListener.vtable
+        );
+    },
+};
+
+/**
+ * A running [`Spaces::watch_resources`]: tell it whether a window shows
+ * the numbers, and stop it when done. Dropping it also stops it.
+ */
+export interface ResourcesWatchLike {
+
+/**
+ * Whether a window shows the numbers: visible watchers are sampled
+ * every 10 seconds, hidden ones every 5 minutes (and still hear
+ * `LowDisk`, for the menu bar).
+ */
+    setVisible(visible: boolean): void;
+/**
+ * Ends the watch. No event is delivered after this returns.
+ */
+    stop(): void;
+}
+/**
+ * @deprecated Use `ResourcesWatchLike` instead.
+ */
+export type ResourcesWatchInterface = ResourcesWatchLike;
+
+
+/**
+ * A running [`Spaces::watch_resources`]: tell it whether a window shows
+ * the numbers, and stop it when done. Dropping it also stops it.
+ */
+export class ResourcesWatch extends UniffiAbstractObject implements ResourcesWatchLike {
+
+    readonly [uniffiTypeNameSymbol] = "ResourcesWatch";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeResourcesWatchObjectFactory.bless(pointer);
+}
+
+
+
+
+/**
+ * Whether a window shows the numbers: visible watchers are sampled
+ * every 10 seconds, hidden ones every 5 minutes (and still hear
+ * `LowDisk`, for the menu bar).
+ */
+    setVisible(visible: boolean): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_resourceswatch_set_visible(
+                uniffiTypeResourcesWatchObjectFactory.clonePointer(this),
+        FfiConverterBool.lower(visible, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+/**
+ * Ends the watch. No event is delivered after this returns.
+ */
+    stop(): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_resourceswatch_stop(
+                uniffiTypeResourcesWatchObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeResourcesWatchObjectFactory.pointer(this);
+            uniffiTypeResourcesWatchObjectFactory.freePointer(pointer);
+            uniffiTypeResourcesWatchObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is ResourcesWatch {
+        return uniffiTypeResourcesWatchObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeResourcesWatchObjectFactory: UniffiObjectFactory<ResourcesWatchLike> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeResourcesWatchObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): ResourcesWatchLike {
+        const instance = Object.create(ResourcesWatch.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "ResourcesWatch";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: ResourcesWatchLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: ResourcesWatchLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_resourceswatch(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_resourceswatch(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is ResourcesWatchLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "ResourcesWatch";
+    },
+}})();
+const FfiConverterTypeResourcesWatch = new FfiConverterObject(uniffiTypeResourcesWatchObjectFactory);
+
+/**
+ * The Spaces registry: add a machine by URL, provision a local one, and get
+ * [`Space`] handles.
  */
 export interface SpacesLike {
 
@@ -32803,6 +34196,15 @@ export interface SpacesLike {
  */
     resolve(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceInfo>;
 /**
+ * What this Mac, its extra Spaces and your other computers use now:
+ * processor, memory and disk, as one snapshot (a few seconds old at
+ * most). With `visible`, the call also says a window shows the numbers
+ * for the next 30 seconds, so the runtime samples every 10 seconds
+ * instead of every 5 minutes: call it every 10 seconds while a window
+ * is visible and stop when it is hidden.
+ */
+    resources(visible: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ResourcesSnapshot>;
+/**
  * Adds a routine. Give exactly one of `every_minutes`, `daily_at`
  * (`HH:MM`) or `weekly_on` (`mon 09:00`).
  */
@@ -32942,6 +34344,14 @@ export interface SpacesLike {
  * compare-and-swap, `create_only` makes it create-only.
  */
     volumeWrite(path: string, content: ArrayBuffer, ifEtag: string | undefined, createOnly: boolean, view: DriveView | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<DriveObject>;
+/**
+ * The same numbers as events for `listener`: a snapshot first, then an
+ * update with only the entries that changed by more than 1 point or
+ * 256 MB, and `LowDisk` whenever the warning level changes. Reopens by
+ * itself if the daemon restarts (the snapshot comes again). Stop it
+ * with [`ResourcesWatch::stop`].
+ */
+    watchResources(visible: boolean, listener: ResourcesListener): ResourcesWatchLike;
 }
 /**
  * @deprecated Use `SpacesLike` instead.
@@ -32950,8 +34360,8 @@ export type SpacesInterface = SpacesLike;
 
 
 /**
- * The Spaces registry: add a machine by URL, claim a Fleet Space,
- * provision a local one, and get [`Space`] handles.
+ * The Spaces registry: add a machine by URL, provision a local one, and get
+ * [`Space`] handles.
  */
 export class Spaces extends UniffiAbstractObject implements SpacesLike {
 
@@ -34198,6 +35608,46 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * What this Mac, its extra Spaces and your other computers use now:
+ * processor, memory and disk, as one snapshot (a few seconds old at
+ * most). With `visible`, the call also says a window shows the numbers
+ * for the next 30 seconds, so the runtime samples every 10 seconds
+ * instead of every 5 minutes: call it every 10 seconds while a window
+ * is visible and stop when it is hidden.
+ */
+    async resources(visible: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<ResourcesSnapshot> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_resources(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterBool.lower(visible, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeResourcesSnapshot.lift.bind(FfiConverterTypeResourcesSnapshot),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * Adds a routine. Give exactly one of `every_minutes`, `daily_at`
  * (`HH:MM`) or `weekly_on` (`mon 09:00`).
  */
@@ -35309,6 +36759,26 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+/**
+ * The same numbers as events for `listener`: a snapshot first, then an
+ * update with only the entries that changed by more than 1 point or
+ * 256 MB, and `LowDisk` whenever the warning level changes. Reopens by
+ * itself if the daemon restarts (the snapshot comes again). Stop it
+ * with [`ResourcesWatch::stop`].
+ */
+    watchResources(visible: boolean, listener: ResourcesListener): ResourcesWatchLike {
+    return FfiConverterTypeResourcesWatch.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_watch_resources(
+                uniffiTypeSpacesObjectFactory.clonePointer(this),
+        FfiConverterBool.lower(visible, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeResourcesListener.lower(listener, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
 
     uniffiDestroy(): void {
         const ptr = (this as any)[destructorGuardSymbol];
@@ -35391,8 +36861,8 @@ const FfiConverterTypeSpaces = new FfiConverterObject(uniffiTypeSpacesObjectFact
 
 /**
  * The entry point of the SDK: create one with `Cua::embedded` or
- * `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
- * through its accessors.
+ * `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+ * accessors.
  */
 export interface CuaLike {
 
@@ -35407,9 +36877,8 @@ export interface CuaLike {
  */
     auth(): AuthLike;
 /**
- * Fleet pools, templates, claims and images. Always talks to Fleet
- * from this process with this SDK's credentials (in daemon mode, from
- * the environment).
+ * Fleet pools, templates, claims and images. Cua Cloud has ended: this
+ * always fails with the "Cua Cloud has ended" error and never connects.
  */
     fleet() /*throws*/: FleetLike;
 /**
@@ -35426,7 +36895,7 @@ export interface CuaLike {
  */
     mode(): CuaMode;
 /**
- * Sandboxes (Fleet, local, direct).
+ * Sandboxes (local, direct, your own cloud).
  */
     sandboxes(): SandboxesLike;
 /**
@@ -35438,8 +36907,8 @@ export interface CuaLike {
  */
     spaces(): SpacesLike;
 /**
- * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
- * Fleet service URL or a relay URL) without a sandbox.
+ * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+ * relay URL) without a sandbox.
  */
     spacesd(url: string, token: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacesdClientLike>;
 }
@@ -35451,8 +36920,8 @@ export type CuaInterface = CuaLike;
 
 /**
  * The entry point of the SDK: create one with `Cua::embedded` or
- * `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
- * through its accessors.
+ * `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+ * accessors.
  */
 export class Cua extends UniffiAbstractObject implements CuaLike {
 
@@ -35519,7 +36988,9 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Runs the SDK runtime in this process. Performs no I/O beyond
- * reading the credential store when `fleet_from_session` is set.
+ * reading the credential store when `fleet_from_session` is set (for
+ * the relay account). It never builds a Fleet client: Cua Cloud has
+ * ended.
  */
     static embedded(config: CuaConfig): CuaLike /*throws*/ {
     return FfiConverterTypeCua.lift(uniffiCaller.rustCallWithError(
@@ -35566,9 +37037,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Fleet pools, templates, claims and images. Always talks to Fleet
- * from this process with this SDK's credentials (in daemon mode, from
- * the environment).
+ * Fleet pools, templates, claims and images. Cua Cloud has ended: this
+ * always fails with the "Cua Cloud has ended" error and never connects.
  */
     fleet(): FleetLike /*throws*/ {
     return FfiConverterTypeFleet.lift(uniffiCaller.rustCallWithError(
@@ -35653,7 +37123,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Sandboxes (Fleet, local, direct).
+ * Sandboxes (local, direct, your own cloud).
  */
     sandboxes(): SandboxesLike {
     return FfiConverterTypeSandboxes.lift(uniffiCaller.rustCall(
@@ -35711,8 +37181,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
- * Fleet service URL or a relay URL) without a sandbox.
+ * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+ * relay URL) without a sandbox.
  */
     async spacesd(url: string, token: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpacesdClientLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -36785,6 +38255,21 @@ const FfiConverterOptionalTypePresenceCursor = new FfiConverterOptional(FfiConve
 // FfiConverter for ExitInfo | undefined
 const FfiConverterOptionalTypeExitInfo = new FfiConverterOptional(FfiConverterTypeExitInfo);
 
+// FfiConverter for GuestUsage | undefined
+const FfiConverterOptionalTypeGuestUsage = new FfiConverterOptional(FfiConverterTypeGuestUsage);
+
+// FfiConverter for DiskOnHost | undefined
+const FfiConverterOptionalTypeDiskOnHost = new FfiConverterOptional(FfiConverterTypeDiskOnHost);
+
+// FfiConverter for Array<SpaceResources>
+const FfiConverterSequenceTypeSpaceResources = new FfiConverterArray(FfiConverterTypeSpaceResources);
+
+// FfiConverter for Array<ComputerResources>
+const FfiConverterSequenceTypeComputerResources = new FfiConverterArray(FfiConverterTypeComputerResources);
+
+// FfiConverter for ComputerResources | undefined
+const FfiConverterOptionalTypeComputerResources = new FfiConverterOptional(FfiConverterTypeComputerResources);
+
 // FfiConverter for Array<ReadinessProbe>
 const FfiConverterSequenceTypeReadinessProbe = new FfiConverterArray(FfiConverterTypeReadinessProbe);
 
@@ -37134,11 +38619,23 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_spaces_tool_methods() !== 24762) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_spaces_tool_methods");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice() !== 46398) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice() !== 6317) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_flush() !== 29688) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_flush");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_link_notice() !== 11798) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_link_notice");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_link_notice_due() !== 52419) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_link_notice_due");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_link_state() !== 28062) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_link_state");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_notice_text() !== 47486) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_notice_text");
@@ -37172,6 +38669,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_status() !== 18801) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_status");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_sync_account() !== 61343) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_sync_account");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() !== 17365) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_use_app_notice");
@@ -37290,7 +38790,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_auth_devices() !== 36673) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_auth_devices");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_auth_logout() !== 38806) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_auth_logout() !== 42354) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_auth_logout");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_auth_status() !== 29264) {
@@ -37302,7 +38802,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_connect() !== 19646) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_constructor_cua_connect");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_embedded() !== 36838) {
+    if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_embedded() !== 26623) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_constructor_cua_embedded");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_agent_setup() !== 50422) {
@@ -37311,7 +38811,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_auth() !== 19106) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_auth");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_fleet() !== 40955) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_fleet() !== 45933) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_fleet");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_info() !== 11159) {
@@ -37323,7 +38823,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_mode() !== 63626) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_mode");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_sandboxes() !== 8394) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_sandboxes() !== 892) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_sandboxes");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() !== 57559) {
@@ -37332,7 +38832,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spaces() !== 35262) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_spaces");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spacesd() !== 28670) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spacesd() !== 62689) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_spacesd");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_approve() !== 49147) {
@@ -37614,7 +39114,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_portforward_local_addr() !== 55098) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_portforward_local_addr");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_portforward_url() !== 43553) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_portforward_url() !== 60604) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_portforward_url");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_constructor_presenceview_new() !== 9981) {
@@ -37665,16 +39165,25 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_relay_url() !== 31201) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_relay_url");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_resourceslistener_on_event() !== 32126) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_resourceslistener_on_event");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_resourceswatch_set_visible() !== 54652) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_resourceswatch_set_visible");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_resourceswatch_stop() !== 52286) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_resourceswatch_stop");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_agents() !== 53699) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_agents");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_delete() !== 55409) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_delete() !== 17492) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_delete");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_detach() !== 34045) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_detach() !== 26534) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_detach");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_forward() !== 37775) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_forward() !== 19019) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_forward");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_guest_display() !== 23945) {
@@ -37698,7 +39207,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_is_ephemeral() !== 27021) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_is_ephemeral");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_keep_alive() !== 63020) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_keep_alive() !== 3593) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_keep_alive");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_kind() !== 13493) {
@@ -37713,7 +39222,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_mcp() !== 8773) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_mcp");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_mcp_config() !== 43800) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_mcp_config() !== 64194) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_mcp_config");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_name() !== 58395) {
@@ -37725,7 +39234,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_overlay() !== 32673) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_overlay");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_public_url() !== 36853) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_public_url() !== 6460) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_public_url");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_refresh() !== 45835) {
@@ -37770,10 +39279,10 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_connect() !== 12250) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_connect");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_connect_url() !== 55493) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_connect_url() !== 19950) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_connect_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_create() !== 63062) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_create() !== 52749) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_create");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_delete() !== 43939) {
@@ -37782,7 +39291,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_get() !== 32181) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_get");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list() !== 18675) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list() !== 6497) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_list");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list_all() !== 9098) {
@@ -37803,10 +39312,10 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_service_name() !== 19159) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_service_name");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_service_public_url() !== 16809) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_service_public_url() !== 37714) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_service_public_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_service_request() !== 12324) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_service_request() !== 31558) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_service_request");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_service_url() !== 25888) {
@@ -37932,7 +39441,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_upload() !== 30524) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_upload");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_space_usage() !== 15261) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_usage() !== 43925) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_usage");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_websocket_headers() !== 61370) {
@@ -38094,6 +39603,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_resolve() !== 9986) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_resolve");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_resources() !== 12146) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_resources");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_routine_add() !== 27220) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_routine_add");
     }
@@ -38189,6 +39701,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_volume_write() !== 64388) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_volume_write");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_watch_resources() !== 49660) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_watch_resources");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdclient_agents() !== 39176) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdclient_agents");
@@ -38357,6 +39872,7 @@ function uniffiEnsureInitialized() {
     uniffiCallbackInterfaceFrameSink.register();
     uniffiCallbackInterfaceSpaceCreateListener.register();
     uniffiCallbackInterfaceTeleportApprover.register();
+    uniffiCallbackInterfaceResourcesListener.register();
     }
 
 export default Object.freeze({
@@ -38407,6 +39923,7 @@ export default Object.freeze({
     FfiConverterTypeCloudTarget,
     FfiConverterTypeCloudTestReport,
     FfiConverterTypeComputerGrant,
+    FfiConverterTypeComputerResources,
     FfiConverterTypeConfigEntry,
     FfiConverterTypeContainer,
     FfiConverterTypeCua,
@@ -38418,6 +39935,9 @@ export default Object.freeze({
     FfiConverterTypeDeviceEnrollment,
     FfiConverterTypeDevices,
     FfiConverterTypeDevicesSnapshot,
+    FfiConverterTypeDiskLevel,
+    FfiConverterTypeDiskOnHost,
+    FfiConverterTypeDiskWarning,
     FfiConverterTypeDoctorReport,
     FfiConverterTypeDriveAccessRequest,
     FfiConverterTypeDriveAudit,
@@ -38466,6 +39986,7 @@ export default Object.freeze({
     FfiConverterTypeGpuOption,
     FfiConverterTypeGpuSupport,
     FfiConverterTypeGuestDisplay,
+    FfiConverterTypeGuestUsage,
     FfiConverterTypeHomeTransfer,
     FfiConverterTypeHost,
     FfiConverterTypeHostAccessRecord,
@@ -38525,6 +40046,11 @@ export default Object.freeze({
     FfiConverterTypeRelayMachine,
     FfiConverterTypeReplayMode,
     FfiConverterTypeResolvedImage,
+    FfiConverterTypeResourcesEvent,
+    FfiConverterTypeResourcesListener,
+    FfiConverterTypeResourcesSnapshot,
+    FfiConverterTypeResourcesUpdate,
+    FfiConverterTypeResourcesWatch,
     FfiConverterTypeRoutineInfo,
     FfiConverterTypeRuntimeCheck,
     FfiConverterTypeRuntimeCheckStatus,
@@ -38560,6 +40086,7 @@ export default Object.freeze({
     FfiConverterTypeSpacePowerReport,
     FfiConverterTypeSpacePresence,
     FfiConverterTypeSpaceRelayRegistration,
+    FfiConverterTypeSpaceResources,
     FfiConverterTypeSpaceSendFileOptions,
     FfiConverterTypeSpaceSendFileReport,
     FfiConverterTypeSpaceSentFile,
@@ -38590,6 +40117,7 @@ export default Object.freeze({
     FfiConverterTypeSpacesdProcess,
     FfiConverterTypeStorageVolume,
     FfiConverterTypeStreamStatsReport,
+    FfiConverterTypeTelemetryLinkNotice,
     FfiConverterTypeTelemetryStatus,
     FfiConverterTypeTeleportApprover,
     FfiConverterTypeTeleportDecision,

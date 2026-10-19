@@ -165,8 +165,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// `cua daemon` when it accepts connections, else the runtime in this
     /// process. `Cua.auto` probes the daemon's socket, so files left by a
     /// daemon that exited (`daemon.json`, `cua.sock`) fall back to embedded
-    /// instead of failing every call. Cua Cloud uses the signed-in session
-    /// when no client credentials are set (the Tauri app does the same).
+    /// instead of failing every call. The signed-in session drives the relay
+    /// account.
     public static func make() throws -> LiveSpacesBackend {
         LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(fleetFromSession: true)))
     }
@@ -402,9 +402,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         }.count
     }
 
-    /// No estimate: the rates came from the retired Fleets API
-    /// (`Fleet.usagePricing()` on run.cua.ai), and the app does not offer
-    /// new cloud Spaces. New Space never waits on it.
+    /// No estimate: the rates came from the Cua Cloud API, which has ended,
+    /// and the app does not offer new cloud Spaces. New Space never waits on it.
     public func cloudPricing() async -> AppCloudPricing? { nil }
 
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
@@ -467,7 +466,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             try await cua.spaces().space(space: id).usage()
         }
         guard let u = try? result.get() else { return nil }
-        return AppSpaceUsage(memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited,
+        return AppSpaceUsage(cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m,
+                             memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited,
                              diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited)
     }
 
@@ -855,6 +855,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// The fixture Spaces' memory and storage: a 4 GB container limit on a
     /// host disk (Storage hides).
     public var fixtureUsage: AppSpaceUsage? = AppSpaceUsage(
+        cpuCount: 4, cpuPercent: 12.5, loadAverage1m: 0.5,
         memoryUsed: 2_254_857_830, memoryTotal: 4 << 30, memoryLimited: true,
         diskUsed: 150_000_000_000, diskTotal: 494_000_000_000, diskLimited: false)
     public func usage(id: String) async -> AppSpaceUsage? { await MainActor.run { fixtureUsage } }

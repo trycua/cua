@@ -84,6 +84,12 @@ pub use sandbox::{
 };
 /// Why a cloud (Fleet) sandbox cannot have a GPU yet.
 pub const FLEET_NO_GPU_REASON: &str = sandbox::FLEET_NO_GPU;
+
+/// The one "Cua Cloud has ended" message: every Cua Cloud (`on="cloud"`,
+/// `cloud:` refs, pools) entry point in the SDKs, the CLI, the MCP server and
+/// Spaces fails with it ([`Error::CloudEnded`]) instead of calling Fleet.
+pub const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own computer. \
+     See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
 pub use state::{EphemeralLease, FleetState, LEASE_DIR, LocalState, SandboxState, StateStore};
 
 /// Errors.
@@ -92,6 +98,10 @@ pub enum Error {
     /// Bad input.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+    /// Cua Cloud (`on="cloud"`, a `cloud:` sandbox, a pool) has ended
+    /// ([`CLOUD_ENDED`]). Use a local sandbox or your own computer.
+    #[error("{}", CLOUD_ENDED)]
+    CloudEnded,
     /// A location, kind or runtime that does not exist, or a combination
     /// of them (or with the image) that does not; the error lists the
     /// valid values ([`placement::PlacementError::valid`]).
@@ -175,9 +185,16 @@ pub enum Error {
 
 fn provider_not_configured(p: &ProviderKind) -> String {
     match p {
-        ProviderKind::Fleet => cua_fleet::MISSING_CREDENTIALS.into(),
+        ProviderKind::Fleet => CLOUD_ENDED.into(),
         ProviderKind::Contrib => "no contrib provider is configured".into(),
         other => format!("provider {other:?} is not configured"),
+    }
+}
+
+impl From<cua_image::InvalidArgument> for Error {
+    /// A build spec, sidecar or service name the image rules refuse.
+    fn from(e: cua_image::InvalidArgument) -> Self {
+        Error::InvalidArgument(e.0)
     }
 }
 

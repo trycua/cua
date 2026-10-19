@@ -142,13 +142,13 @@ const SB: (&str, &str, bool, &str) = (
     "sandbox",
     "string",
     false,
-    "Sandbox ref (local:<name>, cloud:<name>, direct:<host:port>) or a name unique across locations (default: --sandbox / CUA_SANDBOX)",
+    "Sandbox ref (local:<name>, direct:<host:port>) or a name unique across locations (default: --sandbox / CUA_SANDBOX)",
 );
 const NAME: (&str, &str, bool, &str) = (
     "name",
     "string",
     true,
-    "Sandbox ref (local:<name>, cloud:<name>, direct:<host:port>) or a name unique across locations",
+    "Sandbox ref (local:<name>, direct:<host:port>) or a name unique across locations",
 );
 const X: (&str, &str, bool, &str) = ("x", "integer", true, "X in screenshot pixels");
 const Y: (&str, &str, bool, &str) = ("y", "integer", true, "Y in screenshot pixels");
@@ -158,7 +158,7 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "images_list",
         permission: "images:list",
-        description: "List the sandbox image catalog (the images the docs list): ref, OS, container or VM, local and cloud runtime, whether it ships cua-spacesd and which browsers, its other variants, and the command that creates it. browser_tools=true means the in-sandbox cua-driver browser tools can drive its browser. Call this first to choose an image.",
+        description: "List the sandbox image catalog (the images the docs list): ref, OS, container or VM, local runtime, whether it ships cua-spacesd and which browsers, its other variants, and the command that creates it. browser_tools=true means the in-sandbox cua-driver browser tools can drive its browser. Call this first to choose an image.",
         params: &[
             (
                 "os",
@@ -183,18 +183,18 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "sandbox_list",
         permission: "sandbox:list",
-        description: "List sandboxes: local, direct and cloud (Fleet) ones by default, each row with location (local, cloud or direct). Pass location to list only one kind. If the cloud cannot be listed, the local rows come back with a warning.",
+        description: "List sandboxes: local and direct ones by default, each row with location (local or direct). Pass location to list only one kind.",
         params: &[(
             "location",
             "string",
             false,
-            "Only sandboxes in this location: local, cloud or direct (default: all)",
+            "Only sandboxes in this location: local or direct (default: all)",
         )],
     },
     Tool {
         name: "sandbox_create",
         permission: "sandbox:create",
-        description: "Create a sandbox from any image. `on` says where (local, the default unless the user configured another with `cua config set default.on`; or cloud), `kind` what (auto, container, vm) and `runtime` which engine (auto, or gvisor, runc, qemu, lume locally; gvisor, kubevirt in the cloud); an impossible combination fails and lists the valid values. To browse the web, pass browser=true (and optionally url): it starts the canonical Linux image, registers it as a Space, launches Chromium with a throwaway profile inside it and returns the space, session, target_id and tab_id to pass to call_tool with the in-sandbox browser tools (browser_navigate, get_browser_state, browser_click, browser_type). Pass command, env and services to run a server in it, for example an MCP server: services {\"mcp\": 8765}. Without browser=true it does not register a Space: to reach its MCP server with list_tools/call_tool (service=\"mcp\"), use create_space instead (same arguments), or add this one with add_space (address local:<name>).",
+        description: "Create a sandbox from any image. `on` says where (local, the default unless the user configured another with `cua config set default.on`), `kind` what (auto, container, vm) and `runtime` which engine (auto, or gvisor, runc, qemu, lume); an impossible combination fails and lists the valid values. To browse the web, pass browser=true (and optionally url): it starts the canonical Linux image, registers it as a Space, launches Chromium with a throwaway profile inside it and returns the space, session, target_id and tab_id to pass to call_tool with the in-sandbox browser tools (browser_navigate, get_browser_state, browser_click, browser_type). Pass command, env and services to run a server in it, for example an MCP server: services {\"mcp\": 8765}. Without browser=true it does not register a Space: to reach its MCP server with list_tools/call_tool (service=\"mcp\"), use create_space instead (same arguments), or add this one with add_space (address local:<name>).",
         params: &[
             (
                 "browser",
@@ -238,25 +238,19 @@ const TOOLS: &[Tool] = &[
                 "on",
                 "string",
                 false,
-                "Where it runs: local or cloud (default: the user's default location, else local)",
+                "Where it runs: local (default: the user's default location, else local)",
             ),
             (
                 "kind",
                 "string",
                 false,
-                "What kind of machine: auto (default; from the image), container or vm",
+                "What kind of computer: auto (default; from the image), container or vm",
             ),
             (
                 "runtime",
                 "string",
                 false,
-                "Which engine: auto (default) or one the location offers for the kind (local: gvisor, runc, qemu, lume; cloud: gvisor, kubevirt)",
-            ),
-            (
-                "pool",
-                "string",
-                false,
-                "Use this dedicated cloud pool (Fleets advanced; implies on=cloud)",
+                "Which engine: auto (default) or one the location offers for the kind (gvisor, runc, qemu, lume)",
             ),
         ],
     },
@@ -675,7 +669,7 @@ fn schema(t: &Tool) -> Value {
             p["enum"] = json!(["firefox", "chrome"]);
         }
         if t.name == "sandbox_list" && *n == "location" {
-            p["enum"] = json!(["local", "cloud", "direct"]);
+            p["enum"] = json!(["local", "direct"]);
         }
         props.insert(n.to_string(), p);
         if *required {
@@ -1084,26 +1078,29 @@ impl Server {
         let n = a["name"].as_str().unwrap_or_default().to_string();
         let done = |m: String| jtext(json!({"success": true, "message": m}));
         Some(match name {
-            "sandbox_list" => async {
-                let location = match a["location"].as_str().unwrap_or("") {
-                    "" | "all" => None,
-                    l @ ("local" | "cloud" | "direct") => Some(l.to_string()),
-                    other => {
-                        return Err(CuaError::InvalidArgument(format!(
-                            "sandbox_list: location must be local, cloud or direct, not {other:?}"
-                        )));
+            "sandbox_list" => {
+                async {
+                    let location = match a["location"].as_str().unwrap_or("") {
+                        "" | "all" => None,
+                        "cloud" => return Err(crate::util::cloud_ended()),
+                        l @ ("local" | "direct") => Some(l.to_string()),
+                        other => {
+                            return Err(CuaError::InvalidArgument(format!(
+                                "sandbox_list: location must be local or direct, not {other:?}"
+                            )));
+                        }
+                    };
+                    let l = sbx.list_with_warnings(location).await?;
+                    let mut content = jtext(Value::Array(
+                        l.sandboxes.iter().map(sandbox::info_json).collect(),
+                    ))?;
+                    for w in l.warnings {
+                        content.push(json!({"type": "text", "text": format!("warning: {w}")}));
                     }
-                };
-                let l = sbx.list_with_warnings(location).await?;
-                let mut content = jtext(Value::Array(
-                    l.sandboxes.iter().map(sandbox::info_json).collect(),
-                ))?;
-                for w in l.warnings {
-                    content.push(json!({"type": "text", "text": format!("warning: {w}")}));
+                    Ok(content)
                 }
-                Ok(content)
+                .await
             }
-            .await,
             "sandbox_get" => async { jtext(sandbox::info_json(&sbx.get(n).await?)) }.await,
             "sandbox_create" => {
                 async {
@@ -1113,9 +1110,12 @@ impl Server {
                         None if browser => "linux".to_string(),
                         None => a["os_type"].as_str().unwrap_or("linux").to_string(),
                     };
-                    // The user default unless `on` says; a pool implies the
-                    // cloud. The SDK resolves the default and validates.
-                    let pool = a["pool"].as_str().filter(|s| !s.is_empty());
+                    // A cloud pool no longer exists: refused, not ignored.
+                    if a["pool"].as_str().is_some_and(|p| !p.is_empty()) {
+                        return Err(crate::util::cloud_ended());
+                    }
+                    // The user default unless `on` says. The SDK resolves the
+                    // default and validates.
                     let text = |k: &str| {
                         a[k].as_str()
                             .map(str::trim)
@@ -1127,7 +1127,7 @@ impl Server {
                         .as_str()
                         .filter(|s| !s.is_empty())
                         .map(str::to_string);
-                    o.on = text("on").or_else(|| pool.map(|_| "cloud".to_string()));
+                    o.on = text("on");
                     o.kind = text("kind");
                     o.runtime = text("runtime");
                     let (env, services, command) = workload(a)?;
@@ -1152,13 +1152,9 @@ impl Server {
                             service: None,
                         });
                     }
-                    if let Some(p) = pool {
-                        o.pool = Some(p.into());
-                    } else {
-                        let (img, os) = sandbox::resolve_image(&image, None)?;
-                        o.image = img;
-                        o.os = os;
-                    }
+                    let (img, os) = sandbox::resolve_image(&image, None)?;
+                    o.image = img;
+                    o.os = os;
                     let i = sbx.create(o).await?.info();
                     let mut v = json!({
                         "id": i.id,
@@ -1496,9 +1492,43 @@ impl SdkTools {
     }
 }
 
+/// The agent this process serves ("Claude Code"), once its client said.
+static AGENT_LABEL: Mutex<Option<String>> = Mutex::new(None);
+
+/// Before a risky call on This Mac, when the user turned the question on
+/// (`crate::risky`): the result to give the agent instead of running it,
+/// when they chose a separate Space. `None`: run it as before.
+async fn risky_detour(tool: &str, arguments: &Value) -> Option<ToolOutcome> {
+    let action = crate::risky::tool_risk(tool, arguments)?;
+    if !crate::risky::enabled() {
+        return None;
+    }
+    let home = cua_home::cua_home();
+    if !crate::risky::targets_this_mac(arguments, &crate::risky::this_mac_names(&home)) {
+        return None;
+    }
+    let agent = AGENT_LABEL
+        .lock()
+        .ok()
+        .and_then(|l| l.clone())
+        .unwrap_or_else(|| "An agent".into());
+    match crate::risky::ask(&home, &agent, action, crate::risky::ASK_FOR).await {
+        crate::risky::Answer::Separate => Some(ToolOutcome {
+            content: vec![json!({"type": "text", "text": crate::risky::separate_result(action)})],
+            structured: Some(json!({"ran": false, "reason": "user_chose_separate_space"})),
+            is_error: false,
+            meta: None,
+        }),
+        crate::risky::Answer::Here => None,
+    }
+}
+
 #[async_trait::async_trait]
 impl cua_spaces::mcp::ToolBackend for SdkTools {
     async fn call(&self, tool: &str, arguments: Value) -> ToolOutcome {
+        if let Some(out) = risky_detour(tool, &arguments).await {
+            return out;
+        }
         bounded(tool, &arguments, self.forward(tool, arguments.clone())).await
     }
 }
@@ -1536,8 +1566,7 @@ impl cua_spaces::mcp::ToolExtension for Server {
 
 fn error_kind(e: &CuaError) -> &'static str {
     match e {
-        // A pool whose template differs is a bad request for that pool.
-        CuaError::InvalidArgument(_) | CuaError::PoolSpecMismatch(_) => "invalid_argument",
+        CuaError::InvalidArgument(_) => "invalid_argument",
         CuaError::NotFound(_) | CuaError::ImageNotPublished(_) => "not_found",
         CuaError::AmbiguousSandbox(_) => "ambiguous_sandbox",
         CuaError::SpacesdNotAvailable(_) => "spacesd_not_available",
@@ -1546,9 +1575,6 @@ fn error_kind(e: &CuaError) -> &'static str {
         CuaError::TeleportRefused(_) => "teleport_refused",
         CuaError::Timeout(_) | CuaError::ClaimSecretsNotDelivered(_) => "timeout",
         CuaError::Unauthenticated(_) => "unauthenticated",
-        CuaError::Fleet(_) => "fleet",
-        CuaError::FleetAdmissionDenied(_) => "fleet_admission_denied",
-        CuaError::CloudCreditExhausted(_) => "cloud_credit_exhausted",
         CuaError::Cloud(_) => "cloud",
         CuaError::InsufficientDisk(_) => "insufficient_disk",
         CuaError::Cancelled(_) => "cancelled",
@@ -1622,6 +1648,9 @@ pub fn server(cua: Arc<Cua>, permissions: BTreeSet<String>, default_sandbox: Str
     let allowed = permissions.clone();
     McpServer::remote(Arc::new(SdkTools(spaces)))
         .with_client_info_hook(Arc::new(|info: &Value| {
+            if let Ok(mut l) = AGENT_LABEL.lock() {
+                *l = Some(agent_label(info));
+            }
             cua_spacesd_client::set_process_principal(Some(agent_principal(info)));
         }))
         .with_name("cua")

@@ -256,7 +256,7 @@ mod not_found_tests {
     /// found" once, whether it came from the embedded runtime or the daemon.
     #[test]
     fn a_missing_machine_says_not_found_once() {
-        let what = "a machine matching \"dev_22\" among your machines (\"gamma-4 Mac Studio\" (host:96fe))";
+        let what = "a computer matching \"dev_22\" among your computers (\"gamma-4 Mac Studio\" (host:96fe))";
         let embedded: CuaError = cua_spaces::Error::NotFound(what.into()).into();
         assert_eq!(embedded.to_string(), format!("not found: {what}"));
         let daemon: CuaError = cua_daemon::Error::NotFound(format!("{what} not found")).into();

@@ -96,7 +96,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await waitFor(() => expect(hooks.login.data?.input.status).toBe("enabled"));
     await hooks.login.setLaunchAtLogin(false);
     await waitFor(() => expect(hooks.login.data?.input.status).toBe("notRegistered"));
-    expect(hooks.login.data?.rows?.[1]?.label).toBe("This machine runs persistent agents, which stop after a restart until you open Cua Spaces.");
+    expect(hooks.login.data?.rows?.[1]?.label).toBe("This computer runs persistent agents, which stop after a restart until you open Cua Spaces.");
   });
 
   it("lists the account's devices, approves the waiting one by code and revokes another", async () => {
@@ -156,7 +156,8 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await expect(hooks.spaces.createSpace({ image: "macos-tahoe", name: "boom", os: "macos" })).rejects.toThrow(/exceeds the limit/);
     await waitFor(() => expect(hooks.notifications.data?.unread).toBe(4));
     const texts = hooks.notifications.data!.view!.rows.map((r) => r.text);
-    expect(texts).toContain("qa-gui-linux-local is ready");
+    // With what it is, in plain words (never "VM" or "container").
+    expect(texts.find((t) => t.startsWith("qa-gui-linux-local is ready"))).toMatch(/A fresh Linux computer inside this (Mac|PC|computer)\. Your agent can use it now\./);
     // The reason in the failed row's words (the core names the macOS limit).
     expect(texts.find((t) => t.startsWith("Couldn't create boom: "))).toMatch(/This Mac is already running/);
     await hooks.notifications.markAllRead();

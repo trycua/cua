@@ -2,18 +2,19 @@
 
 Three independent axes, the same on every cua surface:
 
-* ``on``: ``"local"`` or ``"cloud"`` (``local=True``/``False`` is the same
-  switch). Other locations (``direct:<addr>``, registered providers) are
-  existing machines or plugins, not something cua-sandbox creates.
+* ``on``: ``"local"`` (``local=True`` is the same switch). Cua Cloud has
+  ended: ``"cloud"`` and ``local=False`` raise
+  :class:`~cua_sandbox._ended.CloudEnded`. Other locations (``direct:<addr>``,
+  registered providers) are existing machines or plugins, not something
+  cua-sandbox creates.
 * ``kind``: ``"auto"``, ``"container"`` or ``"vm"``.
 * ``runtime``: ``"auto"`` or an engine the location offers for the kind:
-  locally ``gvisor``/``runc`` (containers) and ``qemu``/``lume`` (VMs); in the
-  cloud ``gvisor`` (containers) and ``kubevirt`` (VMs). A legacy
+  ``gvisor``/``runc`` (containers) and ``qemu``/``lume`` (VMs). A legacy
   :class:`~cua_sandbox.runtime.Runtime` object still picks a local adapter.
 
 Unset values come from the user's defaults, in this order: environment
 (``CUA_DEFAULT_ON``, ``CUA_DEFAULT_KIND``, ``CUA_DEFAULT_RUNTIME``), then
-``$CUA_HOME/config.toml`` (``cua config set default.on cloud``), then the
+``$CUA_HOME/config.toml`` (``cua config set default.on local``), then the
 built-in ``local``/``auto``/``auto``. The native cua SDK owns both the
 settings and the validation; this module only asks it.
 """
@@ -22,10 +23,10 @@ from __future__ import annotations
 
 import logging
 import os
-import warnings
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from cua_sandbox._ended import CloudEnded
 from cua_sandbox._sdk import InvalidArgument, InvalidPlacement, Unsupported
 
 logger = logging.getLogger(__name__)
@@ -122,7 +123,7 @@ def _text(value: Any, what: str) -> Optional[str]:
 
 def _on_word(on: Any) -> str:
     if not isinstance(on, str) or not on.strip():
-        raise InvalidArgument(f"on= takes 'local' or 'cloud', got {on!r}")
+        raise InvalidArgument(f"on= takes 'local', got {on!r}")
     text = on.strip()
     head, sep, rest = text.partition(":")
     return head.lower() + sep + rest if sep else text.lower()
@@ -149,18 +150,6 @@ class Placement:
     def local(self) -> bool:
         return self.on == "local"
 
-    def cloud_default_hint(self) -> Optional[str]:
-        """What to say when the cloud came from a user default and there are
-        no cloud credentials."""
-        if self.on != "cloud" or self.on_source not in ("env", "config"):
-            return None
-        origin = self.on_origin or ("CUA_DEFAULT_ON" if self.on_source == "env" else "config")
-        tail = " and unset CUA_DEFAULT_ON" if self.on_source == "env" else ""
-        return (
-            f"the default location is cloud ({origin}); run `cua auth login`, or switch "
-            f"back with `cua config set default.on local`{tail}"
-        )
-
 
 def _notice() -> None:
     global _default_notice_shown
@@ -171,9 +160,7 @@ def _notice() -> None:
     if quiet not in ("1", "true", "yes", "on"):
         # Logged from cua_sandbox.sandbox, where users filter it.
         logging.getLogger("cua_sandbox.sandbox").warning(
-            "defaulting to a local sandbox; pass local=False (or on='cloud') for cloud, "
-            "or make it the default with `cua config set default.on cloud` "
-            "(CUA_QUIET_DEFAULT=1 hides this notice)"
+            "defaulting to a local sandbox (CUA_QUIET_DEFAULT=1 hides this notice)"
         )
 
 
@@ -186,16 +173,15 @@ def resolve(
     cloud: Any = None,
     cloud_only: Optional[list[str]] = None,
     image_kind: Optional[str] = None,
-    stacklevel: int = 4,
 ) -> Placement:
     """Where, what kind and which engine (see the module docstring).
 
     Location: ``on=`` or ``local=`` (contradicting each other is
-    :class:`InvalidArgument`); else ``cloud=`` implies the cloud; else a
-    cloud-only argument keeps the cloud with a ``DeprecationWarning``; else a
-    legacy ``Runtime`` object means local; else ``default.on``. The one-time
-    "defaulting to a local sandbox" notice appears only when that is the
-    built-in default.
+    :class:`InvalidArgument`); else ``cloud=`` or a cloud-only argument means
+    the cloud; else a legacy ``Runtime`` object means local; else
+    ``default.on``. The cloud is gone: it raises :class:`CloudEnded`. The
+    one-time "defaulting to a local sandbox" notice appears only when
+    ``default.on`` is the built-in default.
 
     Kind: ``kind=`` > the image's ``kind`` > the engine's kind >
     ``default.kind`` (skipped when it does not fit) > auto.
@@ -227,13 +213,6 @@ def resolve(
     elif cloud is not None:
         where, source, origin = "cloud", "implied", ""
     elif cloud_only:
-        warnings.warn(
-            f"{', '.join(cloud_only)} only appl{'ies' if len(cloud_only) == 1 else 'y'} in the "
-            "cloud, so this sandbox runs in the cloud; sandboxes are local by default now. "
-            "Pass local=False to keep this behaviour without the warning",
-            DeprecationWarning,
-            stacklevel=stacklevel,
-        )
         where, source, origin = "cloud", "implied", ""
     elif legacy is not None:
         # A Runtime object is a local adapter (Docker, QEMU, Lume, Tart, ...).
@@ -248,7 +227,7 @@ def resolve(
         if where != "local":
             if on is not None:
                 raise InvalidArgument(
-                    f"runtime={type(legacy).__name__}(...) runs the sandbox on this machine; "
+                    f"runtime={type(legacy).__name__}(...) runs the sandbox on this computer; "
                     "drop on='cloud', or pass an engine name (runtime='gvisor'/'kubevirt')"
                 )
             # Shipped behaviour (0.8.0): a Runtime object ran locally, even
@@ -258,12 +237,15 @@ def resolve(
             check("local", explicit_kind, None)
         return Placement(where, source, origin, explicit_kind or image_kind, None, legacy)
 
+    if where.partition(":")[0] in ("cloud", "fleet"):
+        raise CloudEnded()
+
     # Validate what was asked for before defaults fill the rest.
     check(where, explicit_kind, engine)
     if where not in LOCATIONS:
         raise Unsupported(
-            f"on={where!r}: cua-sandbox creates local and cloud sandboxes. Connect to an "
-            "existing machine with Sandbox.connect(url=...), or use the cua SDK for other "
+            f"on={where!r}: cua-sandbox creates local sandboxes. Connect to an "
+            "existing computer with Sandbox.connect(url=...), or use the cua SDK for other "
             "providers"
         )
 

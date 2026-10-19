@@ -1,7 +1,10 @@
 ---
 title: Manage VMs
-description: 'Run, attach to, share folders with, store, clone, resize and remove Lume VMs, change SIP, and update Lume.'
+description: 'Run, attach to, share folders with, store, clone, resize and remove Lume VMs, change SIP, update Lume, and drive Lume from scripts or an AI client.'
 ---
+
+These are the everyday Lume commands. The examples use a VM named
+`macos-tahoe`; use your own VM's name.
 
 ## Inspect
 
@@ -85,15 +88,17 @@ lume run --no-display macos-tahoe
 lume ssh macos-tahoe 'diskutil info / | grep "Container Total Space"'
 ```
 
-Increase only, on a stopped VM with the standard layout, no FileVault, and a
-host macOS at least as new as the guest. `--no-backup` removes automatic
-rollback. Linux guests: Lume grows the image; grow the partition and
-filesystem in the guest. [How it works](/lume/concepts/how-lume-works#disk-growth).
+You can only make a disk bigger. The VM must be stopped, use the standard disk
+layout and have FileVault off, and the host macOS must be at least as new as the
+guest. `--no-backup` skips the rollback copy. For a Linux guest, Lume grows the
+disk image, and you then grow the partition and filesystem inside the guest.
+See [how disk growth works](/lume/concepts/how-lume-works#disk-growth).
 
-## Change SIP
+## Turn SIP on or off
 
-The VM must be macOS, stopped, with a working admin account and Remote Login
-(true for unattended VMs). Install the Recovery VNC driver once:
+System Integrity Protection (SIP) is macOS's protection for system files. The
+VM must be macOS and stopped, with a working admin account and Remote Login
+(unattended VMs already have both). Install the Recovery VNC driver once:
 
 ```bash skip="host-install"
 python3 -m pip install --user vncdotool
@@ -106,11 +111,11 @@ printf '%s\n' "$LUME_ADMIN_PASSWORD" | \
   lume sip off macos-tahoe --admin-user admin --admin-password-stdin --yes
 ```
 
-A successful run ends with `System Integrity Protection status: disabled.` (or
-`enabled.`) from a normal boot and leaves the VM stopped. Recovery input accepts
-admin passwords of lowercase letters, digits and hyphens. For many SIP-disabled
-VMs, change a seed once and `lume clone` it.
-[How it works](/lume/concepts/how-lume-works#sip).
+A successful run prints `System Integrity Protection status: disabled.` (or
+`enabled.`) from a normal boot and leaves the VM stopped. The admin password can
+use only lowercase letters, digits and hyphens, because Lume types it into
+Recovery. To get many VMs with SIP off, change one seed VM and `lume clone` it.
+See [how SIP changes work](/lume/concepts/how-lume-works#sip).
 
 ## Update Lume
 
@@ -127,6 +132,56 @@ curl -fsSL https://cua.ai/lume/install.sh | \
 ```
 
 Stable is the default. A pinned nightly does not change the saved channel.
+
+## Drive Lume from scripts and AI clients
+
+The HTTP API and the MCP server control the same VMs as the `lume` command. Use
+the API from scripts and services, and MCP from AI clients.
+
+### Use the HTTP API
+
+The installer starts `lume serve` at login on port 7777. Install with
+`--no-background-service` to start it yourself:
+
+```bash test="cli-shape" id="lume-serve"
+lume serve                 # localhost:7777
+lume serve --port 7778
+```
+
+```bash skip="no-runner"
+curl http://localhost:7777/lume/vms
+```
+
+The API listens on `localhost` only. Keep it there unless you have a network
+boundary and a plan for authentication. Every endpoint is in the
+[HTTP API reference](/lume/reference/http-api).
+
+### Connect an MCP client
+
+`lume serve --mcp` speaks MCP over stdio, so the AI client starts it. Use the
+path that `which lume` prints:
+
+```json test="config" id="json-config" schema="mcp-client-config"
+{
+  "mcpServers": {
+    "lume": {
+      "command": "/Users/your-name/.local/bin/lume",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+Restart the client. It can then list, create, run, stop, clone and resize VMs,
+and run SSH commands in unattended guests (see the
+[MCP tools](/lume/reference/http-api#mcp-tools)). To test the server on its own:
+
+```bash skip="third-party-cli"
+npx @modelcontextprotocol/inspector lume serve --mcp
+```
+
+The MCP server can create and delete VMs and run commands in them. Configure it
+only for clients you trust, and give an agent its own VM.
 
 ## Troubleshooting
 

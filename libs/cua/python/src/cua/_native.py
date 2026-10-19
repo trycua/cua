@@ -557,9 +557,17 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_spaces_tool_methods() != 24762:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice() != 46398:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice() != 6317:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_flush() != 29688:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_link_notice() != 11798:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_link_notice_due() != 52419:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_link_state() != 28062:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_notice_text() != 47486:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -582,6 +590,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_func_telemetry_show_last() != 13855:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_status() != 18801:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_sync_account() != 61343:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -661,7 +671,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_auth_devices() != 36673:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_auth_logout() != 38806:
+    if lib.uniffi_cua_sdk_checksum_method_auth_logout() != 42354:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_auth_status() != 29264:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -669,13 +679,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_constructor_cua_connect() != 19646:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_constructor_cua_embedded() != 36838:
+    if lib.uniffi_cua_sdk_checksum_constructor_cua_embedded() != 26623:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_agent_setup() != 50422:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_auth() != 19106:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 40955:
+    if lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 45933:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_info() != 11159:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -683,13 +693,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_mode() != 63626:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 8394:
+    if lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 892:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() != 57559:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_spaces() != 35262:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 28670:
+    if lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_approve() != 49147:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -877,7 +887,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_portforward_local_addr() != 55098:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_portforward_url() != 43553:
+    if lib.uniffi_cua_sdk_checksum_method_portforward_url() != 60604:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_constructor_presenceview_new() != 9981:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -911,13 +921,19 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_relay_url() != 31201:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_resourceslistener_on_event() != 32126:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_resourceswatch_set_visible() != 54652:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_resourceswatch_stop() != 52286:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_agents() != 53699:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_delete() != 55409:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_delete() != 17492:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_detach() != 34045:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_detach() != 26534:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_forward() != 37775:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_forward() != 19019:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_guest_display() != 23945:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -933,7 +949,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_is_ephemeral() != 27021:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_keep_alive() != 63020:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_keep_alive() != 3593:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_kind() != 13493:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -943,7 +959,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_mcp() != 8773:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_mcp_config() != 43800:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_mcp_config() != 64194:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_name() != 58395:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -951,7 +967,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_overlay() != 32673:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_public_url() != 36853:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_public_url() != 6460:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_refresh() != 45835:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -981,15 +997,15 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_connect() != 12250:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_connect_url() != 55493:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_connect_url() != 19950:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_create() != 63062:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_create() != 52749:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_delete() != 43939:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_get() != 32181:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_list() != 18675:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_list() != 6497:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_list_all() != 9098:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1003,9 +1019,9 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_service_name() != 19159:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_service_public_url() != 16809:
+    if lib.uniffi_cua_sdk_checksum_method_service_public_url() != 37714:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_service_request() != 12324:
+    if lib.uniffi_cua_sdk_checksum_method_service_request() != 31558:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_service_url() != 25888:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1089,7 +1105,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_upload() != 30524:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_space_usage() != 15261:
+    if lib.uniffi_cua_sdk_checksum_method_space_usage() != 43925:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_websocket_headers() != 61370:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1197,6 +1213,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_resolve() != 9986:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_resources() != 12146:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_routine_add() != 27220:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_routine_remove() != 46906:
@@ -1260,6 +1278,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_spaces_volume_unmount() != 56025:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_volume_write() != 64388:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_watch_resources() != 49660:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdclient_agents() != 39176:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1832,6 +1852,26 @@ _UniffiLib.uniffi_cua_sdk_fn_free_relay.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_free_relay.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_clone_resourceslistener.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_clone_resourceslistener.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_free_resourceslistener.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_free_resourceslistener.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_clone_resourceswatch.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_clone_resourceswatch.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_free_resourceswatch.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_free_resourceswatch.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_clone_sandbox.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -1980,6 +2020,23 @@ _UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_framesink.argtypes = (
     ctypes.POINTER(_UniffiVTableCallbackInterfaceCuaSdkFrameSink),
 )
 _UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_framesink.restype = None
+_UNIFFI_CALLBACK_INTERFACE_CUA_SDK_RESOURCES_LISTENER_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,ctypes.c_void_p,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_SDK_RESOURCES_LISTENER = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
+)
+_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_SDK_RESOURCES_LISTENER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
+)
+class _UniffiVTableCallbackInterfaceCuaSdkResourcesListener(ctypes.Structure):
+    _fields_ = [
+        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CUA_SDK_RESOURCES_LISTENER),
+        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_SDK_RESOURCES_LISTENER),
+        ("on_event", _UNIFFI_CALLBACK_INTERFACE_CUA_SDK_RESOURCES_LISTENER_METHOD0),
+    ]
+_UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener.argtypes = (
+    ctypes.POINTER(_UniffiVTableCallbackInterfaceCuaSdkResourcesListener),
+)
+_UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener.restype = None
 _UNIFFI_CALLBACK_INTERFACE_CUA_SDK_SPACE_CREATE_LISTENER_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,ctypes.c_void_p,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -2212,6 +2269,10 @@ _UniffiLib.uniffi_cua_sdk_fn_func_spaces_tool_methods.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_spaces_tool_methods.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_notice.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -2221,6 +2282,18 @@ _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_flush.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_flush.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice_due.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice_due.restype = ctypes.c_int8
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_state.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_state.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_notice_text.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -2277,6 +2350,9 @@ _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_status.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_sync_account.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_sync_account.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_use_app_notice.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -3134,6 +3210,23 @@ _UniffiLib.uniffi_cua_sdk_fn_method_relay_url.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_relay_url.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_method_resourceslistener_on_event.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_resourceslistener_on_event.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_method_resourceswatch_set_visible.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_resourceswatch_set_visible.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_method_resourceswatch_stop.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_resourceswatch_stop.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_method_sandbox_agents.argtypes = (
     ctypes.c_uint64,
 )
@@ -3893,6 +3986,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_resolve.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_resolve.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_resources.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_resources.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_routine_add.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4073,6 +4171,13 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_volume_write.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_volume_write.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_resources.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_resources.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdclient_agents.argtypes = (
     ctypes.c_uint64,
 )
@@ -4479,12 +4584,24 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_sandbox_locations.restype = ctypes.c_uin
 _UniffiLib.uniffi_cua_sdk_checksum_func_spaces_tool_methods.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_spaces_tool_methods.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_flush.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_flush.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_notice.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_notice.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_notice_due.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_notice_due.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_state.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_state.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_notice_text.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_notice_text.restype = ctypes.c_uint16
@@ -4518,6 +4635,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_show_last.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_status.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_sync_account.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_sync_account.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_use_app_notice.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_use_app_notice.restype = ctypes.c_uint16
@@ -5010,6 +5130,15 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_relay_stop_sharing.restype = ctypes.c_
 _UniffiLib.uniffi_cua_sdk_checksum_method_relay_url.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_relay_url.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_resourceslistener_on_event.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_resourceslistener_on_event.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_resourceswatch_set_visible.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_resourceswatch_set_visible.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_resourceswatch_stop.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_resourceswatch_stop.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_agents.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_agents.restype = ctypes.c_uint16
@@ -5439,6 +5568,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_remove.restype = ctypes.c_uint1
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_resolve.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_resolve.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_resources.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_resources.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_routine_add.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_routine_add.restype = ctypes.c_uint16
@@ -5535,6 +5667,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_unmount.restype = ctypes
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_write.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_write.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_watch_resources.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_watch_resources.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spacesdclient_agents.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spacesdclient_agents.restype = ctypes.c_uint16
@@ -8904,6 +9039,260 @@ class _UniffiFfiConverterTypeComputerGrant(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt64.write(value.expires_ms, buf)
         _UniffiFfiConverterBoolean.write(value.revoked, buf)
 
+
+
+
+
+
+class DiskLevel(enum.Enum):
+    """
+    How low the free disk is.
+"""
+
+    OK = 0
+    """
+    Plenty.
+"""
+
+    LOW = 1
+    """
+    Under 50 GB or 15% of the volume, whichever line is higher (the
+    line never rises above 100 GB).
+"""
+
+    CRITICAL = 2
+    """
+    Under the floor where creating a Space already fails (5 GiB).
+"""
+
+
+
+class _UniffiFfiConverterTypeDiskLevel(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return DiskLevel.OK
+        if variant == 2:
+            return DiskLevel.LOW
+        if variant == 3:
+            return DiskLevel.CRITICAL
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == DiskLevel.OK:
+            return
+        if value == DiskLevel.LOW:
+            return
+        if value == DiskLevel.CRITICAL:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == DiskLevel.OK:
+            buf.write_i32(1)
+        if value == DiskLevel.LOW:
+            buf.write_i32(2)
+        if value == DiskLevel.CRITICAL:
+            buf.write_i32(3)
+
+
+
+@dataclass
+class DiskWarning:
+    """
+    The low-disk signal for the app and the menu bar.
+"""
+    def __init__(self, *, level:DiskLevel, free:int, total:int, threshold:int):
+        self.level = level
+        self.free = free
+        self.total = total
+        self.threshold = threshold
+
+
+
+
+    def __str__(self):
+        return "DiskWarning(level={}, free={}, total={}, threshold={})".format(self.level, self.free, self.total, self.threshold)
+    def __eq__(self, other):
+        if self.level != other.level:
+            return False
+        if self.free != other.free:
+            return False
+        if self.total != other.total:
+            return False
+        if self.threshold != other.threshold:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeDiskWarning(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return DiskWarning(
+            level=_UniffiFfiConverterTypeDiskLevel.read(buf),
+            free=_UniffiFfiConverterUInt64.read(buf),
+            total=_UniffiFfiConverterUInt64.read(buf),
+            threshold=_UniffiFfiConverterUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeDiskLevel.check_lower(value.level)
+        _UniffiFfiConverterUInt64.check_lower(value.free)
+        _UniffiFfiConverterUInt64.check_lower(value.total)
+        _UniffiFfiConverterUInt64.check_lower(value.threshold)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeDiskLevel.write(value.level, buf)
+        _UniffiFfiConverterUInt64.write(value.free, buf)
+        _UniffiFfiConverterUInt64.write(value.total, buf)
+        _UniffiFfiConverterUInt64.write(value.threshold, buf)
+
+@dataclass
+class ComputerResources:
+    """
+    A computer: this Mac, or one of your other computers (from the summary
+    it published).
+"""
+    def __init__(self, *, id:str, name:str, online:bool, sampled_at_ms:int, cpu_count:int, cpu_percent:float, load_average_1m:float, memory_total:int, memory_used:int, disk_total:int, disk_free:int, spaces_count:int, spaces_running:int, spaces_cpu_allocated:int, spaces_memory_allocated:int, spaces_memory_used:int, spaces_disk_bytes:int, spaces_disk_exact:bool, warning:DiskWarning):
+        self.id = id
+        self.name = name
+        self.online = online
+        self.sampled_at_ms = sampled_at_ms
+        self.cpu_count = cpu_count
+        self.cpu_percent = cpu_percent
+        self.load_average_1m = load_average_1m
+        self.memory_total = memory_total
+        self.memory_used = memory_used
+        self.disk_total = disk_total
+        self.disk_free = disk_free
+        self.spaces_count = spaces_count
+        self.spaces_running = spaces_running
+        self.spaces_cpu_allocated = spaces_cpu_allocated
+        self.spaces_memory_allocated = spaces_memory_allocated
+        self.spaces_memory_used = spaces_memory_used
+        self.spaces_disk_bytes = spaces_disk_bytes
+        self.spaces_disk_exact = spaces_disk_exact
+        self.warning = warning
+
+
+
+
+    def __str__(self):
+        return "ComputerResources(id={}, name={}, online={}, sampled_at_ms={}, cpu_count={}, cpu_percent={}, load_average_1m={}, memory_total={}, memory_used={}, disk_total={}, disk_free={}, spaces_count={}, spaces_running={}, spaces_cpu_allocated={}, spaces_memory_allocated={}, spaces_memory_used={}, spaces_disk_bytes={}, spaces_disk_exact={}, warning={})".format(self.id, self.name, self.online, self.sampled_at_ms, self.cpu_count, self.cpu_percent, self.load_average_1m, self.memory_total, self.memory_used, self.disk_total, self.disk_free, self.spaces_count, self.spaces_running, self.spaces_cpu_allocated, self.spaces_memory_allocated, self.spaces_memory_used, self.spaces_disk_bytes, self.spaces_disk_exact, self.warning)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.name != other.name:
+            return False
+        if self.online != other.online:
+            return False
+        if self.sampled_at_ms != other.sampled_at_ms:
+            return False
+        if self.cpu_count != other.cpu_count:
+            return False
+        if self.cpu_percent != other.cpu_percent:
+            return False
+        if self.load_average_1m != other.load_average_1m:
+            return False
+        if self.memory_total != other.memory_total:
+            return False
+        if self.memory_used != other.memory_used:
+            return False
+        if self.disk_total != other.disk_total:
+            return False
+        if self.disk_free != other.disk_free:
+            return False
+        if self.spaces_count != other.spaces_count:
+            return False
+        if self.spaces_running != other.spaces_running:
+            return False
+        if self.spaces_cpu_allocated != other.spaces_cpu_allocated:
+            return False
+        if self.spaces_memory_allocated != other.spaces_memory_allocated:
+            return False
+        if self.spaces_memory_used != other.spaces_memory_used:
+            return False
+        if self.spaces_disk_bytes != other.spaces_disk_bytes:
+            return False
+        if self.spaces_disk_exact != other.spaces_disk_exact:
+            return False
+        if self.warning != other.warning:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeComputerResources(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ComputerResources(
+            id=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            online=_UniffiFfiConverterBoolean.read(buf),
+            sampled_at_ms=_UniffiFfiConverterUInt64.read(buf),
+            cpu_count=_UniffiFfiConverterUInt32.read(buf),
+            cpu_percent=_UniffiFfiConverterFloat64.read(buf),
+            load_average_1m=_UniffiFfiConverterFloat64.read(buf),
+            memory_total=_UniffiFfiConverterUInt64.read(buf),
+            memory_used=_UniffiFfiConverterUInt64.read(buf),
+            disk_total=_UniffiFfiConverterUInt64.read(buf),
+            disk_free=_UniffiFfiConverterUInt64.read(buf),
+            spaces_count=_UniffiFfiConverterUInt32.read(buf),
+            spaces_running=_UniffiFfiConverterUInt32.read(buf),
+            spaces_cpu_allocated=_UniffiFfiConverterUInt32.read(buf),
+            spaces_memory_allocated=_UniffiFfiConverterUInt64.read(buf),
+            spaces_memory_used=_UniffiFfiConverterUInt64.read(buf),
+            spaces_disk_bytes=_UniffiFfiConverterUInt64.read(buf),
+            spaces_disk_exact=_UniffiFfiConverterBoolean.read(buf),
+            warning=_UniffiFfiConverterTypeDiskWarning.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterBoolean.check_lower(value.online)
+        _UniffiFfiConverterUInt64.check_lower(value.sampled_at_ms)
+        _UniffiFfiConverterUInt32.check_lower(value.cpu_count)
+        _UniffiFfiConverterFloat64.check_lower(value.cpu_percent)
+        _UniffiFfiConverterFloat64.check_lower(value.load_average_1m)
+        _UniffiFfiConverterUInt64.check_lower(value.memory_total)
+        _UniffiFfiConverterUInt64.check_lower(value.memory_used)
+        _UniffiFfiConverterUInt64.check_lower(value.disk_total)
+        _UniffiFfiConverterUInt64.check_lower(value.disk_free)
+        _UniffiFfiConverterUInt32.check_lower(value.spaces_count)
+        _UniffiFfiConverterUInt32.check_lower(value.spaces_running)
+        _UniffiFfiConverterUInt32.check_lower(value.spaces_cpu_allocated)
+        _UniffiFfiConverterUInt64.check_lower(value.spaces_memory_allocated)
+        _UniffiFfiConverterUInt64.check_lower(value.spaces_memory_used)
+        _UniffiFfiConverterUInt64.check_lower(value.spaces_disk_bytes)
+        _UniffiFfiConverterBoolean.check_lower(value.spaces_disk_exact)
+        _UniffiFfiConverterTypeDiskWarning.check_lower(value.warning)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterBoolean.write(value.online, buf)
+        _UniffiFfiConverterUInt64.write(value.sampled_at_ms, buf)
+        _UniffiFfiConverterUInt32.write(value.cpu_count, buf)
+        _UniffiFfiConverterFloat64.write(value.cpu_percent, buf)
+        _UniffiFfiConverterFloat64.write(value.load_average_1m, buf)
+        _UniffiFfiConverterUInt64.write(value.memory_total, buf)
+        _UniffiFfiConverterUInt64.write(value.memory_used, buf)
+        _UniffiFfiConverterUInt64.write(value.disk_total, buf)
+        _UniffiFfiConverterUInt64.write(value.disk_free, buf)
+        _UniffiFfiConverterUInt32.write(value.spaces_count, buf)
+        _UniffiFfiConverterUInt32.write(value.spaces_running, buf)
+        _UniffiFfiConverterUInt32.write(value.spaces_cpu_allocated, buf)
+        _UniffiFfiConverterUInt64.write(value.spaces_memory_allocated, buf)
+        _UniffiFfiConverterUInt64.write(value.spaces_memory_used, buf)
+        _UniffiFfiConverterUInt64.write(value.spaces_disk_bytes, buf)
+        _UniffiFfiConverterBoolean.write(value.spaces_disk_exact, buf)
+        _UniffiFfiConverterTypeDiskWarning.write(value.warning, buf)
+
 @dataclass
 class ConfigEntry:
     """
@@ -9101,9 +9490,8 @@ class _UniffiFfiConverterTypeContainer(_UniffiConverterRustBuffer):
 @dataclass
 class FleetSettings:
     """
-    Fleet credentials and endpoints. Unset fields fall back to the
-    environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
-    `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
+    Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
+    reads them any more. Kept so existing callers still compile.
 """
     def __init__(self, *, base_url:typing.Optional[str] = _DEFAULT, token_url:typing.Optional[str] = _DEFAULT, client_id:typing.Optional[str] = _DEFAULT, client_secret:typing.Optional[str] = _DEFAULT, token:typing.Optional[str] = _DEFAULT):
         if base_url is _DEFAULT:
@@ -9977,6 +10365,52 @@ class _UniffiFfiConverterTypeDevicesSnapshot(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeRelayAuditEvent.write(value.audit, buf)
         _UniffiFfiConverterMapStringString.write(value.machine_names, buf)
         _UniffiFfiConverterSequenceTypeRelayMachine.write(value.machines, buf)
+
+@dataclass
+class DiskOnHost:
+    """
+    What a Space costs this computer's disk, as opposed to what the guest
+    sees.
+"""
+    def __init__(self, *, bytes:typing.Optional[int], allocated:int, shares_space:bool):
+        self.bytes = bytes
+        self.allocated = allocated
+        self.shares_space = shares_space
+
+
+
+
+    def __str__(self):
+        return "DiskOnHost(bytes={}, allocated={}, shares_space={})".format(self.bytes, self.allocated, self.shares_space)
+    def __eq__(self, other):
+        if self.bytes != other.bytes:
+            return False
+        if self.allocated != other.allocated:
+            return False
+        if self.shares_space != other.shares_space:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeDiskOnHost(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return DiskOnHost(
+            bytes=_UniffiFfiConverterOptionalUInt64.read(buf),
+            allocated=_UniffiFfiConverterUInt64.read(buf),
+            shares_space=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.bytes)
+        _UniffiFfiConverterUInt64.check_lower(value.allocated)
+        _UniffiFfiConverterBoolean.check_lower(value.shares_space)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalUInt64.write(value.bytes, buf)
+        _UniffiFfiConverterUInt64.write(value.allocated, buf)
+        _UniffiFfiConverterBoolean.write(value.shares_space, buf)
 
 
 
@@ -13800,6 +14234,87 @@ class _UniffiFfiConverterTypeGpuSupport(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.reason, buf)
 
 @dataclass
+class GuestUsage:
+    """
+    What `SystemService.Metrics` reports from inside a Space.
+"""
+    def __init__(self, *, cpu_count:int, cpu_percent:float, load_average_1m:float, memory_used:int, memory_total:int, memory_limited:bool, disk_used:int, disk_total:int, disk_limited:bool):
+        self.cpu_count = cpu_count
+        self.cpu_percent = cpu_percent
+        self.load_average_1m = load_average_1m
+        self.memory_used = memory_used
+        self.memory_total = memory_total
+        self.memory_limited = memory_limited
+        self.disk_used = disk_used
+        self.disk_total = disk_total
+        self.disk_limited = disk_limited
+
+
+
+
+    def __str__(self):
+        return "GuestUsage(cpu_count={}, cpu_percent={}, load_average_1m={}, memory_used={}, memory_total={}, memory_limited={}, disk_used={}, disk_total={}, disk_limited={})".format(self.cpu_count, self.cpu_percent, self.load_average_1m, self.memory_used, self.memory_total, self.memory_limited, self.disk_used, self.disk_total, self.disk_limited)
+    def __eq__(self, other):
+        if self.cpu_count != other.cpu_count:
+            return False
+        if self.cpu_percent != other.cpu_percent:
+            return False
+        if self.load_average_1m != other.load_average_1m:
+            return False
+        if self.memory_used != other.memory_used:
+            return False
+        if self.memory_total != other.memory_total:
+            return False
+        if self.memory_limited != other.memory_limited:
+            return False
+        if self.disk_used != other.disk_used:
+            return False
+        if self.disk_total != other.disk_total:
+            return False
+        if self.disk_limited != other.disk_limited:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeGuestUsage(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return GuestUsage(
+            cpu_count=_UniffiFfiConverterUInt32.read(buf),
+            cpu_percent=_UniffiFfiConverterFloat64.read(buf),
+            load_average_1m=_UniffiFfiConverterFloat64.read(buf),
+            memory_used=_UniffiFfiConverterUInt64.read(buf),
+            memory_total=_UniffiFfiConverterUInt64.read(buf),
+            memory_limited=_UniffiFfiConverterBoolean.read(buf),
+            disk_used=_UniffiFfiConverterUInt64.read(buf),
+            disk_total=_UniffiFfiConverterUInt64.read(buf),
+            disk_limited=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt32.check_lower(value.cpu_count)
+        _UniffiFfiConverterFloat64.check_lower(value.cpu_percent)
+        _UniffiFfiConverterFloat64.check_lower(value.load_average_1m)
+        _UniffiFfiConverterUInt64.check_lower(value.memory_used)
+        _UniffiFfiConverterUInt64.check_lower(value.memory_total)
+        _UniffiFfiConverterBoolean.check_lower(value.memory_limited)
+        _UniffiFfiConverterUInt64.check_lower(value.disk_used)
+        _UniffiFfiConverterUInt64.check_lower(value.disk_total)
+        _UniffiFfiConverterBoolean.check_lower(value.disk_limited)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt32.write(value.cpu_count, buf)
+        _UniffiFfiConverterFloat64.write(value.cpu_percent, buf)
+        _UniffiFfiConverterFloat64.write(value.load_average_1m, buf)
+        _UniffiFfiConverterUInt64.write(value.memory_used, buf)
+        _UniffiFfiConverterUInt64.write(value.memory_total, buf)
+        _UniffiFfiConverterBoolean.write(value.memory_limited, buf)
+        _UniffiFfiConverterUInt64.write(value.disk_used, buf)
+        _UniffiFfiConverterUInt64.write(value.disk_total, buf)
+        _UniffiFfiConverterBoolean.write(value.disk_limited, buf)
+
+@dataclass
 class HostAccessRecord:
     """
     One access to this machine.
@@ -14923,10 +15438,10 @@ class _UniffiFfiConverterSequenceTypeBuildFile(_UniffiConverterRustBuffer):
 @dataclass
 class ImageBuild:
     """
-    Image layers built on top of a sandbox's image. Cloud: a remote build
-    (Fleet images API). Local: a build into the container engine (container
-    images only; VM images take no layers here). Both are cached by the same
-    content hash (`cua-b-<hash>`), so an identical spec never rebuilds.
+    Image layers built on top of a sandbox's image. Local: a build into the
+    container engine (container images only; VM images take no layers here),
+    cached by a content hash (`cua-b-<hash>`), so an identical spec never
+    rebuilds. (Cua Cloud's remote build has ended.)
 """
     def __init__(self, *, layers:typing.List[ImageLayer] = _DEFAULT, env:dict[str, str] = _DEFAULT, ports:typing.List[int] = _DEFAULT, files:typing.List[BuildFile] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT):
         if layers is _DEFAULT:
@@ -16997,6 +17512,323 @@ class _UniffiFfiConverterTypeResolvedImage(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.emulated, buf)
         _UniffiFfiConverterString.write(value.os, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.spacesd, buf)
+
+class _UniffiFfiConverterOptionalTypeGuestUsage(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeGuestUsage.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeGuestUsage.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeGuestUsage.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+class _UniffiFfiConverterOptionalTypeDiskOnHost(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeDiskOnHost.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeDiskOnHost.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeDiskOnHost.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class SpaceResources:
+    """
+    One extra Space on this Mac.
+"""
+    def __init__(self, *, id:str, power_state:str, cpu_allocated:int, memory_allocated:int, disk_allocated:int, usage:typing.Optional[GuestUsage], disk_on_host:typing.Optional[DiskOnHost]):
+        self.id = id
+        self.power_state = power_state
+        self.cpu_allocated = cpu_allocated
+        self.memory_allocated = memory_allocated
+        self.disk_allocated = disk_allocated
+        self.usage = usage
+        self.disk_on_host = disk_on_host
+
+
+
+
+    def __str__(self):
+        return "SpaceResources(id={}, power_state={}, cpu_allocated={}, memory_allocated={}, disk_allocated={}, usage={}, disk_on_host={})".format(self.id, self.power_state, self.cpu_allocated, self.memory_allocated, self.disk_allocated, self.usage, self.disk_on_host)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.power_state != other.power_state:
+            return False
+        if self.cpu_allocated != other.cpu_allocated:
+            return False
+        if self.memory_allocated != other.memory_allocated:
+            return False
+        if self.disk_allocated != other.disk_allocated:
+            return False
+        if self.usage != other.usage:
+            return False
+        if self.disk_on_host != other.disk_on_host:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceResources(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceResources(
+            id=_UniffiFfiConverterString.read(buf),
+            power_state=_UniffiFfiConverterString.read(buf),
+            cpu_allocated=_UniffiFfiConverterUInt32.read(buf),
+            memory_allocated=_UniffiFfiConverterUInt64.read(buf),
+            disk_allocated=_UniffiFfiConverterUInt64.read(buf),
+            usage=_UniffiFfiConverterOptionalTypeGuestUsage.read(buf),
+            disk_on_host=_UniffiFfiConverterOptionalTypeDiskOnHost.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterString.check_lower(value.power_state)
+        _UniffiFfiConverterUInt32.check_lower(value.cpu_allocated)
+        _UniffiFfiConverterUInt64.check_lower(value.memory_allocated)
+        _UniffiFfiConverterUInt64.check_lower(value.disk_allocated)
+        _UniffiFfiConverterOptionalTypeGuestUsage.check_lower(value.usage)
+        _UniffiFfiConverterOptionalTypeDiskOnHost.check_lower(value.disk_on_host)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterString.write(value.power_state, buf)
+        _UniffiFfiConverterUInt32.write(value.cpu_allocated, buf)
+        _UniffiFfiConverterUInt64.write(value.memory_allocated, buf)
+        _UniffiFfiConverterUInt64.write(value.disk_allocated, buf)
+        _UniffiFfiConverterOptionalTypeGuestUsage.write(value.usage, buf)
+        _UniffiFfiConverterOptionalTypeDiskOnHost.write(value.disk_on_host, buf)
+
+class _UniffiFfiConverterSequenceTypeSpaceResources(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeSpaceResources.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeSpaceResources.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeSpaceResources.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterSequenceTypeComputerResources(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeComputerResources.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeComputerResources.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeComputerResources.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class ResourcesSnapshot:
+    """
+    One sample of everything.
+"""
+    def __init__(self, *, sequence:int, sampled_at_ms:int, this_mac:ComputerResources, spaces:typing.List[SpaceResources], computers:typing.List[ComputerResources], warning:DiskWarning):
+        self.sequence = sequence
+        self.sampled_at_ms = sampled_at_ms
+        self.this_mac = this_mac
+        self.spaces = spaces
+        self.computers = computers
+        self.warning = warning
+
+
+
+
+    def __str__(self):
+        return "ResourcesSnapshot(sequence={}, sampled_at_ms={}, this_mac={}, spaces={}, computers={}, warning={})".format(self.sequence, self.sampled_at_ms, self.this_mac, self.spaces, self.computers, self.warning)
+    def __eq__(self, other):
+        if self.sequence != other.sequence:
+            return False
+        if self.sampled_at_ms != other.sampled_at_ms:
+            return False
+        if self.this_mac != other.this_mac:
+            return False
+        if self.spaces != other.spaces:
+            return False
+        if self.computers != other.computers:
+            return False
+        if self.warning != other.warning:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeResourcesSnapshot(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ResourcesSnapshot(
+            sequence=_UniffiFfiConverterUInt64.read(buf),
+            sampled_at_ms=_UniffiFfiConverterUInt64.read(buf),
+            this_mac=_UniffiFfiConverterTypeComputerResources.read(buf),
+            spaces=_UniffiFfiConverterSequenceTypeSpaceResources.read(buf),
+            computers=_UniffiFfiConverterSequenceTypeComputerResources.read(buf),
+            warning=_UniffiFfiConverterTypeDiskWarning.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt64.check_lower(value.sequence)
+        _UniffiFfiConverterUInt64.check_lower(value.sampled_at_ms)
+        _UniffiFfiConverterTypeComputerResources.check_lower(value.this_mac)
+        _UniffiFfiConverterSequenceTypeSpaceResources.check_lower(value.spaces)
+        _UniffiFfiConverterSequenceTypeComputerResources.check_lower(value.computers)
+        _UniffiFfiConverterTypeDiskWarning.check_lower(value.warning)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt64.write(value.sequence, buf)
+        _UniffiFfiConverterUInt64.write(value.sampled_at_ms, buf)
+        _UniffiFfiConverterTypeComputerResources.write(value.this_mac, buf)
+        _UniffiFfiConverterSequenceTypeSpaceResources.write(value.spaces, buf)
+        _UniffiFfiConverterSequenceTypeComputerResources.write(value.computers, buf)
+        _UniffiFfiConverterTypeDiskWarning.write(value.warning, buf)
+
+class _UniffiFfiConverterOptionalTypeComputerResources(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeComputerResources.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeComputerResources.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeComputerResources.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class ResourcesUpdate:
+    """
+    What changed since the last event: only entries that moved by more than
+    1 point or 256 MB. Replace entries by `id`; drop the `removed` ids.
+"""
+    def __init__(self, *, sequence:int, sampled_at_ms:int, this_mac:typing.Optional[ComputerResources], spaces:typing.List[SpaceResources], computers:typing.List[ComputerResources], removed:typing.List[str]):
+        self.sequence = sequence
+        self.sampled_at_ms = sampled_at_ms
+        self.this_mac = this_mac
+        self.spaces = spaces
+        self.computers = computers
+        self.removed = removed
+
+
+
+
+    def __str__(self):
+        return "ResourcesUpdate(sequence={}, sampled_at_ms={}, this_mac={}, spaces={}, computers={}, removed={})".format(self.sequence, self.sampled_at_ms, self.this_mac, self.spaces, self.computers, self.removed)
+    def __eq__(self, other):
+        if self.sequence != other.sequence:
+            return False
+        if self.sampled_at_ms != other.sampled_at_ms:
+            return False
+        if self.this_mac != other.this_mac:
+            return False
+        if self.spaces != other.spaces:
+            return False
+        if self.computers != other.computers:
+            return False
+        if self.removed != other.removed:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeResourcesUpdate(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ResourcesUpdate(
+            sequence=_UniffiFfiConverterUInt64.read(buf),
+            sampled_at_ms=_UniffiFfiConverterUInt64.read(buf),
+            this_mac=_UniffiFfiConverterOptionalTypeComputerResources.read(buf),
+            spaces=_UniffiFfiConverterSequenceTypeSpaceResources.read(buf),
+            computers=_UniffiFfiConverterSequenceTypeComputerResources.read(buf),
+            removed=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt64.check_lower(value.sequence)
+        _UniffiFfiConverterUInt64.check_lower(value.sampled_at_ms)
+        _UniffiFfiConverterOptionalTypeComputerResources.check_lower(value.this_mac)
+        _UniffiFfiConverterSequenceTypeSpaceResources.check_lower(value.spaces)
+        _UniffiFfiConverterSequenceTypeComputerResources.check_lower(value.computers)
+        _UniffiFfiConverterSequenceString.check_lower(value.removed)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt64.write(value.sequence, buf)
+        _UniffiFfiConverterUInt64.write(value.sampled_at_ms, buf)
+        _UniffiFfiConverterOptionalTypeComputerResources.write(value.this_mac, buf)
+        _UniffiFfiConverterSequenceTypeSpaceResources.write(value.spaces, buf)
+        _UniffiFfiConverterSequenceTypeComputerResources.write(value.computers, buf)
+        _UniffiFfiConverterSequenceString.write(value.removed, buf)
 
 @dataclass
 class RoutineInfo:
@@ -20244,11 +21076,14 @@ class _UniffiFfiConverterTypeSpaceTransferReport(_UniffiConverterRustBuffer):
 @dataclass
 class SpaceUsage:
     """
-    Memory and storage use ([`Space::usage`]). A size is the guest's own
-    limit only when its `*_limited` flag says so (a VM's memory or disk, a
-    container's cgroup memory limit).
+    Processor, memory and storage use ([`Space::usage`]). A size is the
+    guest's own limit only when its `*_limited` flag says so (a VM's memory
+    or disk, a container's cgroup memory limit).
 """
-    def __init__(self, *, memory_used:int, memory_total:int, memory_limited:bool, disk_used:int, disk_total:int, disk_limited:bool):
+    def __init__(self, *, cpu_count:int = 0, cpu_percent:float = 0.0, load_average_1m:float = 0.0, memory_used:int, memory_total:int, memory_limited:bool, disk_used:int, disk_total:int, disk_limited:bool):
+        self.cpu_count = cpu_count
+        self.cpu_percent = cpu_percent
+        self.load_average_1m = load_average_1m
         self.memory_used = memory_used
         self.memory_total = memory_total
         self.memory_limited = memory_limited
@@ -20260,8 +21095,14 @@ class SpaceUsage:
 
 
     def __str__(self):
-        return "SpaceUsage(memory_used={}, memory_total={}, memory_limited={}, disk_used={}, disk_total={}, disk_limited={})".format(self.memory_used, self.memory_total, self.memory_limited, self.disk_used, self.disk_total, self.disk_limited)
+        return "SpaceUsage(cpu_count={}, cpu_percent={}, load_average_1m={}, memory_used={}, memory_total={}, memory_limited={}, disk_used={}, disk_total={}, disk_limited={})".format(self.cpu_count, self.cpu_percent, self.load_average_1m, self.memory_used, self.memory_total, self.memory_limited, self.disk_used, self.disk_total, self.disk_limited)
     def __eq__(self, other):
+        if self.cpu_count != other.cpu_count:
+            return False
+        if self.cpu_percent != other.cpu_percent:
+            return False
+        if self.load_average_1m != other.load_average_1m:
+            return False
         if self.memory_used != other.memory_used:
             return False
         if self.memory_total != other.memory_total:
@@ -20280,6 +21121,9 @@ class _UniffiFfiConverterTypeSpaceUsage(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
         return SpaceUsage(
+            cpu_count=_UniffiFfiConverterUInt32.read(buf),
+            cpu_percent=_UniffiFfiConverterFloat64.read(buf),
+            load_average_1m=_UniffiFfiConverterFloat64.read(buf),
             memory_used=_UniffiFfiConverterUInt64.read(buf),
             memory_total=_UniffiFfiConverterUInt64.read(buf),
             memory_limited=_UniffiFfiConverterBoolean.read(buf),
@@ -20290,6 +21134,9 @@ class _UniffiFfiConverterTypeSpaceUsage(_UniffiConverterRustBuffer):
 
     @staticmethod
     def check_lower(value):
+        _UniffiFfiConverterUInt32.check_lower(value.cpu_count)
+        _UniffiFfiConverterFloat64.check_lower(value.cpu_percent)
+        _UniffiFfiConverterFloat64.check_lower(value.load_average_1m)
         _UniffiFfiConverterUInt64.check_lower(value.memory_used)
         _UniffiFfiConverterUInt64.check_lower(value.memory_total)
         _UniffiFfiConverterBoolean.check_lower(value.memory_limited)
@@ -20299,6 +21146,9 @@ class _UniffiFfiConverterTypeSpaceUsage(_UniffiConverterRustBuffer):
 
     @staticmethod
     def write(value, buf):
+        _UniffiFfiConverterUInt32.write(value.cpu_count, buf)
+        _UniffiFfiConverterFloat64.write(value.cpu_percent, buf)
+        _UniffiFfiConverterFloat64.write(value.load_average_1m, buf)
         _UniffiFfiConverterUInt64.write(value.memory_used, buf)
         _UniffiFfiConverterUInt64.write(value.memory_total, buf)
         _UniffiFfiConverterBoolean.write(value.memory_limited, buf)
@@ -21186,6 +22036,71 @@ class _UniffiFfiConverterTypeStreamStatsReport(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.duration_ms, buf)
 
 @dataclass
+class TelemetryLinkNotice:
+    """
+    The one-time notice for machines that saw the older "anonymous" wording,
+    shown before anything is linked to the account. Both buttons close it;
+    the second also turns usage data off.
+"""
+    def __init__(self, *, title:str, body:str, ok_label:str, turn_off_label:str, details_label:str, docs_url:str):
+        self.title = title
+        self.body = body
+        self.ok_label = ok_label
+        self.turn_off_label = turn_off_label
+        self.details_label = details_label
+        self.docs_url = docs_url
+
+
+
+
+    def __str__(self):
+        return "TelemetryLinkNotice(title={}, body={}, ok_label={}, turn_off_label={}, details_label={}, docs_url={})".format(self.title, self.body, self.ok_label, self.turn_off_label, self.details_label, self.docs_url)
+    def __eq__(self, other):
+        if self.title != other.title:
+            return False
+        if self.body != other.body:
+            return False
+        if self.ok_label != other.ok_label:
+            return False
+        if self.turn_off_label != other.turn_off_label:
+            return False
+        if self.details_label != other.details_label:
+            return False
+        if self.docs_url != other.docs_url:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTelemetryLinkNotice(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return TelemetryLinkNotice(
+            title=_UniffiFfiConverterString.read(buf),
+            body=_UniffiFfiConverterString.read(buf),
+            ok_label=_UniffiFfiConverterString.read(buf),
+            turn_off_label=_UniffiFfiConverterString.read(buf),
+            details_label=_UniffiFfiConverterString.read(buf),
+            docs_url=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.title)
+        _UniffiFfiConverterString.check_lower(value.body)
+        _UniffiFfiConverterString.check_lower(value.ok_label)
+        _UniffiFfiConverterString.check_lower(value.turn_off_label)
+        _UniffiFfiConverterString.check_lower(value.details_label)
+        _UniffiFfiConverterString.check_lower(value.docs_url)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.title, buf)
+        _UniffiFfiConverterString.write(value.body, buf)
+        _UniffiFfiConverterString.write(value.ok_label, buf)
+        _UniffiFfiConverterString.write(value.turn_off_label, buf)
+        _UniffiFfiConverterString.write(value.details_label, buf)
+        _UniffiFfiConverterString.write(value.docs_url, buf)
+
+@dataclass
 class TelemetryStatus:
     """
     Telemetry state.
@@ -21909,10 +22824,10 @@ class CuaError:  # type: ignore
     _UniffiTempCuaError.NotFound = NotFound # type: ignore
     class ProviderNotConfigured(_UniffiTempCuaError):
         """
-        The provider is not configured (for example no Fleet credentials).
+        The provider is not configured (for example no credentials for it).
 
-        Fix: Set `FLEETS_TOKEN`, or `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`, or
-        run `cua auth login` and create the client with `fleet_from_session`.
+        Fix: Set the credentials the message names (for a contrib provider, its
+        environment variable or `cua auth provider set <name>`).
 """
         def __repr__(self):
             return "CuaError.ProviderNotConfigured({})".format(repr(str(self)))
@@ -21949,23 +22864,22 @@ class CuaError:  # type: ignore
     _UniffiTempCuaError.Timeout = Timeout # type: ignore
     class Fleet(_UniffiTempCuaError):
         """
-        Fleet API failure.
+        Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
+        this.
 
-        Fix: Read the status in the message. Retry a transient failure; check
-        the credentials and the account's capacity otherwise.
+        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
+        ended guide.
 """
         def __repr__(self):
             return "CuaError.Fleet({})".format(repr(str(self)))
     _UniffiTempCuaError.Fleet = Fleet # type: ignore
     class FleetAdmissionDenied(_UniffiTempCuaError):
         """
-        Fleet's admission refused the request: a sandbox or pool size over
-        this account's limits, or a template its policy does not admit. The
-        message is Fleet's own and names the limit.
+        Fleet's admission refused the request. Cua Cloud has ended, so the SDK
+        no longer raises this.
 
-        Fix: Pick a size within the limit the message names (most accounts
-        run 1-8 vCPUs and 1-32 GiB per sandbox), or contact Cua support to
-        raise the account's limits.
+        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
+        ended guide.
 """
         def __repr__(self):
             return "CuaError.FleetAdmissionDenied({})".format(repr(str(self)))
@@ -22017,8 +22931,7 @@ class CuaError:  # type: ignore
         """
         Missing or wrong token or ticket.
 
-        Fix: Pass the sandbox's env token, refresh the Fleet credentials, or run
-        `cua auth login` again.
+        Fix: Pass the sandbox's env token, or run `cua auth login` again.
 """
         def __repr__(self):
             return "CuaError.Unauthenticated({})".format(repr(str(self)))
@@ -22082,7 +22995,7 @@ class CuaError:  # type: ignore
         display, a local runtime) is not available.
 
         Fix: Install or start the prerequisite the message names on this
-        machine.
+        computer.
 """
         def __repr__(self):
             return "CuaError.HostCapabilityMissing({})".format(repr(str(self)))
@@ -22100,9 +23013,10 @@ class CuaError:  # type: ignore
     class PoolSpecMismatch(_UniffiTempCuaError):
         """
         A named cloud pool's template differs from the requested sandbox
-        fields; the message holds the diff (pass `apply` to update it).
+        fields. Cua Cloud has ended, so the SDK no longer raises this.
 
-        Fix: Pass the pool's own fields, or pass `apply` to update its template.
+        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
+        ended guide.
 """
         def __repr__(self):
             return "CuaError.PoolSpecMismatch({})".format(repr(str(self)))
@@ -22110,10 +23024,11 @@ class CuaError:  # type: ignore
     class ClaimSecretsNotDelivered(_UniffiTempCuaError):
         """
         A claim bound but its per-claim secrets (the env token) never
-        reached the sandbox within the bounded wait; the claim was released.
+        reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
+        this.
 
-        Fix: Retry. If it keeps failing, check the pool's claim-secrets setup
-        and the Fleet status.
+        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
+        ended guide.
 """
         def __repr__(self):
             return "CuaError.ClaimSecretsNotDelivered({})".format(repr(str(self)))
@@ -22683,6 +23598,182 @@ class _UniffiFfiConverterTypeReplayMode(_UniffiConverterRustBuffer):
         if value.is_FROM_OFFSET():
             buf.write_i32(4)
             _UniffiFfiConverterUInt64.write(value.offset, buf)
+
+
+
+
+
+
+
+
+class ResourcesEvent:
+    """
+    What [`Spaces::watch_resources`] reports.
+"""
+    def __init__(self):
+        raise RuntimeError("ResourcesEvent cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class SNAPSHOT:
+        """
+        Everything, at the start (and again after a reconnect).
+"""
+
+        def __init__(self, snapshot:ResourcesSnapshot):
+            self.snapshot = snapshot
+
+            """
+        The sample.
+"""
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "ResourcesEvent.SNAPSHOT(snapshot={})".format(self.snapshot)
+        def __eq__(self, other):
+            if not isinstance(other, ResourcesEvent):
+                return NotImplemented
+            if not other.is_SNAPSHOT():
+                return False
+            if self.snapshot != other.snapshot:
+                return False
+            return True
+
+    @dataclass
+    class UPDATE:
+        """
+        Only what changed.
+"""
+
+        def __init__(self, update:ResourcesUpdate):
+            self.update = update
+
+            """
+        The changes.
+"""
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "ResourcesEvent.UPDATE(update={})".format(self.update)
+        def __eq__(self, other):
+            if not isinstance(other, ResourcesEvent):
+                return NotImplemented
+            if not other.is_UPDATE():
+                return False
+            if self.update != other.update:
+                return False
+            return True
+
+    @dataclass
+    class LOW_DISK:
+        """
+        The low-disk level changed (including back to `ok`).
+"""
+
+        def __init__(self, warning:DiskWarning):
+            self.warning = warning
+
+            """
+        The warning now.
+"""
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "ResourcesEvent.LOW_DISK(warning={})".format(self.warning)
+        def __eq__(self, other):
+            if not isinstance(other, ResourcesEvent):
+                return NotImplemented
+            if not other.is_LOW_DISK():
+                return False
+            if self.warning != other.warning:
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_SNAPSHOT(self) -> bool:
+        return isinstance(self, ResourcesEvent.SNAPSHOT)
+    def is_snapshot(self) -> bool:
+        return isinstance(self, ResourcesEvent.SNAPSHOT)
+    def is_UPDATE(self) -> bool:
+        return isinstance(self, ResourcesEvent.UPDATE)
+    def is_update(self) -> bool:
+        return isinstance(self, ResourcesEvent.UPDATE)
+    def is_LOW_DISK(self) -> bool:
+        return isinstance(self, ResourcesEvent.LOW_DISK)
+    def is_low_disk(self) -> bool:
+        return isinstance(self, ResourcesEvent.LOW_DISK)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+ResourcesEvent.SNAPSHOT = type("ResourcesEvent.SNAPSHOT", (ResourcesEvent.SNAPSHOT, ResourcesEvent,), {})  # type: ignore
+ResourcesEvent.UPDATE = type("ResourcesEvent.UPDATE", (ResourcesEvent.UPDATE, ResourcesEvent,), {})  # type: ignore
+ResourcesEvent.LOW_DISK = type("ResourcesEvent.LOW_DISK", (ResourcesEvent.LOW_DISK, ResourcesEvent,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeResourcesEvent(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ResourcesEvent.SNAPSHOT(
+                _UniffiFfiConverterTypeResourcesSnapshot.read(buf),
+            )
+        if variant == 2:
+            return ResourcesEvent.UPDATE(
+                _UniffiFfiConverterTypeResourcesUpdate.read(buf),
+            )
+        if variant == 3:
+            return ResourcesEvent.LOW_DISK(
+                _UniffiFfiConverterTypeDiskWarning.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_SNAPSHOT():
+            _UniffiFfiConverterTypeResourcesSnapshot.check_lower(value.snapshot)
+            return
+        if value.is_UPDATE():
+            _UniffiFfiConverterTypeResourcesUpdate.check_lower(value.update)
+            return
+        if value.is_LOW_DISK():
+            _UniffiFfiConverterTypeDiskWarning.check_lower(value.warning)
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_SNAPSHOT():
+            buf.write_i32(1)
+            _UniffiFfiConverterTypeResourcesSnapshot.write(value.snapshot, buf)
+        if value.is_UPDATE():
+            buf.write_i32(2)
+            _UniffiFfiConverterTypeResourcesUpdate.write(value.update, buf)
+        if value.is_LOW_DISK():
+            buf.write_i32(3)
+            _UniffiFfiConverterTypeDiskWarning.write(value.warning, buf)
 
 
 
@@ -24769,8 +25860,8 @@ class AuthProtocol(typing.Protocol):
         raise NotImplementedError
     async def logout(self, ) -> bool:
         """
-        Revokes (best effort) and removes the session. Returns whether one
-        existed.
+        Revokes (best effort) and removes the session, and unlinks usage
+        data from the account. Returns whether one existed.
 """
         raise NotImplementedError
     def status(self, ) -> AuthStatus:
@@ -24881,8 +25972,8 @@ class Auth(AuthProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def logout(self, ) -> bool:
         """
-        Revokes (best effort) and removes the session. Returns whether one
-        existed.
+        Revokes (best effort) and removes the session, and unlinks usage
+        data from the account. Returns whether one existed.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -25195,7 +26286,8 @@ class _UniffiFfiConverterOptionalTypeFleetUsagePricing(_UniffiConverterRustBuffe
 
 class FleetProtocol(typing.Protocol):
     """
-    Fleet control plane.
+    Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+    one, so none of its methods can be called.
 """
 
     async def acquire(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetSandbox:
@@ -25368,7 +26460,8 @@ class FleetProtocol(typing.Protocol):
 
 class Fleet(FleetProtocol):
     """
-    Fleet control plane.
+    Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+    one, so none of its methods can be called.
 """
 
     _handle: ctypes.c_uint64
@@ -26381,7 +27474,7 @@ class PortForwardProtocol(typing.Protocol):
         raise NotImplementedError
     def url(self, ) -> typing.Optional[str]:
         """
-        URL to use (loopback URL, or the Fleet gateway URL).
+        URL to use (a loopback URL).
 """
         raise NotImplementedError
 
@@ -26468,7 +27561,7 @@ class PortForward(PortForwardProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def url(self, ) -> typing.Optional[str]:
         """
-        URL to use (loopback URL, or the Fleet gateway URL).
+        URL to use (a loopback URL).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -27102,17 +28195,15 @@ class ServiceProtocol(typing.Protocol):
         """
         A shareable URL for this service that stops working after
         `ttl_seconds` (60 s to 24 h, default 1 h): the same as
-        `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
-        Local: a loopback URL with its own token, served by the cua daemon.
+        `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+        served by the cua daemon.
 """
         raise NotImplementedError
     async def request(self, method: str,path: str,body: typing.Optional[bytes],timeout_ms: typing.Optional[int],headers: typing.Union[object, typing.Optional[typing.List[HttpHeader]]] = _DEFAULT) -> HttpResponse:
         """
-        One HTTP request to `path` on the service. Credentials (Fleet bearer
-        and claim) are attached by the runtime. `headers` are sent as given
-        (for example `content-type`, or `accept` and `mcp-session-id` for
-        MCP over Fleet); `authorization` is refused on Fleet, where the
-        gateway bearer owns it.
+        One HTTP request to `path` on the service. Credentials are attached by
+        the runtime. `headers` are sent as given (for example `content-type`,
+        or `accept` and `mcp-session-id` for MCP).
 """
         raise NotImplementedError
     async def url(self, ) -> str:
@@ -27240,8 +28331,8 @@ class Service(ServiceProtocol):
         """
         A shareable URL for this service that stops working after
         `ttl_seconds` (60 s to 24 h, default 1 h): the same as
-        `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
-        Local: a loopback URL with its own token, served by the cua daemon.
+        `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+        served by the cua daemon.
 """
 
         if ttl_seconds is _DEFAULT:
@@ -27268,11 +28359,9 @@ class Service(ServiceProtocol):
         )
     async def request(self, method: str,path: str,body: typing.Optional[bytes],timeout_ms: typing.Optional[int],headers: typing.Union[object, typing.Optional[typing.List[HttpHeader]]] = _DEFAULT) -> HttpResponse:
         """
-        One HTTP request to `path` on the service. Credentials (Fleet bearer
-        and claim) are attached by the runtime. `headers` are sent as given
-        (for example `content-type`, or `accept` and `mcp-session-id` for
-        MCP over Fleet); `authorization` is refused on Fleet, where the
-        gateway bearer owns it.
+        One HTTP request to `path` on the service. Credentials are attached by
+        the runtime. `headers` are sent as given (for example `content-type`,
+        or `accept` and `mcp-session-id` for MCP).
 """
 
         _UniffiFfiConverterString.check_lower(method)
@@ -29477,22 +30566,21 @@ class SandboxProtocol(typing.Protocol):
         raise NotImplementedError
     async def delete(self, ) -> None:
         """
-        Deletes (Fleet: releases the claim and an ephemeral pool).
+        Deletes (local: removes it; direct: forgets it; your cloud: deletes
+        the machine).
 """
         raise NotImplementedError
     def detach(self, ) -> None:
         """
-        Managed Fleet claims: stop renewing the claim and forget the handle;
-        the claim runs until its current shutdown time. Embedded runtime
-        only (a daemon holds its claims by design).
+        Forgets the handle this runtime holds (a Cua Cloud claim used to
+        stop renewing; Cua Cloud has ended). Embedded runtime only.
 """
         raise NotImplementedError
     async def forward(self, port: int) -> PortForward:
         """
         Forwards a loopback port to guest `port`: a TCP forward locally (and
-        over cua-spacesd's tunnel when the image has it); in the cloud
-        without cua-spacesd, a loopback HTTP/WebSocket proxy through the
-        Fleet gateway. Either way `url()` is a loopback URL.
+        over cua-spacesd's tunnel when the image has it). `url()` is a
+        loopback URL.
 """
         raise NotImplementedError
     async def guest_display(self, ) -> GuestDisplay:
@@ -29543,7 +30631,7 @@ class SandboxProtocol(typing.Protocol):
         raise NotImplementedError
     async def keep_alive(self, seconds: int) -> None:
         """
-        Extends a Fleet lease by `seconds`.
+        Extends the sandbox's lease by `seconds`, for a provider that has one.
 """
         raise NotImplementedError
     def kind(self, ) -> str:
@@ -29574,9 +30662,8 @@ class SandboxProtocol(typing.Protocol):
         """
         Where the MCP server behind `service` is (URL of its endpoint at
         `path`, default `/mcp`, plus the headers every request needs), for
-        any MCP client. Embedded: the service route itself (loopback, or the
-        Fleet gateway with a fresh bearer and claim header). Daemon: the
-        daemon's streaming passthrough with its loopback bearer.
+        any MCP client. Embedded: the service route itself (loopback).
+        Daemon: the daemon's streaming passthrough with its loopback bearer.
 """
         raise NotImplementedError
     def name(self, ) -> str:
@@ -29604,9 +30691,8 @@ class SandboxProtocol(typing.Protocol):
     async def public_url(self, service: str,ttl_seconds: typing.Union[object, typing.Optional[int]] = _DEFAULT,label: typing.Union[object, typing.Optional[str]] = _DEFAULT) -> PublicUrl:
         """
         A shareable URL for `service` that stops working after `ttl_seconds`
-        (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
-        Local: a loopback URL with its own token, served by the cua daemon
-        (started if needed; `CUA_BIN` names the CLI).
+        (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+        by the cua daemon (started if needed; `CUA_BIN` names the CLI).
 """
         raise NotImplementedError
     async def refresh(self, ) -> SandboxInfo:
@@ -29732,7 +30818,8 @@ class Sandbox(SandboxProtocol):
         )
     async def delete(self, ) -> None:
         """
-        Deletes (Fleet: releases the claim and an ephemeral pool).
+        Deletes (local: removes it; direct: forgets it; your cloud: deletes
+        the machine).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -29749,9 +30836,8 @@ class Sandbox(SandboxProtocol):
         )
     def detach(self, ) -> None:
         """
-        Managed Fleet claims: stop renewing the claim and forget the handle;
-        the claim runs until its current shutdown time. Embedded runtime
-        only (a daemon holds its claims by design).
+        Forgets the handle this runtime holds (a Cua Cloud claim used to
+        stop renewing; Cua Cloud has ended). Embedded runtime only.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -29767,9 +30853,8 @@ class Sandbox(SandboxProtocol):
     async def forward(self, port: int) -> PortForward:
         """
         Forwards a loopback port to guest `port`: a TCP forward locally (and
-        over cua-spacesd's tunnel when the image has it); in the cloud
-        without cua-spacesd, a loopback HTTP/WebSocket proxy through the
-        Fleet gateway. Either way `url()` is a loopback URL.
+        over cua-spacesd's tunnel when the image has it). `url()` is a
+        loopback URL.
 """
 
         _UniffiFfiConverterUInt16.check_lower(port)
@@ -29919,7 +31004,7 @@ class Sandbox(SandboxProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def keep_alive(self, seconds: int) -> None:
         """
-        Extends a Fleet lease by `seconds`.
+        Extends the sandbox's lease by `seconds`, for a provider that has one.
 """
 
         _UniffiFfiConverterUInt32.check_lower(seconds)
@@ -30015,9 +31100,8 @@ class Sandbox(SandboxProtocol):
         """
         Where the MCP server behind `service` is (URL of its endpoint at
         `path`, default `/mcp`, plus the headers every request needs), for
-        any MCP client. Embedded: the service route itself (loopback, or the
-        Fleet gateway with a fresh bearer and claim header). Daemon: the
-        daemon's streaming passthrough with its loopback bearer.
+        any MCP client. Embedded: the service route itself (loopback).
+        Daemon: the daemon's streaming passthrough with its loopback bearer.
 """
 
         _UniffiFfiConverterString.check_lower(service)
@@ -30110,9 +31194,8 @@ class Sandbox(SandboxProtocol):
     async def public_url(self, service: str,ttl_seconds: typing.Union[object, typing.Optional[int]] = _DEFAULT,label: typing.Union[object, typing.Optional[str]] = _DEFAULT) -> PublicUrl:
         """
         A shareable URL for `service` that stops working after `ttl_seconds`
-        (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
-        Local: a loopback URL with its own token, served by the cua daemon
-        (started if needed; `CUA_BIN` names the CLI).
+        (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+        by the cua daemon (started if needed; `CUA_BIN` names the CLI).
 """
 
         _UniffiFfiConverterString.check_lower(service)
@@ -30420,14 +31503,14 @@ class SandboxesProtocol(typing.Protocol):
     async def connect_url(self, url: str,token: typing.Optional[str],name: typing.Optional[str]) -> Sandbox:
         """
         Connects directly to a machine by URL (`http(s)://host:port`, bare
-        `host:port`, a Fleet service URL or a relay URL) with an optional
-        spacesd token. No daemon is assumed and nothing is probed.
+        `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
 """
         raise NotImplementedError
     async def create(self, options: SandboxCreateOptions) -> Sandbox:
         """
-        Creates (Fleet, local) or connects (direct) a sandbox and waits for
-        the provider and every readiness probe.
+        Creates (local, your cloud, a provider) or connects (direct) a sandbox
+        and waits for the provider and every readiness probe. `on: "cloud"`
+        fails with the "Cua Cloud has ended" error.
 """
         raise NotImplementedError
     async def delete(self, name: str) -> None:
@@ -30446,10 +31529,8 @@ class SandboxesProtocol(typing.Protocol):
         all of them, local, direct and the account's live cloud sandboxes,
         whatever the default location is. `"local"`, `"cloud"` or
         `"direct"`: only those.
-        Cloud sandboxes never fail the listing: without Fleet credentials
-        they are left out silently, and when Fleet fails or takes longer than
-        5 s they are left out with a warning (logged here;
-        [`Sandboxes::list_with_warnings`] returns it).
+        Cua Cloud has ended: its sandboxes are never listed, and listing
+        never asks Fleet.
 """
         raise NotImplementedError
     async def list_all(self, ) -> typing.List[SandboxInfo]:
@@ -30549,8 +31630,7 @@ class Sandboxes(SandboxesProtocol):
     async def connect_url(self, url: str,token: typing.Optional[str],name: typing.Optional[str]) -> Sandbox:
         """
         Connects directly to a machine by URL (`http(s)://host:port`, bare
-        `host:port`, a Fleet service URL or a relay URL) with an optional
-        spacesd token. No daemon is assumed and nothing is probed.
+        `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
 """
 
         _UniffiFfiConverterString.check_lower(url)
@@ -30576,8 +31656,9 @@ class Sandboxes(SandboxesProtocol):
         )
     async def create(self, options: SandboxCreateOptions) -> Sandbox:
         """
-        Creates (Fleet, local) or connects (direct) a sandbox and waits for
-        the provider and every readiness probe.
+        Creates (local, your cloud, a provider) or connects (direct) a sandbox
+        and waits for the provider and every readiness probe. `on: "cloud"`
+        fails with the "Cua Cloud has ended" error.
 """
 
         _UniffiFfiConverterTypeSandboxCreateOptions.check_lower(options)
@@ -30641,10 +31722,8 @@ class Sandboxes(SandboxesProtocol):
         all of them, local, direct and the account's live cloud sandboxes,
         whatever the default location is. `"local"`, `"cloud"` or
         `"direct"`: only those.
-        Cloud sandboxes never fail the listing: without Fleet credentials
-        they are left out silently, and when Fleet fails or takes longer than
-        5 s they are left out with a warning (logged here;
-        [`Sandboxes::list_with_warnings`] returns it).
+        Cua Cloud has ended: its sandboxes are never listed, and listing
+        never asks Fleet.
 """
 
         _UniffiFfiConverterOptionalString.check_lower(location)
@@ -32624,8 +33703,8 @@ class SpaceProtocol(typing.Protocol):
         raise NotImplementedError
     async def usage(self, ) -> SpaceUsage:
         """
-        Memory and storage use now (cheap: poll it at a low rate while a
-        detail is visible).
+        Processor, memory and storage use now (cheap: poll it at a low rate
+        while a detail is visible).
 """
         raise NotImplementedError
     async def websocket_headers(self, ) -> typing.List[HttpHeader]:
@@ -33600,8 +34679,8 @@ class Space(SpaceProtocol):
         )
     async def usage(self, ) -> SpaceUsage:
         """
-        Memory and storage use now (cheap: poll it at a low rate while a
-        detail is visible).
+        Processor, memory and storage use now (cheap: poll it at a low rate
+        while a detail is visible).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -33830,10 +34909,279 @@ class _UniffiFfiConverterSequenceTypeDriveAccessRequest(_UniffiConverterRustBuff
         ]
 
 
+class ResourcesListener():
+    """
+    Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
+    Called on an SDK worker thread; return quickly.
+"""
+
+    def on_event(self, event: ResourcesEvent) -> None:
+        """
+        Something moved.
+"""
+        raise NotImplementedError
+
+class ResourcesListenerImpl(ResourcesListener):
+    """
+    Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
+    Called on an SDK worker thread; return quickly.
+"""
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(
+            self,
+            _uniffi_free=_UniffiLib.uniffi_cua_sdk_fn_free_resourceslistener,
+            _uniffi_call=_uniffi_rust_call,
+            _uniffi_finalizing=sys.is_finalizing,
+    ):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        # At interpreter exit the module globals are gone: skip the free (cua
+        # post-process, libs/cua/scripts/uniffi-python-postprocess.mjs).
+        if handle is not None and not _uniffi_finalizing():
+            _uniffi_call(_uniffi_free, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_sdk_fn_clone_resourceslistener, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def on_event(self, event: ResourcesEvent) -> None:
+        """
+        Something moved.
+"""
+
+        _UniffiFfiConverterTypeResourcesEvent.check_lower(event)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeResourcesEvent.lower(event),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_resourceslistener_on_event,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+# Put all the bits inside a class to keep the top-level namespace clean
+class _UniffiTraitImplResourcesListenerImpl:
+    # For each method, generate a callback function to pass to Rust
+
+    @_UNIFFI_CALLBACK_INTERFACE_CUA_SDK_RESOURCES_LISTENER_METHOD0
+    def on_event(
+            uniffi_handle,
+            event,
+            uniffi_out_return,
+            uniffi_call_status_ptr,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeResourcesListener._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterTypeResourcesEvent.lift(event), )
+            uniffi_method = uniffi_obj.on_event
+            return uniffi_method(*uniffi_args)
+        write_return_value = lambda v: None
+        _uniffi_trait_interface_call(
+                uniffi_call_status_ptr.contents,
+                make_call,
+                write_return_value,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_SDK_RESOURCES_LISTENER
+    def _uniffi_free(uniffi_handle):
+        _UniffiFfiConverterTypeResourcesListener._handle_map.remove(uniffi_handle)
+
+    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_SDK_RESOURCES_LISTENER
+    def _uniffi_clone(uniffi_handle):
+        return _UniffiFfiConverterTypeResourcesListener._handle_map.clone(uniffi_handle)
+
+    # Generate the FFI VTable.  This has a field for each callback interface method.
+    _uniffi_vtable = _UniffiVTableCallbackInterfaceCuaSdkResourcesListener(
+        _uniffi_free,
+        _uniffi_clone,
+        on_event,
+    )
+    # Send Rust a pointer to the VTable.  Note: this means we need to keep the struct alive forever,
+    # or else bad things will happen when Rust tries to access it.
+    _UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener(ctypes.byref(_uniffi_vtable))
+
+class _UniffiFfiConverterTypeResourcesListener:
+    _handle_map = _UniffiHandleMap()
+
+    @staticmethod
+    def lift(value: int):
+        if (value & 1) == 0:
+            # Rust-generated handle, construct a new class that uses the handle to implement the
+            # interface
+            return ResourcesListenerImpl._uniffi_make_instance(value)
+        else:
+            # Python-generated handle, get the object from the handle map
+            return _UniffiFfiConverterTypeResourcesListener._handle_map.remove(value)
+
+    @staticmethod
+    def check_lower(value: ResourcesListener):
+        if not isinstance(value, ResourcesListener):
+            raise TypeError("Expected ResourcesListener subclass, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: ResourcesListener):
+         if isinstance(value, ResourcesListenerImpl):
+            # Rust-implementated object.  Clone the handle and return it
+            return value._uniffi_clone_handle()
+         else:
+            # Python-implementated object, generate a new vtable handle and return that.
+            return _UniffiFfiConverterTypeResourcesListener._handle_map.insert(value)
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer):
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: ResourcesListener, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
+class ResourcesWatchProtocol(typing.Protocol):
+    """
+    A running [`Spaces::watch_resources`]: tell it whether a window shows
+    the numbers, and stop it when done. Dropping it also stops it.
+"""
+
+    def set_visible(self, visible: bool) -> None:
+        """
+        Whether a window shows the numbers: visible watchers are sampled
+        every 10 seconds, hidden ones every 5 minutes (and still hear
+        `LowDisk`, for the menu bar).
+"""
+        raise NotImplementedError
+    def stop(self, ) -> None:
+        """
+        Ends the watch. No event is delivered after this returns.
+"""
+        raise NotImplementedError
+
+class ResourcesWatch(ResourcesWatchProtocol):
+    """
+    A running [`Spaces::watch_resources`]: tell it whether a window shows
+    the numbers, and stop it when done. Dropping it also stops it.
+"""
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(
+            self,
+            _uniffi_free=_UniffiLib.uniffi_cua_sdk_fn_free_resourceswatch,
+            _uniffi_call=_uniffi_rust_call,
+            _uniffi_finalizing=sys.is_finalizing,
+    ):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        # At interpreter exit the module globals are gone: skip the free (cua
+        # post-process, libs/cua/scripts/uniffi-python-postprocess.mjs).
+        if handle is not None and not _uniffi_finalizing():
+            _uniffi_call(_uniffi_free, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_sdk_fn_clone_resourceswatch, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def set_visible(self, visible: bool) -> None:
+        """
+        Whether a window shows the numbers: visible watchers are sampled
+        every 10 seconds, hidden ones every 5 minutes (and still hear
+        `LowDisk`, for the menu bar).
+"""
+
+        _UniffiFfiConverterBoolean.check_lower(visible)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(visible),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_resourceswatch_set_visible,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def stop(self, ) -> None:
+        """
+        Ends the watch. No event is delivered after this returns.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_resourceswatch_stop,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeResourcesWatch:
+    @staticmethod
+    def lift(value: int) -> ResourcesWatch:
+        return ResourcesWatch._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: ResourcesWatch):
+        if not isinstance(value, ResourcesWatch):
+            raise TypeError("Expected ResourcesWatch instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: ResourcesWatch) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> ResourcesWatch:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: ResourcesWatch, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
 class SpacesProtocol(typing.Protocol):
     """
-    The Spaces registry: add a machine by URL, claim a Fleet Space,
-    provision a local one, and get [`Space`] handles.
+    The Spaces registry: add a machine by URL, provision a local one, and get
+    [`Space`] handles.
 """
 
     async def add(self, url: str,token: typing.Optional[str],name: typing.Optional[str]) -> SpaceInfo:
@@ -34050,6 +35398,16 @@ class SpacesProtocol(typing.Protocol):
         Resolves an id, legacy id, URL or display name.
 """
         raise NotImplementedError
+    async def resources(self, visible: bool) -> ResourcesSnapshot:
+        """
+        What this Mac, its extra Spaces and your other computers use now:
+        processor, memory and disk, as one snapshot (a few seconds old at
+        most). With `visible`, the call also says a window shows the numbers
+        for the next 30 seconds, so the runtime samples every 10 seconds
+        instead of every 5 minutes: call it every 10 seconds while a window
+        is visible and stop when it is hidden.
+"""
+        raise NotImplementedError
     async def routine_add(self, agent: str,title: str,prompt: str,every_minutes: typing.Optional[int],daily_at: typing.Optional[str],weekly_on: typing.Optional[str]) -> RoutineInfo:
         """
         Adds a routine. Give exactly one of `every_minutes`, `daily_at`
@@ -34222,11 +35580,20 @@ class SpacesProtocol(typing.Protocol):
         compare-and-swap, `create_only` makes it create-only.
 """
         raise NotImplementedError
+    def watch_resources(self, visible: bool,listener: ResourcesListener) -> ResourcesWatch:
+        """
+        The same numbers as events for `listener`: a snapshot first, then an
+        update with only the entries that changed by more than 1 point or
+        256 MB, and `LowDisk` whenever the warning level changes. Reopens by
+        itself if the daemon restarts (the snapshot comes again). Stop it
+        with [`ResourcesWatch::stop`].
+"""
+        raise NotImplementedError
 
 class Spaces(SpacesProtocol):
     """
-    The Spaces registry: add a machine by URL, claim a Fleet Space,
-    provision a local one, and get [`Space`] handles.
+    The Spaces registry: add a machine by URL, provision a local one, and get
+    [`Space`] handles.
 """
 
     _handle: ctypes.c_uint64
@@ -35033,6 +36400,31 @@ class Spaces(SpacesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def resources(self, visible: bool) -> ResourcesSnapshot:
+        """
+        What this Mac, its extra Spaces and your other computers use now:
+        processor, memory and disk, as one snapshot (a few seconds old at
+        most). With `visible`, the call also says a window shows the numbers
+        for the next 30 seconds, so the runtime samples every 10 seconds
+        instead of every 5 minutes: call it every 10 seconds while a window
+        is visible and stop when it is hidden.
+"""
+
+        _UniffiFfiConverterBoolean.check_lower(visible)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(visible),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeResourcesSnapshot.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_resources(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def routine_add(self, agent: str,title: str,prompt: str,every_minutes: typing.Optional[int],daily_at: typing.Optional[str],weekly_on: typing.Optional[str]) -> RoutineInfo:
         """
         Adds a routine. Give exactly one of `every_minutes`, `daily_at`
@@ -35745,6 +37137,31 @@ class Spaces(SpacesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    def watch_resources(self, visible: bool,listener: ResourcesListener) -> ResourcesWatch:
+        """
+        The same numbers as events for `listener`: a snapshot first, then an
+        update with only the entries that changed by more than 1 point or
+        256 MB, and `LowDisk` whenever the warning level changes. Reopens by
+        itself if the daemon restarts (the snapshot comes again). Stop it
+        with [`ResourcesWatch::stop`].
+"""
+
+        _UniffiFfiConverterBoolean.check_lower(visible)
+
+        _UniffiFfiConverterTypeResourcesListener.check_lower(listener)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(visible),
+            _UniffiFfiConverterTypeResourcesListener.lower(listener),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeResourcesWatch.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_resources,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
 
 
 
@@ -35779,8 +37196,8 @@ class _UniffiFfiConverterTypeSpaces:
 class CuaProtocol(typing.Protocol):
     """
     The entry point of the SDK: create one with `Cua::embedded` or
-    `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
-    through its accessors.
+    `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+    accessors.
 """
 
     def agent_setup(self, ) -> AgentSetup:
@@ -35797,9 +37214,8 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     def fleet(self, ) -> Fleet:
         """
-        Fleet pools, templates, claims and images. Always talks to Fleet
-        from this process with this SDK's credentials (in daemon mode, from
-        the environment).
+        Fleet pools, templates, claims and images. Cua Cloud has ended: this
+        always fails with the "Cua Cloud has ended" error and never connects.
 """
         raise NotImplementedError
     async def info(self, ) -> CuaInfo:
@@ -35820,7 +37236,7 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     def sandboxes(self, ) -> Sandboxes:
         """
-        Sandboxes (Fleet, local, direct).
+        Sandboxes (local, direct, your own cloud).
 """
         raise NotImplementedError
     async def shutdown_daemon(self, ) -> None:
@@ -35835,16 +37251,16 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     async def spacesd(self, url: str,token: typing.Optional[str]) -> SpacesdClient:
         """
-        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-        Fleet service URL or a relay URL) without a sandbox.
+        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+        relay URL) without a sandbox.
 """
         raise NotImplementedError
 
 class Cua(CuaProtocol):
     """
     The entry point of the SDK: create one with `Cua::embedded` or
-    `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
-    through its accessors.
+    `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+    accessors.
 """
 
     _handle: ctypes.c_uint64
@@ -35910,7 +37326,9 @@ class Cua(CuaProtocol):
     def embedded(cls, config: CuaConfig) -> Cua:
         """
         Runs the SDK runtime in this process. Performs no I/O beyond
-        reading the credential store when `fleet_from_session` is set.
+        reading the credential store when `fleet_from_session` is set (for
+        the relay account). It never builds a Fleet client: Cua Cloud has
+        ended.
 """
 
         _UniffiFfiConverterTypeCuaConfig.check_lower(config)
@@ -35987,9 +37405,8 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def fleet(self, ) -> Fleet:
         """
-        Fleet pools, templates, claims and images. Always talks to Fleet
-        from this process with this SDK's credentials (in daemon mode, from
-        the environment).
+        Fleet pools, templates, claims and images. Cua Cloud has ended: this
+        always fails with the "Cua Cloud has ended" error and never connects.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -36052,7 +37469,7 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def sandboxes(self, ) -> Sandboxes:
         """
-        Sandboxes (Fleet, local, direct).
+        Sandboxes (local, direct, your own cloud).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -36099,8 +37516,8 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def spacesd(self, url: str,token: typing.Optional[str]) -> SpacesdClient:
         """
-        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-        Fleet service URL or a relay URL) without a sandbox.
+        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+        relay URL) without a sandbox.
 """
 
         _UniffiFfiConverterString.check_lower(url)
@@ -37528,6 +38945,21 @@ def spaces_tool_methods() -> typing.List[SpacesToolMethod]:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def telemetry_acknowledge_link_notice() -> None:
+    """
+    The person closed the linking notice (either button). Linking starts
+    with the app's next launch, never in the process that showed it.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = lambda val: None
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def telemetry_acknowledge_notice() -> None:
     """
     Records that the first-run notice was shown in the app's UI (nothing is
@@ -37559,6 +38991,49 @@ def telemetry_flush(timeout_ms: int) -> None:
     _uniffi_ffi_result = _uniffi_rust_call_with_error(
         _uniffi_error_converter,
         _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_flush,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def telemetry_link_notice() -> TelemetryLinkNotice:
+    """
+    The one-time linking notice's words.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeTelemetryLinkNotice.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def telemetry_link_notice_due() -> bool:
+    """
+    Whether the app should show the one-time linking notice now: usage data
+    is on, the account offered linking, and this machine has not shown it.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterBoolean.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice_due,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def telemetry_link_state() -> str:
+    """
+    Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterString.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_state,
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
@@ -37764,6 +39239,25 @@ def telemetry_status() -> TelemetryStatus:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+async def telemetry_sync_account() -> str:
+    """
+    Asks the Spaces API for the signed-in account's opaque id and hands it
+    to telemetry (none unlinks). Call at launch and after a sign-in; the
+    SDK's own sign-in already does. Returns the link state. Best effort:
+    offline or signed out, nothing changes.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterString.lift
+    _uniffi_error_converter = None
+    return await _uniffi_rust_call_async(
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_sync_account(*_uniffi_lowered_args),
+        _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+        _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+        _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+        _uniffi_lift_return,
+        _uniffi_error_converter,
+    )
 def telemetry_use_app_notice() -> None:
     """
     The host app shows the first-run notice itself (no stderr notice).
@@ -37783,6 +39277,7 @@ __all__ = [
     "InternalError",
     "AgentSetupTarget",
     "AgentSetupChange",
+    "DiskLevel",
     "CuaMode",
     "RuntimeCheckStatus",
     "RegistrySecret",
@@ -37794,6 +39289,7 @@ __all__ = [
     "CuaError",
     "LoginMethod",
     "ReplayMode",
+    "ResourcesEvent",
     "AgentActionReport",
     "AgentArtifact",
     "HomeTransfer",
@@ -37832,6 +39328,8 @@ __all__ = [
     "CloudTarget",
     "CloudTestReport",
     "ComputerGrant",
+    "DiskWarning",
+    "ComputerResources",
     "ConfigEntry",
     "Container",
     "FleetSettings",
@@ -37844,6 +39342,7 @@ __all__ = [
     "RelayClientInfo",
     "RelayMachine",
     "DevicesSnapshot",
+    "DiskOnHost",
     "RuntimeCheck",
     "DoctorReport",
     "DriveAccessRequest",
@@ -37891,6 +39390,7 @@ __all__ = [
     "FleetUsagePricing",
     "GpuOption",
     "GpuSupport",
+    "GuestUsage",
     "HostAccessRecord",
     "HostPermission",
     "HostProvidedSpace",
@@ -37930,6 +39430,9 @@ __all__ = [
     "PtySize",
     "PublicUrl",
     "ResolvedImage",
+    "SpaceResources",
+    "ResourcesSnapshot",
+    "ResourcesUpdate",
     "RoutineInfo",
     "SandboxCreateOptions",
     "SandboxInfo",
@@ -37979,6 +39482,7 @@ __all__ = [
     "SpacesdHttpRequest",
     "SpacesdHttpResponse",
     "StreamStatsReport",
+    "TelemetryLinkNotice",
     "TelemetryStatus",
     "TeleportDecision",
     "TeleportItem",
@@ -38028,8 +39532,12 @@ __all__ = [
     "resolve_image_with_secret",
     "sandbox_locations",
     "spaces_tool_methods",
+    "telemetry_acknowledge_link_notice",
     "telemetry_acknowledge_notice",
     "telemetry_flush",
+    "telemetry_link_notice",
+    "telemetry_link_notice_due",
+    "telemetry_link_state",
     "telemetry_notice_text",
     "telemetry_record_bench_run",
     "telemetry_record_feature",
@@ -38041,6 +39549,7 @@ __all__ = [
     "telemetry_set_surface",
     "telemetry_show_last",
     "telemetry_status",
+    "telemetry_sync_account",
     "telemetry_use_app_notice",
     "AgentRun",
     "AgentRunProtocol",
@@ -38096,6 +39605,10 @@ __all__ = [
     "TeleportApprover",
     "Space",
     "SpaceProtocol",
+    "ResourcesListenerImpl",
+    "ResourcesListener",
+    "ResourcesWatch",
+    "ResourcesWatchProtocol",
     "Spaces",
     "SpacesProtocol",
     "Cua",

@@ -39,11 +39,14 @@ async def test_gym_reset_opens_and_close_releases(sdk):
 
 
 @pytest.mark.asyncio
-async def test_gym_target_cloud(sdk):
+async def test_gym_target_cloud_ends_with_cua_cloud(sdk):
+    from cua_bench.targets import CloudEnded
+
     env = make(str(HELLO))
     env.target = Target(on="cloud")
-    await env.reset(task_id=0)
-    assert sdk.calls[0]["on"] == "cloud" and sdk.calls[0]["max_pool_size"] == 1
+    with pytest.raises(CloudEnded, match="Cua Cloud has ended"):
+        await env.reset(task_id=0)
+    assert sdk.calls == []
     await env.close()
     assert sdk.live == 0
 

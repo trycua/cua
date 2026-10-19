@@ -195,7 +195,7 @@ struct Sidebar: View {
                 KeyvaultHeader(keyvault: kv, title: model.chrome.keyvaultTitle)
             }
             Section {
-                Label("Machines", systemImage: "server.rack").tag(MainSelection.machines)
+                Label("Computers", systemImage: "server.rack").tag(MainSelection.machines)
                 Label("Agents", systemImage: "person.2").tag(MainSelection.agents)
                 // Only with the Cua Volume experiment on (the core's chrome).
                 if let volume = model.chrome.volumeLabel {

@@ -398,9 +398,8 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   /**
-   * No estimate: the rates came from the retired Fleets API
-   * (`fleet().usagePricing()` on run.cua.ai), and the app does not offer new
-   * cloud Spaces. New Space never waits on it.
+   * No estimate: the rates came from the Cua Cloud API, which has ended, and
+   * the app does not offer new cloud Spaces. New Space never waits on it.
    */
   async cloudPricing(): Promise<AppCloudPricing | null> {
     return null;
@@ -408,7 +407,7 @@ export class LiveSpacesBackend implements SpacesBackend {
 
   async usage(id: string): Promise<AppSpaceUsage | null> {
     const u = await bounded(5, async () => (await this.cua.spaces().space(id)).usage());
-    return u ? { memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
+    return u ? { cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m, memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
   }
 
   async agentRuns(id: string): Promise<AppSpaceAgentRun[]> {

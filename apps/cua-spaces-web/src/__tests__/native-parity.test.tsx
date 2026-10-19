@@ -93,7 +93,7 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     expect(document.body.textContent).not.toContain("waitlist");
     expect(within(teams).getByText("Manage team")).toBeTruthy();
     const note = document.querySelector<HTMLElement>('[data-setting-row="telemetry-note"]')!;
-    expect(note.textContent).toMatch(/^Features used, sandbox types, durations and error categories/);
+    expect(note.textContent).toMatch(/^Which features you use and when something goes wrong\./);
     expect(within(note).getByText("What is collected")).toBeTruthy();
     expect(document.body.textContent).not.toContain("Crash reports and feature counts");
     // Manage team opens the account app in the browser.

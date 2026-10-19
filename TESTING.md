@@ -33,8 +33,8 @@ uv sync --group test
 CUA_TELEMETRY_ENABLED=false uv run pytest libs/python/<package>/tests -v
 ```
 
-Packages outside the root uv workspace (`cua-sandbox`, `cua-train`,
-`libs/cua-bench`, `libs/cua/python`) are installed from their own
+Packages outside the root uv workspace (`cua-sandbox`, `libs/cua-bench`,
+`libs/cua/python`) are installed from their own
 `pyproject.toml`. cua-sandbox runs on the cua SDK, so build the native library
 first and pass explicit ignores: several legacy files start real VMs.
 
@@ -47,7 +47,7 @@ cd ../python/cua-sandbox
 uv sync --frozen --python 3.12
 CUA_TELEMETRY_ENABLED=false uv run --frozen pytest tests --timeout=120 \
   --ignore=tests/live --ignore=tests/test_runtime.py --ignore=tests/test_snapshots.py \
-  --ignore=tests/test_windows_cloud.py --ignore=tests/test_windows_timing.py \
+  --ignore=tests/test_windows_timing.py \
   --deselect tests/test_oci.py::TestLiveRegistry
 ```
 

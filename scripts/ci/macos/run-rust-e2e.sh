@@ -382,6 +382,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_popup_set_value_keeps_front_key_focus_background \
     harness_appkit_context_menu_keeps_front_key_focus_background \
     harness_appkit_slider_drag_px_foreground \
+    harness_appkit_window_capture_ignores_pointer_outside_window \
       harness_appkit_slider_drag_px_background; do
       run_test "appkit-${appkit_test}" cargo test -p cua-driver-e2e --test harness_appkit_test -- \
         --ignored --exact "${appkit_test}" --nocapture --test-threads=1

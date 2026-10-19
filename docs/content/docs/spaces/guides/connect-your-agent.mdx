@@ -1,0 +1,295 @@
+---
+title: Connect your agent
+description: 'Give Claude Code, Codex, Cursor and other AI agents the Cua Spaces tools from the app or the terminal, see what they can do, run agents inside a Space, and give them a provider key.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Connecting an agent gives it the `cua` skills and the `cua` MCP server. After
+that, it can create Spaces, run commands in them, send files, show you the
+desktop and share a Space whenever you ask.
+
+<VideoDemo
+  src="https://trycua.github.io/assets/videos/cua-spaces/connect-your-agent.mp4"
+  poster="https://trycua.github.io/assets/videos/cua-spaces/connect-your-agent-poster.jpg"
+  title="Connect your agent to Cua Spaces"
+>
+  Connect Claude Code to Cua Spaces and ask it to list your Spaces (35 seconds, no sound).
+</VideoDemo>
+
+## Connect from the app
+
+On first run, the first screen offers **Connect Claude Code**, then Codex,
+Hermes, OpenClaw and **Other**. Press the one you use. The app adds Cua to that
+agent's settings and checks that the agent can use it. If the agent was already
+open, close it and open it again.
+
+To connect an agent later, or to remove one, open **Settings, AI agents**:
+
+- Press **Configure** next to a detected agent to set it up, or **Remove** to
+  take out what Cua added.
+- Press **Configure all detected agents** to set up every one at once.
+
+## Connect from a terminal
+
+`cua agents setup` does the same as the app. It adds the `cua` skills and MCP
+server to each agent you name.
+
+```bash test="cli-shape" id="cua-agents-detect"
+cua agents detect          # read-only: which supported agents are installed
+cua agents setup --agents claude,codex --yes
+cua agents status          # what Cua configured for each agent
+cua agents remove          # removes only what Cua added
+```
+
+The [supported agents](/cua-cli/guides/mcp-server#supported-agents) include
+Claude Code, Codex, Cursor, Gemini CLI, Hermes, OpenClaw and more. If yours is
+not on the list, add the server by hand:
+
+```bash skip="third-party-cli"
+claude mcp add cua -- cua daemon mcp
+codex mcp add cua -- cua daemon mcp
+```
+
+`cua daemon mcp` starts `cua daemon` if it is not running, so every agent on
+this computer shares the same Spaces, sandboxes and streams.
+
+## Check that it works
+
+1. If your agent was already running, start a new session. Agents load their
+   tools when a session starts.
+2. Ask: "List my Cua Spaces."
+3. If your agent asks permission to use a `cua` tool, allow it. Agents ask in
+   their own window or terminal.
+
+Then try the request the app offers at the end of its first run. It works
+right away, on this computer:
+
+> List my computers and tell me what's on this Mac
+
+On Windows the request ends "on this PC", and on Linux "on this computer". When
+that works, try a bigger task:
+
+| Ask your agent | What it does |
+|---|---|
+| "Open a Linux Space and run my test suite in it" | Creates a Space, uploads your project and runs the tests inside it (`create_space`, `upload`, `space_bash`). |
+| "Use my Space's browser to finish the checkout test and show me" | Moves your signed-in browser session into the Space, then drives the Space's browser (`teleport_browser_session`). |
+| "Share this Space with a teammate as a viewer" | Shares the Space with read-only access (`share_space`). Cua Spaces asks you to confirm first. |
+
+Open the Space in Cua Spaces to watch it work. [What your agent can do](#what-your-agent-can-do)
+lists the tools it gets.
+
+## What your agent can do
+
+The cua MCP server gives an agent 33 Spaces tools plus sandbox and computer
+tools. For the computer the agent runs on, use [Cua Driver](/cua-driver/quickstart)
+instead. The main ones:
+
+```text output
+list_spaces / create_space {reuse}  -> pick, reuse or create a Space
+space_bash    {space, command}      -> run commands inside it
+send_file     {space, path}         -> drop a host file into ~/Downloads (sha256-verified)
+stream_endpoint                     -> a ticketed media URL
+list_tools / call_tool              -> cua-driver tools in the Space, or any declared service
+delete_space {space}                -> delete it and stop metering
+```
+
+`space` is an id or a name. A tool whose feature the Space lacks returns
+`capability_missing`. For every tool and its parameters, see the
+[Spaces reference](/spaces/reference).
+
+## Limit what an agent can do
+
+Give an agent that only needs to look read-only access:
+
+```bash skip="third-party-cli"
+claude mcp add cua -- cua daemon mcp --permissions spaces:readonly
+```
+
+See [permissions](/cua-cli/guides/mcp-server#permissions) for the full list.
+
+<Callout type="warn">
+  `space_bash`, `send_file`, `teleport_app` and `hotspot_start` act with your
+  authority. Grant `spaces:readonly` to agents that don't need to change
+  anything.
+</Callout>
+
+## Run an agent inside a Space
+
+An agent can also start other agents inside a Space, as long-lived threads.
+
+| Tool | Does |
+|------|------|
+| `agent_capabilities` | Ready harnesses (`claude-code`, `openai-codex`). |
+| `agent_start {space, agent, prompt, show}` | Start a detached run. `show` tails it in a terminal on the Space desktop. |
+| `agent_message {space, run_id, text, force}` | Next turn. Refused mid-turn unless `force`. |
+| `agent_status`, `agent_list`, `agent_stop` | State, output tail, stop. |
+
+Runs live in the guest (`~/.spaces-agents/<run_id>/`) and survive the client
+going away. The daemon copies your agent's credential file (for example
+`~/.claude/.credentials.json`) into the Space at start.
+`CUA_SPACES_AGENT_CREDENTIALS_HOME=none` copies nothing.
+
+In TypeScript a run is a thread:
+
+```ts skip="third-party-cli"
+import { embedded } from "@trycua/cua"
+import { startThread } from "@trycua/cua/spaces"
+
+const bot = await startThread(embedded().spaces(), {
+  agent: "claude-code",
+  prompt: "Open the repo in the Space and run the tests",
+  placement: { type: "dedicated", on: "local", deleteOnClose: true },
+})
+await bot.send("Now fix the failing test")
+console.log(await bot.status())
+await bot.close()                 // stops the run and deletes the Space
+```
+
+`placement` `shared` (`{ type: "shared", space, acknowledgeNoIsolation: true }`)
+reuses a Space you name. `adoptThread(spaces, spaceId, runId)` reattaches.
+
+The lower-level calls are one run per thread and one message per turn. A message
+sent mid-turn is refused (or queued) unless forced, so show the reason. The
+TypeScript and Rust tabs are from the
+[examples in other languages](/spaces/guides/create-a-space-with-the-sdk#examples-in-other-languages),
+and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
+
+<Tabs items={['TypeScript', 'Rust', 'Swift']}>
+  <Tab value="TypeScript">
+    ```ts test="excerpt" id="ts-agent-start" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-agent-start"
+    const report = await space.agentStart(bot.agent, prompt, false, options)
+    const t = new BotThread(bot, report.runId, space)
+    ```
+
+    ```ts test="excerpt" id="ts-agent-message" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-agent-message"
+    const r = await this.space.agentMessage(this.runId, message, false)
+    if (!r.ok) {
+      this.fold.note(this.turns.length, `Refused: ${r.reason}`)
+      return { accepted: false, reason: r.reason }
+    }
+    ```
+  </Tab>
+  <Tab value="Rust">
+    ```rust test="excerpt" id="rs-agent" source="samples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent"
+    let r = self
+        .agents
+        .start(&self.agent, text, self.options.clone())
+        .await
+        .map_err(agents_err)?;
+    ```
+
+    ```rust test="excerpt" id="rs-agent-message" source="samples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent-message"
+    let r = self
+        .agents
+        .send(run, text, vec![])
+        .await
+        .map_err(agents_err)?;
+    if !r.accepts_message {
+        self.system(format!("queued while {}: {}", r.phase, r.reason));
+    }
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="excerpt" id="sw-agent-start" source="samples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-start"
+    let options = SpaceAgentOptions(
+        envFromHost: endpoint?.keyVariables ?? Self.defaultKeyVariables(bot.harness),
+        repo: nil, branch: nil, cwd: home, model: endpoint?.model, baseUrl: endpoint?.baseURL,
+        exitWhenIdle: false)
+    let report = try await space.agentStart(agent: bot.harness.rawValue, prompt: prompt, show: false,
+                                            options: options)
+    ```
+
+    ```swift test="excerpt" id="sw-agent-message" source="samples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-message"
+    let report = try await space(bot).agentMessage(runId: run, text: text, force: false)
+    if !report.ok { throw EngineError.refused(report.reason) }
+    ```
+  </Tab>
+</Tabs>
+
+## Agent keys
+
+Claude Code, Codex and the other harnesses need a provider key to run. Add it
+once in **Cua Spaces, Settings, Agents**, and every agent you start in a Space
+gets the key it needs.
+
+- **Anthropic** (`ANTHROPIC_API_KEY`): Claude Code and other agents that use Claude.
+- **OpenAI** (`OPENAI_API_KEY`): Codex and other agents that use OpenAI models.
+- **Another key**: save it under the variable its agent reads, like
+  `GEMINI_API_KEY` or `OPENROUTER_API_KEY`.
+
+Each row shows only `•••• ` and the key's last four characters, and when you
+added it. Replace and Remove are on the same row. A key is never shown again
+after you save it.
+
+The same works from the `cua` CLI. The key is read from stdin, so it never lands
+in your shell history:
+
+```bash test="cli-shape" id="agent-keys-cli"
+cua agent keys
+pbpaste | cua agent keys set anthropic
+cua agent keys set other --env GEMINI_API_KEY < gemini.key
+cua agent keys rm OPENAI_API_KEY
+```
+
+### Which agents get a key
+
+When an agent starts (`agent_start`, a persistent agent's turn, a routine), the
+Cua daemon adds the saved keys that agent's harness reads, and no others: a
+Claude Code run gets `ANTHROPIC_API_KEY`, a Codex run gets `OPENAI_API_KEY`, and
+a Gemini CLI run gets neither. A key you pass yourself (`env`, or `env_from_host`
+from the daemon's environment) wins over a saved one.
+
+- **Other keys** reach a run only when its harness reads that variable, or when
+  the caller names it in `env_from_host`.
+- **A custom endpoint** (`base_url`) gets no saved key unless it is named in
+  `env_from_host`, so a key is never sent to a proxy you didn't mean it for.
+- **In the Space** the key is written 0600 into the run's own directory and
+  redacted from the run's event log, like any key a run gets.
+
+`agent_capabilities` counts saved keys: a harness whose key is saved reports
+`auth: ok`. A run with no key fails before anything is installed, and the error
+says to add the key in Settings, Agents or to set it for the Cua daemon.
+
+### Where the keys are kept
+
+The Cua daemon keeps the keys in one item of your login Keychain (service
+`run.cua.ai`, next to your Cua sign-in). The item trusts the Cua apps of this
+Mac, so the app, the daemon and the `cua` CLI read it without a prompt, and
+agents started at night by a routine still get their key.
+
+The keys are not kept in the [Keyvault](/spaces/guides/keyvault). The Keyvault
+holds app sessions and passwords that you approve one use at a time and can lock.
+A provider key has to reach an agent the moment it starts, unattended, with no
+vault to set up first.
+
+<Callout type="info">
+  Agents never see this list. `agent_keys.list`, `agent_keys.set` and
+  `agent_keys.remove` are methods of the daemon for the Cua app, not MCP tools:
+  no agent can read, add or remove a key. Their answers carry only the provider,
+  the variable, the last four characters and when the key was added. Keys never
+  go to logs or usage data.
+</Callout>
+
+A build of cua that keeps its session in a file (an unsigned development build,
+or Linux today) can't save agent keys: they are never written to a plain file.
+Set the key in the Cua daemon's environment there instead
+(`export ANTHROPIC_API_KEY=...`, then `cua daemon stop` and `cua daemon start`)
+and name it in `env_from_host`. Windows uses the Credential Manager the same way
+as the macOS Keychain.
+
+## If it doesn't work
+
+| What you see | What to do |
+|---|---|
+| The agent has no `cua` tools | Run `cua agents status`. Then start a new session in the agent. In Hermes, run `/reload-mcp`. |
+| "The Cua daemon isn't running. Start Cua, or run `cua daemon start`." | Open Cua Spaces, or run `cua daemon start`. |
+| Your agent is not in the app's list | Run `cua agents detect` to see every supported agent, or add the server by hand as shown above. |
+| The agent can't reach a Space on another computer | Sign in on this computer, and make sure the device is enrolled. See [Add a computer](/spaces/guides/add-a-computer#reach-it-from-your-other-devices). |
+
+## Next
+
+- [Create a Space](/spaces/guides/add-a-space): run an agent's work in a new desktop.
+- [Add a computer](/spaces/guides/add-a-computer): give your agent another computer.
+- [Persistent agents](/spaces/guides/persistent-agents): agents with a name, a memory and routines.

@@ -139,6 +139,12 @@ extension WebUIBridge {
             guard let usage = try await relay.relayUsage(), usage.metered else { return NSNull() }
             return BridgeValue.encode(usage)
 
+        // Processor, memory and disk for Home and a Space's page: This
+        // Mac's own numbers (`HostResourceSampler`), read on each call. The
+        // daemon's per-Space numbers join them once it serves `resources`.
+        case "resources.get":
+            return HostResourceSampler.shared.sample().snapshot()
+
         // Settings, Storage
         case "storage.get":
             let storage = model.storage
@@ -169,7 +175,21 @@ extension WebUIBridge {
             // signal here, before the SDK's own check.
             guard let telemetry = model.telemetrySink, telemetry.status().enabled else { return NSNull() }
             let signals = raw.compactMap(Self.telemetrySignal)
+            // The page's first run moved past Welcome: its usage notice was
+            // on screen, so events may be sent from here (this one included).
+            if raw.contains(where: Self.leftWelcome) { telemetry.acknowledgeNotice() }
             if !signals.isEmpty { telemetry.record(signals) }
+            return NSNull()
+
+        // The one-time notice that usage data is now linked to the account
+        // (CUA-1881); no telemetry (a bare model) has none.
+        case "telemetry.linkNotice":
+            guard let telemetry = model.telemetrySink else { return NSNull() }
+            let n = telemetry.linkNotice()
+            return ["due": n.due, "title": n.title, "body": n.body, "okLabel": n.okLabel,
+                    "turnOffLabel": n.turnOffLabel, "detailsLabel": n.detailsLabel, "docsUrl": n.docsUrl] as [String: Any]
+        case "telemetry.acknowledgeLinkNotice":
+            model.telemetrySink?.acknowledgeLinkNotice()
             return NSNull()
 
         // A Space's detail
@@ -395,6 +415,18 @@ extension WebUIBridge {
         return NSNull()
     }
 
+    /// The page's first run moved past Welcome (its usage notice was on
+    /// screen): any page left or shown other than Welcome being shown, or
+    /// "Set up later".
+    static func leftWelcome(_ raw: Any) -> Bool {
+        guard let s = raw as? [String: Any] else { return false }
+        switch s["type"] as? String {
+        case "onboarding-page": return !(s["page"] as? String == "welcome" && s["action"] as? String == "shown")
+        case "step": return s["step"] as? String == "onboarding_skipped"
+        default: return false
+        }
+    }
+
     /// A usage event as the core's signal: known kinds with every field a
     /// fixed word, flag or duration (anything else is dropped whole, so a
     /// name or a path never reaches the telemetry).
@@ -454,8 +486,11 @@ extension WebUIBridge {
                   let method = word("mountMethod"), let outcome = word("outcome") else { return nil }
             return .volumeSetup(surface: surface, storage: storage, addToFinder: finder, mountMethod: method, outcome: outcome)
         case "share":
-            guard let action = word("action"), let role = word("role"), let outcome = word("outcome") else { return nil }
-            return .share(action: action, role: role, outcome: outcome)
+            // Why and where a share failed (CUA-1855); a page from before them sends neither.
+            guard let action = word("action"), let role = word("role"), let outcome = word("outcome"),
+                  let errorKind = s["errorKind"] == nil ? "none" : word("errorKind"),
+                  let failedStage = s["failedStage"] == nil ? "none" : word("failedStage") else { return nil }
+            return .share(action: action, role: role, outcome: outcome, errorKind: errorKind, failedStage: failedStage)
         case "app-update":
             guard let action = word("action"), let channel = word("channel"), let trigger = word("trigger") else { return nil }
             return .appUpdate(action: action, channel: channel, trigger: trigger)

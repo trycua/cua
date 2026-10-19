@@ -118,6 +118,26 @@ export class ThisMachineStore {
     if (profile) form = hostFormReduce(this.core, form, { type: "set-profile", profile });
     this.failedRequest = null;
     this.set({ form, error: null, setupError: null });
+    void this.prefillName();
+  }
+
+  /** Fills Name with what the system calls this computer (the host reports
+   * it before setup), so nobody has to type it. A name already typed stays. */
+  private async prefillName(): Promise<void> {
+    const status = (await this.adapter.call("host.status", {}).catch(() => null)) as { name?: string | null } | null;
+    const name = status?.name?.trim();
+    if (name && this.state.form && !this.state.form.name) this.send({ type: "set-name", name });
+  }
+
+  /** Sets this computer up with the form's defaults and its own name, in
+   * one step (the first run's "Set up"). Resolves to whether it worked. */
+  async quickSetUp(identity: string | null, profile = "desktop"): Promise<boolean> {
+    let form = hostFormInitial(this.core);
+    form = hostFormReduce(this.core, form, { type: "set-profile", profile });
+    this.failedRequest = null;
+    this.set({ form, error: null, setupError: null });
+    await this.prefillName();
+    return this.submit(identity);
   }
 
   closeForm(): void {

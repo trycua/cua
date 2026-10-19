@@ -120,6 +120,8 @@ pub const SPACES_SDK_ONLY_METHODS: &[&str] = &[
     "Spaces.space",
     "Spaces.list_tools_json",
     "Spaces.call_tool_json",
+    "Spaces.resources",
+    "Spaces.watch_resources",
     "Space.home",
     "Space.screenshot",
     "Space.close_stream",
@@ -351,13 +353,10 @@ pub struct SpaceCreateOptions {
     /// Name (default `space-<hex>`).
     #[uniffi(default = None)]
     pub name: Option<String>,
-    /// vCPUs. Local default 2; cloud 1-64 (most accounts run 1-8; Fleet
-    /// decides), default the pool template's (4).
+    /// vCPUs. Local default 2.
     #[uniffi(default = None)]
     pub cpus: Option<u32>,
-    /// Memory in MiB. Local default 4096; cloud 512 up to 524288 (most
-    /// accounts run 1024-32768; Fleet decides), default the pool
-    /// template's (4096).
+    /// Memory in MiB. Local default 4096.
     #[uniffi(default = None)]
     pub memory_mb: Option<u64>,
     /// Grow the VM's disk to this many GiB (local VMs; default: the
@@ -500,7 +499,7 @@ impl From<dpb::SpacesHost> for SpacesHost {
 /// none.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct GpuSupport {
-    /// `lume`, `qemu`, `container`, `gvisor`, `fleet`, a provider's name.
+    /// `lume`, `qemu`, `container`, `gvisor`, a provider's name.
     pub runtime: String,
     /// Its options.
     pub options: Vec<GpuOption>,
@@ -818,11 +817,23 @@ pub struct SpaceWindow {
     pub limitation: String,
 }
 
-/// Memory and storage use ([`Space::usage`]). A size is the guest's own
-/// limit only when its `*_limited` flag says so (a VM's memory or disk, a
-/// container's cgroup memory limit).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record, Deserialize)]
+/// Processor, memory and storage use ([`Space::usage`]). A size is the
+/// guest's own limit only when its `*_limited` flag says so (a VM's memory
+/// or disk, a container's cgroup memory limit).
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record, Deserialize)]
 pub struct SpaceUsage {
+    /// Cores the guest sees (0 from a guest that does not report it).
+    #[uniffi(default = 0)]
+    #[serde(default)]
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    #[uniffi(default = 0.0)]
+    #[serde(default)]
+    pub cpu_percent: f64,
+    /// 1-minute load average.
+    #[uniffi(default = 0.0)]
+    #[serde(default)]
+    pub load_average_1m: f64,
     /// Memory in use, bytes.
     pub memory_used: u64,
     /// Memory size, bytes.
@@ -944,8 +955,8 @@ pub struct SpaceStreamTicket {
     pub width: u32,
     /// Initial height.
     pub height: u32,
-    /// Attaching needs [`Space::websocket_headers`] (Fleet gateway or the
-    /// daemon passthrough).
+    /// Attaching needs [`Space::websocket_headers`] (a gateway or the daemon
+    /// passthrough).
     pub needs_headers: bool,
 }
 
@@ -2042,6 +2053,11 @@ impl ToolOut {
     }
 }
 
+// The resource records and watch live in `spaces_resources.rs` (the docs
+// generators read `native/*.rs`), included here so they share this module's
+// private `Host` and `daemon_err`.
+include!("spaces_resources.rs");
+
 /// Where the Spaces runtime lives.
 #[derive(Clone)]
 enum Host {
@@ -2206,8 +2222,8 @@ impl SpacesToolCaller {
 
 // ------------------------------------------------------------ Spaces
 
-/// The Spaces registry: add a machine by URL, claim a Fleet Space,
-/// provision a local one, and get [`Space`] handles.
+/// The Spaces registry: add a machine by URL, provision a local one, and get
+/// [`Space`] handles.
 #[derive(uniffi::Object)]
 pub struct Spaces {
     host: Host,
@@ -3240,8 +3256,8 @@ impl Space {
         run(async move { Ok(s.window_thumbnail(&window_id, epoch, max_dimension).await?) }).await
     }
 
-    /// Memory and storage use now (cheap: poll it at a low rate while a
-    /// detail is visible).
+    /// Processor, memory and storage use now (cheap: poll it at a low rate
+    /// while a detail is visible).
     pub async fn usage(&self) -> Result<SpaceUsage> {
         let s = self.inner.clone();
         run(async move { via_json(&s.usage().await?) }).await

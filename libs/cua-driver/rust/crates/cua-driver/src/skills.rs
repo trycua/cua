@@ -1,12 +1,15 @@
 //! `cua-driver skills {install|update|uninstall|status|path}` —
 //! agent skill-pack management.
 //!
-//! The install scripts intentionally do NOT touch the user's
+//! The binary install scripts intentionally do NOT touch the user's
 //! `~/.claude/skills/` (etc.) directories — too invasive for an
 //! `irm | iex` / `curl | sh` one-liner that the user might be running
-//! just to try the binary. This verb is the opt-in path: fetch the
-//! versioned skill pack from a matching GitHub release and symlink it
-//! into each detected agent's skills dir.
+//! just to try the binary. Wiring up an agent is the explicit step:
+//! `cua-driver mcp-config --client <agent>` installs the skill pack for
+//! that agent by default (`--no-skills` opts out; see
+//! [`install_for_client`]), and this verb installs it for every detected
+//! agent: fetch the versioned skill pack from a matching GitHub release and
+//! symlink it into each detected agent's skills dir.
 //!
 //! ## Subcommands
 //!
@@ -42,6 +45,7 @@
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
+//! - Cursor:      `~/.agents/skills/` (shared with Codex and Pi; Cursor also reads `~/.claude/skills/`)
 //! - Pi:          `~/.agents/skills/` (shared global location; Pi also reads `~/.pi/agent/skills/`)
 //! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
@@ -225,6 +229,13 @@ const AGENTS: &[Agent] = &[
         // of making Pi report a duplicate skill-name collision.
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".pi/agent"),
+    },
+    Agent {
+        label: "Cursor",
+        // Cursor loads ~/.agents/skills too. Reuse it so Cursor, Codex and Pi
+        // converge on one managed cua-driver link.
+        parent: AgentParent::Home(".agents/skills"),
+        install_marker: Some(".cursor"),
     },
     Agent {
         label: "Prime Agent",
@@ -581,6 +592,18 @@ fn link_agent_paths(
     install_marker: Option<&Path>,
     local_skill_dir: &Path,
 ) -> Result<LinkStatus> {
+    link_agent_paths_with(agent_label, parent, install_marker, local_skill_dir, true)
+}
+
+/// [`link_agent_paths`] with the progress lines switched off for callers whose
+/// stdout carries something else (`mcp-config`).
+fn link_agent_paths_with(
+    agent_label: &str,
+    parent: &Path,
+    install_marker: Option<&Path>,
+    local_skill_dir: &Path,
+    chatty: bool,
+) -> Result<LinkStatus> {
     if !ensure_skills_parent(parent, install_marker)? {
         return Ok(LinkStatus::NotDetected);
     }
@@ -598,11 +621,13 @@ fn link_agent_paths(
     let has_metadata = link.symlink_metadata().is_ok();
     let resolves = link.exists();
     if has_metadata && resolves {
-        println!(
-            "  {} skill link already exists at {} (skipping)",
-            agent_label,
-            link.display()
-        );
+        if chatty {
+            println!(
+                "  {} skill link already exists at {} (skipping)",
+                agent_label,
+                link.display()
+            );
+        }
         return Ok(LinkStatus::Existing);
     }
     if has_metadata && !resolves && is_symlink_or_junction(&link) {
@@ -610,18 +635,22 @@ fn link_agent_paths(
         // sweep_legacy_skill_pack cleaned a pre-rename pack out from
         // under it). Remove + recreate pointing at the new target.
         if let Err(e) = remove_link(&link) {
-            eprintln!(
-                "  warning: could not remove stale {} link at {}: {e}",
+            if chatty {
+                eprintln!(
+                    "  warning: could not remove stale {} link at {}: {e}",
+                    agent_label,
+                    link.display()
+                );
+            }
+            return Ok(LinkStatus::Existing);
+        }
+        if chatty {
+            println!(
+                "  cleaned up stale {} link at {}",
                 agent_label,
                 link.display()
             );
-            return Ok(LinkStatus::Existing);
         }
-        println!(
-            "  cleaned up stale {} link at {}",
-            agent_label,
-            link.display()
-        );
     }
     make_dir_symlink(local_skill_dir, &link).with_context(|| {
         format!(
@@ -630,7 +659,9 @@ fn link_agent_paths(
             local_skill_dir.display()
         )
     })?;
-    println!("  ✅ linked {} skill at {}", agent_label, link.display());
+    if chatty {
+        println!("  ✅ linked {} skill at {}", agent_label, link.display());
+    }
     Ok(LinkStatus::Created)
 }
 
@@ -658,6 +689,155 @@ fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
 fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
     std::os::unix::fs::symlink(target, link)?;
     Ok(())
+}
+
+// ── default install for `mcp-config --client <agent>` ─────────────────────
+
+/// The agents whose skills directory `cua-driver mcp-config --client <client>`
+/// installs the skill pack into. A client with no known skills directory
+/// (Qwen Code, Factory Droid, ZCode) maps to none.
+fn client_agents(client: &str) -> Vec<Agent> {
+    let labels: &[&str] = match client {
+        "claude" | "claude-code" => &["Claude Code"],
+        "codex" => &["Codex"],
+        "cursor" => &["Cursor"],
+        "openclaw" => &["OpenClaw"],
+        "opencode" => &["OpenCode"],
+        "hermes" => &["Hermes"],
+        "antigravity" | "gemini" => &["Antigravity IDE", "Antigravity CLI"],
+        "pi" => &["Pi"],
+        "prime-agent" => &["Prime Agent"],
+        _ => &[],
+    };
+    AGENTS
+        .iter()
+        .filter(|agent| labels.contains(&agent.label))
+        .copied()
+        .collect()
+}
+
+/// How one `mcp-config --client` run left the skill pack.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ClientSkills {
+    /// The client has no skills directory to install into.
+    Unsupported,
+    /// Linked for these agents; `true` when this run created the link.
+    Installed(Vec<(&'static str, PathBuf, bool)>),
+    /// The client's own folder is not on this computer yet.
+    NotFound(Vec<&'static str>),
+}
+
+/// Install the skill pack for the agent behind `cua-driver mcp-config
+/// --client <client>`, the default when that command wires up an agent.
+///
+/// The pack is the one compiled into this binary, so it matches the driver the
+/// agent is about to start and needs no network. It lands where the explicit
+/// `skills install` puts it: a local copy under `<HomeDir>/skills/cua-driver`
+/// and a link to it from the agent's skills directory. The agent was named on
+/// the command line, so its skills directory is created when the agent's own
+/// folder (`~/.claude`, `~/.config/opencode`, ...) exists. A link or folder
+/// that is already there is never replaced, and nothing goes to stdout.
+pub fn install_for_client(client: &str) -> Result<ClientSkills> {
+    let agents = client_agents(client);
+    if agents.is_empty() {
+        return Ok(ClientSkills::Unsupported);
+    }
+    let local = local_skill_dir()?;
+    let mut staged = false;
+    let mut installed = Vec::new();
+    let mut missing = Vec::new();
+    for agent in agents {
+        let parent = agent.parent_path()?;
+        let marker = agent
+            .install_marker_path()?
+            .filter(|marker| marker.is_dir())
+            .or_else(|| parent.parent().map(Path::to_path_buf));
+        if !(parent.is_dir() || marker.as_deref().is_some_and(Path::is_dir)) {
+            missing.push(agent.label);
+            continue;
+        }
+        if !staged {
+            stage_embedded(&local)?;
+            staged = true;
+        }
+        match link_agent_paths_with(agent.label, &parent, marker.as_deref(), &local, false)? {
+            LinkStatus::Created => {
+                installed.push((agent.label, parent.join(SKILL_PACK_NAME), true))
+            }
+            LinkStatus::Existing => {
+                installed.push((agent.label, parent.join(SKILL_PACK_NAME), false))
+            }
+            LinkStatus::NotDetected => missing.push(agent.label),
+        }
+    }
+    Ok(if installed.is_empty() {
+        ClientSkills::NotFound(missing)
+    } else {
+        ClientSkills::Installed(installed)
+    })
+}
+
+/// Write the skill files compiled into this binary to `dest`, host platform
+/// only, changing only files whose content differs. A `dest` that is itself a
+/// link is somebody's checkout (a developer's hand-rolled setup): leave it be.
+fn stage_embedded(dest: &Path) -> Result<()> {
+    if is_symlink_or_junction(dest) {
+        return Ok(());
+    }
+    fs::create_dir_all(dest).with_context(|| format!("create {}", dest.display()))?;
+    for (name, text) in cua_driver_core::mcp_skills::embedded_files() {
+        if is_excluded_platform_doc(name, false) {
+            continue;
+        }
+        let path = dest.join(name);
+        if fs::read_to_string(&path).is_ok_and(|current| current == *text) {
+            continue;
+        }
+        fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// The one line `mcp-config --client <client>` prints (to stderr, so the
+/// config on stdout stays pasteable) about the skill pack, or `None` when the
+/// client has no skills directory.
+pub fn install_for_client_line(client: &str) -> Option<String> {
+    client_skills_line(client, install_for_client(client))
+}
+
+fn client_skills_line(client: &str, outcome: Result<ClientSkills>) -> Option<String> {
+    match outcome {
+        Ok(ClientSkills::Unsupported) => None,
+        Ok(ClientSkills::Installed(links)) => {
+            let names = links
+                .iter()
+                .map(|(label, _, _)| *label)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let paths = links
+                .iter()
+                .map(|(_, path, _)| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(if links.iter().all(|(_, _, created)| !created) {
+                format!("cua-driver: the skill pack for {names} is already installed at {paths}.")
+            } else {
+                format!(
+                    "cua-driver: installed the skill pack for {names} at {paths} \
+                     (skip with --no-skills, remove with `cua-driver skills uninstall`)."
+                )
+            })
+        }
+        Ok(ClientSkills::NotFound(labels)) => Some(format!(
+            "cua-driver: no {} folder found yet, so the skill pack was not installed. \
+             Run `cua-driver skills install` once the agent has started.",
+            labels.join(" or ")
+        )),
+        Err(error) => Some(format!(
+            "cua-driver: could not install the skill pack for {client}: {error:#}. \
+             Run `cua-driver skills install` to retry."
+        )),
+    }
 }
 
 // ── fetch ──────────────────────────────────────────────────────────────────
@@ -955,10 +1135,12 @@ fn print_path() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_skills_parent, extract_tar_gz, link_agent_paths, resolve_hermes_skills_dir,
-        skill_release_url, unix_hermes_home, windows_hermes_home, AgentParent, LinkStatus, AGENTS,
+        client_agents, client_skills_line, ensure_skills_parent, extract_tar_gz, link_agent_paths,
+        link_agent_paths_with, resolve_hermes_skills_dir, skill_release_url, stage_embedded,
+        unix_hermes_home, windows_hermes_home, AgentParent, ClientSkills, LinkStatus, AGENTS,
         SKILL_FILES,
     };
+    use anyhow::anyhow;
     use std::path::PathBuf;
     use tempfile::tempdir;
 
@@ -1095,6 +1277,161 @@ mod tests {
             LinkStatus::Existing
         );
         assert!(parent.join("cua-driver").exists());
+    }
+
+    #[test]
+    fn cursor_shares_the_codex_and_pi_skill_directory() {
+        let cursor = AGENTS.iter().find(|agent| agent.label == "Cursor").unwrap();
+        assert!(matches!(cursor.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(cursor.install_marker, Some(".cursor")));
+    }
+
+    #[test]
+    fn every_mcp_config_client_with_a_skills_folder_maps_to_its_agents() {
+        let labels = |client: &str| -> Vec<&'static str> {
+            client_agents(client)
+                .into_iter()
+                .map(|agent| agent.label)
+                .collect()
+        };
+        assert_eq!(labels("claude"), ["Claude Code"]);
+        assert_eq!(labels("claude-code"), ["Claude Code"]);
+        assert_eq!(labels("codex"), ["Codex"]);
+        assert_eq!(labels("cursor"), ["Cursor"]);
+        assert_eq!(labels("openclaw"), ["OpenClaw"]);
+        assert_eq!(labels("opencode"), ["OpenCode"]);
+        assert_eq!(labels("hermes"), ["Hermes"]);
+        assert_eq!(labels("pi"), ["Pi"]);
+        assert_eq!(labels("prime-agent"), ["Prime Agent"]);
+        assert_eq!(
+            labels("antigravity"),
+            ["Antigravity IDE", "Antigravity CLI"]
+        );
+        assert_eq!(labels("gemini"), labels("antigravity"));
+        // No skills folder is known for these.
+        for client in [
+            "qwen",
+            "qwen-code",
+            "droid",
+            "factory",
+            "zcode",
+            "",
+            "emacs",
+        ] {
+            assert!(labels(client).is_empty(), "{client}");
+        }
+    }
+
+    #[test]
+    fn quiet_linking_reports_the_same_status_without_printing() {
+        let home = tempdir().unwrap();
+        let parent = home.path().join(".claude/skills");
+        let marker = home.path().join(".claude");
+        let local_skill = home.path().join("pack");
+        std::fs::create_dir_all(&marker).unwrap();
+        std::fs::create_dir_all(&local_skill).unwrap();
+        assert_eq!(
+            link_agent_paths_with("Claude Code", &parent, Some(&marker), &local_skill, false)
+                .unwrap(),
+            LinkStatus::Created
+        );
+        assert_eq!(
+            link_agent_paths_with("Claude Code", &parent, Some(&marker), &local_skill, false)
+                .unwrap(),
+            LinkStatus::Existing
+        );
+    }
+
+    #[test]
+    fn the_staged_pack_is_the_embedded_pack_for_this_host_only() {
+        let root = tempdir().unwrap();
+        let stage = root.path().join("skills/cua-driver");
+        stage_embedded(&stage).unwrap();
+        for (name, text) in cua_driver_core::mcp_skills::embedded_files() {
+            let other_platform = ["WINDOWS.md", "MACOS.md", "LINUX.md"].contains(name)
+                && !name.eq_ignore_ascii_case(if cfg!(target_os = "windows") {
+                    "WINDOWS.md"
+                } else if cfg!(target_os = "macos") {
+                    "MACOS.md"
+                } else {
+                    "LINUX.md"
+                });
+            let path = stage.join(name);
+            if other_platform {
+                assert!(!path.exists(), "{name} belongs to another platform");
+            } else {
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), *text, "{name}");
+            }
+        }
+        // A refresh rewrites only what changed and keeps files it does not own.
+        std::fs::write(stage.join("SKILL.md"), "stale").unwrap();
+        std::fs::write(stage.join("NOTES.md"), "mine").unwrap();
+        stage_embedded(&stage).unwrap();
+        assert_ne!(
+            std::fs::read_to_string(stage.join("SKILL.md")).unwrap(),
+            "stale"
+        );
+        assert_eq!(
+            std::fs::read_to_string(stage.join("NOTES.md")).unwrap(),
+            "mine"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_stage_is_left_alone() {
+        let root = tempdir().unwrap();
+        let checkout = root.path().join("checkout");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(checkout.join("SKILL.md"), "mine").unwrap();
+        let stage = root.path().join("stage");
+        std::os::unix::fs::symlink(&checkout, &stage).unwrap();
+        stage_embedded(&stage).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(checkout.join("SKILL.md")).unwrap(),
+            "mine"
+        );
+    }
+
+    #[test]
+    fn the_one_line_says_what_happened_and_how_to_undo_it() {
+        let link = PathBuf::from("/home/me/.claude/skills/cua-driver");
+        let created = client_skills_line(
+            "claude",
+            Ok(ClientSkills::Installed(vec![(
+                "Claude Code",
+                link.clone(),
+                true,
+            )])),
+        )
+        .unwrap();
+        assert_eq!(created.lines().count(), 1);
+        assert!(created.contains("installed the skill pack for Claude Code"));
+        assert!(created.contains("/home/me/.claude/skills/cua-driver"));
+        assert!(created.contains("--no-skills"));
+        assert!(created.contains("cua-driver skills uninstall"));
+
+        let again = client_skills_line(
+            "claude",
+            Ok(ClientSkills::Installed(vec![("Claude Code", link, false)])),
+        )
+        .unwrap();
+        assert!(again.contains("already installed"));
+        assert!(!again.contains("--no-skills"));
+
+        let missing =
+            client_skills_line("opencode", Ok(ClientSkills::NotFound(vec!["OpenCode"]))).unwrap();
+        assert!(missing.contains("no OpenCode folder found"));
+        assert!(missing.contains("cua-driver skills install"));
+
+        let failed = client_skills_line("codex", Err(anyhow!("disk full"))).unwrap();
+        assert!(failed.contains("could not install the skill pack for codex: disk full"));
+        assert_eq!(failed.lines().count(), 1);
+
+        assert_eq!(
+            client_skills_line("qwen", Ok(ClientSkills::Unsupported)),
+            None
+        );
     }
 
     #[test]

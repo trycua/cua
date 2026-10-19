@@ -2,13 +2,10 @@
 
 Every variant gets its own sandbox, its own log file and its own
 ``result.json``; ``Target.concurrency`` bounds how many run
-at once. In the cloud, variants with the same image share one managed pool
-sized for the batch (``max_pool_size = min(concurrency, variants)``), so the
-pool scales up from zero for the batch and back down afterwards.
+at once.
 
 Cancellation (Ctrl-C, ``cb run stop``) cancels the running variants; each
-one's ``async with`` releases its sandbox or claim on the way out. If the
-process dies instead, cloud claims expire after their TTL.
+one's ``async with`` releases its sandbox on the way out.
 """
 
 from __future__ import annotations
@@ -77,7 +74,7 @@ class JobResult:
     backend: str = ""
     #: The image as the task or ``--image`` named it.
     image: Optional[str] = None
-    #: The Fleet pool that served the claim (cloud runs).
+    #: The pool that served the sandbox (unused: always ``None`` since Cua Cloud ended).
     pool: Optional[str] = None
     #: The variant's output directory.
     output_dir: str = ""
@@ -197,16 +194,12 @@ class BatchRunner:
         self._opener = opener
         self._env_factory = env_factory
         self._attach = attach
-        # Cloud: the first claim per pool key goes alone until its pool exists,
-        # so concurrent first-use claims never race to create the same pool.
-        self._pool_gates: dict[tuple, asyncio.Event] = {}
 
     def plans(self, jobs: list[Job]) -> list[PoolPlan]:
         return plan_claims(((job.session_id, job.spec) for job in jobs), self.target.concurrency)
 
     async def run(self, jobs: list[Job]) -> list[JobResult]:
         plans = self.plans(jobs)
-        pool_size = {plan.spec.pool_key: plan.max_pool_size for plan in plans}
         self.reporter.plan(self.target, jobs, plans)
         semaphore = asyncio.Semaphore(self.target.concurrency)
         total = len(jobs)
@@ -216,7 +209,7 @@ class BatchRunner:
             nonlocal finished
             async with semaphore:
                 self.reporter.started(job, index, total)
-                result = await self.run_job(job, max_pool_size=pool_size.get(job.spec.pool_key, 1))
+                result = await self.run_job(job)
             finished += 1
             self.reporter.finished(result, finished, total)
             return result
@@ -228,7 +221,7 @@ class BatchRunner:
             except asyncio.CancelledError:
                 for task in tasks:
                     task.cancel()
-                # Let every variant run its cleanup (claim release) before leaving.
+                # Let every variant run its cleanup (sandbox release) before leaving.
                 await asyncio.gather(*tasks, return_exceptions=True)
                 raise
 
@@ -239,7 +232,7 @@ class BatchRunner:
             except Exception:  # noqa: BLE001 - bookkeeping never fails a task
                 pass
 
-    async def run_job(self, job: Job, *, max_pool_size: int = 1) -> JobResult:
+    async def run_job(self, job: Job) -> JobResult:
         """Run one variant; retry infrastructure failures up to ``retries`` times.
 
         A retry starts over in a fresh sandbox. Only failures before the task
@@ -248,7 +241,7 @@ class BatchRunner:
         """
         retries = 0
         while True:
-            result = await self._run_once(job, max_pool_size=max_pool_size, retries=retries)
+            result = await self._run_once(job, retries=retries)
             if not (getattr(result, "_retryable", False) and retries < self.retries):
                 return result
             retries += 1
@@ -257,7 +250,7 @@ class BatchRunner:
                 print(f"\n↻ Retrying {job.name} ({retries}/{self.retries}) in {delay:.0f}s")
             await asyncio.sleep(delay)
 
-    async def _run_once(self, job: Job, *, max_pool_size: int, retries: int) -> JobResult:
+    async def _run_once(self, job: Job, *, retries: int) -> JobResult:
         target, spec = self.target, job.spec
         result = JobResult(
             session_id=job.session_id,
@@ -284,29 +277,12 @@ class BatchRunner:
         started = time.monotonic()
         job.output_dir.mkdir(parents=True, exist_ok=True)
         self._status(job, "starting")
-        pool_seen: dict[str, Optional[str]] = {"pool": None}
 
-        gate: Optional[asyncio.Event] = None
         opener, attach = self._opener, self._attach
         if not spec.needs_sandbox:
             opener, attach = _no_sandbox, _dataset_session
-        if target.cloud and spec.needs_sandbox:
-            existing = self._pool_gates.get(spec.pool_key)
-            if existing is None:
-                gate = self._pool_gates[spec.pool_key] = asyncio.Event()
-            else:
-                await existing.wait()
-        loop = asyncio.get_running_loop()
-
-        def open_gate() -> None:
-            if gate is not None and not gate.is_set():
-                loop.call_soon_threadsafe(gate.set)
 
         def on_progress(event: Progress) -> None:
-            if event.pool:
-                pool_seen["pool"] = event.pool
-            if event.stage != "pool":  # past pool lookup/creation
-                open_gate()
             print(f"[sandbox] {event.stage}: {event.message}")
             self.reporter.progress(job, event)
 
@@ -316,11 +292,8 @@ class BatchRunner:
             try:
                 env = self._env_factory(str(job.task_path))
                 result._setup_started = _now_utc()  # type: ignore[attr-defined]
-                async with opener(
-                    spec, target, max_pool_size=max_pool_size, on_progress=on_progress
-                ) as sandbox:
-                    open_gate()
-                    result.pool = pool_seen["pool"] or getattr(sandbox, "pool_name", None)
+                async with opener(spec, target, on_progress=on_progress) as sandbox:
+                    result.pool = getattr(sandbox, "pool_name", None)
                     result.sandbox = _sandbox_ref(sandbox)
                     facts = image_facts(sandbox, spec)
                     for key, value in facts.items():
@@ -351,14 +324,12 @@ class BatchRunner:
                     result.error = f"agent failure: {episode.failure_mode}"
                     print(f"\n✗ Task failed: {result.error}")
             except asyncio.CancelledError:
-                open_gate()
                 result.status = "cancelled"
                 result.error = "cancelled"
                 print("\n✗ Task cancelled (sandbox released)")
                 self._finish(job, result, started)
                 raise
             except Exception as error:  # noqa: BLE001 - one variant never stops the batch
-                open_gate()
                 result.error = explain_error(error, spec, target)
                 result._error_obj = error  # type: ignore[attr-defined]
                 result._retryable = not isinstance(error, TargetError)  # type: ignore[attr-defined]

@@ -104,6 +104,19 @@ export function hostAccount(account: AccountRunning): AppHostAccount | null {
   return { id: p?.subject, email: p?.email, display: name ?? who };
 }
 
+/** The one-time notice that usage data is now linked to the signed-in
+ * account (CUA-1881), as the page shows it: the SDK's words, and whether it
+ * is due now. */
+export interface LinkNoticeView {
+  due: boolean;
+  title: string;
+  body: string;
+  okLabel: string;
+  turnOffLabel: string;
+  detailsLabel: string;
+  docsUrl: string;
+}
+
 /** The usage-telemetry switch, and where the app's usage events go. */
 export interface TelemetryRunning {
   status(): AppTelemetryInput;
@@ -115,6 +128,12 @@ export interface TelemetryRunning {
    * from here usage events may be sent (the SwiftUI app's
    * `appTelemetryWelcomeLeft`). */
   acknowledgeNotice(): void;
+  /** The one-time linking notice for machines that saw the older
+   * "anonymous" wording (`telemetryLinkNotice`, `telemetryLinkNoticeDue`). */
+  linkNotice(): LinkNoticeView;
+  /** The person closed it, either button (`telemetryAcknowledgeLinkNotice`):
+   * linking starts at the next launch, never in this process. */
+  acknowledgeLinkNotice(): void;
 }
 
 /** Signals held while the first-run notice is still on screen. */
@@ -172,6 +191,23 @@ export class LiveTelemetry implements TelemetryRunning {
     this.noticeShown = true;
     const held = this.held.splice(0);
     if (held.length && s.enabled) this.native.appTelemetryRecord(held);
+  }
+
+  linkNotice(): LinkNoticeView {
+    const n = this.native.telemetryLinkNotice();
+    return {
+      due: this.native.telemetryLinkNoticeDue(),
+      title: n.title,
+      body: n.body,
+      okLabel: n.okLabel,
+      turnOffLabel: n.turnOffLabel,
+      detailsLabel: n.detailsLabel,
+      docsUrl: n.docsUrl,
+    };
+  }
+
+  acknowledgeLinkNotice(): void {
+    this.native.telemetryAcknowledgeLinkNotice();
   }
 
   private shown(): boolean {

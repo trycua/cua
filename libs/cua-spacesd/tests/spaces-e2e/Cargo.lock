@@ -2067,6 +2067,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-create-failure"
+version = "0.1.0"
+
+[[package]]
 name = "cua-cursor-motion"
 version = "0.36.0"
 dependencies = [
@@ -2081,7 +2085,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "cua-auth",
  "cua-byoc",
  "cua-disk",
  "cua-fleet",
@@ -2494,6 +2497,7 @@ dependencies = [
  "cua-agent-setup",
  "cua-agents",
  "cua-auth",
+ "cua-create-failure",
  "cua-daemon",
  "cua-fleet",
  "cua-host",
@@ -2507,7 +2511,6 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
- "js-sys",
  "pbjson-types",
  "prost",
  "serde",
@@ -2521,9 +2524,6 @@ dependencies = [
  "tonic-web-wasm-client",
  "tracing",
  "uniffi",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]
@@ -2537,6 +2537,8 @@ dependencies = [
  "chrono",
  "cua-agents",
  "cua-auth",
+ "cua-create-failure",
+ "cua-disk",
  "cua-fleet",
  "cua-home",
  "cua-host",
@@ -2549,11 +2551,13 @@ dependencies = [
  "cua-spaces-contract",
  "cua-spacesd-client",
  "cua-telemetry",
+ "cua-vmm",
  "futures-util",
  "hex",
  "http",
  "humantime",
  "ignore",
+ "libc",
  "pbjson-types",
  "prost",
  "rand 0.9.5",
@@ -2561,6 +2565,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sysinfo",
  "tar",
  "thiserror 2.0.20",
  "tokio",
@@ -2623,7 +2628,6 @@ dependencies = [
  "cua-auth",
  "cua-chromium-storage",
  "cua-daemon",
- "cua-fleet",
  "cua-home",
  "cua-keyvault",
  "cua-media-client",

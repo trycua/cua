@@ -18,8 +18,6 @@ function renderPanel(overrides: Partial<Parameters<typeof SettingsPanel>[0]> = {
   const props = {
     menuBar: false,
     onMenuBarMode: vi.fn(),
-    fleetLive: false,
-    clientId: undefined,
     onOpenExternal: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
@@ -53,22 +51,12 @@ describe("SettingsPanel notch tab control", () => {
 });
 
 describe("SettingsPanel account section", () => {
-  it("shows a sign-in button that opens Cua when not live", async () => {
+  it("shows a sign-in button that opens Cua when not signed in", async () => {
     const user = userEvent.setup();
-    const props = renderPanel({ fleetLive: false });
+    const props = renderPanel();
     const button = screen.getByRole("button", { name: "Sign in to Cua" });
     await user.click(button);
     expect(props.onOpenExternal).toHaveBeenCalledWith(SIGN_IN_URL);
-  });
-
-  it("shows the API-key state but still offers account sign-in when env creds are live", () => {
-    renderPanel({ fleetLive: true, clientId: "client-abc" });
-    // The env machine key reads as "signed in via API key" with the client id…
-    expect(screen.getByText("Signed in via API key")).toBeInTheDocument();
-    expect(screen.getByText("client-abc")).toBeInTheDocument();
-    // …but it does NOT masquerade as a Cua account, and account sign-in stays available.
-    expect(screen.queryByText("Signed in to Cua")).toBeNull();
-    expect(screen.getByRole("button", { name: "Sign in to Cua" })).toBeInTheDocument();
   });
 });
 
@@ -262,8 +250,6 @@ describe("SettingsPanel AI agents", () => {
         <Panel
           menuBar={false}
           onMenuBarMode={vi.fn()}
-          fleetLive={false}
-          clientId={undefined}
           onOpenExternal={vi.fn()}
           onClose={vi.fn()}
         />,
@@ -390,7 +376,7 @@ describe("SettingsPanel Privacy", () => {
   it("acknowledges the notice, turns usage telemetry off and links the docs", async () => {
     const telemetry = fakeTelemetry();
     const props = renderPanel({ telemetry });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     expect(telemetry.calls).toEqual(["ack"]);
     await userEvent.click(screen.getByRole("radio", { name: "Off" }));
     expect(telemetry.calls).toContain("set:false");
@@ -409,7 +395,7 @@ describe("SettingsPanel Privacy", () => {
   it("lists Account, Teams, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
     const onShowWelcome = vi.fn();
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments"]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
@@ -440,7 +426,7 @@ describe("SettingsPanel Experiments", () => {
       recordSignals: vi.fn(),
     };
     renderPanel({ telemetry });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
     for (const name of ["Cua Volume", "Your cloud"]) {
       expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
@@ -472,14 +458,13 @@ describe("SettingsPanel billing and Teams", () => {
       onSignedOut: vi.fn(async () => () => {}),
     };
     const props = renderPanel({
-      fleetLive: true,
       signedInIdentity: "you@example.com",
       auth,
       billingStatus: async () => ({
         billingEnabled: true,
         card: null,
         credit: { balanceUsdCents: 742 },
-        billingUrl: "https://run.cua.ai/billing",
+        billingUrl: "https://example.com/billing",
       }),
     });
     expect(await screen.findByRole("region", { name: "Teams" })).toBeInTheDocument();
@@ -731,7 +716,7 @@ describe("SettingsPanel launch at login", () => {
     const { fakeLoginItemBridge } = await import("../native/loginItem");
     renderPanel({ loginItem: fakeLoginItemBridge("notRegistered"), serves: { providesSpaces: true, runsAgents: false } });
     expect(
-      await screen.findByText("This machine provides Spaces, which stop after a restart until you open Cua Spaces."),
+      await screen.findByText("This computer provides Spaces, which stop after a restart until you open Cua Spaces."),
     ).toBeInTheDocument();
   });
 

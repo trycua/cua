@@ -61,7 +61,7 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         current = HostStatus(
             configured: true, mode: request.mode, relayUrl: relay ? (request.relayUrl ?? "https://relay.cua.ai") : nil,
             directUrl: relay ? nil : "http://\(request.direct ?? "")", envTokenPath: nil, machineId: "0123abcd4567",
-            name: request.name ?? "This machine", sharing: true, serviceInstalled: true, serviceRunning: true,
+            name: request.name ?? "This computer", sharing: true, serviceInstalled: true, serviceRunning: true,
             serviceKind: "launchd", online: true, clients: [], allow: request.allow ?? [],
             permissions: [
                 HostPermission(id: "screen-recording", title: "Screen Recording",
@@ -125,7 +125,7 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         calls.append("resume:\(account)")
         guard current.pausedSignedOut else { return current }
         guard account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame else {
-            throw CuaError.InvalidArgument(message: "this machine is shared with another Cua account")
+            throw CuaError.InvalidArgument(message: "this computer is shared with another Cua account")
         }
         current.pausedSignedOut = false
         current.sharing = true
@@ -155,6 +155,10 @@ public final class HostModel {
     public private(set) var machineId: String?
     /// The host setup form, while it shows.
     public private(set) var form: AppHostFormState?
+    /// What the system calls this computer (Sharing's Computer Name), which
+    /// the setup form's Name starts with: `cua host setup` uses the same
+    /// name when none is given. Tests pin it.
+    public var computerName: () -> String? = { Foundation.Host.current().localizedName }
     public private(set) var busy = false
     public private(set) var error: String?
     /// The last page button that failed (a setting, Stop sharing, ...), in
@@ -229,6 +233,9 @@ public final class HostModel {
 
     public func openForm() {
         form = appHostFormInitial()
+        if let name = computerName()?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            send(.setName(name: name))
+        }
         error = nil
         setupFailure = nil
     }

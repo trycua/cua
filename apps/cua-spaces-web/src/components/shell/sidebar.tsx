@@ -6,12 +6,16 @@ import { useRef, type PointerEvent } from "react";
 
 import { LogOutIcon } from "lucide-react";
 
+import type { Space } from "@/bridge";
+import { spokenName } from "@/bridge/space-names";
+
 import { signInCodeText, useBridge, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
+import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { bindingFor } from "@/lib/keybindings";
-import { realSpaces } from "@/lib/spaces";
+import { realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
@@ -52,8 +56,10 @@ export function Sidebar() {
                   <item.icon className={cn("size-4 text-muted-foreground", isActive && "text-brand-strong")} strokeWidth={1.75} />
                   <span className="flex-1 truncate">{item.label}</span>
                   {item.to === "/notifications" && unread > 0 ? (
-                    <span data-unread-badge className="min-w-4 rounded-full bg-brand px-1 text-center text-2xs font-medium tabular-nums text-white" aria-label={`${unread} unread`}>
-                      {unread}
+                    // The Cua key says they're Cua's; the count, in plain text, says how many are unread.
+                    <span data-unread-badge className="flex items-center gap-1" aria-label={`${unread} unread`}>
+                      <CuaKey size={16} />
+                      <span className="text-2xs font-medium tabular-nums text-foreground">{unread}</span>
                     </span>
                   ) : null}
                   {counts[item.to] !== undefined ? (
@@ -67,6 +73,7 @@ export function Sidebar() {
         })}
       </nav>
       <div className="mt-auto">
+        <SidebarCreating spaces={spaces ?? []} />
         <SidebarUpdateIndicator />
         <AccountFooter />
       </div>
@@ -75,9 +82,40 @@ export function Sidebar() {
   );
 }
 
+/** Spaces being made, wherever the user is (a create started in the first
+ * run keeps going after it): the name, the progress line and a bar. Opens
+ * the Space's row. */
+function SidebarCreating({ spaces }: { spaces: Space[] }) {
+  const making = spaces.filter((s) => spaceState(s) === "creating");
+  if (making.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5 px-2.5 pb-2" data-sidebar-creating="">
+      {making.slice(0, 2).map((s) => {
+        const p = s.progress;
+        const fraction = p ? Math.max(0, Math.min(1, p.permille / 1000)) : 0;
+        return (
+          <Link
+            key={s.id}
+            to="/spaces"
+            className="block rounded-lg border bg-background/70 px-3 py-2 text-left outline-none hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/60"
+            data-sidebar-creating-row={s.id}
+          >
+            <div className="text-2xs font-medium text-muted-foreground">Making</div>
+            <div className="truncate text-xs font-medium">{spokenName(s.name)}</div>
+            <div className="truncate text-2xs text-muted-foreground">{p?.transfer ?? p?.label ?? "Starting…"}</div>
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/10" role="progressbar" aria-label={`Making ${s.name}`} aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
+              <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${Math.round(fraction * 100)}%` }} />
+            </div>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The account, or "Sign in"; and a way back into a first run left halfway. */
 export function AccountFooter() {
-  const { mode, core } = useBridge();
+  const { core } = useBridge();
   const { data: session, signIn, signOut, cancelSignIn, openExternal } = useSession();
   const plan = useRelayUsageView()?.planCard;
   const trackPlanClick = useTrackPlanClick();
@@ -86,8 +124,7 @@ export function AccountFooter() {
   const identity = session.signedIn ? (session.identity ?? "Signed in") : null;
   const phase = session.signIn.kind;
   const waiting = phase === "starting" || phase === "waiting";
-  // The SwiftUI host runs its own first run.
-  const unfinished = mode !== "webkit" && !session.onboarding.completed;
+  const unfinished = !session.onboarding.completed;
   const run = (f: () => Promise<unknown>, what: string) =>
     f().catch((e: unknown) => toast(what, { description: e instanceof Error ? e.message : String(e) }));
 

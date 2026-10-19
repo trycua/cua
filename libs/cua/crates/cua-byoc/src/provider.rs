@@ -529,7 +529,7 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
         let machine = instance
             .details
             .get(DETAIL_RELAY_MACHINE)
-            .ok_or_else(|| Error::NotFound(format!("the relay machine of {}", instance.id)))?;
+            .ok_or_else(|| Error::NotFound(format!("the relay computer of {}", instance.id)))?;
         Ok(ServiceEndpoint {
             url: self.relay.machine_url(machine),
             headers: vec![],

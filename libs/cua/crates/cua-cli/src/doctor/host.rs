@@ -51,7 +51,7 @@ fn with_severity(mut check: Check, required: bool) -> Check {
 /// sandbox's runtime needs.
 /// The user defaults (`cua config`): each effective value and where it
 /// comes from, informational. A value that does not parse fails (every
-/// create would); a cloud default without cloud credentials warns.
+/// create would).
 pub fn defaults_checks() -> Vec<Check> {
     use cua_sandbox_core::settings::Settings;
     let settings = match Settings::load() {
@@ -83,20 +83,6 @@ pub fn defaults_checks() -> Vec<Check> {
         };
         let failed = check.status == Status::Fail;
         checks.push(with_severity(check, failed));
-    }
-    if let Ok((cua_sandbox_core::placement::On::Cloud, source)) = settings.default_on()
-        && !crate::auth::fleet_maybe_configured()
-        && let Some(hint) = cua_sandbox_core::settings::cloud_default_hint(&source)
-    {
-        checks.push(with_severity(
-            Check::new(
-                "host.defaults.cloud_credentials",
-                Status::Warn,
-                "the default location is cloud, but no cloud credentials are configured",
-            )
-            .fix(hint),
-            false,
-        ));
     }
     checks
 }
@@ -256,13 +242,19 @@ pub async fn host_checks(cua: &Arc<Cua>, runtime_type: Option<&str>, arch: &str)
         }
     }
     checks.extend(host_sharing_checks());
-    checks.push(local_network_check(&report.checks).await);
+    checks.push(local_network_check(&report.checks, &vmm).await);
     checks
 }
 
 /// `host.local_network`: on a Mac that runs macOS VMs (lume answers, or
-/// it provides Spaces), one bounded connect to a running VM.
-async fn local_network_check(runtime: &[cua_sdk::RuntimeCheck]) -> Check {
+/// it provides Spaces), the daemon's own probe from its runtime doctor
+/// report (it talks to the VMs, under its own app's grant), else one
+/// bounded connect from this process for a daemon that predates it.
+async fn local_network_check(
+    runtime: &[cua_sdk::RuntimeCheck],
+    report_json: &serde_json::Value,
+) -> Check {
+    use super::local_network as ln;
     let os = std::env::consts::OS;
     let lume = runtime
         .iter()
@@ -274,11 +266,14 @@ async fn local_network_check(runtime: &[cua_sdk::RuntimeCheck]) -> Check {
         );
     let macos_vms = lume || provides;
     let probe = if os == "macos" && macos_vms {
-        Some(super::local_network::probe(&super::local_network::lume_base()).await)
+        match ln::from_daemon(report_json) {
+            Some(p) => Some(p),
+            None => Some(ln::from_this_process().await),
+        }
     } else {
         None
     };
-    super::local_network::check(os, macos_vms, probe)
+    ln::check(os, macos_vms, probe)
 }
 
 /// This machine's `cua host` readiness: a GUI (Aqua) session for the

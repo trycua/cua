@@ -194,7 +194,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::onboarding_page("welcome", s, "none"),
         events::space_wizard(s),
         events::persistent_agent(s, Some(s), Outcome::Ok, Some(s)),
-        events::share(s, s, Outcome::Ok),
+        events::share(s, s, Outcome::Ok, "none", "none"),
         events::app_update(s, s, s),
         events::device_enroll(s, Outcome::Ok),
         events::experiment(s, "sharing"),
@@ -214,11 +214,21 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::onboarding_page("volume", "completed", s).unwrap());
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
-    v.push(events::share("share", s, Outcome::Ok).unwrap());
+    v.push(events::share("share", s, Outcome::Ok, s, s).unwrap());
+    v.push(events::share("share", "viewer", Outcome::Error, s, s).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());
     v.push(events::app_update("downloaded", s, s).unwrap());
     v.push(events::device_enroll("rekey", Outcome::Ok).unwrap());
     v.push(events::experiment("experiment_off", "your_cloud").unwrap());
+    v.push(events::installer_step("installer_started", s, s, s, &[s]).unwrap());
+    v.push(events::installer_step("installer_failed", s, s, "ps1", &[s, "cli"]).unwrap());
+    v.push(
+        events::installer_step("installer_failed", "cli", "cancelled", "sh", &["host"]).unwrap(),
+    );
+    v.push(events::agent_used_space("space_bash").unwrap());
+    v.push(events::agent_used_space("computer_click").unwrap());
+    assert!(events::installer_step(s, "cli", "network", "sh", &[]).is_none());
+    assert!(events::agent_used_space(s).is_none());
     v
 }
 
@@ -904,6 +914,7 @@ fn docs_page_names_every_event_and_property() {
     let page = concat!(
         include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry.mdx"),
         include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry-events.mdx"),
+        include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry-counting.mdx"),
     );
     for spec in schema::EVENTS {
         assert!(
@@ -975,7 +986,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(e.props["failed_phase"], "other");
     assert_eq!(e.props["error_kind"], "other");
     assert_eq!(e.props["time_bucket"], "gte_30m");
-    assert_eq!(e.props["location"], "cloud");
+    // Cua Cloud has ended: never reported as `cloud` any more.
+    assert_eq!(e.props["location"], "other");
     assert_eq!(e.props["gpu"], true);
     let disk = events::space_create(
         &events::SpaceCreate {
@@ -992,7 +1004,23 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     );
     assert_eq!(disk.props["error_kind"], "insufficient_disk");
     // The causes the Spaces app reads from a failure's text.
-    for (variant, kind) in [("LocalNetwork", "local_network"), ("VmLimit", "vm_limit")] {
+    for (variant, kind) in [
+        ("LocalNetwork", "local_network"),
+        ("VmLimit", "vm_limit"),
+        // The cause words the app core sends as they are.
+        ("image_pull_not_found", "image_pull_not_found"),
+        ("image_pull_auth", "image_pull_auth"),
+        ("image_pull_network", "image_pull_network"),
+        ("image_pull_rate_limited", "image_pull_rate_limited"),
+        ("vm_boot_timeout", "vm_boot_timeout"),
+        ("services_unreachable", "services_unreachable"),
+        ("virtualization_unavailable", "virtualization_unavailable"),
+        ("quota_exceeded", "quota_exceeded"),
+        ("runtime_not_running", "runtime_not_running"),
+        // A failure never reports `none`.
+        ("none", "other"),
+        ("", "other"),
+    ] {
         let e = events::space_create(
             &events::SpaceCreate {
                 on: "local",
@@ -1072,7 +1100,7 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     let s = events::space_create_started("cloud", "windows", "vm", true);
     assert_eq!(
         (&s.props["location"], &s.props["gpu"]),
-        (&serde_json::json!("cloud"), &serde_json::json!(true))
+        (&serde_json::json!("other"), &serde_json::json!(true))
     );
     let v = events::volume_setup(
         &events::VolumeSetup {
@@ -1110,15 +1138,44 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(failed.props["http_status"], 401);
     assert_eq!(failed.props["error_kind"], "unauthenticated");
     assert_eq!(
-        events::share("unshare", "editor", Outcome::Ok)
+        events::share("unshare", "editor", Outcome::Ok, "none", "none")
             .unwrap()
             .props["role"],
         "none"
     );
     assert_eq!(
-        events::share("share", "viewer", Outcome::Ok).unwrap().props["role"],
+        events::share("share", "viewer", Outcome::Ok, "none", "none")
+            .unwrap()
+            .props["role"],
         "viewer"
     );
+    // CUA-1855: why a share failed, in fixed words; a dismissed prompt is
+    // `cancelled`, an unknown kind `other`, and an ok never carries one.
+    let dismissed = events::share(
+        "share",
+        "viewer",
+        Outcome::Cancelled,
+        "presence_cancelled",
+        "presence",
+    )
+    .unwrap();
+    assert_eq!(dismissed.props["outcome"], "cancelled");
+    assert_eq!(dismissed.props["error_kind"], "presence_cancelled");
+    assert_eq!(dismissed.props["failed_stage"], "presence");
+    let unknown =
+        events::share("share", "editor", Outcome::Error, "grace@example.com", "x").unwrap();
+    assert_eq!(unknown.props["error_kind"], "other");
+    assert_eq!(unknown.props["failed_stage"], "other");
+    let ok = events::share(
+        "share",
+        "editor",
+        Outcome::Ok,
+        "presence_denied",
+        "presence",
+    )
+    .unwrap();
+    assert_eq!(ok.props["error_kind"], "none");
+    assert_eq!(ok.props["failed_stage"], "none");
     assert_eq!(
         events::persistent_agent("create", Some("hermes"), Outcome::Ok, None)
             .unwrap()
@@ -1422,4 +1479,140 @@ fn agent_run_end_follows_the_published_status() {
     );
     assert_eq!(events::error_kind("AgentFailed"), "agent_failed");
     assert_eq!(events::error_kind("Agent"), "agent");
+}
+
+#[test]
+fn a_failed_host_space_never_reports_no_error_kind() {
+    let e = events::host_space_provided("vm", "macos", Outcome::Error, None);
+    assert_eq!(e.props["error_kind"], "other");
+    let e = events::host_space_provided("vm", "macos", Outcome::Error, Some("image_pull_auth"));
+    assert_eq!(e.props["error_kind"], "image_pull_auth");
+    let ok = events::host_space_provided("vm", "macos", Outcome::Ok, None);
+    assert_eq!(ok.props["error_kind"], "none");
+}
+
+/// `cua_installer_step` is sent by install.sh and install.ps1, which build
+/// the payload themselves. The fixture they are tested against
+/// (`scripts/install/tests/test_install_telemetry.py`) must pass the same
+/// schema check as every other event.
+#[test]
+fn installer_payloads_validate_against_the_declared_schema() {
+    let text = include_str!("../../../../../scripts/install/tests/fixtures/installer-step.json");
+    let doc: Value = serde_json::from_str(text).unwrap();
+    let events = doc["events"].as_array().unwrap();
+    assert_eq!(events.len(), 3);
+    for e in events {
+        let name = e["event"].as_str().unwrap();
+        assert_eq!(name, schema::event::INSTALLER_STEP);
+        let props = e["properties"].as_object().unwrap();
+        schema::validate(name, props).unwrap_or_else(|err| panic!("{e}: {err}"));
+        let id = e["distinct_id"].as_str().unwrap();
+        assert!(id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+    // The builder agrees with the fixture on the event's own properties.
+    let built =
+        events::installer_step("installer_failed", "cli", "checksum", "sh", &["cli"]).unwrap();
+    for (k, v) in &built.props {
+        assert_eq!(&events[1]["properties"][k], v, "{k}");
+    }
+    let built = events::installer_step(
+        "installer_started",
+        "cli",
+        "network",
+        "sh",
+        &["spaces", "cli"],
+    )
+    .unwrap();
+    assert_eq!(built.props["install_stage"], "none");
+    assert_eq!(built.props["error_kind"], "none");
+    assert_eq!(built.props["items"], "cli+spaces");
+}
+
+/// An agent's tool call that reached a Space: one `cua_agent_used_space`
+/// per install per UTC day, only for tools that act inside a Space, never
+/// while telemetry is off and never from inside an agent run's Space.
+#[test]
+fn agent_used_space_is_sent_once_per_day_for_space_tools_only() {
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[]);
+    assert!(matches!(
+        t.capture_agent_used_space_on(20_000, "list_spaces"),
+        Captured::Invalid(_)
+    ));
+    assert!(matches!(
+        t.capture_agent_used_space_on(20_000, "computer_access_grant"),
+        Captured::Invalid(_)
+    ));
+    assert_eq!(
+        t.capture_agent_used_space_on(20_000, "space_bash"),
+        Captured::Queued
+    );
+    assert_eq!(
+        t.capture_agent_used_space_on(20_000, "call_tool"),
+        Captured::AlreadyRecorded
+    );
+    let (t2, _) = ready(h.path(), &[]);
+    assert_eq!(
+        t2.capture_agent_used_space_on(20_000, "upload"),
+        Captured::AlreadyRecorded
+    );
+    assert_eq!(
+        t.capture_agent_used_space_on(20_001, "call_tool"),
+        Captured::Queued
+    );
+    t.flush(Duration::from_secs(1));
+    let used: Vec<Value> = sink
+        .events()
+        .into_iter()
+        .filter(|e| e["event"] == "cua_agent_used_space")
+        .collect();
+    assert_eq!(used.len(), 2);
+    assert_eq!(used[0]["properties"]["tool_group"], "shell");
+    assert_eq!(used[1]["properties"]["tool_group"], "services");
+
+    for env in [
+        &[("DO_NOT_TRACK", "1")][..],
+        &[("CUA_TELEMETRY", "0")][..],
+        &[("CI", "true")][..],
+        &[("CUA_AGENT_RUN_ID", "run-1")][..],
+    ] {
+        let h = tempfile::tempdir().unwrap();
+        let (t, sink) = ready(h.path(), env);
+        assert_eq!(
+            t.capture_agent_used_space_on(20_000, "space_bash"),
+            Captured::Disabled,
+            "{env:?}"
+        );
+        t.flush(Duration::from_secs(1));
+        assert!(sink.events().is_empty(), "{env:?}");
+        assert!(
+            !h.path()
+                .join("telemetry/funnel/agent_used_space_day")
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn space_tool_groups_cover_the_tools_that_act_inside_a_space() {
+    use events::space_tool_group as g;
+    assert_eq!(g("space_bash"), Some("shell"));
+    assert_eq!(g("computer_shell"), Some("shell"));
+    assert_eq!(g("send_file"), Some("files"));
+    assert_eq!(g("computer_file_write"), Some("files"));
+    assert_eq!(g("call_tool"), Some("services"));
+    assert_eq!(g("agent_start"), Some("agents"));
+    assert_eq!(g("computer_screenshot"), Some("computer"));
+    assert_eq!(g("teleport_app"), Some("other"));
+    for admin in [
+        "list_spaces",
+        "create_space",
+        "delete_space",
+        "share_space",
+        "computer_access_list",
+        "volume_ls",
+        "",
+    ] {
+        assert_eq!(g(admin), None, "{admin}");
+    }
 }

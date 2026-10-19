@@ -4,11 +4,11 @@
 //! Why: the legacy keychain gives a new generic password the default
 //! access list, which trusts only the executable that created it. The Cua
 //! Spaces app (`Contents/MacOS/CuaSpacesMac`) signs in and creates the
-//! `run.cua.ai` / `cua-cli` item; the bundled `cua` daemon and CLI
+//! `ai.cua.session` / `cua-cli` item; the bundled `cua` daemon and CLI
 //! (`Contents/MacOS/cua`, same Developer ID team, different executable)
 //! then read it and macOS asks for the login password ("cua wants to use
-//! your confidential information stored in run.cua.ai"), right after every
-//! first sign-in.
+//! your confidential information stored in ..."), right after every first
+//! sign-in.
 //!
 //! The fix keeps the default model (an explicit list of trusted
 //! applications, everyone else is asked) and only widens the list: the
@@ -45,7 +45,29 @@
 //! [`check_items`] reads every Cua item without any prompt (user interaction
 //! disabled for the call) to tell "readable" from "needs a prompt", which
 //! the Spaces app asks before it starts anything that reads the session.
+//!
+//! **Why the access list and not an access group.** An item shared by the
+//! app and a `cua` installed outside it cannot use `kSecAttrAccessGroup`:
+//! that is the data protection keychain, which needs the
+//! `keychain-access-groups` entitlement backed by a provisioning profile, and
+//! a bare command-line tool has no place to carry one (the Spaces app is
+//! signed without any keychain access group on purpose). The file-based
+//! login keychain is the one a Developer ID tool can use, and there Apple's
+//! mechanism for "these applications may read this item without asking" is
+//! the item's access list of trusted applications, each matched by its
+//! designated requirement, together with the item's partition list, which
+//! macOS sets to the creator's team (`teamid:YCK386LBJ7`) for a Developer ID
+//! process. A process that meets both reads the item with no prompt, and
+//! every later build with the same bundle id and team does.
+//!
+//! **Service rename (CUA-1877).** Items used to live under the service
+//! `run.cua.ai`. [`migrate_legacy`] moves each one to the current service
+//! with a read that never prompts (a Cua-signed build is trusted by the
+//! legacy list, so it is silent), writes the new item with the access list
+//! above, verifies it, and only then deletes the old one (see
+//! `crate::legacy_vault`).
 
+use crate::legacy_vault::{Failure, Vault, move_item};
 use core_foundation::base::TCFType as _;
 use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
 use security_framework::os::macos::keychain::SecKeychain;
@@ -175,6 +197,8 @@ const ERR_SEC_ITEM_NOT_FOUND: OSStatus = -25300;
 const ERR_SEC_AUTH_FAILED: OSStatus = -25293;
 /// `userCanceledErr`: the user cancelled the prompt.
 const USER_CANCELED: OSStatus = -128;
+/// `errSecDecode`: an item whose secret is not text.
+const ERR_SEC_DECODE: OSStatus = -26275;
 /// `errSecInteractionNotAllowed`: the keychain needs a prompt (unlock or
 /// access confirmation) that this session cannot show (an SSH session).
 pub(crate) const ERR_SEC_INTERACTION_NOT_ALLOWED: OSStatus = -25308;
@@ -740,6 +764,88 @@ pub(crate) fn check_items(
         .collect()
 }
 
+/// The keychain as a [`Vault`] of text items, for moving an item between
+/// services: reads and the delete are as quiet as the caller made them
+/// ([`Quiet`]); a write gives the item the Cua access list of this writer.
+pub(crate) struct KeychainVault<'a> {
+    pub(crate) kc: Keychain<'a>,
+    pub(crate) signed: bool,
+}
+
+impl Vault for KeychainVault<'_> {
+    type Err = Status;
+
+    fn read(&self, service: &str, account: &str) -> Result<Option<String>, Status> {
+        read_secret(self.kc, service, account)?
+            .map(|bytes| String::from_utf8(bytes).map_err(|_| Status(ERR_SEC_DECODE)))
+            .transpose()
+    }
+
+    fn write(&self, service: &str, account: &str, text: &str) -> Result<(), Status> {
+        set_in(self.kc, service, account, text.as_bytes(), self.signed)
+    }
+
+    fn delete(&self, service: &str, account: &str) -> Result<(), Status> {
+        match find_item(self.kc, service, account)? {
+            None => Ok(()),
+            Some(item) => check(unsafe { SecKeychainItemDelete(item.0) }),
+        }
+    }
+}
+
+/// Moves every item of `legacy_service` that `wanted` picks and `service`
+/// lacks over to `service` (see [`crate::legacy_vault`]), and says what became
+/// of each: `Ready { recreated: true }` when it moved, `NeedsAccess` when
+/// reading the old item needs a prompt (without `prompt`, nothing is asked:
+/// the old item is left as it is), `Denied` when the user refused it, and
+/// `Failed` for anything else (the old item is left too). Items `service`
+/// already has, and accounts the legacy service does not have, are not
+/// listed.
+pub(crate) fn migrate_legacy(
+    kc: Keychain<'_>,
+    legacy_service: &str,
+    service: &str,
+    wanted: &dyn Fn(&str) -> bool,
+    prompt: bool,
+    signed: bool,
+) -> Vec<(String, ItemState)> {
+    let _quiet = (!prompt).then(Quiet::new);
+    let vault = KeychainVault { kc, signed };
+    accounts(kc, legacy_service, wanted)
+        .into_iter()
+        .filter_map(|account| {
+            match find_item(kc, service, &account) {
+                // The current item wins; the old one is not touched.
+                Ok(Some(_)) => return None,
+                Ok(None) => {}
+                Err(e) => return Some((account, ItemState::Failed(e.to_string()))),
+            }
+            let state = match move_item(&vault, legacy_service, service, &account) {
+                Ok(Some(_)) => ItemState::Ready { recreated: true },
+                // Gone since it was listed.
+                Ok(None) => return None,
+                Err(Failure::Read(Status(ERR_SEC_INTERACTION_NOT_ALLOWED))) => {
+                    ItemState::NeedsAccess
+                }
+                // As in `check_items`: with interaction disabled an access
+                // list that would ask fails as "auth failed" (no one was
+                // asked); after a prompt, it means the user denied it.
+                Err(Failure::Read(Status(ERR_SEC_AUTH_FAILED))) if !prompt => {
+                    ItemState::NeedsAccess
+                }
+                Err(Failure::Read(Status(ERR_SEC_AUTH_FAILED | USER_CANCELED))) => {
+                    ItemState::Denied
+                }
+                Err(Failure::Read(e) | Failure::Write(e)) => ItemState::Failed(e.to_string()),
+                Err(Failure::Unverified) => ItemState::Failed(
+                    "the moved item could not be read back; the old item was kept".into(),
+                ),
+            };
+            Some((account, state))
+        })
+        .collect()
+}
+
 /// Whether this process's security session can show UI (a console login
 /// can; an SSH session cannot). `true` when unknown.
 pub(crate) fn has_graphic_access() -> bool {
@@ -761,6 +867,7 @@ pub(crate) fn default_keychain_unlocked() -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn exe(p: &Path) {
         use std::os::unix::fs::PermissionsExt as _;
@@ -1109,11 +1216,9 @@ mod tests {
         assert!(!recover_staged(t.at(), SERVICE, "cua-cli"));
     }
 
-    /// An item this process is not trusted by (another build wrote it):
-    /// with interaction disabled the check says so instead of prompting.
-    #[test]
-    fn an_untrusted_item_needs_access_without_a_prompt() {
-        let t = TestKeychain::new();
+    /// An access list that trusts only `/usr/bin/true`: this process is not
+    /// trusted by an item created with it, as with another build's item.
+    fn access_for_another_app() -> Owned {
         let c = CString::new("/usr/bin/true").unwrap();
         let mut other: SecRef = ptr::null_mut();
         check(unsafe { SecTrustedApplicationCreateFromPath(c.as_ptr(), &mut other) }).unwrap();
@@ -1130,7 +1235,15 @@ mod tests {
         let mut access: SecRef = ptr::null_mut();
         check(unsafe { SecAccessCreate(desc.0 as CFStringRef, list.0 as CFArrayRef, &mut access) })
             .unwrap();
-        let access = Owned(access);
+        Owned(access)
+    }
+
+    /// An item this process is not trusted by (another build wrote it):
+    /// with interaction disabled the check says so instead of prompting.
+    #[test]
+    fn an_untrusted_item_needs_access_without_a_prompt() {
+        let t = TestKeychain::new();
+        let access = access_for_another_app();
         create_with(
             t.at(),
             SERVICE,
@@ -1145,5 +1258,368 @@ mod tests {
         );
         // Nothing changed.
         assert_eq!(t.comment("cua-cli").as_deref(), Some("elsewhere"));
+    }
+
+    const LEGACY_SERVICE: &str = "legacy.cua.invalid";
+
+    fn session_and_device_key(t: &TestKeychain, service: &str) {
+        // As older builds wrote them: the default list, no comment.
+        create_with(t.at(), service, "cua-cli", b"session", None).unwrap();
+        create_with(t.at(), service, "cua-cli.device-key", b"key", None).unwrap();
+    }
+
+    fn exists(t: &TestKeychain, service: &str, account: &str) -> bool {
+        find_item(t.at(), service, account).unwrap().is_some()
+    }
+
+    fn secret(t: &TestKeychain, service: &str, account: &str) -> Option<Vec<u8>> {
+        read_secret(t.at(), service, account).unwrap()
+    }
+
+    /// Every item of the legacy service moves: the new one carries the Cua
+    /// access list of the (Cua-signed) writer and the same secret, the old
+    /// one is deleted, and nothing was asked.
+    #[test]
+    fn migration_moves_every_item_to_the_new_service_and_deletes_the_old_ones() {
+        let t = TestKeychain::new();
+        session_and_device_key(&t, LEGACY_SERVICE);
+        let moved = migrate_legacy(t.at(), LEGACY_SERVICE, SERVICE, &all, false, true);
+        assert_eq!(
+            moved,
+            vec![
+                ("cua-cli".into(), ItemState::Ready { recreated: true }),
+                (
+                    "cua-cli.device-key".into(),
+                    ItemState::Ready { recreated: true }
+                ),
+            ]
+        );
+        for (account, expected) in [("cua-cli", &b"session"[..]), ("cua-cli.device-key", b"key")] {
+            assert_eq!(
+                secret(&t, SERVICE, account).as_deref(),
+                Some(expected),
+                "{account}"
+            );
+            assert_eq!(t.comment(account).as_deref(), Some(ACL_MARKER), "{account}");
+            assert!(!exists(&t, LEGACY_SERVICE, account), "{account} still old");
+            // The writer (this process) is on the new item's list.
+            let me = std::env::current_exe().unwrap().canonicalize().unwrap();
+            assert!(
+                trusted_paths(&t, account)
+                    .iter()
+                    .any(|p| p == me.to_str().unwrap()),
+                "{account}"
+            );
+        }
+        // The prompts switch is back on (the move was quiet, then restored).
+        assert!(interaction_allowed());
+    }
+
+    #[test]
+    fn migration_with_no_legacy_item_does_nothing() {
+        let t = TestKeychain::new();
+        assert!(migrate_legacy(t.at(), LEGACY_SERVICE, SERVICE, &all, false, true).is_empty());
+        assert!(!exists(&t, SERVICE, "cua-cli"));
+        // Other services' items and accounts nobody asked for stay put.
+        create_with(t.at(), "other.invalid", "cua-cli", b"o", None).unwrap();
+        create_with(t.at(), LEGACY_SERVICE, "unrelated", b"u", None).unwrap();
+        let wanted = |a: &str| a.starts_with("cua-cli");
+        assert!(migrate_legacy(t.at(), LEGACY_SERVICE, SERVICE, &wanted, false, true).is_empty());
+        assert!(exists(&t, "other.invalid", "cua-cli"));
+        assert!(exists(&t, LEGACY_SERVICE, "unrelated"));
+        assert!(!exists(&t, SERVICE, "cua-cli"));
+        assert!(!exists(&t, SERVICE, "unrelated"));
+    }
+
+    /// A legacy item this process is not trusted by would need a prompt: the
+    /// move reports it, creates nothing, and leaves the old item as it was.
+    #[test]
+    fn a_failed_read_leaves_the_old_item_intact() {
+        let t = TestKeychain::new();
+        let access = access_for_another_app();
+        create_with(
+            t.at(),
+            LEGACY_SERVICE,
+            "cua-cli",
+            b"session",
+            Some((&access, "elsewhere")),
+        )
+        .unwrap();
+        // The device key is readable: a blocked item does not stop the others.
+        create_with(t.at(), LEGACY_SERVICE, "cua-cli.device-key", b"key", None).unwrap();
+        let moved = migrate_legacy(t.at(), LEGACY_SERVICE, SERVICE, &all, false, true);
+        assert_eq!(
+            moved,
+            vec![
+                ("cua-cli".into(), ItemState::NeedsAccess),
+                (
+                    "cua-cli.device-key".into(),
+                    ItemState::Ready { recreated: true }
+                ),
+            ]
+        );
+        assert!(!exists(&t, SERVICE, "cua-cli"), "nothing was created");
+        let old = find_item(t.at(), LEGACY_SERVICE, "cua-cli")
+            .unwrap()
+            .unwrap();
+        assert_eq!(comment(&old).as_deref(), Some("elsewhere"));
+        // The blocked move changed nothing, so it can be tried again: it
+        // fails the same way and the old item is still there.
+        assert_eq!(
+            migrate_legacy(t.at(), LEGACY_SERVICE, SERVICE, &all, false, true),
+            vec![("cua-cli".into(), ItemState::NeedsAccess)]
+        );
+        assert!(exists(&t, LEGACY_SERVICE, "cua-cli"));
+        assert!(!exists(&t, SERVICE, "cua-cli"));
+    }
+
+    /// Moving again changes nothing, and an item the new service already
+    /// has is never overwritten (nor is its legacy twin read or deleted).
+    #[test]
+    fn migration_is_idempotent_and_never_overwrites_the_new_item() {
+        let t = TestKeychain::new();
+        session_and_device_key(&t, LEGACY_SERVICE);
+        let first = migrate_legacy(t.at(), LEGACY_SERVICE, SERVICE, &all, false, true);
+        assert_eq!(first.len(), 2);
+        assert!(migrate_legacy(t.at(), LEGACY_SERVICE, SERVICE, &all, false, true).is_empty());
+        assert_eq!(
+            secret(&t, SERVICE, "cua-cli").as_deref(),
+            Some(&b"session"[..])
+        );
+        // A downgraded build wrote the legacy item again: the new one wins.
+        create_with(t.at(), LEGACY_SERVICE, "cua-cli", b"older", None).unwrap();
+        assert!(migrate_legacy(t.at(), LEGACY_SERVICE, SERVICE, &all, false, true).is_empty());
+        assert_eq!(
+            secret(&t, SERVICE, "cua-cli").as_deref(),
+            Some(&b"session"[..])
+        );
+        assert_eq!(
+            secret(&t, LEGACY_SERVICE, "cua-cli").as_deref(),
+            Some(&b"older"[..])
+        );
+    }
+
+    /// What a "build" does in [`a_second_signed_build_reads_the_item_without_a_prompt`]:
+    /// a signed copy of this test binary runs only this test, with
+    /// `CUA_KEYCHAIN_HELPER=<role>|<account>|<keychain path>`. Without the
+    /// variable (every ordinary run) it does nothing.
+    #[test]
+    fn signed_build_helper() {
+        let Ok(spec) = std::env::var("CUA_KEYCHAIN_HELPER") else {
+            return;
+        };
+        let mut parts = spec.splitn(3, '|');
+        let (role, account, path) = (
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+        );
+        let kc = SecKeychain::open(path).unwrap();
+        let at = Keychain::Given(&kc);
+        // Nothing in a helper may wait on a dialog.
+        let _quiet = Quiet::new();
+        match role {
+            "create" => match set_in(at, SERVICE, account, b"session", true) {
+                Ok(()) => println!("HELPER create ok"),
+                Err(Status(code)) => println!("HELPER create error {code}"),
+            },
+            "create-legacy" => match set_in(at, LEGACY_SERVICE, account, b"session", true) {
+                Ok(()) => println!("HELPER create-legacy ok"),
+                Err(Status(code)) => println!("HELPER create-legacy error {code}"),
+            },
+            "migrate" => println!(
+                "HELPER migrate {:?}",
+                migrate_legacy(at, LEGACY_SERVICE, SERVICE, &|_| true, false, true)
+            ),
+            "delete" => match (KeychainVault {
+                kc: at,
+                signed: true,
+            })
+            .delete(SERVICE, account)
+            {
+                Ok(()) => println!("HELPER delete ok"),
+                Err(Status(code)) => println!("HELPER delete error {code}"),
+            },
+            _ => match read_secret(at, SERVICE, account) {
+                Ok(Some(s)) => println!("HELPER read ok {}", String::from_utf8_lossy(&s)),
+                Ok(None) => println!("HELPER read none"),
+                Err(Status(code)) => println!("HELPER read error {code}"),
+            },
+        }
+    }
+
+    /// Re-signs a copy of this test binary as a build named `ident`. With
+    /// `dr`, its designated requirement is that text (what a Developer ID
+    /// build has: the identifier and the team, not the code), else the
+    /// ad hoc default (its cdhash, which changes with every build).
+    /// `hardened` makes the code hash differ between builds of the same
+    /// identifier. `None` when this machine cannot sign.
+    fn signed_build(
+        dir: &Path,
+        file: &str,
+        ident: &str,
+        dr: Option<&str>,
+        hardened: bool,
+    ) -> Option<PathBuf> {
+        let exe = dir.join(file);
+        std::fs::copy(std::env::current_exe().ok()?, &exe).ok()?;
+        let mut cmd = std::process::Command::new("/usr/bin/codesign");
+        cmd.args(["--force", "-s", "-", "-i", ident]);
+        if hardened {
+            cmd.args(["-o", "runtime"]);
+        }
+        if let Some(dr) = dr {
+            cmd.arg("-r").arg(format!("={dr}"));
+        }
+        let out = cmd.arg(&exe).output().ok()?;
+        out.status.success().then_some(exe)
+    }
+
+    /// What the helper `build` printed for `role` on `keychain` (killed after
+    /// a minute: a helper that waits on a dialog is a failure, not a hang).
+    fn run_helper(build: &Path, role: &str, account: &str, keychain: &Path) -> String {
+        let mut child = std::process::Command::new(build)
+            .args([
+                "--exact",
+                "macos_keychain::tests::signed_build_helper",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(
+                "CUA_KEYCHAIN_HELPER",
+                format!("{role}|{account}|{}", keychain.display()),
+            )
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if started.elapsed() > Duration::from_secs(60) {
+                let _ = child.kill();
+                return "HELPER timed out".into();
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut text).unwrap();
+        // libtest prints "test <name> ... " first on the same line.
+        text.lines()
+            .find_map(|l| l.find("HELPER ").map(|at| l[at..].trim().to_string()))
+            .unwrap_or_else(|| format!("HELPER printed nothing ({status}): {text}"))
+    }
+
+    /// The point of the Cua access list: an item a signed build created is
+    /// read, with prompts off, by a LATER signed build (other code, so
+    /// another cdhash, same identifier), and by nothing else. The builds are
+    /// ad hoc signed with a designated requirement of the identifier only,
+    /// which is what a Developer ID build has across updates (its
+    /// requirement names the identifier and the team, never the code). The
+    /// control shows why an ordinary ad hoc build cannot hold such an item:
+    /// its requirement is its cdhash, which the next build does not meet.
+    ///
+    /// Skipped (with a note) where `codesign` cannot run.
+    #[test]
+    fn a_second_signed_build_reads_the_item_without_a_prompt() {
+        let t = TestKeychain::new();
+        let kc_path = t._dir.path().join("test.keychain");
+        let dir = tempfile::tempdir().unwrap();
+        let dr = r#"designated => identifier "com.cua.keychain-test""#;
+        let other_dr = r#"designated => identifier "com.cua.somebody-else""#;
+        let ident = "com.cua.keychain-test";
+        let (Some(v1), Some(v2), Some(other), Some(adhoc1), Some(adhoc2)) = (
+            signed_build(dir.path(), "v1", ident, Some(dr), false),
+            signed_build(dir.path(), "v2", ident, Some(dr), true),
+            signed_build(
+                dir.path(),
+                "other",
+                "com.cua.somebody-else",
+                Some(other_dr),
+                false,
+            ),
+            signed_build(dir.path(), "adhoc1", ident, None, false),
+            signed_build(dir.path(), "adhoc2", ident, None, true),
+        ) else {
+            eprintln!("skipped: codesign cannot sign test builds here");
+            return;
+        };
+        // A second build is another build: another cdhash.
+        assert_ne!(std::fs::read(&v1).unwrap(), std::fs::read(&v2).unwrap());
+
+        let created = run_helper(&v1, "create", "cua-cli", &kc_path);
+        if created != "HELPER create ok" {
+            eprintln!("skipped: a signed test build cannot use the keychain here ({created})");
+            return;
+        }
+        assert_eq!(t.comment("cua-cli").as_deref(), Some(ACL_MARKER));
+        let read = |who: &Path, account: &str| run_helper(who, "read", account, &kc_path);
+        let needs_prompt = |got: &str| {
+            got == format!("HELPER read error {ERR_SEC_INTERACTION_NOT_ALLOWED}")
+                || got == format!("HELPER read error {ERR_SEC_AUTH_FAILED}")
+        };
+        if read(&v1, "cua-cli") != "HELPER read ok session" {
+            eprintln!("skipped: a signed test build cannot read the keychain here");
+            return;
+        }
+        // The build that wrote it reads it, and so does the later build,
+        // with prompts off.
+        assert_eq!(read(&v1, "cua-cli"), "HELPER read ok session");
+        assert_eq!(read(&v2, "cua-cli"), "HELPER read ok session");
+        // A build of another app would need a prompt.
+        let got = read(&other, "cua-cli");
+        assert!(needs_prompt(&got), "{got}");
+        // The later build of the app can also delete it without a prompt:
+        // that is what ends a move.
+        assert_eq!(
+            run_helper(&v2, "delete", "cua-cli", &kc_path),
+            "HELPER delete ok"
+        );
+        assert!(!exists(&t, SERVICE, "cua-cli"));
+
+        // The move across an update: the old build left the item under the
+        // legacy service; the new build moves it with no prompt, the old
+        // build still reads the new item, a stranger does not.
+        assert_eq!(
+            run_helper(&v1, "create-legacy", "cua-cli", &kc_path),
+            "HELPER create-legacy ok"
+        );
+        assert_eq!(
+            run_helper(&v2, "migrate", "-", &kc_path),
+            r#"HELPER migrate [("cua-cli", Ready { recreated: true })]"#
+        );
+        assert!(!exists(&t, LEGACY_SERVICE, "cua-cli"));
+        assert!(exists(&t, SERVICE, "cua-cli"));
+        assert_eq!(t.comment("cua-cli").as_deref(), Some(ACL_MARKER));
+        assert_eq!(read(&v1, "cua-cli"), "HELPER read ok session");
+        let got = read(&other, "cua-cli");
+        assert!(needs_prompt(&got), "{got}");
+        // An item the new build cannot read without a prompt is not moved:
+        // the old one stays as it was and nothing is created.
+        let _ = run_helper(&v2, "delete", "cua-cli", &kc_path);
+        assert_eq!(
+            run_helper(&other, "create-legacy", "cua-cli", &kc_path),
+            "HELPER create-legacy ok"
+        );
+        assert_eq!(
+            run_helper(&v2, "migrate", "-", &kc_path),
+            r#"HELPER migrate [("cua-cli", NeedsAccess)]"#
+        );
+        assert!(exists(&t, LEGACY_SERVICE, "cua-cli"));
+        assert!(!exists(&t, SERVICE, "cua-cli"));
+
+        // Control: an item an ordinary ad hoc build wrote is readable by
+        // that build only, not by the next one, though both name the same
+        // identifier.
+        assert_eq!(
+            run_helper(&adhoc1, "create", "adhoc-item", &kc_path),
+            "HELPER create ok"
+        );
+        assert_eq!(read(&adhoc1, "adhoc-item"), "HELPER read ok session");
+        let got = read(&adhoc2, "adhoc-item");
+        assert!(needs_prompt(&got), "{got}");
     }
 }

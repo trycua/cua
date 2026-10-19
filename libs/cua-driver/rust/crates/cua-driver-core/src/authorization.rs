@@ -874,6 +874,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_agent_cursor_state"
         | "get_recording_state"
         | "check_for_update"
+        | "get_guide"
         | "health_report"
         | "probe" => RiskClass::R0,
 

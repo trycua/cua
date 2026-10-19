@@ -624,6 +624,7 @@ fn unbound_menu_window(
     requested: u32,
     focused: Option<u32>,
     main: Option<u32>,
+    advice: &'static str,
 ) -> ToolResult {
     super::background_refusal_result(
         pid,
@@ -634,7 +635,7 @@ fn unbound_menu_window(
                 "invoke_menu: requested window {requested} is not the confirmed document menu context \
                  (focused={focused:?}, main={main:?}); no menu action was dispatched"
             ),
-            advice: Some("foreground"),
+            advice: Some(advice),
         },
     )
 }
@@ -797,6 +798,15 @@ impl MenuRequest {
         )
     }
 
+    /// The next step a refusal recommends when the window is not the menu's
+    /// context (`window_not_key`).
+    fn escalation(&self) -> &'static str {
+        match self {
+            MenuRequest::Path | MenuRequest::KeyEquivalent(_) => "foreground",
+            MenuRequest::PathBehindUsersWindow => "bring_to_front",
+        }
+    }
+
     /// Why the call refuses instead of reaching the item, for
     /// `background_unavailable`.
     fn unavailable_because(&self) -> &'static str {
@@ -844,6 +854,17 @@ impl MenuRequest {
     }
 }
 
+/// This pid's mutation lease, unless the calling task already holds it
+/// ([`crate::background_mutation::with_held_lease`]): the lease is not
+/// reentrant, so waiting for it again would never return.
+async fn lease_unless_held(pid: i32) -> Option<super::BackgroundMutationLease> {
+    if crate::background_mutation::held_by_current_task(pid) {
+        None
+    } else {
+        Some(super::acquire_background_mutation(pid).await)
+    }
+}
+
 /// Run a menu command in a background app without activating it, or in a
 /// window behind the user's window without raising it (`request` says which,
 /// and its texts say so). Presses the item through accessibility when macOS
@@ -857,7 +878,9 @@ pub(super) async fn run_in_background(
     path: Vec<String>,
     request: MenuRequest,
 ) -> ToolResult {
-    let _mutation = super::acquire_background_mutation(pid).await;
+    // invoke_menu already holds this pid's lease for the whole call (see
+    // `invoke`); hotkey's menu route takes it here.
+    let _mutation = lease_unless_held(pid).await;
     let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
         .await
         .ok()
@@ -963,7 +986,7 @@ pub(super) async fn run_in_background(
             requested,
             focused,
             main,
-        })) => unbound_menu_window(pid, requested, focused, main),
+        })) => unbound_menu_window(pid, requested, focused, main, request.escalation()),
         Ok(Err(BackgroundPressError::Other(error))) => refusal(error),
         Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
     }
@@ -1012,16 +1035,17 @@ enum MenuRoute {
     /// changes nothing.
     KeyWindowInFront,
     /// The frontmost app's key window cannot be read, and the target is not
-    /// its frontmost window on screen (`order_read`) or that order cannot be
-    /// read either. The target may be behind the user's window, and the
+    /// its frontmost window on screen (`front_known`), or no frontmost window
+    /// can be found either (the app has none on screen, or the window list
+    /// cannot be read). The target may be behind the user's window, and the
     /// key-window record cannot be confirmed without a readable key window:
     /// refuse rather than raise it.
-    KeyWindowUnknown { order_read: bool },
+    KeyWindowUnknown { front_known: bool },
 }
 
 /// `key_window` is the frontmost app's `AXFocusedWindow`. `front_window` is
 /// its frontmost on-screen window, consulted only when the key window cannot
-/// be read; `None` when the window order cannot be read.
+/// be read; `None` when none can be found.
 fn menu_route(
     target_in_front: bool,
     key_window: Option<u32>,
@@ -1036,7 +1060,7 @@ fn menu_route(
         Some(_) => MenuRoute::BehindUsersWindow,
         None if front_window == Some(window_id) => MenuRoute::KeyWindowInFront,
         None => MenuRoute::KeyWindowUnknown {
-            order_read: front_window.is_some(),
+            front_known: front_window.is_some(),
         },
     }
 }
@@ -1070,13 +1094,13 @@ fn not_made_key(reason: &str) -> String {
 
 /// Why a window of the frontmost app was not pressed when that app's key
 /// window cannot be read ([`MenuRoute::KeyWindowUnknown`]).
-fn key_window_unknown(order_read: bool) -> &'static str {
-    if order_read {
+fn key_window_unknown(front_known: bool) -> &'static str {
+    if front_known {
         "is not the frontmost window of the app the user is using, and that app's key window \
          could not be read, so it may be behind the user's window"
     } else {
-        "belongs to the app the user is using, whose key window and on-screen window order \
-         could not be read, so it may be behind the user's window"
+        "belongs to the app the user is using, whose key window could not be read and whose \
+         frontmost window on screen could not be found, so it may be behind the user's window"
     }
 }
 
@@ -1154,6 +1178,13 @@ impl Tool for InvokeMenuTool {
         // background app, refuse and say so instead of activating it. A window
         // behind the user's window in the app they are using is not raised
         // either (MenuRoute::BehindUsersWindow, MenuRoute::KeyWindowUnknown).
+        //
+        // One per-process mutation lease covers the route decision, every
+        // focus change, the press and the hand-back. A key scope that a
+        // concurrent same-pid call holds would otherwise read as the user's key
+        // window and send that window down the raising path, or overlap this
+        // call's scope and hand key back to the wrong window.
+        let _mutation = super::acquire_background_mutation(pid).await;
         let (target_in_front, key_window, front_window) = tokio::task::spawn_blocking(move || {
             if live_frontmost_app().or_else(crate::apps::frontmost_pid) != Some(pid) {
                 return (false, None, None);
@@ -1174,19 +1205,25 @@ impl Tool for InvokeMenuTool {
         .unwrap_or((false, None, None));
         match menu_route(target_in_front, key_window, front_window, window_id) {
             MenuRoute::Background => {
-                return run_in_background(pid, window_id, path, MenuRequest::Path).await;
+                let press = run_in_background(pid, window_id, path, MenuRequest::Path);
+                return crate::background_mutation::with_held_lease(pid, press).await;
             }
-            MenuRoute::KeyWindowUnknown { order_read } => {
-                return behind_users_window_refusal(pid, window_id, key_window_unknown(order_read));
+            MenuRoute::KeyWindowUnknown { front_known } => {
+                return behind_users_window_refusal(
+                    pid,
+                    window_id,
+                    key_window_unknown(front_known),
+                );
             }
             MenuRoute::BehindUsersWindow => {
                 let scope = match key_scope_behind_users_window(pid, window_id).await {
                     Ok(scope) => scope,
                     Err(refused) => return refused,
                 };
-                let result =
-                    run_in_background(pid, window_id, path, MenuRequest::PathBehindUsersWindow)
-                        .await;
+                let press =
+                    run_in_background(pid, window_id, path, MenuRequest::PathBehindUsersWindow);
+                let result = crate::background_mutation::with_held_lease(pid, press).await;
+                // Key goes back before the lease is released.
                 drop(scope);
                 return result;
             }
@@ -1270,17 +1307,24 @@ mod tests {
 
     #[test]
     fn unbound_menu_refuses_before_dispatch_with_the_exact_target() {
-        let result = unbound_menu_window(42, 7, Some(8), None);
-        assert_eq!(result.is_error, Some(true));
-        let data = result.structured_content.unwrap();
-        assert_eq!(data["code"], "window_not_key");
-        assert_eq!(data["effect"], "refused");
-        assert_eq!(data["pid"], 42);
-        assert_eq!(data["window_id"], 7);
-        assert!(data["reason"]
-            .as_str()
-            .unwrap()
-            .contains("no menu action was dispatched"));
+        for (request, next) in [
+            (MenuRequest::Path, "foreground"),
+            (MenuRequest::KeyEquivalent("⌘S".into()), "foreground"),
+            (MenuRequest::PathBehindUsersWindow, "bring_to_front"),
+        ] {
+            let result = unbound_menu_window(42, 7, Some(8), None, request.escalation());
+            assert_eq!(result.is_error, Some(true));
+            let data = result.structured_content.unwrap();
+            assert_eq!(data["code"], "window_not_key");
+            assert_eq!(data["effect"], "refused");
+            assert_eq!(data["pid"], 42);
+            assert_eq!(data["window_id"], 7);
+            assert_eq!(data["escalation"]["recommended"], next);
+            assert!(data["reason"]
+                .as_str()
+                .unwrap()
+                .contains("no menu action was dispatched"));
+        }
     }
 
     #[test]
@@ -1458,12 +1502,12 @@ mod tests {
         // cannot be confirmed without a readable key window.
         assert_eq!(
             menu_route(true, None, Some(41), 42),
-            MenuRoute::KeyWindowUnknown { order_read: true }
+            MenuRoute::KeyWindowUnknown { front_known: true }
         );
-        // Nothing is known about the order: refuse too.
+        // No frontmost window can be found either: refuse too.
         assert_eq!(
             menu_route(true, None, None, 42),
-            MenuRoute::KeyWindowUnknown { order_read: false }
+            MenuRoute::KeyWindowUnknown { front_known: false }
         );
     }
 
@@ -1503,13 +1547,16 @@ mod tests {
         ));
         assert!(not_front.contains("is not the frontmost window of the app the user is using"));
         assert!(not_front.contains("may be behind the user's window"));
-        let unread = assert_refused_with_bring_to_front(behind_users_window_refusal(
+        let no_front = assert_refused_with_bring_to_front(behind_users_window_refusal(
             7,
             42,
             key_window_unknown(false),
         ));
-        assert!(unread.contains("whose key window and on-screen window order could not be read"));
-        assert!(unread.contains("may be behind the user's window"));
+        assert!(no_front.contains(
+            "whose key window could not be read and whose frontmost window on screen could not \
+             be found"
+        ));
+        assert!(no_front.contains("may be behind the user's window"));
     }
 
     #[test]
@@ -1527,6 +1574,25 @@ mod tests {
         assert_eq!(
             MenuRequest::PathBehindUsersWindow.preface(&["File".into()]),
             ""
+        );
+    }
+
+    #[tokio::test]
+    async fn a_held_lease_is_reused_not_awaited_again() {
+        let pid = -91_101;
+        let _held = super::super::acquire_background_mutation(pid).await;
+        let reused = tokio::time::timeout(
+            Duration::from_secs(1),
+            crate::background_mutation::with_held_lease(pid, lease_unless_held(pid)),
+        )
+        .await
+        .expect("a lease the task holds must not be awaited again");
+        assert!(reused.is_none());
+        // Without the proof the call waits its turn.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), lease_unless_held(pid))
+                .await
+                .is_err()
         );
     }
 

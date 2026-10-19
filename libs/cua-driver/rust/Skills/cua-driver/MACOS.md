@@ -899,7 +899,7 @@ decides how:
   target's, so the menu is opened and the item pressed there. When the app's
   key window cannot be read, its frontmost window on screen counts as the
   user's window and takes this route; any other window, or every window when
-  the window order cannot be read either, is refused with `window_not_key`
+  no frontmost window can be found either, is refused with `window_not_key`
   (it may be behind the user's window).
 
 It refuses missing, duplicate, disabled, or non-actionable segments and never

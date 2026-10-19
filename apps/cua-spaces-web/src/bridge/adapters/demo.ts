@@ -477,6 +477,14 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       state.agentSetup = state.agentSetup.map((r) =>
         wanted(r) ? { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" } : r,
       );
+      // The demo plays the agent's first request a little later: a line in this computer's access log.
+      const used = state.agentSetup.find(wanted);
+      if (used && agents?.length === 1) {
+        setTimeout(() => {
+          const line = { atMs: now(), via: "token", who: used.name, what: "MCP" };
+          state.host = { ...state.host, recentAccess: [line, ...(state.host.recentAccess ?? [])] };
+        }, step * 30);
+      }
       return state.agentSetup.map((r) => ({ ...r }));
     },
     ...newSpaceDemoHandlers({ state, wait, emit, step, now }),

@@ -129,6 +129,17 @@ export class ThisMachineStore {
     if (name && this.state.form && !this.state.form.name) this.send({ type: "set-name", name });
   }
 
+  /** Sets this computer up with the form's defaults and its own name, in
+   * one step (the first run's "Set up"). Resolves to whether it worked. */
+  async quickSetUp(identity: string | null, profile = "desktop"): Promise<boolean> {
+    let form = hostFormInitial(this.core);
+    form = hostFormReduce(this.core, form, { type: "set-profile", profile });
+    this.failedRequest = null;
+    this.set({ form, error: null, setupError: null });
+    await this.prefillName();
+    return this.submit(identity);
+  }
+
   closeForm(): void {
     this.failedRequest = null;
     this.set({ form: null, setupError: null });

@@ -65,7 +65,7 @@ import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } fr
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
 import type { GlobalShortcut, HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
-import type { WebkitMethod, WkHostState, WkMachines, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
+import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
 const defs = new Defs();
@@ -1107,6 +1107,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "session.get": WkSessionShape,
   "session.signIn": WkSessionShape,
   "session.signOut": WkSessionShape,
+  // The first run is this page's on both hosts (`WkOnboarding`).
+  "onboarding.get": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
+  "onboarding.complete": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
   "spaces.list": WkSpacesShape,
   "spaces.setPower": WkSpacesShape,
   "spaces.delete": WkSpacesShape,

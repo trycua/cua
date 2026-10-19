@@ -82,11 +82,10 @@ function RootLayout() {
 
 /**
  * Opens the first run once per launch while the host says it isn't done,
- * unless the user chose "Set up later" (the sidebar then offers it). The
- * SwiftUI host runs its own.
+ * unless the user chose "Set up later" (the sidebar then offers it). Every
+ * host runs this one (the SwiftUI app opens its window here on a first run).
  */
 function useFirstRun() {
-  const { mode } = useBridge();
   const { data: session } = useSession();
   const { skipped } = useSavedOnboarding();
   const { pathname } = useLocation();
@@ -95,8 +94,8 @@ function useFirstRun() {
   useEffect(() => {
     if (checked.current || !session) return;
     checked.current = true;
-    if (mode !== "webkit" && !session.onboarding.completed && !skipped && !pathname.startsWith("/onboarding")) {
+    if (!session.onboarding.completed && !skipped && !pathname.startsWith("/onboarding")) {
       void navigate({ to: "/onboarding", replace: true });
     }
-  }, [mode, session, skipped, pathname, navigate]);
+  }, [session, skipped, pathname, navigate]);
 }

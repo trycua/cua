@@ -9,6 +9,7 @@
  * `state/cloud.tsx` does. Hooks read it with `useSyncExternalStore`.
  */
 
+import { hostOs } from "./host-os";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
@@ -174,6 +175,9 @@ const timelineKey = (r: RunRef) => `${r.spaceId}\n${r.runId}`;
 /** `createSpace`'s request: the SDK's create config, plus the OS when the image doesn't say. */
 export interface CreateSpaceRequest extends SpaceCreateConfig {
   os?: SpaceOs;
+  /** The host also posts a system notification when it is ready (the
+   * first run's extra Space, which keeps going after the window closes). */
+  notifyWhenReady?: boolean;
 }
 
 export interface StoreOptions {
@@ -539,7 +543,7 @@ export class BridgeStore {
   }
 
   private async runCreate(req: CreateSpaceRequest, pendingId: string): Promise<Space> {
-    const { os: _os, ...config } = req;
+    const { os: _os, notifyWhenReady, ...config } = req;
     const os = osOf(req);
     const on = config.on ?? this.settingsSnap?.values.defaultLocation ?? "local";
     // A Space on one of your machines or in your own cloud lists as a relay machine.
@@ -564,13 +568,16 @@ export class BridgeStore {
       hostName: machine?.name ?? null,
     });
     try {
-      const row = await this.adapter.call("spaces.create", { config, pendingId, os });
+      const row = await this.adapter.call("spaces.create", notifyWhenReady ? { config, pendingId, os, notifyWhenReady } : { config, pendingId, os });
       this.createdIds.set(pendingId, row.id);
       this.dispatch({ type: "finish", id: pendingId, spaceId: row.id });
       this.createRequests.delete(pendingId);
       await this.refresh("spaces");
       const space = (this.resources.spaces.data as Space[] | undefined)?.find((s) => s.id === row.id) ?? rowsToSpaces(this.core, [row], this.now())[0]!;
-      this.extras.record({ kind: "message", title: `${space.name} is ready`, space: space.id });
+      // Plain words: a fresh computer inside this one (never "VM" or "container").
+      const system = space.os === "macos" ? "macOS" : space.os === "windows" ? "Windows" : space.os === "linux" ? "Linux" : null;
+      const body = system ? `A fresh ${system} computer inside ${({ macos: "this Mac", windows: "this PC", linux: "this computer" } as const)[hostOs()]}. Your agent can use it now.` : undefined;
+      this.extras.record({ kind: "message", title: `${space.name} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
       return space;
     } catch (e) {
       const message = toError(e).message;

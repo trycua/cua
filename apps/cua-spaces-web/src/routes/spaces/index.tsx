@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import { emptyHome, useBridge, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
 import { GettingStarted } from "@/components/getting-started";
+import { FirstRunTodosCard, useFirstRunTodosShown } from "@/components/first-run-todos";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { SpaceCanvas } from "@/components/space-canvas";
@@ -49,6 +50,8 @@ function SpacesPage() {
   const shown = visibleSpaces(spaces, filter, (s) => matchesQuery(core, s, machineName(machines, s), query));
   const access = useSpaceAccess(spaces);
   const running = spaces.filter((s) => spaceState(s) === "running").length;
+  // After the first run's Finish later, its to-do list stands in for the checklist.
+  const firstRunTodos = useFirstRunTodosShown();
 
   return (
     <Page>
@@ -61,7 +64,8 @@ function SpacesPage() {
           </Button>
         }
       />
-      <GettingStarted />
+      <FirstRunTodosCard />
+      {firstRunTodos ? null : <GettingStarted />}
       <div className="mb-4 flex items-center gap-3">
         <Segmented aria-label="Filter by state" value={filter} options={FILTERS} onValueChange={setFilter} />
         {/* Find a Space by name, detail, id or machine (the SwiftUI sidebar's search). */}

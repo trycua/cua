@@ -95,15 +95,13 @@ export const HOST_COVERAGE = {
   "keyvault.deny": { webkit: { methods: ["keyvault.deny"] }, tauri: ["keyvault_deny"] },
   "keyvault.revokeGrant": { webkit: { methods: ["keyvault.revokeGrant"] }, tauri: ["keyvault_revoke_grant"] },
   "session.get": {
-    webkit: { methods: ["session.get"] },
-    electron: { methods: ["session.get", "onboarding.get"] },
+    webkit: { methods: ["session.get", "onboarding.get"] },
     tauri: ["fleet_status", "onboarding_state", "daemon_status"],
   },
   "session.signIn": { webkit: { methods: ["session.signIn"] }, tauri: ["begin_sign_in"] },
   "session.signOut": { webkit: { methods: ["session.signOut"] }, tauri: ["sign_out"] },
   "session.completeOnboarding": {
-    webkit: { methods: [], byDesign: "the SwiftUI app's first run is its own window; resolves without a call" },
-    electron: { methods: ["onboarding.complete"] },
+    webkit: { methods: ["onboarding.complete"] },
     tauri: ["complete_onboarding"],
   },
   "session.openExternal": {

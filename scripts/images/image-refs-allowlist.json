@@ -537,7 +537,6 @@
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest": {
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
-        "infra/fleets-wif-smoke/main.tf",
         "libs/cua/crates/cua-sandbox-core/src/fleet_local.rs",
         "scripts/images/test-check-tag-safety.sh",
         "tests/e2e/local-runtimes/fleet-catalog.public.json"

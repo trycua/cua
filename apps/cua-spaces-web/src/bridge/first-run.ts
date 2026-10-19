@@ -276,7 +276,7 @@ export interface FirstRunHook {
 }
 
 /** Live readings while `active` (the first run, or Home's to-do list). */
-export function useFirstRun(active = true): FirstRunHook {
+export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRunHook {
   const ctx = useContext(BridgeContext);
   if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
   const { core, adapter, store } = ctx;
@@ -295,6 +295,8 @@ export function useFirstRun(active = true): FirstRunHook {
   const [setupError, setSetupError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const shownRef = useRef(false);
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
 
   const signedIn = Boolean(session.data?.signedIn);
   const signingIn = session.data?.signIn.kind === "starting" || session.data?.signIn.kind === "waiting";
@@ -303,11 +305,16 @@ export function useFirstRun(active = true): FirstRunHook {
   useEffect(() => {
     if (!active || !adapter) return;
     let live = true;
+    let n = 0;
     const read = () => {
-      void adapter
-        .call("agents.setup", {})
-        .then((rows) => live && setAgents(rows))
-        .catch(() => live && setAgents((a) => a ?? []));
+      // The agent setup runs a command on the host: once connected, it's read now and then.
+      const connected = agentsRef.current?.some((a) => a.agent === (readFirstRun().agent ?? "") && a.configured);
+      if (!connected || n++ % 6 === 0) {
+        void adapter
+          .call("agents.setup", {})
+          .then((rows) => live && setAgents(rows))
+          .catch(() => live && setAgents((a) => a ?? []));
+      }
       if (s.step === "setup" || s.finishedLater) {
         void adapter
           .call("host.status", {})
@@ -316,12 +323,12 @@ export function useFirstRun(active = true): FirstRunHook {
       }
     };
     read();
-    const timer = setInterval(read, FIRST_RUN_POLL_MS);
+    const timer = setInterval(read, pollMs);
     return () => {
       live = false;
       clearInterval(timer);
     };
-  }, [active, adapter, s.step, s.finishedLater, tick]);
+  }, [active, adapter, s.step, s.finishedLater, tick, pollMs]);
 
   const rows: FirstRunAgent[] | null = agents
     ? agents.map((a) => ({ agent: a.agent, name: a.name, installed: a.installed, configured: a.configured }))

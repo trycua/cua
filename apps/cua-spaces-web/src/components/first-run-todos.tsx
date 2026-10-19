@@ -26,7 +26,8 @@ export function FirstRunTodosCard() {
 }
 
 function TodosCard() {
-  const fr = useFirstRun(true);
+  // Home reads more slowly than the first run.
+  const fr = useFirstRun(true, 10_000);
   const { core } = useBridge();
   const todos = firstRunTodos(core, { ...fr.input, step: "setup" });
   const [copied, setCopied] = useState(false);

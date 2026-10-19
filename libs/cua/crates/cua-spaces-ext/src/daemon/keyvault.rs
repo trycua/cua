@@ -1071,6 +1071,7 @@ impl SessionBroker for McpSessionBroker {
         &self,
         app: &str,
         target: &str,
+        paths: &[String],
         duration_secs: u64,
         reason: &str,
     ) -> Result<String, SessionBrokerError> {
@@ -1084,6 +1085,10 @@ impl SessionBroker for McpSessionBroker {
                     targets: vec![target.into()],
                     duration_secs: Some(duration_secs),
                     reason: reason.into(),
+                    // The caller's selection rides the request: approval
+                    // captures these paths, and the grant (and so the
+                    // delivery) covers only what that capture produced.
+                    paths: Some(paths.to_vec()),
                     ..Default::default()
                 },
             )

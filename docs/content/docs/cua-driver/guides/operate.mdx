@@ -179,7 +179,7 @@ cua-driver update --apply
 
 `check-update` only checks (`--json` for scripts, `--no-cache` to skip the
 1-hour cache); `update --apply` runs the canonical installer. Then restart the
-daemon with your usual start command (`open -n -g -a CuaDriver --args serve`,
+daemon with your usual start command (`cua-driver permissions grant`,
 `cua-driver autostart kick`, or `cua-driver serve`), keeping any mode flags. The
 same check is the `check_for_update` MCP tool.
 

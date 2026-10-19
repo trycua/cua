@@ -58,8 +58,10 @@ import type { SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
+import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { RiskyRequest } from "../ops/nudges";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
@@ -430,6 +432,19 @@ const StartupShape = ref(
     title: str,
     body: str,
     actions: list(oneOf("allowAccess", "tryAgain", "signInAgain")),
+  }),
+);
+
+const LinkNoticeShape = ref(
+  "TelemetryLinkNotice",
+  obj<TelemetryLinkNotice>()({
+    due: bool,
+    title: str,
+    body: str,
+    okLabel: str,
+    turnOffLabel: str,
+    detailsLabel: str,
+    docsUrl: str,
   }),
 );
 
@@ -852,6 +867,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.setupDriver": list(obj<AgentSetupOutcome>()({ agents: strings, target: str, item: str, change: str, detail: str })),
 
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
+  "nudges.pending": list(obj<RiskyRequest>()({ id: str, agent: str, action: str, atMs: num, expiresMs: num })),
+  "nudges.answer": nul,
   "relay.usage": nullable(
     obj<RelayUsage>()({
       metered: bool,
@@ -944,6 +961,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "notifications.markRead": nul,
 
   "telemetry.track": nul,
+  "telemetry.linkNotice": nullable(LinkNoticeShape),
+  "telemetry.acknowledgeLinkNotice": nul,
   "spaces.usage": nullable(
     obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool }),
   ),
@@ -1259,6 +1278,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "notifications.markAllRead": nul,
   "notifications.markRead": nul,
   "telemetry.track": nul,
+  "telemetry.linkNotice": nullable(LinkNoticeShape),
+  "telemetry.acknowledgeLinkNotice": nul,
   "spaces.usage": OP_SHAPES["spaces.usage"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
   "stream.pip": strings,
@@ -1288,6 +1309,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "startup.get": StartupShape,
   "startup.act": StartupShape,
   "relay.usage": OP_SHAPES["relay.usage"],
+  "nudges.pending": OP_SHAPES["nudges.pending"],
+  "nudges.answer": nul,
   "resources.get": OP_SHAPES["resources.get"],
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],

@@ -181,6 +181,13 @@ export const PAGES: PageSpec[] = [
       'The local `cua daemon` API (a Unix socket on the host, not cua-spacesd): sandbox lifecycle across locations, the local runtimes and images it orchestrates, Spaces and the machines that provide them, its identity (`GetInfo`) and the loopback media bridge for webviews.',
     files: ['cua/daemon/v1/sandboxes.proto', 'cua/daemon/v1/runtime.proto', 'cua/daemon/v1/spaces.proto', 'cua/daemon/v1/daemon.proto'],
   },
+  {
+    slug: 'daemon-resources',
+    title: 'Daemon: resources',
+    description: 'cua.daemon.v1 resource messages: processor, memory and disk of this Mac, its extra Spaces and your other computers.',
+    intro: 'What `SpaceService.GetResources` and `WatchResources` return: one snapshot, then updates and the low-disk warning. Numbers only.',
+    files: ['cua/daemon/v1/resources.proto'],
+  },
 ];
 
 // ============================================================================

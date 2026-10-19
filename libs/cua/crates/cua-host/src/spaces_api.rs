@@ -177,6 +177,11 @@ pub struct ApiMe {
     pub orgs: Vec<ApiOrg>,
     #[serde(default)]
     pub entitlements: ApiEntitlements,
+    /// The opaque account id usage data is linked to (`acct_` and 32 hex,
+    /// never the email or the subject). Absent while linking is off on the
+    /// server (`SPACES_CP_LINK_USAGE`), so no client links anything then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analytics_id: Option<String>,
 }
 
 /// The parts of the entitlements the apps read. Unknown plans mean free
@@ -294,7 +299,7 @@ fn org_error(status: u16, body: &str) -> Error {
         return Error::Internal(format!("{TEAMS_NOT_AVAILABLE} (HTTP {status})"));
     }
     if status == 403 && code.as_deref() == Some("not_owner") {
-        return Error::PermissionDenied("Only the machine's owner can add it to a team.".into());
+        return Error::PermissionDenied("Only the computer's owner can add it to a team.".into());
     }
     http_error(status, body)
 }
@@ -1049,7 +1054,7 @@ mod tests {
         let e = org_error(403, r#"{"error":"not_owner"}"#);
         assert_eq!(
             e.to_string(),
-            "Only the machine's owner can add it to a team."
+            "Only the computer's owner can add it to a team."
         );
         assert!(is_teams_unavailable(&org_error(404, "404 page not found")));
         assert!(!is_teams_unavailable(&org_error(

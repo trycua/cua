@@ -72,7 +72,7 @@ public final class AgentKeysModel {
                              addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0)
         }
         let unavailable = report?["available"] as? Bool == false
-            ? (report?["unavailable"] as? String ?? "this machine can't keep keys") : nil
+            ? (report?["unavailable"] as? String ?? "this computer can't keep keys") : nil
         return AppAgentKeysInput(keys: keys.filter { !$0.env.isEmpty }, unavailable: unavailable, error: error)
     }
 

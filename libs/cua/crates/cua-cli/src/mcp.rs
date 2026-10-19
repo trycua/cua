@@ -244,7 +244,7 @@ const TOOLS: &[Tool] = &[
                 "kind",
                 "string",
                 false,
-                "What kind of machine: auto (default; from the image), container or vm",
+                "What kind of computer: auto (default; from the image), container or vm",
             ),
             (
                 "runtime",
@@ -1492,9 +1492,43 @@ impl SdkTools {
     }
 }
 
+/// The agent this process serves ("Claude Code"), once its client said.
+static AGENT_LABEL: Mutex<Option<String>> = Mutex::new(None);
+
+/// Before a risky call on This Mac, when the user turned the question on
+/// (`crate::risky`): the result to give the agent instead of running it,
+/// when they chose a separate Space. `None`: run it as before.
+async fn risky_detour(tool: &str, arguments: &Value) -> Option<ToolOutcome> {
+    let action = crate::risky::tool_risk(tool, arguments)?;
+    if !crate::risky::enabled() {
+        return None;
+    }
+    let home = cua_home::cua_home();
+    if !crate::risky::targets_this_mac(arguments, &crate::risky::this_mac_names(&home)) {
+        return None;
+    }
+    let agent = AGENT_LABEL
+        .lock()
+        .ok()
+        .and_then(|l| l.clone())
+        .unwrap_or_else(|| "An agent".into());
+    match crate::risky::ask(&home, &agent, action, crate::risky::ASK_FOR).await {
+        crate::risky::Answer::Separate => Some(ToolOutcome {
+            content: vec![json!({"type": "text", "text": crate::risky::separate_result(action)})],
+            structured: Some(json!({"ran": false, "reason": "user_chose_separate_space"})),
+            is_error: false,
+            meta: None,
+        }),
+        crate::risky::Answer::Here => None,
+    }
+}
+
 #[async_trait::async_trait]
 impl cua_spaces::mcp::ToolBackend for SdkTools {
     async fn call(&self, tool: &str, arguments: Value) -> ToolOutcome {
+        if let Some(out) = risky_detour(tool, &arguments).await {
+            return out;
+        }
         bounded(tool, &arguments, self.forward(tool, arguments.clone())).await
     }
 }
@@ -1614,6 +1648,9 @@ pub fn server(cua: Arc<Cua>, permissions: BTreeSet<String>, default_sandbox: Str
     let allowed = permissions.clone();
     McpServer::remote(Arc::new(SdkTools(spaces)))
         .with_client_info_hook(Arc::new(|info: &Value| {
+            if let Ok(mut l) = AGENT_LABEL.lock() {
+                *l = Some(agent_label(info));
+            }
             cua_spacesd_client::set_process_principal(Some(agent_principal(info)));
         }))
         .with_name("cua")

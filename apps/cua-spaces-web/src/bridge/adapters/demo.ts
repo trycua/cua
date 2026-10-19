@@ -7,6 +7,7 @@
  * sign-in finishes in the "browser"). Used when no host is detected.
  */
 
+import type { RiskyRequest } from "../ops/nudges";
 import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from "../adapter";
 import type { AgentSetupRow, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
@@ -85,6 +86,8 @@ export interface DemoOptions {
   platform?: DemoPlatform;
   /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`). */
   update?: Partial<UpdateState>;
+  /** A This Mac prompt to show (`?demo=nudge-second-agent`, `?demo=nudge-risky`). */
+  nudge?: "second-agent" | "risky";
 }
 
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
@@ -109,6 +112,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
+    nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
@@ -179,6 +183,22 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   };
 
   if (state.platform.os !== "macos") state.host = { ...state.host, name: demoMachine(state.platform).name };
+  // Claude Code has been on the desktop for a while; Codex just started.
+  if (options.nudge === "second-agent") {
+    const t = now();
+    const agent = (name: string, id: string) => `${DEMO_IDENTITY} (acct-ada) \u00b7 agent ${name} (${id})`;
+    state.host = {
+      ...state.host,
+      recentAccess: [
+        { atMs: t - 5_000, via: "relay", who: agent("Codex", "agent:codex-5120"), what: "DriverService" },
+        { atMs: t - 20_000, via: "relay", who: agent("Claude Code", "agent:claude-code-4242"), what: "ComputerService" },
+        { atMs: t - 12 * 60_000, via: "relay", who: agent("Claude Code", "agent:claude-code-4242"), what: "DriverService" },
+        ...(state.host.recentAccess ?? []),
+      ],
+    };
+  }
+  let risky: RiskyRequest[] =
+    options.nudge === "risky" ? [{ id: "risky-4242-1", agent: "Claude Code", action: "run an installer", atMs: now(), expiresMs: now() + 30_000 }] : [];
 
   const later = (ms: number, f: () => void) => {
     const t = setTimeout(() => {
@@ -504,6 +524,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
     ...demoRelayUsageHandlers(ctx),
+    "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
+    "nudges.answer": ({ id }) => {
+      risky = risky.filter((r) => r.id !== id);
+      return null;
+    },
     ...demoResourcesHandlers(ctx),
     ...demoSpaceDetailHandlers(ctx),
     ...demoHostSetupHandlers(ctx),

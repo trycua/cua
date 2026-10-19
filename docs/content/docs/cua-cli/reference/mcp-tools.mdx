@@ -26,10 +26,10 @@ Full entries: [Space lifecycle](/spaces/reference/spaces#space-lifecycle).
 
 | Tool | Description |
 | --- | --- |
-| <span id="add_space"></span>[`add_space`](/spaces/reference/spaces#add_space) | Add an existing machine as a Space by address and token. |
+| <span id="add_space"></span>[`add_space`](/spaces/reference/spaces#add_space) | Add an existing computer as a Space by address and token. |
 | <span id="remove_space"></span>[`remove_space`](/spaces/reference/spaces#remove_space) | Forget a registered Space without touching it. |
 | <span id="list_spaces"></span>[`list_spaces`](/spaces/reference/spaces#list_spaces) | List the Spaces this connection can see. |
-| <span id="create_space"></span>[`create_space`](/spaces/reference/spaces#create_space) | Create a Space: a new sandbox on this machine, on one of your machines, or in the cloud. |
+| <span id="create_space"></span>[`create_space`](/spaces/reference/spaces#create_space) | Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud. |
 | <span id="delete_space"></span>[`delete_space`](/spaces/reference/spaces#delete_space) | Delete a Space's sandbox and forget it. |
 | <span id="stop_space"></span>[`stop_space`](/spaces/reference/spaces#stop_space) | Turn a Space off: suspend it (memory kept) or stop it (disk kept). |
 | <span id="start_space"></span>[`start_space`](/spaces/reference/spaces#start_space) | Turn a Space back on: resume or boot it. |
@@ -130,9 +130,9 @@ Full entries: [Hotspot](/spaces/reference/spaces#hotspot).
 
 | Tool | Description |
 | --- | --- |
-| <span id="hotspot_start"></span>[`hotspot_start`](/spaces/reference/spaces#hotspot_start) | Start sharing this machine's network with a Space. |
-| <span id="hotspot_stop"></span>[`hotspot_stop`](/spaces/reference/spaces#hotspot_stop) | Stop sharing this machine's network. |
-| <span id="hotspot_status"></span>[`hotspot_status`](/spaces/reference/spaces#hotspot_status) | Report which Spaces are sharing this machine's network, with counters. |
+| <span id="hotspot_start"></span>[`hotspot_start`](/spaces/reference/spaces#hotspot_start) | Start sharing this computer's network with a Space. |
+| <span id="hotspot_stop"></span>[`hotspot_stop`](/spaces/reference/spaces#hotspot_stop) | Stop sharing this computer's network. |
+| <span id="hotspot_status"></span>[`hotspot_status`](/spaces/reference/spaces#hotspot_status) | Report which Spaces are sharing this computer's network, with counters. |
 
 ### Cua Volume
 
@@ -228,7 +228,7 @@ Permission: `sandbox:create`.
 | <span id="sandbox_create--command"></span>`command` | `string[]` |  | Entrypoint override (argv), for example ["python", "-m", "my_mcp"]. |
 | <span id="sandbox_create--env"></span>`env` | `object` |  | Environment variables (string values). |
 | <span id="sandbox_create--image"></span>`image` | `string` |  | Image reference, any registry (overrides os_type). |
-| <span id="sandbox_create--kind"></span>`kind` | `"auto" \| "container" \| "vm"` |  | What kind of machine: auto (default; from the image), container or vm. |
+| <span id="sandbox_create--kind"></span>`kind` | `"auto" \| "container" \| "vm"` |  | What kind of computer: auto (default; from the image), container or vm. |
 | <span id="sandbox_create--name"></span>`name` | `string` |  | Sandbox name. |
 | <span id="sandbox_create--on"></span>`on` | `string` |  | Where it runs: local (default: the user's default location, else local). |
 | <span id="sandbox_create--os_type"></span>`os_type` | `string` |  | linux (default) or macos. |

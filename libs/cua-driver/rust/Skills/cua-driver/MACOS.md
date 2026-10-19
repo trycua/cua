@@ -242,10 +242,11 @@ editor state.
 
 1. `cua-driver` is on `$PATH` (`which cua-driver`). If not, point the
    user at `scripts/install-local.sh` and stop.
-2. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
-   recommended form: goes through LaunchServices so TCC attributes
-   the process to CuaDriver.app). `cua-driver serve &` also works;
-   the CLI auto-relaunches through `open -n -g -a CuaDriver` when it
+2. Start the daemon with `cua-driver permissions grant` (the
+   recommended form: it launches the installed CuaDriver.app by its
+   exact path through LaunchServices, so TCC attributes the process to
+   that app). `cua-driver serve &` also works;
+   the CLI auto-relaunches the installed app by path when it
    detects a wrong-TCC context (any IDE-spawned shell: Claude Code,
    Cursor, VS Code, Conductor). Verify with `cua-driver status`.
 3. Run `cua-driver permissions status --json`. This
@@ -297,7 +298,7 @@ Verify with the daemon running:
 
 ```bash
 cua-driver --version
-open -n -g -a CuaDriver --args serve
+cua-driver permissions grant
 cua-driver status
 cua-driver doctor
 cua-driver permissions status --json   # read-only, never prompts
@@ -386,7 +387,7 @@ Limits:
   consent, can still appear.
 
 After the MDM installs the profile, restart the daemon (`cua-driver stop`, then
-`open -n -g -a CuaDriver --args serve`) and run
+`cua-driver permissions grant`) and run
 `cua-driver permissions status --json`. Expect `accessibility: true`.
 
 #### (b) Operator-authorized hosts: approve through the host's screen sharing
@@ -519,7 +520,7 @@ display over SSH for this first run.
    logged: `cua_vnc.py click X Y "CuaDriver: Accessibility"`.
 4. Take another screenshot and confirm that the dialog is gone or the switch is on.
 5. If macOS offers **Quit & Reopen** for CuaDriver, accept it, then restart the
-   daemon (`open -n -g -a CuaDriver --args serve`).
+   daemon (`cua-driver permissions grant`).
 6. If macOS asks for an administrator password or Touch ID, that credential
    belongs to the owner: stop and ask them to enter it. Only when they gave you
    a disposable VM's password for this task, put it in an environment variable
@@ -533,7 +534,7 @@ lines of the approval log: which prompts you approved, when, and on which host.
 
 Send these steps in plain words:
 
-1. Run `open -n -g -a CuaDriver --args serve`, then `cua-driver permissions grant`.
+1. Run `cua-driver permissions grant`.
 2. In the **CuaDriver Permissions** window, click **Open System Settings**.
 3. Under **Privacy & Security**, switch **CuaDriver** on under **Accessibility**
    and under **Screen & System Audio Recording**. Add

@@ -596,12 +596,12 @@ impl Spaces {
                         .await;
                         match r {
                             Ok(()) | Err(cua_host::Error::NotFound(_)) => {
-                                done.push("removed its relay machine".into())
+                                done.push("removed its relay computer".into())
                             }
-                            Err(e) => failed.push(format!("relay machine {id}: {e}")),
+                            Err(e) => failed.push(format!("relay computer {id}: {e}")),
                         }
                     }
-                    Err(e) => failed.push(format!("relay machine {id}: {e}")),
+                    Err(e) => failed.push(format!("relay computer {id}: {e}")),
                 },
             }
         }

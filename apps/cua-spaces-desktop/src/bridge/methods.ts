@@ -32,7 +32,7 @@ export const METHODS = [
   "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
   "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
   "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
+  "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.usage", "spaces.windows", "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
   "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
@@ -44,6 +44,7 @@ export const METHODS = [
   "window.setBackgroundColor", "window.setDragRegions", "window.setDropTargets",
   "startup.get", "startup.act",
   "relay.usage",
+  "nudges.pending", "nudges.answer",
   "resources.get",
   "checklist.get", "checklist.send",
 ] as const;

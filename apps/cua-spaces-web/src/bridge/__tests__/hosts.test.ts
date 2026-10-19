@@ -48,6 +48,22 @@ function tauriHost(answers: Record<string, unknown> = {}, withEvents = true) {
   return { win, calls, listeners, invoke };
 }
 
+describe("tauri adapter: the one-time linking notice", () => {
+  it("reads the notice from telemetry_link_notice and acknowledges with telemetry_acknowledge_link_notice", async () => {
+    const notice = { due: true, title: "We've updated how usage data works", body: "b", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" };
+    const { win, calls } = tauriHost({ telemetry_link_notice: notice });
+    const a = createTauriAdapter(win);
+    expect(await a.call("telemetry.linkNotice", {})).toEqual(notice);
+    expect(await a.call("telemetry.acknowledgeLinkNotice", {})).toBeNull();
+    expect(calls.map(([c]) => c)).toEqual(["telemetry_link_notice", "telemetry_acknowledge_link_notice"]);
+  });
+
+  it("a command that answers nothing (an older shell) reads as no notice", async () => {
+    const { win } = tauriHost();
+    expect(await createTauriAdapter(win).call("telemetry.linkNotice", {})).toBeNull();
+  });
+});
+
 describe("tauri adapter", () => {
   it("maps operations onto the existing invoke commands", async () => {
     const { win, calls } = tauriHost({ list_spaces: [], keyvault_set_unattended: [], set_space_power: {} });
@@ -569,14 +585,14 @@ describe("webkit adapter", () => {
   });
 
   it("maps this Mac's own desktop (status local) to a local, running row", async () => {
-    const here = { id: "local", name: "This machine", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const here = { id: "local", name: "This computer", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: here, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: true, powerState: "running" });
   });
 
   it("keeps this Mac local while it is not set up for access", async () => {
-    const mac = { id: "this-mac", name: "This machine", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const mac = { id: "this-mac", name: "This computer", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: mac, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: false, powerState: "suspended" });
@@ -926,6 +942,22 @@ describe("webkit adapter", () => {
     expect(sent.map((r) => [r.method, r.args])).toEqual([["telemetry.track", { signals: [{ type: "feature", feature: "space_open" }] }]]);
     await expect(a.call("host.openSettings", { url: "https://example.com" })).rejects.toMatchObject({ code: "bad_args" });
     expect(sent).toHaveLength(1);
+  });
+
+  it("asks the host for the one-time linking notice and sends the acknowledgement; no answer reads as none", async () => {
+    const notice = { due: true, title: "We've updated how usage data works", body: "b", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" };
+    const { win, sent } = webkitHost((req) => (req.method === "telemetry.linkNotice" ? ok(notice) : ok(null)));
+    const a = createWebkitAdapter(win);
+    expect(await a.call("telemetry.linkNotice", {})).toEqual(notice);
+    expect(await a.call("telemetry.acknowledgeLinkNotice", {})).toBeNull();
+    expect(sent.map((r) => [r.method, r.args])).toEqual([
+      ["telemetry.linkNotice", {}],
+      ["telemetry.acknowledgeLinkNotice", {}],
+    ]);
+    const older = webkitHost(() => ({ ok: false, error: { code: "unimplemented", message: "telemetry.linkNotice is not available in this host" } }));
+    expect(await createWebkitAdapter(older.win).call("telemetry.linkNotice", {})).toBeNull();
+    const odd = webkitHost(() => ok({ due: true, title: "", body: 3 }));
+    expect(await createWebkitAdapter(odd.win).call("telemetry.linkNotice", {})).toBeNull();
   });
 
   it("runs New Space on the app's env and create, with its progress", async () => {

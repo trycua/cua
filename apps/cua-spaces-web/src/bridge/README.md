@@ -465,6 +465,8 @@ something the native apps already do; nothing is a new mechanism.
 | Operation | Args | Result | Tauri | SwiftUI (`WebUIBridge+Pages.swift`) |
 |---|---|---|---|---|
 | `telemetry.track` | `{ signals }` | `null` | `telemetry_record_signals` | `model.telemetrySink?.record(signals)` (`appTelemetryRecord`), only while `status().enabled`; each signal checked again |
+| `telemetry.linkNotice` | `{}` | `{ due, title, body, okLabel, turnOffLabel, detailsLabel, docsUrl } \| null` | `telemetry_link_notice` | `model.telemetrySink?.linkNotice()` (`telemetryLinkNotice`, `telemetryLinkNoticeDue`); the one-time notice that usage data is now linked to the account (CUA-1881). The page shows it only while `due`. The demo host has none |
+| `telemetry.acknowledgeLinkNotice` | `{}` | `null` | `telemetry_acknowledge_link_notice` | `model.telemetrySink?.acknowledgeLinkNotice()` (`telemetryAcknowledgeLinkNotice`); either button. "Turn off usage data" first sets `telemetry` off through `updateSetting` |
 | `spaces.usage` | `{ spaceId }` | `SpaceUsage \| null` | `space_usage` | `backend.usage(id:)` |
 | `spaces.windows` | `{ spaceId }` | `{ windows, display, open }` (`open`: the rows whose picture in picture is open) | none (the viewer lists windows over its own stream) | `StreamRowsModel` over `backend.streamProvider(id:)` |
 | `stream.pip` | `{ spaceId, command: { type: "open" \| "close", row } }` | open row ids | none (its PiP is a viewer window) | a `StreamPiPSet` per Space, as the detail view keeps |

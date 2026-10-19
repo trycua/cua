@@ -113,7 +113,7 @@ async def resolve(
         return ref.name, None, f"http://{ref.name}"
     if ref.location == "relay":
         raise Unsupported(
-            f"{ref.id}: relay machines are Spaces; open it with cua.embedded().spaces()"
+            f"{ref.id}: relay computers are Spaces; open it with cua.embedded().spaces()"
         )
     if is_local is None:
         from cua_sandbox.sandbox import _is_local_sandbox as is_local

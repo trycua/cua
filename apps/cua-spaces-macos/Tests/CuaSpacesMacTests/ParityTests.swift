@@ -1600,7 +1600,10 @@ struct ParityTests {
             let rows = try appSpaceRowsFromJson(json: text([c["row"]!]))
             let space = appRowsToSpaces(rows: rows, nowMs: Int64(f["now"] as! Int))[0]
             let usage = (c["usage"] as? [String: Any]).map { u in
-                AppSpaceUsage(memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
+                AppSpaceUsage(cpuCount: (u["cpuCount"] as? NSNumber)?.uint32Value ?? 0,
+                              cpuPercent: (u["cpuPercent"] as? NSNumber)?.doubleValue ?? 0,
+                              loadAverage1m: (u["loadAverage1m"] as? NSNumber)?.doubleValue ?? 0,
+                              memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
                               memoryTotal: (u["memoryTotal"] as! NSNumber).uint64Value,
                               memoryLimited: u["memoryLimited"] as! Bool,
                               diskUsed: (u["diskUsed"] as! NSNumber).uint64Value,
@@ -2188,7 +2191,9 @@ struct ParityTests {
         case let .volumeSetup(surface, storage, addToFinder, mountMethod, outcome):
             return ["type": "volume-setup", "surface": surface, "storage": storage, "addToFinder": addToFinder,
                     "mountMethod": mountMethod, "outcome": outcome]
-        case let .share(action, role, outcome): return ["type": "share", "action": action, "role": role, "outcome": outcome]
+        case let .share(action, role, outcome, errorKind, failedStage):
+            return ["type": "share", "action": action, "role": role, "outcome": outcome,
+                    "errorKind": errorKind, "failedStage": failedStage]
         case let .appUpdate(action, channel, trigger):
             return ["type": "app-update", "action": action, "channel": channel, "trigger": trigger]
         case let .deviceEnroll(method, outcome): return ["type": "device-enroll", "method": method, "outcome": outcome]

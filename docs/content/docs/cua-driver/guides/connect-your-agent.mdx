@@ -39,6 +39,8 @@ cua-driver mcp-config --client <client>
 | Qwen Code | `--client qwen`, which prints `qwen mcp add cua-driver <path> mcp` | |
 | Pi | `--client pi` | No MCP: runs one-shot `cua-driver call …` commands. |
 | Kimi Code | `kimi mcp add cua-driver -- <path> mcp`, then `kimi mcp test cua-driver` | No preset. |
+| GitHub Copilot CLI | Add `{"mcpServers": {"cua-driver": {"type": "local", "command": "<path>", "args": ["mcp"], "tools": ["*"]}}}` to `~/.copilot/mcp-config.json` | No preset. |
+| Muse Code (macOS, Linux) | Merge `{"mcp_servers": {"cua-driver": {"enabled": true, "transport": "stdio", "command": "<path>", "args": ["mcp"]}}}` into `$XDG_CONFIG_HOME/muse/settings.json`, or `~/.config/muse/settings.json` | No preset. Start a new Muse session; MCP servers load at startup. |
 | T3 Code | Register Cua Driver in the harness that T3 Code launches | |
 
 Find `<path>` with `command -v cua-driver`. The full roster is in the

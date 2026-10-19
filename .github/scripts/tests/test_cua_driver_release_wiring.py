@@ -688,24 +688,47 @@ fi
         self.assertIn("launches the installed", shared_hints)
         self.assertNotIn("launches CuaDriver", shared_hints)
 
-    def test_post_install_hints_include_muse_stdio_mcp_config(self) -> None:
+    def test_post_install_hints_stay_short_and_point_at_mcp_config(self) -> None:
         shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
 
-        self.assertIn("Muse Code (macOS / Linux", shared_hints)
-        self.assertIn("$XDG_CONFIG_HOME/muse/settings.json", shared_hints)
-        self.assertIn('"mcp_servers": {', shared_hints)
-        self.assertIn('"transport": "stdio"', shared_hints)
-        self.assertIn('"command": "{{BINARY}}"', shared_hints)
-        self.assertIn('"args": ["mcp"]', shared_hints)
-        self.assertIn("MCP servers load at startup", shared_hints)
+        # Three essential steps; client snippets live behind `mcp-config`.
+        for step in ("  1. ", "  2. ", "  3. "):
+            self.assertIn(step, shared_hints)
+        self.assertNotIn("  4. ", shared_hints)
+        self.assertLess(len(shared_hints.splitlines()), 30)
+        self.assertIn("{{BINARY}} permissions grant", shared_hints)
+        self.assertIn("{{BINARY}} mcp-config --client <name>", shared_hints)
+        for removed in (
+            '"mcpServers"',
+            "codex mcp add",
+            "droid mcp add",
+            "qwen mcp add",
+            "check_permissions",
+            "open -n -g",
+            "-a CuaDriver",
+        ):
+            self.assertNotIn(removed, shared_hints)
 
-    def test_post_install_hints_use_canonical_capability_manifest_flags(self) -> None:
-        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+    def test_clients_without_an_mcp_config_preset_are_documented(self) -> None:
+        # Muse Code and GitHub Copilot CLI have no `mcp-config --client` preset;
+        # their snippets moved out of the installer output into the docs.
+        docs = self.read("docs/content/docs/cua-driver/guides/connect-your-agent.mdx")
 
-        self.assertIn("--capability-manifest", shared_hints)
-        self.assertIn("--approve-capability-manifest", shared_hints)
-        self.assertNotIn("--session-policy", shared_hints)
-        self.assertNotIn("--approve-session-policy", shared_hints)
+        self.assertIn("Muse Code (macOS, Linux)", docs)
+        self.assertIn("$XDG_CONFIG_HOME/muse/settings.json", docs)
+        self.assertIn('"mcp_servers"', docs)
+        self.assertIn('"transport": "stdio"', docs)
+        self.assertIn("MCP servers load at startup", docs)
+        self.assertIn("GitHub Copilot CLI", docs)
+        self.assertIn("~/.copilot/mcp-config.json", docs)
+
+    def test_permission_docs_use_canonical_capability_manifest_flags(self) -> None:
+        docs = self.read("docs/content/docs/cua-driver/guides/permissions.mdx")
+
+        self.assertIn("--capability-manifest", docs)
+        self.assertIn("--approve-capability-manifest", docs)
+        self.assertNotIn("--session-policy", docs)
+        self.assertNotIn("--approve-session-policy", docs)
 
     def test_agent_sdk_examples_use_implicit_sessions_and_per_call_targets(self) -> None:
         example_dir = REPO_ROOT / "libs/cua-driver/examples/agent-sdks"

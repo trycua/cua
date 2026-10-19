@@ -10,6 +10,7 @@ import { CuaKey } from "@/components/cua-key";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
 import { cn } from "@/lib/utils";
@@ -131,6 +132,26 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         <span>{c.note}</span>
         <span className="text-muted-foreground">{c.noteMore}</span>
       </p>
+      {fr.usage ? (
+        <div className="mt-8 flex max-w-[520px] flex-col gap-3 text-[13px] text-muted-foreground" data-first-run-usage="">
+          <p>
+            {fr.usage.notice}{" "}
+            <button type="button" className="underline hover:text-foreground" onClick={fr.openUsageLink}>
+              {fr.usage.linkLabel}
+            </button>
+          </p>
+          <label className="flex items-center gap-2.5 text-foreground">
+            <Switch
+              checked={fr.usage.on}
+              disabled={!fr.usage.enabled}
+              onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})}
+              aria-label={fr.usage.label}
+            />
+            <span>{fr.usage.label}</span>
+            {fr.usage.help ? <span className="text-muted-foreground">{fr.usage.help}</span> : null}
+          </label>
+        </div>
+      ) : null}
       <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
         <span className="text-muted-foreground">{c.orLabel}</span>
         {c.others.map((o) => (

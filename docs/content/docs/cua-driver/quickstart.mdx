@@ -39,12 +39,11 @@ platform.
 
 ```bash test="cli-shape" id="cua-driver-permissions-grant"
 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
-open -n -g -a CuaDriver --args serve
 cua-driver permissions grant
 ```
 
-Starting through the app bundle makes macOS attribute the prompts to
-CuaDriver, so the grant sticks to the driver.
+`permissions grant` starts the installed app by its exact path, so macOS
+attributes the prompts to that copy of CuaDriver and the grant sticks to the driver.
 
 macOS asks once for each permission. Neither prompt grants anything by
 itself: both offer **Open System Settings**, not **Allow**.
@@ -64,7 +63,7 @@ off. Switching it on is what grants access.
   Switch on both **Accessibility** and **Screen & System Audio Recording**. If you choose
   **Deny**, the driver cannot see or drive your desktop. macOS may offer to quit and reopen
   CuaDriver when you flip a toggle. Accept: the driver only picks up a changed grant after a full
-  relaunch. If the daemon does not come back, run `open -n -g -a CuaDriver --args serve`.
+  relaunch. If the daemon does not come back, run `cua-driver permissions grant` again.
 </Callout>
 
 macOS does not always show both prompts in one pass. Check what landed:

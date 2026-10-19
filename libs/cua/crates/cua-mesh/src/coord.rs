@@ -535,7 +535,7 @@ fn handle(
                 reason: if accept {
                     String::new()
                 } else {
-                    "the machine did not accept the proof".into()
+                    "the computer did not accept the proof".into()
                 },
             });
         }

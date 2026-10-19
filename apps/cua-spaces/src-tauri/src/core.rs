@@ -949,11 +949,21 @@ impl AppCore {
         let identity = self.session.install(c).await?;
         self.signed_in.store(true, Ordering::Relaxed);
         self.identity_changed().await;
+        self.sync_usage_link().await;
         Ok(identity)
+    }
+
+    /// Links usage data to the signed-in account when the Spaces API offers
+    /// an account id (CUA-1881); none unlinks. Best effort: offline or
+    /// signed out, nothing changes. Called at launch and after a sign-in.
+    pub async fn sync_usage_link(&self) {
+        crate::telemetry::sync_account(&self.session).await;
     }
 
     /// Signs out.
     pub async fn sign_out(&self) {
+        // Usage data goes back to a new anonymous install id.
+        let _ = cua_telemetry::global().forget_account();
         self.session.clear().await;
         self.signed_in.store(false, Ordering::Relaxed);
         self.identity_changed().await;
@@ -1207,7 +1217,7 @@ impl AppCore {
         let parsed = On::parse(on).map_err(msg)?;
         if parsed.is_existing_machine() {
             return Err(format!(
-                "{parsed} names one machine; the default location is local or cloud"
+                "{parsed} names one computer; the default location is local or cloud"
             ));
         }
         let mut settings = self.settings()?;
@@ -1445,11 +1455,15 @@ impl AppCore {
             .collect())
     }
 
-    /// Memory and storage use now (the app core's `SpaceUsage` shape).
+    /// Processor, memory and storage use now (the app core's `SpaceUsage`
+    /// shape).
     pub async fn space_usage(&self, space: &str) -> CmdResult<serde_json::Value> {
         let s = self.space(space).await?;
         let u = s.usage().await.map_err(msg)?;
         Ok(serde_json::json!({
+            "cpuCount": u.cpu_count,
+            "cpuPercent": u.cpu_percent,
+            "loadAverage1m": u.load_average_1m,
             "memoryUsed": u.memory_used,
             "memoryTotal": u.memory_total,
             "memoryLimited": u.memory_limited,

@@ -14,7 +14,9 @@ import { Sidebar } from "@/components/shell/sidebar";
 import { RelayAllowanceNotice } from "@/components/shell/relay-allowance-notice";
 import { SpacesNotice } from "@/components/shell/spaces-notice";
 import { SpaceSheets } from "@/components/space-sheets";
+import { UsageLinkNotice } from "@/components/usage-link-notice";
 import { TopBar } from "@/components/shell/top-bar";
+import { ThisMacNudges } from "@/components/this-mac-nudges";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationToasts } from "@/hooks/use-notification-toasts";
 import { useThemeHostSync, useThemeSync } from "@/lib/theme";
@@ -77,6 +79,8 @@ function RootLayout() {
       <ChecklistTracker />
       <NewSpace />
       <SpaceSheets />
+      <ThisMacNudges />
+      <UsageLinkNotice />
     </div>
   );
 }

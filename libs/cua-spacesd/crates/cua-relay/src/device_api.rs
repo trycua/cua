@@ -259,7 +259,7 @@ async fn account(relay: &Relay, headers: &HeaderMap) -> Result<Identity, Respons
         return Err(error(
             StatusCode::FORBIDDEN,
             "machine_token",
-            "machine tokens cannot manage devices",
+            "computer tokens cannot manage devices",
         ));
     }
     let Some(token) = account_token(headers) else {

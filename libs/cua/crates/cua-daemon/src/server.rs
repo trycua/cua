@@ -282,6 +282,11 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     // (the Spaces apps' notch and previews, SDK scripts); idle otherwise.
     #[cfg(feature = "spaces")]
     let _thumbnails = runtime.spaces().spawn_thumbnail_refresh();
+    // This computer's processor, memory and disk, sampled every five
+    // minutes while nobody watches (the menu bar warning), and published
+    // into its relay machine record when it is one.
+    #[cfg(feature = "spaces")]
+    let _resources = runtime.spaces().spawn_resources_publisher();
     // A local Space that stops on its own (out of memory, a crash) is
     // recorded as stopped, and why, for every client.
     let _stop_watch = runtime.sandboxes().spawn_stop_watch();

@@ -38,7 +38,7 @@ description: "Sign in and out, user defaults, the cua daemon, health checks and 
 | [`cua telemetry status`](#cua-telemetry-status) | Whether telemetry is on, why, and the exact properties every event carries. |
 | [`cua telemetry on`](#cua-telemetry-on) | Turn usage telemetry on (writes [telemetry] enabled = \"on\" to ~/.cua/config.toml). |
 | [`cua telemetry off`](#cua-telemetry-off) | Turn usage telemetry off (same as `cua config set telemetry off`). |
-| [`cua telemetry show-last`](#cua-telemetry-show-last) | Print the last events this machine queued or sent, exactly as sent. |
+| [`cua telemetry show-last`](#cua-telemetry-show-last) | Print the last events this computer queued or sent, exactly as sent. |
 | [`cua telemetry reset-id`](#cua-telemetry-reset-id) | Delete the anonymous install id and salt (new ones are created on the next event). |
 | [`cua telemetry schema`](#cua-telemetry-schema) | Every event and property that may be sent, with its allowed values. |
 
@@ -65,7 +65,7 @@ cua auth login [OPTIONS]
 | <span id="cua-auth-login--agents"></span>`--agents` |  | string |  | Agents: `all` (installed), `none`, or ids such as `claude,codex,hermes` (`cua agents detect` lists every supported agent). |
 | <span id="cua-auth-login--mcp-command"></span>`--mcp-command` |  | string |  | Command agents launch for the MCP server (default: the `cua` on PATH, else this binary). |
 | <span id="cua-auth-login--no-browser"></span>`--no-browser` |  | boolean | `false` | Do not open a browser; print the URL. |
-| <span id="cua-auth-login--remote"></span>`--remote` |  | boolean | `false` | Sign in from another device with a code (for SSH sessions and machines without a browser). |
+| <span id="cua-auth-login--remote"></span>`--remote` |  | boolean | `false` | Sign in from another device with a code (for SSH sessions and computers without a browser). |
 | <span id="cua-auth-login--no-onboarding"></span>`--no-onboarding` |  | boolean | `false` | Skip the agent onboarding prompt. |
 | <span id="cua-auth-login--skills-only"></span>`--skills-only` |  | boolean | `false` | Only install skills. Alias: `--no-mcp`. |
 | <span id="cua-auth-login--mcp-only"></span>`--mcp-only` |  | boolean | `false` | Only configure the MCP server. Alias: `--no-skills`. |
@@ -262,7 +262,7 @@ cua config set [OPTIONS] <KEY> <VALUE>
 # Create sandboxes in your AWS account unless --on says otherwise
 cua config set default.on aws
 
-# Back to this machine
+# Back to this computer
 cua config set default.on local
 
 # Prefer VMs when the image offers both
@@ -514,7 +514,7 @@ cua telemetry off
 
 ### `cua telemetry show-last`
 
-Print the last events this machine queued or sent, exactly as sent.
+Print the last events this computer queued or sent, exactly as sent.
 
 ```text output
 cua telemetry show-last [OPTIONS]

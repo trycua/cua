@@ -88,7 +88,7 @@ async def test_builtin_default_is_local_with_the_notice(local_sdk, notice):
 
 
 async def test_env_beats_config(monkeypatch, local_sdk, notice):
-    cua.config_set("default.on", "cloud")
+    cua.config_set("default.on", "aws")
     monkeypatch.setenv("CUA_DEFAULT_ON", "local")
     with pytest.raises(_Captured):
         await Sandbox.create(ROOTFS, telemetry_enabled=False)

@@ -96,6 +96,7 @@ class FakeMacTools:
         self.team = team
         self.requirement = requirement
         self.calls: list[list[str]] = []
+        self.unregistered: list[tuple[str, Path, bool]] = []
 
     def __call__(self, argv) -> CommandResult:
         argv = list(argv)
@@ -104,6 +105,10 @@ class FakeMacTools:
         if tool == "tar":
             with tarfile.open(argv[2]) as tar:
                 tar.extractall(argv[4])
+            return CommandResult(0, "")
+        if tool == gate.LSREGISTER:
+            # The bundle must still be on disk when it is unregistered.
+            self.unregistered.append((argv[1], target, target.is_dir()))
             return CommandResult(0, "")
         adhoc = not self.signed or target.name in self.adhoc_names
         if tool == "codesign" and "--verify" in argv:
@@ -148,6 +153,42 @@ def test_notarized_release_passes(tmp_path: Path) -> None:
     ]
     for name in STANDALONE_MACHO:
         assert verified.count(name) == 4, name
+
+
+def test_extracted_apps_are_unregistered_from_launchservices_then_deleted(tmp_path: Path) -> None:
+    """Checking a release must not leave extra CuaDriver.app copies registered."""
+    tools = FakeMacTools()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+
+    report = verify_macos(
+        make_darwin_artifacts(tmp_path / "a"), VERSION, run=tools, workdir=scratch
+    )
+
+    assert report.failures == []
+    # One extracted CuaDriver.app per full darwin archive, each unregistered with
+    # `lsregister -u` while it still exists, and nothing left behind.
+    assert [flag for flag, _, _ in tools.unregistered] == ["-u"] * 3
+    assert {path.name for _, path, _ in tools.unregistered} == {"CuaDriver.app"}
+    assert all(existed for _, _, existed in tools.unregistered)
+    assert list(scratch.iterdir()) == []
+    # The unregistering happens after the last check and before nothing else.
+    last_check = max(i for i, call in enumerate(tools.calls) if call[0] != gate.LSREGISTER)
+    first_unregister = min(i for i, call in enumerate(tools.calls) if call[0] == gate.LSREGISTER)
+    assert first_unregister > last_check
+
+
+def test_a_host_without_lsregister_still_verifies(tmp_path: Path) -> None:
+    tools = FakeMacTools()
+
+    def run(argv):
+        if argv[0] == gate.LSREGISTER:
+            raise FileNotFoundError(argv[0])
+        return tools(argv)
+
+    report = verify_macos(make_darwin_artifacts(tmp_path / "a"), VERSION, run=run)
+
+    assert report.failures == []
 
 
 def test_unsigned_node_runtime_fails_unless_checking_a_legacy_release(tmp_path: Path) -> None:

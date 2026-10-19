@@ -207,6 +207,28 @@ def check_notarized(
         report.ok(f"{label}: stapled notarization ticket is valid")
 
 
+LSREGISTER = (
+    "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/"
+    "LaunchServices.framework/Versions/A/Support/lsregister"
+)
+
+
+def _forget_extracted_apps(scratch: Path, run: Runner) -> None:
+    """Unregister every app bundle extracted under ``scratch`` from LaunchServices.
+
+    ``codesign`` and ``spctl`` make macOS learn a bundle's path and bundle id.
+    A released CuaDriver.app extracted into a temp dir and then deleted would
+    stay registered, and ``open -a CuaDriver`` (or a permission row in System
+    Settings) can later resolve to that dead copy. Best effort; the files are
+    deleted by the caller.
+    """
+    for app in sorted(scratch.rglob("*.app")):
+        try:
+            run([LSREGISTER, "-u", str(app)])
+        except OSError:
+            return  # no lsregister here (not macOS); nothing was registered
+
+
 def _extract_tar(archive: Path, destination: Path, run: Runner) -> bool:
     # System tar matches what the installer runs and preserves bundle metadata.
     result = run(["tar", "-xzf", str(archive), "-C", str(destination)])
@@ -279,6 +301,7 @@ def verify_macos(
                     target, f"{name}:{file_name}", team_id, run, report, deep=False
                 )
     finally:
+        _forget_extracted_apps(scratch, run)
         shutil.rmtree(scratch, ignore_errors=True)
 
     for installer in sorted(artifacts.rglob("*.pkg")):

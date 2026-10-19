@@ -1312,7 +1312,7 @@
   {
    "abstract": "Run platform-aware diagnostic probes.",
    "arguments": [],
-   "discussion": "Exit code is non-zero when any probe is an error.",
+   "discussion": "Exit code is non-zero when any probe is an error. On macOS it warns about other copies of CuaDriver.app that macOS can launch instead of the installed one, and about permission rows tied to a different path or version.",
    "examples": [
     {
      "command": "cua-driver doctor",
@@ -1321,6 +1321,10 @@
     {
      "command": "cua-driver doctor --json",
      "description": "Emit the probe report as JSON"
+    },
+    {
+     "command": "cua-driver doctor --fix",
+     "description": "macOS: make macOS forget extra copies of the app (deletes no files)"
     }
    ],
    "flags": [
@@ -1328,6 +1332,12 @@
      "default_value": false,
      "help": "Emit the probe report as JSON.",
      "name": "json",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "macOS: make LaunchServices forget every other copy of CuaDriver.app. No files are deleted.",
+     "name": "fix",
      "short_name": null
     }
    ],

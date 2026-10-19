@@ -222,9 +222,9 @@ daemon_signal_if_current() {
 }
 
 daemon_wait_for_exit() {
-    local pid="$1" attempts=0
+    local pid="$1" attempts=0 limit=$(( ${CUA_DRIVER_STOP_TIMEOUT:-5} * 10 ))
     while daemon_pid_alive "$pid"; do
-        [[ "$attempts" -lt 20 ]] || return 1
+        [[ "$attempts" -lt "$limit" ]] || return 1
         sleep 0.1 2>/dev/null || sleep 1 || true
         attempts=$((attempts + 1))
     done
@@ -246,6 +246,85 @@ daemon_process_identity() {
     printf '%s' "$identity"
 }
 
+# A daemon can run from ANY copy of CuaDriver.app (an old release in ~/Downloads, the
+# Trash, a benchmark folder), not only the one this script removes. These three
+# helpers identify a Cua Driver process by its bundle id instead of its path. They
+# are copied verbatim from _install-common.sh (a test keeps the copies identical)
+# because this script must work standalone via curl | bash.
+CUA_DRIVER_RELEASE_BUNDLE_ID="com.trycua.driver"
+
+cua_driver_plist_string() {
+    local plist="$1" key="$2" value=""
+    [ -f "$plist" ] || return 1
+    if [ -x /usr/libexec/PlistBuddy ]; then
+        value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$plist" 2>/dev/null)" || value=""
+    fi
+    if [ -z "$value" ]; then
+        value="$(awk -v key="$key" '
+            function text(line) { sub(".*<string>", "", line); sub("</string>.*", "", line); return line }
+            index($0, "<key>" key "</key>") {
+                if ($0 ~ /<string>/) { print text($0); exit }
+                want = 1; next
+            }
+            want && /<string>/ { print text($0); exit }
+            want && /<key>/ { exit }
+        ' "$plist" 2>/dev/null)" || value=""
+    fi
+    [ -n "$value" ] || return 1
+    printf '%s' "$value"
+}
+
+cua_driver_bundle_of_command() {
+    local command_line="$1" bundle
+    case "$command_line" in
+        */Contents/MacOS/cua-driver|*/Contents/MacOS/cua-driver\ *) ;;
+        *) return 1 ;;
+    esac
+    bundle="${command_line%%/Contents/MacOS/cua-driver*}"
+    case "$bundle" in
+        /*.app) printf '%s' "$bundle" ;;
+        *) return 1 ;;
+    esac
+}
+
+cua_driver_bundle_is_release() {
+    local bundle="$1" id=""
+    id="$(cua_driver_plist_string "$bundle/Contents/Info.plist" CFBundleIdentifier)" || id=""
+    if [ -n "$id" ]; then
+        [ "$id" = "$CUA_DRIVER_RELEASE_BUNDLE_ID" ]
+        return
+    fi
+    case "${bundle##*/}" in
+        CuaDriver.app|CuaDriver-*.app|"CuaDriver "*.app) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+cua_driver_ancestor_pids() {
+    local pid="$$" depth=0 parent
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+        printf '%s\n' "$pid"
+        parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')" || break
+        [ -n "$parent" ] || break
+        pid="$parent"
+        depth=$((depth + 1))
+    done
+}
+
+cua_driver_run_bounded() {
+    local limit="$1" child tenths
+    shift
+    "$@" >/dev/null 2>&1 &
+    child=$!
+    tenths=$((limit * 10))
+    while kill -0 "$child" 2>/dev/null && [ "$tenths" -gt 0 ]; do
+        sleep 0.1 2>/dev/null || sleep 1
+        tenths=$((tenths - 1))
+    done
+    kill "$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+}
+
 daemon_identity_matches_install() {
     case "$1" in
         "$APP_BUNDLE"/Contents/MacOS/cua-driver|"$APP_BUNDLE"/Contents/MacOS/cua-driver[[:space:]]*|\
@@ -255,8 +334,12 @@ daemon_identity_matches_install() {
         "$HOME_DIR"/packages/releases/*/cua-driver|"$HOME_DIR"/packages/releases/*/cua-driver[[:space:]]*|\
         "$LEGACY_HOME_DIR"/packages/current/cua-driver|"$LEGACY_HOME_DIR"/packages/current/cua-driver[[:space:]]*|\
         "$LEGACY_HOME_DIR"/packages/releases/*/cua-driver|"$LEGACY_HOME_DIR"/packages/releases/*/cua-driver[[:space:]]*) return 0 ;;
-        *) return 1 ;;
     esac
+    # Not one of our install paths: still ours when it runs a com.trycua.driver
+    # app bundle from anywhere else.
+    local bundle
+    bundle="$(cua_driver_bundle_of_command "$1")" || return 1
+    cua_driver_bundle_is_release "$bundle"
 }
 
 daemon_pid_is_release() {
@@ -268,9 +351,11 @@ daemon_pid_is_release() {
 release_daemon_fallback_pids() {
     command -v pgrep >/dev/null 2>&1 || return 2
     command -v ps >/dev/null 2>&1 || return 2
-    local uid pid identity candidates="" pgrep_status=0
+    local uid pid identity candidates="" pgrep_status=0 ancestors
     uid="$(id -u 2>/dev/null || true)"
     [[ "$uid" =~ ^[0-9]+$ ]] || return 2
+    # Never select this script or the process that started it.
+    ancestors="$(cua_driver_ancestor_pids)"
 
     candidates="$(pgrep -U "$uid" -f '(^|[[:space:]/])cua-driver([[:space:]]|$)' 2>/dev/null)" || pgrep_status=$?
     case "$pgrep_status" in
@@ -282,6 +367,7 @@ release_daemon_fallback_pids() {
     while IFS= read -r pid; do
         [[ -n "$pid" ]] || continue
         [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 2
+        printf '%s\n' "$ancestors" | grep -qx "$pid" && continue
         identity="$(daemon_process_identity "$pid" 2>/dev/null)" || return 2
         if daemon_identity_matches_install "$identity"; then
             printf '%s\n' "$pid"
@@ -297,9 +383,57 @@ verify_release_daemon_absent() {
         return 1
     fi
     if [[ -n "$pids" ]]; then
-        printf 'daemon_stop_incomplete: release cua-driver process remains but cannot be safely classified or signalled.\n' >&2
+        printf 'daemon_stop_incomplete: Cua Driver process(es) still running after SIGTERM and SIGKILL (pid: %s).\n' \
+            "$(printf '%s' "$pids" | tr '\n' ' ' | sed 's/ *$//')" >&2
         return 1
     fi
+}
+
+# Stop every Cua Driver process of this user that is not the pid-file daemon:
+# daemons started from another copy of the app, and extra instances. Each gets,
+# in order, a graceful stop request through its own bundle's CLI (or the trusted
+# installed helper), SIGTERM, then SIGKILL, with CUA_DRIVER_STOP_TIMEOUT seconds
+# (default 5) between steps. A pid is re-identified and its start time compared
+# before every signal, so a recycled pid is never signalled. Other users'
+# processes and other apps (any other bundle id) are never selected.
+stop_stray_release_daemons() {
+    local pids="" status=0 pid identity bundle version label generation helper how
+    pids="$(release_daemon_fallback_pids 2>/dev/null)" || status=$?
+    # Inspection failures are reported (and fail closed) by verify_release_daemon_absent.
+    [[ "$status" == "0" && -n "$pids" ]] || return 0
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        daemon_pid_alive "$pid" || continue
+        identity="$(daemon_process_identity "$pid" 2>/dev/null)" || continue
+        generation="$(daemon_process_generation "$pid" 2>/dev/null)" || continue
+        bundle="$(cua_driver_bundle_of_command "$identity" || true)"
+        version=""
+        [[ -z "$bundle" ]] || version="$(cua_driver_plist_string "$bundle/Contents/Info.plist" CFBundleShortVersionString || true)"
+        label="pid $pid, ${version:+version $version, }${bundle:-$identity}"
+        how=""
+
+        helper="${bundle:+$bundle/Contents/MacOS/cua-driver}"
+        [[ -n "$helper" && -x "$helper" ]] || helper="${DAEMON_STOP_HELPER:-}"
+        if [[ -n "$helper" && -x "$helper" ]] && daemon_pid_matches_generation "$pid" "$generation"; then
+            cua_driver_run_bounded "${CUA_DRIVER_STOP_TIMEOUT:-5}" "$helper" --expected-pid "$pid" stop
+            if daemon_wait_for_exit "$pid"; then how="a graceful stop request"; fi
+        fi
+        if [[ -z "$how" ]] && daemon_signal_if_current "$pid" "$generation" TERM; then
+            if daemon_wait_for_exit "$pid"; then how="SIGTERM"; fi
+        fi
+        if [[ -z "$how" ]] && daemon_signal_if_current "$pid" "$generation" KILL; then
+            if daemon_wait_for_exit "$pid"; then
+                how="SIGKILL after it ignored SIGTERM for ${CUA_DRIVER_STOP_TIMEOUT:-5}s"
+            fi
+        fi
+        if [[ -z "$how" ]] && ! daemon_pid_alive "$pid"; then how="its own exit"; fi
+        if [[ -n "$how" ]]; then
+            log "stopped Cua Driver ($label) with $how"
+        else
+            printf 'daemon_stop_incomplete: could not stop Cua Driver (%s); it is still running.\n' "$label" >&2
+        fi
+    done <<< "$pids"
+    return 0
 }
 
 stop_release_daemon() {
@@ -312,11 +446,11 @@ stop_release_daemon() {
             printf 'daemon_stop_incomplete: failed to identify live daemon pid %s safely.\n' "$pid" >&2
             return 1
         fi
-        if [[ "$status" == "0" ]]; then
-            [[ -n "$helper" && -x "$helper" ]] || {
-                printf 'daemon_stop_incomplete: trusted installed cua-driver stop helper is unavailable for pid %s.\n' "$pid" >&2
-                return 1
-            }
+        if [[ "$status" == "0" ]] && [[ ! -n "$helper" || ! -x "$helper" ]]; then
+            # The installed copy is gone or was never the one running (the daemon
+            # belongs to another copy of the app): the signal sweep below handles it.
+            printf 'note: no trusted stop helper for pid %s; stopping it with signals.\n' "$pid" >&2
+        elif [[ "$status" == "0" ]]; then
             generation="$(daemon_process_generation "$pid")" || {
                 printf 'daemon_stop_incomplete: failed to capture process generation for daemon pid %s.\n' "$pid" >&2
                 return 1
@@ -347,8 +481,10 @@ stop_release_daemon() {
                     fi
                 fi
             fi
+            log "stopped Cua Driver daemon pid $pid (pid-file daemon)"
         fi
     fi
+    stop_stray_release_daemons
     sleep 0.2 2>/dev/null || true
     verify_release_daemon_absent
 }

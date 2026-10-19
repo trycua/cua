@@ -362,10 +362,7 @@ pub fn initialize_result() -> Value {
 /// Interpreter uses for its system message.
 fn agent_instructions() -> String {
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
-        (
-            "AX (Accessibility)",
-            "MACOS.md (no-foreground contract, AXMenuBar navigation, SkyLight click dispatch)",
-        )
+        ("AX (Accessibility)", "MACOS.md (permissions)")
     } else if cfg!(target_os = "windows") {
         (
             "UIA (UI Automation)",
@@ -378,13 +375,22 @@ fn agent_instructions() -> String {
         )
     };
 
+    // macOS only: Cua Driver's own TCC prompts have one narrow, owner-gated
+    // exception to "system prompts belong to the user"; the steps and
+    // guardrails live in MACOS.md ("Install and approve permissions").
+    let permission_line = if cfg!(target_os = "macos") {
+        "\n\nmacOS: if `check_permissions` shows Accessibility or Screen Recording off, ask the user; approve Cua Driver's own prompts only if the owner explicitly authorized it (MACOS.md)."
+    } else {
+        ""
+    };
+
     // Only point at run_script when this driver offers it.
     #[cfg(feature = "script")]
     let script_enabled = crate::script_tool::enabled();
     #[cfg(not(feature = "script"))]
     let script_enabled = false;
     let script_line = if script_enabled {
-        " Loops, branches or retries: one `run_script` call (sandboxed JavaScript)."
+        " Loops, branches or retries: one `run_script` call."
     } else {
         ""
     };
@@ -392,18 +398,17 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
-Efficient loop:
 1. `list_windows({{app:"Name"}})` or `launch_app` for `pid` and `window_id`.
-2. Read narrowly: `get_window_state` with `query:"Save"` (or `max_elements`). Re-read with `since:"latest"`; for just a picture, `include_accessibility_tree:false`.
+2. Read narrowly: `get_window_state` with `query:"Save"`. Re-read with `since:"latest"`.
 3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixel `x,y` only for surfaces missing from the tree.
-4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: it stops at the first failure and returns what changed.{script_line}
+4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: stops at the first failure, returns what changed.{script_line}
 5. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)`. `unknown` and `effect:"unverifiable"` are not success.
 
-Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages, clipboard tools for the clipboard. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.
+Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.
 
 Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.next_call` (`browser_prepare`) if refused, then `browser_click`/`browser_type`/`browser_pointer` (hover, drag); never desktop pointer tools.
 
-`start_session` is optional; repeat a short `session` label on every call that accepts it. On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.
+`start_session` is optional; repeat a short `session` label on every call that accepts it. On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.{permission_line}
 
 Details: `skill://cua-driver/SKILL.md` and {platform_skill_pointer}."#
     )
@@ -526,6 +531,27 @@ mod agent_instruction_tests {
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"
         );
+    }
+
+    #[test]
+    fn macos_instructions_gate_permission_approval_on_owner_authorization() {
+        let instructions = agent_instructions();
+        let has_line = instructions.contains("Cua Driver's own prompts");
+        assert_eq!(
+            has_line,
+            cfg!(target_os = "macos"),
+            "only the macOS instructions mention TCC prompts"
+        );
+        if has_line {
+            // Keeps the narrow exception narrow: ask first, own prompts only,
+            // explicit owner authorization; MACOS.md holds the detail.
+            assert!(instructions.contains("ask the user"));
+            assert!(instructions.contains(
+                "approve Cua Driver's own prompts only if the owner explicitly authorized it"
+            ));
+            assert!(instructions.contains("(MACOS.md)"));
+            assert!(instructions.contains("`check_permissions`"));
+        }
     }
 
     #[test]

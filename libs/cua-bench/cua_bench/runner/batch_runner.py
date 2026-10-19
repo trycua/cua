@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
 from ..sandboxes import Progress, explain_error, image_facts, open_sandbox
-from ..targets import EnvSpec, PoolPlan, Target, TargetError, plan_claims
+from ..targets import EnvSpec, Target, TargetError
 from .episode import AgentOptions, run_episode
 from .output import routed_stdio, task_log
 
@@ -43,7 +43,7 @@ class Job:
 
 #: Version of the ``result.json`` / ``summary.json`` layout. New keys are
 #: additive only; a rename or removal bumps it.
-RESULT_SCHEMA_VERSION = 1
+RESULT_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -67,15 +67,13 @@ class JobResult:
     error: Optional[str] = None
     #: Wall time of the variant in seconds.
     duration_s: float = 0.0
-    #: Where it ran: ``local`` or ``cloud``.
+    #: Where it ran: ``local``, or the provider of ``--on``.
     on: str = "local"
     #: What ran it, ``<location>-<engine>`` (``local-gvisor``, ``local-qemu``,
-    #: ``cloud-gvisor``, ``cloud-kubevirt``, ``cloud-pool:<name>``).
+    #: ``e2b-auto``).
     backend: str = ""
     #: The image as the task or ``--image`` named it.
     image: Optional[str] = None
-    #: The pool that served the sandbox (unused: always ``None`` since Cua Cloud ended).
-    pool: Optional[str] = None
     #: The variant's output directory.
     output_dir: str = ""
     #: Extra values the task or agent reported.
@@ -85,8 +83,8 @@ class JobResult:
     # the pinned repo@sha256 when the SDK reports it, and the architecture.
     #: ``container`` or ``vm``.
     kind: Optional[str] = None
-    #: The engine (``gvisor``, ``runc``, ``qemu``, ``lume``, ``kubevirt``)
-    #: when one was chosen; ``None``: the SDK picked.
+    #: The engine (``gvisor``, ``runc``, ``qemu``, ``lume``) when one was
+    #: chosen; ``None``: the SDK picked.
     runtime: Optional[str] = None
     #: The resolved image reference.
     image_ref: Optional[str] = None
@@ -100,7 +98,7 @@ class JobResult:
     attempt: int = 0
     #: How many infrastructure retries (``--retries``) the variant took.
     retries: int = 0
-    #: The sandbox's qualified ref (``local:<name>``, ``cloud:<name>``), when known.
+    #: The sandbox's qualified ref (``local:<name>``), when known.
     sandbox: Optional[str] = None
 
     @property
@@ -109,14 +107,14 @@ class JobResult:
 
 
 class Reporter(Protocol):
-    def plan(self, target: Target, jobs: list[Job], plans: list[PoolPlan]) -> None: ...
+    def plan(self, target: Target, jobs: list[Job]) -> None: ...
     def started(self, job: Job, index: int, total: int) -> None: ...
     def progress(self, job: Job, event: Progress) -> None: ...
     def finished(self, result: JobResult, index: int, total: int) -> None: ...
 
 
 class NullReporter:
-    def plan(self, target, jobs, plans) -> None:  # noqa: D401
+    def plan(self, target, jobs) -> None:  # noqa: D401
         pass
 
     def started(self, job, index, total) -> None:
@@ -195,12 +193,8 @@ class BatchRunner:
         self._env_factory = env_factory
         self._attach = attach
 
-    def plans(self, jobs: list[Job]) -> list[PoolPlan]:
-        return plan_claims(((job.session_id, job.spec) for job in jobs), self.target.concurrency)
-
     async def run(self, jobs: list[Job]) -> list[JobResult]:
-        plans = self.plans(jobs)
-        self.reporter.plan(self.target, jobs, plans)
+        self.reporter.plan(self.target, jobs)
         semaphore = asyncio.Semaphore(self.target.concurrency)
         total = len(jobs)
         finished = 0
@@ -293,7 +287,6 @@ class BatchRunner:
                 env = self._env_factory(str(job.task_path))
                 result._setup_started = _now_utc()  # type: ignore[attr-defined]
                 async with opener(spec, target, on_progress=on_progress) as sandbox:
-                    result.pool = getattr(sandbox, "pool_name", None)
                     result.sandbox = _sandbox_ref(sandbox)
                     facts = image_facts(sandbox, spec)
                     for key, value in facts.items():
@@ -304,7 +297,6 @@ class BatchRunner:
                         job,
                         "running",
                         sandbox=result.sandbox,
-                        pool=result.pool,
                         **{k: v for k, v in facts.items() if v is not None},
                     )
                     session = attach(sandbox, spec)
@@ -369,5 +361,5 @@ class BatchRunner:
             (job.output_dir / "result.json").write_text(json.dumps(payload, indent=2))
         except OSError:
             pass
-        fields = {"reward": result.reward, "error": result.error, "pool": result.pool}
+        fields = {"reward": result.reward, "error": result.error}
         self._status(job, result.status, **{k: v for k, v in fields.items() if v is not None})

@@ -1,12 +1,12 @@
-"""``cb run``: run tasks locally or in the cloud, and inspect runs.
+"""``cb run``: run tasks, and inspect runs.
 
 Usage:
-    cb run <task|dataset> [--on local|cloud] [--kind container|vm] [--runtime <engine>] ...
+    cb run <task|dataset> [--on local] [--kind container|vm] [--runtime <engine>] ...
     cb run task <path>          # one task (one variant, --variant-id)
     cb run dataset <path|name>  # every task and variant, in parallel
     cb run list | info <id> | watch <id> | logs <id> | stop <id>
 
-Both targets use the same runner: each variant gets a cua-sandbox sandbox
+Every target uses the same runner: each variant gets a cua-sandbox sandbox
 (a local gVisor container / QEMU / Lume, or a machine of your own cloud),
 the task's setup, the oracle or agent, and evaluate() run in this process,
 and results land in ``$XDG_DATA_HOME/cua-bench/runs/<run id>/``.
@@ -83,7 +83,7 @@ def add_target_args(parser) -> None:
     )
     group.add_argument(
         "--runtime",
-        choices=["auto", "gvisor", "runc", "qemu", "lume", "kubevirt"],
+        choices=["auto", "gvisor", "runc", "qemu", "lume"],
         default=None,
         help="Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its "
         "kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else "
@@ -97,9 +97,6 @@ def add_target_args(parser) -> None:
     )
     group.add_argument("--cpu", type=int, help="vCPUs per sandbox")
     group.add_argument("--memory", help="Memory per sandbox (e.g. 4096, 4G)")
-    # Deprecated no-ops: they configured Cua Cloud's managed pools, which have ended.
-    group.add_argument("--warm", action="store_true", help=argparse.SUPPRESS)
-    group.add_argument("--claim-ttl", dest="claim_ttl", help=argparse.SUPPRESS)
     # cua-bench 0.2.11 flags, deprecated (a notice names the new flags).
     group.add_argument(
         "--platform",
@@ -152,8 +149,6 @@ def target_from_args(args):
         cpu=getattr(args, "cpu", None),
         memory=getattr(args, "memory", None),
         concurrency=getattr(args, "max_parallel", None) or 1,
-        warm=getattr(args, "warm", False),
-        claim_ttl=getattr(args, "claim_ttl", None),
     )
 
 
@@ -163,14 +158,13 @@ def target_from_args(args):
 
 
 class ConsoleReporter:
-    """Plan, per-variant status lines and pool scaling notices."""
+    """Plan and per-variant status lines."""
 
     WAIT_EVERY_S = 30.0
 
     def __init__(self, stream=None, log_file: Optional[Path] = None) -> None:
         self.stream = stream or sys.stdout
         self.log_file = log_file
-        self._cold_pools: set[str] = set()
         self._last_wait: dict[str, float] = {}
         self._color = bool(getattr(self.stream, "isatty", lambda: False)())
 
@@ -189,33 +183,19 @@ class ConsoleReporter:
             except OSError:
                 pass
 
-    def plan(self, target, jobs, plans) -> None:
+    def plan(self, target, jobs) -> None:
         backends = sorted({job.spec.backend(target.on) for job in jobs})
         self.line(
             f"{len(jobs)} variant(s) on {self._c(BOLD, target.on)} "
             f"({', '.join(backends)}), up to {target.concurrency} at a time"
         )
-        for plan in plans:
-            self.line(
-                f"  {plan.spec.image_label}  {plan.tasks} variant(s), sandboxes "
-                f"max {plan.max_pool_size}"
-            )
 
     def started(self, job, index, total) -> None:
         what = "acquiring sandbox" if job.spec.needs_sandbox else "no environment (dataset)"
         self.line(self._c(GREY, f"[{index}/{total}] ▸ {job.name}: {what}"))
 
     def progress(self, job, event) -> None:
-        if event.stage == "cold_start":
-            key = event.pool or "pool"
-            if key not in self._cold_pools:
-                self._cold_pools.add(key)
-                self.line(
-                    self._c(
-                        YELLOW, f"  pool {key} is scaling up from zero (about 1 min, VMs longer)"
-                    )
-                )
-        elif event.stage == "ready":
+        if event.stage == "ready":
             elapsed = f" ({event.elapsed:.0f}s)" if event.elapsed else ""
             self.line(self._c(GREY, f"  ▸ {job.name}: sandbox ready{elapsed}"))
         elif event.stage == "waiting":
@@ -223,8 +203,6 @@ class ConsoleReporter:
             if now - self._last_wait.get(job.session_id, 0.0) >= self.WAIT_EVERY_S:
                 self._last_wait[job.session_id] = now
                 self.line(self._c(GREY, f"  ▸ {job.name}: {event.message}"))
-        elif event.stage == "pool" and event.message:
-            self.line(self._c(GREY, f"  {event.message}"))
 
     def finished(self, result, index, total) -> None:
         reward = "-" if result.reward is None else f"{result.reward:g}"
@@ -350,7 +328,7 @@ def build_jobs(
     from cua_bench.targets import check_requirements
 
     # Adapters declare what they need (KVM for local VMs, API keys ...):
-    # fail before any sandbox is claimed.
+    # fail before any sandbox starts.
     check_requirements((job.spec for job in jobs), target)
     return jobs
 
@@ -474,8 +452,7 @@ def _cmd_execute(args, kind: str) -> int:
     except KeyboardInterrupt:
         _track_run_completed(taskset, None, len(jobs), "cancelled")
         print(
-            f"\n{YELLOW}Interrupted: sandboxes released (cloud claims expire on their TTL "
-            f"if a release did not finish).{RESET}"
+            f"\n{YELLOW}Interrupted: sandboxes released.{RESET}"
         )
         return 130
     except BaseException:
@@ -618,7 +595,6 @@ def _summarize(results, output_dir: Path, kind: str, args) -> int:
                 "variant": r.variant,
                 "status": r.status,
                 "reward": r.reward,
-                "pool": r.pool,
                 "duration_s": r.duration_s,
                 "error": r.error,
                 "kind": r.kind,
@@ -674,12 +650,8 @@ def _summarize(results, output_dir: Path, kind: str, args) -> int:
 
 def _print_dry_run(target, jobs) -> int:
     """``--dry-run``: what each variant would run on, without starting anything."""
-    from cua_bench.targets import plan_claims
-
     reporter = ConsoleReporter()
-    reporter.plan(
-        target, jobs, plan_claims(((j.session_id, j.spec) for j in jobs), target.concurrency)
-    )
+    reporter.plan(target, jobs)
     where = target.on
     for job in jobs:
         spec = job.spec
@@ -890,7 +862,7 @@ def cmd_stop(args) -> int:
                     break
                 time.sleep(0.5)
             else:
-                print(f"{YELLOW}Still running after 60s; cloud claims expire on their TTL.{RESET}")
+                print(f"{YELLOW}Still running after 60s.{RESET}")
         except (ValueError, ProcessLookupError):
             pass
     for session in sessions:
@@ -957,7 +929,7 @@ def execute(args):
     command = commands.get(getattr(args, "run_command", None))
     if command is None:
         print(f"{YELLOW}Usage:{RESET}")
-        print("  cb run <task|dataset> [--on local|cloud]   Run tasks")
+        print("  cb run <task|dataset> [--on local]         Run tasks")
         print("  cb run list | info <id> | watch <id> | logs <id> | stop <id>")
         return 1
     return command(args)

@@ -65,7 +65,10 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
     }
     case "share": {
       const [action, role, outcome] = [word("action"), word("role"), word("outcome")];
-      return action && role && outcome ? new S.Share({ action, role, outcome }) : null;
+      // Why and where a share failed (CUA-1855); a page from before them sends neither.
+      const errorKind = s.errorKind === undefined ? "none" : word("errorKind");
+      const failedStage = s.failedStage === undefined ? "none" : word("failedStage");
+      return action && role && outcome && errorKind && failedStage ? new S.Share({ action, role, outcome, errorKind, failedStage }) : null;
     }
     case "app-update": {
       const [action, channel, trigger] = [word("action"), word("channel"), word("trigger")];

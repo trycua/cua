@@ -64,9 +64,18 @@ const UNAVAILABLE_HELP: &str = "this Mac needs Touch ID or a login password";
 #[cfg(target_os = "windows")]
 const UNAVAILABLE_HELP: &str = "Cua asks for Windows Hello, or your Windows account password when Hello is not set up; this account has neither (set a password in Settings, Accounts, Sign-in options)";
 #[cfg(target_os = "linux")]
-const UNAVAILABLE_HELP: &str = "polkit needs an authentication agent in the session and the ai.cua.spaces.keyvault action installed (the Cua .deb installs it)";
+const UNAVAILABLE_HELP: &str = "on Linux this needs Cua Spaces installed from the .deb (it sets up the password prompt; the AppImage cannot) and a desktop session with a polkit authentication agent running";
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 const UNAVAILABLE_HELP: &str = "this platform has no confirmation prompt";
+
+/// What a refusal means, and what to do when no prompt was shown. On Linux
+/// polkit refuses without asking when its policy does not let this session
+/// ask (an older policy, in a remote desktop session: CUA-1725),
+/// so the words say how to get the prompt.
+#[cfg(target_os = "linux")]
+const DENIED: &str = "polkit did not confirm it is you. If no password prompt appeared, update Cua Spaces from the latest .deb (it sets up the prompt) and use a desktop session with a polkit authentication agent running";
+#[cfg(not(target_os = "linux"))]
+const DENIED: &str = "biometric authorization was denied";
 
 /// Why an interactive authorization did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,7 +97,7 @@ pub enum AuthError {
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Denied => write!(f, "biometric authorization was denied"),
+            Self::Denied => f.write_str(DENIED),
             Self::Unavailable => write!(f, "user confirmation is unavailable: {UNAVAILABLE_HELP}"),
             Self::Cancelled => write!(f, "biometric authorization was cancelled"),
             Self::Failed(detail) => write!(f, "the confirmation prompt failed: {detail}"),
@@ -408,7 +417,10 @@ fn hello_result(value: i32) -> Result<(), AuthError> {
 /// `pkcheck`'s exit status (pkcheck(1)): 0 authorized, 1 not authorized,
 /// 2 no authentication agent to ask (the challenge could not be made),
 /// 3 the user dismissed the dialog, 127 an error, said on stderr. An error
-/// (or a signal) is reported as one, never as the user's refusal.
+/// (or a signal) is reported as one, never as the user's refusal, except
+/// an action polkit does not know: the policy is not installed (the
+/// AppImage cannot install it), so no prompt can be shown here
+/// (CUA-1855).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn pkcheck_result(code: Option<i32>, stderr: &str) -> Result<(), AuthError> {
     let detail = || {
@@ -424,6 +436,7 @@ fn pkcheck_result(code: Option<i32>, stderr: &str) -> Result<(), AuthError> {
         Some(1) => Err(AuthError::Denied),
         Some(2) => Err(AuthError::Unavailable),
         Some(3) => Err(AuthError::Cancelled),
+        _ if stderr.contains("is not registered") => Err(AuthError::Unavailable),
         _ => Err(AuthError::Failed(detail())),
     }
 }
@@ -1027,9 +1040,29 @@ mod tests {
             pkcheck_result(Some(42), ""),
             Err(AuthError::Failed(_))
         ));
+        // No policy installed (an AppImage), as polkit 124 says it.
+        assert_eq!(
+            pkcheck_result(
+                Some(127),
+                "Error checking for authorization ai.cua.spaces.keyvault: GDBus.Error:org.freedesktop.PolicyKit1.Error.Failed: Action ai.cua.spaces.keyvault is not registered\n"
+            ),
+            Err(AuthError::Unavailable)
+        );
         assert_ne!(
             AuthError::Failed("x".into()).to_string(),
             AuthError::Denied.to_string()
+        );
+    }
+
+    /// CUA-1855: on Linux a refusal and a missing prompt say what to do.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_errors_name_the_next_step() {
+        let denied = AuthError::Denied.to_string();
+        assert!(denied.contains("If no password prompt appeared") && denied.contains(".deb"));
+        let unavailable = AuthError::Unavailable.to_string();
+        assert!(
+            unavailable.contains(".deb") && unavailable.contains("polkit authentication agent")
         );
     }
 
@@ -1051,12 +1084,27 @@ mod tests {
         .expect("the policy file the deb installs");
         assert!(policy.contains(&format!("<action id=\"{POLKIT_ACTION}\">")));
         assert!(policy.contains(&format!("<action id=\"{POLKIT_DEVICE_ACTION}\">")));
-        // The user's own password or fingerprint, every time, in a session they are at.
-        assert!(policy.contains("<allow_active>auth_self</allow_active>"));
-        assert!(
-            policy.contains("<allow_any>no</allow_any>")
-                && policy.contains("<allow_inactive>no</allow_inactive>")
+        // The user's own password or fingerprint, every time, in a session
+        // they are at: a local desktop (active) or a remote desktop, which
+        // polkit files under "any" (xrdp, VNC: CUA-1725). Never without
+        // asking, and never from an inactive session.
+        assert_eq!(
+            policy
+                .matches("<allow_active>auth_self</allow_active>")
+                .count(),
+            2
         );
+        assert_eq!(
+            policy.matches("<allow_any>auth_self</allow_any>").count(),
+            2
+        );
+        assert_eq!(
+            policy
+                .matches("<allow_inactive>no</allow_inactive>")
+                .count(),
+            2
+        );
+        assert!(!policy.contains(">yes<") && !policy.contains("auth_self_keep"));
         // Only root may pass polkit details, so the messages carry no `$(...)`.
         assert!(
             !policy.contains("$("),

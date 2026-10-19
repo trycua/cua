@@ -11,8 +11,18 @@ Space. They open it from their own app or terminal as `relay:<machine>`.
 
 To share from the app, press **Share** in the Space's toolbar, enter an email
 address or account ID, and choose **Viewer** or **Editor**. The same list shows
-who has access and who is connected. Cua Spaces asks you to confirm with Touch
-ID or your login password first.
+who has access and who is connected. Cua Spaces asks you to confirm first:
+Touch ID or your login password on a Mac, Windows Hello or your account password
+on Windows, and your password through polkit on Linux.
+
+<Callout title="Sharing on Linux">
+  Sharing on Linux needs Cua Spaces installed from the **.deb**, and a desktop
+  session with a polkit authentication agent running (XFCE, GNOME and KDE start
+  one). The .deb installs the password prompt; the AppImage cannot, so it cannot
+  share. A remote desktop (xrdp, VNC) works too: you get the same password
+  prompt. If sharing fails at once with no prompt, update to the latest .deb.
+  See [Linux packages](/spaces/guides/install#linux-packages).
+</Callout>
 
 You can share with one person at a time, or with a whole team at once. See
 [People and teams](#people-and-teams).

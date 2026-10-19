@@ -486,8 +486,11 @@ extension WebUIBridge {
                   let method = word("mountMethod"), let outcome = word("outcome") else { return nil }
             return .volumeSetup(surface: surface, storage: storage, addToFinder: finder, mountMethod: method, outcome: outcome)
         case "share":
-            guard let action = word("action"), let role = word("role"), let outcome = word("outcome") else { return nil }
-            return .share(action: action, role: role, outcome: outcome)
+            // Why and where a share failed (CUA-1855); a page from before them sends neither.
+            guard let action = word("action"), let role = word("role"), let outcome = word("outcome"),
+                  let errorKind = s["errorKind"] == nil ? "none" : word("errorKind"),
+                  let failedStage = s["failedStage"] == nil ? "none" : word("failedStage") else { return nil }
+            return .share(action: action, role: role, outcome: outcome, errorKind: errorKind, failedStage: failedStage)
         case "app-update":
             guard let action = word("action"), let channel = word("channel"), let trigger = word("trigger") else { return nil }
             return .appUpdate(action: action, channel: channel, trigger: trigger)

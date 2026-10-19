@@ -2395,103 +2395,107 @@ extern "C" {
 #[test]
 #[ignore]
 fn harness_appkit_window_capture_ignores_pointer_outside_window() {
-    use base64::Engine as _;
-
-    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-capture-pointer-outside")
-        .expect("start macOS daemon proxy");
-    let harness = Harness::launch();
-    let (wid, _) = driver
-        .find_window(harness.pid as i64, "CuaTestHarness AppKit")
-        .expect("find AppKit harness window");
-
-    // Offset the window from the screen origin and leave room above it. Keep
-    // its current size: the harness window is not resizable (no settable
-    // AXSize), and set_window_frame only writes AXSize when the size changes.
-    let listed = driver.call(
-        "list_windows",
-        serde_json::json!({ "pid": harness.pid as i64 }),
-    );
-    assert!(!listed.is_error(), "list_windows: {}", listed.text());
-    let current = listed.structured()["windows"]
-        .as_array()
-        .and_then(|windows| {
-            windows
-                .iter()
-                .find(|w| w["window_id"].as_u64() == Some(wid))
-        })
-        .map(|w| w["bounds"].clone())
-        .expect("AppKit harness window bounds");
-    let width = current["width"].as_f64().expect("window width");
-    let height = current["height"].as_f64().expect("window height");
-    let (x, y) = (180.0, 260.0);
-    let moved = driver.call(
-        "set_window_frame",
-        serde_json::json!({
-            "pid": harness.pid as i64, "window_id": wid,
-            "x": x, "y": y, "width": width, "height": height
-        }),
-    );
-    assert!(!moved.is_error(), "set_window_frame: {}", moved.text());
-
-    // Park the real pointer just above the window, outside its frame but
-    // close enough for ScreenCaptureKit to fold it into the capture (a
-    // benchmark parked it 27 pt above a window's top edge).
-    // SAFETY: plain CoreGraphics call with a by-value point.
-    unsafe {
-        CGWarpMouseCursorPosition(WarpPoint {
-            x: x + width / 2.0,
-            y: y - 24.0,
-        })
-    };
-    std::thread::sleep(Duration::from_millis(300));
-
-    let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
-    assert!(!snapshot.is_error(), "capture: {}", snapshot.text());
-    let structured = snapshot.structured();
-    assert_eq!(structured["screenshot_frame_valid"], true, "{structured}");
-    let scale = structured["screenshot_scale"]
-        .as_f64()
-        .expect("screenshot scale");
-    let bounds = &structured["window_bounds"];
-    let data = snapshot.raw["result"]["content"]
-        .as_array()
-        .and_then(|parts| parts.iter().find(|part| part["type"] == "image"))
-        .and_then(|part| part["data"].as_str())
-        .expect("window screenshot image part");
-    let png = base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .expect("decode screenshot");
-    let image = image::load_from_memory(&png)
-        .expect("load screenshot")
-        .to_rgba8();
-    let (w, h) = image.dimensions();
-    assert_eq!(
-        (f64::from(w), f64::from(h)),
-        (
-            (bounds["width"].as_f64().unwrap() * scale).round(),
-            (bounds["height"].as_f64().unwrap() * scale).round()
+    run_case(
+        native_readonly_case(
+            "appkit",
+            "window_capture_ignores_pointer_outside_window",
+            Targeting::NotApplicable,
+            DriverRoute::WindowState,
+            vec![OracleKind::Pixels],
         ),
-        "screenshot size must match the window bounds at the reported scale"
-    );
+        |pid, wid, driver| {
+            use base64::Engine as _;
 
-    // The bug left a transparent band across the top and down the right side
-    // of the image. Sample just inside each edge, away from the rounded
-    // corners: every sample must be the window's own opaque pixels.
-    let inset = (4.0 * scale) as u32;
-    let samples = [
-        (w / 2, inset),         // top centre (title bar)
-        (w / 4, inset),         // top, left of centre
-        (3 * w / 4, inset),     // top, right of centre
-        (w - 1 - inset, h / 2), // right edge
-        (w - 1 - inset, h / 4), // right edge, upper
-        (w / 2, h - 1 - inset), // bottom centre
-    ];
-    for (sx, sy) in samples {
-        let alpha = image.get_pixel(sx, sy).0[3];
-        assert_eq!(
-            alpha, 255,
-            "pixel ({sx},{sy}) of a {w}x{h} window screenshot is transparent: \
-             the window does not fill its own capture"
-        );
-    }
+            // Offset the window from the screen origin and leave room above
+            // it. Keep its current size: the harness window is not resizable
+            // (no settable AXSize), and set_window_frame only writes AXSize
+            // when the size changes.
+            let listed = driver.call("list_windows", serde_json::json!({ "pid": pid as i64 }));
+            assert!(!listed.is_error(), "list_windows: {}", listed.text());
+            let current = listed.structured()["windows"]
+                .as_array()
+                .and_then(|windows| {
+                    windows
+                        .iter()
+                        .find(|w| w["window_id"].as_u64() == Some(wid))
+                })
+                .map(|w| w["bounds"].clone())
+                .expect("AppKit harness window bounds");
+            let width = current["width"].as_f64().expect("window width");
+            let height = current["height"].as_f64().expect("window height");
+            let (x, y) = (180.0, 260.0);
+            let moved = driver.call(
+                "set_window_frame",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "x": x, "y": y, "width": width, "height": height
+                }),
+            );
+            assert!(!moved.is_error(), "set_window_frame: {}", moved.text());
+
+            // Park the real pointer just above the window, outside its frame
+            // but close enough for ScreenCaptureKit to fold it into the
+            // capture (a benchmark parked it 27 pt above a window's top edge).
+            // SAFETY: plain CoreGraphics call with a by-value point.
+            unsafe {
+                CGWarpMouseCursorPosition(WarpPoint {
+                    x: x + width / 2.0,
+                    y: y - 24.0,
+                })
+            };
+            std::thread::sleep(Duration::from_millis(300));
+
+            let snapshot = snapshot_elements(driver, pid, wid);
+            assert!(!snapshot.is_error(), "capture: {}", snapshot.text());
+            let structured = snapshot.structured();
+            assert_eq!(structured["screenshot_frame_valid"], true, "{structured}");
+            let scale = structured["screenshot_scale"]
+                .as_f64()
+                .expect("screenshot scale");
+            let bounds = &structured["window_bounds"];
+            let data = snapshot.raw["result"]["content"]
+                .as_array()
+                .and_then(|parts| parts.iter().find(|part| part["type"] == "image"))
+                .and_then(|part| part["data"].as_str())
+                .expect("window screenshot image part");
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .expect("decode screenshot");
+            let image = image::load_from_memory(&png)
+                .expect("load screenshot")
+                .to_rgba8();
+            let (w, h) = image.dimensions();
+            assert_eq!(
+                (f64::from(w), f64::from(h)),
+                (
+                    (bounds["width"].as_f64().unwrap() * scale).round(),
+                    (bounds["height"].as_f64().unwrap() * scale).round()
+                ),
+                "screenshot size must match the window bounds at the reported scale"
+            );
+
+            // The bug left a transparent band across the top and down the
+            // right side of the image. Sample just inside each edge, away
+            // from the rounded corners: every sample must be the window's own
+            // opaque pixels.
+            let inset = (4.0 * scale) as u32;
+            let samples = [
+                (w / 2, inset),         // top centre (title bar)
+                (w / 4, inset),         // top, left of centre
+                (3 * w / 4, inset),     // top, right of centre
+                (w - 1 - inset, h / 2), // right edge
+                (w - 1 - inset, h / 4), // right edge, upper
+                (w / 2, h - 1 - inset), // bottom centre
+            ];
+            for (sx, sy) in samples {
+                let alpha = image.get_pixel(sx, sy).0[3];
+                assert_eq!(
+                    alpha, 255,
+                    "pixel ({sx},{sy}) of a {w}x{h} window screenshot is transparent: \
+                     the window does not fill its own capture"
+                );
+            }
+            Observation::delivered(vec![OracleKind::Pixels], Evidence::default())
+        },
+    );
 }

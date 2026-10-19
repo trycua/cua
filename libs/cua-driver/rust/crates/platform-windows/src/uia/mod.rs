@@ -586,7 +586,7 @@ unsafe fn walk_root_by_pid(
         if pid != target_pid {
             continue;
         }
-    // Match — pull a cached subtree from this element using the same
+        // Match — pull a cached subtree from this element using the same
         // cache_req shape as the primary path so walk_cached_bounded sees the same
         // properties + patterns.
         let cached = match elem.BuildUpdatedCache(cache_req) {
@@ -1330,7 +1330,8 @@ mod tests {
             let mut state = WalkState::new(&mut budget, case.max_depth);
             walk_synthetic_tree(&case.children, 0, 0, &mut state);
             assert_eq!(
-                state.budget.outcome().nodes_visited, case.expected_visited,
+                state.budget.outcome().nodes_visited,
+                case.expected_visited,
                 "{}: visited",
                 case.name
             );

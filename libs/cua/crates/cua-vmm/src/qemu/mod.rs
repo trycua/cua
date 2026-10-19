@@ -373,11 +373,8 @@ impl QemuRuntime {
         .ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                if windows_arm {
-                    "Windows ARM needs Secure Boot firmware: AAVMF_CODE.secboot.fd and AAVMF_VARS.ms.fd in <qemu prefix>/share/AAVMF or /usr/share/AAVMF".into()
-                } else {
-                    format!("install edk2 (Homebrew qemu ships it; {})", QemuPackageManager::linux_hint())
-                },
+                format!("install edk2 (Homebrew qemu ships it; {}){}", QemuPackageManager::linux_hint(),
+                    if windows_arm { "; Windows ARM needs AAVMF_CODE.secboot.fd + AAVMF_VARS.ms.fd in <qemu prefix>/share/AAVMF or /usr/share/AAVMF" } else { "" }),
             )
         })?;
         match fw.vars_template {
@@ -622,12 +619,7 @@ impl QemuRuntime {
         {
             let mut command = tokio::process::Command::new("/bin/sh");
             if let Some(swtpm) = &swtpm {
-                command
-                    .env("CUA_SWTPM", swtpm)
-                    .env("CUA_TPM_DIR", &tpm_dir)
-                    .env("CUA_TPM_SOCKET", tpm_dir.join("swtpm.sock"))
-                    .env("CUA_TPM_PID", dir.join("swtpm.pid"))
-                    .env("CUA_TPM_LOG", dir.join("swtpm.log"));
+                command.env("CUA_SWTPM", swtpm).env("CUA_TPM_DIR", &tpm_dir);
             }
             let out = command
                 .arg("-c")
@@ -1531,17 +1523,7 @@ impl Runtime for QemuRuntime {
 
 #[cfg(unix)]
 const TPM_LAUNCH: &str = r#"
-"$CUA_SWTPM" socket --tpm2 --terminate --tpmstate "dir=$CUA_TPM_DIR" --ctrl "type=unixio,path=$CUA_TPM_SOCKET" --pid "file=$CUA_TPM_PID" </dev/null >>"$CUA_TPM_LOG" 2>&1 &
-tpm=$!
-i=0
-until [ -S "$CUA_TPM_SOCKET" ]; do
-    if ! kill -0 "$tpm" 2>/dev/null || [ "$i" -ge 100 ]; then
-        kill "$tpm" 2>/dev/null
-        exit 1
-    fi
-    i=$((i + 1))
-    sleep 0.05
-done
+"$CUA_SWTPM" socket --daemon --tpm2 --terminate --tpmstate "dir=$CUA_TPM_DIR" --ctrl "type=unixio,path=$CUA_TPM_DIR/swtpm.sock" --pid "file=$CUA_TPM_DIR/../swtpm.pid" </dev/null >>"$CUA_TPM_DIR/../swtpm.log" 2>&1 || exit 1
 "$0" "$@" </dev/null >>"$CUA_QEMU_LOG" 2>&1 & echo $!
 "#;
 

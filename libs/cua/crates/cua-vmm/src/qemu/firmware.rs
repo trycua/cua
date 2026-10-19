@@ -117,8 +117,6 @@ pub fn find_uefi_with(arch: Arch, qemu_bin: &Path, exists: impl Fn(&Path) -> boo
     None
 }
 
-/// Windows ARM needs Secure Boot code and a Microsoft-enrolled persistent store.
-/// Search only known matching pairs; never pair arbitrary firmware halves.
 pub fn find_windows_arm(qemu_bin: &Path) -> Option<Uefi> {
     find_windows_arm_with(qemu_bin, |p| p.is_file())
 }

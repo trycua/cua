@@ -17,20 +17,19 @@ fn fake_swtpm() {
 
 #[tokio::test]
 async fn readiness_failure_and_stop_tpm() {
-    for mode in ["ready", "failure", "timeout"] {
+    for mode in ["ready", "failure"] {
         let tmp = tempfile::tempdir().unwrap();
         let runtime = QemuRuntime::new(QemuConfig {
             root: tmp.path().into(),
             ..Default::default()
         });
         let dir = runtime.dir("vm");
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join("tpm")).unwrap();
         let tpm = dir.join("swtpm");
         let body = match mode {
             "failure" => "#!/bin/sh\nexit 1\n",
-            "timeout" => "#!/bin/sh\nexec sleep 30\n",
             _ => {
-                "#!/bin/sh\nexec \"$CUA_TEST_BIN\" --exact qemu::tpm_tests::fake_swtpm --nocapture\n"
+                "#!/bin/sh\n\"$CUA_TEST_BIN\" --exact qemu::tpm_tests::fake_swtpm --nocapture </dev/null >/dev/null 2>&1 &\nwhile [ ! -S \"$CUA_TPM_SOCKET\" ]; do sleep 0.01; done\n"
             }
         };
         std::fs::write(&tpm, body).unwrap();
@@ -39,16 +38,16 @@ async fn readiness_failure_and_stop_tpm() {
             Duration::from_secs(4),
             tokio::process::Command::new("/bin/sh")
                 .arg("-c")
-                .arg(TPM_LAUNCH.replace("100", "3"))
+                .arg(TPM_LAUNCH)
                 .arg("/bin/sh")
                 .args([
                     "-c",
-                    "[ -S \"$CUA_TPM_SOCKET\" ] && touch \"$CUA_TPM_DIR/started\"",
+                    "[ -S \"$CUA_TPM_SOCKET\" ] && touch \"$CUA_TPM_DIR/../started\"",
                 ])
                 .env("CUA_TEST_BIN", std::env::current_exe().unwrap())
                 .env("CUA_SWTPM", &tpm)
-                .env("CUA_TPM_DIR", &dir)
-                .env("CUA_TPM_SOCKET", dir.join("swtpm.sock"))
+                .env("CUA_TPM_DIR", dir.join("tpm"))
+                .env("CUA_TPM_SOCKET", dir.join("tpm/swtpm.sock"))
                 .env("CUA_TPM_PID", dir.join("swtpm.pid"))
                 .env("CUA_TPM_LOG", dir.join("swtpm.log"))
                 .env("CUA_QEMU_LOG", dir.join("qemu.log"))

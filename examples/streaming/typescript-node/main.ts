@@ -468,7 +468,7 @@ async function main(): Promise<number> {
     log("note: the Node example has no renderer; running headless (CUA_HEADLESS=0 ignored)")
   }
   // No state is written: the direct env client needs no sandbox registry.
-  const cua = embedded({ fleetFromEnv: false, stateDir: join(tmpdir(), "cua-example-node") })
+  const cua = embedded({ stateDir: join(tmpdir(), "cua-example-node") })
   const env = await cua.spacesd(ENV_URL, ENV_TOKEN)
   const jsonl = new Jsonl(BENCH_JSONL)
 

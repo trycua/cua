@@ -22,9 +22,9 @@ use std::collections::BTreeMap;
 ///
 /// Ids are sandbox refs: `local:<name>`, `cloud:<name>`,
 /// `direct:<host:port>` and `relay:<machine-id>`. The legacy spellings
-/// (`space://fleet/<ns>/<claim>`, `space://local/<name>`,
-/// `fleet:<ns>:<claim>`, ...) are still accepted, as is a registered
-/// Space's display name or a bare name unique across locations.
+/// (`space://local/<name>`, `space://relay/<id>`, ...) are still accepted,
+/// as is a registered Space's display name or a bare name unique across
+/// locations.
 pub type SpaceArg = String;
 
 /// `add_space`: register a Space by URL after a capabilities handshake.
@@ -82,29 +82,6 @@ pub struct RemoveSpace {
 /// `list_spaces`: takes no arguments.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ListSpaces {}
-
-/// The cloud runtime a cloud Space's pool is named after (internal; the
-/// tools take `runtime` as a string).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum FleetRuntime {
-    /// A full KubeVirt VM booted from a KubeVirt containerDisk image (one
-    /// with a `/disk/disk.img` layer).
-    Kubevirt,
-    /// A gVisor (runsc) pod running a container rootfs image. About six
-    /// times faster to warm-start, with a far smaller memory footprint.
-    Gvisor,
-}
-
-impl FleetRuntime {
-    /// The wire spelling.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            FleetRuntime::Kubevirt => "kubevirt",
-            FleetRuntime::Gvisor => "gvisor",
-        }
-    }
-}
 
 /// What kind of machine a Space is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

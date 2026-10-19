@@ -22,7 +22,7 @@
 //!
 //! [`Persistent::pause`] stops the run, saves the home, releases the lease,
 //! keeps routines from firing, and suspends a local Space. A cloud Space
-//! cannot be suspended (Fleet has no per-claim pause), so pausing releases it
+//! cannot be suspended, so pausing releases it
 //! after the home is saved, and [`Persistent::resume`] creates it again
 //! from the same image and restores the home.
 

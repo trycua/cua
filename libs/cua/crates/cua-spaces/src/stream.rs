@@ -139,7 +139,7 @@ pub struct StreamTicket {
     /// Initial frame size `[width, height]`.
     pub frame_size: [u32; 2],
     /// Whether attaching needs extra headers ([`Space::websocket_headers`];
-    /// Fleet gateway). A browser cannot set them; use the daemon's media
+    /// a relay gateway). A browser cannot set them; use the daemon's media
     /// bridge then.
     pub needs_gateway_headers: bool,
     /// The whole `OpenMediaResponse` minus the ticket.

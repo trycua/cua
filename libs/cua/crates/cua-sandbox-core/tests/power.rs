@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use cua_sandbox_core::{
-    Error, FleetState, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime,
+    Error, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime,
     LocalStartSpec, LocalState, LocalSummary, PortExposure, PowerControl, PowerState, Provider,
     ProviderCapabilities, ProviderCreate, ProviderInstance, ProviderKind, Result, RunKind,
     RuntimeError, RuntimeResult, SandboxState, Sandboxes, ServiceEndpoint, Status, StopReason,
@@ -208,22 +208,6 @@ async fn sandboxes_without_a_power_control_refuse_by_name() {
     }
     assert!(rt.calls().is_empty());
 
-    // A cloud claim has no per-claim power.
-    sbx.state()
-        .save(&SandboxState::Fleet(FleetState {
-            name: "claim".into(),
-            runtime_type: "fleet".into(),
-            pool_name: "pool".into(),
-            status: "running".into(),
-            created_at: String::new(),
-            extra: Default::default(),
-        }))
-        .unwrap();
-    assert_eq!(sbx.power_control("claim"), None);
-    assert!(matches!(
-        sbx.power_on("claim").await,
-        Err(Error::CloudEnded)
-    ));
     // No such sandbox.
     assert_eq!(sbx.power_control("nope"), None);
     assert!(matches!(

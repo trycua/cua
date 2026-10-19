@@ -48,13 +48,6 @@ pub enum Made {
         /// Nothing had that name before.
         fresh: bool,
     },
-    /// A Cua Cloud claim the create made.
-    FleetClaim {
-        /// Its namespace.
-        namespace: String,
-        /// Its name.
-        name: String,
-    },
     /// A relay machine the create registered.
     RelayMachine {
         /// Machine id.
@@ -576,11 +569,6 @@ impl Spaces {
                         .registry
                         .remove(&crate::SpaceId::Local { name: name.clone() }.to_string());
                 }
-                // A claim an earlier version made: Cua Cloud has ended, so
-                // there is nothing left to release.
-                Made::FleetClaim { namespace: _, name } => done.push(format!(
-                    "dropped its record of cloud:{name} (Cua Cloud has ended)"
-                )),
                 Made::HostSpace { host, machine } => {
                     match crate::host_spaces::cancel_on_host(self, host, machine).await {
                         Ok(m) => done.push(m),

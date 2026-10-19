@@ -21,7 +21,7 @@ const mcp: McpDocumentation = {
       permission: 'spaces:add_space',
       description: 'Register a Space.',
       instructions: 'Stored in ~/.cua.',
-      providers: ['fleet', 'local'],
+      providers: ['cloud', 'local'],
       metering: 'free',
       annotations: { read_only: false, destructive: false, idempotent: true, open_world: true },
       sdk_symbol: 'SpacesConnection.addSpace(url:token:)',
@@ -62,7 +62,7 @@ test('Spaces tools link to their one entry in the Spaces reference instead of re
   const ref = mcpReference(mcp, spaces);
   const add = ref.tools.find((t) => t.name === 'add_space')!;
   assert.deepEqual(add.facts, [
-    ['Providers', 'fleet, local'],
+    ['Providers', 'cloud, local'],
     ['Metering', 'free'],
     ['SDK', '`SpacesConnection.addSpace(url:token:)`'],
   ]);

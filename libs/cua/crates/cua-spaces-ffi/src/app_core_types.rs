@@ -3108,8 +3108,7 @@ pub struct AppLocalStorage {
     pub linux_runtime_download_bytes: u64,
 }
 
-/// Cua Cloud rates for this account (the SDK's `Fleet.usage_pricing()`,
-/// read from Fleet's `GET /api/config`).
+/// Cua Cloud rates for this account.
 pub type AppCloudPricing = core::wizard::CloudPricing;
 #[uniffi::remote(Record)]
 pub struct AppCloudPricing {
@@ -3238,7 +3237,7 @@ pub struct AppPlacementOption {
 pub type AppGpuChoice = core::wizard::GpuChoice;
 #[uniffi::remote(Record)]
 pub struct AppGpuChoice {
-    /// `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+    /// `lume`, `qemu`, `container`, `gvisor`.
     pub runtime: String,
     /// What the create passes as `gpu` (`paravirtual`).
     pub id: String,
@@ -5227,8 +5226,7 @@ pub struct AppBillingCredit {
     pub balance_usd_cents: i64,
 }
 
-/// The account's billing (the SDK's `Fleet.billing_status()`, Fleet's
-/// `GET /api/billing/status`).
+/// The account's billing, as the apps read it.
 pub type AppBillingStatus = core::billing::BillingStatus;
 #[uniffi::remote(Record)]
 pub struct AppBillingStatus {
@@ -5242,8 +5240,8 @@ pub struct AppBillingStatus {
     pub billing_url: Option<String>,
 }
 
-/// A cloud Space Fleet refused for want of credit: the line, the button,
-/// and the website billing page it opens.
+/// A cloud Space refused for want of credit: the line, the button, and the
+/// website billing page it opens.
 pub type AppCreditNotice = core::billing::CreditNotice;
 #[uniffi::remote(Record)]
 pub struct AppCreditNotice {

@@ -1,12 +1,12 @@
-//! What kind of image a registry reference is, so a Fleet image ref runs on
+//! What kind of image a registry reference is, so an image ref runs on
 //! the right local backend without the caller saying how.
 //!
 //! | registry content | [`ImageKind`] | local backend |
 //! |---|---|---|
-//! | `FROM scratch` + `/disk/disk.img` or trycua containerDisk media types (KubeVirt containerDisk, Fleet `runtime: kubevirt`); see [`container_disk_evidence`] | `ContainerDisk` | QEMU |
-//! | any other plain OCI image (Fleet `runtime: gvisor`) | `Rootfs` | container (gVisor) |
+//! | `FROM scratch` + `/disk/disk.img` or trycua containerDisk media types (KubeVirt containerDisk); see [`container_disk_evidence`] | `ContainerDisk` | QEMU |
+//! | any other plain OCI image | `Rootfs` | container (gVisor) |
 //! | Lume / Tart / agoda VM media types | `Lume` | Lume |
-//! | any other darwin-platform image (Fleet `runtime: macos`) | `Macos` | none |
+//! | any other darwin-platform image (macOS) | `Macos` | none |
 
 use serde::{Deserialize, Serialize};
 
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(only.run_arch("aarch64").as_deref(), Some("amd64"));
     }
 
-    /// Live, read-only: the public Fleet catalog refs classify as expected.
+    /// Live, read-only: the public catalog refs classify as expected.
     #[tokio::test]
     async fn live_fleet_refs_classify() {
         if std::env::var("CUA_E2E_IMAGE").as_deref() != Ok("1") {

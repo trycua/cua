@@ -85,7 +85,6 @@ Docs: [Sandboxes](https://cua.ai/docs/cua-sdk).
 |---|---|
 | `cua-proto` | `proto/` codegen: prost messages and tonic clients and servers for `cua.env.v1` and `cua.daemon.v1`. Also the descriptor set, well-known constants (ports, metadata keys, HTTP paths) and the client-stream fallback registry. |
 | `cua-spacesd-client` | Ergonomic spacesd client: reconnect, keepalive, chunked transfer, gRPC vs gRPC-Web, auth, and the Fleet gateway adapter. |
-| `cua-fleet` | Fleet pools, templates, claims and images over `libs/fleet/sdk` (cyclops-sdk, a read-only mirror this crate path-depends on). Auto-managed pools and the one runtime/image pairing check. |
 | `cua-vmm` | Local runtimes: Lume, QEMU and OCI containers (gVisor when available). |
 | `cua-image` | OCI pull and push, containerDisk and rootfs formats, `ImageSpec`, local builder. |
 | `cua-sandbox-core` | One daemon-agnostic `Sandbox` over the `local`, `cloud` and `direct` locations, and the placement model (`on`, `kind`, `runtime`) and user defaults (`cua config`); cua-sandbox-compatible state files (`~/.cua/sandboxes`). |

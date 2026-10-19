@@ -10,7 +10,7 @@
 //!   QEMU backend boots `ImageSource::Oci` refs.
 //! * [`detect`] — classify a reference (containerDisk, rootfs, Lume, other macOS).
 //! * [`resolve`] — the one resolver: reference + backend + arch to a pinned
-//!   variant (`ResolvedImage`), used by every SDK, the daemon and cua-fleet.
+//!   variant (`ResolvedImage`), used by every SDK and the daemon.
 //! * [`canonical`] — `ghcr.io/trycua/{linux,windows,macos}`, their tiers
 //!   (`-slim`, full, `-xcode`), Omarchy and their aliases.
 //! * [`catalog`] — the shared image catalog (`libs/images/sandbox-images.json`).

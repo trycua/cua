@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// this before reading the session; an explicit read of a session stored
 /// before markers existed writes the marker.
 #[uniffi::export]
-pub fn may_have_fleet_session() -> bool {
+pub fn may_have_session() -> bool {
     cua_auth::may_have_session()
 }
 

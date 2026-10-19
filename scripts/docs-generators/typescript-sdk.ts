@@ -292,7 +292,7 @@ export function buildPages(typedocDir: string, version: string): Map<string, str
   for (const m of MODULES) {
     const intro =
       `Import from \`${m.importPath}\`. This page covers the hand-written TypeScript layer; ` +
-      'the generated native binding (sandboxes, guest, fleet, spaces objects) is documented per object in the ' +
+      'the generated native binding (sandboxes, guest, spaces objects) is documented per object in the ' +
       '[Cua SDK reference](/cua-sdk/reference).';
     const header = readHeader(`cua-sdk/typescript/${m.page}.md`, { version });
     files.set(

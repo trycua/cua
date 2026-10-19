@@ -55,10 +55,9 @@ pub struct CoreConfig {
     pub spaces_home: PathBuf,
     /// Where `download` lands.
     pub download_dir: PathBuf,
-    /// Connect a Cua Cloud client from the environment
-    /// (`CUA_CLIENT_ID`/`SECRET` or `FLEETS_TOKEN`). Cua Cloud has ended, so
-    /// [`Core::create_cloud_space`] still fails with
-    /// [`cua_sandbox_core::CLOUD_ENDED`] whatever the credentials.
+    /// Whether the app offers Cua Cloud. Cua Cloud has ended, so
+    /// [`Core::create_cloud_space`] fails with
+    /// [`cua_sandbox_core::CLOUD_ENDED`] whatever this says.
     pub cloud_from_env: bool,
     /// spacesd handshake timeout.
     pub probe_timeout: Duration,
@@ -136,10 +135,6 @@ impl Core {
             // itself (PiP), from frames or a media ticket.
             .operator_display(Arc::new(cua_spaces::operator::NoDisplay))
             .probe_timeout(config.probe_timeout);
-        if config.cloud_from_env {
-            // Cua Cloud (the SDK's cloud engine client).
-            builder = builder.fleet(cua_fleet::FleetClient::from_env()?);
-        }
         // #endregion docs:rs-open
         if let Some(local) = &config.local_runtime {
             // Local sandboxes, with their state in the app's directory.

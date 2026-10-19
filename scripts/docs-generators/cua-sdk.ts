@@ -8,7 +8,7 @@
  * so one dump describes every language. `cua-bindgen docs` (the pinned
  * uniffi_bindgen, library mode) prints it as JSON; this script renders it
  * into `docs/content/docs/cua-sdk/reference/`, one page per object (Sandbox,
- * Image, Services, Guest, Fleet, Spaces, ...) with language-tabbed
+ * Image, Services, Guest, Spaces, ...) with language-tabbed
  * signatures, and writes the reference index, the Errors page, the Types
  * page (with every item) and the reference `meta.json`.
  *
@@ -203,7 +203,7 @@ export const PAGES: PageSpec[] = [
     description: 'The Cua handle: embedded or daemon client, its configuration, and the SDK version.',
     intro:
       'Every program starts from one `Cua` handle, embedded in the process or connected to a running `cua daemon`, with the same API either way. Its accessors return the other objects. The `config_*` functions read and write the user defaults in `$CUA_HOME/config.toml` (`cua config`).',
-    items: ['Cua', 'CuaConfig', 'FleetSettings', 'CuaInfo', 'CuaMode', 'cua_sdk_version', 'config_list', 'config_get', 'config_set', 'config_unset', 'config_path', 'ConfigEntry', 'locations', 'LocationInfo', 'check_placement'],
+    items: ['Cua', 'CuaConfig', 'CuaInfo', 'CuaMode', 'cua_sdk_version', 'config_list', 'config_get', 'config_set', 'config_unset', 'config_path', 'ConfigEntry', 'locations', 'LocationInfo', 'check_placement'],
     modules: ['cua', 'root'],
   },
   {
@@ -399,39 +399,6 @@ export const PAGES: PageSpec[] = [
     ],
     items: ['MediaSession', 'MediaOpenOptions', 'MediaBridge'],
     modules: ['media'],
-  },
-  {
-    slug: 'fleet',
-    title: 'Fleet',
-    description: 'Cloud pools and templates: apply, check, export, scale and delete (advanced).',
-    intro:
-      '`cua.fleet()` manages cloud capacity directly: named pools, [claims](/cua-sdk/reference/fleet/claims) and [images](/cua-sdk/reference/fleet/images). Most programs only need `Sandboxes.create` with `on: "cloud"`, which manages pools for you.',
-    items: ['Fleet', 'FleetPools', 'SandboxSpec', 'PoolOptions', 'FleetPoolExport', 'FleetPool', 'FleetPoolSpec', 'FleetManagedPool', 'FleetGcReport', 'fleet_generate_claim_token'],
-    python: [['`cua_sandbox.Pool`', `${PY}/pool#pool`]],
-  },
-  {
-    slug: 'fleet/claims',
-    title: 'Claims',
-    description: 'Claim sandboxes from a cloud pool, keep them alive, release them, and sign service URLs.',
-    intro: 'A claim binds one sandbox of a pool to you until you release it or its TTL passes.',
-    members: [
-      {
-        object: 'Fleet',
-        title: 'Claim methods',
-        methods: ['claim', 'acquire', 'acquire_with', 'attach_claim', 'list_claims', 'keep_alive', 'release', 'service_url', 'create_signed_service_url'],
-      },
-    ],
-    items: ['FleetClaim', 'FleetClaimOptions', 'FleetSandbox', 'FleetSignedUrl'],
-    python: [['`Pool.claim`', `${PY}/pool#poolclaim`]],
-  },
-  {
-    slug: 'fleet/images',
-    title: 'Cloud images and runtimes',
-    description: 'Fleet image resources and the runtime (gVisor or KubeVirt) each image runs on.',
-    intro: 'Which cloud runtime an image needs, and the Fleet image resources of a namespace.',
-    members: [{ object: 'Fleet', title: 'Image methods', methods: ['create_image', 'get_image', 'list_images', 'delete_image'] }],
-    items: ['fleet_resolve_runtime', 'fleet_check_runtime', 'fleet_image_variant'],
-    modules: ['fleet'],
   },
   {
     slug: 'local',
@@ -1001,7 +968,7 @@ export const PAGES: PageSpec[] = [
     title: 'App core: billing, relay usage and Teams',
     description: 'The Billing and Relay usage rows in Settings, the out-of-credit and relay allowance notices, and the Teams section.',
     intro:
-      'The apps take no payment details: the website handles credit and cards. `app_billing_status` turns `Fleet.billing_status` into the core\'s `AppBillingStatus`, which Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space that Fleet refuses for want of credit (`CuaError::CloudCreditExhausted`) shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it. `app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does); `app_relay_usage_view` derives the Settings row and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade. Nothing stops at the limit. `app_teams` turns the account\'s `AppTeamsInput` into the Teams rows of Settings: the signed-in state, each team with its people and the role of each.',
+      'The apps take no payment details: the website handles credit and cards. `AppBillingStatus` is what Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space refused for want of credit shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it. `app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does); `app_relay_usage_view` derives the Settings row and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade. Nothing stops at the limit. `app_teams` turns the account\'s `AppTeamsInput` into the Teams rows of Settings: the signed-in state, each team with its people and the role of each.',
     items: ['AppCreditNotice'],
     prefixes: ['AppBilling', 'app_billing_', 'AppRelay', 'app_relay_', 'AppTeam', 'app_teams'],
     catalog: true,
@@ -1145,7 +1112,7 @@ export const PAGES: PageSpec[] = [
     slug: 'auth',
     title: 'Auth',
     description: 'Sign-in and the credential store the SDK, the CLI and the daemon share.',
-    intro: '`cua.auth()` signs in and reads the shared session. Cloud calls use it when no Fleet token or client credentials are configured.',
+    intro: '`cua.auth()` signs in and reads the shared session. Your own cloud and the relay use it.',
     items: ['Auth', 'LoginAttempt'],
     modules: ['auth'],
     python: [['`cua_sandbox.configure()`', `${PY}/configuration#configure`]],
@@ -1213,7 +1180,6 @@ export const MAX_TABS = 30;
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
   ['Sandboxes', ['cua', 'sandbox', 'image', 'os-image-catalog', 'image-software', 'services', 'local', 'runtime-support']],
-  ['Cloud capacity', ['fleet']],
   ['Inside a sandbox', ['spacesd', 'agents']],
   ['Spaces', ['spaces']],
   ['Account', ['auth', 'agent-setup', 'telemetry']],
@@ -1844,7 +1810,7 @@ interface RenderContext {
 /** CuaError variants a doc comment names, as links into the Errors page. */
 function mentionedErrors(doc: string | null, rc: RenderContext): string[] {
   if (!doc) return [];
-  // Only code spans count: `Fleet` names a variant, "a Fleet URL" does not.
+  // Only code spans count: `Timeout` names a variant, "a timeout" does not.
   const found = [...rc.errorVariants].filter((v) => new RegExp(`\`(CuaError(::|\\.))?${v}\``).test(doc));
   return found.sort().map((v) => `[\`${v}\`](${relLink(`${pageRoute(ERRORS_SLUG)}#${slug(v)}`, rc.page)})`);
 }
@@ -2346,9 +2312,9 @@ const OTHER_PAGES: Record<string, [title: string, description: string]> = {
   'os-image-catalog': ['Image catalog details', 'The canonical images, their variants per backend and architecture.'],
   'image-software': ["What's installed", 'The apps, tools and simulator runtimes in each image tier, as the strict doctor measured them.'],
   'runtime-support': ['Runtime support', 'Which images run on which local runtime and in the cloud.'],
-  python: ['Python high-level API', '`cua_sandbox`: `Sandbox`, `Image`, the computer interfaces, `Pool`, runtimes and configuration.'],
+  python: ['Python high-level API', '`cua_sandbox`: `Sandbox`, `Image`, the computer interfaces, runtimes and configuration.'],
   typescript: ['TypeScript additions', 'What `@trycua/cua` adds in TypeScript: `embedded()`, `Image`, helpers, and the Spaces modules.'],
-  rust: ['Rust crates', 'The public crates (`cua-sdk`, `cua-spacesd-client`, `cua-fleet`, `cua-sandbox-core`, `cua-spaces`), with stability tiers.'],
+  rust: ['Rust crates', 'The public crates (`cua-sdk`, `cua-spacesd-client`, `cua-sandbox-core`, `cua-spaces`), with stability tiers.'],
   protocol: ['Protocol', 'The gRPC contracts of cua-spacesd (`cua.env.v1`) and the cua daemon (`cua.daemon.v1`).'],
 };
 

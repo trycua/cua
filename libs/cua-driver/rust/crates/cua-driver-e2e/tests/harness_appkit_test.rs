@@ -2415,12 +2415,14 @@ fn harness_appkit_window_capture_ignores_pointer_outside_window() {
     );
     assert!(!moved.is_error(), "set_window_frame: {}", moved.text());
 
-    // Park the real pointer above the window, outside its frame.
+    // Park the real pointer just above the window, outside its frame but
+    // close enough for ScreenCaptureKit to fold it into the capture (a
+    // benchmark parked it 27 pt above a window's top edge).
     // SAFETY: plain CoreGraphics call with a by-value point.
     unsafe {
         CGWarpMouseCursorPosition(WarpPoint {
             x: x + width / 2.0,
-            y: y - 140.0,
+            y: y - 24.0,
         })
     };
     std::thread::sleep(Duration::from_millis(300));

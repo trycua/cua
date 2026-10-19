@@ -249,6 +249,7 @@ jobs:
         with:
           workspaces: libs/cua
           key: cli-${{ matrix.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the cua CLI
         working-directory: libs/cua
         run: cargo build --release --locked -p cua-cli --features byoc

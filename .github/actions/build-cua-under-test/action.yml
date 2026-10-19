@@ -42,6 +42,7 @@ runs:
           libs/cua-spacesd -> target
           libs/cua-driver/rust -> target
         key: cua-under-test
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Install build dependencies
       shell: bash
       run: |

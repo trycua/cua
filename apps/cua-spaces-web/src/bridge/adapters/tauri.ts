@@ -57,6 +57,7 @@ import { tauriHostSetupOps } from "../ops/host-setup";
 import { TAURI_SPACE_DETAIL_UNSUPPORTED, tauriSpaceDetailOps } from "../ops/space-detail";
 import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
+import { RESOURCES_OPERATIONS } from "../ops/resources";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
@@ -92,6 +93,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...TAURI_SPACE_DETAIL_UNSUPPORTED,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...RESOURCES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,

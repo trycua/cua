@@ -27,6 +27,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`health_report`](#health_report) | Single-call end-to-end driver diagnostics. | macOS, Linux, Windows |
 | [`check_for_update`](#check_for_update) | Check the saved stable/nightly Cua Driver channel for a release on GitHub. | macOS, Linux, Windows |
 | [`install_extension`](#install_extension) | Preview or install one Driver-managed optional extension. | macOS, Linux, Windows |
+| [`get_guide`](#get_guide) | Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). | macOS, Linux, Windows |
 
 Served by `cua-driver mcp`; see [MCP tools](/cua-driver/reference/mcp-tools) for every tool.
 
@@ -57,7 +58,7 @@ TARGET BY NAME (no earlier read needed, so one batch can cross screens): a step 
 WAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `expect` (one check or up to 4, checked after it); a step may also be only a check. A check is &#123;role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?&#125;: `text` matches any row of the tree, static text included; `gone:true` waits for it to disappear. Checks poll until they hold or time out (wait_for 5 s, expect 2 s, max 10 s), and a check that does not hold fails the step with what was found instead. The report says which step failed, in which phase (wait_for, find, action, expect) and why. Whole batch: at most 60 s.
 
 Example (fill a form, submit, confirm the dialog, check the result):
-&#123;"steps":[&#123;"set_value":&#123;"app":"Safari","role":"textfield","name":"Email","value":"ada@example.com"&#125;&#125;,&#123;"click":&#123;"role":"button","name":"Submit"&#125;,"expect":[&#123;"role":"button","name":"Confirm"&#125;]&#125;,&#123;"click":&#123;"role":"button","name":"Confirm"&#125;,"expect":[&#123;"name":"Confirm","gone":true&#125;,&#123;"text":"Thanks"&#125;]&#125;],"observe":&#123;&#125;&#125;.
+&#123;"steps":[&#123;"set_value":&#123;"app":"Safari","role":"textfield","name":"Email","value":"ada@example.com"&#125;&#125;,&#123;"click":&#123;"role":"button","name":"Submit"&#125;,"expect":[&#123;"role":"button","name":"Confirm"&#125;]&#125;,&#123;"click":&#123;"role":"button","name":"Confirm"&#125;,"expect":[&#123;"name":"Confirm","gone":true&#125;,&#123;"text":"Thanks"&#125;]&#125;],"observe":&#123;&#125;&#125; Batching rules: `get_guide({topic:"batching"})`.
 
 Effect: destructive. Platforms: macOS, Linux, Windows.
 
@@ -101,7 +102,7 @@ Example:
 const app = await cua.getApp("Calculator");
 for (const key of ["7", "multiply", "6", "equals"]) await app.click(&#123;role: "button", name: key&#125;);
 const [display] = await app.query(&#123;role: "statictext"&#125;);
-return display.value;.
+return display.value; Batching rules: `get_guide({topic:"batching"})`.
 
 Effect: destructive. Platforms: macOS, Linux, Windows.
 
@@ -225,7 +226,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 ## Configuration and maintenance tools
 
-Configuration, permissions, health, updates and extensions.
+Configuration, permissions, health, updates, extensions and on-demand guides.
 
 ### `get_config`
 
@@ -365,7 +366,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 Report TCC permission status for Accessibility and Screen Recording. By default also raises the system permission dialogs for any missing grants: Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check.
 
-Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured timeout/probe failure when applicable), `direct_capture_verification` (validated source, UTC time, and bundle identity from an explicit grant probe), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent.
+Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured timeout/probe failure when applicable), `direct_capture_verification` (validated source, UTC time, and bundle identity from an explicit grant probe), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent. How to get them granted: `get_guide({topic:"permissions"})`.
 
 **macOS parameters**
 
@@ -377,7 +378,7 @@ Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight A
 </Tab>
 <Tab value="Linux">
 
-Check required permissions for cua-driver-rs on Linux.
+Check required permissions for cua-driver-rs on Linux. How to get them granted: `get_guide({topic:"permissions"})`.
 
 **Linux parameters**
 
@@ -388,7 +389,7 @@ Check required permissions for cua-driver-rs on Linux.
 </Tab>
 <Tab value="Windows">
 
-Check required permissions for cua-driver-rs on Windows.
+Check required permissions for cua-driver-rs on Windows. How to get them granted: `get_guide({topic:"permissions"})`.
 
 **Windows parameters**
 
@@ -485,3 +486,14 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 ```json
 {"name":"perception"}
 ```
+
+### `get_guide`
+
+Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). Topics: overview, drag, browser, permissions, batching, menus. Call with no topic to list them. Read-only.
+
+Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="get_guide--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_guide--topic"></span>`topic` | `string` |  | One of: overview, drag, browser, permissions, batching, menus. Omit to list the topics. |

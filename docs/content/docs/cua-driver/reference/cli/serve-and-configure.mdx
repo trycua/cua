@@ -13,7 +13,7 @@ description: "Serve MCP and call tools from the shell; run the daemon; grant per
 | Command | Description |
 | --- | --- |
 | [`cua-driver mcp`](#cua-driver-mcp) | Run the stdio MCP server. |
-| [`cua-driver mcp-config`](#cua-driver-mcp-config) | Print client-specific connection guidance (MCP config where supported). |
+| [`cua-driver mcp-config`](#cua-driver-mcp-config) | Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent. |
 | [`cua-driver list-tools`](#cua-driver-list-tools) | List every registered MCP tool with a one-line description. |
 | [`cua-driver describe`](#cua-driver-describe) | Print a tool's full description and JSON input schema. |
 | [`cua-driver call`](#cua-driver-call) | Invoke an MCP tool through the running daemon. |
@@ -97,9 +97,9 @@ cua-driver mcp --socket /tmp/cua-driver.sock
 
 ## `cua-driver mcp-config`
 
-Print client-specific connection guidance (MCP config where supported).
+Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.
 
-Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode.
+Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.
 
 ```text output
 cua-driver mcp-config [OPTIONS]
@@ -108,6 +108,7 @@ cua-driver mcp-config [OPTIONS]
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-driver-mcp-config--client"></span>`--client` | string |  | Client name to print configuration for. |
+| <span id="cua-driver-mcp-config--no-skills"></span>`--no-skills` | boolean | `false` | With --client, do not install the cua-driver skill pack for that agent. |
 
 **Examples**
 
@@ -115,8 +116,11 @@ cua-driver mcp-config [OPTIONS]
 # Print a generic mcpServers entry
 cua-driver mcp-config
 
-# Print setup for Codex
+# Print setup for Codex and install its skill pack
 cua-driver mcp-config --client codex
+
+# Print setup for Codex only
+cua-driver mcp-config --client codex --no-skills
 ```
 
 ## `cua-driver list-tools`

@@ -63,7 +63,7 @@ fn main() {
             "object": "Template",
             "field": "spec.vmTemplate.sidecars",
             "type": "object[]",
-            "description": format!("Containers that run next to the sandbox, on every runtime (at most {}). They reach the sandbox at host `{}`.", parity::MAX_SIDECARS, parity::MAIN_CONTAINER_NAME),
+            "description": format!("Containers that run next to the sandbox, on every runtime (at most {}). They reach the sandbox at host `{}`.", cua_fleet::MAX_SIDECARS, cua_fleet::MAIN_CONTAINER_NAME),
         },
         {
             "object": "Template",
@@ -125,7 +125,7 @@ fn main() {
             },
             "registry": {
                 "prefix": parity::REGISTRY_SECRET_PREFIX,
-                "max_sidecars": parity::MAX_SIDECARS,
+                "max_sidecars": cua_fleet::MAX_SIDECARS,
                 "example": registry_body,
             },
         },

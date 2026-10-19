@@ -56,6 +56,12 @@ pub async fn scope<F: Future>(pacing: StepPacing, future: F) -> F::Output {
     CURRENT.scope(pacing, future).await
 }
 
+/// Whether the action being dispatched is a step of a `run_steps` batch or a
+/// `run_script` program, as opposed to a call the agent made directly.
+pub fn in_batch() -> bool {
+    CURRENT.try_with(|_| ()).is_ok()
+}
+
 /// The pacing of the action being dispatched. [`StepPacing::Single`] outside a
 /// batch, and whenever the operator set [`BATCH_PACING_ENV`] to `full`.
 pub fn current() -> StepPacing {
@@ -126,6 +132,20 @@ mod tests {
             assert_eq!(report_window(short), short);
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn a_scope_marks_its_calls_as_inside_a_batch() {
+        assert!(!in_batch());
+        scope(StepPacing::Single, async {
+            assert!(in_batch(), "the last step of a batch is still a batch step");
+        })
+        .await;
+        scope(StepPacing::Batched, async {
+            assert!(in_batch());
+        })
+        .await;
+        assert!(!in_batch());
     }
 
     #[tokio::test]

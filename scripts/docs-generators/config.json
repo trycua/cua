@@ -162,7 +162,6 @@
       "generatorScript": "scripts/docs-generators/sandbox.ts",
       "watchPaths": [
         "libs/cua/python/pyproject.toml",
-        "libs/typescript/fleet/package.json",
         "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json",
         "scripts/docs-generators/sandbox-facts.json",
         "scripts/docs-generators/sandbox-facts.schema.json",

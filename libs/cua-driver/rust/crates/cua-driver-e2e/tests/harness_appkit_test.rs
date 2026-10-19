@@ -2374,3 +2374,104 @@ fn harness_appkit_context_menu_keeps_front_key_focus_background() {
         },
     );
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WarpPoint {
+    x: f64,
+    y: f64,
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGWarpMouseCursorPosition(point: WarpPoint) -> i32;
+}
+
+/// Regression for trycua/cua#5476. With the real pointer parked outside the
+/// target window, a window screenshot came back the size of the window but
+/// with the window drawn smaller (about 96.5%) and pushed down by ~31 px, so
+/// pixel targets read off it missed by ~37 px. The window must fill its own
+/// screenshot edge to edge, whatever the pointer is doing.
+#[test]
+#[ignore]
+fn harness_appkit_window_capture_ignores_pointer_outside_window() {
+    use base64::Engine as _;
+
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-capture-pointer-outside")
+        .expect("start macOS daemon proxy");
+    let harness = Harness::launch();
+    let (wid, _) = driver
+        .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+        .expect("find AppKit harness window");
+
+    // Offset the window from the screen origin and leave room above it.
+    let (x, y, width, height) = (180.0, 260.0, 640.0, 420.0);
+    let moved = driver.call(
+        "set_window_frame",
+        serde_json::json!({
+            "pid": harness.pid as i64, "window_id": wid,
+            "x": x, "y": y, "width": width, "height": height
+        }),
+    );
+    assert!(!moved.is_error(), "set_window_frame: {}", moved.text());
+
+    // Park the real pointer above the window, outside its frame.
+    // SAFETY: plain CoreGraphics call with a by-value point.
+    unsafe {
+        CGWarpMouseCursorPosition(WarpPoint {
+            x: x + width / 2.0,
+            y: y - 140.0,
+        })
+    };
+    std::thread::sleep(Duration::from_millis(300));
+
+    let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+    assert!(!snapshot.is_error(), "capture: {}", snapshot.text());
+    let structured = snapshot.structured();
+    assert_eq!(structured["screenshot_frame_valid"], true, "{structured}");
+    let scale = structured["screenshot_scale"]
+        .as_f64()
+        .expect("screenshot scale");
+    let bounds = &structured["window_bounds"];
+    let data = snapshot.raw["result"]["content"]
+        .as_array()
+        .and_then(|parts| parts.iter().find(|part| part["type"] == "image"))
+        .and_then(|part| part["data"].as_str())
+        .expect("window screenshot image part");
+    let png = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .expect("decode screenshot");
+    let image = image::load_from_memory(&png)
+        .expect("load screenshot")
+        .to_rgba8();
+    let (w, h) = image.dimensions();
+    assert_eq!(
+        (f64::from(w), f64::from(h)),
+        (
+            (bounds["width"].as_f64().unwrap() * scale).round(),
+            (bounds["height"].as_f64().unwrap() * scale).round()
+        ),
+        "screenshot size must match the window bounds at the reported scale"
+    );
+
+    // The bug left a transparent band across the top and down the right side
+    // of the image. Sample just inside each edge, away from the rounded
+    // corners: every sample must be the window's own opaque pixels.
+    let inset = (4.0 * scale) as u32;
+    let samples = [
+        (w / 2, inset),         // top centre (title bar)
+        (w / 4, inset),         // top, left of centre
+        (3 * w / 4, inset),     // top, right of centre
+        (w - 1 - inset, h / 2), // right edge
+        (w - 1 - inset, h / 4), // right edge, upper
+        (w / 2, h - 1 - inset), // bottom centre
+    ];
+    for (sx, sy) in samples {
+        let alpha = image.get_pixel(sx, sy).0[3];
+        assert_eq!(
+            alpha, 255,
+            "pixel ({sx},{sy}) of a {w}x{h} window screenshot is transparent: \
+             the window does not fill its own capture"
+        );
+    }
+}

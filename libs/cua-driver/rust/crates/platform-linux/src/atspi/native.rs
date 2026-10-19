@@ -1079,6 +1079,43 @@ fn correlate_hyprland_frame(
     Some(frame.ordinal)
 }
 
+/// Pair Chromium browser windows with Hyprland clients by size alone when
+/// titles cannot (Chromium's accessible title adds tab-group and profile text
+/// the compositor title lacks). Chromium reports frame extents in its own
+/// scaled units, so every owned client must pair one-to-one with every
+/// `BrowserRootView` frame under one common scale, and every such pairing must
+/// give the target client the same frame. Any other owned client or frame kind leaves the counts unequal
+/// and refuses.
+fn scaled_hyprland_frame(
+    frames: &[HyprlandFrame],
+    clients: &[(&str, u32, u32)],
+    target: usize,
+) -> Option<usize> {
+    let roots = frames
+        .iter()
+        .filter(|frame| frame.browser_root)
+        .map(|frame| {
+            let (width, height) = frame.size?;
+            Some((frame.ordinal, (f64::from(width), f64::from(height))))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let native = clients
+        .iter()
+        .map(|&(_, width, height)| (f64::from(width), f64::from(height)))
+        .collect::<Vec<_>>();
+    let scaled = roots.iter().map(|(_, size)| *size).collect::<Vec<_>>();
+    let partner = cua_driver_core::browser::binding::unique_scaled_partner(
+        &native,
+        &scaled,
+        target,
+        HYPRLAND_FRAME_SCALED_TOLERANCE,
+    )?;
+    Some(roots[partner].0)
+}
+
+/// Per-edge tolerance, in Chromium's scaled units, for [`scaled_hyprland_frame`].
+const HYPRLAND_FRAME_SCALED_TOLERANCE: f64 = 8.0;
+
 #[cfg(test)]
 mod hyprland_frame_tests {
     use super::*;
@@ -1164,6 +1201,62 @@ mod hyprland_frame_tests {
             None
         );
     }
+
+    fn sized_root(ordinal: usize, title: &str, width: i32, height: i32) -> HyprlandFrame {
+        HyprlandFrame {
+            ordinal,
+            title: title.into(),
+            browser_root: true,
+            size: Some((width, height)),
+        }
+    }
+
+    #[test]
+    fn grouped_tab_titles_bind_by_scaled_size() {
+        // Measured on Hyprland at a 1.3636 GTK scale: the grouped tab adds
+        // "Part of group ..." to the accessible title only.
+        let frames = [
+            sized_root(0, "Calendar - Outlook", 2819, 1536),
+            sized_root(1, "Sign in - Part of group SSO - Google Chrome", 1408, 766),
+            HyprlandFrame {
+                ordinal: 2,
+                title: String::new(),
+                browser_root: false,
+                size: None,
+            },
+        ];
+        let clients = [
+            ("Calendar - Outlook", 3832, 2087),
+            ("Sign in - Google Chrome", 1913, 1041),
+        ];
+        assert_eq!(scaled_hyprland_frame(&frames, &clients, 1), Some(1));
+        assert_eq!(scaled_hyprland_frame(&frames, &clients, 0), Some(0));
+    }
+
+    #[test]
+    fn scaled_frames_refuse_equal_sizes_and_unequal_counts() {
+        let twins = [sized_root(0, "a", 1408, 766), sized_root(1, "b", 1408, 766)];
+        let clients = [("a", 1913, 1041), ("b", 1913, 1041)];
+        assert_eq!(scaled_hyprland_frame(&twins, &clients, 0), None);
+        let one = [sized_root(0, "a", 1408, 766)];
+        assert_eq!(scaled_hyprland_frame(&one, &clients, 0), None);
+    }
+
+    #[test]
+    fn scaled_frames_bind_a_unique_window_beside_equal_sized_ones() {
+        let frames = [
+            sized_root(0, "Calendar - Outlook", 2819, 1536),
+            sized_root(1, "Sign in - Part of group SSO - Google Chrome", 1408, 766),
+            sized_root(4, "DDF.PDF - Google Chrome", 2819, 1536),
+        ];
+        let clients = [
+            ("Calendar - Outlook", 3832, 2087),
+            ("DDF.PDF - Google Chrome", 3832, 2087),
+            ("Sign in - Google Chrome", 1913, 1041),
+        ];
+        assert_eq!(scaled_hyprland_frame(&frames, &clients, 2), Some(1));
+        assert_eq!(scaled_hyprland_frame(&frames, &clients, 0), None);
+    }
 }
 
 /// Resolve native window `xid` to the ordinal of the application top-level that
@@ -1227,7 +1320,8 @@ async fn resolve_window_frame(
             .iter()
             .map(|window| (window.title.as_str(), window.width, window.height))
             .collect::<Vec<_>>();
-        return correlate_hyprland_frame(&frames, &clients, target);
+        return correlate_hyprland_frame(&frames, &clients, target)
+            .or_else(|| scaled_hyprland_frame(&frames, &clients, target));
     }
     if seeds.len() == 1 {
         // One top-level: the caller's window is the only thing this
@@ -3628,6 +3722,15 @@ async fn live_accessible<'a>(
 /// `Ok((action_name, suspected_noop))`. Errors when the object no longer
 /// exists so the caller can fall back to resolving the index afresh.
 pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)> {
+    perform_action_ref_guarded(object_ref, || Ok(()))
+}
+
+/// Exact-object action with an invocation guard checked immediately before
+/// dispatch, after the potentially slow accessibility identity/proxy reads.
+pub(crate) fn perform_action_ref_guarded(
+    object_ref: &ObjectRef,
+    before_dispatch: impl Fn() -> Result<()>,
+) -> Result<(String, bool, bool)> {
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -3650,6 +3753,7 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)
             // folded into `rejected`/`suspected_noop` (which would claim the
             // toolkit declined it) nor silently reported as a plain success.
             let mut unacknowledged = false;
+            before_dispatch()?;
             let rejected = match call(ap.do_action(chosen as i32)).await {
                 Some(Ok(accepted)) => !accepted,
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
@@ -3752,6 +3856,28 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
             }
         },
         || Err(anyhow!("element_showing (cached element) timed out")),
+    )
+}
+
+/// Whether a snapshot-cached tab currently carries `Selected` (or `Checked`,
+/// matching the walk's tab `selected` field): one `GetState` round-trip, no
+/// tree re-walk. Unlike [`element_showing_ref`], a missing state set is an
+/// error: callers use this as proof before acting on the selected tab.
+pub fn element_selected_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => {
+                    Ok(state.contains(State::Selected) || state.contains(State::Checked))
+                }
+                Some(Err(error)) => Err(anyhow!("cached element exposed no state set: {error}")),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_selected (cached element) timed out")),
     )
 }
 

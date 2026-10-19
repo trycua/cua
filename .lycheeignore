@@ -10,6 +10,12 @@ https://openai.com/*
 https://github.com/user-attachments/assets/*
 # Self-referential install.sh URL: resolves once this PR merges to main
 https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh
+# Moved by the repo-root tidy-up: these resolve once it merges to main
+# (remove these four lines after the merge)
+https://github.com/trycua/cua/tree/main/examples/python/osworld-image
+https://github.com/trycua/cua/blob/main/docs/rfcs/4268-jev-use-native-candidates\.md
+https://github.com/trycua/cua/blob/main/legal/LICENSING\.md
+https://github.com/trycua/cua/blob/main/\.github/SECURITY\.md
 # Paths added in cua-staging (samples, examples, Spaces): resolve once promoted to trycua/cua main
 https://github.com/trycua/cua/tree/main/examples/openkoalabots
 https://github.com/trycua/cua/tree/main/libs/spaces-sdk-swift

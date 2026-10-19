@@ -1,11 +1,11 @@
 ---
 title: Cua Cloud (Fleets) has ended
-description: Cua Cloud and Cua Fleets stopped on 16 October 2026. What changed, what happened to your data, and where to run sandboxes now.
+description: Cua Cloud and Cua Fleets ended on 18 October 2026. What changed and where to run sandboxes now.
 ---
 
 Cua Cloud, including Cua Fleets (pools, claims, warm replicas and the Terraform
-provider), stopped on Friday 16 October 2026. Remaining customer data was
-deleted then. The Fleets pages that used to be here have been removed.
+provider), ended on 18 October 2026. The Fleets pages that used to be here have
+been removed.
 
 ## What still works
 
@@ -19,16 +19,16 @@ The same SDK calls, images and `cua` CLI commands run anywhere else:
 
 ## In your code
 
-`on="cloud"`, `local=False`, `--on cloud`, `Cua.fleet()` and `cua fleet` are
-deprecated in `cua` 0.4.2 and `cua-sandbox` 0.9.1. They fail with this message:
+`on="cloud"`, `local=False`, `--on cloud` and `pool:` image references fail
+with this message:
 
 ```text output
 Cua Cloud has ended; use a local sandbox or your own machine. See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended
 ```
 
-They are removed in `cua` 0.5.0. The same goes for `cua images` listings of
-cloud images, `cua pools`, `--pool`, `FLEETS_TOKEN` and cloud suspend, resume
-and extend-lease.
+`Cua.fleet()`, `cua fleet`, `cua pools`, `--pool`, `FLEETS_TOKEN`, cloud image
+listings and cloud suspend, resume and extend-lease are removed from the SDKs and
+the `cua` CLI.
 
 Replace `on="cloud"` with a local runtime or your own cloud. Sidecars,
 services, secrets and images work the same way there:

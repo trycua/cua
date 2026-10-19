@@ -17,7 +17,7 @@ UNIFIED = (
     "cua-sdk/guides/images",
     "cua-sdk/guides/lifecycle",
 )
-# Hand-written Cua SDK and Cua Fleets pages stay short.
+# Hand-written Cua SDK pages stay short.
 MAX_WORDS = 1000
 
 
@@ -49,9 +49,8 @@ class UnifiedSandboxDocsTests(unittest.TestCase):
                 for word in ("claim_name", "pool_name", "pool.apply", "claim_ttl"):
                     self.assertNotIn(word, text)
 
-    def test_old_image_anchor_still_resolves(self):
+    def test_images_page_states_the_windows_license(self):
         text = page("cua-sdk/guides/images")
-        self.assertIn('<span id="choose-a-published-fleet-image" />', text)
         self.assertIn("Windows images do not include a Windows license", text)
 
     def test_cloud_guide_is_removed_and_the_ended_page_stays(self):

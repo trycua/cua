@@ -1,4 +1,4 @@
-"""Assert the Fleet desktop-control how-to matches the Sandbox Driver API."""
+"""Assert the desktop-control guide matches the Sandbox Driver API."""
 
 from pathlib import Path
 import re
@@ -13,7 +13,7 @@ PAGE = (
 DRIVER = ROOT / "libs/python/cua-sandbox/cua_sandbox/interfaces/driver.py"
 
 
-class FleetDriverGuideTests(unittest.TestCase):
+class DesktopDriverGuideTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.page = PAGE.read_text()

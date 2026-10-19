@@ -5,7 +5,6 @@ on:
     paths:
       - ".github/workflows/ci-public-containerdisk-refs.yml"
       - "docs/content/docs/how-to-guides/sandbox/**"
-      - "infra/fleets-wif-smoke/**"
       - "libs/fleet/backend/auth/**"
       - "libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py"
       - "libs/python/cua-sandbox/tests/live/test_fleet_pool_persistent.py"

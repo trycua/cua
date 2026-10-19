@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Which anonymous usage events a UI transition means, for both shells.
+//! Which usage events a UI transition means, for both shells.
 //!
 //! The apps drive the core's reducers; these functions look at one step of
 //! a reducer (the state before and the action) and answer with

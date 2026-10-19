@@ -2659,6 +2659,12 @@ RustBuffer uniffi_cua_sdk_fn_func_spaces_tool_methods(RustCallStatus *_Nonnull o
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_ACKNOWLEDGE_LINK_NOTICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_ACKNOWLEDGE_LINK_NOTICE
+void uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice(RustCallStatus *_Nonnull out_status
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_ACKNOWLEDGE_NOTICE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_ACKNOWLEDGE_NOTICE
 void uniffi_cua_sdk_fn_func_telemetry_acknowledge_notice(RustCallStatus *_Nonnull out_status
@@ -2668,6 +2674,24 @@ void uniffi_cua_sdk_fn_func_telemetry_acknowledge_notice(RustCallStatus *_Nonnul
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_FLUSH
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_FLUSH
 void uniffi_cua_sdk_fn_func_telemetry_flush(uint32_t timeout_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_LINK_NOTICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_LINK_NOTICE
+RustBuffer uniffi_cua_sdk_fn_func_telemetry_link_notice(RustCallStatus *_Nonnull out_status
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_LINK_NOTICE_DUE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_LINK_NOTICE_DUE
+int8_t uniffi_cua_sdk_fn_func_telemetry_link_notice_due(RustCallStatus *_Nonnull out_status
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_LINK_STATE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_LINK_STATE
+RustBuffer uniffi_cua_sdk_fn_func_telemetry_link_state(RustCallStatus *_Nonnull out_status
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_NOTICE_TEXT
@@ -2726,6 +2750,12 @@ RustBuffer uniffi_cua_sdk_fn_func_telemetry_show_last(uint32_t limit, RustCallSt
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_STATUS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_STATUS
 RustBuffer uniffi_cua_sdk_fn_func_telemetry_status(RustCallStatus *_Nonnull out_status
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_SYNC_ACCOUNT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_SYNC_ACCOUNT
+uint64_t uniffi_cua_sdk_fn_func_telemetry_sync_account(void
 
 );
 #endif
@@ -3199,6 +3229,12 @@ uint16_t uniffi_cua_sdk_checksum_func_spaces_tool_methods(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_ACKNOWLEDGE_LINK_NOTICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_ACKNOWLEDGE_LINK_NOTICE
+uint16_t uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_ACKNOWLEDGE_NOTICE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_ACKNOWLEDGE_NOTICE
 uint16_t uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice(void
@@ -3208,6 +3244,24 @@ uint16_t uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_FLUSH
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_FLUSH
 uint16_t uniffi_cua_sdk_checksum_func_telemetry_flush(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_LINK_NOTICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_LINK_NOTICE
+uint16_t uniffi_cua_sdk_checksum_func_telemetry_link_notice(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_LINK_NOTICE_DUE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_LINK_NOTICE_DUE
+uint16_t uniffi_cua_sdk_checksum_func_telemetry_link_notice_due(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_LINK_STATE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_LINK_STATE
+uint16_t uniffi_cua_sdk_checksum_func_telemetry_link_state(void
 
 );
 #endif
@@ -3274,6 +3328,12 @@ uint16_t uniffi_cua_sdk_checksum_func_telemetry_show_last(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_STATUS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_STATUS
 uint16_t uniffi_cua_sdk_checksum_func_telemetry_status(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_SYNC_ACCOUNT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_SYNC_ACCOUNT
+uint16_t uniffi_cua_sdk_checksum_func_telemetry_sync_account(void
 
 );
 #endif

@@ -23018,7 +23018,7 @@ public struct AppOnboardingState: Equatable, Hashable {
     public var launchAtLogin: Bool
     /**
      * The usage-data switch on Welcome: the machine's telemetry setting
-     * (Settings' "Share anonymous usage data", `cua telemetry off`), none
+     * (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
      * until the shell read it (then it shows on).
      */
     public var telemetry: AppTelemetryInput?
@@ -23114,7 +23114,7 @@ public struct AppOnboardingState: Equatable, Hashable {
          */launchAtLogin: Bool,
         /**
          * The usage-data switch on Welcome: the machine's telemetry setting
-         * (Settings' "Share anonymous usage data", `cua telemetry off`), none
+         * (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
          * until the shell read it (then it shows on).
          */telemetry: AppTelemetryInput?,
         /**
@@ -35680,7 +35680,7 @@ public func FfiConverterTypeAppUnconfirmedMachine_lower(_ value: AppUnconfirmedM
 
 public struct AppUsageToggle: Equatable, Hashable {
     /**
-     * "Share anonymous usage data".
+     * "Share usage data to help improve Cua".
      */
     public var label: String
     /**
@@ -35700,7 +35700,7 @@ public struct AppUsageToggle: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Share anonymous usage data".
+         * "Share usage data to help improve Cua".
          */label: String,
         /**
          * On.
@@ -50454,7 +50454,7 @@ public enum AppOnboardingAction: Equatable, Hashable {
      */
     case welcomeShown
     /**
-     * Welcome's "Share anonymous usage data" switch (not while the
+     * Welcome's "Share usage data to help improve Cua" switch (not while the
      * environment decides). The shell writes the setting.
      */
     case usageDataToggled(
@@ -69146,7 +69146,8 @@ public func appTelemetrySignInFailed(message: String?) -> [AppTelemetrySignal]  
 }
 /**
  * The app started: attributes this process's events to `spaces_app` at
- * `version`, lets the app show the first-run notice itself (nothing is
+ * `version`, links usage data to the signed-in account in the background
+ * when the Spaces API offers it, lets the app show the first-run notice itself (nothing is
  * sent before it has been shown once), and records `app_launched` (on a
  * first run, once the notice shows). Call once at launch, before the
  * first `Cua`. `onboarding_eligible`: the first run is still to finish
@@ -70566,7 +70567,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed() != 34262) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 189) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 30125) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_storage() != 21459) {

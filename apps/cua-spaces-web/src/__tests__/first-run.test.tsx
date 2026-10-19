@@ -70,6 +70,24 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(document.body.textContent).not.toMatch(/\bVM\b|virtual machine|container|daemon|MCP/i);
   });
 
+  it("says in plain words that usage data is on and linked to the account, and turns it off with one tap", async () => {
+    const calls = await mount();
+    await waitFor(() => expect(heading()).toBe("A shared Space for every agent."));
+    const note = await waitFor(() => {
+      const n = document.querySelector("[data-first-run-usage]");
+      expect(n).toBeTruthy();
+      return n!;
+    });
+    expect(note.textContent).toMatch(/linked to your account through a random ID/);
+    expect(note.textContent).toMatch(/Never your files, what you type or your screen/);
+    expect(note.textContent).not.toMatch(/SPACES_CP_LINK_USAGE|telemetry|opaque/i);
+    expect(note.textContent).toMatch(/Share usage data to help improve Cua/);
+    const sw = note.querySelector<HTMLElement>('[role="switch"]')!;
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(sw);
+    await waitFor(() => expect(calls.some((c) => /telemetry|settings/.test(c.op))).toBe(true));
+  });
+
   it("makes the extra Space in the background, asks the host to notify, and keeps Done on", async () => {
     writeFirstRun({ step: "setup", agent: "claude-code", setupStartedMs: Date.now() });
     const calls = await mount({ local: (l) => ({ ...l, backends: ["docker"], macosImage: null, hostArch: "amd64" }) });

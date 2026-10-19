@@ -142,5 +142,12 @@ export function telemetryMethods({ model }: BridgeContext): Handlers {
       if (kept.some((k) => leftWelcome(k.raw))) telemetry.acknowledgeNotice();
       return null;
     },
+    // The one-time linking notice (CUA-1881): the SDK's words and whether
+    // it is due. No telemetry (a test host) has none.
+    "telemetry.linkNotice": () => model.telemetry?.linkNotice() ?? null,
+    "telemetry.acknowledgeLinkNotice": () => {
+      model.telemetry?.acknowledgeLinkNotice();
+      return null;
+    },
   };
 }

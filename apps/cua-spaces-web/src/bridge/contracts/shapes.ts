@@ -58,6 +58,7 @@ import type { SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
+import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
@@ -431,6 +432,19 @@ const StartupShape = ref(
     title: str,
     body: str,
     actions: list(oneOf("allowAccess", "tryAgain", "signInAgain")),
+  }),
+);
+
+const LinkNoticeShape = ref(
+  "TelemetryLinkNotice",
+  obj<TelemetryLinkNotice>()({
+    due: bool,
+    title: str,
+    body: str,
+    okLabel: str,
+    turnOffLabel: str,
+    detailsLabel: str,
+    docsUrl: str,
   }),
 );
 
@@ -947,6 +961,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "notifications.markRead": nul,
 
   "telemetry.track": nul,
+  "telemetry.linkNotice": nullable(LinkNoticeShape),
+  "telemetry.acknowledgeLinkNotice": nul,
   "spaces.usage": nullable(
     obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool }),
   ),
@@ -1262,6 +1278,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "notifications.markAllRead": nul,
   "notifications.markRead": nul,
   "telemetry.track": nul,
+  "telemetry.linkNotice": nullable(LinkNoticeShape),
+  "telemetry.acknowledgeLinkNotice": nul,
   "spaces.usage": OP_SHAPES["spaces.usage"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
   "stream.pip": strings,

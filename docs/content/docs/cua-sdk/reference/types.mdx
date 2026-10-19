@@ -48,7 +48,7 @@ Renamed members: in Kotlin, objects implement `AutoCloseable`, whose `close()` f
 
 ## All items
 
-267 items. Methods are listed on their object.
+273 items. Methods are listed on their object.
 
 The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/reference/spaces/resources#all-items).
 
@@ -296,8 +296,12 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpaceWriteReport`](/cua-sdk/reference/spaces/space#spacewritereport-record) | record | Result of `Space.write`. |
 | [`StorageVolume`](/cua-sdk/reference/cua#storagevolume-record) | record | Space on the volume a local engine writes to. |
 | [`StreamStatsReport`](/cua-sdk/reference/auth#streamstatsreport-record) | record | One stream session's aggregate stats (sampled). |
+| [`telemetry_acknowledge_link_notice`](/cua-sdk/reference/auth#telemetry_acknowledge_link_notice) | function | The person closed the linking notice (either button). |
 | [`telemetry_acknowledge_notice`](/cua-sdk/reference/auth#telemetry_acknowledge_notice) | function | Records that the first-run notice was shown in the app's UI (nothing is sent from a machine before that). |
 | [`telemetry_flush`](/cua-sdk/reference/auth#telemetry_flush) | function | Sends queued events now, waiting at most `timeout_ms`; anything left is kept on disk for a later process. |
+| [`telemetry_link_notice`](/cua-sdk/reference/auth#telemetry_link_notice) | function | The one-time linking notice's words. |
+| [`telemetry_link_notice_due`](/cua-sdk/reference/auth#telemetry_link_notice_due) | function | Whether the app should show the one-time linking notice now: usage data is on, the account offered linking, and this machine has not shown it. |
+| [`telemetry_link_state`](/cua-sdk/reference/auth#telemetry_link_state) | function | Where linking stands: `off`, `not_offered`, `notice_due` or `linked`. |
 | [`telemetry_notice_text`](/cua-sdk/reference/auth#telemetry_notice_text) | function | The first-run notice text (an app shows it in its own UI, then calls `telemetry_acknowledge_notice`). |
 | [`telemetry_record_bench_run`](/cua-sdk/reference/auth#telemetry_record_bench_run) | function | Records a finished cua-bench run: the taskset (catalog name, else `custom`), the aggregate success rate (0 to 1, bucketed), the task count (bucketed) and the outcome (`ok`, `error`, `cancelled`). |
 | [`telemetry_record_feature`](/cua-sdk/reference/auth#telemetry_record_feature) | function | Records use of a Spaces app feature (fixed names: `space_create_local`, `teleport_drop`, ... see the docs). |
@@ -309,7 +313,9 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`telemetry_set_surface`](/cua-sdk/reference/auth#telemetry_set_surface) | function | Names the SDK surface events are attributed to. |
 | [`telemetry_show_last`](/cua-sdk/reference/auth#telemetry_show_last) | function | The last `limit` events queued or sent from this machine, exactly as sent, as JSON (`[{status, payload}]`). |
 | [`telemetry_status`](/cua-sdk/reference/auth#telemetry_status) | function | Telemetry state, and exactly what every event carries. |
+| [`telemetry_sync_account`](/cua-sdk/reference/auth#telemetry_sync_account) | function | Asks the Spaces API for the signed-in account's opaque id and hands it to telemetry (none unlinks). |
 | [`telemetry_use_app_notice`](/cua-sdk/reference/auth#telemetry_use_app_notice) | function | The host app shows the first-run notice itself (no stderr notice). |
+| [`TelemetryLinkNotice`](/cua-sdk/reference/auth#telemetrylinknotice-record) | record | The one-time notice for machines that saw the older "anonymous" wording, shown before anything is linked to the account. |
 | [`TelemetryStatus`](/cua-sdk/reference/auth#telemetrystatus-record) | record | Telemetry state. |
 | [`TeleportApprover`](/cua-sdk/reference/spaces/space#teleportapprover) | object | The consent gate of `Space.teleport`: shown the manifest, returns the human's decision, or `None` to cancel. |
 | [`TeleportDecision`](/cua-sdk/reference/spaces/space#teleportdecision-record) | record | A human's answer to a teleport manifest. |

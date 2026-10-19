@@ -796,7 +796,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
 
     if let Some(t) = &input.telemetry {
-        let mut share = row("telemetry", Choice, "Share anonymous usage data");
+        let mut share = row("telemetry", Choice, "Share usage data to help improve Cua");
         share.options = vec![opt("on", "On", t.enabled), opt("off", "Off", !t.enabled)];
         if let Some(by) = t.locked_by.clone().filter(|b| !b.is_empty()) {
             share.enabled = false;
@@ -805,7 +805,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         let mut note = row(
             "telemetry-note",
             Note,
-            "Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items.",
+            "Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen.",
         );
         note.link_label = Some("What is collected".into());
         note.link_url = Some(TELEMETRY_DOCS_URL.into());

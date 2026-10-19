@@ -40,6 +40,7 @@ pub(crate) struct MockReply {
     /// Hold the reply this long before sending it (a slow but live page).
     pub delay: Option<std::time::Duration>,
     pub result: Result<Value, (i64, String)>,
+    pub response_ready: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl MockReply {
@@ -49,6 +50,7 @@ impl MockReply {
             result: Ok(result),
             suppress_response: false,
             delay: None,
+            response_ready: None,
         }
     }
 
@@ -59,6 +61,7 @@ impl MockReply {
             result: Ok(json!({})),
             suppress_response: true,
             delay: None,
+            response_ready: None,
         }
     }
 
@@ -68,7 +71,21 @@ impl MockReply {
             result: Err((code, message.to_owned())),
             suppress_response: false,
             delay: None,
+            response_ready: None,
         }
+    }
+
+    /// Keep the socket open without answering this command.
+    pub fn silent() -> Self {
+        Self {
+            suppress_response: true,
+            ..Self::ok(serde_json::json!({}))
+        }
+    }
+
+    pub fn after_notification(mut self, ready: Arc<tokio::sync::Notify>) -> Self {
+        self.response_ready = Some(ready);
+        self
     }
 
     /// The exact shape Chromium uses for an unimplemented method.
@@ -149,6 +166,9 @@ impl MockCdpServer {
                         }
                         if let Some(delay) = reply.delay {
                             tokio::time::sleep(delay).await;
+                        }
+                        if let Some(ready) = reply.response_ready {
+                            ready.notified().await;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

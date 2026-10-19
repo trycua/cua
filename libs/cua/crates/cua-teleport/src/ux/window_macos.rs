@@ -226,10 +226,9 @@ pub fn display_union() -> Option<Rect> {
 /// and the Retina capture was four times the pixels to copy and drop.
 ///
 /// Only when this process already has Screen Recording: the app never asks
-/// for it itself (a capture without it makes macOS prompt). In Cua Spaces,
-/// macOS files the host service's Screen Recording (Cua Spaces Helper, a
-/// login item inside the app) under the app, so once the service is
-/// allowed this preview works too.
+/// for it itself (a capture without it makes macOS prompt). The Cua Spaces
+/// app's background service asks once, under the same "Cua Spaces" name,
+/// and its grant covers this preview too.
 pub fn capture(window_id: u32, max_width: usize) -> Option<Vec<u8>> {
     // SAFETY: no arguments, no preconditions.
     if !unsafe { CGPreflightScreenCaptureAccess() } {

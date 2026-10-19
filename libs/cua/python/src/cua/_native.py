@@ -36235,7 +36235,7 @@ class HostProtocol(typing.Protocol):
     async def migrate_service(self, force: bool,app_version: str) -> HostServiceMigration:
         """
         macOS: moves the host service from the old LaunchAgent to the Cua
-        Spaces app's helper ("Cua Spaces Helper"), keeping this machine's
+        Spaces app (its own login item, "Cua Spaces"), keeping this machine's
         registration, id and Spaces; puts the old one back if the helper
         does not take over (the outcome says so). `app_version`: a failed
         move is not tried again by itself with the same version; `force`
@@ -36356,7 +36356,7 @@ class Host(HostProtocol):
     async def migrate_service(self, force: bool,app_version: str) -> HostServiceMigration:
         """
         macOS: moves the host service from the old LaunchAgent to the Cua
-        Spaces app's helper ("Cua Spaces Helper"), keeping this machine's
+        Spaces app (its own login item, "Cua Spaces"), keeping this machine's
         registration, id and Spaces; puts the old one back if the helper
         does not take over (the outcome says so). `app_version`: a failed
         move is not tried again by itself with the same version; `force`

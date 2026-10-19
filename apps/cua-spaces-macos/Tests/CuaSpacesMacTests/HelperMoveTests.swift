@@ -7,7 +7,7 @@ import CuaSpacesFFI
 import Foundation
 import Testing
 
-/// The one-time move of the host service into the app (Cua Spaces Helper):
+/// The one-time move of the host service into the app (its own login item):
 /// offered only when the old LaunchAgent runs it and this app carries the
 /// helper, moved only when the person says Continue, and what went wrong
 /// shown in words with the old service kept.
@@ -62,11 +62,11 @@ struct HelperMoveTests {
     @Test func aMoveThatDidNotTakeOverSaysSoAndKeepsTheOldOne() async {
         let host = oldInstall()
         host.migration = HostServiceMigration(
-            outcome: "rolled-back", detail: "Cua Spaces Helper did not take over", permissionsNeeded: false)
+            outcome: "rolled-back", detail: "the host service did not take over", permissionsNeeded: false)
         let m = HostModel(host: host)
         await m.refresh()
         await m.moveToHelper()
-        #expect(m.helperMove == .rolledBack("Cua Spaces Helper did not take over"))
+        #expect(m.helperMove == .rolledBack("the host service did not take over"))
         #expect(m.status?.serviceKind == "launchd")
     }
 

@@ -86,16 +86,18 @@ helper_checks() {
   local s
   s="$(status_json)"
   check "service kind is app-helper" '[ "$(printf %s "$s" | field service.kind)" = app-helper ]'
-  check "Cua Spaces Helper is running" 'launchctl print "$gui/$label_new" 2>/dev/null | grep -q "state = running"'
+  check "the app's login item is running" 'launchctl print "$gui/$label_new" 2>/dev/null | grep -q "state = running"'
+  check "the app's own executable runs it" 'pgrep -f "CuaSpacesMac --service-helper run" >/dev/null'
   check "cua-spacesd runs inside the app" \
-    'pgrep -fl "Cua Spaces Helper.app/Contents/MacOS/cua-spacesd" >/dev/null'
+    'pgrep -fl "Cua Spaces.app/Contents/MacOS/cua-spacesd" >/dev/null'
   check "the old agent is gone from launchd" '! launchctl print "$gui/$label_old" >/dev/null 2>&1'
   check "the old plist is gone" '[ ! -e "$HOME/Library/LaunchAgents/$label_old.plist" ]'
   check "the old binary is gone" '[ ! -e "$HOME/.cua/host/bin/cua-spacesd" ]'
   check "no second cua-spacesd" '[ "$(pgrep -x cua-spacesd | wc -l | tr -d " ")" = 1 ]'
-  check "the helper is signed as com.trycua.spaces.helper with a stable requirement" \
-    'codesign -d -r- "$app/Contents/Library/LoginItems/Cua Spaces Helper.app" 2>&1 | grep -q "identifier \"com.trycua.spaces.helper\"" &&
-     ! codesign -d -r- "$app/Contents/Library/LoginItems/Cua Spaces Helper.app" 2>&1 | grep -q cdhash'
+  check "the app is signed as com.trycua.spaces.macos with a stable requirement" \
+    'codesign -d -r- "$app" 2>&1 | grep -q "identifier \"com.trycua.spaces.macos\"" &&
+     ! codesign -d -r- "$app" 2>&1 | grep -q cdhash'
+  check "no separate helper bundle" '[ ! -e "$app/Contents/Library/LoginItems" ]'
 }
 
 permissions() { status_json | python3 -c 'import json,sys; print(",".join(p["id"] for p in json.load(sys.stdin).get("permissions",[])))'; }
@@ -110,7 +112,7 @@ upgrade)
   "$cua" host migrate; echo "migrate exit $?"
   same_machine_checks
   helper_checks
-  echo "permissions still to allow for Cua Spaces Helper: $(permissions)"
+  echo "permissions still to allow for Cua Spaces: $(permissions)"
   ;;
 update)
   newer="${2:?usage: update NEWER.app}"
@@ -127,9 +129,9 @@ update)
 downgrade)
   old="${2:?usage: downgrade OLD.app}"
   replace_app "$old"
-  # The helper notices its bundle is gone within about 10 s and stops.
-  check "no Cua Spaces Helper left running" \
-    'for _ in $(seq 1 15); do pgrep -f "Cua Spaces Helper" >/dev/null || break; sleep 2; done; ! pgrep -f "Cua Spaces Helper" >/dev/null'
+  # The service notices its cua-spacesd is gone within about 10 s and stops.
+  check "no service left running" \
+    'for _ in $(seq 1 15); do pgrep -f "service-helper run" >/dev/null || break; sleep 2; done; ! pgrep -f "service-helper run" >/dev/null'
   check "the old app still reads this machine's setup" '[ "$(status_json | field configured)" = true ]'
   "$cua" host setup --name "$(status_json | field name)" >/dev/null 2>&1; echo "setup exit $?"
   open -a "$app"

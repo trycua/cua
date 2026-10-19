@@ -89,8 +89,8 @@ pub fn defaults_checks() -> Vec<Check> {
 
 /// `host.service`: how this machine's host service (`cua host setup`)
 /// runs, informational. On a Mac it says whether it is the Cua Spaces
-/// app's "Cua Spaces Helper" or the old LaunchAgent, and warns when both
-/// are there or the helper's app is gone. `None` when the machine is not
+/// app's own login item or the old LaunchAgent, and warns when both
+/// are there or the app is gone. `None` when the machine is not
 /// set up for access.
 pub fn host_service_check(s: &cua_host::HostStatus) -> Option<Check> {
     if !s.configured {
@@ -107,24 +107,24 @@ pub fn host_service_check(s: &cua_host::HostStatus) -> Option<Check> {
         "app-helper" if !s.helper_available => Check::new(
             "host.service",
             Status::Warn,
-            "the host service is set up as Cua Spaces Helper, but the Cua Spaces app is not installed",
+            "the host service is set up to run inside the Cua Spaces app, but the app is not installed",
         )
         .fix("install Cua Spaces again, or `cua host setup --runner launchd`"),
         "app-helper" if s.legacy_service => Check::new(
             "host.service",
             Status::Warn,
-            format!("Cua Spaces Helper ({state}), and the old LaunchAgent is still there"),
+            format!("the Cua Spaces app's login item ({state}), and the old LaunchAgent is still there"),
         )
         .fix("`cua host migrate` removes the old LaunchAgent"),
         "app-helper" => Check::new(
             "host.service",
             Status::Pass,
-            format!("Cua Spaces Helper, the Cua Spaces app's login item ({state})"),
+            format!("the Cua Spaces app's login item ({state})"),
         ),
         "launchd" if s.helper_available => Check::new(
             "host.service",
             Status::Pass,
-            format!("LaunchAgent com.trycua.spacesd.host ({state}); Cua Spaces can run it as Cua Spaces Helper"),
+            format!("LaunchAgent com.trycua.spacesd.host ({state}); the Cua Spaces app can run it instead"),
         )
         .fix("`cua host migrate` (macOS then asks once for Screen Recording and Accessibility)"),
         kind => Check::new("host.service", Status::Pass, format!("{kind} ({state})")),
@@ -575,7 +575,7 @@ mod host_service_tests {
         assert!(host_service_check(&cua_host::HostStatus::default()).is_none());
         let c = host_service_check(&status("app-helper", true, false)).unwrap();
         assert_eq!(c.status, Status::Pass);
-        assert!(c.message.contains("Cua Spaces Helper"), "{}", c.message);
+        assert!(c.message.contains("Cua Spaces app's login item"), "{}", c.message);
         let c = host_service_check(&status("app-helper", true, true)).unwrap();
         assert_eq!(c.status, Status::Warn);
         assert!(c.remediation.contains("cua host migrate"));

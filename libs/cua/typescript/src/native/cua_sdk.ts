@@ -9486,7 +9486,7 @@ export type HostStatus = {
      */
     ownerEmail?: string,
     /**
-     * macOS: a Cua Spaces app with its helper ("Cua Spaces Helper") is
+     * macOS: a Cua Spaces app that can run the host service is
      * installed, so the host service can run as it.
      */
     helperAvailable: boolean,
@@ -35917,7 +35917,7 @@ export interface HostLike {
     configure(change: HostSettingsChange, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostStatus>;
 /**
  * macOS: moves the host service from the old LaunchAgent to the Cua
- * Spaces app's helper ("Cua Spaces Helper"), keeping this machine's
+ * Spaces app (its own login item, "Cua Spaces"), keeping this machine's
  * registration, id and Spaces; puts the old one back if the helper
  * does not take over (the outcome says so). `app_version`: a failed
  * move is not tried again by itself with the same version; `force`
@@ -36032,7 +36032,7 @@ export class Host extends UniffiAbstractObject implements HostLike {
 
 /**
  * macOS: moves the host service from the old LaunchAgent to the Cua
- * Spaces app's helper ("Cua Spaces Helper"), keeping this machine's
+ * Spaces app (its own login item, "Cua Spaces"), keeping this machine's
  * registration, id and Spaces; puts the old one back if the helper
  * does not take over (the outcome says so). `app_version`: a failed
  * move is not tried again by itself with the same version; `force`

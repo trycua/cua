@@ -13,9 +13,9 @@
 # sidecar), Sparkle.framework (the updater, from the pinned SwiftPM
 # artifact, with its XPC services) in Contents/Frameworks and the
 # third-party notices (Settings, About, Acknowledgements), the host
-# service's login item (Contents/Library/LoginItems/Cua Spaces Helper.app:
-# the CuaSpacesHelper launcher and the pinned cua-spacesd from
-# scripts/fetch-spacesd.sh, or $CUA_SPACESD_BIN; its SMAppService plist in
+# service (the pinned cua-spacesd from scripts/fetch-spacesd.sh, or
+# $CUA_SPACESD_BIN, in Contents/MacOS; the app's own executable runs it as
+# its login item, whose SMAppService plist is in
 # Contents/Library/LaunchAgents), then signs it ad hoc as
 # com.trycua.spaces.macos.
 #
@@ -54,13 +54,11 @@ bins=()
 if [ -z "$archs" ]; then
   "$here/../../libs/cua/swift/scripts/fresh-abi.sh" "$here" "$config"
   swift build --package-path "$here" -c "$config" --product CuaSpacesMac
-  swift build --package-path "$here" -c "$config" --product CuaSpacesHelper
   bins+=("$(swift build --package-path "$here" -c "$config" --show-bin-path)")
 else
   for arch in $archs; do
     "$here/../../libs/cua/swift/scripts/fresh-abi.sh" "$here" "$config" --arch "$arch"
     swift build --package-path "$here" -c "$config" --arch "$arch" --product CuaSpacesMac
-    swift build --package-path "$here" -c "$config" --arch "$arch" --product CuaSpacesHelper
     bins+=("$(swift build --package-path "$here" -c "$config" --arch "$arch" --show-bin-path)")
   done
 fi
@@ -119,41 +117,27 @@ for rp in $(otool -l "$app/Contents/MacOS/CuaSpacesMac" | awk '/LC_RPATH/ {getli
 done
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/MacOS/CuaSpacesMac" 2>/dev/null || true
 
-# The host service as the app's login item (SMAppService.agent): Cua Spaces
-# Helper.app, whose launcher runs the bundled cua-spacesd as its child, so
-# macOS shows and remembers its permissions as "Cua Spaces Helper" (the
-# bundle id, not a file path). Versions follow the app's.
-helper_app="$app/Contents/Library/LoginItems/Cua Spaces Helper.app"
-mkdir -p "$helper_app/Contents/MacOS" "$helper_app/Contents/Resources" "$app/Contents/Library/LaunchAgents"
-cp "$here/Support/Helper/Info.plist" "$helper_app/Contents/Info.plist"
-for key in CFBundleShortVersionString CFBundleVersion; do
-  /usr/libexec/PlistBuddy -c "Set :$key $(/usr/libexec/PlistBuddy -c "Print :$key" "$app/Contents/Info.plist")" \
-    "$helper_app/Contents/Info.plist"
-done
-if [ ${#bins[@]} -gt 1 ]; then
-  slices=()
-  for b in "${bins[@]}"; do slices+=("$b/CuaSpacesHelper"); done
-  lipo -create "${slices[@]}" -output "$helper_app/Contents/MacOS/Cua Spaces Helper"
-else
-  cp "$bin/CuaSpacesHelper" "$helper_app/Contents/MacOS/Cua Spaces Helper"
-fi
+# The host service: cua-spacesd next to the app's executable, which runs it
+# as the app's login item (SMAppService.agent; `CuaSpacesMac
+# --service-helper run`), so macOS asks for and keeps its permissions under
+# the app's own name, "Cua Spaces".
+mkdir -p "$app/Contents/Library/LaunchAgents"
 # shellcheck disable=SC2086 # one word per architecture
 spacesd="$("$here/scripts/fetch-spacesd.sh" ${archs:-$(uname -m)})"
-cp "$spacesd" "$helper_app/Contents/MacOS/cua-spacesd"
-chmod 0755 "$helper_app/Contents/MacOS/cua-spacesd"
-cp "$here/Support/AppIcon.icns" "$helper_app/Contents/Resources/AppIcon.icns"
+cp "$spacesd" "$app/Contents/MacOS/cua-spacesd"
+chmod 0755 "$app/Contents/MacOS/cua-spacesd"
 cp "$here/Support/Helper/com.trycua.spaces.helper.plist" "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist"
 [ -x "$cli" ] && cp "$cli" "$app/Contents/MacOS/cua"
 
-# Release: symbols go to dSYMs, not into the download (about 30-40% of each
+# Release: symbols go to dSYMs, not into the download (about 40% of each
 # binary). Executables keep only what dynamic linking needs; the dylib keeps
 # its exported (global) symbols, which the app links against.
 if [ "$config" = release ]; then
   syms="$out/dSYMs"
   rm -rf "$syms"
   mkdir -p "$syms"
-  for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" \
-    "$helper_app/Contents/MacOS/Cua Spaces Helper" "$helper_app/Contents/MacOS/cua-spacesd"; do
+  for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/MacOS/cua" "$app/Contents/MacOS/cua-spacesd" \
+    "$app/Contents/Frameworks/libcua_sdk.dylib"; do
     [ -f "$f" ] || continue
     # A prebuilt binary (cua-spacesd) has no debug map: its dSYM still
     # carries the symbol table, which is what symbolication needs.
@@ -164,12 +148,9 @@ if [ "$config" = release ]; then
     esac
   done
 fi
-
-# Nested code first: the daemon gets a signature of its own (ad hoc here;
-# build-release.sh signs it with the release identity), then the helper
-# bundle.
-codesign -s - -f -i com.trycua.cua-env-driver "$helper_app/Contents/MacOS/cua-spacesd"
-codesign -s - -f -i com.trycua.spaces.helper "$helper_app"
+# The daemon keeps a signature of its own (ad hoc here; build-release.sh
+# signs it with the release identity).
+codesign -s - -f -i com.trycua.cua-env-driver "$app/Contents/MacOS/cua-spacesd"
 
 if [ -x "$cli" ]; then
   codesign -s - -f -i com.trycua.cua "$app/Contents/MacOS/cua"
@@ -204,8 +185,7 @@ fi
 # only fail on the other kind of Mac).
 if [ -n "$archs" ]; then
   for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/Frameworks/libcua_sdk.dylib" "$app/Contents/MacOS/cua" \
-    "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" \
-    "$helper_app/Contents/MacOS/Cua Spaces Helper" "$helper_app/Contents/MacOS/cua-spacesd"; do
+    "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" "$app/Contents/MacOS/cua-spacesd"; do
     [ -e "$f" ] || continue
     for arch in $archs; do
       lipo "$f" -verify_arch "$arch" || { echo "$f has no $arch slice ($(lipo -archs "$f"))" >&2; exit 1; }

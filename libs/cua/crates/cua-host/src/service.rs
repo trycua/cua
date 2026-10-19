@@ -13,9 +13,9 @@
 //!   accessibility run with the user's TCC grants. The user grants Screen
 //!   Recording and Accessibility in System Settings; nothing here grants or
 //!   opens anything. With the Cua Spaces app installed, the agent is the
-//!   app's own login item ([`AppHelper`]): "Cua Spaces Helper", a signed
-//!   helper bundle inside the app registered with `SMAppService`, so macOS
-//!   shows and keeps its permissions under the app's name and Team ID;
+//!   app's own login item ([`AppHelper`]): the app's executable in its
+//!   service mode, registered with `SMAppService`, so macOS shows and keeps
+//!   every permission under one name, "Cua Spaces", and the Team ID;
 //!   without the app, a hand-written LaunchAgent ([`Launchd`]) runs the
 //!   downloaded binary.
 //! - Windows: a scheduled task that starts at logon with the user's
@@ -39,12 +39,11 @@ pub const WINDOWS_TASK_NAME: &str = "Cua\\SpacesdHost";
 /// launchd label of the Cua Spaces app's login item ([`AppHelper`]).
 pub const APP_HELPER_LABEL: &str = "com.trycua.spaces.helper";
 /// What macOS shows for it (System Settings: Privacy & Security, Login
-/// Items).
-pub const APP_HELPER_NAME: &str = "Cua Spaces Helper";
-/// The helper bundle, inside the app.
-pub const APP_HELPER_BUNDLE: &str = "Contents/Library/LoginItems/Cua Spaces Helper.app";
-/// The helper's launcher (its bundle's main executable), inside the bundle.
-pub const APP_HELPER_EXECUTABLE: &str = "Contents/MacOS/Cua Spaces Helper";
+/// Items): the app's own name, since the app's executable runs it.
+pub const APP_HELPER_NAME: &str = "Cua Spaces";
+/// The cua-spacesd the app ships, inside the app (the service runs only
+/// this one).
+pub const APP_HELPER_DAEMON: &str = "Contents/MacOS/cua-spacesd";
 /// The `SMAppService.agent` plist, inside the app.
 pub const APP_HELPER_PLIST: &str = "Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist";
 /// The app's own executable (which registers the helper), inside the app.
@@ -85,7 +84,7 @@ pub enum RunnerKind {
     Systemd,
     /// launchd LaunchAgent in the GUI session.
     Launchd,
-    /// macOS: the Cua Spaces app's login item, "Cua Spaces Helper"
+    /// macOS: the Cua Spaces app's login item (the app's own executable)
     /// ([`AppHelper`]).
     AppHelper,
     /// Windows scheduled task at logon (interactive token).
@@ -1212,24 +1211,29 @@ pub fn helper_spec_path(user_home: &Path) -> PathBuf {
     user_home.join(".cua").join("helper").join("service.json")
 }
 
-/// The helper's launcher inside `app` (what `config.driver_bin` names for
-/// the app-helper runner: `<launcher> check-permissions` answers for the
-/// helper's own permissions).
+/// The service's launcher inside `app`: the app's own executable (what
+/// `config.driver_bin` names for the app-helper runner; `<launcher>
+/// check-permissions` answers for the app's permissions).
 pub fn app_helper_launcher(app: &Path) -> PathBuf {
-    app.join(APP_HELPER_BUNDLE).join(APP_HELPER_EXECUTABLE)
+    app.join(APP_EXECUTABLE)
 }
 
 /// Whether `app` is a Cua Spaces app that carries the helper.
 pub fn has_app_helper(app: &Path) -> bool {
     app.join(APP_HELPER_PLIST).is_file()
-        && app_helper_launcher(app).is_file()
+        && app.join(APP_HELPER_DAEMON).is_file()
         && app.join(APP_EXECUTABLE).is_file()
 }
 
-/// Whether `launcher` is a Cua Spaces app's helper launcher (a host set up
-/// with the app-helper runner names it as its driver).
+/// Whether `launcher` is a Cua Spaces app's executable (a host set up with
+/// the app-helper runner names it as its driver).
 pub fn is_app_helper_launcher(launcher: &Path) -> bool {
-    launcher.ends_with(Path::new(APP_HELPER_BUNDLE).join(APP_HELPER_EXECUTABLE))
+    launcher.ends_with(APP_EXECUTABLE)
+        && launcher
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .is_some_and(|app| app.extension().is_some_and(|e| e == "app"))
 }
 
 /// The installed Cua Spaces app that carries the helper, if any (macOS):
@@ -1272,14 +1276,15 @@ pub struct HelperRegistration {
     pub error: Option<String>,
 }
 
-/// The Cua Spaces app's login item: "Cua Spaces Helper"
-/// (`Contents/Library/LoginItems/Cua Spaces Helper.app`), registered with
-/// `SMAppService.agent` by the app's own executable. Its launcher reads
-/// [`helper_spec_path`] and runs the cua-spacesd sealed in the helper
-/// bundle with it, in the GUI session; macOS holds the helper responsible
-/// for it, so Screen Recording and Accessibility are granted to "Cua
-/// Spaces Helper" (bundle id `com.trycua.spaces.helper`, the Cua team)
-/// and survive app updates.
+/// The Cua Spaces app's login item: the app's own executable
+/// (`CuaSpacesMac --service-helper run`), registered with
+/// `SMAppService.agent` by that executable. It reads [`helper_spec_path`]
+/// and runs the cua-spacesd sealed in the app with it, in the GUI session;
+/// macOS holds the app responsible for it, so Screen Recording and
+/// Accessibility are granted to "Cua Spaces" (bundle id
+/// `com.trycua.spaces.macos`, the Cua team), once, and survive app updates.
+/// (A separate helper bundle got two names in System Settings: macOS lists
+/// a login item's Screen Recording under the app that contains it.)
 pub struct AppHelper {
     /// The app (`/Applications/Cua Spaces.app`).
     pub app: PathBuf,
@@ -1353,8 +1358,8 @@ impl ServiceManager for AppHelper {
     }
     fn install(&self, spec: &ServiceSpec) -> Result<()> {
         let mut spec = spec.clone();
-        // The helper runs only its own cua-spacesd; the spec says which
-        // launcher it was written for.
+        // The service runs only the app's own cua-spacesd; the spec says
+        // which launcher it was written for.
         spec.program = app_helper_launcher(&self.app);
         let json =
             serde_json::to_string_pretty(&spec).map_err(|e| Error::Internal(e.to_string()))?;
@@ -1874,13 +1879,14 @@ mod tests {
         }
         assert!(
             !has_app_helper(&app),
-            "an app without the helper bundle (0.9.4)"
+            "an app without its own cua-spacesd (0.9.4)"
         );
-        let launcher = app_helper_launcher(&app);
-        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
-        std::fs::write(&launcher, "").unwrap();
+        std::fs::write(app.join(APP_HELPER_DAEMON), "").unwrap();
         assert!(has_app_helper(&app));
+        let launcher = app_helper_launcher(&app);
+        assert_eq!(launcher, app.join(APP_EXECUTABLE));
         assert!(is_app_helper_launcher(&launcher));
+        assert!(!is_app_helper_launcher(Path::new("/usr/local/bin/CuaSpacesMac")));
         assert!(!is_app_helper_launcher(Path::new(
             "/Users/ada/.cua/host/bin/cua-spacesd"
         )));
@@ -1905,7 +1911,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            e.contains("Cua Spaces Helper") && e.contains("Invalid argument"),
+            e.contains("Cua Spaces") && e.contains("Invalid argument"),
             "{e}"
         );
         // The JSON CuaSpacesMac --service-helper prints.

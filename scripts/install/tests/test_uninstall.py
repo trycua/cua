@@ -301,7 +301,8 @@ class UninstallMacTest(unittest.TestCase):
         dry = box.run("--dry-run")
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertIn("--service-helper unregister", dry.stdout)
-        self.assertIn("tccutil reset All com.trycua.spaces.helper", dry.stdout)
+        self.assertIn("tccutil reset All com.trycua.spaces.macos", dry.stdout)
+        self.assertNotIn("tccutil reset All com.trycua.spaces.helper", dry.stdout)
         self.assertEqual(box.index("tccutil"), -1)
         self.assertTrue(box.exists(".cua/helper/service.json"))
         result = box.run("--yes", "--prefix", str(box.home))
@@ -309,7 +310,6 @@ class UninstallMacTest(unittest.TestCase):
         # Unregistered by the app before the app goes, then stopped.
         self.assertGreaterEqual(box.index("app: --service-helper unregister"), 0)
         self.assertGreaterEqual(box.index("launchctl: bootout gui/1000/com.trycua.spaces.helper"), 0)
-        self.assertGreaterEqual(box.index("tccutil: reset All com.trycua.spaces.helper"), 0)
         self.assertGreaterEqual(box.index("tccutil: reset All com.trycua.spaces.macos"), 0)
         self.assertGreaterEqual(box.index("tccutil: reset All com.trycua.cua-env-driver"), 0)
         self.assertIn("minus button", result.stdout)

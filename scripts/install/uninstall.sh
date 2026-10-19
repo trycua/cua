@@ -592,8 +592,8 @@ EOF
             fi
             rm_path "$plist"
         done
-        # The Cua Spaces app's own helper ("Cua Spaces Helper", the app's
-        # login item since 0.10): `cua host remove` above unregisters it when
+        # The Cua Spaces app's own host service (the app's executable as its
+        # login item, since 0.10): `cua host remove` above unregisters it when
         # it can; this covers an app whose cua could not run. What it ran
         # (~/.cua/helper) goes too, and so do the privacy permissions macOS
         # keeps for it and for the old cua-spacesd.
@@ -615,12 +615,11 @@ EOF
             launchctl bootout "gui/$(id -u)/com.trycua.spaces.helper" >/dev/null 2>&1 || true
         fi
         rm_path "$HOME/.cua/helper"
-        # (Screen Recording is listed under the app, Accessibility under the
-        # helper. tccutil finds them by bundle id while the app is still
-        # here. An old cua-spacesd entry is kept by its file path, which
+        # (Both are listed under the app, "Cua Spaces"; tccutil finds them
+        # by bundle id while the app is still here. An old cua-spacesd entry is kept by its file path, which
         # tccutil cannot name: say how to remove it.)
         if has tccutil; then
-            for bundle_id in com.trycua.spaces.helper com.trycua.spaces.macos com.trycua.cua-env-driver; do
+            for bundle_id in com.trycua.spaces.macos com.trycua.cua-env-driver; do
                 if [ "$dry_run" = 1 ]; then
                     say "[dry-run] tccutil reset All $bundle_id"
                 else

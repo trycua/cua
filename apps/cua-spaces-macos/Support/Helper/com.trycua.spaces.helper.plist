@@ -4,18 +4,25 @@
   Cua Spaces.app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist:
   the host service as the app's login item, registered with
   SMAppService.agent(plistName:) (`CuaSpacesMac --service-helper register`;
-  cua-host's app-helper runner). It runs in the user's GUI (Aqua) session so
-  screen capture and input run with the helper's own Screen Recording and
-  Accessibility grants. The helper reads ~/.cua/helper/service.json and
-  exits 0 when there is none (nothing set up), which launchd leaves stopped;
-  any other exit is restarted.
+  cua-host's app-helper runner). It runs the app's own executable
+  (`--service-helper run`), so screen capture and input use the app's
+  Screen Recording and Accessibility grants: one name, "Cua Spaces", in
+  System Settings. It runs in the user's GUI (Aqua) session, reads
+  ~/.cua/helper/service.json and exits 0 when there is none (nothing set
+  up), which launchd leaves stopped; any other exit is restarted.
 -->
 <plist version="1.0">
 <dict>
 	<key>Label</key>
 	<string>com.trycua.spaces.helper</string>
 	<key>BundleProgram</key>
-	<string>Contents/Library/LoginItems/Cua Spaces Helper.app/Contents/MacOS/Cua Spaces Helper</string>
+	<string>Contents/MacOS/CuaSpacesMac</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>CuaSpacesMac</string>
+		<string>--service-helper</string>
+		<string>run</string>
+	</array>
 	<key>AssociatedBundleIdentifiers</key>
 	<array>
 		<string>com.trycua.spaces.macos</string>

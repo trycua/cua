@@ -85,7 +85,8 @@ public enum LoginLaunch {
     }
 }
 
-/// The host service's login item: `Cua Spaces Helper.app` run by
+/// The host service's login item: this app's own executable
+/// (`CuaSpacesMac --service-helper run`, so its permissions are the app's) run by
 /// `SMAppService.agent` from Contents/Library/LaunchAgents/
 /// com.trycua.spaces.helper.plist. cua-host (the `app-helper` runner, in
 /// this app's SDK and in the `cua` CLI) drives it through

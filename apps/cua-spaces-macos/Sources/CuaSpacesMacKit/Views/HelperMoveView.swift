@@ -5,9 +5,9 @@ import AppKit
 import SwiftUI
 
 /// The one-time sheet that moves this Mac's sharing service into the app,
-/// as "Cua Spaces Helper", and walks through the one thing macOS asks
-/// again: Screen Recording and Accessibility for the helper
-/// (`HostModel.helperMove`).
+/// (run by the app's own executable, so macOS shows one name, "Cua
+/// Spaces"), and walks through the one thing macOS asks again: Screen
+/// Recording and Accessibility, each once (`HostModel.helperMove`).
 public struct HelperMoveSheet: View {
     let host: HostModel
 
@@ -46,7 +46,7 @@ public struct HelperMoveSheet: View {
             Label("Cua Spaces moved its background helper", systemImage: "arrow.triangle.2.circlepath")
                 .font(.headline)
             Text("macOS needs you to allow it once more.")
-            Text("The helper is what lets people and agents you share this Mac with see the screen and use the mouse and keyboard. It now lives inside Cua Spaces, so macOS remembers your answer after updates.")
+            Text("The helper is what lets the people and agents you share this Mac with see the screen and use the mouse and keyboard. It is now part of Cua Spaces, so macOS lists it as \u{201C}Cua Spaces\u{201D} and remembers your answer after updates.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -62,12 +62,12 @@ public struct HelperMoveSheet: View {
     @ViewBuilder
     private func moved(permissions: Bool) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Allow Cua Spaces Helper", systemImage: "checkmark.shield")
+            Label("Allow Cua Spaces", systemImage: "checkmark.shield")
                 .font(.headline)
             if permissions {
-                Text("Turn these on in System Settings:")
-                step(1, "Screen Recording: Cua Spaces", "Open", Self.screenRecordingURL)
-                step(2, "Accessibility: Cua Spaces Helper", "Open", Self.accessibilityURL)
+                Text("In System Settings, turn on \u{201C}Cua Spaces\u{201D} in these two lists:")
+                step(1, "Screen Recording", "Open", Self.screenRecordingURL)
+                step(2, "Accessibility", "Open", Self.accessibilityURL)
                 Text("The old entry there is called \u{201C}cua-spacesd\u{201D}. You can remove it: click it, then click the minus (\u{2212}) button below the list.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

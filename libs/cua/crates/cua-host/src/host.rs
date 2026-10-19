@@ -333,13 +333,8 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
         return vec![];
     }
     let d = service_name(driver);
-    // macOS lists the helper's Screen Recording under the app that
-    // contains it ("Cua Spaces"), and its Accessibility as the helper.
-    let screen = if crate::service::is_app_helper_launcher(driver) {
-        "Cua Spaces".to_string()
-    } else {
-        d.clone()
-    };
+    // The app's executable runs the service: both are "Cua Spaces".
+    let screen = d.clone();
     vec![
         PermissionHint {
             id: "screen-recording".into(),
@@ -364,8 +359,8 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
     ]
 }
 
-/// How System Settings lists the host service: "Cua Spaces Helper" for
-/// the app's helper, else "cua-spacesd (<path>)".
+/// How System Settings lists the host service: "Cua Spaces" when the app
+/// runs it, else "cua-spacesd (<path>)".
 fn service_name(driver: &Path) -> String {
     if crate::service::is_app_helper_launcher(driver) {
         crate::service::APP_HELPER_NAME.to_string()
@@ -532,7 +527,7 @@ pub struct HostStatus {
     /// The owner's email, when the relay gave one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_email: Option<String>,
-    /// macOS: a Cua Spaces app with its helper ("Cua Spaces Helper") is
+    /// macOS: a Cua Spaces app that can run the host service is
     /// installed, so the host service can run as it.
     #[serde(default)]
     pub helper_available: bool,
@@ -1073,7 +1068,7 @@ impl Host {
                     .map(|app| service::app_helper_launcher(&app))
                     .ok_or_else(|| {
                         Error::Service(
-                            "Cua Spaces Helper lives in the Cua Spaces app, which is not \
+                            "the host service runs inside the Cua Spaces app, which is not \
                              installed; install it, or run `cua host setup --runner launchd`"
                                 .into(),
                         )
@@ -1765,7 +1760,7 @@ impl Host {
     // ------------------------------------------------- the app's helper
 
     /// Moves the host service from the old hand-written LaunchAgent to the
-    /// Cua Spaces app's helper ("Cua Spaces Helper"), keeping the machine
+    /// Cua Spaces app (its login item, under the app's own name), keeping the machine
     /// (config, machine id and token, policy, provided Spaces); see
     /// [`helper_migration`]. `app_version` is the app's (a failed move is
     /// not tried again by itself with the same version); `force` tries
@@ -1810,7 +1805,7 @@ impl Host {
             MigrationPlan::Nothing(why) => Ok(ServiceMigration::new("not-needed", why, false)),
             MigrationPlan::KeepAfterFailure => Ok(ServiceMigration::new(
                 "kept",
-                "moving to Cua Spaces Helper failed before with this version; the old host \
+                "moving into the Cua Spaces app failed before with this version; the old host \
                  service keeps running (`cua host migrate --force` tries again)",
                 false,
             )),
@@ -1830,7 +1825,7 @@ impl Host {
                 self.record_migration("done", app_version, None);
                 Ok(ServiceMigration::new(
                     "switched",
-                    "the host service will run as Cua Spaces Helper when sharing resumes",
+                    "the host service will run inside the Cua Spaces app when sharing resumes",
                     config.share_desktop,
                 ))
             }
@@ -1886,12 +1881,12 @@ impl Host {
                     "config",
                     "local",
                     &next.name,
-                    "host service moved to Cua Spaces Helper",
+                    "host service moved into the Cua Spaces app",
                 );
                 let needs = next.share_desktop && !self.missing_permissions(&next).is_empty();
                 Ok(ServiceMigration::new(
                     "migrated",
-                    "the host service now runs as Cua Spaces Helper; this machine kept its id, \
+                    "the host service now runs inside the Cua Spaces app; this machine kept its id, \
                      its registration and its Spaces",
                     needs,
                 ))
@@ -1901,7 +1896,7 @@ impl Host {
                 if moved {
                     let _ = move_file(&backup, &plist);
                 }
-                let mut why = format!("Cua Spaces Helper did not take over: {e}");
+                let mut why = format!("the Cua Spaces app's host service did not take over: {e}");
                 if found.loaded
                     && let Err(e) = legacy.bootstrap()
                 {
@@ -2234,15 +2229,10 @@ mod tests {
     #[test]
     fn permission_hints_name_the_app_helper() {
         let helper = Path::new(
-            "/Applications/Cua Spaces.app/Contents/Library/LoginItems/Cua Spaces Helper.app/Contents/MacOS/Cua Spaces Helper",
+            "/Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac",
         );
         for h in permission_hints("macos", helper) {
-            let want = if h.id == "screen-recording" {
-                "turn on Cua Spaces,"
-            } else {
-                "turn on Cua Spaces Helper,"
-            };
-            assert!(h.instructions.contains(want), "{}", h.instructions);
+            assert!(h.instructions.contains("turn on Cua Spaces,"), "{}", h.instructions);
             assert!(
                 !h.instructions.contains("cua-spacesd"),
                 "{}",
@@ -2252,7 +2242,7 @@ mod tests {
         let ln = local_network_hint("macos", true, helper).unwrap();
         assert!(
             ln.instructions
-                .contains("Allow Cua Spaces Helper to find devices"),
+                .contains("Allow Cua Spaces to find devices"),
             "{}",
             ln.instructions
         );

@@ -25,7 +25,7 @@ public protocol HostRunning: AnyObject, Sendable {
     /// other devices.
     func configure(change: HostSettingsChange) async throws -> HostStatus
     /// Moves the host service from the old LaunchAgent into this app, as
-    /// its "Cua Spaces Helper" login item, keeping this machine's id,
+    /// its own login item ("Cua Spaces"), keeping this machine's id,
     /// registration and Spaces; the old one comes back if the helper does
     /// not take over (outcome `rolled-back`).
     func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration
@@ -156,7 +156,7 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     public func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration {
         calls.append("migrate:\(force)")
         let m = migration ?? HostServiceMigration(
-            outcome: "migrated", detail: "the host service now runs as Cua Spaces Helper", permissionsNeeded: true)
+            outcome: "migrated", detail: "the host service now runs inside the Cua Spaces app", permissionsNeeded: true)
         if m.outcome == "migrated" || m.outcome == "cleaned-up" {
             current.serviceKind = "app-helper"
             current.legacyService = false
@@ -165,11 +165,11 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     }
 }
 
-/// The one-time move of the host service into this app, as its login item
-/// "Cua Spaces Helper" (Cua Spaces 0.9.4 and earlier, and `cua host setup`
+/// The one-time move of the host service into this app, as its own login
+/// item (Cua Spaces 0.9.4 and earlier, and `cua host setup`
 /// without the app, ran it from a LaunchAgent of their own). Offered on the
 /// main window, so a person is there for the one thing macOS asks again:
-/// Screen Recording and Accessibility, now for Cua Spaces Helper. A login
+/// Screen Recording and Accessibility, now for "Cua Spaces". A login
 /// launch nobody sees never moves it.
 public enum HelperMove: Equatable {
     /// "Cua Spaces moved its background helper": Continue or Not now.
@@ -285,7 +285,7 @@ public final class HostModel {
         await followHelper()
     }
 
-    // MARK: - The app's helper ("Cua Spaces Helper")
+    // MARK: - The app's login item (the host service, as "Cua Spaces")
 
     /// After each status: offer the move when the old LaunchAgent runs this
     /// machine and this app carries the helper; quietly remove what an

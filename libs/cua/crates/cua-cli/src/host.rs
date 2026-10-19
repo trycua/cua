@@ -62,7 +62,7 @@ pub enum HostCmd {
         driver_bin: Option<PathBuf>,
         /// auto | systemd | launchd | app-helper | windows-task | process.
         /// On a Mac with the Cua Spaces app, auto is app-helper: the
-        /// service runs as the app's "Cua Spaces Helper" login item.
+        /// service runs as the app's own login item ("Cua Spaces").
         #[arg(long, default_value = "auto")]
         runner: String,
         /// What this machine is for: `desktop` (share this desktop; the
@@ -1106,7 +1106,7 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
     } else if s.service.kind == "launchd" && s.helper_available {
         line(
             out,
-            "  tip: `cua host migrate` moves this service into the Cua Spaces app (Cua Spaces Helper)",
+            "  tip: `cua host migrate` moves this service into the Cua Spaces app (its login item)",
         );
     }
     line(
@@ -1480,7 +1480,7 @@ pub async fn run_host(
                     line(
                         out,
                         "macOS will ask you once more for Screen Recording and Accessibility, \
-                         now for Cua Spaces Helper: allow both in System Settings > Privacy & \
+                         now for Cua Spaces: allow both in System Settings > Privacy & \
                          Security (`cua host status` lists them). The old \"cua-spacesd\" \
                          entries there can be removed with the minus button.",
                     );

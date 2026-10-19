@@ -1,7 +1,7 @@
 //! Moving a macOS host from the hand-written LaunchAgent (`cua host setup`
 //! without the app, Cua Spaces 0.9.4 and earlier: `~/.cua/host/bin/cua-spacesd`
 //! run by `~/Library/LaunchAgents/com.trycua.spacesd.host.plist`) to the Cua
-//! Spaces app's own login item, "Cua Spaces Helper"
+//! Spaces app's own login item (the app's executable, "Cua Spaces")
 //! ([`crate::service::AppHelper`]).
 //!
 //! The move keeps everything that makes the machine this machine: the host
@@ -100,7 +100,7 @@ pub fn plan(f: &MigrationFacts) -> MigrationPlan {
             if f.legacy.present() || f.legacy_binary {
                 MigrationPlan::RemoveLeftovers
             } else {
-                MigrationPlan::Nothing("the host service already runs as Cua Spaces Helper")
+                MigrationPlan::Nothing("the host service already runs inside the Cua Spaces app")
             }
         }
         Some(RunnerKind::Launchd) => {

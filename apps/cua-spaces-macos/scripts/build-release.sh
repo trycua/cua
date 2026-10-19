@@ -15,11 +15,9 @@
 #                                          Updater.app, then the framework
 #   Contents/Frameworks/libcua_sdk.dylib   (no entitlements)
 #   Contents/MacOS/cua                     com.trycua.cua, Support/cua.entitlements
-#   Contents/Library/LoginItems/Cua Spaces Helper.app
-#                                          the host service's login item:
-#                                          MacOS/cua-spacesd (com.trycua.cua-env-driver),
-#                                          then the bundle (com.trycua.spaces.helper,
-#                                          Support/Helper/CuaSpacesHelper.entitlements)
+#   Contents/MacOS/cua-spacesd             com.trycua.cua-env-driver (the host service,
+#                                          which the app's own executable runs as its
+#                                          login item)
 #   Cua Spaces.app                         com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
 #
 #   scripts/build-release.sh --version 0.2.0[-suffix] [--build-number N]
@@ -149,16 +147,11 @@ if [ -n "$feed_url" ]; then
   case "$feed_url" in https://*) ;; *) echo "--feed-url must be https" >&2; exit 2 ;; esac
   /usr/libexec/PlistBuddy -c "Set :SUFeedURL $feed_url" "$plist"
 fi
-# The helper's versions follow the app's.
-helper_app="$app/Contents/Library/LoginItems/Cua Spaces Helper.app"
-[ -x "$helper_app/Contents/MacOS/Cua Spaces Helper" ] && [ -x "$helper_app/Contents/MacOS/cua-spacesd" ] ||
-  { echo "$app has no Cua Spaces Helper.app with cua-spacesd" >&2; exit 1; }
+[ -x "$app/Contents/MacOS/cua-spacesd" ] || { echo "$app has no Contents/MacOS/cua-spacesd" >&2; exit 1; }
 [ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] ||
   { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $short" "$helper_app/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$helper_app/Contents/Info.plist"
 # The symbols build-app.sh took out of the binaries, for symbolicating crash
-# reports (the release workflow keeps them as an artifact; not shipped).
+# reports (the release workflow keeps it as an artifact; not shipped).
 if [ -d "$out/dSYMs" ]; then
   rm -f "$out/cua-spaces-$version-dSYMs.zip"
   (cd "$out" && ditto -c -k --keepParent dSYMs "cua-spaces-$version-dSYMs.zip")
@@ -195,13 +188,10 @@ done
 "${sign[@]}" "$app/Contents/Frameworks/libcua_sdk.dylib"
 "${sign[@]}" --identifier com.trycua.cua \
   --entitlements "$here/Support/cua.entitlements" "$app/Contents/MacOS/cua"
-# The host service's login item: the daemon, then the helper bundle (its
-# launcher is the main executable). The designated requirement is the
-# identifier and the team, so Screen Recording and Accessibility granted to
-# "Cua Spaces Helper" stay granted across updates.
-"${sign[@]}" --identifier com.trycua.cua-env-driver "$helper_app/Contents/MacOS/cua-spacesd"
-"${sign[@]}" --identifier com.trycua.spaces.helper \
-  --entitlements "$here/Support/Helper/CuaSpacesHelper.entitlements" "$helper_app"
+# The host service. The app's own executable runs it, so its permissions
+# are the app's (designated requirement: identifier and team, checked
+# below), and they stay granted across updates.
+"${sign[@]}" --identifier com.trycua.cua-env-driver "$app/Contents/MacOS/cua-spacesd"
 app_entitlements="$here/Support/CuaSpacesMac.entitlements"
 if [ "$identity" = "-" ]; then
   app_entitlements="$out/.adhoc.entitlements"
@@ -213,7 +203,7 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$app" >&2
 for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}" \
-  "$helper_app" "$helper_app/Contents/MacOS/cua-spacesd"; do
+  "$app/Contents/MacOS/cua-spacesd"; do
   flags="$(codesign -dv "$f" 2>&1 | sed -n 's/^CodeDirectory.*flags=\([^ ]*\).*/\1/p')"
   case "$flags" in *runtime*) ;; *) echo "$f is not signed with the hardened runtime ($flags)" >&2; exit 1 ;; esac
 done
@@ -221,8 +211,6 @@ done
   { echo "the bundled cua is not signed as com.trycua.cua" >&2; exit 1; }
 [ "$(codesign -dv "$app" 2>&1 | sed -n 's/^Identifier=//p')" = com.trycua.spaces.macos ] ||
   { echo "the app is not signed as com.trycua.spaces.macos" >&2; exit 1; }
-[ "$(codesign -dv "$helper_app" 2>&1 | sed -n 's/^Identifier=//p')" = com.trycua.spaces.helper ] ||
-  { echo "Cua Spaces Helper.app is not signed as com.trycua.spaces.helper" >&2; exit 1; }
 # A Developer ID build must be first party to the Keyvault: the broker and
 # its clients accept only code meeting TrustPolicy::production() (Apple
 # anchored, the pinned team CUA_TEAM_ID in cua-keyvault's caller.rs, a Cua
@@ -244,8 +232,7 @@ fi
 # it must be the identifier and the team, never a cdhash, or the next build
 # would not meet it and macOS would ask for the login password again.
 if [ "$identity" != "-" ]; then
-  for pair in "$app/Contents/MacOS/CuaSpacesMac:com.trycua.spaces.macos" "$app/Contents/MacOS/cua:com.trycua.cua" \
-    "$helper_app/Contents/MacOS/Cua Spaces Helper:com.trycua.spaces.helper"; do
+  for pair in "$app/Contents/MacOS/CuaSpacesMac:com.trycua.spaces.macos" "$app/Contents/MacOS/cua:com.trycua.cua"; do
     f="${pair%:*}"
     id="${pair##*:}"
     dr="$(codesign -d -r- "$f" 2>&1 | sed -n 's/^designated => //p')"
@@ -259,7 +246,7 @@ fi
 # A Developer ID build signs Sparkle with the same team (library
 # validation stays on: the app loads only its own team's code).
 if [ "$identity" != "-" ]; then
-  for f in "${sparkle_parts[@]}" "$helper_app/Contents/MacOS/cua-spacesd"; do
+  for f in "${sparkle_parts[@]}" "$app/Contents/MacOS/cua-spacesd"; do
     codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$f" ||
       { echo "$f is not signed by team $team" >&2; exit 1; }
   done

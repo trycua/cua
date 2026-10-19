@@ -255,9 +255,7 @@ async fn an_old_install_moves_to_the_helper_and_keeps_the_machine() {
     assert_eq!(config.runner, "app-helper");
     assert_eq!(
         config.driver_bin,
-        old.app.join(
-            "Contents/Library/LoginItems/Cua Spaces Helper.app/Contents/MacOS/Cua Spaces Helper"
-        )
+        old.app.join("Contents/MacOS/CuaSpacesMac")
     );
     assert_eq!(config.machine_id.as_deref(), Some(old.machine.as_str()));
     assert_eq!(

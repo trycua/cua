@@ -140,6 +140,7 @@ Canonical entry points:
 ```text
 Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
 Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux niri:        CUA_E2E_WAYLAND_SESSION=niri scripts/ci/linux/run-rust-e2e-wayland.sh
 Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
 Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
 Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg
@@ -147,7 +148,8 @@ Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 macOS:             scripts/ci/macos/run-rust-e2e.sh
 ```
 
-The hosted Sway and nested-compositor runners create controlled sessions.
+The hosted Sway, nested niri, and nested-compositor runners create controlled
+sessions.
 GNOME, KDE, real Xorg, Windows, and macOS use an existing graphical login. The
 suites are often maintainer-triggered and retain typed case/results,
 screenshots, accessibility state, trajectories, logs, and video where the lane

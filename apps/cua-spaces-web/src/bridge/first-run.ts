@@ -46,6 +46,9 @@ import { onboardingInitial, onboardingTelemetry, readSavedOnboarding, writeSaved
 import type { OnboardingFlowState } from "./contracts/onboarding";
 import { useRelayUsage } from "./relay-usage";
 import { newPendingId } from "./store";
+import { extraName, spokenName } from "./space-names";
+
+export { extraName, spokenName };
 import { spaceState } from "../lib/spaces";
 
 
@@ -72,7 +75,7 @@ export function agentUsedMs(core: CoreClient, status: HostStatus | null, sinceMs
 
 /** "18:12", in the user's own clock. */
 export function clockTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 /** Without the core: the two screens in their plainest state. Not the
@@ -343,14 +346,14 @@ export function useFirstRun(active = true): FirstRunHook {
         if (state === "creating") {
           return {
             phase: "creating",
-            name: row.name,
+            name: spokenName(row.name),
             os: row.os,
             detail: row.progress?.transfer ?? row.progress?.label ?? null,
             fraction: row.progress ? row.progress.permille / 1000 : null,
           };
         }
-        if (state === "failed") return { phase: "failed", name: row.name, os: row.os, error: row.progress?.error ?? null };
-        return { phase: "ready", name: row.name, os: row.os };
+        if (state === "failed") return { phase: "failed", name: spokenName(row.name), os: row.os, error: row.progress?.error ?? null };
+        return { phase: "ready", name: spokenName(row.name), os: row.os };
       }
       // Asked for, not listed yet.
       return { phase: "creating", os: s.extraOs, name: null, detail: null, fraction: null };
@@ -468,7 +471,7 @@ export function useFirstRun(active = true): FirstRunHook {
         if (!offer || offer.blocked) return;
         const pendingId = newPendingId();
         writeFirstRun({ extraPendingId: pendingId, extraOs: id, extraNotNow: false });
-        spaces.createSpace({ ...offer.args, os: offer.os, notifyWhenReady: true }, pendingId).catch(() => {
+        spaces.createSpace({ ...offer.args, name: extraName(id, spaces.data ?? []), os: offer.os, notifyWhenReady: true }, pendingId).catch(() => {
           // The row shows the failure; the card reads it from there.
         });
       } else if (id === "cancel" && s.extraPendingId) {

@@ -51,9 +51,10 @@ function RootLayout() {
 
   if (pathname.startsWith("/onboarding")) {
     return (
-      <div className="flex h-full flex-col bg-background">
-        <div className="app-drag h-(--titlebar-height) shrink-0" />
-        <main className="min-h-0 flex-1">
+      <div className="relative h-full bg-background">
+        {/* The first run draws under the title bar; this keeps it draggable. */}
+        <div className="app-drag absolute inset-x-0 top-0 z-20 h-(--titlebar-height)" />
+        <main className="h-full">
           <Outlet />
         </main>
       </div>

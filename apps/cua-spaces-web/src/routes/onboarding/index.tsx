@@ -48,7 +48,7 @@ function OnboardingPage() {
     <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] dark:bg-[#07080a]" data-step={view.step}>
       <Backdrop />
       <Art art={view.art} step={view.step} />
-      <header className="relative z-10 flex h-12 shrink-0 items-center justify-between px-10">
+      <header className="relative z-30 flex shrink-0 items-center justify-between px-10 pt-[calc(var(--titlebar-height)+12px)] pb-2">
         <CuaWordmark />
         <button type="button" onClick={leave} className="text-[13px] text-muted-foreground hover:text-foreground" data-onboarding-later="">
           {view.later}
@@ -84,7 +84,7 @@ const MARKS: Record<string, string> = {
 function AgentMark({ agent, className }: { agent: string; className?: string }) {
   const src = MARKS[agent];
   if (!src) return <PlusIcon className={cn("size-4", className)} aria-hidden />;
-  return <img src={src} alt="" aria-hidden className={cn("size-4 shrink-0 object-contain dark:invert", agent === "claude-code" && "dark:invert-0", className)} draggable={false} />;
+  return <img src={src} alt="" aria-hidden className={cn("size-4 shrink-0 object-contain", agent !== "claude-code" && agent !== "openclaw" && "dark:invert", className)} draggable={false} />;
 }
 
 function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
@@ -117,7 +117,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           autoFocus
           onClick={() => void fr.connect()}
         >
-          <AgentMark agent={c.agent.agent} className="invert dark:invert-0" />
+          <AgentMark agent={c.agent.agent} className={c.agent.agent === "claude-code" ? "" : "invert dark:invert-0"} />
           {c.busy ?? c.primary.label}
         </Button>
       </div>
@@ -317,7 +317,7 @@ function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }
   return (
     <Card className="mt-6" data-first-run-extra={extra.phase}>
       <div className="flex items-start gap-3.5">
-        <span className="mt-0.5">
+        <span className="mt-0.5 flex">
           <StateIcon state={icon} />
         </span>
         <div className="min-w-0 flex-1">

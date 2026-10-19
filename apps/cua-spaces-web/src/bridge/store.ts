@@ -10,6 +10,7 @@
  */
 
 import { hostOs } from "./host-os";
+import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
@@ -577,7 +578,7 @@ export class BridgeStore {
       // Plain words: a fresh computer inside this one (never "VM" or "container").
       const system = space.os === "macos" ? "macOS" : space.os === "windows" ? "Windows" : space.os === "linux" ? "Linux" : null;
       const body = system ? `A fresh ${system} computer inside ${({ macos: "this Mac", windows: "this PC", linux: "this computer" } as const)[hostOs()]}. Your agent can use it now.` : undefined;
-      this.extras.record({ kind: "message", title: `${space.name} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
+      this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
       return space;
     } catch (e) {
       const message = toError(e).message;

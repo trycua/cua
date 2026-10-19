@@ -7,6 +7,7 @@ import { useRef, type PointerEvent } from "react";
 import { LogOutIcon } from "lucide-react";
 
 import type { Space } from "@/bridge";
+import { spokenName } from "@/bridge/space-names";
 
 import { signInCodeText, useBridge, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
@@ -100,7 +101,7 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
             data-sidebar-creating-row={s.id}
           >
             <div className="text-2xs font-medium text-muted-foreground">Making</div>
-            <div className="truncate text-xs font-medium">{s.name}</div>
+            <div className="truncate text-xs font-medium">{spokenName(s.name)}</div>
             <div className="truncate text-2xs text-muted-foreground">{p?.transfer ?? p?.label ?? "Starting…"}</div>
             <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/10" role="progressbar" aria-label={`Making ${s.name}`} aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
               <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${Math.round(fraction * 100)}%` }} />

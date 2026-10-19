@@ -804,7 +804,7 @@ pub fn upsell(plan: &FirstRunPlan, agent_used: bool) -> Option<UpsellCard> {
     let hours = plan.hours_limit.unwrap_or(20);
     Some(UpsellCard {
         plan: "pro".into(),
-        title: "Reach your computers from anywhere for longer".into(),
+        title: "More remote hours with Pro".into(),
         lines: vec![
             format!("Free: {hours} remote hours a month · {sessions} connections at once"),
             format!("Pro: {PRO_HOURS} remote hours a month · {PRO_SESSIONS} connections at once"),

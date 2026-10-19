@@ -58,12 +58,12 @@ client-side spans, not safety thresholds; flush is not application receipt.
 The original QEMU framebuffer recording completed cleanly: 500 s, 2500 frames,
 full decoding without errors. Inspected frames at 400 s and 495 s show both
 independent counters at A=1/1, B=1/1. A four-second control clip was inspected
-before input. The final cropped, silent video is retained locally at
-`/home/netbos/Documents/GitHub/cua-evidence/3506/plasma66-env/plasma-6.6.4-AB.webm`
-for GitHub attachment. It covers operations 1–6 only: recording had already
-ended before operations 7–11; no second recorder was started. Do not describe
-it as visual proof of the focus-race counterexample. All fixture journals
-were copied to the host before guest shutdown. Failed attempts are retained.
+before input. The final cropped, silent [video](evidence/plasma-6.6.4-AB.webm)
+is included with this RFC for reviewer access. It covers operations 1–6 only:
+recording had already ended before operations 7–11; no second recorder was
+started. Do not describe it as visual proof of the focus-race counterexample.
+All fixture journals were copied to the host before guest shutdown. Failed
+attempts are retained.
 
 The focused Rust overlay test compiled and failed the same assertion,
 `started.elapsed() >= ARRIVAL_WAIT_CAP`, in both the prototype and clean
@@ -189,10 +189,10 @@ timestamps and operation timestamps in the same guest/host clock mapping,
 inspect the takeover/receipt moment, copy journals/video out before shutdown,
 and stop at the first wrong-window delivery. Never replay an uncertain ID.
 
-The existing video is attachment-ready but **not public evidence until uploaded**.
-Single manual step: drag `plasma-6.6.4-AB.webm` from the retained
-`plasma66-env` directory into the edit box of the existing PR comment, let
-GitHub insert its uploaded URL, retain the operations 1–6-only caption, and save.
+The operations 1–6 recording is staged with the RFC at
+[`evidence/plasma-6.6.4-AB.webm`](evidence/plasma-6.6.4-AB.webm); after this
+branch is pushed, reviewers can access it from the PR branch without a separate
+comment attachment. It does not show the operation-11 counterexample.
 
 ## Earlier source review
 
@@ -217,30 +217,45 @@ runtime dependencies and helper installation would require reprovisioning.
 The retained work disk is not a saved running desktop. No new guest was
 created and no host input was sent to work around this limitation.
 
-## What source review establishes
+## KWin 6.6.4 API/source disposition
 
-KDE's [public scripting API documentation](https://develop.kde.org/docs/plasma/kwin/api/)
-describes Plasma 6 APIs, but identifies itself as generated for KWin 6.0. Check
-the installed 6.6 build as well. The following candidates were checked against
-the KDE `v6.6.0` source tag, commit
-`e53bb3be7ecf1735c7739b797f94d66de422ab4d`:
+The source review was repeated against KDE KWin tag [`v6.6.4`](https://github.com/KDE/kwin/tree/v6.6.4),
+peeled commit [`203f8d127b93b7ced97345a3b640ae22bb5d5919`](https://github.com/KDE/kwin/commit/203f8d127b93b7ced97345a3b640ae22bb5d5919),
+to resolve the blocking question about a supported API that binds delivery to
+the selected live window. The version matters: source/API names below are
+specific to KWin 6.6.4; this review does not assert ABI stability for later KWin.
 
-| Purpose                               | Exact API                                                                                             | Source                                                                                                                                                                                                                                               |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Enumerate live script-visible windows | `workspace.windowList()`                                                                              | [workspace_wrapper.h](https://github.com/KDE/kwin/blob/e53bb3be7ecf1735c7739b797f94d66de422ab4d/src/scripting/workspace_wrapper.h)                                                                                                                   |
-| Identify the compositor object        | `window.internalId` (UUID), `window.pid`                                                              | [window.h](https://github.com/KDE/kwin/blob/e53bb3be7ecf1735c7739b797f94d66de422ab4d/src/window.h)                                                                                                                                                   |
-| Request activation                    | `workspace.activeWindow = target`                                                                     | [workspace_wrapper.cpp](https://github.com/KDE/kwin/blob/e53bb3be7ecf1735c7739b797f94d66de422ab4d/src/scripting/workspace_wrapper.cpp)                                                                                                               |
-| Read active window / observe changes  | `workspace.activeWindow`, `workspace.windowActivated.connect(callback)`                               | [workspace_wrapper.h](https://github.com/KDE/kwin/blob/e53bb3be7ecf1735c7739b797f94d66de422ab4d/src/scripting/workspace_wrapper.h)                                                                                                                   |
-| Load and unload a JavaScript probe    | `org.kde.kwin.Scripting.loadScript(filePath, pluginName)`, `unloadScript(pluginName)` at `/Scripting` | [scripting.h](https://github.com/KDE/kwin/blob/e53bb3be7ecf1735c7739b797f94d66de422ab4d/src/scripting/scripting.h)                                                                                                                                   |
-| Run one loaded probe                  | `org.kde.kwin.Script.run()` at `/Scripting/Script<ID>`                                                | [scripting.cpp](https://github.com/KDE/kwin/blob/e53bb3be7ecf1735c7739b797f94d66de422ab4d/src/scripting/scripting.cpp), [D-Bus XML](https://github.com/KDE/kwin/blob/e53bb3be7ecf1735c7739b797f94d66de422ab4d/src/scripting/org.kde.kwin.Script.xml) |
+| Candidate and exact symbol/interface | Status and source in v6.6.4 | What it provides | Delivery-time target binding? |
+| ------------------------------------ | --------------------------- | ----------------- | ---------------------------- |
+| Scripting: `workspace.windowList()`, `window.internalId`, `window.pid`, `workspace.activeWindow`, `workspace.windowActivated`, `workspace.activeWindow = target` | Supported script API documented by KDE; implementation: [`workspace_wrapper.h`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/scripting/workspace_wrapper.h), [`workspace_wrapper.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/scripting/workspace_wrapper.cpp), [`window.h`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/window.h) | Enumerates and identifies script-visible windows, requests activation, and observes active-window changes/read-back. | **No.** Activation and observation are distinct from associating a later EIS event with that window. Operation 11 demonstrates the focus race. |
+| Script control D-Bus: `org.kde.kwin.Scripting.loadScript(filePath, pluginName)`, `unloadScript(pluginName)` at `/Scripting`; `org.kde.kwin.Script.run()` at `/Scripting/Script<ID>` | Supported scripting control interface; [`scripting.h`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/scripting/scripting.h), [`scripting.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/scripting/scripting.cpp), [`org.kde.kwin.Script.xml`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/scripting/org.kde.kwin.Script.xml) | Loads/runs/unloads KWin scripts; the script can use the activation/observation API above. | **No.** It controls script execution, not the recipient of portal input. |
+| Legacy `org.kde.KWin` D-Bus `/KWin`: `getWindowInfo(uuid)`, `queryWindowInfo()` | Supported but read/query-oriented wrapper; [`dbusinterface.h`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/dbusinterface.h) | Reads window information or interactively selects a window. No target-input method is declared there. | **No.** No input delivery interface. |
+| Effects API: `EffectsHandler::activeWindow`, `activateWindow(EffectWindow *)`, `windowActivated` | KWin effect extension API; [`effecthandler.h`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/effect/effecthandler.h) | Effect code can activate/observe a window and receive/filter compositor input for effect-owned behavior. | **No demonstrated public target-delivery primitive.** The API surface provides activation and effect input handling, not a per-event target-bound dispatch contract. |
+| KWin input internals: `KWin::input()`, `InputRedirection::installInputEventFilter()`, `addInputBackend()`, `InputDeviceHandler::setFocus()` | Source-level exported C++ internals in [`input.h`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/input.h), not established here as a supported public/stable extension API | Input filters observe/intercept events; backends register device events into KWin's input pipeline. | **Not established.** A plugin using these internals would need its own target-binding contract and ABI/support decision; `KWIN_EXPORT` alone does not make the internal header a supported API. |
+| KDE fake-input Wayland protocol: `org_kde_kwin_fake_input.keyboard_key`, `.keyboard_keysym`, pointer/touch requests; server `FakeInputBackendPrivate` | Explicitly documented as a KDE implementation detail that regular clients must not use; backward-incompatible changes may occur without a major-version bump. KWin v6.6.4 advertises protocol version 6; [`fakeinputbackend.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/backends/fakeinput/fakeinputbackend.cpp), [`Wayland Explorer protocol status`](https://wayland.app/protocols/kde-fake-input), [`CMakeLists.txt`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/CMakeLists.txt#L221) (PlasmaWaylandProtocols 1.20.0 build dependency) | Authenticated requests emit emulated device events; the server currently marks the device authenticated in `authenticate()` with `// TODO: make secure`, and KWin's Wayland server permission filter restricts this interface. | **No.** Requests contain event values/state, no Cua target or surface; emitted events enter ordinary compositor routing. Not a supported regular-client target API. |
+| Input-method path: unstable `zwp_input_method_context_v1.key` / `keysym`, KWin `InputMethod::key()` / `keysymReceived()` | Unstable Wayland protocol for compositor-authorized input methods, not a general automation API. KWin v6.6.4 restricts `zwp_input_method_v1` to its designated input-method connection; [`wayland_server.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/wayland_server.cpp#L145-L165), [`inputmethod_v1.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/wayland/inputmethod_v1.cpp), [`inputmethod.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/inputmethod.cpp#L833-L848) | The input-method context is activated for the current text-input client; its key requests call `SeatInterface::notifyKeyboardKey()`. | **No.** The key request has no exact-window argument; seat delivery uses current keyboard focus. This is scoped to text input, not window-addressed automation. |
+| Virtual keyboard D-Bus: `org.kde.kwin.VirtualKeyboard` (`willShowOnActive()`, `forceActivate()`, `active`/`enabled`) | Session D-Bus input-method state/activation interface; [`virtualkeyboard_dbus.h`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/virtualkeyboard_dbus.h), [`virtualkeyboard_dbus.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/virtualkeyboard_dbus.cpp) | Activates/shows the virtual keyboard and exposes availability/state. It has no method to send a key. | **No.** Activation only; no target-bound input operation. |
+| EIS/libei input backend: `EisPlugin::EisPlugin()` → `input()->addInputBackend(std::make_unique<EisBackend>())`; `InputRedirection::addInputDevice()` connects `InputDevice::keyChanged` to `KeyboardInputRedirection::processKey` and pointer signals to `PointerInputRedirection::process*` | Built-in KWin EIS plugin; [`eisplugin.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/plugins/eis/eisplugin.cpp), [`eiscontext.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/plugins/eis/eiscontext.cpp), [`input.h`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/input.h), [`input.cpp`](https://github.com/KDE/kwin/blob/203f8d127b93b7ced97345a3b640ae22bb5d5919/src/input.cpp#L3280-L3292) | Registers emulated devices whose events enter KWin's ordinary input redirection/filter/seat path. | **No.** The examined path carries no Cua-selected window token or target transaction; subsequent recipient selection remains KWin's ordinary focus/hit-test routing. |
 
-These APIs establish a candidate for requesting and observing activation.
-They do not expose an atomic "verify target and deliver this portal burst"
-operation. The existence of a setter, a signal, or a successful D-Bus reply is
-not proof of activation, application receipt, or delivery-time target binding.
-The signal must be observed before requesting activation; an already-active
-target may not cause a new signal. Re-read the exact live object before each
-burst rather than treating an earlier notification as durable authority.
+The trusted Cua identity bridge contributes `(pid, token, helper generation,
+internalId)` to the experiment, but none of the supported interfaces above
+accepts that tuple for input dispatch. `workspace.activeWindow = target` is an
+activation request; `workspace.activeWindow` / `windowActivated` are
+observations; neither atomically associates the subsequent portal/libei
+operation with the target. The 6.6.4 operation-11 counterexample verifies that
+this is not merely a theoretical concern for the tested guarded-global-input
+prototype.
+
+**Disposition:** no supported Plasma/KWin 6.6.4 target-bound pointer/keyboard
+primitive was demonstrated in the documented scripting, D-Bus, effects/plugin,
+or EIS interfaces reviewed here. This is a bounded source/API finding, not a
+proof that no private mechanism or future KWin API could exist. Do not use
+private input internals as if they were supported public API; a compositor
+extension would require a separately reviewable support/ABI contract. Keep
+guarded portal/libei input unavailable for the KWin target route, preserve
+zero-dispatch refusal and partial/unknown/no-replay behavior, and pursue an
+upstream target-bound API or a separately scoped supported compositor extension
+before reconsidering production input.
 
 ## Identity bridge used by this experiment
 
@@ -377,7 +392,7 @@ check or relabeled as a zero-dispatch refusal.
 ## Review boundary
 
 Use the completed result table at the top, not an obsolete host-only matrix.
-The genuine A/B video still needs manual GitHub attachment and does not show
-the postcheck fault. Machine-readable operation 11 is the counterexample
-evidence presently available in Git. Maintainer disposition is pending;
-RFC stays `review` and production raw KWin input remains unavailable.
+The included A/B video will be reviewer-accessible from the PR branch after it
+is pushed, and covers operations 1–6 only; machine-readable operation 11 remains
+the counterexample evidence. Maintainer disposition is pending; RFC
+stays `review` and production raw KWin input remains unavailable.

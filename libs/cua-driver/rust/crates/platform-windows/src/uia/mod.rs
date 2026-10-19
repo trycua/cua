@@ -896,56 +896,7 @@ fn emit_cached_node(
         lines.push((depth, format_node_line(&node)));
         nodes.push(node);
     }
-
-    // Recurse using cached children (no additional RPC).
-    let children = match cached_children(element) {
-        Ok(Some(children)) => children,
-        // UIA returns S_OK with a null array for a cached leaf. windows-rs
-        // normally maps that null interface to E_POINTER, so use the raw
-        // result below to distinguish a complete leaf from a real HRESULT
-        // failure.
-        Ok(None) => return,
-        Err(_) => {
-            walk_state.mark_incomplete();
-            return;
-        }
-    };
-    let len = match children.Length() {
-        Ok(len) => len,
-        Err(_) => {
-            walk_state.mark_incomplete();
-            return;
-        }
-    };
-    for i in 0..len {
-        match children.GetElement(i) {
-            Ok(child) => walk_cached_bounded(
-                &child,
-                depth + 1,
-                emitted_parent,
-                in_web_content || control_type.eq_ignore_ascii_case("Document"),
-                nodes,
-                lines,
-                counter,
-                walk_state,
-            ),
-            Err(_) => walk_state.mark_incomplete(),
-        }
-    }
-}
-
-unsafe fn cached_children(
-    element: &IUIAutomationElement,
-) -> windows::core::Result<Option<IUIAutomationElementArray>> {
-    let mut raw = std::ptr::null_mut();
-    let result =
-        (Interface::vtable(element).GetCachedChildren)(Interface::as_raw(element), &mut raw);
-    result.ok()?;
-    if raw.is_null() {
-        Ok(None)
-    } else {
-        Ok(Some(IUIAutomationElementArray::from_raw(raw)))
-    }
+    (control_type, emitted_parent)
 }
 
 fn read_cached_control_type(element: &IUIAutomationElement) -> String {

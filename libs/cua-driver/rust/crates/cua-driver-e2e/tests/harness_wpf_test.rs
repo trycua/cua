@@ -365,6 +365,26 @@ fn harness_wpf_query_projects_structured_elements() {
                 Some(false),
                 "a bound that skips the WPF root's descendants must report an incomplete snapshot"
             );
+
+            let shallow = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "max_depth": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !shallow.is_error(),
+                "depth-bounded snapshot failed: {}",
+                shallow.text()
+            );
+            assert_eq!(
+                shallow.structured()["elements_complete"].as_bool(),
+                Some(false),
+                "a depth bound that skips WPF descendants must report an incomplete snapshot"
+            );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );

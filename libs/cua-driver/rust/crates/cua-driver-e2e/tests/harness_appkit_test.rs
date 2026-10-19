@@ -2404,8 +2404,26 @@ fn harness_appkit_window_capture_ignores_pointer_outside_window() {
         .find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("find AppKit harness window");
 
-    // Offset the window from the screen origin and leave room above it.
-    let (x, y, width, height) = (180.0, 260.0, 640.0, 420.0);
+    // Offset the window from the screen origin and leave room above it. Keep
+    // its current size: the harness window is not resizable (no settable
+    // AXSize), and set_window_frame only writes AXSize when the size changes.
+    let listed = driver.call(
+        "list_windows",
+        serde_json::json!({ "pid": harness.pid as i64 }),
+    );
+    assert!(!listed.is_error(), "list_windows: {}", listed.text());
+    let current = listed.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|w| w["window_id"].as_u64() == Some(wid))
+        })
+        .map(|w| w["bounds"].clone())
+        .expect("AppKit harness window bounds");
+    let width = current["width"].as_f64().expect("window width");
+    let height = current["height"].as_f64().expect("window height");
+    let (x, y) = (180.0, 260.0);
     let moved = driver.call(
         "set_window_frame",
         serde_json::json!({

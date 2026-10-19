@@ -31,6 +31,7 @@
     "get_config",
     "get_cursor_position",
     "get_desktop_state",
+    "get_guide",
     "get_recording_state",
     "get_screen_size",
     "get_session",

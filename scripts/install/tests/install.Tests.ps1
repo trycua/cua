@@ -182,6 +182,28 @@ Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
         $env:CUA_DRIVER_RS_INSTALL_DIR | Should -BeNullOrEmpty
     }
 
+    It 'adds the MCP server without the skill with -NoSkills' -Skip:($IsWindows) {
+        $root = Join-Path $env:CUA_TEST_ROOT 'noskills'
+        $prefix = Join-Path $root 'prefix'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $cuaLog = Join-Path $root 'cua.log'
+        $fakeDriver = Join-Path $root 'install.ps1'
+        Set-Content -LiteralPath $fakeDriver -Value @"
+param([switch]`$NoPathUpdate, [switch]`$RequireSignature)
+New-Item -ItemType Directory -Force -Path `$env:CUA_DRIVER_RS_INSTALL_DIR | Out-Null
+Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
+"@
+        $fakeCua = Join-Path $root 'cua'
+        Set-Content -LiteralPath $fakeCua -Value "#!/bin/sh`necho `"`$*`" >>'$cuaLog'"
+        chmod +x $fakeCua
+        $env:CUA_INSTALL_DRIVER_URL = ConvertTo-FileUrl $fakeDriver
+        $Prefix = $prefix; $DryRun = $false; $NoModifyPath = $true; $NoSkills = $true
+        try {
+            Install-CuaDriver $fakeCua (New-Item -ItemType Directory -Force -Path (Join-Path $root 'tmp')).FullName 'file:///r.json' 6>$null
+        } finally { $env:CUA_INSTALL_DRIVER_URL = $null; $NoSkills = $false }
+        Get-Content $cuaLog | Should -Be "agents setup --cua-driver --agents all --yes --no-skills --mcp-command $(Join-Path (Join-Path $prefix 'bin') 'cua-driver.exe')"
+    }
+
     It 'refuses a plain-HTTP cua-driver installer URL' {
         $env:CUA_INSTALL_DRIVER_URL = 'http://example.invalid/install.ps1'
         $DryRun = $false
@@ -371,6 +393,11 @@ Describe 'install.ps1' {
         $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
         $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe'
         $out | Should -Not -Match 'msiexec'
+    }
+
+    It 'dry run: -NoSkills leaves the skill out of the planned agent setup' {
+        $out = Invoke-Installer @{ DryRun = $true; Select = 'cua-driver'; NoSkills = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p11') } @{ CUA_INSTALL_NONINTERACTIVE = '1'; CUA_INSTALL_DRIVER_URL = 'https://example.test/driver/install.ps1' }
+        $out | Should -Match 'agents setup --cua-driver --agents all --yes --no-skills --mcp-command .*p11.bin.cua-driver.exe'
     }
 
     It 'dry run: -Select cua-driver,host prints the driver, agents and host steps' {

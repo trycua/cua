@@ -15,9 +15,12 @@ never calls a model API.
 
 To add the skill and MCP server to every agent on the machine in one step, use
 the cua installer: `curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver`.
+Add `--no-skills` to leave the skill out.
 
 `mcp-config` prints the exact command or JSON for your client, with your
-installed binary's absolute path. Run what it prints, then restart the client:
+installed binary's absolute path. Run what it prints, then restart the client.
+It also installs the [agent skill](#install-the-agent-skill) for that client and
+prints one line saying where; add `--no-skills` to skip that:
 
 ```bash test="cli-shape" id="cua-driver-mcp-config"
 cua-driver mcp-config --client <client>
@@ -72,8 +75,10 @@ loop instead, see [Computer use with Gemini](/cua-driver/guides/gemini). MiniMax
 ## Install the agent skill
 
 The skill teaches an agent to pick tools, address elements, keep focus, and
-verify each action. It links into Claude Code, Codex, Prime Agent, OpenClaw,
-OpenCode, Antigravity, Hermes, and Pi:
+verify each action. `mcp-config --client <client>` and the cua installer install
+it for the agents they set up. To install it for every agent on the machine, or
+for one you set up another way, run `skills install`. It links into Claude Code,
+Codex, Cursor, Prime Agent, OpenClaw, OpenCode, Antigravity, Hermes, and Pi:
 
 ```bash test="cli-shape" id="cua-driver-skills-install"
 cua-driver skills install
@@ -87,7 +92,10 @@ If `status` reports a client's skill directory as absent, create it
 Add `--all-platforms` to keep the macOS, Windows, and Linux guides together.
 OpenClaw can use ClawHub instead: `clawhub install @cua/driver`. Cua Driver
 0.28.0+ also serves the skill as MCP resources; whether that activates it as a
-skill is up to the client.
+skill is up to the client. Most clients never read resources on their own, so
+the server also offers a read-only `get_guide` tool: `get_guide({topic})`
+returns the guidance for `drag`, `browser`, `permissions`, `batching`, `menus` or
+the `overview`, with no skill installed.
 
 ## Agent SDKs
 

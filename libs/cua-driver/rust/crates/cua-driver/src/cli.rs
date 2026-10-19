@@ -48,6 +48,8 @@ pub enum Command {
     },
     McpConfig {
         client: Option<String>,
+        /// Skip installing the skill pack for `client` (`--no-skills`).
+        no_skills: bool,
     },
     Serve {
         socket: Option<String>,
@@ -843,7 +845,10 @@ pub fn parse_command() -> Command {
             grants: grants.clone(),
         },
         Some("list-tools") => Command::ListTools,
-        Some("mcp-config") => Command::McpConfig { client: mcp_client },
+        Some("mcp-config") => Command::McpConfig {
+            client: mcp_client,
+            no_skills: args.iter().any(|a| a == "--no-skills"),
+        },
         Some("serve") => Command::Serve {
             socket,
             pid_file: flag_value(&args, "--pid-file"),
@@ -2083,8 +2088,11 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "mcp-config",
-              "description": "Print client-specific connection guidance (MCP config where supported).",
-              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode. Omit for the generic snippet." } ] },
+              "description": "Print client-specific connection guidance (MCP config where supported) and, with --client, install the skill pack for that agent.",
+              "args": [
+                  { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode. Omit for the generic snippet." },
+                  { "name": "--no-skills", "type": "flag", "description": "With --client, do not install the cua-driver skill pack for that agent." }
+              ] },
             { "name": "manifest",
               "description": "Emit this machine-readable description of the CLI surface.",
               "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
@@ -2208,7 +2216,14 @@ pub fn build_manifest() -> serde_json::Value {
 /// `--client <name>` selects one of: claude, codex, cursor, hermes,
 /// antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode.
 /// Omit for the generic JSON snippet.
-pub fn run_mcp_config(client: Option<&str>) {
+///
+/// A named client also gets the skill pack for its agent, because agents
+/// connected over MCP rarely read the skill resource on their own. One line
+/// on stderr (stdout stays the pasteable config) says where it went; pass
+/// `no_skills` (`--no-skills`) to leave the agent's skills folder alone. Only a
+/// failure to print the config exits nonzero: a skill pack that cannot be
+/// installed is reported and does not fail the command.
+pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
     let binary = std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(str::to_owned))
@@ -2436,6 +2451,15 @@ pub fn run_mcp_config(client: Option<&str>) {
         Some(other) => {
             eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode.");
             process::exit(2);
+        }
+    }
+
+    // A client that got past the match above is a known one.
+    if let Some(client) = client.filter(|client| !client.is_empty()) {
+        if !no_skills {
+            if let Some(line) = crate::skills::install_for_client_line(client) {
+                eprintln!("{line}");
+            }
         }
     }
 }
@@ -4499,11 +4523,11 @@ fn cli_docs_literal() -> serde_json::Value {
             },
             {
                 "name": "mcp-config",
-                "abstract": "Print client-specific connection guidance (MCP config where supported).",
-                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode.",
+                "abstract": "Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.",
                 "arguments": no_args,
                 "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
-                "flags": no_flags,
+                "flags": [{"name":"no-skills","short_name":null,"help":"With --client, do not install the cua-driver skill pack for that agent.","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
@@ -4790,7 +4814,8 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("permissions grant", &[("cua-driver permissions grant", "Request the grants for CuaDriver.app")]),
     ("mcp-config", &[
         ("cua-driver mcp-config", "Print a generic mcpServers entry"),
-        ("cua-driver mcp-config --client codex", "Print setup for Codex"),
+        ("cua-driver mcp-config --client codex", "Print setup for Codex and install its skill pack"),
+        ("cua-driver mcp-config --client codex --no-skills", "Print setup for Codex only"),
     ]),
     ("recording", &[("cua-driver recording", "Print the current recording state")]),
     ("recording start", &[("cua-driver recording start ~/cua-trajectories/demo1", "Record turns into a directory")]),

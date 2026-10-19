@@ -61,6 +61,20 @@ const FILES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The compiled-in skill files as `(file name, text)`. The same bytes back
+/// the MCP resources, the `get_guide` tool and the offline skill installer, so
+/// all three always match this binary.
+pub fn embedded_files() -> &'static [(&'static str, &'static str)] {
+    FILES
+}
+
+/// One compiled-in skill file by its name (for example `MACOS.md`).
+pub fn embedded_file(name: &str) -> Option<&'static str> {
+    FILES
+        .iter()
+        .find_map(|(file, text)| (*file == name).then_some(*text))
+}
+
 struct Pack {
     entry: Value,
     resources: Vec<Value>,

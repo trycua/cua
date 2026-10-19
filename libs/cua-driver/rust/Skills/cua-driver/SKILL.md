@@ -123,3 +123,4 @@ Load on demand; do not reabsorb these into this file:
 - [BROWSER.md](BROWSER.md): exact page binding and typed browser actions; only when the requested method permits them.
 - [RECORDING.md](RECORDING.md): capture lifecycle, artifact checks, replay limits.
 - [EMBEDDING.md](EMBEDDING.md): trusted application-host integration, not routine GUI operation.
+- `get_guide({topic})`: an MCP tool that returns the drag, browser, permissions, batching and menus sections of these files on demand, with no skill install or resource read. `overview` returns this file.

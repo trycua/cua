@@ -166,9 +166,15 @@ impl ToolDef {
         let input_schema = advertised_runtime_input_schema(&self.name, &self.input_schema);
         let caps = advertised_capabilities_for(&self.name, &input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
+        // Tools that most often need a guide point at `get_guide`, so an agent
+        // that never reads the skill still learns where the guidance lives.
+        let description = match crate::guide::description_hint(&self.name) {
+            Some(hint) => format!("{} {hint}", self.description),
+            None => self.description.clone(),
+        };
         let mut entry = serde_json::json!({
             "name": self.name,
-            "description": self.description,
+            "description": description,
             "inputSchema": input_schema,
             "annotations": {
                 "readOnlyHint": self.read_only,
@@ -700,7 +706,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 /// - `browser.state`, `browser.prepare`, `browser.navigate`,
 ///   `browser.input.click`, `browser.input.type`, `browser.input.files`,
 ///   `browser.dialog`
-/// - `driver.update_check`, `driver.probe`
+/// - `driver.update_check`, `driver.guide`, `driver.probe`
 /// - `history.status`, `history.query`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
@@ -845,6 +851,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
+        "get_guide" => &["driver.guide"],
         "probe" => &["driver.probe"],
 
         // ── encrypted local Computer History ─────────────────────────
@@ -1361,6 +1368,7 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+        self.register(Box::new(crate::guide::GetGuideTool));
         self.register_batch_tools();
     }
 
@@ -3472,6 +3480,7 @@ fn session_requiring_tool(tool_name: &str) -> bool {
         tool_name,
         "check_permissions"
             | "health_report"
+            | "get_guide"
             | "get_session"
             | "list_sessions"
             | "get_session_state"
@@ -6433,6 +6442,7 @@ mod capability_tests {
         // misc
         "page",
         "check_for_update",
+        "get_guide",
         "probe",
         // browser-tool v1
         "get_browser_state",
@@ -6539,6 +6549,7 @@ mod capability_tests {
         "browser.input.pointer",
         // driver self
         "driver.update_check",
+        "driver.guide",
         "driver.probe",
         // encrypted local history
         "history.status",

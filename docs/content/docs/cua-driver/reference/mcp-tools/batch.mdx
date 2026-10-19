@@ -40,7 +40,7 @@ TARGET BY NAME (no earlier read needed, so one batch can cross screens): a step 
 WAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `expect` (one check or up to 4, checked after it); a step may also be only a check. A check is &#123;role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?&#125;: `text` matches any row of the tree, static text included; `gone:true` waits for it to disappear. Checks poll until they hold or time out (wait_for 5 s, expect 2 s, max 10 s), and a check that does not hold fails the step with what was found instead. The report says which step failed, in which phase (wait_for, find, action, expect) and why. Whole batch: at most 60 s.
 
 Example (fill a form, submit, confirm the dialog, check the result):
-&#123;"steps":[&#123;"set_value":&#123;"app":"Safari","role":"textfield","name":"Email","value":"ada@example.com"&#125;&#125;,&#123;"click":&#123;"role":"button","name":"Submit"&#125;,"expect":[&#123;"role":"button","name":"Confirm"&#125;]&#125;,&#123;"click":&#123;"role":"button","name":"Confirm"&#125;,"expect":[&#123;"name":"Confirm","gone":true&#125;,&#123;"text":"Thanks"&#125;]&#125;],"observe":&#123;&#125;&#125;.
+&#123;"steps":[&#123;"set_value":&#123;"app":"Safari","role":"textfield","name":"Email","value":"ada@example.com"&#125;&#125;,&#123;"click":&#123;"role":"button","name":"Submit"&#125;,"expect":[&#123;"role":"button","name":"Confirm"&#125;]&#125;,&#123;"click":&#123;"role":"button","name":"Confirm"&#125;,"expect":[&#123;"name":"Confirm","gone":true&#125;,&#123;"text":"Thanks"&#125;]&#125;],"observe":&#123;&#125;&#125; Batching rules: `get_guide({topic:"batching"})`.
 
 Effect: destructive. Platforms: macOS, Linux, Windows.
 
@@ -84,7 +84,7 @@ Example:
 const app = await cua.getApp("Calculator");
 for (const key of ["7", "multiply", "6", "equals"]) await app.click(&#123;role: "button", name: key&#125;);
 const [display] = await app.query(&#123;role: "statictext"&#125;);
-return display.value;.
+return display.value; Batching rules: `get_guide({topic:"batching"})`.
 
 Effect: destructive. Platforms: macOS, Linux, Windows.
 

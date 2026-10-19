@@ -22,7 +22,7 @@ description: "Let other cua.ai accounts watch or edit a Space, through the relay
 
 Let another cua.ai account watch or edit a Space.
 
-Shares the Space through the cua.ai relay with one account, by verified email or account id; the same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.
+Shares the Space through the cua.ai relay with one account, by verified email or account id, or with a whole team as `team:<id>` (always as an editor; Teams plan); the same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.
 
 | | |
 | --- | --- |
@@ -40,7 +40,7 @@ Shares the Space through the cua.ai relay with one account, by verified email or
 | --- | --- | --- | --- |
 | `role` | `string` | `viewer` | `viewer` (presence with their own cursor and a view-only stream) or `editor` (full use; their input is a human session). Default `viewer`. |
 | `space` | `string` | required | Space id or name. |
-| `who` | `string` | required | Who: an email address (verified by cua.ai) or an account id. Teams are not accepted: share with each member. |
+| `who` | `string` | required | Who: an email address (verified by cua.ai) or an account id, or `team:<id>` for a whole team. A team always gets `editor` and needs the Teams plan; the sharer is a team owner or admin who owns the Space. |
 
 ### Result
 

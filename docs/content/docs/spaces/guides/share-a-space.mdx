@@ -14,7 +14,8 @@ address or account ID, and choose **Viewer** or **Editor**. The same list shows
 who has access and who is connected. Cua Spaces asks you to confirm with Touch
 ID or your login password first.
 
-To share a whole machine with your team, see [Teams](/spaces/guides/teams).
+You can share with one person at a time, or with a whole team at once. See
+[People and teams](#people-and-teams).
 
 From a terminal:
 
@@ -25,6 +26,17 @@ cua spaces shares local:studio                                # who, and who is 
 cua spaces unshare local:studio bob@example.com               # at once
 cua spaces unshare local:studio --all                         # nobody; leaves the relay
 ```
+
+## People and teams
+
+- **One person.** Type their email or account ID. They can be anyone with a
+  cua.ai account. They do not have to be on your team, or on any team. You
+  choose **Viewer** or **Editor** for each person.
+- **A whole team.** Every member of the team, and their agents, can use the
+  Space, as an editor. Only an owner or admin of a team on the
+  [Teams plan](/spaces/guides/teams) can do this, and only for a Space they
+  own. See
+  [Share a Space with the team](/spaces/guides/teams#share-a-space-with-the-team).
 
 ## What each role can do
 
@@ -38,6 +50,9 @@ cua spaces unshare local:studio --all                         # nobody; leaves t
 The Space's own cua-spacesd enforces the role, not the caller. A refused call
 fails with `PermissionDenied` (`view-only share: <who> cannot call <method>`).
 
+A team always gets the Editor role. There is no view-only share for a whole
+team. To let someone only watch, share with them as a person, as a viewer.
+
 ## How it works
 
 Sharing uses the same relay and allowlist as an
@@ -50,6 +65,10 @@ Sharing uses the same relay and allowlist as an
 - The relay keeps two lists per machine: `allow` (editors) and `viewers`.
 - Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/add-a-computer#reach-it-from-your-other-devices).
 - Removing someone, or changing their role, cuts their open streams at once.
+- A team share works differently. The Space goes on the team's list of
+  computers, and each time someone opens it, the relay checks with the Cua
+  account service that they are still in the team and that their device is
+  approved.
 
 ```rust test="excerpt" id="rs-share-space" source="libs/cua/crates/cua-spaces/tests/share_space_e2e.rs#rs-share-space"
 let shares = ada
@@ -110,7 +129,8 @@ tools are `relay_register_space` and `relay_unregister_space`.
 | Added by address (`direct:`) | yes, if its driver supports `relay_attach` | Older drivers report `capability_missing`. |
 | A Space shared with you | no | Only the owner can share (`permission_denied`). |
 
-- The relay shares with accounts, not teams: share with each member.
+- You can share with a person or with a whole team. A team always gets the
+  Editor role.
 - Presence cursors travel on the relay stream, not QUIC datagrams, so remote
   cursors update a little less often than on your own network.
 - A Space that is released (for example a paused persistent agent in your

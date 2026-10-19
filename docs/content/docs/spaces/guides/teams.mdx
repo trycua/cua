@@ -203,8 +203,24 @@ with the Cua account service and caches the answer for up to a minute.
 
 ### Share a Space with the team
 
-To make an existing Space a team computer, share it with the team. Every member
-then sees it and opens it as an editor from an approved device.
+To make a Space you already have a team computer, share it with the team. Every
+member of the team, and their agents, then sees it and can open it as an editor
+(full control), from a device an admin has approved.
+
+- **In the app:** press **Share** on the Space. If you own or manage a team on
+  the Teams plan, the Share window shows a **Share with** button for each of
+  your teams.
+- **In a terminal:** run `cua spaces share <space> team:<team id>`, or
+  `cua team add-machine <team> <space>`. `cua team ls` shows the team ID.
+- Only an owner or admin of the team can do this, and only for a Space they
+  own. A team can hold as many shared computers as its seats allow.
+- A team always gets the Editor role. There is no view-only share for a whole
+  team. To let someone only watch, share with them as a person, as a viewer.
+- To stop, remove the team in the Share window, or run
+  `cua spaces unshare <space> team:<team id>`.
+
+You can also share a Space with one person who is not on your team. See
+[Share a Space](/spaces/guides/share-a-space).
 
 ## Seats and billing
 

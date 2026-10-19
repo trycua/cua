@@ -557,9 +557,17 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_spaces_tool_methods() != 24762:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice() != 46398:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice() != 6317:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_flush() != 29688:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_link_notice() != 11798:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_link_notice_due() != 52419:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_link_state() != 28062:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_notice_text() != 47486:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -582,6 +590,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_func_telemetry_show_last() != 13855:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_status() != 18801:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_telemetry_sync_account() != 61343:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -661,7 +671,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_auth_devices() != 36673:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_auth_logout() != 38806:
+    if lib.uniffi_cua_sdk_checksum_method_auth_logout() != 42354:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_auth_status() != 29264:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2259,6 +2269,10 @@ _UniffiLib.uniffi_cua_sdk_fn_func_spaces_tool_methods.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_spaces_tool_methods.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_notice.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -2268,6 +2282,18 @@ _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_flush.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_flush.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice_due.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice_due.restype = ctypes.c_int8
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_state.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_state.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_notice_text.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -2324,6 +2350,9 @@ _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_status.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_sync_account.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_telemetry_sync_account.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_use_app_notice.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -4555,12 +4584,24 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_sandbox_locations.restype = ctypes.c_uin
 _UniffiLib.uniffi_cua_sdk_checksum_func_spaces_tool_methods.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_spaces_tool_methods.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_flush.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_flush.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_notice.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_notice.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_notice_due.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_notice_due.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_state.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_link_state.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_notice_text.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_notice_text.restype = ctypes.c_uint16
@@ -4594,6 +4635,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_show_last.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_status.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_sync_account.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_sync_account.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_use_app_notice.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_telemetry_use_app_notice.restype = ctypes.c_uint16
@@ -21992,6 +22036,71 @@ class _UniffiFfiConverterTypeStreamStatsReport(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.duration_ms, buf)
 
 @dataclass
+class TelemetryLinkNotice:
+    """
+    The one-time notice for machines that saw the older "anonymous" wording,
+    shown before anything is linked to the account. Both buttons close it;
+    the second also turns usage data off.
+"""
+    def __init__(self, *, title:str, body:str, ok_label:str, turn_off_label:str, details_label:str, docs_url:str):
+        self.title = title
+        self.body = body
+        self.ok_label = ok_label
+        self.turn_off_label = turn_off_label
+        self.details_label = details_label
+        self.docs_url = docs_url
+
+
+
+
+    def __str__(self):
+        return "TelemetryLinkNotice(title={}, body={}, ok_label={}, turn_off_label={}, details_label={}, docs_url={})".format(self.title, self.body, self.ok_label, self.turn_off_label, self.details_label, self.docs_url)
+    def __eq__(self, other):
+        if self.title != other.title:
+            return False
+        if self.body != other.body:
+            return False
+        if self.ok_label != other.ok_label:
+            return False
+        if self.turn_off_label != other.turn_off_label:
+            return False
+        if self.details_label != other.details_label:
+            return False
+        if self.docs_url != other.docs_url:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTelemetryLinkNotice(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return TelemetryLinkNotice(
+            title=_UniffiFfiConverterString.read(buf),
+            body=_UniffiFfiConverterString.read(buf),
+            ok_label=_UniffiFfiConverterString.read(buf),
+            turn_off_label=_UniffiFfiConverterString.read(buf),
+            details_label=_UniffiFfiConverterString.read(buf),
+            docs_url=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.title)
+        _UniffiFfiConverterString.check_lower(value.body)
+        _UniffiFfiConverterString.check_lower(value.ok_label)
+        _UniffiFfiConverterString.check_lower(value.turn_off_label)
+        _UniffiFfiConverterString.check_lower(value.details_label)
+        _UniffiFfiConverterString.check_lower(value.docs_url)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.title, buf)
+        _UniffiFfiConverterString.write(value.body, buf)
+        _UniffiFfiConverterString.write(value.ok_label, buf)
+        _UniffiFfiConverterString.write(value.turn_off_label, buf)
+        _UniffiFfiConverterString.write(value.details_label, buf)
+        _UniffiFfiConverterString.write(value.docs_url, buf)
+
+@dataclass
 class TelemetryStatus:
     """
     Telemetry state.
@@ -25751,8 +25860,8 @@ class AuthProtocol(typing.Protocol):
         raise NotImplementedError
     async def logout(self, ) -> bool:
         """
-        Revokes (best effort) and removes the session. Returns whether one
-        existed.
+        Revokes (best effort) and removes the session, and unlinks usage
+        data from the account. Returns whether one existed.
 """
         raise NotImplementedError
     def status(self, ) -> AuthStatus:
@@ -25863,8 +25972,8 @@ class Auth(AuthProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def logout(self, ) -> bool:
         """
-        Revokes (best effort) and removes the session. Returns whether one
-        existed.
+        Revokes (best effort) and removes the session, and unlinks usage
+        data from the account. Returns whether one existed.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -38836,6 +38945,21 @@ def spaces_tool_methods() -> typing.List[SpacesToolMethod]:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def telemetry_acknowledge_link_notice() -> None:
+    """
+    The person closed the linking notice (either button). Linking starts
+    with the app's next launch, never in the process that showed it.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = lambda val: None
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def telemetry_acknowledge_notice() -> None:
     """
     Records that the first-run notice was shown in the app's UI (nothing is
@@ -38867,6 +38991,49 @@ def telemetry_flush(timeout_ms: int) -> None:
     _uniffi_ffi_result = _uniffi_rust_call_with_error(
         _uniffi_error_converter,
         _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_flush,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def telemetry_link_notice() -> TelemetryLinkNotice:
+    """
+    The one-time linking notice's words.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeTelemetryLinkNotice.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def telemetry_link_notice_due() -> bool:
+    """
+    Whether the app should show the one-time linking notice now: usage data
+    is on, the account offered linking, and this machine has not shown it.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterBoolean.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice_due,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def telemetry_link_state() -> str:
+    """
+    Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterString.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_state,
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
@@ -39072,6 +39239,25 @@ def telemetry_status() -> TelemetryStatus:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+async def telemetry_sync_account() -> str:
+    """
+    Asks the Spaces API for the signed-in account's opaque id and hands it
+    to telemetry (none unlinks). Call at launch and after a sign-in; the
+    SDK's own sign-in already does. Returns the link state. Best effort:
+    offline or signed out, nothing changes.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterString.lift
+    _uniffi_error_converter = None
+    return await _uniffi_rust_call_async(
+        _UniffiLib.uniffi_cua_sdk_fn_func_telemetry_sync_account(*_uniffi_lowered_args),
+        _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+        _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+        _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+        _uniffi_lift_return,
+        _uniffi_error_converter,
+    )
 def telemetry_use_app_notice() -> None:
     """
     The host app shows the first-run notice itself (no stderr notice).
@@ -39296,6 +39482,7 @@ __all__ = [
     "SpacesdHttpRequest",
     "SpacesdHttpResponse",
     "StreamStatsReport",
+    "TelemetryLinkNotice",
     "TelemetryStatus",
     "TeleportDecision",
     "TeleportItem",
@@ -39345,8 +39532,12 @@ __all__ = [
     "resolve_image_with_secret",
     "sandbox_locations",
     "spaces_tool_methods",
+    "telemetry_acknowledge_link_notice",
     "telemetry_acknowledge_notice",
     "telemetry_flush",
+    "telemetry_link_notice",
+    "telemetry_link_notice_due",
+    "telemetry_link_state",
     "telemetry_notice_text",
     "telemetry_record_bench_run",
     "telemetry_record_feature",
@@ -39358,6 +39549,7 @@ __all__ = [
     "telemetry_set_surface",
     "telemetry_show_last",
     "telemetry_status",
+    "telemetry_sync_account",
     "telemetry_use_app_notice",
     "AgentRun",
     "AgentRunProtocol",

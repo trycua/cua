@@ -2866,6 +2866,41 @@
         "currentTeamId"
       ]
     },
+    "TelemetryLinkNotice": {
+      "type": "object",
+      "properties": {
+        "due": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "okLabel": {
+          "type": "string"
+        },
+        "turnOffLabel": {
+          "type": "string"
+        },
+        "detailsLabel": {
+          "type": "string"
+        },
+        "docsUrl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "due",
+        "title",
+        "body",
+        "okLabel",
+        "turnOffLabel",
+        "detailsLabel",
+        "docsUrl"
+      ]
+    },
     "UpdateState": {
       "type": "object",
       "properties": {
@@ -5354,6 +5389,19 @@
     "teams.list": {
       "$ref": "#/$defs/TeamsList"
     },
+    "telemetry.acknowledgeLinkNotice": {
+      "type": "null"
+    },
+    "telemetry.linkNotice": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TelemetryLinkNotice"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "telemetry.track": {
       "type": "null"
     },
@@ -6850,6 +6898,19 @@
     },
     "teams.list": {
       "$ref": "#/$defs/TeamsList"
+    },
+    "telemetry.acknowledgeLinkNotice": {
+      "type": "null"
+    },
+    "telemetry.linkNotice": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TelemetryLinkNotice"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "telemetry.track": {
       "type": "null"

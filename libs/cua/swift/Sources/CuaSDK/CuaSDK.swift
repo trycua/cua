@@ -2001,8 +2001,8 @@ public protocol AuthProtocol: AnyObject, Sendable {
     func beginLogin(flow: String?) async throws  -> LoginAttempt
 
     /**
-     * Revokes (best effort) and removes the session. Returns whether one
-     * existed.
+     * Revokes (best effort) and removes the session, and unlinks usage
+     * data from the account. Returns whether one existed.
      */
     func logout() async throws  -> Bool
 
@@ -2119,8 +2119,8 @@ open func beginLogin(flow: String?)async throws  -> LoginAttempt  {
 }
 
     /**
-     * Revokes (best effort) and removes the session. Returns whether one
-     * existed.
+     * Revokes (best effort) and removes the session, and unlinks usage
+     * data from the account. Returns whether one existed.
      */
 open func logout()async throws  -> Bool  {
     return
@@ -34810,6 +34810,99 @@ public func FfiConverterTypeStreamStatsReport_lower(_ value: StreamStatsReport) 
 
 
 /**
+ * The one-time notice for machines that saw the older "anonymous" wording,
+ * shown before anything is linked to the account. Both buttons close it;
+ * the second also turns usage data off.
+ */
+public struct TelemetryLinkNotice: Equatable, Hashable {
+    public var title: String
+    public var body: String
+    /**
+     * Keeps usage data on ("Got it").
+     */
+    public var okLabel: String
+    /**
+     * Turns usage data off ("Turn off usage data").
+     */
+    public var turnOffLabel: String
+    /**
+     * The link to what is collected.
+     */
+    public var detailsLabel: String
+    public var docsUrl: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, body: String,
+        /**
+         * Keeps usage data on ("Got it").
+         */okLabel: String,
+        /**
+         * Turns usage data off ("Turn off usage data").
+         */turnOffLabel: String,
+        /**
+         * The link to what is collected.
+         */detailsLabel: String, docsUrl: String) {
+        self.title = title
+        self.body = body
+        self.okLabel = okLabel
+        self.turnOffLabel = turnOffLabel
+        self.detailsLabel = detailsLabel
+        self.docsUrl = docsUrl
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TelemetryLinkNotice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTelemetryLinkNotice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TelemetryLinkNotice {
+        return
+            try TelemetryLinkNotice(
+                title: FfiConverterString.read(from: &buf),
+                body: FfiConverterString.read(from: &buf),
+                okLabel: FfiConverterString.read(from: &buf),
+                turnOffLabel: FfiConverterString.read(from: &buf),
+                detailsLabel: FfiConverterString.read(from: &buf),
+                docsUrl: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TelemetryLinkNotice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterString.write(value.okLabel, into: &buf)
+        FfiConverterString.write(value.turnOffLabel, into: &buf)
+        FfiConverterString.write(value.detailsLabel, into: &buf)
+        FfiConverterString.write(value.docsUrl, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTelemetryLinkNotice_lift(_ buf: RustBuffer) throws -> TelemetryLinkNotice {
+    return try FfiConverterTypeTelemetryLinkNotice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTelemetryLinkNotice_lower(_ value: TelemetryLinkNotice) -> RustBuffer {
+    return FfiConverterTypeTelemetryLinkNotice.lower(value)
+}
+
+
+/**
  * Telemetry state.
  */
 public struct TelemetryStatus: Equatable, Hashable {
@@ -41614,6 +41707,15 @@ public func spacesToolMethods() -> [SpacesToolMethod]  {
 })
 }
 /**
+ * The person closed the linking notice (either button). Linking starts
+ * with the app's next launch, never in the process that showed it.
+ */
+public func telemetryAcknowledgeLinkNotice()  {try! rustCall() {
+    uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice($0
+    )
+}
+}
+/**
  * Records that the first-run notice was shown in the app's UI (nothing is
  * sent from a machine before that). Apps that show the notice themselves
  * call [`telemetry_use_app_notice`] first so the SDK does not print it.
@@ -41632,6 +41734,34 @@ public func telemetryFlush(timeoutMs: UInt32)  {try! rustCall() {
         FfiConverterUInt32.lower(timeoutMs),$0
     )
 }
+}
+/**
+ * The one-time linking notice's words.
+ */
+public func telemetryLinkNotice() -> TelemetryLinkNotice  {
+    return try!  FfiConverterTypeTelemetryLinkNotice_lift(try! rustCall() {
+    uniffi_cua_sdk_fn_func_telemetry_link_notice($0
+    )
+})
+}
+/**
+ * Whether the app should show the one-time linking notice now: usage data
+ * is on, the account offered linking, and this machine has not shown it.
+ */
+public func telemetryLinkNoticeDue() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cua_sdk_fn_func_telemetry_link_notice_due($0
+    )
+})
+}
+/**
+ * Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+ */
+public func telemetryLinkState() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cua_sdk_fn_func_telemetry_link_state($0
+    )
+})
 }
 /**
  * The first-run notice text (an app shows it in its own UI, then calls
@@ -41753,6 +41883,27 @@ public func telemetryStatus() -> TelemetryStatus  {
     uniffi_cua_sdk_fn_func_telemetry_status($0
     )
 })
+}
+/**
+ * Asks the Spaces API for the signed-in account's opaque id and hands it
+ * to telemetry (none unlinks). Call at launch and after a sign-in; the
+ * SDK's own sign-in already does. Returns the link state. Best effort:
+ * offline or signed out, nothing changes.
+ */
+public func telemetrySyncAccount()async  -> String  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_func_telemetry_sync_account(
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: nil
+
+        )
 }
 /**
  * The host app shows the first-run notice itself (no stderr notice).
@@ -41895,10 +42046,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_spaces_tool_methods() != 24762) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice() != 46398) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice() != 6317) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_flush() != 29688) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_telemetry_link_notice() != 11798) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_telemetry_link_notice_due() != 52419) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_telemetry_link_state() != 28062) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_notice_text() != 47486) {
@@ -41932,6 +42095,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_status() != 18801) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_telemetry_sync_account() != 61343) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365) {
@@ -42042,7 +42208,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_auth_begin_login() != 55109) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_auth_logout() != 38806) {
+    if (uniffi_cua_sdk_checksum_method_auth_logout() != 42354) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_auth_status() != 29264) {

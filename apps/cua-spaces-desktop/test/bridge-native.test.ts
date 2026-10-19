@@ -149,6 +149,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["machines.list", {}],
       ["host.status", {}],
       ["telemetry.track", { signals: [{ type: "step", step: "app_launched", ok: true }] }],
+      ["telemetry.linkNotice", {}],
+      ["telemetry.acknowledgeLinkNotice", {}],
       ["window.setBackgroundColor", { color: "#16181c" }],
       ["window.setDragRegions", { rects: [{ x: 78, y: 0, width: 400, height: 38 }] }],
       ["window.setDropTargets", { targets: [{ spaceId: space, x: 20, y: 60, width: 232, height: 180 }] }],
@@ -345,6 +347,16 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetrySignal(native, { type: "experiments-on", experiments: ["cua_volume", "BAD"] })).toBeNull();
     expect(telemetrySignal(native, { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false })).toBeNull();
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
+  });
+
+  it("answers the one-time linking notice from the host's telemetry, and records that it was closed", async () => {
+    telemetry.linkNoticeDue = true;
+    const notice = (await call("telemetry.linkNotice")) as Record<string, unknown>;
+    expect(notice).toMatchObject({ due: true, title: "We've updated how usage data works", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" });
+    const before = telemetry.linkNoticeAcknowledged;
+    expect(await call("telemetry.acknowledgeLinkNotice")).toBeNull();
+    expect(telemetry.linkNoticeAcknowledged).toBe(before + 1);
+    expect(((await call("telemetry.linkNotice")) as { due: boolean }).due).toBe(false);
   });
 
   it("leaves a create's signals to the host, which records them from the create it runs", async () => {

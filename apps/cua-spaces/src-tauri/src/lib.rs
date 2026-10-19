@@ -569,6 +569,7 @@ pub fn run() {
             keyvault::keyvault_approve,
             keyvault::keyvault_deny,
             telemetry::telemetry_status,
+            telemetry::telemetry_link_notice,
             telemetry::telemetry_acknowledge_link_notice,
             telemetry::telemetry_set_enabled,
             telemetry::telemetry_acknowledge_notice,

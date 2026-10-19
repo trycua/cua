@@ -56,6 +56,7 @@ import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
 import { webkitKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { webkitSettingsOps } from "../ops/settings";
 import { startupFromHost, webkitStartupOps } from "../ops/startup";
+import { webkitTelemetryNoticeOps } from "../ops/telemetry";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
@@ -635,6 +636,7 @@ export function createWebkitAdapter(
     ...webkitSettingsOps(request),
     ...webkitPageOps(request, toHostStatus, spaceToRow),
     ...webkitStartupOps(request),
+    ...webkitTelemetryNoticeOps(request),
     ...webkitAgentDetailOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),

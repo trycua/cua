@@ -5594,7 +5594,7 @@ pub struct AppOnboardingState {
     /// shell applies it when the first run finishes.
     pub launch_at_login: bool,
     /// The usage-data switch on Welcome: the machine's telemetry setting
-    /// (Settings' "Share anonymous usage data", `cua telemetry off`), none
+    /// (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
     /// until the shell read it (then it shows on).
     pub telemetry: Option<AppTelemetryInput>,
     /// Settings, Experiments: the Cua Volume page (and its Done line) only
@@ -5725,7 +5725,7 @@ pub enum AppOnboardingAction {
     /// On a machine that already showed the usage notice, with usage data
     /// on, the run's start counts now rather than when Welcome is left.
     WelcomeShown,
-    /// Welcome's "Share anonymous usage data" switch (not while the
+    /// Welcome's "Share usage data to help improve Cua" switch (not while the
     /// environment decides). The shell writes the setting.
     UsageDataToggled {
         /// On.
@@ -5799,11 +5799,11 @@ pub struct AppStepDot {
 }
 
 /// One answer on the This machine page.
-/// Welcome's "Share anonymous usage data" switch.
+/// Welcome's "Share usage data to help improve Cua" switch.
 pub type AppUsageToggle = core::onboarding::UsageToggle;
 #[uniffi::remote(Record)]
 pub struct AppUsageToggle {
-    /// "Share anonymous usage data".
+    /// "Share usage data to help improve Cua".
     pub label: String,
     /// On.
     pub on: bool,

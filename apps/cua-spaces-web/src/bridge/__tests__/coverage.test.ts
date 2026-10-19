@@ -114,6 +114,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "notifications.markAllRead": {},
   "notifications.markRead": { ids: ["n1"] },
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
+  "telemetry.linkNotice": {},
+  "telemetry.acknowledgeLinkNotice": {},
   "spaces.usage": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },

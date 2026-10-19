@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Which anonymous usage events a UI step means, from the app core
+ * Which usage events a UI step means, from the app core
  * (`telemetry::*`): the first run's pages, Space creates, Settings, Storage,
  * the Share sheet and enrolling this device. The shell sends the signals
  * (`telemetry_record_signals`); the SwiftUI app derives and sends the same

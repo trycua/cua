@@ -94,7 +94,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
         "notifications.list", "notifications.markAllRead", "notifications.markRead",
-        "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
+        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.usage", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).

@@ -131,6 +131,8 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "notifications.markAllRead": {},
   "notifications.markRead": { ids: ["n1"] },
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
+  "telemetry.linkNotice": {},
+  "telemetry.acknowledgeLinkNotice": {},
   "spaces.usage": { spaceId: SPACE },
   "spaces.windows": { spaceId: SPACE },
   "stream.pip": { spaceId: SPACE, command: { type: "open", row: "desktop" } },

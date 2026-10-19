@@ -82,7 +82,7 @@ cua-host = { path = "../../../libs/cua/crates/cua-host" }
 cua-agent-setup = { path = "../../../libs/cua/crates/cua-agent-setup" }
 # "Sign in to Cua" and the credential store shared with the CLI and daemon.
 cua-auth = { path = "../../../libs/cua/crates/cua-auth" }
-# Anonymous usage telemetry (the SDK core).
+# Usage telemetry (the SDK core).
 cua-telemetry = { path = "../../../libs/cua/crates/cua-telemetry" }
 tokio = { version = "1", features = ["net", "rt", "rt-multi-thread", "sync", "macros", "time", "process"] }
 # User "Sign in to Cua" device-authorization grant (src/auth.rs): the device

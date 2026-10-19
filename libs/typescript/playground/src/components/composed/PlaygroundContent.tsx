@@ -85,9 +85,6 @@ interface PlaygroundContentProps {
   onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
   /** Optional class name for the root layout container (can override default h-screen w-screen) */
   className?: string;
-
-  /** Render prop for cloud VM creation wizard. Injected by cloud website. */
-  renderCloudCreate?: (props: { onCreated: () => void; onCancel: () => void }) => React.ReactNode;
 }
 
 /**
@@ -116,7 +113,6 @@ export function PlaygroundContent({
   onExamplePromptSelected,
   onToast,
   className,
-  renderCloudCreate,
 }: PlaygroundContentProps) {
   const { state, dispatch, adapters } = usePlayground();
   const activeChat = useActiveChat();
@@ -342,11 +338,7 @@ export function PlaygroundContent({
 
       {settingsModal}
 
-      <AddSandboxModal
-        isOpen={showAddSandboxModal}
-        onClose={handleCloseAddSandbox}
-        renderCloudCreate={renderCloudCreate}
-      />
+      <AddSandboxModal isOpen={showAddSandboxModal} onClose={handleCloseAddSandbox} />
     </>
   );
 }

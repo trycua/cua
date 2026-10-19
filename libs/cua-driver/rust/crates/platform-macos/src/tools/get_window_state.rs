@@ -88,6 +88,17 @@ fn def() -> &'static ToolDef {
     })
 }
 
+/// Start `capture` on a blocking thread now, so it overlaps the AX walk of a
+/// read that wants both. `None` when nothing would overlap: no screenshot is
+/// wanted, or no tree is walked (the caller then captures in its own turn).
+fn prefetch_capture<T: Send + 'static>(
+    should_capture: bool,
+    want_tree: bool,
+    capture: impl FnOnce() -> T + Send + 'static,
+) -> Option<tokio::task::JoinHandle<T>> {
+    (should_capture && want_tree).then(|| tokio::task::spawn_blocking(capture))
+}
+
 /// Chromium stops painting and stops updating its accessibility tree while its
 /// window is not visible, which includes sitting on another Space (CUA-1351,
 /// cdb-v2-40: a click delivered off-Space only showed once the Space was shown).
@@ -274,6 +285,12 @@ impl Tool for GetWindowStateTool {
         let collapse_menus = query.as_deref().is_none_or(|q| q.trim().is_empty())
             && !view.full_output
             && !observation_only;
+        // Start the screenshot grab before the tree walk so the two overlap:
+        // ScreenCaptureKit and the accessibility walk use independent system
+        // services, and the read otherwise pays for them one after the other.
+        let prefetched_capture = prefetch_capture(should_capture, want_tree, move || {
+            crate::capture::screenshot_window_bytes(window_id)
+        });
         let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
             // `timeout_ms` bounds the walk itself: it returns the partial tree
@@ -350,6 +367,10 @@ impl Tool for GetWindowStateTool {
         // against, and the raw capture's backing scale.
         let mut screenshot_frame_error = None;
         let mut screenshot_resize_scale = None;
+        let prefetched_raw = match prefetched_capture {
+            Some(handle) => Some(handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!(e)))),
+            None => None,
+        };
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> Result<
@@ -368,11 +389,13 @@ impl Tool for GetWindowStateTool {
                 let bounds = crate::windows::window_bounds_by_id(window_id)
                     .filter(|b| b.width > 0.0 && b.height > 0.0)
                     .ok_or(super::px_frame::PxFrameError::WindowNotFound { window_id })?;
-                let raw = crate::capture::screenshot_window_bytes(window_id).map_err(|e| {
-                    super::px_frame::PxFrameError::CaptureUnavailable {
-                        window_id,
-                        reason: e.to_string(),
-                    }
+                let raw = match prefetched_raw {
+                    Some(raw) => raw,
+                    None => crate::capture::screenshot_window_bytes(window_id),
+                }
+                .map_err(|e| super::px_frame::PxFrameError::CaptureUnavailable {
+                    window_id,
+                    reason: e.to_string(),
                 })?;
                 let (orig_w, orig_h) = crate::capture::png_dimensions(&raw).map_err(|e| {
                     super::px_frame::PxFrameError::CaptureUnavailable {
@@ -1386,6 +1409,53 @@ mod window_scope_contract_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_capture_is_prefetched_only_when_a_tree_walk_can_overlap_it() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            assert!(prefetch_capture(true, false, || 1).is_none());
+            assert!(prefetch_capture(false, true, || 1).is_none());
+            assert!(prefetch_capture(false, false, || 1).is_none());
+            let handle = prefetch_capture(true, true, || 7).expect("prefetched");
+            assert_eq!(handle.await.unwrap(), 7);
+        });
+    }
+
+    /// Each side waits for the other to have started. They can only both
+    /// finish if the capture is running while the walk runs; a capture that
+    /// follows the walk would leave both waiting out the timeout.
+    #[test]
+    fn a_prefetched_capture_overlaps_the_tree_walk() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        const LIMIT: Duration = Duration::from_secs(10);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (capture_started, capture_seen) = mpsc::channel::<()>();
+        let (walk_started, walk_seen) = mpsc::channel::<()>();
+        let (capture_ok, walk_ok) = rt.block_on(async {
+            let capture = prefetch_capture(true, true, move || {
+                capture_started.send(()).unwrap();
+                walk_seen.recv_timeout(LIMIT).is_ok()
+            })
+            .unwrap();
+            let walk = tokio::task::spawn_blocking(move || {
+                walk_started.send(()).unwrap();
+                capture_seen.recv_timeout(LIMIT).is_ok()
+            })
+            .await
+            .unwrap();
+            (capture.await.unwrap(), walk)
+        });
+        assert!(capture_ok, "the capture never saw the walk start");
+        assert!(walk_ok, "the walk never saw the capture start");
+    }
 
     #[test]
     fn only_off_space_chromium_windows_get_the_staleness_note() {

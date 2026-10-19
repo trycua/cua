@@ -1688,10 +1688,17 @@ impl ToolRegistry {
         evidence: &TrustedInvocationEvidence,
     ) -> ToolResult {
         let seed = crate::recovery_hint::Seed::from_args(&args);
+        let session = args
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let in_batch = crate::step_pacing::in_batch();
         let mut result = self
             .invoke_authorized_unannotated(name, args, context, evidence)
             .await;
-        crate::recovery_hint::annotate(renamed_tool(name).unwrap_or(name), &seed, &mut result);
+        let tool = renamed_tool(name).unwrap_or(name);
+        crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
         result
     }
 

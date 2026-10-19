@@ -698,7 +698,9 @@ pub struct ActionResult {
     pub error: Option<ActionError>,
     /// What to do next, in one short sentence. Present when the effect is
     /// `unverifiable` or `suspected_noop`, so an unconfirmed action points at
-    /// the next step instead of leaving the agent to guess.
+    /// the next step instead of leaving the agent to guess. Also carries a
+    /// suggestion to chain steps with `run_steps` after several direct actions
+    /// in a row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
     /// The call that moves the task forward, always safe to run as is (a read,

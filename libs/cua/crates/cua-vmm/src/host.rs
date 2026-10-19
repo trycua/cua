@@ -163,7 +163,6 @@ pub async fn run(program: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Result<
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Probe only when installation or denied KVM access requires privilege.
 static SUDO_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 pub fn local_qemu_plan() -> bool {

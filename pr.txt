@@ -1,7 +1,0 @@
-Install QEMU locally on apt hosts without sudo
-
-On cua 0.5.0, runtime setup attempts privileged QEMU installation even when sudo is unavailable, leaving VM creation without QEMU.
-
-Use signed apt downloads and dpkg-deb extraction under CUA_HOME/qemu when noninteractive sudo is unavailable. Stage and smoke-test before replacing an installation, publish relocatable wrappers, discover extracted firmware, and allow TCG when KVM access is denied without sudo. Cache privilege detection and report the local installation. Preserve privileged installs and non-apt behavior.
-
-Tests: firmware regression fails without the new candidates and passes with them. Hermetic Python installer test passes (wrappers, quoting, symlinks, failed reinstall preservation, replacement). cua-vmm library tests excluding the existing SSH test module: 200 passed, 1 ignored. Full suite: 205 passed, 1 ignored, 2 unrelated SSH failures caused by mktemp templates on this host. cargo check -p cua-daemon passes. No VM boot or KVM access performed.

@@ -1,5 +1,4 @@
 #!/bin/sh
-# apt verifies repository signatures and package hashes; never run package scripts.
 set -eu
 home=$1
 for tool in ssh ssh-keygen dpkg-deb realpath; do
@@ -24,7 +23,6 @@ set -- -o "Dir::State::Lists=$stage/lists" -o "Dir::Cache=$stage/cache" -o Debug
 apt-get "$@" update
 apt-get "$@" --download-only --reinstall --no-install-recommends -y install $packages qemu-system-common qemu-system-data qemu-utils
 for deb in "$stage/cache/archives/"*.deb; do dpkg-deb -x "$deb" "$stage/root"; done
-# Leave host-only absolute links alone. In-root links must survive the rename.
 find "$stage/root" -type l -exec sh -c '
     root=$1; shift
     for link do
@@ -39,7 +37,6 @@ find "$stage/root" -type l -exec sh -c '
 ' sh "$stage/root" {} +
 wrapper() {
     root=$1; binary=$2; destination=$3
-    # Quote embedded paths, including homes containing apostrophes.
     quoted=$(printf '%s' "$root" | sed "s/'/'\\\\''/g")
     {
         printf "#!/bin/sh\nroot='%s'\n" "$quoted"

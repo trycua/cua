@@ -423,8 +423,20 @@ impl Snapshot {
     /// `detect_bounded` over an explicit observer of the current layer-0
     /// windows and frontmost pid.
     fn detect_bounded_with(
+        self,
+        bounds: WindowObservationBounds,
+        observe: impl FnMut() -> (Vec<WindowInfo>, Option<i32>) + Send + 'static,
+    ) -> Changes {
+        self.detect_bounded_reporting(bounds, REPORT_WINDOW, observe)
+    }
+
+    /// [`detect_bounded_with`](Self::detect_bounded_with) with an explicit
+    /// report window: how long the result waits for a change before the rest
+    /// of the deadline runs detached.
+    fn detect_bounded_reporting(
         mut self,
         bounds: WindowObservationBounds,
+        report_window: Duration,
         observe: impl FnMut() -> (Vec<WindowInfo>, Option<i32>) + Send + 'static,
     ) -> Changes {
         let earlier = self.earlier.take();
@@ -433,7 +445,7 @@ impl Snapshot {
             return Changes::not_polled().with_earlier(earlier);
         }
         let started = Instant::now();
-        let report = REPORT_WINDOW.min(bounds.timeout);
+        let report = report_window.min(bounds.timeout);
         let mut observe = observe;
         let changes = match self.poll_until(started + report, bounds.poll, &mut observe) {
             Ok(changes) => changes,
@@ -450,11 +462,17 @@ impl Snapshot {
     /// tokio runtime. Most action-tool call sites should prefer this
     /// over the blocking `detect()`.
     pub async fn detect_async(self) -> Changes {
+        // A step of a batch returns after a shorter report window, because
+        // the next step follows at once. The pacing is read here: a blocking
+        // thread does not inherit the task's batch marker.
+        let report_window = cua_driver_core::step_pacing::report_window(REPORT_WINDOW);
         // Move the Snapshot (and its embedded lease) onto the blocking
         // thread; the lease's Drop runs there when detect_with returns.
-        tokio::task::spawn_blocking(move || self.detect())
-            .await
-            .unwrap_or_else(|_| Changes::not_polled())
+        tokio::task::spawn_blocking(move || {
+            self.detect_bounded_reporting(host_observation_bounds(), report_window, observe_host)
+        })
+        .await
+        .unwrap_or_else(|_| Changes::not_polled())
     }
 
     /// One observation against the snapshot: the change it shows, if any.
@@ -602,6 +620,19 @@ fn observe_host() -> (Vec<WindowInfo>, Option<i32>) {
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
+
+/// Time-boxed observation of a window list that never changes, as for an
+/// action that opens nothing. Support for the step-latency benchmark.
+#[cfg(test)]
+pub(crate) fn observe_quiet_window_list(bounds: WindowObservationBounds, report_window: Duration) {
+    let snap = WindowChangeDetector::capture_from(HashSet::new(), Some(7), false, None);
+    let _ = snap.detect_bounded_reporting(bounds, report_window, || (Vec::new(), Some(7)));
+    end_tail();
+}
+
+/// The report window of a direct call. Support for the step-latency benchmark.
+#[cfg(test)]
+pub(crate) const DIRECT_REPORT_WINDOW: Duration = REPORT_WINDOW;
 
 #[cfg(test)]
 mod tests {
@@ -891,6 +922,57 @@ mod tests {
         assert!(lock(&TAIL).is_some(), "the remainder runs detached");
         end_tail();
         assert!(lock(&TAIL).is_none());
+    }
+
+    /// A step of a batch returns after the shorter batch report window, and
+    /// the rest of the deadline still runs detached with the lease held.
+    #[test]
+    fn a_batched_quiet_poll_returns_after_the_batch_report_window() {
+        use cua_driver_core::step_pacing::BATCH_REPORT_WINDOW;
+        let _serial = lock(&TAIL_TEST_LOCK);
+        end_tail();
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
+        let started = Instant::now();
+        let changes = snap.detect_bounded_reporting(
+            observation_bounds_from(Some("3000"), Some("10")),
+            BATCH_REPORT_WINDOW,
+            || (vec![win(1, 7, "App", "Main")], Some(7)),
+        );
+        let elapsed = started.elapsed();
+        assert!(changes.polled);
+        assert!(!changes.needs_restore());
+        assert!(
+            elapsed >= BATCH_REPORT_WINDOW && elapsed < REPORT_WINDOW,
+            "returned after {elapsed:?}"
+        );
+        assert!(lock(&TAIL).is_some(), "the remainder runs detached");
+        end_tail();
+    }
+
+    /// The shorter window still reports a window that opens inside it.
+    #[test]
+    fn a_batched_poll_still_reports_a_window_that_opens_quickly() {
+        use cua_driver_core::step_pacing::BATCH_REPORT_WINDOW;
+        let _serial = lock(&TAIL_TEST_LOCK);
+        end_tail();
+        let started = Instant::now();
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
+        let changes = snap.detect_bounded_reporting(
+            observation_bounds_from(Some("3000"), Some("10")),
+            BATCH_REPORT_WINDOW,
+            move || {
+                if started.elapsed() > Duration::from_millis(40) {
+                    (
+                        vec![win(1, 7, "App", "Main"), win(2, 7, "App", "Menu")],
+                        Some(7),
+                    )
+                } else {
+                    (vec![win(1, 7, "App", "Main")], Some(7))
+                }
+            },
+        );
+        assert_eq!(changes.new_windows.len(), 1);
+        assert!(started.elapsed() < REPORT_WINDOW);
     }
 
     /// A deadline inside the report window behaves as before: no tail.

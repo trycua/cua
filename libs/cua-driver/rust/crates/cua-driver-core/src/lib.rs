@@ -107,6 +107,7 @@ pub mod snapshot_store;
 #[cfg(test)]
 pub(crate) mod snapshot_test_support;
 pub mod socket_io;
+pub mod step_pacing;
 pub mod text_sanitize;
 pub mod timestamp;
 pub mod tool;

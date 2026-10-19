@@ -98,7 +98,7 @@ Returned by [`app_drive_mount_preview_frame`](#app_drive_mount_preview_frame), [
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `volume` | `f64` |  | The volume in the sidebar, 0 absent to 1 shown (and selected). |
-| `flight` | [`Option<AppPreviewPoint>`](/cua-sdk/reference/spaces/app-core/onboarding-settings#apppreviewpoint-record) |  | The file in flight: its icon's top left (drawn above both windows). |
+| `flight` | [`Option<AppPreviewPoint>`](/cua-sdk/reference/spaces/app-core/onboarding-previews#apppreviewpoint-record) |  | The file in flight: its icon's top left (drawn above both windows). |
 | `arrived` | `Vec<f64>` |  | Each file in the volume, 0 absent to 1 shown. |
 
 ## `AppDriveMountInput` record
@@ -124,8 +124,8 @@ Returned by [`app_drive_mount_preview`](#app_drive_mount_preview).
 | `width` | `f64` |  | Stage width. |
 | `height` | `f64` |  | Stage height. |
 | `loop_ms` / `loopMs` | `u32` |  | One loop (ms). |
-| `space` | [`AppPreviewWindow`](/cua-sdk/reference/spaces/app-core/onboarding-settings#apppreviewwindow-record) |  | The Space (left). |
-| `finder` | [`AppPreviewWindow`](/cua-sdk/reference/spaces/app-core/onboarding-settings#apppreviewwindow-record) |  | The Finder window (right). |
+| `space` | [`AppPreviewWindow`](/cua-sdk/reference/spaces/app-core/onboarding-previews#apppreviewwindow-record) |  | The Space (left). |
+| `finder` | [`AppPreviewWindow`](/cua-sdk/reference/spaces/app-core/onboarding-previews#apppreviewwindow-record) |  | The Finder window (right). |
 | `sidebar` | [`AppLogicalRect`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The Finder window's sidebar (a shade darker than its content). |
 | `places` | [`Vec<AppLogicalRect>`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The sidebar's other places (placeholder bars). |
 | `volume` | [`AppLogicalRect`](/cua-sdk/reference/spaces/app-core/notch#applogicalrect-record) |  | The volume's row in the sidebar (the selection highlight). |

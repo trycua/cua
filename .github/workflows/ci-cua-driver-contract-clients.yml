@@ -380,7 +380,6 @@ jobs:
           tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz" > /tmp/cua-driver-npm/contents.txt
           grep -F 'package/dist/embedded.js' /tmp/cua-driver-npm/contents.txt
           grep -F 'package/dist/electron.js' /tmp/cua-driver-npm/contents.txt
-          grep -F 'package/dist/fleet.js' /tmp/cua-driver-npm/contents.txt
           tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
             grep -F 'package/libcua_driver_sdk.so'
           tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
@@ -392,7 +391,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/libs/cua-driver/compat-fixtures/apps/typescript/app.mjs" .
           node app.mjs
           node --input-type=module -e \
-            "const sdk = await import('@trycua/cua-driver'); const embedded = await import('@trycua/cua-driver/embedded'); const fleet = await import('@trycua/cua-driver/fleet'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost || typeof fleet.connectFleetDriver !== 'function') process.exit(1)"
+            "const sdk = await import('@trycua/cua-driver'); const embedded = await import('@trycua/cua-driver/embedded'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost) process.exit(1)"
 
       - name: Install Python agent SDK example dependencies
         working-directory: libs/cua-driver/examples/agent-sdks

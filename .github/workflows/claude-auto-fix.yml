@@ -233,7 +233,7 @@ jobs:
           REPOSITORY STRUCTURE:
           This is a Python/TypeScript monorepo managed with uv (Python) and pnpm (TypeScript).
           - libs/python/ - Python packages: agent, core, som, bench-ui
-          - libs/typescript/ - TypeScript packages: core, fleet, agent, playground
+          - libs/typescript/ - TypeScript packages: core, agent, playground
           - Python requires: >=3.12,<3.14
           - Package manager: uv (Python), pnpm@10 (TypeScript)
           - Build backend: pdm-backend (Python)

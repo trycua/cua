@@ -78,8 +78,8 @@ and bump type. Cua Sandbox's draft is published by hand, which starts its PyPI
 workflow; the others publish themselves.
 
 Not on Release Please: the Docker images (`docker-*-v*`, still on
-**Legacy packages: Bump Version**, with no GitHub release pages), `@trycua/fleet`
-and `cua-fleet` (Fleets is shut down), the OS images (`linux-image-v*`,
+**Legacy packages: Bump Version**, with no GitHub release pages), `cua-fleet`
+(Fleets is shut down), the OS images (`linux-image-v*`,
 `omarchy-image-v*` and the image pipelines' own date versions), and the
 `cua-install-latest`/`cua-spaces-latest` rolling feeds.
 

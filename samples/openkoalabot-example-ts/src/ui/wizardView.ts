@@ -136,7 +136,7 @@ export function renderWizard(p: WizardProps): HTMLElement {
             : "This image runs as a KubeVirt virtual machine: a full VM with its own kernel. It takes longer to start and suits desktops that need one.",
         ),
         note("", "info", "A Cua Cloud Space is metered until you delete it."),
-        p.cloud ? null : note("warn", "alert", "Cua Cloud is not signed in. Run `cua auth login` (or set CUA_CLIENT_ID and CUA_CLIENT_SECRET) and restart the server."),
+        p.cloud ? null : note("warn", "alert", "Cua Cloud has ended. Create this Space on This machine instead."),
       ].filter((n): n is HTMLElement => n !== null)
     if (s.step === 2) {
       const name = h("input", {

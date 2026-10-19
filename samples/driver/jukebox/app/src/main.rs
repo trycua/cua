@@ -17,7 +17,7 @@
 //!
 //! Every instrument owns its own `rodio` output stream, so notes from the
 //! separate instrument processes mix at the OS audio mixer — real polyphony
-//! across the whole coordinated fleet.
+//! across the whole coordinated ensemble.
 
 #![windows_subsystem = "windows"]
 

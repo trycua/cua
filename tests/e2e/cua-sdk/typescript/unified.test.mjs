@@ -72,18 +72,11 @@ async function urlsAndForward(sb, port) {
 }
 
 e.e2eTest("unified-sandbox-api", "hermetic", "cloud create fails (Cua Cloud has ended) + daemon public URL", async () => {
-  const c = cua.embedded({
-    stateDir: e.tmpState(),
-    fleetFromEnv: false,
-    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
-  })
-  // A cloud create (command and services on a managed gVisor pool) fails
-  // before anything is created.
+  const c = cua.embedded({ stateDir: e.tmpState() })
+  // A cloud create (command and services) fails before anything is created.
   await e.assertCloudEnded(c, {
     command: ["python", "/srv.py"],
     services: new Map([["mcp", 8765]]),
-    runtime: "gvisor",
-    cloud: cua.CloudOptions.create({ maxPoolSize: 2 }),
   })
 
   await e.withDaemon(async (d) => {

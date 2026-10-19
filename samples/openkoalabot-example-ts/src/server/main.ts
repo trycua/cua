@@ -42,7 +42,6 @@ const cua = process.argv.includes("--daemon")
       stateDir: join(home, "sandboxes"),
       spacesHome: join(home, "spaces"),
       teleportHome: arg("teleport-home"),
-      fleetFromEnv: true,
     }))
 const spaces = cua.spaces()
 // #endregion docs:ts-open
@@ -51,7 +50,8 @@ const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist
 const running = await startServer(
   {
     spaces: spaces as unknown as SpacesPort,
-    cloud: Boolean(process.env.CUA_CLIENT_ID || process.env.FLEETS_TOKEN || process.env.CUA_TOKEN),
+    // Cua Cloud has ended: the wizard offers This machine only.
+    cloud: false,
     // The New Space wizard: one SDK call per plan (src/core/plan.ts).
     create: async (call) => {
       // #region docs:ts-create

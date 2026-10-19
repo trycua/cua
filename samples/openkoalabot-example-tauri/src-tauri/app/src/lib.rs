@@ -138,9 +138,10 @@ fn walkthrough() -> R<Option<serde_json::Value>> {
     Ok(Some(serde_json::from_slice(&std::fs::read(path)?)?))
 }
 
+/// Cua Cloud has ended: always `false`.
 #[tauri::command]
-fn cloud_configured(s: State<'_, AppState>) -> bool {
-    s.core.config().cloud_from_env
+fn cloud_configured() -> bool {
+    false
 }
 
 #[tauri::command]
@@ -639,7 +640,6 @@ pub fn run() {
             // Local Spaces run on the SDK's own runtime (containers, QEMU,
             // Lume); their state stays in this app's data directory.
             let config = CoreConfig::in_dir(dir)
-                .with_cloud_from_env(std::env::var_os("CUA_CLIENT_ID").is_some())
                 .with_local_runtime(Arc::new(cua_daemon::local::VmmLocal::default()));
             let core = Core::new(config)?;
             // Agent runs use the default model unless OPENKOALABOTS_MODEL_URL

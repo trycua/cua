@@ -107,7 +107,7 @@ test("the wizard's plan becomes one create call, validated first", async () => {
   assert.equal(bad.status, 400)
   assert.match(bad.body.error, /does not run in Cua Cloud/)
   const noCloud = await call("spaces/create", { plan: { image: "ghcr.io/trycua/linux:24.04", target: "cloud", name: "desk" } })
-  assert.equal(noCloud.status, 501, "Cua Cloud needs credentials")
+  assert.equal(noCloud.status, 501, "Cua Cloud has ended")
   assert.equal(created.length, 0, "nothing created for refused plans")
   const ok = await call("spaces/create", { plan: { image: "ghcr.io/trycua/linux:24.04", target: "local", name: "desk", cpus: 2, memory_mb: 4096 } })
   assert.equal(ok.status, 200)

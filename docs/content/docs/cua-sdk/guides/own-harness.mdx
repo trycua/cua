@@ -151,7 +151,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-```rust skip="no-runner"
+```rust test="rust" id="harness-rust"
 use cua_sdk::{Cua, CuaConfig, SandboxCreateOptions};
 use serde_json::{json, Value};
 
@@ -251,7 +251,9 @@ console.log(new TextDecoder().decode((await env.sh('uname -a', undefined)).stdou
   </Tab>
   <Tab value="Rust">
 
-```rust skip="no-runner"
+```rust test="rust" id="harness-connect-rust"
+use cua_sdk::{Cua, CuaConfig};
+
 let sb = Cua::embedded(CuaConfig::default())?
     .sandboxes()
     .connect_url("http://10.0.0.5:3211".into(), Some("TOKEN".into()), None)

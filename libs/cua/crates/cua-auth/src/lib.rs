@@ -7,7 +7,7 @@
 //!   for the client and falls back to the device flow when it does not, so
 //!   it works before and after that client change lands.
 //! - **Store**: the OS credential vault on Windows and on macOS for builds
-//!   signed by Cua (service `run.cua.ai`, `staging.run.cua.ai` for
+//!   signed by Cua (service `ai.cua.session`, `ai.cua.session.staging` for
 //!   `CUA_ENV=staging`; account `cua-cli`), a 0600
 //!   `~/.cua/credentials.json` elsewhere (Linux, and unsigned or ad-hoc
 //!   macOS builds, which macOS treats as a new app on every rebuild so
@@ -21,6 +21,9 @@
 //!   none (never writing it back to a file).
 //!   A process without a terminal (an agent, a script, a service) never
 //!   waits on a macOS keychain prompt: see [`KEYCHAIN_NONINTERACTIVE_ENV`].
+//!   Items that older builds stored under the service `run.cua.ai`
+//!   (`staging.run.cua.ai`) move to the current service on first read, and
+//!   sign-out removes both: see `legacy_vault`.
 //! - **Session**: a refreshing access token. Every call reads the store, so
 //!   a sign-out or a token another process rotated is seen at once instead
 //!   of being refreshed twice.
@@ -49,11 +52,17 @@ const DEFAULT_SCOPE: &str = "openid profile offline_access organization:*";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 /// Refresh this long before expiry.
 const REFRESH_SKEW_SECS: i64 = 60;
-/// The OS vault service of the session: `run.cua.ai` in production,
+/// The OS vault service of the session: `ai.cua.session` in production,
 /// another one per `CUA_ENV`, so environments never share a session.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn keyring_service() -> &'static str {
     cua_home::env::CuaEnv::current().keyring_service()
+}
+/// The service older builds used (`run.cua.ai`, `staging.run.cua.ai`): read
+/// once to move its items to [`keyring_service`], and cleared on sign-out.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn legacy_keyring_service() -> &'static str {
+    cua_home::env::CuaEnv::current().legacy_keyring_service()
 }
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const KEYRING_ACCOUNT: &str = "cua-cli";
@@ -90,10 +99,16 @@ pub enum Error {
 /// Result alias.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+mod callback_page;
 #[allow(dead_code)]
 mod chunked;
+#[allow(dead_code)]
+mod legacy_vault;
 #[cfg(target_os = "macos")]
 mod macos_keychain;
+
+use callback_page::Outcome;
+pub use callback_page::ReturnTo;
 
 /// What to do when the login keychain cannot be used without a prompt this
 /// session cannot show (an SSH session).
@@ -467,11 +482,17 @@ impl Store {
         match self {
             #[cfg(target_os = "macos")]
             Store::Keyring => {
-                let wanted = |a: &str| {
-                    a == KEYRING_ACCOUNT
-                        || a.strip_prefix(KEYRING_ACCOUNT)
-                            .is_some_and(|r| r.starts_with('.'))
-                };
+                let wanted = is_cua_account;
+                // Items still under the legacy service name move first (a
+                // read that needs a prompt is not asked unless `prompt`).
+                let moved = macos_keychain::migrate_legacy(
+                    macos_keychain::Keychain::Default,
+                    legacy_keyring_service(),
+                    keyring_service(),
+                    &wanted,
+                    prompt,
+                    signed_by_cua(),
+                );
                 let items = macos_keychain::check_items(
                     macos_keychain::Keychain::Default,
                     keyring_service(),
@@ -479,6 +500,7 @@ impl Store {
                     prompt,
                     signed_by_cua(),
                 );
+                let items = merge_moved(items, moved);
                 KeychainCheck::from_items(items, || {
                     macos_keychain::default_keychain_unlocked() == Some(false)
                 })
@@ -493,15 +515,29 @@ impl Store {
     /// Starts over when the keychain cannot be read ("Sign in again"):
     /// removes the stored session without reading it, and every other Cua
     /// item this process cannot read without a prompt (a secret this build
-    /// can never use without one). Then checks again, without a prompt.
+    /// can never use without one), under the current service name and under
+    /// the legacy one. Then checks again, without a prompt.
     pub fn forget_keychain(&self) -> Result<KeychainCheck> {
         self.clear()?;
         #[cfg(target_os = "macos")]
-        for item in &self.check_keychain(false).items {
-            if matches!(item.state, KeychainState::NeedsAccess)
-                && let Ok(entry) = keyring::Entry::new(keyring_service(), &item.account)
-            {
-                let _ = vault_delete(entry);
+        if matches!(self, Store::Keyring) {
+            for service in [keyring_service(), legacy_keyring_service()] {
+                // Not `check_keychain`: that would move a readable legacy
+                // item over, and this is a sign-out.
+                let items = macos_keychain::check_items(
+                    macos_keychain::Keychain::Default,
+                    service,
+                    &is_cua_account,
+                    false,
+                    false,
+                );
+                for (account, state) in items {
+                    if state == macos_keychain::ItemState::NeedsAccess
+                        && let Ok(entry) = keyring::Entry::new(service, &account)
+                    {
+                        let _ = vault_delete(entry);
+                    }
+                }
             }
         }
         Ok(self.check_keychain(false))
@@ -620,7 +656,9 @@ impl Store {
                     ) {
                         return self.load_stored();
                     }
-                    None
+                    // Not under the current service name: an older build may
+                    // have stored it under the legacy one.
+                    move_legacy_item(KEYRING_ACCOUNT)?
                 }
                 Err(e) => return Err(vault_err(e)),
             },
@@ -677,11 +715,15 @@ impl Store {
                 Err(e) => Err(store_err(e)),
             },
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match vault_delete(keyring_entry()?) {
-                Ok(()) => Ok(true),
-                Err(keyring::Error::NoEntry) => Ok(false),
-                Err(e) => Err(store_err(e)),
-            },
+            Store::Keyring => {
+                let existed = match vault_delete(keyring_entry()?) {
+                    Ok(()) => true,
+                    Err(keyring::Error::NoEntry) => false,
+                    Err(e) => return Err(store_err(e)),
+                };
+                // Signing out removes the item an older build left too.
+                Ok(drop_legacy_item(KEYRING_ACCOUNT) || existed)
+            }
             Store::TestKeychain(d) => match std::fs::remove_file(d.join("vault.json")) {
                 Ok(()) => Ok(true),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -756,7 +798,9 @@ impl Store {
                     adopt_read(&format!("{KEYRING_ACCOUNT}.{name}"), &s);
                     Ok(Some(s))
                 }
-                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(keyring::Error::NoEntry) => {
+                    move_legacy_item(&format!("{KEYRING_ACCOUNT}.{name}"))
+                }
                 Err(e) => Err(vault_err(e)),
             },
             _ => read_optional(&path),
@@ -772,7 +816,13 @@ impl Store {
         }
         #[cfg(target_os = "macos")]
         {
-            vault_get(secret_entry(name).ok()?).ok()
+            // A signed build that has not run since the service was renamed
+            // has not moved the secret yet: it is still there under the
+            // legacy name. This build only reads it, as it always does.
+            vault_get(secret_entry(name).ok()?).ok().or_else(|| {
+                let account = format!("{KEYRING_ACCOUNT}.{name}");
+                vault_get(VaultEntry::new(legacy_keyring_service(), &account).ok()?).ok()
+            })
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -898,11 +948,14 @@ impl Store {
         let path = self.secret_path(name)?;
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match vault_delete(secret_entry(name)?) {
-                Ok(()) => Ok(true),
-                Err(keyring::Error::NoEntry) => Ok(false),
-                Err(e) => Err(store_err(e)),
-            },
+            Store::Keyring => {
+                let existed = match vault_delete(secret_entry(name)?) {
+                    Ok(()) => true,
+                    Err(keyring::Error::NoEntry) => false,
+                    Err(e) => return Err(store_err(e)),
+                };
+                Ok(drop_legacy_item(&format!("{KEYRING_ACCOUNT}.{name}")) || existed)
+            }
             _ => match std::fs::remove_file(&path) {
                 Ok(()) => Ok(true),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -972,6 +1025,41 @@ fn adopt_read(account: &str, text: &str) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (account, text);
+}
+
+/// Whether a vault account is a Cua item: the session or one of its named
+/// secrets (`cua-cli`, `cua-cli.<name>`).
+#[cfg(target_os = "macos")]
+fn is_cua_account(account: &str) -> bool {
+    account == KEYRING_ACCOUNT
+        || account
+            .strip_prefix(KEYRING_ACCOUNT)
+            .is_some_and(|r| r.starts_with('.'))
+}
+
+/// The check of the current service's items together with what became of the
+/// items moved from the legacy service ([`macos_keychain::migrate_legacy`]).
+/// An item moved just now is read as the new item (and says so); one that
+/// could not move is listed as the old item it is, so the check says the
+/// keychain needs access, and the Spaces app offers to allow it.
+#[cfg(target_os = "macos")]
+fn merge_moved(
+    mut items: Vec<(String, macos_keychain::ItemState)>,
+    moved: Vec<(String, macos_keychain::ItemState)>,
+) -> Vec<(String, macos_keychain::ItemState)> {
+    use macos_keychain::ItemState;
+    for (account, state) in moved {
+        match items.iter_mut().find(|(a, _)| *a == account) {
+            Some((_, found)) => {
+                if state == (ItemState::Ready { recreated: true }) {
+                    *found = state;
+                }
+            }
+            None => items.push((account, state)),
+        }
+    }
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    items
 }
 
 /// What [`Store::check_keychain`] found.
@@ -1283,11 +1371,21 @@ fn auth_failed(e: &keyring::Error) -> bool {
 /// macOS the item trusts every Cua executable of this machine, so the app,
 /// the daemon and the CLI share it without a keychain prompt (see
 /// `macos_keychain`).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn vault_set(account: &str, text: &str) -> Result<()> {
-    let (account, text) = (account.to_string(), text.as_bytes().to_vec());
+    vault_set_in(keyring_service(), account, text)
+}
+
+/// [`vault_set`] under another service name.
+#[cfg(target_os = "macos")]
+fn vault_set_in(service: &str, account: &str, text: &str) -> Result<()> {
+    let (service, account, text) = (
+        service.to_string(),
+        account.to_string(),
+        text.as_bytes().to_vec(),
+    );
     keychain_call(
-        move || macos_keychain::set_generic_password(keyring_service(), &account, &text),
+        move || macos_keychain::set_generic_password(&service, &account, &text),
         || macos_keychain::Status(macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED),
     )
     .map_err(|e| {
@@ -1302,8 +1400,8 @@ fn vault_set(account: &str, text: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn vault_set(account: &str, text: &str) -> Result<()> {
-    VaultEntry::new(keyring_service(), account)
+fn vault_set_in(service: &str, account: &str, text: &str) -> Result<()> {
+    VaultEntry::new(service, account)
         .map_err(store_err)?
         .set_password(text)
         .map_err(store_err)
@@ -1384,6 +1482,76 @@ fn interaction_not_allowed(e: &keyring::Error) -> bool {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn keyring_entry() -> Result<VaultEntry> {
     VaultEntry::new(keyring_service(), KEYRING_ACCOUNT).map_err(store_err)
+}
+
+/// The OS credential vault as a [`legacy_vault::Vault`]: every call goes
+/// through the same prompt-less, deadline-bound paths as an ordinary read or
+/// write ([`vault_get`], [`vault_set_in`], [`vault_delete`]).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct NativeVault;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl legacy_vault::Vault for NativeVault {
+    type Err = Error;
+
+    fn read(&self, service: &str, account: &str) -> Result<Option<String>> {
+        match vault_get(VaultEntry::new(service, account).map_err(store_err)?) {
+            Ok(s) => Ok(Some(s)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(vault_err(e)),
+        }
+    }
+
+    fn write(&self, service: &str, account: &str, text: &str) -> Result<()> {
+        vault_set_in(service, account, text)
+    }
+
+    fn delete(&self, service: &str, account: &str) -> Result<()> {
+        match vault_delete(VaultEntry::new(service, account).map_err(store_err)?) {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(store_err(e)),
+        }
+    }
+}
+
+/// Moves the vault item `account` from the legacy service to the current
+/// one (see [`legacy_vault`]) and returns its text; `None` when there is no
+/// legacy item. A legacy item that needs a prompt this process may not show
+/// stays as it is and fails with the usual hint ([`KEYCHAIN_NEEDS_ACCESS`]).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn move_legacy_item(account: &str) -> Result<Option<String>> {
+    // A legacy recreate interrupted before its rename left the item under its
+    // staging name: take it back first.
+    #[cfg(target_os = "macos")]
+    let _ = macos_keychain::recover_staged(
+        macos_keychain::Keychain::Default,
+        legacy_keyring_service(),
+        account,
+    );
+    match legacy_vault::move_item(
+        &NativeVault,
+        legacy_keyring_service(),
+        keyring_service(),
+        account,
+    ) {
+        Ok(text) => Ok(text),
+        Err(legacy_vault::Failure::Read(e) | legacy_vault::Failure::Write(e)) => Err(e),
+        Err(legacy_vault::Failure::Unverified) => Err(Error::Store(
+            "could not move the Cua sign-in to its new vault item; the old item was kept".into(),
+        )),
+    }
+}
+
+/// Deletes the legacy vault item `account` if there is one this process may
+/// delete without a prompt (signing out never asks for a password because of
+/// an item nobody uses any more); whether it did. Sign-out calls this next to
+/// deleting the current item.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn drop_legacy_item(account: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let _quiet = macos_keychain::Quiet::new();
+    VaultEntry::new(legacy_keyring_service(), account)
+        .is_ok_and(|entry| vault_delete(entry).is_ok())
 }
 
 /// Whether a file store at `path` reads missing secrets from the OS
@@ -1664,6 +1832,9 @@ pub struct PendingLogin {
     pub user_code: Option<String>,
     /// Why the flow differs from the one asked for (fallback), if it does.
     pub note: Option<String>,
+    /// Browser flow: where the callback page tells the person to go back to.
+    /// Starts from [`ReturnTo::from_env`].
+    pub return_to: Option<ReturnTo>,
     oidc: Oidc,
     token_endpoint: String,
     pending: Pending,
@@ -1759,6 +1930,7 @@ async fn begin_pkce(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin, String> 
         url,
         user_code: None,
         note: None,
+        return_to: ReturnTo::from_env(),
         oidc: oidc.clone(),
         token_endpoint: d.token_endpoint.clone(),
         pending: Pending::Pkce {
@@ -1803,6 +1975,7 @@ async fn begin_device(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin> {
         url: verify,
         user_code: (!user_code.is_empty()).then_some(user_code),
         note: None,
+        return_to: ReturnTo::from_env(),
         oidc: oidc.clone(),
         token_endpoint: d.token_endpoint.clone(),
         pending: Pending::Device {
@@ -1827,9 +2000,10 @@ impl PendingLogin {
                     .ok()
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(300);
-                let code = tokio::time::timeout(
+                let to = self.return_to.as_ref();
+                let (code, mut browser) = tokio::time::timeout(
                     Duration::from_secs(secs),
-                    await_callback(&listener, &state),
+                    await_callback(&listener, &state, to),
                 )
                 .await
                 .map_err(|_| {
@@ -1838,7 +2012,7 @@ impl PendingLogin {
                             .into(),
                     )
                 })??;
-                let (status, v) = self
+                let exchanged = self
                     .oidc
                     .form(
                         &self.token_endpoint,
@@ -1850,14 +2024,25 @@ impl PendingLogin {
                             ("code_verifier", &verifier),
                         ],
                     )
-                    .await?;
-                if status != 200 {
-                    return Err(Error::Unauthenticated(describe(
+                    .await;
+                // Keycloak: the code expired or was already redeemed.
+                let invalid_grant =
+                    matches!(&exchanged, Ok((_, v)) if v["error"] == "invalid_grant");
+                let creds = match exchanged {
+                    Ok((200, v)) => Credentials::from_token_response(&v),
+                    Ok((status, v)) => Err(Error::Unauthenticated(describe(
                         &v,
                         &format!("token request failed (HTTP {status})"),
-                    )));
-                }
-                Credentials::from_token_response(&v)
+                    ))),
+                    Err(e) => Err(e),
+                };
+                let (status, outcome) = match &creds {
+                    Ok(c) => ("200 OK", Outcome::SignedIn(c.identity().email)),
+                    Err(_) if invalid_grant => ("400 Bad Request", Outcome::Expired),
+                    Err(_) => ("502 Bad Gateway", Outcome::Failed),
+                };
+                respond_page(&mut browser, status, &outcome, to).await;
+                creds
             }
             Pending::Device {
                 device_code,
@@ -1909,28 +2094,30 @@ impl PendingLogin {
     }
 }
 
-const CALLBACK_OK: &str = "<!doctype html><meta charset=utf-8><title>Cua</title><body style=\"font-family:system-ui;margin:4em\"><h1>Signed in to Cua</h1><p>You can close this tab and return to the app.</p></body>";
-
-/// Escapes text for an HTML body (the callback page echoes the provider's
-/// error description, which arrives in the redirect's query string).
-fn html_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            c => out.push(c),
-        }
-    }
-    out
+async fn respond_page(
+    sock: &mut tokio::net::TcpStream,
+    status: &str,
+    outcome: &Outcome,
+    to: Option<&ReturnTo>,
+) {
+    use tokio::io::AsyncWriteExt;
+    let body = callback_page::render(outcome, to);
+    let resp = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = sock.write_all(resp.as_bytes()).await;
+    let _ = sock.shutdown().await;
 }
 
 /// Serves the loopback redirect until a request carries our `state` and a
-/// code (or an error). Bounded in connections and bytes.
-async fn await_callback(listener: &tokio::net::TcpListener, state: &str) -> Result<String> {
+/// code (or an error). Bounded in connections and bytes. Returns the code
+/// and the browser's connection, answered once the code is exchanged.
+async fn await_callback(
+    listener: &tokio::net::TcpListener,
+    state: &str,
+    to: Option<&ReturnTo>,
+) -> Result<(String, tokio::net::TcpStream)> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     for _ in 0..64 {
         let (mut sock, _) = listener.accept().await.map_err(http_err)?;
@@ -1951,29 +2138,16 @@ async fn await_callback(listener: &tokio::net::TcpListener, state: &str) -> Resu
             .unwrap_or("/")
             .to_string();
         let parsed = url::Url::parse(&format!("http://127.0.0.1{target}")).ok();
-        let respond = |status: &str, body: &str| {
-            format!(
-                "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            )
-        };
         let Some(u) = parsed.filter(|u| u.path() == "/callback") else {
             let _ = sock
-                .write_all(respond("404 Not Found", "not found").as_bytes())
+                .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\nnot found")
                 .await;
             continue;
         };
         let q: std::collections::HashMap<String, String> = u.query_pairs().into_owned().collect();
         if q.get("state").map(String::as_str) != Some(state) {
-            let _ = sock
-                .write_all(
-                    respond(
-                        "400 Bad Request",
-                        "Sign-in state mismatch; start again with cua auth login.",
-                    )
-                    .as_bytes(),
-                )
-                .await;
+            // An earlier attempt's tab: keep waiting for this one.
+            respond_page(&mut sock, "400 Bad Request", &Outcome::Stale, to).await;
             continue;
         }
         if let Some(e) = q.get("error") {
@@ -1981,28 +2155,19 @@ async fn await_callback(listener: &tokio::net::TcpListener, state: &str) -> Resu
                 .get("error_description")
                 .cloned()
                 .unwrap_or_else(|| e.clone());
-            let _ = sock
-                .write_all(
-                    respond(
-                        "400 Bad Request",
-                        &format!("Sign-in failed: {}", html_escape(&msg)),
-                    )
-                    .as_bytes(),
-                )
-                .await;
+            let outcome = if e == "access_denied" {
+                Outcome::Cancelled
+            } else {
+                Outcome::Failed
+            };
+            respond_page(&mut sock, "400 Bad Request", &outcome, to).await;
             return Err(Error::Unauthenticated(format!("sign-in failed: {msg}")));
         }
         let Some(code) = q.get("code").filter(|c| !c.is_empty()).cloned() else {
-            let _ = sock
-                .write_all(respond("400 Bad Request", "missing code").as_bytes())
-                .await;
+            respond_page(&mut sock, "400 Bad Request", &Outcome::Failed, to).await;
             continue;
         };
-        let _ = sock
-            .write_all(respond("200 OK", CALLBACK_OK).as_bytes())
-            .await;
-        let _ = sock.shutdown().await;
-        return Ok(code);
+        return Ok((code, sock));
     }
     Err(Error::Unauthenticated(
         "too many unexpected requests on the sign-in callback".into(),
@@ -2521,14 +2686,6 @@ mod tests {
     }
 
     #[test]
-    fn callback_error_text_is_html_escaped() {
-        assert_eq!(
-            html_escape("<script>x('a\"b')</script>&"),
-            "&lt;script&gt;x(&#39;a&quot;b&#39;)&lt;/script&gt;&amp;"
-        );
-    }
-
-    #[test]
     fn pkce_challenge_matches_rfc7636_appendix_b() {
         assert_eq!(
             pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
@@ -2723,6 +2880,55 @@ mod tests {
         assert_eq!(store.load().unwrap().unwrap().access_token, "at");
         assert!(!d.path().join(LEGACY_SPACES_SESSION).exists());
         assert!(!store.migrate_legacy(d.path()).unwrap());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn the_session_lives_under_a_neutral_service_per_environment() {
+        use cua_home::env::CuaEnv;
+        assert_eq!(CuaEnv::Prod.keyring_service(), "ai.cua.session");
+        assert_eq!(CuaEnv::Staging.keyring_service(), "ai.cua.session.staging");
+        // The names older builds used are only ever read to move an item.
+        assert_eq!(CuaEnv::Prod.legacy_keyring_service(), "run.cua.ai");
+        assert_eq!(
+            CuaEnv::Staging.legacy_keyring_service(),
+            "staging.run.cua.ai"
+        );
+        for env in [CuaEnv::Prod, CuaEnv::Staging] {
+            assert_ne!(env.keyring_service(), env.legacy_keyring_service());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_check_reports_moved_items_as_the_new_ones_and_blocked_ones_as_old() {
+        use macos_keychain::ItemState as S;
+        let ready = |recreated| S::Ready { recreated };
+        // Moved just now: the check reads the new item and says it moved.
+        assert_eq!(
+            merge_moved(
+                vec![("cua-cli".into(), ready(false))],
+                vec![("cua-cli".into(), ready(true))]
+            ),
+            vec![("cua-cli".into(), ready(true))]
+        );
+        // The new session was there already; only the device key was blocked:
+        // it is listed as needing access, in account order.
+        assert_eq!(
+            merge_moved(
+                vec![("cua-cli".into(), ready(false))],
+                vec![("cua-cli.device-key".into(), S::NeedsAccess)]
+            ),
+            vec![
+                ("cua-cli".into(), ready(false)),
+                ("cua-cli.device-key".into(), S::NeedsAccess)
+            ]
+        );
+        // Nothing moved: the check as it was.
+        assert_eq!(
+            merge_moved(vec![("cua-cli".into(), ready(false))], vec![]),
+            vec![("cua-cli".into(), ready(false))]
+        );
     }
 
     #[test]

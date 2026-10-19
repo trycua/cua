@@ -67,7 +67,7 @@ describe.skipIf(!wasmBuilt)("This machine in the first run", () => {
     const hostChoice = await screen.findByTestId("onboarding-host");
     expect(hostChoice).not.toHaveProperty("disabled", true);
     expect(screen.queryByText(/Available once this machine is set up/)).toBeNull();
-    expect(hostChoice.textContent).toMatch(/Next: name this machine/);
+    expect(hostChoice.textContent).toMatch(/Next: name it and choose who else can use it/);
 
     // Choosing only selects; Continue opens the form.
     fireEvent.click(hostChoice);
@@ -78,13 +78,15 @@ describe.skipIf(!wasmBuilt)("This machine in the first run", () => {
       if (!f) throw new Error("no host form");
       return f as HTMLFormElement;
     });
+    // Name starts as what the system calls this computer.
+    await waitFor(() => expect(form.querySelector<HTMLInputElement>('[data-host-field="name"] input')?.value).toBe("Ada’s MacBook Pro"));
     await waitFor(() => expect(form.querySelector<HTMLButtonElement>("[data-host-submit]")?.disabled).toBe(false));
     fireEvent.submit(form);
     await waitFor(() => expect(readSavedOnboarding().state?.step).toBe("done"), { timeout: 5000 });
     expect(readSavedOnboarding().state?.mode).toBe("host");
   });
 
-  it("finishes the page at once for Access other machines", async () => {
+  it("finishes the page at once for the open-other-computers choice", async () => {
     const adapter = createDemoAdapter({ latencyMs: 1, stepMs: 1, signedIn: true, onboarded: false });
     render(
       <BridgeProvider adapter={adapter} core={await testCore()} storeOptions={{ tickMs: 5 }}>
@@ -102,12 +104,12 @@ describe.skipIf(!wasmBuilt)("This machine in the first run", () => {
     expect(readSavedOnboarding().state).toMatchObject({ step: "done", mode: "client" });
   });
 
-  it("always has an enabled Continue, with Access other machines selected, and Return continues", async () => {
+  it("always has an enabled Continue, with the open-other-computers choice selected, and Return continues", async () => {
     await toMode();
     const next = (await screen.findByRole("button", { name: /Continue/ })) as HTMLButtonElement;
     expect(next.disabled).toBe(false);
-    expect(screen.getByRole("radio", { name: /Access other machines/ }).getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByRole("radio", { name: /Set up this machine/ }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByRole("radio", { name: /open my other computers/ }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: /Let my other devices reach/ }).getAttribute("aria-checked")).toBe("false");
     fireEvent.keyDown(screen.getByTestId("heading"), { key: "Enter" });
     expect(readSavedOnboarding().state).toMatchObject({ step: "done", mode: "client" });
   });

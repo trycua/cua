@@ -1,16 +1,15 @@
 //! `cua`: the Cua command line, on the cua SDK (`cua-sdk` as a Rust
 //! library).
 //!
-//! - `auth`, `wif-token`: Cua / Fleet identity (browser or device login,
-//!   client credentials, `FLEETS_TOKEN`, GitHub Actions OIDC, user API
-//!   keys);
+//! - `auth`: Cua sign-in (browser or device login, client credentials) and
+//!   contrib provider keys;
 //! - `agents`: set up AI coding agents (cua skills, the cua MCP server);
-//! - `sandbox` (`sb`): Fleet, local and direct sandboxes;
+//! - `sandbox` (`sb`): local and direct sandboxes;
 //! - `do`, `do-host-consent`: one-shot computer actions for agents;
 //! - `mcp` (`serve-mcp`): stdio MCP server for AI assistants;
 //! - `skills`, `trajectory` (`traj`): recorded demonstrations and action
 //!   trajectories;
-//! - `image` (`img`): local OCI images and Fleet image resources;
+//! - `image` (`img`): local OCI images;
 //! - `env`, `daemon`, `runtime`: spacesd debugging, the cua daemon and
 //!   local runtimes;
 //! - `host`, `spaces`: set this machine up for unattended access (relay or
@@ -41,11 +40,9 @@ pub mod extension;
 mod host;
 mod image_build;
 mod image_release;
-mod images;
 pub mod keyvault_cmd;
 mod mcp;
 mod persistent_cmd;
-mod pools;
 mod providers;
 pub mod sandbox;
 mod shell;
@@ -98,7 +95,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Log in to Cua and inspect Fleet identity.
+    /// Log in to Cua and manage the signed-in session.
     #[command(subcommand)]
     Auth(AuthCmd),
     /// AI coding agents on this machine: install cua skills and configure the cua MCP server.
@@ -107,11 +104,11 @@ enum Command {
     /// Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop.
     #[command(subcommand)]
     Agent(agent_cmd::AgentCmd),
-    /// Sandboxes: local, cloud or an existing machine (direct).
+    /// Sandboxes: local or an existing machine (direct).
     #[command(subcommand, visible_alias = "sb")]
     Sandbox(Box<sandbox::SandboxCmd>),
     /// User defaults (~/.cua/config.toml): where sandboxes run when --on is
-    /// not given (default.on), the default kind and runtime, cloud defaults.
+    /// not given (default.on), the default kind and runtime.
     #[command(subcommand)]
     Config(config_cmd::ConfigCmd),
     /// Serve the HTML5 viewer for every sandbox on one loopback port.
@@ -167,13 +164,16 @@ enum Command {
     /// Recorded `cua do` trajectories.
     #[command(subcommand, visible_alias = "traj")]
     Trajectory(TrajCmd),
-    /// Workload identity federation tokens.
-    #[command(subcommand, name = "wif-token")]
-    WifToken(WifCmd),
-    /// Fleet: managed pools behind `cua sandbox create` without `--pool`.
-    #[command(subcommand)]
-    Fleet(FleetCmd),
-    /// Images: local OCI pull/build/push and Fleet image resources.
+    /// Removed: Cua Cloud has ended.
+    #[command(name = "wif-token", hide = true, disable_help_flag = true)]
+    WifToken(util::EndedArgs),
+    /// Removed: Cua Cloud has ended.
+    #[command(hide = true, disable_help_flag = true)]
+    Fleet(util::EndedArgs),
+    /// Removed: Cua Cloud has ended.
+    #[command(hide = true, disable_help_flag = true)]
+    Pools(util::EndedArgs),
+    /// Images: local OCI pull/build/push.
     #[command(subcommand, visible_alias = "img")]
     Image(ImageCmd),
     /// The sandbox image catalog (the images the docs list): which exist,
@@ -201,7 +201,7 @@ enum Command {
   # Host, image and guest checks for the sandbox dev
   cua doctor dev
   # CI: fail on warnings, write JUnit XML
-  cua doctor cloud:dev --strict --junit doctor.xml")]
+  cua doctor local:dev --strict --junit doctor.xml")]
     Doctor(Box<doctor::DoctorCmd>),
     /// Unattended access to this machine (setup, status, stop, start, remove).
     #[command(subcommand)]
@@ -348,6 +348,11 @@ enum AuthCmd {
   cua auth status
   cua auth status --json")]
     Status,
+    /// Who is signed in: the account, its plan and its teams.
+    #[command(after_help = "Examples:
+  cua auth whoami
+  cua auth whoami --json")]
+    Whoami,
     /// Whether this cua can read the Cua items in the macOS keychain
     /// without a prompt (JSON; for the Spaces app, which asks before it
     /// starts anything that reads the session). A Cua-signed cua gives
@@ -362,13 +367,9 @@ enum AuthCmd {
         #[arg(long, conflicts_with = "prompt")]
         forget: bool,
     },
-    /// The active Fleet identity, verified against Fleet.
-    #[command(after_help = "Examples:
-  cua auth whoami")]
-    Whoami,
-    /// Fleet user API keys (client credentials).
-    #[command(subcommand)]
-    Keys(KeysCmd),
+    /// Removed: Cua Cloud has ended.
+    #[command(hide = true, disable_help_flag = true)]
+    Keys(util::EndedArgs),
     /// Keys of the contrib sandbox providers (`--on e2b`, `--on daytona`,
     /// `--on modal`).
     #[command(subcommand)]
@@ -411,38 +412,6 @@ enum ProviderCmd {
     Rm {
         /// Provider.
         name: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum KeysCmd {
-    /// List API keys.
-    #[command(
-        visible_alias = "list",
-        after_help = "Examples:
-  cua auth keys ls"
-    )]
-    Ls,
-    /// Create an API key (prints CUA_CLIENT_ID / CUA_CLIENT_SECRET once).
-    #[command(after_help = "Examples:
-  # A key for CI
-  cua auth keys create ci")]
-    Create {
-        /// Key name.
-        name: String,
-        /// Scopes (repeatable).
-        #[arg(long = "scope")]
-        scope: Vec<String>,
-    },
-    /// Delete an API key by id.
-    #[command(
-        visible_alias = "delete",
-        after_help = "Examples:
-  cua auth keys rm <key-id>"
-    )]
-    Rm {
-        /// Key id (from `cua auth keys ls`).
-        id: String,
     },
 }
 
@@ -567,19 +536,6 @@ enum TrajCmd {
         dir: PathBuf,
         #[arg(long, default_value_t = 8089)]
         port: u16,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum WifCmd {
-    /// Print a GitHub Actions OIDC token for Fleets.
-    #[command(after_help = "Examples:
-  # In a GitHub Actions job with `id-token: write`
-  cua wif-token github")]
-    Github {
-        /// Token audience.
-        #[arg(long, default_value = auth::GITHUB_WIF_AUDIENCE)]
-        audience: String,
     },
 }
 
@@ -729,56 +685,6 @@ enum RuntimeCmd {
 }
 
 #[derive(Subcommand, Debug)]
-enum FleetCmd {
-    /// Managed pools (`cua-auto-*`): reused per image and shape, autoscaled
-    /// from zero, garbage-collected when idle.
-    #[command(subcommand)]
-    Pools(PoolsCmd),
-    /// One pool (any pool you own, not only managed ones).
-    #[command(subcommand)]
-    Pool(PoolCmd),
-}
-
-#[derive(Subcommand, Debug)]
-enum PoolCmd {
-    /// Print a pool's spec: the shared sandbox model as JSON, or with
-    /// `--terraform` the equivalent `fleets_pool` resource block.
-    #[command(after_help = "Examples:
-  cua fleet pool export ci-linux
-  cua fleet pool export ci-linux --terraform > pool.tf")]
-    Export {
-        /// Pool name.
-        name: String,
-        /// Emit Terraform HCL (the cyclops-cs `fleets_pool` resource).
-        #[arg(long)]
-        terraform: bool,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum PoolsCmd {
-    /// List this account's managed pools.
-    #[command(
-        visible_alias = "list",
-        after_help = "Examples:
-  cua fleet pools ls"
-    )]
-    Ls,
-    /// Delete managed pools idle for `--idle` and stuck claims.
-    #[command(after_help = "Examples:
-  cua fleet pools gc
-  cua fleet pools gc --idle 2h")]
-    Gc {
-        /// Idle threshold (`30m`, `2h`, `1d`).
-        #[arg(long, default_value = "30m")]
-        idle: String,
-        /// Only these pools (repeatable). Default: every managed pool.
-        #[arg(long = "pool")]
-        pools: Vec<String>,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 enum ImageCmd {
     /// Pull an image into the local cache.
     #[command(after_help = "Examples:
@@ -811,60 +717,23 @@ enum ImageCmd {
         /// Destination registry reference.
         destination: String,
     },
-    /// List Fleet image resources.
-    #[command(
-        visible_alias = "list",
-        after_help = "Examples:
-  cua image ls
-  cua image ls --namespace acme"
-    )]
-    Ls {
-        /// Namespace (default: every namespace, or CUA_FLEET_NAMESPACE).
-        #[arg(long)]
-        namespace: Option<String>,
-    },
-    /// Show a Fleet image resource.
-    #[command(after_help = "Examples:
-  cua image info desktop")]
-    Info {
-        /// Image resource name.
-        name: String,
-        /// Namespace (default: CUA_FLEET_NAMESPACE).
-        #[arg(long)]
-        namespace: Option<String>,
-    },
-    /// Delete a Fleet image resource.
-    #[command(
-        visible_alias = "delete",
-        after_help = "Examples:
-  cua image rm desktop"
-    )]
-    Rm {
-        /// Image resource name.
-        name: String,
-        /// Namespace (default: CUA_FLEET_NAMESPACE).
-        #[arg(long)]
-        namespace: Option<String>,
-        /// Do not ask for confirmation.
-        #[arg(long)]
-        force: bool,
-    },
-    /// Submit an Image manifest (JSON) to Fleet for a remote build.
-    #[command(after_help = "Examples:
-  cua image create -f image.json")]
-    Create {
-        /// Image manifest file (JSON).
-        #[arg(short, long)]
-        file: PathBuf,
-        /// Namespace (default: CUA_FLEET_NAMESPACE).
-        #[arg(long)]
-        namespace: Option<String>,
-    },
+    /// Removed: Cua Cloud has ended.
+    #[command(alias = "list", hide = true, disable_help_flag = true)]
+    Ls(util::EndedArgs),
+    /// Removed: Cua Cloud has ended.
+    #[command(hide = true, disable_help_flag = true)]
+    Info(util::EndedArgs),
+    /// Removed: Cua Cloud has ended.
+    #[command(alias = "delete", hide = true, disable_help_flag = true)]
+    Rm(util::EndedArgs),
+    /// Removed: Cua Cloud has ended.
+    #[command(hide = true, disable_help_flag = true)]
+    Create(util::EndedArgs),
 }
 
 #[derive(Subcommand, Debug)]
 enum ImagesCmd {
-    /// List the catalog: ref, OS, container or VM, local and cloud runtime,
+    /// List the catalog: ref, OS, container or VM, local runtime,
     /// cua-spacesd, browsers, summary.
     #[command(
         visible_alias = "list",
@@ -1112,7 +981,7 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     (1, "Failure, or `cua do` reported an error"),
     (
         2,
-        "Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`, `cloud:NAME`)",
+        "Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`)",
     ),
     (
         3,
@@ -1120,7 +989,7 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     ),
     (
         4,
-        "Not supported, or not configured (for example no cloud credentials)",
+        "Not supported, or not configured (for example no provider credentials)",
     ),
     (5, "No cua-spacesd answered, or a transport failure"),
     (
@@ -1179,11 +1048,9 @@ async fn stranger_daemon() -> Option<cua_daemon::identity::Verdict> {
 }
 
 /// The SDK handle. `with_session` passes the `cua auth login` session to
-/// an embedded runtime as its Fleet token when the environment has no
-/// Fleet credentials.
+/// an embedded runtime (relay and hosted Spaces features); the token
+/// refreshes itself.
 async fn open(cli: &Cli, with_session: bool) -> Result<Arc<Cua>, CuaError> {
-    // The signed-in session (shared credential store) drives Fleet when the
-    // environment has no Fleet credentials; the token refreshes itself.
     let embedded = move || {
         Cua::embedded(CuaConfig {
             state_dir: cli.state_dir.clone(),
@@ -1536,13 +1403,9 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 }
                 AuthCmd::Logout => auth::logout(out).await,
                 AuthCmd::Status => auth::status(json, out).await,
-                AuthCmd::Keychain { prompt, forget } => auth::keychain(*prompt, *forget, out),
                 AuthCmd::Whoami => auth::whoami(json, out).await,
-                AuthCmd::Keys(KeysCmd::Ls) => auth::keys_list(json, out).await,
-                AuthCmd::Keys(KeysCmd::Create { name, scope }) => {
-                    auth::keys_create(name.clone(), scope.clone(), json, out).await
-                }
-                AuthCmd::Keys(KeysCmd::Rm { id }) => auth::keys_delete(id.clone(), out).await,
+                AuthCmd::Keychain { prompt, forget } => auth::keychain(*prompt, *forget, out),
+                AuthCmd::Keys(_) => Err(util::cloud_ended()),
                 AuthCmd::Provider(ProviderCmd::Ls) => providers::list(json, out),
                 AuthCmd::Provider(ProviderCmd::Set { name, var }) => {
                     providers::set(name, var.as_deref(), out)
@@ -1559,10 +1422,16 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 agents::AgentsCmd::Update => agents::cmd_update(json, out),
             };
         }
-        Command::WifToken(WifCmd::Github { audience }) => {
-            let t = auth::github_wif_token(audience).await?;
-            line(out, t);
-            return Ok(0);
+        // Removed Cua Cloud commands (hidden): the one ended message, before
+        // any sign-in, daemon or network call.
+        Command::Fleet(_)
+        | Command::Pools(_)
+        | Command::WifToken(_)
+        | Command::Image(
+            ImageCmd::Ls(_) | ImageCmd::Info(_) | ImageCmd::Rm(_) | ImageCmd::Create(_),
+        ) => return Err(util::cloud_ended()),
+        Command::Sandbox(cmd) if matches!(**cmd, sandbox::SandboxCmd::KeepAlive(_)) => {
+            return Err(util::cloud_ended());
         }
         Command::Trajectory(t) => {
             return match t {
@@ -1628,45 +1497,6 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Cache(cmd) => {
             let state_dir = cli.state_dir.clone();
             return cache::run(cmd.clone(), state_dir.as_deref(), json, out).await;
-        }
-        // Cua Cloud has ended: Fleet pools and Fleet image resources fail
-        // before anything else.
-        Command::Fleet(FleetCmd::Pool(PoolCmd::Export { name, terraform })) => {
-            Err::<(), _>(auth::cloud_ended())?;
-            return pools::export(name, *terraform, out).await;
-        }
-        Command::Fleet(FleetCmd::Pools(cmd)) => {
-            Err::<(), _>(auth::cloud_ended())?;
-            let state_dir = cli.state_dir.as_deref();
-            return match cmd {
-                PoolsCmd::Ls => pools::list(state_dir, json, out).await,
-                PoolsCmd::Gc { idle, pools: only } => {
-                    pools::gc(state_dir, idle, only, json, out).await
-                }
-            };
-        }
-        Command::Image(
-            i @ (ImageCmd::Ls { .. }
-            | ImageCmd::Info { .. }
-            | ImageCmd::Rm { .. }
-            | ImageCmd::Create { .. }),
-        ) => {
-            Err::<(), _>(auth::cloud_ended())?;
-            return match i {
-                ImageCmd::Ls { namespace } => images::list(namespace.clone(), json, out).await,
-                ImageCmd::Info { name, namespace } => {
-                    images::info(name.clone(), namespace.clone(), out).await
-                }
-                ImageCmd::Rm {
-                    name,
-                    namespace,
-                    force,
-                } => images::delete(name.clone(), namespace.clone(), *force, out).await,
-                ImageCmd::Create { file, namespace } => {
-                    images::create(file.clone(), namespace.clone(), out).await
-                }
-                _ => unreachable!(),
-            };
         }
         Command::Daemon(DaemonCmd::Start {
             foreground,
@@ -1827,7 +1657,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
 
 async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     let json = cli.json;
-    let needs_fleet = matches!(
+    let needs_session = matches!(
         cli.command,
         Command::Sandbox(_)
             | Command::Agent(_)
@@ -1842,38 +1672,20 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             Some(doctor::DoctorSub::Parity(p)) => [&p.a, &p.b].iter().any(|t| {
                 !(t.starts_with("http") || t.starts_with("direct:") || t.starts_with("local:"))
             }),
-            None => d.args.needs_fleet(),
+            None => d.args.needs_session(),
         },
         _ => false,
     };
-    // The default `cua sb ls` is an implicit Fleet call: it opens the
-    // signed-in session only when the session marker says one exists, so it
-    // never reads the OS credential vault otherwise.
-    let needs_fleet = needs_fleet
-        && match &cli.command {
-            Command::Sandbox(cmd) => match cmd.as_ref() {
-                sandbox::SandboxCmd::Ls { cloud, .. } => *cloud || cua_auth::may_have_session(),
-                _ => true,
-            },
-            _ => true,
-        };
+    // `cua sb ls` lists what this machine knows: it never reads the OS
+    // credential vault.
+    let needs_session = needs_session
+        && !matches!(&cli.command, Command::Sandbox(cmd) if matches!(cmd.as_ref(), sandbox::SandboxCmd::Ls { .. }));
     if let Some(d) = &cli.state_dir {
         let _ = sandbox::STATE_DIR.set(PathBuf::from(d));
     }
     // Ephemeral sandboxes of a process that died go before new ones come.
     if matches!(cli.command, Command::Sandbox(_)) {
         cache::quick_reap(cli.state_dir.as_deref()).await;
-    }
-    // Fleet sandboxes are held by the daemon so their claim heartbeat
-    // outlives this command: start one when none runs.
-    if let Command::Sandbox(cmd) = &cli.command
-        && sandbox::wants_daemon(cmd)
-        && !cli.embedded
-        && cli.daemon.is_none()
-        && std::env::var_os("CUA_NO_DAEMON_AUTOSTART").is_none()
-        && let Err(e) = daemon_start(&cli, false, None, "127.0.0.1:0", &mut std::io::stderr()).await
-    {
-        eprintln!("note: could not start the cua daemon ({e}); continuing without it");
     }
     // `cua daemon mcp` serves the daemon's Spaces runtime: start one when
     // none runs (its chatter goes to stderr; stdout is the MCP channel).
@@ -1883,7 +1695,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     {
         daemon_start(&cli, false, None, "127.0.0.1:0", &mut std::io::stderr()).await?;
     }
-    let cua = open(&cli, needs_fleet).await?;
+    let cua = open(&cli, needs_session).await?;
     match cli.command {
         Command::Sandbox(cmd) => return sandbox::run(&cua, *cmd, json, out).await,
         Command::Viewer { listen, no_open } => {
@@ -2117,7 +1929,9 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     let d = local.push_image(reference, destination.clone()).await?;
                     line(out, format!("{destination}@{d}"));
                 }
-                _ => unreachable!("handled above"),
+                ImageCmd::Ls(_) | ImageCmd::Info(_) | ImageCmd::Rm(_) | ImageCmd::Create(_) => {
+                    unreachable!("handled above")
+                }
             }
         }
         Command::Auth(_)
@@ -2133,6 +1947,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Team(_)
         | Command::Usage { .. }
         | Command::Fleet(_)
+        | Command::Pools(_)
         | Command::Teleport(_)
         | Command::Cache(_)
         | Command::Config(_)
@@ -2355,17 +2170,6 @@ async fn daemon_start(
             .embedded_runtime()
             .cloned()
             .ok_or_else(|| CuaError::Internal("embedded runtime".into()))?;
-        // Keep renewing the claims of managed Fleet sandboxes this machine
-        // created (for example after a daemon restart).
-        {
-            let rt = runtime.clone();
-            tokio::spawn(async move {
-                let held = rt.adopt_managed_fleet_sandboxes().await;
-                if !held.is_empty() {
-                    eprintln!("cua daemon: holding managed Fleet sandboxes {held:?}");
-                }
-            });
-        }
         // A local create the last daemon did not finish (it crashed or was
         // killed mid-create): register the Space or delete its sandbox, so
         // nothing runs that no Space lists.
@@ -2829,22 +2633,6 @@ mod tests {
                 "{e:?} exits undocumented"
             );
         }
-    }
-
-    #[test]
-    fn pool_apply_and_export_parse() {
-        let parse =
-            |a: &[&str]| Cli::try_parse_from(std::iter::once("cua").chain(a.iter().copied()));
-        assert!(
-            parse(&["sandbox", "create", "img", "--apply"]).is_err(),
-            "--apply needs --pool"
-        );
-        assert!(parse(&["sandbox", "create", "--pool", "p", "--name", "n", "--apply"]).is_ok());
-        let cli = parse(&["fleet", "pool", "export", "p", "--terraform"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Command::Fleet(FleetCmd::Pool(PoolCmd::Export { ref name, terraform: true })) if name == "p"
-        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -155,6 +155,10 @@ public final class HostModel {
     public private(set) var machineId: String?
     /// The host setup form, while it shows.
     public private(set) var form: AppHostFormState?
+    /// What the system calls this computer (Sharing's Computer Name), which
+    /// the setup form's Name starts with: `cua host setup` uses the same
+    /// name when none is given. Tests pin it.
+    public var computerName: () -> String? = { Foundation.Host.current().localizedName }
     public private(set) var busy = false
     public private(set) var error: String?
     /// The last page button that failed (a setting, Stop sharing, ...), in
@@ -229,6 +233,9 @@ public final class HostModel {
 
     public func openForm() {
         form = appHostFormInitial()
+        if let name = computerName()?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            send(.setName(name: name))
+        }
         error = nil
         setupFailure = nil
     }

@@ -223,13 +223,6 @@ The spare Mac runs macOS Spaces as Lume VMs:
 - The cua daemon on the spare Mac creates the VMs. The host's cua-spacesd
   starts it when a request comes in, with the `cua` CLI that ran setup.
 
-<Callout type="info">
-  A Space reaches the relay from inside its VM or container. With a relay on
-  the spare Mac itself (a self-hosted relay on `localhost`), a container gets
-  it at `host.docker.internal` and a Lume VM at the host's NAT address,
-  `192.168.64.1`.
-</Callout>
-
 ## Troubleshooting
 
 | Error | Meaning | Fix |

@@ -51,7 +51,7 @@ fn with_severity(mut check: Check, required: bool) -> Check {
 /// sandbox's runtime needs.
 /// The user defaults (`cua config`): each effective value and where it
 /// comes from, informational. A value that does not parse fails (every
-/// create would); a cloud default without cloud credentials warns.
+/// create would).
 pub fn defaults_checks() -> Vec<Check> {
     use cua_sandbox_core::settings::Settings;
     let settings = match Settings::load() {
@@ -83,20 +83,6 @@ pub fn defaults_checks() -> Vec<Check> {
         };
         let failed = check.status == Status::Fail;
         checks.push(with_severity(check, failed));
-    }
-    if let Ok((cua_sandbox_core::placement::On::Cloud, source)) = settings.default_on()
-        && !crate::auth::fleet_maybe_configured()
-        && let Some(hint) = cua_sandbox_core::settings::cloud_default_hint(&source)
-    {
-        checks.push(with_severity(
-            Check::new(
-                "host.defaults.cloud_credentials",
-                Status::Warn,
-                "the default location is cloud, but no cloud credentials are configured",
-            )
-            .fix(hint),
-            false,
-        ));
     }
     checks
 }

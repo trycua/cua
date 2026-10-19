@@ -35,17 +35,6 @@ def _check(label: str, ok: bool, good: str, bad: str) -> None:
     print(f"  {label:<9}{mark}")
 
 
-def _cloud_auth() -> str:
-    """The credential source, without reading the OS credential vault: a
-    dashboard is not an explicit sign-in check (``cb run --on cloud`` is)."""
-    try:
-        from cua_sandbox import fleet_auth_source
-
-        return fleet_auth_source(read_session=False) or ""
-    except Exception:  # noqa: BLE001 - SDK not loadable
-        return ""
-
-
 async def _execute_async(args) -> int:
     """Execute status command asynchronously."""
     print("\ncua-bench Status")

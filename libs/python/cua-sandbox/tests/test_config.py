@@ -1,27 +1,18 @@
 """Unit tests for config and auth modules."""
 
+import warnings
+
 import pytest
 from cua_sandbox._config import (
     _global_config,
     configure,
     get_api_key,
     get_base_url,
-    get_client_id,
-    get_client_secret,
-    get_fleet_base_url,
-    get_fleet_token,
-    get_token_url,
-    has_fleet_auth,
 )
 
 _CONFIG_ENV_VARS = (
     "CUA_API_KEY",
     "CUA_BASE_URL",
-    "CUA_FLEET_BASE_URL",
-    "CUA_TOKEN_URL",
-    "CUA_CLIENT_ID",
-    "CUA_CLIENT_SECRET",
-    "FLEETS_TOKEN",
 )
 
 
@@ -41,16 +32,8 @@ def isolate_config(monkeypatch):
 
 
 class TestConfig:
-    def test_configure_client_credentials_uses_fleet_defaults(self):
-        configure(client_id="client-id", client_secret="client-secret")
-
-        assert get_client_id() == "client-id"
-        assert get_client_secret() == "client-secret"
+    def test_default_base_url(self):
         assert get_base_url() == "https://api.cua.ai"
-        assert get_fleet_base_url() == "https://run.cua.ai"
-        assert (
-            get_token_url() == "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
-        )
 
     def test_configure_api_key(self):
         configure(api_key="sk-test-123")
@@ -73,39 +56,22 @@ class TestConfig:
         configure(api_key="sk-configured")
         assert get_api_key() == "sk-configured"
 
-    def test_get_fleet_token_prefers_configured_token(self, monkeypatch):
-        monkeypatch.setenv("FLEETS_TOKEN", " env-token ")
-        configure(fleet_token=" configured-token ")
+    def test_cloud_options_are_accepted_and_ignored_with_a_warning(self):
+        """Cua Cloud has ended: its options keep parsing but change nothing."""
+        with pytest.warns(DeprecationWarning, match="Cua Cloud has ended"):
+            configure(
+                fleet_base_url="https://fleet.example.test",
+                token_url="https://auth.example.test/token",
+                client_id="client-id",
+                client_secret="client-secret",
+                fleet_token="fleet-token",
+            )
 
-        assert get_fleet_token() == "configured-token"
+        assert get_base_url() == "https://api.cua.ai"
+        assert get_api_key() is None
+        assert not hasattr(_global_config, "client_id")
 
-    def test_get_fleet_token_uses_trimmed_environment_token(self, monkeypatch):
-        monkeypatch.setenv("FLEETS_TOKEN", " env-token ")
-
-        assert get_fleet_token() == "env-token"
-
-    def test_get_fleet_token_treats_blank_configured_token_as_unset(self, monkeypatch):
-        monkeypatch.setenv("FLEETS_TOKEN", "env-token")
-        configure(fleet_token=" \t ")
-
-        assert get_fleet_token() == "env-token"
-
-    def test_get_fleet_token_treats_blank_environment_token_as_unset(self, monkeypatch):
-        monkeypatch.setenv("FLEETS_TOKEN", " \n ")
-
-        assert get_fleet_token() is None
-
-    def test_has_fleet_auth_with_static_token(self):
-        configure(fleet_token="fleet-token")
-
-        assert has_fleet_auth() is True
-
-    def test_has_fleet_auth_with_complete_client_credentials(self):
-        configure(client_id="client-id", client_secret="client-secret")
-
-        assert has_fleet_auth() is True
-
-    def test_has_fleet_auth_requires_complete_credentials_without_token(self):
-        configure(client_id="client-id")
-
-        assert has_fleet_auth() is False
+    def test_api_key_and_base_url_do_not_warn(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            configure(api_key="sk-test-123", base_url="http://localhost:9000")

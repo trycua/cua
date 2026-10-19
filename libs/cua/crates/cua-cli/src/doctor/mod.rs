@@ -5,7 +5,7 @@
 //! - **image**: what the registry says (resolved digest, variant, OS,
 //!   `ai.cua.spacesd`), when the image is known;
 //! - **guest**: `SystemService.Diagnose` through the SDK (every ref form:
-//!   `local:`, `cloud:`, `direct:`, `relay:`, a bare name or a URL), with
+//!   `local:`, `direct:`, `relay:`, a bare name or a URL), with
 //!   the caller's clock for the skew check; or, for images without
 //!   cua-spacesd, the doctor shim against the image's own API.
 //!
@@ -52,7 +52,7 @@ pub enum EffectsArg {
 
 #[derive(Args, Debug, Clone)]
 pub struct DoctorArgs {
-    /// Sandbox to check: `local:<name>`, `cloud:<name>`, `direct:<host:port>`,
+    /// Sandbox to check: `local:<name>`, `direct:<host:port>`,
     /// a bare name, or a spacesd URL. Omit for the host checks only.
     pub target: Option<String>,
     /// Image to resolve for the image checks (default: the sandbox's).
@@ -109,8 +109,8 @@ pub struct DoctorArgs {
 }
 
 impl DoctorArgs {
-    /// Whether resolving the target may need Fleet credentials.
-    pub fn needs_fleet(&self) -> bool {
+    /// Whether resolving the target may need the signed-in session (relay Spaces).
+    pub fn needs_session(&self) -> bool {
         self.target.as_deref().is_some_and(|t| {
             !(t.starts_with("http://")
                 || t.starts_with("https://")
@@ -175,7 +175,7 @@ async fn guest_part(
     let client = if is_url(&target) {
         cua.spacesd(target.clone(), args.token.clone()).await
     } else {
-        // Refs resolve through the SDK (local/cloud/direct/relay, bare names).
+        // Refs resolve through the SDK (local/direct/relay, bare names).
         if let Ok(info) = cua.sandboxes().get(target.clone()).await {
             guest.runtime_type = Some(info.runtime_type.clone());
             guest.image = info.image.clone();

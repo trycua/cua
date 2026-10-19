@@ -15,13 +15,13 @@ description: "Every cua command and every cua MCP tool, generated from the CLI d
 | Command group | Description |
 | --- | --- |
 | [`cua`](/cua-cli/reference/cli) | Synopsis, global options, exit codes and every command. |
-| [`cua auth`](/cua-cli/reference/cli/auth) | Sign in, inspect your Fleet identity, manage API keys and CI tokens. |
-| [`cua sandbox`](/cua-cli/reference/cli/sandbox) | Create, list, connect to, suspend and delete sandboxes, local or in the cloud. |
+| [`cua auth`](/cua-cli/reference/cli/auth) | Sign in and out, see who is signed in, and store sandbox provider keys. |
+| [`cua sandbox`](/cua-cli/reference/cli/sandbox) | Create, list, connect to, suspend and delete sandboxes, local or on your own machines. |
 | [Sandbox access](/cua-cli/reference/cli/sandbox-access) | Run commands, copy files, forward ports, take screenshots, reach the MCP and view a sandbox (`cua sandbox exec`, `cp`, `view`, ...). |
-| [`cua config`](/cua-cli/reference/cli/config) | User defaults: where sandboxes run (`default.on`), the default kind and runtime, cloud defaults. |
+| [`cua config`](/cua-cli/reference/cli/config) | User defaults: where sandboxes run (`default.on`), the default kind and runtime. |
 | [`cua viewer`](/cua-cli/reference/cli/viewer) | One local browser page that lists every sandbox and opens its viewer. |
 | [`cua do`](/cua-cli/reference/cli/do) | One-shot computer actions (screenshot, click, type, windows) against a selected target. |
-| [`cua image`](/cua-cli/reference/cli/image) | Pull, build and push OCI images, and manage Fleet image resources; list the image catalog. |
+| [`cua image`](/cua-cli/reference/cli/image) | Pull, build and push OCI images; list the image catalog. |
 | [`cua mcp`](/cua-cli/reference/cli/mcp) | The stdio MCP server for AI assistants. |
 | [`cua agent`](/cua-cli/reference/cli/agent) | Run coding agents (Claude Code, Codex, Gemini CLI, ...) inside a sandbox and follow, continue or stop them. |
 | [`cua agents`](/cua-cli/reference/cli/agents) | Install cua skills and the cua MCP server into AI coding agents. |
@@ -50,7 +50,7 @@ description: "Every cua command and every cua MCP tool, generated from the CLI d
 | [All tools](/cua-cli/reference/mcp-tools) | Every `cua mcp` tool with a one-line summary. |
 | [Spaces tools](/cua-cli/reference/mcp-tools/spaces) | The Spaces contract: register, claim and release Spaces, run commands, move files, stream, run agents and teleport. 86 tools. |
 | [Image tools](/cua-cli/reference/mcp-tools/images) | The sandbox image catalog: which images exist and which ship a browser. 1 tools. |
-| [Sandbox tools](/cua-cli/reference/mcp-tools/sandbox) | Create and manage sandboxes, local or in the cloud. 11 tools. |
+| [Sandbox tools](/cua-cli/reference/mcp-tools/sandbox) | Create and manage sandboxes, local or on your own machines. 11 tools. |
 | [Teleport tools](/cua-cli/reference/mcp-tools/teleport) | Move a signed-in browser session, per site, into a sandbox through the Cua Keyvault, with consent. 1 tools. |
 | [Computer tools](/cua-cli/reference/mcp-tools/computer) | Screenshots, input, windows, files and shell on a sandbox desktop. 35 tools. |
 | [Skills tools](/cua-cli/reference/mcp-tools/skills) | List, read, record and delete skills (recorded demonstrations). 4 tools. |

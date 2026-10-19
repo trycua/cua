@@ -50,7 +50,6 @@
     "ghcr.io/x/*": "placeholder namespace in tests",
     "ghcr.io/x:*": "placeholder ref in tests",
     "ghcr.io/nope/*": "placeholder ref in tests",
-    "quay.io/org/*": "placeholder namespace in tests",
     "quay.io/x/*": "placeholder namespace in tests",
     "public.ecr.aws/example/*": "placeholder namespace in tests",
     "registry.example.com/*": "placeholder registry in tests",
@@ -223,8 +222,7 @@
       "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
       "paths": [
         "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
-        "libs/cua/crates/cua-spaces/tests/generic.rs",
-        "libs/python/cua-sandbox/tests/test_fleet_image_variants.py"
+        "libs/cua/crates/cua-spaces/tests/generic.rs"
       ]
     },
     "ghcr.io/trycua/cua-desktop-linux:e2e-86b137f": {
@@ -239,7 +237,6 @@
         "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
         "libs/cua/crates/cua-image/src/canonical.rs",
         "libs/cua/crates/cua-spaces/tests/generic.rs",
-        "libs/python/cua-sandbox/tests/test_fleet_image_variants.py",
         "scripts/images/docs-image-refs-baseline.json",
         "scripts/images/test-check-tag-safety.sh"
       ]
@@ -253,7 +250,6 @@
     "ghcr.io/trycua/cua-desktop-linux:test": {
       "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
       "paths": [
-        "libs/cua/crates/cua-cli/tests/sandbox_do.rs",
         "libs/cua/crates/cua-sdk/tests/refs.rs",
         "libs/cua/crates/cua-sdk/tests/topologies.rs"
       ]
@@ -262,14 +258,7 @@
       "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
       "paths": [
         "libs/cua/crates/cua-fleet/tests/size_limits.rs",
-        "libs/cua/crates/cua-fleet/tests/spec.rs",
-        "libs/python/cua-sandbox/tests/test_pool_spec.py"
-      ]
-    },
-    "ghcr.io/trycua/cua-e2e-x:1": {
-      "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
-      "paths": [
-        "libs/cua/crates/cua-cli/src/pools.rs"
+        "libs/cua/crates/cua-fleet/tests/spec.rs"
       ]
     },
     "ghcr.io/trycua/cua-plain-ubuntu-server:existing": {
@@ -432,13 +421,6 @@
         "libs/python/cua-sandbox/tests/test_from_registry_ostype.py"
       ]
     },
-    "ghcr.io/trycua/minecraft-workspace:latest": {
-      "reason": "cloud workspace image in cua-sandbox Fleet test fixtures",
-      "paths": [
-        "libs/python/cua-sandbox/tests/_image_fixtures.py",
-        "libs/python/cua-sandbox/tests/test_pull_secret.py"
-      ]
-    },
     "ghcr.io/trycua/omarchy:edge-20260925-abcdef1": {
       "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
       "paths": [
@@ -543,12 +525,10 @@
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81": {
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
-        "libs/cua-bench/cua_bench/tests/live/test_cloud_live.py",
         "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
         "libs/cua/crates/cua-fleet/tests/live.rs",
         "libs/cua/crates/cua-fleet/tests/live_autopool.rs",
         "libs/cua/python/tests/test_live_fleet.py",
-        "libs/python/cua-sandbox/tests/live/test_fleet_autopool_live.py",
         "tests/e2e/cua-sdk/python/e2e.py",
         "tests/e2e/cua-sdk/rust/src/lib.rs",
         "tests/e2e/cua-sdk/typescript/lib.mjs"
@@ -557,7 +537,6 @@
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest": {
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
-        "infra/fleets-wif-smoke/main.tf",
         "libs/cua/crates/cua-sandbox-core/src/fleet_local.rs",
         "scripts/images/test-check-tag-safety.sh",
         "tests/e2e/local-runtimes/fleet-catalog.public.json"
@@ -567,13 +546,6 @@
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "libs/cua/crates/cua-fleet/src/pool.rs"
-      ]
-    },
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-1": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
-      "paths": [
-        "libs/python/cua-sandbox/tests/test_pool.py",
-        "libs/python/cua-sandbox/tests/test_sandbox_fleet_lifecycle.py"
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34": {
@@ -614,7 +586,6 @@
       "paths": [
         "libs/cua/crates/cua-sandbox-core/src/fleet_local.rs",
         "libs/cua/crates/cua-sandbox-core/tests/providers.rs",
-        "libs/python/cua-sandbox/tests/test_pull_secret.py",
         "tests/e2e/local-runtimes/fleet-catalog.public.json"
       ]
     }
@@ -644,7 +615,6 @@
         "libs/cua/bench/streaming/results/baseline-macos-arm64.json",
         "libs/cua/bench/streaming/results/baseline-macos-arm64.md",
         "libs/cua/crates/cua-cli/src/image_build.rs",
-        "libs/cua/crates/cua-cli/tests/sandbox_do.rs",
         "libs/cua/crates/cua-fleet/src/runtime.rs",
         "libs/cua/crates/cua-fleet/tests/claim_secrets.rs",
         "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
@@ -660,9 +630,6 @@
         "libs/images/common/tools/tests/fixtures/manifest.linux.json",
         "libs/images/common/tools/tests/test_cua_image_manifest.py",
         "libs/images/linux/image.json",
-        "libs/python/cua-sandbox/tests/_image_fixtures.py",
-        "libs/python/cua-sandbox/tests/test_fleet_image_variants.py",
-        "libs/python/cua-sandbox/tests/test_pool.py",
         "scripts/images/check-image-refs.py",
         "scripts/images/check-tag-safety.sh",
         "scripts/images/docs-image-refs-baseline.json",

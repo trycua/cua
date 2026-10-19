@@ -298,8 +298,11 @@ struct ViewModelTests {
         await model.refresh()
         let h = model.host
         #expect(h.panel.actions.map(\.id) == [.setUp])
+        h.computerName = { "Ada’s MacBook Pro" }
         await h.run(.setUp)
-        #expect(h.formView?.title == "Set up this machine")
+        #expect(h.formView?.title == "Set up this computer")
+        // Name starts as what the system calls this computer.
+        #expect(h.formView?.fields.first?.value == "Ada’s MacBook Pro")
         h.send(.setName(name: "Studio"))
         await h.submit()
         #expect(h.form == nil)

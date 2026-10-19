@@ -162,7 +162,12 @@ async fn browser_pkce_login_then_onboards_the_named_agents() {
         .await
         .unwrap();
     assert_eq!(r.status().as_u16(), 200);
-    assert!(r.text().await.unwrap().contains("Signed in to Cua"));
+    let page = r.text().await.unwrap();
+    assert!(page.contains("You're signed in") && page.contains("return to your terminal"));
+    assert!(
+        !page.contains("code-1") && !page.contains(&q["state"]),
+        "{page}"
+    );
 
     let status = tokio::time::timeout(Duration::from_secs(60), child.wait())
         .await
@@ -598,7 +603,9 @@ impl Pty {
         }
     }
 
-    /// Everything printed so far.
+    /// Everything printed so far. Only the Unix tests read it, so Windows clippy
+    /// (`-D warnings`) would flag it as dead code.
+    #[cfg(unix)]
     fn output(&self) -> String {
         self.buf.lock().unwrap().clone()
     }

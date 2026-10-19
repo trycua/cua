@@ -9,10 +9,13 @@ import gradio as gr
 import requests
 from PIL import Image
 
+from ..human_auth import auth_headers, client_token, gradio_auth, is_loopback, resolve_host
+
 
 class HumanCompletionUI:
-    def __init__(self, server_url: str = "http://localhost:8002"):
+    def __init__(self, server_url: str = "http://localhost:8002", token: Optional[str] = None):
         self.server_url = server_url
+        self.token = token  # else $CUA_HUMAN_TOOL_TOKEN, else the saved token file
         self.current_call_id: Optional[str] = None
         self.refresh_interval = 2.0  # seconds
         self.last_image = None  # Store the last image for display
@@ -107,12 +110,20 @@ class HumanCompletionUI:
 
         return formatted
 
+    def _headers(self) -> Dict[str, str]:
+        """Bearer token header, read fresh so a restarted server's new token is picked up."""
+        return auth_headers(self.token)
+
     def get_pending_calls(self) -> List[Dict[str, Any]]:
         """Get pending calls from the server."""
         try:
-            response = requests.get(f"{self.server_url}/pending", timeout=5)
+            response = requests.get(
+                f"{self.server_url}/pending", headers=self._headers(), timeout=5
+            )
             if response.status_code == 200:
                 return response.json().get("pending_calls", [])
+            if response.status_code == 401:
+                print("Error fetching pending calls: the server rejected the token")
         except Exception as e:
             print(f"Error fetching pending calls: {e}")
         return []
@@ -122,7 +133,10 @@ class HumanCompletionUI:
         try:
             response_data = {"response": response}
             response_obj = requests.post(
-                f"{self.server_url}/complete/{call_id}", json=response_data, timeout=10
+                f"{self.server_url}/complete/{call_id}",
+                json=response_data,
+                headers=self._headers(),
+                timeout=10,
             )
             response_obj.raise_for_status()
             return True
@@ -135,7 +149,10 @@ class HumanCompletionUI:
         try:
             response_data = {"tool_calls": tool_calls}
             response_obj = requests.post(
-                f"{self.server_url}/complete/{call_id}", json=response_data, timeout=10
+                f"{self.server_url}/complete/{call_id}",
+                json=response_data,
+                headers=self._headers(),
+                timeout=10,
             )
             response_obj.raise_for_status()
             return True
@@ -158,7 +175,10 @@ class HumanCompletionUI:
                 response_data["tool_calls"] = tool_calls
 
             response_obj = requests.post(
-                f"{self.server_url}/complete/{call_id}", json=response_data, timeout=10
+                f"{self.server_url}/complete/{call_id}",
+                json=response_data,
+                headers=self._headers(),
+                timeout=10,
             )
             response_obj.raise_for_status()
             return True
@@ -426,9 +446,9 @@ class HumanCompletionUI:
         return self.refresh_pending_calls()
 
 
-def create_ui():
+def create_ui(server_url: str = "http://localhost:8002", token: Optional[str] = None):
     """Create the Gradio interface."""
-    ui_handler = HumanCompletionUI()
+    ui_handler = HumanCompletionUI(server_url=server_url, token=token)
 
     with gr.Blocks(title="Human-in-the-Loop Agent Tool", fill_width=True) as demo:
         gr.Markdown("# 🤖 Human-in-the-Loop Agent Tool")
@@ -745,7 +765,26 @@ def create_ui():
     return demo
 
 
-if __name__ == "__main__":
+def main(argv: Optional[List[str]] = None) -> None:
+    """Run the UI on its own. Listens on 127.0.0.1 unless --host is given."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Human-in-the-loop UI")
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Address to listen on (default: 127.0.0.1, or $CUA_HUMAN_TOOL_HOST)",
+    )
+    args = parser.parse_args(argv)
+
+    host = resolve_host(args.host)
+    if not is_loopback(host):
+        print(f"WARNING: listening on {host}, reachable from other machines.")
     demo = create_ui()
     demo.queue()
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    # The page asks for the server token as its password.
+    demo.launch(server_name=host, server_port=7860, auth=gradio_auth(client_token))
+
+
+if __name__ == "__main__":
+    main()

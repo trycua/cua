@@ -650,7 +650,7 @@ struct PromptTicker: View {
     }
 }
 
-/// The Cua key: the app icon's keycap with the Cua mark, on its own
+/// The Cua key: the app icon's keycap with the stacked Cua mark, on its own
 /// (apps/cua-spaces-macos/scripts/dmg-art/key.html). The icon of Cua's own
 /// notifications, in place of a colored tile; unread stays with the text.
 public enum CuaKey {

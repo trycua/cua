@@ -4,7 +4,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * The Cua key: the app icon's blue keycap with the official Cua mark, on its
+ * The Cua key: the app icon's blue keycap with the stacked Cua mark, on its
  * own (rendered by apps/cua-spaces-macos/scripts/dmg-art/key.html). It is the
  * icon of Cua's own notifications, so they read as Cua's in light and dark
  * without a colored tile. It says who, never what: unread and error stay with

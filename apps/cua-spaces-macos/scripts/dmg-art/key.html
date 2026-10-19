@@ -2,10 +2,12 @@
 <!-- SPDX-License-Identifier: FSL-1.1-MIT -->
 <!-- Copyright (c) 2026 Cua AI, Inc. -->
 <!--
-  The Cua key on its own: the app icon's key (product-1 with the official Cua
-  mark, unaltered, multiplied into the glaze, turned 6 degrees) on a
-  transparent square. Notifications use it as their icon, in place of a blue
-  tile. Render it with render-key.sh; the PNGs are checked in.
+  The Cua key on its own: the app icon's key (product-1 with the Spaces stack,
+  the official Cua mark unaltered in the front square, multiplied into the
+  glaze, turned 6 degrees) on a transparent square, the same legend as the app
+  icon in art.html. Notifications use it as their icon, in place of a blue
+  tile. The PNGs are checked in; to redraw them, screenshot this page at
+  1024 x 1024 with headless Chrome and scale it with sips to 32, 64 and 128.
 -->
 <meta charset="utf-8">
 <style>
@@ -14,7 +16,7 @@
   .key { position: absolute; left: 62px; top: 74px; width: 900px; height: 870px; transform: rotate(6deg); }
   .key img.sprite { position: absolute; inset: 0; width: 100%; height: 100%; }
   .legend { position: absolute; left: 0; top: 0; width: 100px; height: 100px; transform-origin: 0 0; }
-  .legend > img { position: absolute; inset: 20%; width: 60%; height: 60%; object-fit: contain; opacity: .8; mix-blend-mode: multiply; }
+  .legend > img { position: absolute; inset: 24%; width: 52%; height: 52%; object-fit: contain; opacity: .8; mix-blend-mode: multiply; }
 </style>
 <div class="stage"><div class="key" id="key"></div></div>
 <script>
@@ -29,5 +31,5 @@
   }
   const k = 900 / SPR.w;
   document.getElementById("key").innerHTML = `<img class="sprite" src="src/product-1.webp">` +
-    `<div class="legend" style="transform:${homography(SPR.quad.map(([x, y]) => [x * k, y * k]))}"><img src="src/cua-logo-black.svg"></div>`;
+    `<div class="legend" style="transform:${homography(SPR.quad.map(([x, y]) => [x * k, y * k]))}"><img src="src/spaces-tray-template.svg"></div>`;
 </script>

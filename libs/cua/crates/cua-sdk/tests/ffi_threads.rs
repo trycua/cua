@@ -5,9 +5,9 @@
 //! runtime (`run`) panics with "there is no reactor running" here.
 //!
 //! Two checks:
-//! - dynamic: env, Fleet, sandboxes, Spaces and presence methods against
-//!   in-process fakes (MockServer spacesd with presence, FakeFleet), in
-//!   the embedded and daemon topologies;
+//! - dynamic: env, sandboxes, Spaces and presence methods against
+//!   in-process fakes (MockServer spacesd with presence), in the embedded
+//!   and daemon topologies;
 //! - static: every `pub async fn` in an exported impl either goes through
 //!   the runtime (`run(`, `env_call!`, `fleet_call!`) or only delegates to
 //!   methods that do, so new methods cannot skip it silently.
@@ -19,7 +19,6 @@ use cua_daemon::{
     fixtures::{self, SpacesdFixture},
     server::{self, DaemonHandle, ServerConfig},
 };
-use cua_fleet::testing::FakeFleet;
 use cua_sdk::{
     Cua, CuaConfig, PresenceCursor, PresenceIdentity, PresencePoint, SandboxCreateOptions,
     SpacesdCommand, presence_now_ms,
@@ -35,7 +34,6 @@ use std::{
 };
 
 const TOKEN: &str = "env-token";
-const POOL: &str = "cua-e2e-ffi";
 
 /// Polls `f` on the current thread, parking between wakeups. No Tokio.
 fn block_on<F: Future>(f: F) -> F::Output {
@@ -132,7 +130,6 @@ fn direct(url: &str, name: &str) -> SandboxCreateOptions {
 struct World {
     rt: tokio::runtime::Runtime,
     env: SpacesdFixture,
-    _gw: SpacesdFixture,
     _dirs: tempfile::TempDir,
     _daemon: Option<DaemonHandle>,
 }
@@ -144,24 +141,21 @@ fn world(daemon: bool) -> (World, Arc<Cua>) {
         .build()
         .unwrap();
     let dirs = tempfile::tempdir().unwrap();
-    let (env, gw, cua, handle) = rt.block_on(async {
+    let (env, cua, handle) = rt.block_on(async {
         let env = fixtures::start_env(Some(TOKEN), None).await;
         env.mock
             .state
             .advertise(&["presence", cua_spacesd_client::TUNNEL_FORWARD_FEATURE]);
-        let gw = fixtures::start_env(None, Some(fixtures::fake_gateway(POOL, POOL))).await;
-        let fake = FakeFleet::new();
         let runtime = Runtime::new(RuntimeConfig {
             state_dir: Some(dirs.path().join("sandboxes")),
             spaces_home: Some(dirs.path().join("cua")),
             teleport_home: Some(dirs.path().join("host-home")),
-            fleet_client: Some(fake.client_with_base(&gw.url)),
             env_probe_timeout: Some(Duration::from_secs(5)),
             ..Default::default()
         })
         .unwrap();
         if !daemon {
-            return (env, gw, Cua::from_runtime(runtime), None);
+            return (env, Cua::from_runtime(runtime), None);
         }
         let h = server::start(
             runtime,
@@ -177,13 +171,12 @@ fn world(daemon: bool) -> (World, Arc<Cua>) {
         .unwrap();
         // `Cua::connect` itself is exercised on the foreign thread below.
         let cua = Cua::connect(h.loopback_url.clone(), Some(h.token.clone())).unwrap();
-        (env, gw, cua, Some(h))
+        (env, cua, Some(h))
     });
     (
         World {
             rt,
             env,
-            _gw: gw,
             _dirs: dirs,
             _daemon: handle,
         },
@@ -191,7 +184,7 @@ fn world(daemon: bool) -> (World, Arc<Cua>) {
     )
 }
 
-async fn exercise(cua: Arc<Cua>, env_url: String, with_fleet: bool) {
+async fn exercise(cua: Arc<Cua>, env_url: String) {
     // ---- Cua
     let _ = cua.info().await.unwrap();
 
@@ -237,10 +230,8 @@ async fn exercise(cua: Arc<Cua>, env_url: String, with_fleet: bool) {
         .unwrap();
 
     // ---- Fleet: Cua Cloud has ended, so the client never connects.
-    if with_fleet {
-        let e = cua.fleet().err().expect("Cua.fleet() fails");
-        assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
-    }
+    let e = cua.fleet().err().expect("Cua.fleet() fails");
+    assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
 
     // ---- sandboxes (direct)
     let sbx = cua.sandboxes();
@@ -337,7 +328,7 @@ fn exported_methods_run_without_a_tokio_runtime_embedded() {
         })
         .unwrap();
         block_on(other.info()).unwrap();
-        block_on(exercise(cua, url, true));
+        block_on(exercise(cua, url));
     });
     drop(w.rt);
 }
@@ -346,7 +337,7 @@ fn exported_methods_run_without_a_tokio_runtime_embedded() {
 fn exported_methods_run_without_a_tokio_runtime_daemon() {
     let (w, cua) = world(true);
     let url = w.env.url.clone();
-    on_foreign_thread("ffi-daemon", move || block_on(exercise(cua, url, false)));
+    on_foreign_thread("ffi-daemon", move || block_on(exercise(cua, url)));
     drop(w.rt);
 }
 

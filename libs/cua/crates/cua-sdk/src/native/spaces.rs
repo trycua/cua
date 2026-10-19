@@ -351,13 +351,10 @@ pub struct SpaceCreateOptions {
     /// Name (default `space-<hex>`).
     #[uniffi(default = None)]
     pub name: Option<String>,
-    /// vCPUs. Local default 2; cloud 1-64 (most accounts run 1-8; Fleet
-    /// decides), default the pool template's (4).
+    /// vCPUs. Local default 2.
     #[uniffi(default = None)]
     pub cpus: Option<u32>,
-    /// Memory in MiB. Local default 4096; cloud 512 up to 524288 (most
-    /// accounts run 1024-32768; Fleet decides), default the pool
-    /// template's (4096).
+    /// Memory in MiB. Local default 4096.
     #[uniffi(default = None)]
     pub memory_mb: Option<u64>,
     /// Grow the VM's disk to this many GiB (local VMs; default: the
@@ -500,7 +497,7 @@ impl From<dpb::SpacesHost> for SpacesHost {
 /// none.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct GpuSupport {
-    /// `lume`, `qemu`, `container`, `gvisor`, `fleet`, a provider's name.
+    /// `lume`, `qemu`, `container`, `gvisor`, a provider's name.
     pub runtime: String,
     /// Its options.
     pub options: Vec<GpuOption>,
@@ -944,8 +941,8 @@ pub struct SpaceStreamTicket {
     pub width: u32,
     /// Initial height.
     pub height: u32,
-    /// Attaching needs [`Space::websocket_headers`] (Fleet gateway or the
-    /// daemon passthrough).
+    /// Attaching needs [`Space::websocket_headers`] (a gateway or the daemon
+    /// passthrough).
     pub needs_headers: bool,
 }
 
@@ -2206,8 +2203,8 @@ impl SpacesToolCaller {
 
 // ------------------------------------------------------------ Spaces
 
-/// The Spaces registry: add a machine by URL, claim a Fleet Space,
-/// provision a local one, and get [`Space`] handles.
+/// The Spaces registry: add a machine by URL, provision a local one, and get
+/// [`Space`] handles.
 #[derive(uniffi::Object)]
 pub struct Spaces {
     host: Host,

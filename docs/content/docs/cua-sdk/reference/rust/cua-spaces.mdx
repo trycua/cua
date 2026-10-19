@@ -1308,8 +1308,7 @@ How a declared service is reached.
 
 ```rust
 pub enum ServiceSource {
-  Sandbox(Service),
-  Fleet { fleet: FleetClient, bound: BoundSandbox, service: String },
+  Sandbox(Box<Service>),
   Url(ServiceEndpoint),
 }
 ```
@@ -1664,7 +1663,6 @@ impl Spaces {
   fn builder() -> SpacesBuilder;
   fn home_dir(&self) -> &Path;
   fn registry(&self) -> &Registry;
-  fn fleet(&self) -> Option<&FleetClient>;
   fn sandboxes(&self) -> &Sandboxes;
   fn operator_display(&self) -> &Arc<dyn OperatorDisplay>;
   fn fleet_namespace(&self) -> &str;

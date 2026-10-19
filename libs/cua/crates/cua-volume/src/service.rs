@@ -71,6 +71,7 @@ pub struct StorageInfo {
     pub fs_path: String,
     pub s3: Option<S3Settings>,
     pub has_keys: bool,
+    /// Always false: the Cua cloud drive backend has ended.
     pub cloud_available: bool,
 }
 
@@ -332,11 +333,6 @@ impl DriveService {
         let backend: Arc<dyn Backend>;
         let mut check = StorageCheck::default();
         match kind {
-            BackendKind::Cloud => {
-                return Err(Error::Invalid(
-                    "the Cua cloud drive is not available in this release; use fs or s3".into(),
-                ));
-            }
             BackendKind::Fs => {
                 backend = Arc::new(crate::fs::FsBackend::new(
                     state_dir(&self.home).join("data"),
@@ -796,7 +792,7 @@ mod tests {
         let info = svc.storage().unwrap();
         assert_eq!(info.backend, "fs");
         assert!(!info.cloud_available);
-        // Cloud stays off.
+        // The cloud backend has ended.
         let e = svc
             .set_storage(StorageUpdate {
                 backend: "cloud".into(),
@@ -805,6 +801,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.tag(), "invalid_argument");
+        assert!(e.to_string().contains("has ended"), "{e}");
         // S3 without keys says so before touching the network.
         let e = svc
             .set_storage(StorageUpdate {

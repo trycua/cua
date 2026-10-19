@@ -38,8 +38,8 @@ Returned by [`Cua.sandboxes`](/cua-sdk/reference/cua#cua).
 | --- | --- |
 | [`cancel_create`](#sandboxescancel_create) | Cancels the create of the named sandbox `name` that is still running (in this process or the daemon): the work in flight stops (an image download, a boot, a claim) and what the create made is deleted; a sandbox of that name that existed before is never touched. |
 | [`connect`](#sandboxesconnect) | Reattaches to a sandbox by ref (`local:<name>`, `cloud:<name>`, `direct:<host:port>`, a legacy id) or by a name that is unique across locations (else `AmbiguousSandbox`, listing the qualified refs). |
-| [`connect_url`](#sandboxesconnect_url) | Connects directly to a machine by URL (`http(s)://host:port`, bare `host:port`, a Fleet service URL or a relay URL) with an optional spacesd token. |
-| [`create`](#sandboxescreate) | Creates (Fleet, local) or connects (direct) a sandbox and waits for the provider and every readiness probe. |
+| [`connect_url`](#sandboxesconnect_url) | Connects directly to a machine by URL (`http(s)://host:port`, bare `host:port` or a relay URL) with an optional spacesd token. |
+| [`create`](#sandboxescreate) | Creates (local, your cloud, a provider) or connects (direct) a sandbox and waits for the provider and every readiness probe. |
 | [`delete`](#sandboxesdelete) | Deletes a sandbox by ref or unique name. |
 | [`get`](#sandboxesget) | One sandbox's info, by ref or unique name. |
 | [`list`](#sandboxeslist) | Sandboxes, each tagged with its `location`. |
@@ -155,8 +155,7 @@ pub async fn connect(&self, name: String) -> Result<Arc<Sandbox>, CuaError>
 ### `Sandboxes.connect_url`
 
 Connects directly to a machine by URL (`http(s)://host:port`, bare
-`host:port`, a Fleet service URL or a relay URL) with an optional
-spacesd token. No daemon is assumed and nothing is probed.
+`host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -271,8 +270,9 @@ println(out.stdout.decodeToString())
 
 ### `Sandboxes.create`
 
-Creates (Fleet, local) or connects (direct) a sandbox and waits for
-the provider and every readiness probe.
+Creates (local, your cloud, a provider) or connects (direct) a sandbox
+and waits for the provider and every readiness probe. `on: "cloud"`
+fails with the "Cua Cloud has ended" error.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -517,10 +517,8 @@ Sandboxes, each tagged with its `location`. `None` (the default):
 all of them, local, direct and the account's live cloud sandboxes,
 whatever the default location is. `"local"`, `"cloud"` or
 `"direct"`: only those.
-Cloud sandboxes never fail the listing: without Fleet credentials
-they are left out silently, and when Fleet fails or takes longer than
-5 s they are left out with a warning (logged here;
-`Sandboxes.list_with_warnings` returns it).
+Cua Cloud has ended: its sandboxes are never listed, and listing
+never asks Fleet.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -674,17 +672,17 @@ Returned by [`Sandboxes.connect`](#sandboxesconnect), [`Sandboxes.connect_url`](
 | [`spacesd`](#sandboxspacesd) | Attaches to cua-spacesd inside the sandbox (the `env` service or guest port 3211). |
 | [`viewer_url`](#sandboxviewer_url) | A browser link to this sandbox's desktop in the cua-spacesd HTML5 viewer (`/viewer` on the `env` service): video, audio, input, clipboard, file drop and folder sharing, in any modern browser. |
 | [`agents`](/cua-sdk/reference/agents#sandboxagents) | Coding agents inside this sandbox (needs cua-spacesd): run a harness over ACP, stream normalized events, follow up, interrupt, collect results; runs outlive this handle. |
-| [`delete`](/cua-sdk/reference/sandbox/lifecycle#sandboxdelete) | Deletes (Fleet: releases the claim and an ephemeral pool). |
-| [`detach`](/cua-sdk/reference/sandbox/lifecycle#sandboxdetach) | Managed Fleet claims: stop renewing the claim and forget the handle; the claim runs until its current shutdown time. |
-| [`forward`](/cua-sdk/reference/services#sandboxforward) | Forwards a loopback port to guest `port`: a TCP forward locally (and over cua-spacesd's tunnel when the image has it); in the cloud without cua-spacesd, a loopback HTTP/WebSocket proxy through the Fleet gateway. |
+| [`delete`](/cua-sdk/reference/sandbox/lifecycle#sandboxdelete) | Deletes (local: removes it; direct: forgets it; your cloud: deletes the machine). |
+| [`detach`](/cua-sdk/reference/sandbox/lifecycle#sandboxdetach) | Forgets the handle this runtime holds (a Cua Cloud claim used to stop renewing; Cua Cloud has ended). |
+| [`forward`](/cua-sdk/reference/services#sandboxforward) | Forwards a loopback port to guest `port`: a TCP forward locally (and over cua-spacesd's tunnel when the image has it). |
 | [`guest_display`](/cua-sdk/reference/sandbox/without-spacesd#sandboxguest_display) | The guest display without cua-spacesd: the VM's VNC endpoint and a host command that opens it (`lume attach`). |
 | [`guest_screenshot`](/cua-sdk/reference/sandbox/without-spacesd#sandboxguest_screenshot) | Captures the guest framebuffer as PNG without cua-spacesd. |
 | [`guest_sh`](/cua-sdk/reference/sandbox/without-spacesd#sandboxguest_sh) | Runs `line` with `/bin/sh -c` in the guest without cua-spacesd, to completion (default timeout 120 s). |
-| [`keep_alive`](/cua-sdk/reference/sandbox/lifecycle#sandboxkeep_alive) | Extends a Fleet lease by `seconds`. |
+| [`keep_alive`](/cua-sdk/reference/sandbox/lifecycle#sandboxkeep_alive) | Extends the sandbox's lease by `seconds`, for a provider that has one. |
 | [`mcp`](/cua-sdk/reference/services#sandboxmcp) | An MCP client (the official Rust SDK) for the MCP server behind `service` at `path` (default `/mcp`). |
 | [`mcp_config`](/cua-sdk/reference/services#sandboxmcp_config) | Where the MCP server behind `service` is (URL of its endpoint at `path`, default `/mcp`, plus the headers every request needs), for any MCP client. |
 | [`open_media_bridge`](/cua-sdk/reference/spacesd/media#sandboxopen_media_bridge) | Opens a media session and returns a loopback WebSocket bridge for a webview (daemon mode). |
-| [`public_url`](/cua-sdk/reference/services#sandboxpublic_url) | A shareable URL for `service` that stops working after `ttl_seconds` (60 s to 24 h, default 1 h). |
+| [`public_url`](/cua-sdk/reference/services#sandboxpublic_url) | A shareable URL for `service` that stops working after `ttl_seconds` (60 s to 24 h, default 1 h): a loopback URL with its own token, served by the cua daemon (started if needed; `CUA_BIN` names the CLI). |
 | [`refresh`](/cua-sdk/reference/sandbox/lifecycle#sandboxrefresh) | Fresh info (status from the provider). |
 | [`restart`](/cua-sdk/reference/sandbox/lifecycle#sandboxrestart) | Restarts. |
 | [`resume`](/cua-sdk/reference/sandbox/lifecycle#sandboxresume) | Resumes. |
@@ -875,12 +873,12 @@ Returned by [`Sandbox.info`](#sandbox), [`Sandbox.refresh`](/cua-sdk/reference/s
 | `name` | `String` |  | Name. |
 | `kind` | `String` |  | What kind of machine: `container` or `vm` (empty when not known: an existing machine, or a cloud sandbox this client did not create). |
 | `runtime` | `String` |  | The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or `kubevirt` (empty when not known). |
-| `runtime_type` / `runtimeType` | `String` |  | `runtime_type` as persisted (`fleet`, `direct`, `gvisor`, `qemu`, ...); prefer `location`, `kind` and `runtime`. |
+| `runtime_type` / `runtimeType` | `String` |  | `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet` for a record of the Cua Cloud that has ended); prefer `location`, `kind` and `runtime`. |
 | `status` | [`SandboxStatus`](#sandboxstatus-enum) |  | Status. |
 | `status_detail` / `statusDetail` | `Option<String>` |  | Provider's word for an unknown status. |
 | `ephemeral` | `bool` |  | No state file; torn down on delete. |
 | `services` | `HashMap<String, u16>` |  | Declared services: name → guest port (0 = only the name is known). |
-| `endpoints` | `HashMap<String, String>` |  | Service base URLs by name (Fleet: gateway URLs that need the Fleet bearer). |
+| `endpoints` | `HashMap<String, String>` |  | Service base URLs by name. |
 | `image` | `Option<String>` |  | Image, when known. |
 | `id` | `String` |  | Qualified ref, the same kind of value local and in the cloud: `local:<name>`, `cloud:<name>` or `direct:<host:port>`. Every call that takes a sandbox name accepts it. |
 | `phase` | [`SandboxPhase`](#sandboxphase-enum) |  | Portable phase: provisioning, starting, ready or stopped. |

@@ -28,7 +28,7 @@ description: "Cua Volume: files, versions, grants, access requests and audit of 
 | [`cua volume mount`](#cua-volume-mount) | Show the drive as a volume (Finder on macOS, FUSE on Linux). |
 | [`cua volume unmount`](#cua-volume-unmount) | Turn the volume off (files still uploading land first). |
 | [`cua volume status`](#cua-volume-status) | The volume, sync across devices, and the block cache. |
-| [`cua volume config`](#cua-volume-config) | Which store the drive uses (fs, s3, cloud). |
+| [`cua volume config`](#cua-volume-config) | Which store the drive uses (fs, s3). |
 | [`cua volume config show`](#cua-volume-config-show) | The backend and bucket settings in effect (never keys). |
 | [`cua volume config set`](#cua-volume-config-set) | Choose the backend. |
 | [`cua volume config set-keys`](#cua-volume-config-set-keys) | Save S3 keys in the credential store: the access key id and the secret, one per line on stdin. |
@@ -384,7 +384,7 @@ cua volume status --json
 
 ## `cua volume config`
 
-Which store the drive uses (fs, s3, cloud).
+Which store the drive uses (fs, s3).
 
 ```text output
 cua volume config [OPTIONS] <COMMAND>
@@ -414,7 +414,7 @@ cua volume config set [OPTIONS] --backend <BACKEND>
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-volume-config-set--backend"></span>`--backend` | string | required | `fs` (default), `s3`, or `cloud` (off unless the Cua cloud enables it). |
+| <span id="cua-volume-config-set--backend"></span>`--backend` | string | required | `fs` (default) or `s3`. |
 | <span id="cua-volume-config-set--endpoint"></span>`--endpoint` | string |  |  |
 | <span id="cua-volume-config-set--region"></span>`--region` | string |  |  |
 | <span id="cua-volume-config-set--bucket"></span>`--bucket` | string |  |  |

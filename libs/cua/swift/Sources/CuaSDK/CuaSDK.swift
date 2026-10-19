@@ -2218,8 +2218,8 @@ public func FfiConverterTypeAuth_lower(_ value: Auth) -> UInt64 {
 
 /**
  * The entry point of the SDK: create one with `Cua::embedded` or
- * `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
- * through its accessors.
+ * `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+ * accessors.
  */
 public protocol CuaProtocol: AnyObject, Sendable {
 
@@ -2236,9 +2236,8 @@ public protocol CuaProtocol: AnyObject, Sendable {
     func auth()  -> Auth
 
     /**
-     * Fleet pools, templates, claims and images. Always talks to Fleet
-     * from this process with this SDK's credentials (in daemon mode, from
-     * the environment).
+     * Fleet pools, templates, claims and images. Cua Cloud has ended: this
+     * always fails with the "Cua Cloud has ended" error and never connects.
      */
     func fleet() throws  -> Fleet
 
@@ -2259,7 +2258,7 @@ public protocol CuaProtocol: AnyObject, Sendable {
     func mode()  -> CuaMode
 
     /**
-     * Sandboxes (Fleet, local, direct).
+     * Sandboxes (local, direct, your own cloud).
      */
     func sandboxes()  -> Sandboxes
 
@@ -2274,16 +2273,16 @@ public protocol CuaProtocol: AnyObject, Sendable {
     func spaces()  -> Spaces
 
     /**
-     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-     * Fleet service URL or a relay URL) without a sandbox.
+     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+     * relay URL) without a sandbox.
      */
     func spacesd(url: String, token: String?) async throws  -> SpacesdClient
 
 }
 /**
  * The entry point of the SDK: create one with `Cua::embedded` or
- * `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
- * through its accessors.
+ * `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+ * accessors.
  */
 open class Cua: CuaProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -2380,7 +2379,9 @@ public static func connect(address: String?, token: String?)throws  -> Cua  {
 
     /**
      * Runs the SDK runtime in this process. Performs no I/O beyond
-     * reading the credential store when `fleet_from_session` is set.
+     * reading the credential store when `fleet_from_session` is set (for
+     * the relay account). It never builds a Fleet client: Cua Cloud has
+     * ended.
      */
 public static func embedded(config: CuaConfig)throws  -> Cua  {
     return try  FfiConverterTypeCua_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -2417,9 +2418,8 @@ open func auth() -> Auth  {
 }
 
     /**
-     * Fleet pools, templates, claims and images. Always talks to Fleet
-     * from this process with this SDK's credentials (in daemon mode, from
-     * the environment).
+     * Fleet pools, templates, claims and images. Cua Cloud has ended: this
+     * always fails with the "Cua Cloud has ended" error and never connects.
      */
 open func fleet()throws  -> Fleet  {
     return try  FfiConverterTypeFleet_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -2473,7 +2473,7 @@ open func mode() -> CuaMode  {
 }
 
     /**
-     * Sandboxes (Fleet, local, direct).
+     * Sandboxes (local, direct, your own cloud).
      */
 open func sandboxes() -> Sandboxes  {
     return try!  FfiConverterTypeSandboxes_lift(try! rustCall() {
@@ -2515,8 +2515,8 @@ open func spaces() -> Spaces  {
 }
 
     /**
-     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-     * Fleet service URL or a relay URL) without a sandbox.
+     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+     * relay URL) without a sandbox.
      */
 open func spacesd(url: String, token: String?)async throws  -> SpacesdClient  {
     return
@@ -3013,7 +3013,8 @@ public func FfiConverterTypeDevices_lower(_ value: Devices) -> UInt64 {
 
 
 /**
- * Fleet control plane.
+ * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+ * one, so none of its methods can be called.
  */
 public protocol FleetProtocol: AnyObject, Sendable {
 
@@ -3186,7 +3187,8 @@ public protocol FleetProtocol: AnyObject, Sendable {
 
 }
 /**
- * Fleet control plane.
+ * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+ * one, so none of its methods can be called.
  */
 open class Fleet: FleetProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -6004,7 +6006,7 @@ public protocol PortForwardProtocol: AnyObject, Sendable {
     func localAddr()  -> String?
 
     /**
-     * URL to use (loopback URL, or the Fleet gateway URL).
+     * URL to use (a loopback URL).
      */
     func url()  -> String?
 
@@ -6108,7 +6110,7 @@ open func localAddr() -> String?  {
 }
 
     /**
-     * URL to use (loopback URL, or the Fleet gateway URL).
+     * URL to use (a loopback URL).
      */
 open func url() -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
@@ -6734,22 +6736,21 @@ public protocol SandboxProtocol: AnyObject, Sendable {
     func agents() async throws  -> Agents
 
     /**
-     * Deletes (Fleet: releases the claim and an ephemeral pool).
+     * Deletes (local: removes it; direct: forgets it; your cloud: deletes
+     * the machine).
      */
     func delete() async throws
 
     /**
-     * Managed Fleet claims: stop renewing the claim and forget the handle;
-     * the claim runs until its current shutdown time. Embedded runtime
-     * only (a daemon holds its claims by design).
+     * Forgets the handle this runtime holds (a Cua Cloud claim used to
+     * stop renewing; Cua Cloud has ended). Embedded runtime only.
      */
     func detach() throws
 
     /**
      * Forwards a loopback port to guest `port`: a TCP forward locally (and
-     * over cua-spacesd's tunnel when the image has it); in the cloud
-     * without cua-spacesd, a loopback HTTP/WebSocket proxy through the
-     * Fleet gateway. Either way `url()` is a loopback URL.
+     * over cua-spacesd's tunnel when the image has it). `url()` is a
+     * loopback URL.
      */
     func forward(port: UInt16) async throws  -> PortForward
 
@@ -6800,7 +6801,7 @@ public protocol SandboxProtocol: AnyObject, Sendable {
     func isEphemeral()  -> Bool
 
     /**
-     * Extends a Fleet lease by `seconds`.
+     * Extends the sandbox's lease by `seconds`, for a provider that has one.
      */
     func keepAlive(seconds: UInt32) async throws
 
@@ -6831,9 +6832,8 @@ public protocol SandboxProtocol: AnyObject, Sendable {
     /**
      * Where the MCP server behind `service` is (URL of its endpoint at
      * `path`, default `/mcp`, plus the headers every request needs), for
-     * any MCP client. Embedded: the service route itself (loopback, or the
-     * Fleet gateway with a fresh bearer and claim header). Daemon: the
-     * daemon's streaming passthrough with its loopback bearer.
+     * any MCP client. Embedded: the service route itself (loopback).
+     * Daemon: the daemon's streaming passthrough with its loopback bearer.
      */
     func mcpConfig(service: String, path: String?) async throws  -> McpConfig
 
@@ -6851,9 +6851,8 @@ public protocol SandboxProtocol: AnyObject, Sendable {
 
     /**
      * A shareable URL for `service` that stops working after `ttl_seconds`
-     * (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
-     * Local: a loopback URL with its own token, served by the cua daemon
-     * (started if needed; `CUA_BIN` names the CLI).
+     * (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+     * by the cua daemon (started if needed; `CUA_BIN` names the CLI).
      */
     func publicUrl(service: String, ttlSeconds: UInt32?, label: String?) async throws  -> PublicUrl
 
@@ -7029,7 +7028,8 @@ open func agents()async throws  -> Agents  {
 }
 
     /**
-     * Deletes (Fleet: releases the claim and an ephemeral pool).
+     * Deletes (local: removes it; direct: forgets it; your cloud: deletes
+     * the machine).
      */
 open func delete()async throws   {
     return
@@ -7049,9 +7049,8 @@ open func delete()async throws   {
 }
 
     /**
-     * Managed Fleet claims: stop renewing the claim and forget the handle;
-     * the claim runs until its current shutdown time. Embedded runtime
-     * only (a daemon holds its claims by design).
+     * Forgets the handle this runtime holds (a Cua Cloud claim used to
+     * stop renewing; Cua Cloud has ended). Embedded runtime only.
      */
 open func detach()throws   {try rustCallWithError(FfiConverterTypeCuaError_lift) {
     uniffi_cua_sdk_fn_method_sandbox_detach(
@@ -7062,9 +7061,8 @@ open func detach()throws   {try rustCallWithError(FfiConverterTypeCuaError_lift)
 
     /**
      * Forwards a loopback port to guest `port`: a TCP forward locally (and
-     * over cua-spacesd's tunnel when the image has it); in the cloud
-     * without cua-spacesd, a loopback HTTP/WebSocket proxy through the
-     * Fleet gateway. Either way `url()` is a loopback URL.
+     * over cua-spacesd's tunnel when the image has it). `url()` is a
+     * loopback URL.
      */
 open func forward(port: UInt16)async throws  -> PortForward  {
     return
@@ -7199,7 +7197,7 @@ open func isEphemeral() -> Bool  {
 }
 
     /**
-     * Extends a Fleet lease by `seconds`.
+     * Extends the sandbox's lease by `seconds`, for a provider that has one.
      */
 open func keepAlive(seconds: UInt32)async throws   {
     return
@@ -7278,9 +7276,8 @@ open func mcp(service: String, path: String? = nil)async throws  -> McpClient  {
     /**
      * Where the MCP server behind `service` is (URL of its endpoint at
      * `path`, default `/mcp`, plus the headers every request needs), for
-     * any MCP client. Embedded: the service route itself (loopback, or the
-     * Fleet gateway with a fresh bearer and claim header). Daemon: the
-     * daemon's streaming passthrough with its loopback bearer.
+     * any MCP client. Embedded: the service route itself (loopback).
+     * Daemon: the daemon's streaming passthrough with its loopback bearer.
      */
 open func mcpConfig(service: String, path: String? = nil)async throws  -> McpConfig  {
     return
@@ -7334,9 +7331,8 @@ open func openMediaBridge(openMediaJson: String?)async throws  -> MediaBridge  {
 
     /**
      * A shareable URL for `service` that stops working after `ttl_seconds`
-     * (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
-     * Local: a loopback URL with its own token, served by the cua daemon
-     * (started if needed; `CUA_BIN` names the CLI).
+     * (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+     * by the cua daemon (started if needed; `CUA_BIN` names the CLI).
      */
 open func publicUrl(service: String, ttlSeconds: UInt32? = nil, label: String? = nil)async throws  -> PublicUrl  {
     return
@@ -7642,14 +7638,14 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
 
     /**
      * Connects directly to a machine by URL (`http(s)://host:port`, bare
-     * `host:port`, a Fleet service URL or a relay URL) with an optional
-     * spacesd token. No daemon is assumed and nothing is probed.
+     * `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
      */
     func connectUrl(url: String, token: String?, name: String?) async throws  -> Sandbox
 
     /**
-     * Creates (Fleet, local) or connects (direct) a sandbox and waits for
-     * the provider and every readiness probe.
+     * Creates (local, your cloud, a provider) or connects (direct) a sandbox
+     * and waits for the provider and every readiness probe. `on: "cloud"`
+     * fails with the "Cua Cloud has ended" error.
      */
     func create(options: SandboxCreateOptions) async throws  -> Sandbox
 
@@ -7668,10 +7664,8 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
      * all of them, local, direct and the account's live cloud sandboxes,
      * whatever the default location is. `"local"`, `"cloud"` or
      * `"direct"`: only those.
-     * Cloud sandboxes never fail the listing: without Fleet credentials
-     * they are left out silently, and when Fleet fails or takes longer than
-     * 5 s they are left out with a warning (logged here;
-     * [`Sandboxes::list_with_warnings`] returns it).
+     * Cua Cloud has ended: its sandboxes are never listed, and listing
+     * never asks Fleet.
      */
     func list(location: String?) async throws  -> [SandboxInfo]
 
@@ -7793,8 +7787,7 @@ open func connect(name: String)async throws  -> Sandbox  {
 
     /**
      * Connects directly to a machine by URL (`http(s)://host:port`, bare
-     * `host:port`, a Fleet service URL or a relay URL) with an optional
-     * spacesd token. No daemon is assumed and nothing is probed.
+     * `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
      */
 open func connectUrl(url: String, token: String?, name: String?)async throws  -> Sandbox  {
     return
@@ -7814,8 +7807,9 @@ open func connectUrl(url: String, token: String?, name: String?)async throws  ->
 }
 
     /**
-     * Creates (Fleet, local) or connects (direct) a sandbox and waits for
-     * the provider and every readiness probe.
+     * Creates (local, your cloud, a provider) or connects (direct) a sandbox
+     * and waits for the provider and every readiness probe. `on: "cloud"`
+     * fails with the "Cua Cloud has ended" error.
      */
 open func create(options: SandboxCreateOptions)async throws  -> Sandbox  {
     return
@@ -7879,10 +7873,8 @@ open func get(name: String)async throws  -> SandboxInfo  {
      * all of them, local, direct and the account's live cloud sandboxes,
      * whatever the default location is. `"local"`, `"cloud"` or
      * `"direct"`: only those.
-     * Cloud sandboxes never fail the listing: without Fleet credentials
-     * they are left out silently, and when Fleet fails or takes longer than
-     * 5 s they are left out with a warning (logged here;
-     * [`Sandboxes::list_with_warnings`] returns it).
+     * Cua Cloud has ended: its sandboxes are never listed, and listing
+     * never asks Fleet.
      */
 open func list(location: String?)async throws  -> [SandboxInfo]  {
     return
@@ -8023,17 +8015,15 @@ public protocol ServiceProtocol: AnyObject, Sendable {
     /**
      * A shareable URL for this service that stops working after
      * `ttl_seconds` (60 s to 24 h, default 1 h): the same as
-     * `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
-     * Local: a loopback URL with its own token, served by the cua daemon.
+     * `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+     * served by the cua daemon.
      */
     func publicUrl(ttlSeconds: UInt32?, label: String?) async throws  -> PublicUrl
 
     /**
-     * One HTTP request to `path` on the service. Credentials (Fleet bearer
-     * and claim) are attached by the runtime. `headers` are sent as given
-     * (for example `content-type`, or `accept` and `mcp-session-id` for
-     * MCP over Fleet); `authorization` is refused on Fleet, where the
-     * gateway bearer owns it.
+     * One HTTP request to `path` on the service. Credentials are attached by
+     * the runtime. `headers` are sent as given (for example `content-type`,
+     * or `accept` and `mcp-session-id` for MCP).
      */
     func request(method: String, path: String, body: Data?, timeoutMs: UInt32?, headers: [HttpHeader]?) async throws  -> HttpResponse
 
@@ -8178,8 +8168,8 @@ open func name() -> String  {
     /**
      * A shareable URL for this service that stops working after
      * `ttl_seconds` (60 s to 24 h, default 1 h): the same as
-     * `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
-     * Local: a loopback URL with its own token, served by the cua daemon.
+     * `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+     * served by the cua daemon.
      */
 open func publicUrl(ttlSeconds: UInt32? = nil, label: String? = nil)async throws  -> PublicUrl  {
     return
@@ -8199,11 +8189,9 @@ open func publicUrl(ttlSeconds: UInt32? = nil, label: String? = nil)async throws
 }
 
     /**
-     * One HTTP request to `path` on the service. Credentials (Fleet bearer
-     * and claim) are attached by the runtime. `headers` are sent as given
-     * (for example `content-type`, or `accept` and `mcp-session-id` for
-     * MCP over Fleet); `authorization` is refused on Fleet, where the
-     * gateway bearer owns it.
+     * One HTTP request to `path` on the service. Credentials are attached by
+     * the runtime. `headers` are sent as given (for example `content-type`,
+     * or `accept` and `mcp-session-id` for MCP).
      */
 open func request(method: String, path: String, body: Data?, timeoutMs: UInt32?, headers: [HttpHeader]? = nil)async throws  -> HttpResponse  {
     return
@@ -10334,8 +10322,8 @@ public func FfiConverterTypeSpaceStreamSession_lower(_ value: SpaceStreamSession
 
 
 /**
- * The Spaces registry: add a machine by URL, claim a Fleet Space,
- * provision a local one, and get [`Space`] handles.
+ * The Spaces registry: add a machine by URL, provision a local one, and get
+ * [`Space`] handles.
  */
 public protocol SpacesProtocol: AnyObject, Sendable {
 
@@ -10727,8 +10715,8 @@ public protocol SpacesProtocol: AnyObject, Sendable {
 
 }
 /**
- * The Spaces registry: add a machine by URL, claim a Fleet Space,
- * provision a local one, and get [`Space`] handles.
+ * The Spaces registry: add a machine by URL, provision a local one, and get
+ * [`Space`] handles.
  */
 open class Spaces: SpacesProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -16667,8 +16655,7 @@ public struct CloudOptions: Equatable, Hashable {
     public var pool: String?
     /**
      * With `pool`: update the pool's template to the given fields instead
-     * of failing on a mismatch (`Fleet.apply` semantics for the template;
-     * the pool's capacity is kept). Managed pools refuse it.
+     * of failing on a mismatch. Cua Cloud has ended: ignored.
      */
     public var apply: Bool
 
@@ -16693,8 +16680,7 @@ public struct CloudOptions: Equatable, Hashable {
          */pool: String? = nil,
         /**
          * With `pool`: update the pool's template to the given fields instead
-         * of failing on a mismatch (`Fleet.apply` semantics for the template;
-         * the pool's capacity is kept). Managed pools refuse it.
+         * of failing on a mismatch. Cua Cloud has ended: ignored.
          */apply: Bool = false) {
         self.warm = warm
         self.maxPoolSize = maxPoolSize
@@ -17712,11 +17698,11 @@ public struct CuaConfig: Equatable, Hashable {
      */
     public var stateDir: String?
     /**
-     * Fleet settings (merged over the environment).
+     * Ignored: Cua Cloud has ended.
      */
     public var fleet: FleetSettings?
     /**
-     * Read Fleet settings from the environment.
+     * Ignored: Cua Cloud has ended.
      */
     public var fleetFromEnv: Bool
     /**
@@ -17733,14 +17719,15 @@ public struct CuaConfig: Equatable, Hashable {
      */
     public var teleportHome: String?
     /**
-     * When the settings and environment carry no Fleet credentials, use
-     * the signed-in session (`Cua.auth()`, `cua auth login`) from the
-     * shared credential store, refreshed as needed.
+     * Use the signed-in session (`Cua.auth()`, `cua auth login`) from the
+     * shared credential store, refreshed as needed, for the relay account
+     * the runtime lists the account's machines with ("My machines"). The
+     * name is historical: it no longer builds a Fleet client, because Cua
+     * Cloud has ended.
      */
     public var fleetFromSession: Bool
     /**
-     * Where managed Fleet pools keep their name cache and machine-wide GC
-     * lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+     * Ignored: Cua Cloud has ended, so there are no managed pools.
      */
     public var fleetPoolHome: String?
 
@@ -17751,10 +17738,10 @@ public struct CuaConfig: Equatable, Hashable {
          * State directory for sandbox state files (default `~/.cua/sandboxes`).
          */stateDir: String? = nil,
         /**
-         * Fleet settings (merged over the environment).
+         * Ignored: Cua Cloud has ended.
          */fleet: FleetSettings? = nil,
         /**
-         * Read Fleet settings from the environment.
+         * Ignored: Cua Cloud has ended.
          */fleetFromEnv: Bool = true,
         /**
          * spacesd probe timeout (default 15 s).
@@ -17767,13 +17754,14 @@ public struct CuaConfig: Equatable, Hashable {
          * side effects (tests, CI). Default: the real host.
          */teleportHome: String? = nil,
         /**
-         * When the settings and environment carry no Fleet credentials, use
-         * the signed-in session (`Cua.auth()`, `cua auth login`) from the
-         * shared credential store, refreshed as needed.
+         * Use the signed-in session (`Cua.auth()`, `cua auth login`) from the
+         * shared credential store, refreshed as needed, for the relay account
+         * the runtime lists the account's machines with ("My machines"). The
+         * name is historical: it no longer builds a Fleet client, because Cua
+         * Cloud has ended.
          */fleetFromSession: Bool = false,
         /**
-         * Where managed Fleet pools keep their name cache and machine-wide GC
-         * lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+         * Ignored: Cua Cloud has ended, so there are no managed pools.
          */fleetPoolHome: String? = nil) {
         self.stateDir = stateDir
         self.fleet = fleet
@@ -21721,29 +21709,28 @@ public func FfiConverterTypeFleetSandbox_lower(_ value: FleetSandbox) -> RustBuf
 
 
 /**
- * Fleet credentials and endpoints. Unset fields fall back to the
- * environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
- * `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
+ * Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
+ * reads them any more. Kept so existing callers still compile.
  */
 public struct FleetSettings: Equatable, Hashable {
     /**
-     * Fleet API base URL.
+     * Ignored.
      */
     public var baseUrl: String?
     /**
-     * OAuth token URL.
+     * Ignored.
      */
     public var tokenUrl: String?
     /**
-     * OAuth client id.
+     * Ignored.
      */
     public var clientId: String?
     /**
-     * OAuth client secret.
+     * Ignored.
      */
     public var clientSecret: String?
     /**
-     * Static Fleet token (wins over client credentials).
+     * Ignored.
      */
     public var token: String?
 
@@ -21751,19 +21738,19 @@ public struct FleetSettings: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Fleet API base URL.
+         * Ignored.
          */baseUrl: String? = nil,
         /**
-         * OAuth token URL.
+         * Ignored.
          */tokenUrl: String? = nil,
         /**
-         * OAuth client id.
+         * Ignored.
          */clientId: String? = nil,
         /**
-         * OAuth client secret.
+         * Ignored.
          */clientSecret: String? = nil,
         /**
-         * Static Fleet token (wins over client credentials).
+         * Ignored.
          */token: String? = nil) {
         self.baseUrl = baseUrl
         self.tokenUrl = tokenUrl
@@ -22176,7 +22163,7 @@ public func FfiConverterTypeGpuOption_lower(_ value: GpuOption) -> RustBuffer {
  */
 public struct GpuSupport: Equatable, Hashable {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`, `fleet`, a provider's name.
+     * `lume`, `qemu`, `container`, `gvisor`, a provider's name.
      */
     public var runtime: String
     /**
@@ -22192,7 +22179,7 @@ public struct GpuSupport: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `lume`, `qemu`, `container`, `gvisor`, `fleet`, a provider's name.
+         * `lume`, `qemu`, `container`, `gvisor`, a provider's name.
          */runtime: String,
         /**
          * Its options.
@@ -23462,10 +23449,10 @@ public func FfiConverterTypeHttpResponse_lower(_ value: HttpResponse) -> RustBuf
 
 
 /**
- * Image layers built on top of a sandbox's image. Cloud: a remote build
- * (Fleet images API). Local: a build into the container engine (container
- * images only; VM images take no layers here). Both are cached by the same
- * content hash (`cua-b-<hash>`), so an identical spec never rebuilds.
+ * Image layers built on top of a sandbox's image. Local: a build into the
+ * container engine (container images only; VM images take no layers here),
+ * cached by a content hash (`cua-b-<hash>`), so an identical spec never
+ * rebuilds. (Cua Cloud's remote build has ended.)
  */
 public struct ImageBuild: Equatable, Hashable {
     /**
@@ -24071,7 +24058,7 @@ public func FfiConverterTypeMcpConfig_lower(_ value: McpConfig) -> RustBuffer {
 public struct MediaBridge: Equatable, Hashable {
     /**
      * Loopback `ws://` URL carrying a short-lived bridge ticket. Speaks
-     * rcdp wire v2 unchanged; no Fleet bearer or env token is exposed.
+     * rcdp wire v2 unchanged; no env token is exposed.
      */
     public var wsUrl: String
     /**
@@ -24090,7 +24077,7 @@ public struct MediaBridge: Equatable, Hashable {
     public init(
         /**
          * Loopback `ws://` URL carrying a short-lived bridge ticket. Speaks
-         * rcdp wire v2 unchanged; no Fleet bearer or env token is exposed.
+         * rcdp wire v2 unchanged; no env token is exposed.
          */wsUrl: String,
         /**
          * The bridge ticket (also accepted as subprotocol
@@ -27451,9 +27438,8 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      */
     public var token: String?
     /**
-     * Fleet: claim from this existing (user-owned) pool. Unset: a managed,
-     * autoscaled pool keyed by image and shape. Local (with an empty
-     * image): run this Fleet pool's template locally.
+     * Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
+     * error.
      */
     public var pool: String?
     /**
@@ -27469,7 +27455,7 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      */
     public var memoryMb: UInt64?
     /**
-     * Extra guest ports (local: published; Fleet: `port-<n>` services).
+     * Extra guest ports (local: published).
      */
     public var ports: [UInt16]
     /**
@@ -27485,13 +27471,13 @@ public struct SandboxCreateOptions: Equatable, Hashable {
      */
     public var readyTimeoutMs: UInt32?
     /**
-     * Guest environment (local: container environment or cloud-init;
-     * cloud: the template environment with `processMode: Run`, on gVisor
-     * and KubeVirt; values are not secrets).
+     * Guest environment (local: container environment or cloud-init; values
+     * are not secrets).
      */
     public var env: [String: String]
     /**
-     * Deprecated: initial replicas of a new managed pool (> 0 = warm).
+     * Deprecated, and Cua Cloud has ended: initial replicas of a new
+     * managed pool (> 0 = warm).
      */
     public var fleetReplicas: UInt32?
     /**
@@ -27599,9 +27585,8 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * spacesd token.
          */token: String? = nil,
         /**
-         * Fleet: claim from this existing (user-owned) pool. Unset: a managed,
-         * autoscaled pool keyed by image and shape. Local (with an empty
-         * image): run this Fleet pool's template locally.
+         * Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
+         * error.
          */pool: String? = nil,
         /**
          * Guest OS (`linux`, `macos`, `windows`).
@@ -27613,7 +27598,7 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * Memory (MiB).
          */memoryMb: UInt64? = nil,
         /**
-         * Extra guest ports (local: published; Fleet: `port-<n>` services).
+         * Extra guest ports (local: published).
          */ports: [UInt16] = [],
         /**
          * Named services (name → guest port). `env` defaults to 3211.
@@ -27625,12 +27610,12 @@ public struct SandboxCreateOptions: Equatable, Hashable {
          * Readiness budget (default 10 min).
          */readyTimeoutMs: UInt32? = nil,
         /**
-         * Guest environment (local: container environment or cloud-init;
-         * cloud: the template environment with `processMode: Run`, on gVisor
-         * and KubeVirt; values are not secrets).
+         * Guest environment (local: container environment or cloud-init; values
+         * are not secrets).
          */env: [String: String] = [:],
         /**
-         * Deprecated: initial replicas of a new managed pool (> 0 = warm).
+         * Deprecated, and Cua Cloud has ended: initial replicas of a new
+         * managed pool (> 0 = warm).
          */fleetReplicas: UInt32? = nil,
         /**
          * Deprecated: use `cloud.claim_ttl_seconds`.
@@ -27831,8 +27816,9 @@ public struct SandboxInfo: Equatable, Hashable {
      */
     public var runtime: String
     /**
-     * `runtime_type` as persisted (`fleet`, `direct`, `gvisor`, `qemu`,
-     * ...); prefer `location`, `kind` and `runtime`.
+     * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
+     * for a record of the Cua Cloud that has ended); prefer `location`,
+     * `kind` and `runtime`.
      */
     public var runtimeType: String
     /**
@@ -27852,8 +27838,7 @@ public struct SandboxInfo: Equatable, Hashable {
      */
     public var services: [String: UInt16]
     /**
-     * Service base URLs by name (Fleet: gateway URLs that need the Fleet
-     * bearer).
+     * Service base URLs by name.
      */
     public var endpoints: [String: String]
     /**
@@ -27911,8 +27896,9 @@ public struct SandboxInfo: Equatable, Hashable {
          * `kubevirt` (empty when not known).
          */runtime: String,
         /**
-         * `runtime_type` as persisted (`fleet`, `direct`, `gvisor`, `qemu`,
-         * ...); prefer `location`, `kind` and `runtime`.
+         * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
+         * for a record of the Cua Cloud that has ended); prefer `location`,
+         * `kind` and `runtime`.
          */runtimeType: String,
         /**
          * Status.
@@ -27927,8 +27913,7 @@ public struct SandboxInfo: Equatable, Hashable {
          * Declared services: name → guest port (0 = only the name is known).
          */services: [String: UInt16],
         /**
-         * Service base URLs by name (Fleet: gateway URLs that need the Fleet
-         * bearer).
+         * Service base URLs by name.
          */endpoints: [String: String],
         /**
          * Image, when known.
@@ -29535,14 +29520,11 @@ public struct SpaceCreateOptions: Equatable, Hashable {
      */
     public var name: String?
     /**
-     * vCPUs. Local default 2; cloud 1-64 (most accounts run 1-8; Fleet
-     * decides), default the pool template's (4).
+     * vCPUs. Local default 2.
      */
     public var cpus: UInt32?
     /**
-     * Memory in MiB. Local default 4096; cloud 512 up to 524288 (most
-     * accounts run 1024-32768; Fleet decides), default the pool
-     * template's (4096).
+     * Memory in MiB. Local default 4096.
      */
     public var memoryMb: UInt64?
     /**
@@ -29616,13 +29598,10 @@ public struct SpaceCreateOptions: Equatable, Hashable {
          * Name (default `space-<hex>`).
          */name: String? = nil,
         /**
-         * vCPUs. Local default 2; cloud 1-64 (most accounts run 1-8; Fleet
-         * decides), default the pool template's (4).
+         * vCPUs. Local default 2.
          */cpus: UInt32? = nil,
         /**
-         * Memory in MiB. Local default 4096; cloud 512 up to 524288 (most
-         * accounts run 1024-32768; Fleet decides), default the pool
-         * template's (4096).
+         * Memory in MiB. Local default 4096.
          */memoryMb: UInt64? = nil,
         /**
          * Grow the VM's disk to this many GiB (local VMs; default: the
@@ -31510,8 +31489,8 @@ public struct SpaceStreamTicket: Equatable, Hashable {
      */
     public var height: UInt32
     /**
-     * Attaching needs [`Space::websocket_headers`] (Fleet gateway or the
-     * daemon passthrough).
+     * Attaching needs [`Space::websocket_headers`] (a gateway or the daemon
+     * passthrough).
      */
     public var needsHeaders: Bool
 
@@ -31547,8 +31526,8 @@ public struct SpaceStreamTicket: Equatable, Hashable {
          * Initial height.
          */height: UInt32,
         /**
-         * Attaching needs [`Space::websocket_headers`] (Fleet gateway or the
-         * daemon passthrough).
+         * Attaching needs [`Space::websocket_headers`] (a gateway or the daemon
+         * passthrough).
          */needsHeaders: Bool) {
         self.space = space
         self.mediaSessionId = mediaSessionId
@@ -33137,8 +33116,8 @@ public struct SpacesdHttpRequest: Equatable, Hashable {
      */
     public var path: String
     /**
-     * Extra headers. Credentials (`authorization`, the env and Fleet claim
-     * headers) are the client's and cannot be set here.
+     * Extra headers. Credentials (`authorization` and the env headers) are
+     * the client's and cannot be set here.
      */
     public var headers: [SpacesdHttpHeader]
     /**
@@ -33164,8 +33143,8 @@ public struct SpacesdHttpRequest: Equatable, Hashable {
          * Absolute path under the endpoint, for example `/mcp`. Never a URL.
          */path: String,
         /**
-         * Extra headers. Credentials (`authorization`, the env and Fleet claim
-         * headers) are the client's and cannot be set here.
+         * Extra headers. Credentials (`authorization` and the env headers) are
+         * the client's and cannot be set here.
          */headers: [SpacesdHttpHeader] = [],
         /**
          * Request body (empty for none).
@@ -34828,10 +34807,10 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     case NotFound(message: String)
 
     /**
-     * The provider is not configured (for example no Fleet credentials).
+     * The provider is not configured (for example no credentials for it).
      *
-     * Fix: Set `FLEETS_TOKEN`, or `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`, or
-     * run `cua auth login` and create the client with `fleet_from_session`.
+     * Fix: Set the credentials the message names (for a contrib provider, its
+     * environment variable or `cua auth provider set <name>`).
      */
     case ProviderNotConfigured(message: String)
 
@@ -34860,21 +34839,20 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     case Timeout(message: String)
 
     /**
-     * Fleet API failure.
+     * Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
+     * this.
      *
-     * Fix: Read the status in the message. Retry a transient failure; check
-     * the credentials and the account's capacity otherwise.
+     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * ended guide.
      */
     case Fleet(message: String)
 
     /**
-     * Fleet's admission refused the request: a sandbox or pool size over
-     * this account's limits, or a template its policy does not admit. The
-     * message is Fleet's own and names the limit.
+     * Fleet's admission refused the request. Cua Cloud has ended, so the SDK
+     * no longer raises this.
      *
-     * Fix: Pick a size within the limit the message names (most accounts
-     * run 1-8 vCPUs and 1-32 GiB per sandbox), or contact Cua support to
-     * raise the account's limits.
+     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * ended guide.
      */
     case FleetAdmissionDenied(message: String)
 
@@ -34916,8 +34894,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     /**
      * Missing or wrong token or ticket.
      *
-     * Fix: Pass the sandbox's env token, refresh the Fleet credentials, or run
-     * `cua auth login` again.
+     * Fix: Pass the sandbox's env token, or run `cua auth login` again.
      */
     case Unauthenticated(message: String)
 
@@ -34983,18 +34960,20 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
 
     /**
      * A named cloud pool's template differs from the requested sandbox
-     * fields; the message holds the diff (pass `apply` to update it).
+     * fields. Cua Cloud has ended, so the SDK no longer raises this.
      *
-     * Fix: Pass the pool's own fields, or pass `apply` to update its template.
+     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * ended guide.
      */
     case PoolSpecMismatch(message: String)
 
     /**
      * A claim bound but its per-claim secrets (the env token) never
-     * reached the sandbox within the bounded wait; the claim was released.
+     * reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
+     * this.
      *
-     * Fix: Retry. If it keeps failing, check the pool's claim-secrets setup
-     * and the Fleet status.
+     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * ended guide.
      */
     case ClaimSecretsNotDelivered(message: String)
 
@@ -40450,7 +40429,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_auth() != 19106) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_cua_fleet() != 40955) {
+    if (uniffi_cua_sdk_checksum_method_cua_fleet() != 45933) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_info() != 11159) {
@@ -40462,7 +40441,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_mode() != 63626) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_cua_sandboxes() != 8394) {
+    if (uniffi_cua_sdk_checksum_method_cua_sandboxes() != 892) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() != 57559) {
@@ -40471,7 +40450,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_spaces() != 35262) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_cua_spacesd() != 28670) {
+    if (uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_fleet_acquire() != 16535) {
@@ -40756,7 +40735,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_portforward_local_addr() != 55098) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_portforward_url() != 43553) {
+    if (uniffi_cua_sdk_checksum_method_portforward_url() != 60604) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_overlay() != 32673) {
@@ -40765,13 +40744,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_agents() != 53699) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_delete() != 55409) {
+    if (uniffi_cua_sdk_checksum_method_sandbox_delete() != 17492) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_detach() != 34045) {
+    if (uniffi_cua_sdk_checksum_method_sandbox_detach() != 26534) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_forward() != 37775) {
+    if (uniffi_cua_sdk_checksum_method_sandbox_forward() != 19019) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_guest_display() != 23945) {
@@ -40795,7 +40774,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_is_ephemeral() != 27021) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_keep_alive() != 63020) {
+    if (uniffi_cua_sdk_checksum_method_sandbox_keep_alive() != 3593) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_kind() != 13493) {
@@ -40810,7 +40789,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_mcp() != 8773) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_mcp_config() != 43800) {
+    if (uniffi_cua_sdk_checksum_method_sandbox_mcp_config() != 64194) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_name() != 58395) {
@@ -40819,7 +40798,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandbox_open_media_bridge() != 27610) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandbox_public_url() != 36853) {
+    if (uniffi_cua_sdk_checksum_method_sandbox_public_url() != 6460) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandbox_refresh() != 45835) {
@@ -40864,10 +40843,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandboxes_connect() != 12250) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandboxes_connect_url() != 55493) {
+    if (uniffi_cua_sdk_checksum_method_sandboxes_connect_url() != 19950) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandboxes_create() != 63062) {
+    if (uniffi_cua_sdk_checksum_method_sandboxes_create() != 52749) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandboxes_delete() != 43939) {
@@ -40876,7 +40855,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_sandboxes_get() != 32181) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_sandboxes_list() != 18675) {
+    if (uniffi_cua_sdk_checksum_method_sandboxes_list() != 6497) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandboxes_list_all() != 9098) {
@@ -40897,10 +40876,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_service_name() != 19159) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_service_public_url() != 16809) {
+    if (uniffi_cua_sdk_checksum_method_service_public_url() != 37714) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_service_request() != 12324) {
+    if (uniffi_cua_sdk_checksum_method_service_request() != 31558) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_service_url() != 25888) {
@@ -41479,7 +41458,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_constructor_cua_connect() != 19646) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_constructor_cua_embedded() != 36838) {
+    if (uniffi_cua_sdk_checksum_constructor_cua_embedded() != 26623) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_constructor_host_new() != 62533) {

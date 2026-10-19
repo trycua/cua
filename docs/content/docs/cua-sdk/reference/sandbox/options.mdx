@@ -28,16 +28,16 @@ Options for `Sandboxes.create`.
 | `image` | `String` | `""` | Image reference. Locally, `pool:<name>` runs that cloud pool's template image. |
 | `name` | `Option<String>` | `None` | Name. `None`: ephemeral (cloud: released with the sandbox; the managed capacity stays for reuse). |
 | `token` | `Option<String>` | `None` | spacesd token. |
-| `pool` | `Option<String>` | `None` | Fleet: claim from this existing (user-owned) pool. Unset: a managed, autoscaled pool keyed by image and shape. Local (with an empty image): run this Fleet pool's template locally. |
+| `pool` | `Option<String>` | `None` | Cua Cloud has ended: a pool fails with the "Cua Cloud has ended" error. |
 | `os` | `Option<String>` | `None` | Guest OS (`linux`, `macos`, `windows`). |
 | `cpus` | `Option<u32>` | `None` | vCPUs. |
 | `memory_mb` / `memoryMb` | `Option<u64>` | `None` | Memory (MiB). |
-| `ports` | `Vec<u16>` | `[]` | Extra guest ports (local: published; Fleet: `port-<n>` services). |
+| `ports` | `Vec<u16>` | `[]` | Extra guest ports (local: published). |
 | `services` | `HashMap<String, u16>` | `[:]` | Named services (name → guest port). `env` defaults to 3211. |
 | `wait_for` / `waitFor` | [`Vec<ReadinessProbe>`](#readinessprobe-record) | `[]` | Readiness probes. |
 | `ready_timeout_ms` / `readyTimeoutMs` | `Option<u32>` | `None` | Readiness budget (default 10 min). |
-| `env` | `HashMap<String, String>` | `[:]` | Guest environment (local: container environment or cloud-init; cloud: the template environment with `processMode: Run`, on gVisor and KubeVirt; values are not secrets). |
-| `fleet_replicas` / `fleetReplicas` | `Option<u32>` | `None` | Deprecated: initial replicas of a new managed pool (&gt; 0 = warm). |
+| `env` | `HashMap<String, String>` | `[:]` | Guest environment (local: container environment or cloud-init; values are not secrets). |
+| `fleet_replicas` / `fleetReplicas` | `Option<u32>` | `None` | Deprecated, and Cua Cloud has ended: initial replicas of a new managed pool (&gt; 0 = warm). |
 | `fleet_ttl_seconds` / `fleetTtlSeconds` | `Option<u32>` | `None` | Deprecated: use `cloud.claim_ttl_seconds`. |
 | `warm` | `Option<bool>` | `None` | Deprecated: use `cloud.warm`. |
 | `max_pool_size` / `maxPoolSize` | `Option<u32>` | `None` | Deprecated: use `cloud.max_pool_size`. |
@@ -63,7 +63,7 @@ unset means the cloud; with `on = "local"` they are an error.
 | `max_pool_size` / `maxPoolSize` | `Option<u32>` | `None` | Most sandboxes of this image at once (default 10). |
 | `claim_ttl_seconds` / `claimTtlSeconds` | `Option<u32>` | `None` | Seconds the sandbox outlives this process without a keep-alive (renewed while held; default 15 min). |
 | `pool` | `Option<String>` | `None` | Dedicated capacity: claim from this existing pool. The sandbox fields given alongside (image, command, env, services, sidecars, cpus, memory) must match its template, or creation fails with `PoolSpecMismatch` and a diff. |
-| `apply` | `bool` | `false` | With `pool`: update the pool's template to the given fields instead of failing on a mismatch (`Fleet.apply` semantics for the template; the pool's capacity is kept). Managed pools refuse it. |
+| `apply` | `bool` | `false` | With `pool`: update the pool's template to the given fields instead of failing on a mismatch. Cua Cloud has ended: ignored. |
 
 ## `ReadinessProbe` record
 

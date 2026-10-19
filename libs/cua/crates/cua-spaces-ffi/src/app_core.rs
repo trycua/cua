@@ -2471,7 +2471,8 @@ impl AppCliInstaller {
 // ---- Usage telemetry ------------------------------------------------------------
 
 /// The app started: attributes this process's events to `spaces_app` at
-/// `version`, lets the app show the first-run notice itself (nothing is
+/// `version`, links usage data to the signed-in account in the background
+/// when the Spaces API offers it, lets the app show the first-run notice itself (nothing is
 /// sent before it has been shown once), and records `app_launched` (on a
 /// first run, once the notice shows). Call once at launch, before the
 /// first `Cua`. `onboarding_eligible`: the first run is still to finish
@@ -2482,6 +2483,11 @@ pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -
     let t = cua_telemetry::global();
     t.set_product("spaces_app", &version);
     t.set_notice_mode(cua_telemetry::NoticeMode::External);
+    // Links usage data to the signed-in account when the Spaces API offers
+    // it (CUA-1881); the SDK's sign-in does the same. Off the launch path.
+    cua_sdk::support::spawn(async {
+        cua_sdk::telemetry_sync_account().await;
+    });
     core::telemetry::start_with(t, onboarding_eligible)
 }
 

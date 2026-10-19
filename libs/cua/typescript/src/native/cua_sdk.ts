@@ -909,6 +909,18 @@ export function spacesToolMethods(): Array<SpacesToolMethod> {
     }
 
 /**
+ * The person closed the linking notice (either button). Linking starts
+ * with the app's next launch, never in the process that showed it.
+ */
+export function telemetryAcknowledgeLinkNotice(): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+/**
  * Records that the first-run notice was shown in the app's UI (nothing is
  * sent from a machine before that). Apps that show the notice themselves
  * call [`telemetry_use_app_notice`] first so the SDK does not print it.
@@ -932,6 +944,58 @@ export function telemetryFlush(timeoutMs: number): void {uniffiCaller.rustCall(
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
+    }
+
+/**
+ * The one-time linking notice's words.
+ */
+export function telemetryLinkNotice(): TelemetryLinkNotice {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeTelemetryLinkNotice.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_telemetry_link_notice(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Whether the app should show the one-time linking notice now: usage data
+ * is on, the account offered linking, and this machine has not shown it.
+ */
+export function telemetryLinkNoticeDue(): boolean {
+    return FfiConverterBool.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_telemetry_link_notice_due(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+ */
+export function telemetryLinkState(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_telemetry_link_state(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
     }
 
 /**
@@ -1127,6 +1191,43 @@ export function telemetryStatus(): TelemetryStatus {
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
+    }
+
+/**
+ * Asks the Spaces API for the signed-in account's opaque id and hands it
+ * to telemetry (none unlinks). Call at launch and after a sign-in; the
+ * SDK's own sign-in already does. Returns the link state. Best effort:
+ * offline or signed out, nothing changes.
+ */
+export async function telemetrySyncAccount(asyncOpts_?: { signal: AbortSignal }): Promise<string> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_func_telemetry_sync_account(
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
     }
 
 /**
@@ -17587,6 +17688,79 @@ const FfiConverterTypeStreamStatsReport = (() => {
 })();
 
 /**
+ * The one-time notice for machines that saw the older "anonymous" wording,
+ * shown before anything is linked to the account. Both buttons close it;
+ * the second also turns usage data off.
+ */
+export type TelemetryLinkNotice = {
+    title: string,
+    body: string,
+    /**
+     * Keeps usage data on ("Got it").
+     */
+    okLabel: string,
+    /**
+     * Turns usage data off ("Turn off usage data").
+     */
+    turnOffLabel: string,
+    /**
+     * The link to what is collected.
+     */
+    detailsLabel: string,
+    docsUrl: string
+}
+
+/**
+ * Generated factory for {@link TelemetryLinkNotice} record objects.
+ */
+export const TelemetryLinkNotice = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<TelemetryLinkNotice, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<TelemetryLinkNotice>,
+    });
+})();
+
+const FfiConverterTypeTelemetryLinkNotice = (() => {
+    type TypeName = TelemetryLinkNotice;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                title: FfiConverterString.read(from),
+                body: FfiConverterString.read(from),
+                okLabel: FfiConverterString.read(from),
+                turnOffLabel: FfiConverterString.read(from),
+                detailsLabel: FfiConverterString.read(from),
+                docsUrl: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.title, into);
+            FfiConverterString.write(value.body, into);
+            FfiConverterString.write(value.okLabel, into);
+            FfiConverterString.write(value.turnOffLabel, into);
+            FfiConverterString.write(value.detailsLabel, into);
+            FfiConverterString.write(value.docsUrl, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.title) +
+             FfiConverterString.allocationSize(value.body) +
+             FfiConverterString.allocationSize(value.okLabel) +
+             FfiConverterString.allocationSize(value.turnOffLabel) +
+             FfiConverterString.allocationSize(value.detailsLabel) +
+             FfiConverterString.allocationSize(value.docsUrl);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * Telemetry state.
  */
 export type TelemetryStatus = {
@@ -22497,8 +22671,8 @@ export interface AuthLike {
  */
     devices(relayUrl: string | undefined, name: string | undefined) /*throws*/: DevicesLike;
 /**
- * Revokes (best effort) and removes the session. Returns whether one
- * existed.
+ * Revokes (best effort) and removes the session, and unlinks usage
+ * data from the account. Returns whether one existed.
  */
     logout(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<boolean>;
 /**
@@ -22623,8 +22797,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Revokes (best effort) and removes the session. Returns whether one
- * existed.
+ * Revokes (best effort) and removes the session, and unlinks usage
+ * data from the account. Returns whether one existed.
  */
     async logout(asyncOpts_?: { signal: AbortSignal }): Promise<boolean> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -38445,11 +38619,23 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_spaces_tool_methods() !== 24762) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_spaces_tool_methods");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice() !== 46398) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice() !== 6317) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_flush() !== 29688) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_flush");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_link_notice() !== 11798) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_link_notice");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_link_notice_due() !== 52419) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_link_notice_due");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_link_state() !== 28062) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_link_state");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_notice_text() !== 47486) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_notice_text");
@@ -38483,6 +38669,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_status() !== 18801) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_status");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_sync_account() !== 61343) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_sync_account");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() !== 17365) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_telemetry_use_app_notice");
@@ -38601,7 +38790,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_auth_devices() !== 36673) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_auth_devices");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_auth_logout() !== 38806) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_auth_logout() !== 42354) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_auth_logout");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_auth_status() !== 29264) {
@@ -39928,6 +40117,7 @@ export default Object.freeze({
     FfiConverterTypeSpacesdProcess,
     FfiConverterTypeStorageVolume,
     FfiConverterTypeStreamStatsReport,
+    FfiConverterTypeTelemetryLinkNotice,
     FfiConverterTypeTelemetryStatus,
     FfiConverterTypeTeleportApprover,
     FfiConverterTypeTeleportDecision,

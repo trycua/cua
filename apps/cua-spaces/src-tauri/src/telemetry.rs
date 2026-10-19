@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Anonymous usage telemetry for the Spaces app, on the SDK's telemetry
+//! Usage telemetry for the Spaces app, on the SDK's telemetry
 //! core (cua-telemetry): the same schema, install id, switches and
 //! `$CUA_HOME/config.toml` setting as the `cua` CLI. The app shows the
 //! first-run notice in its onboarding (nothing is sent before), and
@@ -43,6 +43,26 @@ pub fn init(home: &Path) -> &'static Telemetry {
 
 fn t() -> Option<&'static Telemetry> {
     CLIENT.get()
+}
+
+/// Asks the Spaces API for the signed-in account's opaque id and hands it
+/// to telemetry (CUA-1881). The state is the install's, in
+/// `$CUA_HOME/telemetry`, so the app's and the SDK's clients both see it.
+pub async fn sync_account(session: &crate::auth::SessionHandle) {
+    let Some(t) = t() else { return };
+    if !t.is_enabled() {
+        return;
+    }
+    let budget = std::time::Duration::from_secs(10);
+    let Ok(Ok(token)) = tokio::time::timeout(budget, session.get_valid_token(false)).await else {
+        return;
+    };
+    let Ok(api) = cua_host::spaces_api::SpacesApiClient::current() else {
+        return;
+    };
+    if let Ok(Ok(me)) = tokio::time::timeout(budget, api.me(&token)).await {
+        t.offer_account(me.analytics_id.as_deref());
+    }
 }
 
 /// Records signals the app core derived (both shells send them the same
@@ -120,6 +140,8 @@ pub struct TelemetryView {
     pub notice_shown: bool,
     pub notice_text: String,
     pub docs_url: String,
+    /// Show the one-time linking notice now (CUA-1881).
+    pub link_notice_due: bool,
 }
 
 fn client() -> Result<&'static Telemetry, String> {
@@ -136,7 +158,55 @@ fn view(t: &Telemetry) -> TelemetryView {
         notice_shown: s.notice_shown,
         notice_text: cua_telemetry::notice::TEXT.to_string(),
         docs_url: cua_telemetry::notice::DOCS_URL.to_string(),
+        link_notice_due: t.link_notice_due(),
     }
+}
+
+/// The one-time linking notice (CUA-1881) as the web UI shows it: the words
+/// from `cua_telemetry::link`, one copy for every shell, and whether it is
+/// due now.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkNoticeView {
+    pub due: bool,
+    pub title: String,
+    pub body: String,
+    /// "Got it": keeps usage data on.
+    pub ok_label: String,
+    /// "Turn off usage data".
+    pub turn_off_label: String,
+    /// The link to what is collected.
+    pub details_label: String,
+    pub docs_url: String,
+}
+
+fn link_notice_view(due: bool) -> LinkNoticeView {
+    use cua_telemetry::link;
+    LinkNoticeView {
+        due,
+        title: link::NOTICE_TITLE.into(),
+        body: link::NOTICE_BODY.into(),
+        ok_label: link::NOTICE_OK.into(),
+        turn_off_label: link::NOTICE_TURN_OFF.into(),
+        details_label: link::NOTICE_DETAILS.into(),
+        docs_url: cua_telemetry::notice::DOCS_URL.into(),
+    }
+}
+
+/// The one-time linking notice: its words and whether it is due now.
+#[tauri::command]
+pub fn telemetry_link_notice() -> Result<LinkNoticeView, String> {
+    let t = client()?;
+    t.refresh();
+    Ok(link_notice_view(t.link_notice_due()))
+}
+
+/// The one-time linking notice was closed (either button).
+#[tauri::command]
+pub fn telemetry_acknowledge_link_notice() -> Result<TelemetryView, String> {
+    let t = client()?;
+    t.acknowledge_link_notice();
+    Ok(view(t))
 }
 
 #[tauri::command]
@@ -223,5 +293,29 @@ fn stream_event(codec: &str, frames: u64, height: u32, duration_ms: u64) -> Opti
 pub fn shutdown() {
     if let Some(t) = t() {
         t.shutdown(std::time::Duration::from_millis(400));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_link_notice_carries_the_sdk_words_in_the_pages_shape() {
+        let v = serde_json::to_value(link_notice_view(true)).unwrap();
+        assert_eq!(v["due"], true);
+        assert_eq!(v["title"], cua_telemetry::link::NOTICE_TITLE);
+        assert_eq!(v["body"], cua_telemetry::link::NOTICE_BODY);
+        assert_eq!(v["okLabel"], "Got it");
+        assert_eq!(v["turnOffLabel"], "Turn off usage data");
+        assert_eq!(v["detailsLabel"], "What is collected");
+        assert_eq!(
+            v["docsUrl"],
+            "https://cua.ai/docs/cua-sdk/concepts/telemetry"
+        );
+        assert_eq!(
+            serde_json::to_value(link_notice_view(false)).unwrap()["due"],
+            false
+        );
     }
 }

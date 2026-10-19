@@ -693,8 +693,8 @@
         "- notch choice: Spaces tab in the notch {Show|*Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {On|*Off} (disabled) ?Set by DO_NOT_TRACK",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {On|*Off} (disabled) ?Set by DO_NOT_TRACK",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
       "settings": 1
@@ -712,8 +712,8 @@
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents]",
         "- agent:codex text: Codex = skills and MCP configured [Remove]",
         "- agent:cursor text: Cursor = working…",
@@ -736,8 +736,8 @@
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
         "# Privacy (privacy)",
-        "- telemetry choice: Share anonymous usage data {*On|Off}",
-        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "- telemetry choice: Share usage data to help improve Cua {*On|Off}",
+        "- telemetry-note note: Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configuring…] (disabled)",
         "- agent:codex text: Codex = skills and MCP configured [Remove] (disabled)",
         "- agent:cursor text: Cursor = skills 1/3, MCP not configured [Configure] (disabled)",
@@ -756,7 +756,7 @@
         "drive": null,
         "driveStorage": null,
         "lede": "Computers for you and your agents.",
-        "notice": "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy.",
+        "notice": "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy.",
         "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
         "presentations": [],
         "primary": "Get started",
@@ -766,7 +766,7 @@
         "summary": [],
         "title": "Welcome to Cua Spaces",
         "todos": [],
-        "usage": "Share anonymous usage data [x]"
+        "usage": "Share usage data to help improve Cua [x]"
       },
       "onboarding": "initial"
     },
@@ -779,7 +779,7 @@
         "drive": null,
         "driveStorage": null,
         "lede": "Computers for you and your agents.",
-        "notice": "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy.",
+        "notice": "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy.",
         "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
         "presentations": [],
         "primary": "Get started",
@@ -789,7 +789,7 @@
         "summary": [],
         "title": "Welcome to Cua Spaces",
         "todos": [],
-        "usage": "Share anonymous usage data [x]"
+        "usage": "Share usage data to help improve Cua [x]"
       },
       "onboarding": "cli-installed"
     },

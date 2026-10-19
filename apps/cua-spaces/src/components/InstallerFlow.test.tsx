@@ -142,13 +142,13 @@ describe("InstallerFlow", () => {
     expect(screen.getByText("Welcome to Cua Spaces")).toBeInTheDocument();
     // The telemetry notice is on Welcome: it is recorded as shown before
     // anything is recorded.
-    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Change it here or in Settings, Privacy.");
+    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Change this here or in Settings, Privacy.");
     expect(screen.getByRole("link", { name: "What is collected" })).toHaveAttribute(
       "href",
       "https://cua.ai/docs/cua-sdk/concepts/telemetry",
     );
     // Nothing is recorded while Welcome shows; the switch is on.
-    expect(screen.getByRole("switch", { name: "Share anonymous usage data" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Share usage data to help improve Cua" })).toBeChecked();
     expect(telemetry.signals).toEqual([]);
     // First launch installs the bundled cua (PATH line added): no page.
     await waitFor(() => expect(installer.calls).toEqual(["cliPlan", "installCli:path"]));
@@ -257,7 +257,7 @@ describe("InstallerFlow", () => {
         onDone={vi.fn()}
       />,
     );
-    const toggle = screen.getByRole("switch", { name: "Share anonymous usage data" });
+    const toggle = screen.getByRole("switch", { name: "Share usage data to help improve Cua" });
     await waitFor(() => expect(toggle).toBeChecked());
     fireEvent.click(toggle);
     expect(toggle).not.toBeChecked();

@@ -83,6 +83,18 @@ pub fn run(cmd: TelemetryCmd, json: bool, out: &mut dyn Write) -> Result<i32, Cu
                 );
                 line(out, format!("Endpoint: {}", s.endpoint));
                 line(out, format!("First-run notice shown: {}", s.notice_shown));
+                line(
+                    out,
+                    format!(
+                        "Linked to your account: {}",
+                        match s.link.as_str() {
+                            "linked" => "yes (an opaque account id while signed in)",
+                            "notice_due" => "not yet (the notice shows first)",
+                            "off" => "no (usage data is off)",
+                            _ => "no",
+                        }
+                    ),
+                );
                 line(out, format!("Offline spool: {} events", s.spooled));
                 line(out, format!("State: {}", s.state_dir));
                 line(

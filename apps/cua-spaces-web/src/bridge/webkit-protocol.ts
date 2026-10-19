@@ -127,6 +127,8 @@ export const WEBKIT_METHODS = [
   "notifications.markAllRead",
   "notifications.markRead",
   "telemetry.track",
+  "telemetry.linkNotice",
+  "telemetry.acknowledgeLinkNotice",
   "spaces.usage",
   "spaces.windows",
   "stream.pip",

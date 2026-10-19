@@ -181,6 +181,17 @@ extension WebUIBridge {
             if !signals.isEmpty { telemetry.record(signals) }
             return NSNull()
 
+        // The one-time notice that usage data is now linked to the account
+        // (CUA-1881); no telemetry (a bare model) has none.
+        case "telemetry.linkNotice":
+            guard let telemetry = model.telemetrySink else { return NSNull() }
+            let n = telemetry.linkNotice()
+            return ["due": n.due, "title": n.title, "body": n.body, "okLabel": n.okLabel,
+                    "turnOffLabel": n.turnOffLabel, "detailsLabel": n.detailsLabel, "docsUrl": n.docsUrl] as [String: Any]
+        case "telemetry.acknowledgeLinkNotice":
+            model.telemetrySink?.acknowledgeLinkNotice()
+            return NSNull()
+
         // A Space's detail
         case "spaces.usage":
             return BridgeValue.encode(await model.backend.usage(id: try spaceId(args)))

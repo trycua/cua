@@ -308,8 +308,8 @@ function FallbackSettingsPage() {
 
       <SettingsGroup title="Privacy">
         <SettingsRow
-          label="Share anonymous usage data"
-          description="Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items."
+          label="Share usage data to help improve Cua"
+          description="Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen."
           htmlFor="telemetry"
           control={
             <Switch

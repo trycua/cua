@@ -837,9 +837,17 @@ external fun uniffi_cua_sdk_checksum_func_presence_text_color(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_spaces_tool_methods(
 ): Short
+external fun uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice(
+): Short
 external fun uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_telemetry_flush(
+): Short
+external fun uniffi_cua_sdk_checksum_func_telemetry_link_notice(
+): Short
+external fun uniffi_cua_sdk_checksum_func_telemetry_link_notice_due(
+): Short
+external fun uniffi_cua_sdk_checksum_func_telemetry_link_state(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_telemetry_notice_text(
 ): Short
@@ -862,6 +870,8 @@ external fun uniffi_cua_sdk_checksum_func_telemetry_set_surface(
 external fun uniffi_cua_sdk_checksum_func_telemetry_show_last(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_telemetry_status(
+): Short
+external fun uniffi_cua_sdk_checksum_func_telemetry_sync_account(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_telemetry_use_app_notice(
 ): Short
@@ -2696,10 +2706,18 @@ external fun uniffi_cua_sdk_fn_func_presence_text_color(`background`: RustBuffer
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_spaces_tool_methods(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice(uniffi_out_err: UniffiRustCallStatus,
+): Unit
 external fun uniffi_cua_sdk_fn_func_telemetry_acknowledge_notice(uniffi_out_err: UniffiRustCallStatus,
 ): Unit
 external fun uniffi_cua_sdk_fn_func_telemetry_flush(`timeoutMs`: Int,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
+external fun uniffi_cua_sdk_fn_func_telemetry_link_notice(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_func_telemetry_link_notice_due(uniffi_out_err: UniffiRustCallStatus,
+): Byte
+external fun uniffi_cua_sdk_fn_func_telemetry_link_state(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_telemetry_notice_text(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_telemetry_record_bench_run(`taskset`: RustBuffer.ByValue,`successRate`: RustBuffer.ByValue,`taskCount`: Long,`outcome`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -2722,6 +2740,8 @@ external fun uniffi_cua_sdk_fn_func_telemetry_show_last(`limit`: Int,uniffi_out_
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_telemetry_status(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_func_telemetry_sync_account(
+): Long
 external fun uniffi_cua_sdk_fn_func_telemetry_use_app_notice(uniffi_out_err: UniffiRustCallStatus,
 ): Unit
 external fun ffi_cua_sdk_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
@@ -2960,10 +2980,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_func_spaces_tool_methods() != 24762.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_link_notice() != 46398.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_func_telemetry_acknowledge_notice() != 6317.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_telemetry_flush() != 29688.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_telemetry_link_notice() != 11798.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_telemetry_link_notice_due() != 52419.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_telemetry_link_state() != 28062.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_telemetry_notice_text() != 47486.toShort()) {
@@ -2997,6 +3029,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_telemetry_status() != 18801.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_telemetry_sync_account() != 61343.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365.toShort()) {
@@ -3107,7 +3142,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_auth_begin_login() != 55109.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_auth_logout() != 38806.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_auth_logout() != 42354.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_auth_status() != 29264.toShort()) {
@@ -6939,8 +6974,8 @@ public interface AuthInterface {
     suspend fun `beginLogin`(`flow`: kotlin.String?): LoginAttempt
 
     /**
-     * Revokes (best effort) and removes the session. Returns whether one
-     * existed.
+     * Revokes (best effort) and removes the session, and unlinks usage
+     * data from the account. Returns whether one existed.
      */
     suspend fun `logout`(): kotlin.Boolean
 
@@ -7111,8 +7146,8 @@ open class Auth: Disposable, AutoCloseable, AuthInterface
 
 
     /**
-     * Revokes (best effort) and removes the session. Returns whether one
-     * existed.
+     * Revokes (best effort) and removes the session, and unlinks usage
+     * data from the account. Returns whether one existed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -39379,6 +39414,78 @@ public object FfiConverterTypeStreamStatsReport: FfiConverterRustBuffer<StreamSt
 
 
 /**
+ * The one-time notice for machines that saw the older "anonymous" wording,
+ * shown before anything is linked to the account. Both buttons close it;
+ * the second also turns usage data off.
+ */
+data class TelemetryLinkNotice (
+    var `title`: kotlin.String
+    ,
+    var `body`: kotlin.String
+    ,
+    /**
+     * Keeps usage data on ("Got it").
+     */
+    var `okLabel`: kotlin.String
+    ,
+    /**
+     * Turns usage data off ("Turn off usage data").
+     */
+    var `turnOffLabel`: kotlin.String
+    ,
+    /**
+     * The link to what is collected.
+     */
+    var `detailsLabel`: kotlin.String
+    ,
+    var `docsUrl`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTelemetryLinkNotice: FfiConverterRustBuffer<TelemetryLinkNotice> {
+    override fun read(buf: ByteBuffer): TelemetryLinkNotice {
+        return TelemetryLinkNotice(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TelemetryLinkNotice) = (
+            FfiConverterString.allocationSize(value.`title`) +
+            FfiConverterString.allocationSize(value.`body`) +
+            FfiConverterString.allocationSize(value.`okLabel`) +
+            FfiConverterString.allocationSize(value.`turnOffLabel`) +
+            FfiConverterString.allocationSize(value.`detailsLabel`) +
+            FfiConverterString.allocationSize(value.`docsUrl`)
+    )
+
+    override fun write(value: TelemetryLinkNotice, buf: ByteBuffer) {
+            FfiConverterString.write(value.`title`, buf)
+            FfiConverterString.write(value.`body`, buf)
+            FfiConverterString.write(value.`okLabel`, buf)
+            FfiConverterString.write(value.`turnOffLabel`, buf)
+            FfiConverterString.write(value.`detailsLabel`, buf)
+            FfiConverterString.write(value.`docsUrl`, buf)
+    }
+}
+
+
+
+/**
  * Telemetry state.
  */
 data class TelemetryStatus (
@@ -46298,6 +46405,19 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
 
         /**
+         * The person closed the linking notice (either button). Linking starts
+         * with the app's next launch, never in the process that showed it.
+         */ fun `telemetryAcknowledgeLinkNotice`()
+        =
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_telemetry_acknowledge_link_notice(
+
+        _status)
+}
+
+
+
+        /**
          * Records that the first-run notice was shown in the app's UI (nothing is
          * sent from a machine before that). Apps that show the notice themselves
          * call [`telemetry_use_app_notice`] first so the SDK does not print it.
@@ -46322,6 +46442,46 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         FfiConverterUInt.lower(`timeoutMs`),_status)
 }
 
+
+
+        /**
+         * The one-time linking notice's words.
+         */ fun `telemetryLinkNotice`(): TelemetryLinkNotice {
+            return FfiConverterTypeTelemetryLinkNotice.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * Whether the app should show the one-time linking notice now: usage data
+         * is on, the account offered linking, and this machine has not shown it.
+         */ fun `telemetryLinkNoticeDue`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_notice_due(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+         */ fun `telemetryLinkState`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_telemetry_link_state(
+
+        _status)
+}
+    )
+    }
 
 
         /**
@@ -46478,6 +46638,26 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     )
     }
 
+
+        /**
+         * Asks the Spaces API for the signed-in account's opaque id and hands it
+         * to telemetry (none unlinks). Call at launch and after a sign-in; the
+         * SDK's own sign-in already does. Returns the link state. Best effort:
+         * offline or signed out, nothing changes.
+         */
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `telemetrySyncAccount`() : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_cua_sdk_fn_func_telemetry_sync_account(),
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
 
         /**
          * The host app shows the first-run notice itself (no stderr notice).

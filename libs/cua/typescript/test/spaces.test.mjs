@@ -136,7 +136,6 @@ test("spaces embedded", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures"
   const dir = mkdtempSync(join(tmpdir(), "cua-ts-spaces-"))
   const c = cua.embedded({
     stateDir: join(dir, "sbx"),
-    fleetFromEnv: false,
     spacesHome: join(dir, "cua"),
     teleportHome: fx.teleport_host_home,
   })

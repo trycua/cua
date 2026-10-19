@@ -3,14 +3,12 @@
 # dependencies = ["cua-sandbox", "httpx>=0.27,<1"]
 # ///
 """
-Demo 3: OSWorld desktop on Fleet (or local QEMU) with the Cua Driver MCP.
-Claims an OSWorld disk, screenshots it through the OSWorld control server, then
+Demo 3: OSWorld desktop on local QEMU with the Cua Driver MCP.
+Boots an OSWorld disk, screenshots it through the OSWorld control server, then
 drives it over the cua-driver MCP endpoint baked into the image.
 
 Usage:
-    export OSWORLD_IMAGE="<registry>/<repo>@sha256:<digest>"   # containerDisk you published
-    uv run samples/python/3_osworld_fleet.py                     # Fleet
-    OSWORLD_LOCAL=1 OSWORLD_QCOW2=/path/to/overlay.qcow2 uv run samples/python/3_osworld_fleet.py  # local
+    OSWORLD_QCOW2=/path/to/overlay.qcow2 uv run samples/python/3_osworld_local.py
 
 See docs/content/docs/cua-bench/guides/benchmarks.mdx (OSWorld-Verified).
 """
@@ -28,17 +26,16 @@ from cua_sandbox import Image, Sandbox
 
 sys.stdout.reconfigure(encoding="utf-8")  # tool results contain emoji; keep Windows consoles happy
 
-LOCAL = os.environ.get("OSWORLD_LOCAL") == "1"
-IMAGE_REF = os.environ["OSWORLD_IMAGE"] if not os.environ.get("OSWORLD_LOCAL") else ""
 QCOW2 = os.environ.get("OSWORLD_QCOW2", str(Path.home() / "osworld-cua" / "osworld-cua.qcow2"))
 MCP_PORT = 3000
 
-# The only line that differs between Fleet and local: where the disk comes from.
 image = (
     Image.from_file(QCOW2, os_type="linux", agent_type="osworld")
-    if LOCAL
-    else Image.from_registry(IMAGE_REF, os_type="linux", kind="vm", agent_type="osworld")
-).expose(5000).expose(MCP_PORT).expose(8080).expose(9222)  # OSWorld server, MCP, VLC, Chrome CDP
+    .expose(5000)
+    .expose(MCP_PORT)
+    .expose(8080)
+    .expose(9222)  # OSWorld server, MCP, VLC, Chrome CDP
+)
 
 
 class Mcp:
@@ -54,15 +51,10 @@ class Mcp:
         }
         if self.session:
             headers["mcp-session-id"] = self.session
-        if LOCAL:  # bare-metal QEMU forwards exposed guest ports to localhost
-            host_port = self.sb.exposed_ports[MCP_PORT]
-            async with httpx.AsyncClient(timeout=120) as c:
-                return await c.post(
-                    f"http://127.0.0.1:{host_port}/mcp", headers=headers, json=payload
-                )
-        return await self.sb.services.request(  # Fleet: authenticated service proxy
-            f"port-{MCP_PORT}", method="POST", path="/mcp", headers=headers, json=payload
-        )
+        # Bare-metal QEMU forwards exposed guest ports to localhost.
+        host_port = self.sb.exposed_ports[MCP_PORT]
+        async with httpx.AsyncClient(timeout=120) as c:
+            return await c.post(f"http://127.0.0.1:{host_port}/mcp", headers=headers, json=payload)
 
     async def call(self, method: str, params: dict | None = None) -> dict:
         payload = {"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params or {}}
@@ -89,11 +81,9 @@ class Mcp:
 async def main() -> None:
     t0 = time.time()
     async with Sandbox.ephemeral(
-        image, local=LOCAL, cpu=4, memory_mb=8192, time_to_start=1500
+        image, local=True, cpu=4, memory_mb=8192, time_to_start=1500
     ) as sb:
-        print(
-            f"[{time.time() - t0:.0f}s] sandbox {sb.name} ready ({'local' if LOCAL else 'fleet'})"
-        )
+        print(f"[{time.time() - t0:.0f}s] sandbox {sb.name} ready")
 
         # 1. OSWorld control server (:5000) through the normal Sandbox surface.
         print("screen:", await sb.get_dimensions())
@@ -132,11 +122,7 @@ async def main() -> None:
         await mcp.tool("end_session", session="osworld-tutorial")
         Path("osworld-after.png").write_bytes(await sb.screenshot())
         print("saved osworld-after.png")
-    print(
-        f"[{time.time() - t0:.0f}s] claim released (the managed pool stays for reuse)"
-        if not LOCAL
-        else f"[{time.time() - t0:.0f}s] VM stopped"
-    )
+    print(f"[{time.time() - t0:.0f}s] VM stopped")
 
 
 if __name__ == "__main__":

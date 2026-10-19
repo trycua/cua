@@ -10,10 +10,6 @@ pub enum Error {
     /// teleport refused, timeout, transport, ...).
     #[error(transparent)]
     Spaces(#[from] cua_spaces::Error),
-    /// The Cua Cloud client could not be configured. Cua Cloud has ended, so
-    /// nothing in the app creates on it any more.
-    #[error("Cua Cloud: {0}")]
-    Cloud(#[from] cua_fleet::Error),
     /// Local I/O.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),

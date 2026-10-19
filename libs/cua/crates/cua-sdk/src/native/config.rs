@@ -1,6 +1,6 @@
 //! User defaults (`$CUA_HOME/config.toml`, `cua config`) for every
 //! language: where sandboxes and Spaces run when `on` is not given, the
-//! default kind and runtime, and the cloud defaults. Each value comes with
+//! default kind and runtime, and the runtime sources. Each value comes with
 //! where it came from (the environment, the config file, or the built-in
 //! default); an explicit argument always wins over all three.
 //!
@@ -15,8 +15,8 @@ use cua_sandbox_core::settings::{self, Entry, Settings};
 /// One setting's effective value.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ConfigEntry {
-    /// `default.on`, `default.kind`, `default.runtime`, `cloud.warm`,
-    /// `cloud.max_pool_size` or `cloud.claim_ttl`.
+    /// `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
+    /// `runtime.linux` or `telemetry.enabled`.
     pub key: String,
     /// The effective value.
     pub value: String,
@@ -69,7 +69,7 @@ pub fn config_get(key: String) -> Result<ConfigEntry> {
 }
 
 /// Writes a setting to the config file (checked and normalised: `default.on`
-/// takes `local`, `cloud` or a provider). Returns its effective value, which
+/// takes `local` or a provider). Returns its effective value, which
 /// an environment variable may still override.
 #[uniffi::export]
 pub fn config_set(key: String, value: String) -> Result<ConfigEntry> {
@@ -95,7 +95,7 @@ pub fn config_path() -> String {
     settings::config_path().display().to_string()
 }
 
-/// The locations `on` accepts: `local`, `cloud`, then registered providers.
+/// The locations `on` accepts: `local`, then registered providers.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LocationInfo {
     /// The location's name.
@@ -173,7 +173,12 @@ mod tests {
             config_set("default.on".into(), "qemu".into()),
             Err(CuaError::InvalidArgument(_))
         ));
-        assert!(config_list().unwrap().iter().any(|e| e.key == "cloud.warm"));
+        assert!(
+            config_list()
+                .unwrap()
+                .iter()
+                .any(|e| e.key == "runtime.linux")
+        );
         assert!(config_path().ends_with("config.toml"));
     }
 

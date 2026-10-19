@@ -1019,11 +1019,7 @@ fn exit_code(e: &CuaError) -> i32 {
         CuaError::SpacesdNotAvailable(_)
         | CuaError::Transport(_)
         | CuaError::DaemonNotRunning(_) => 5,
-        CuaError::Unauthenticated(_)
-        | CuaError::PermissionDenied(_)
-        | CuaError::FleetAdmissionDenied(_)
-        | CuaError::CloudCreditExhausted(_)
-        | CuaError::Cloud(_) => 6,
+        CuaError::Unauthenticated(_) | CuaError::PermissionDenied(_) | CuaError::Cloud(_) => 6,
         CuaError::InsufficientDisk(_) => 7,
         CuaError::Cancelled(_) => 130,
         _ => 1,
@@ -1058,7 +1054,7 @@ async fn open(cli: &Cli, with_session: bool) -> Result<Arc<Cua>, CuaError> {
     let embedded = move || {
         Cua::embedded(CuaConfig {
             state_dir: cli.state_dir.clone(),
-            fleet_from_session: with_session,
+            account_from_session: with_session,
             ..Default::default()
         })
     };
@@ -2175,7 +2171,7 @@ async fn daemon_start(
             // Test and CI hosts point teleport at a throwaway home; the
             // real daemon reads the user's own app sessions (on consent).
             teleport_home: env("CUA_SPACES_TELEPORT_HOME"),
-            fleet_from_session: true,
+            account_from_session: true,
             ..Default::default()
         };
         let cua = Cua::embedded(cfg)?;
@@ -2246,7 +2242,7 @@ async fn daemon_start(
                 loop {
                     tick.tick().await;
                     let n = health_runtime
-                        .list_filtered(None, false)
+                        .list_filtered(None)
                         .await
                         .map(|l| l.sandboxes.len() as u64)
                         .unwrap_or(0);
@@ -2713,8 +2709,6 @@ mod tests {
             CuaError::DaemonNotRunning(s()),
             CuaError::Unauthenticated(s()),
             CuaError::PermissionDenied(s()),
-            CuaError::FleetAdmissionDenied(s()),
-            CuaError::CloudCreditExhausted(s()),
             CuaError::Cloud(s()),
             CuaError::InsufficientDisk(s()),
             CuaError::ImageNotPublished(s()),

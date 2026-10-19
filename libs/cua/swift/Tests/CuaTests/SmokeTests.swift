@@ -73,16 +73,17 @@ struct Fixtures {
 }
 
 @Suite struct SmokeTests {
-    @Test func versionAndTypedErrors() throws {
+    @Test func versionAndTypedErrors() async throws {
         #expect(!cuaSdkVersion().isEmpty)
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("cua-swift-\(UUID().uuidString)")
-        let cua = try Cua.embedded(stateDir: dir.path, fleetFromEnv: false)
+        let cua = try Cua.embedded(stateDir: dir.path)
         #expect(cua.mode() == .embedded)
-        // Cua Cloud has ended: `fleet()` fails with the one message, as
-        // `Unsupported`, and never connects.
+        // Cua Cloud has ended: a cloud create fails with the one message, as
+        // `Unsupported`.
+        let options = SandboxCreateOptions(on: "cloud", image: "img:test")
         do {
-            _ = try cua.fleet()
+            _ = try await cua.sandboxes().create(options: options)
             Issue.record("expected Unsupported (Cua Cloud has ended)")
         } catch CuaError.Unsupported(let message) {
             #expect(message.contains("Cua Cloud has ended"))
@@ -101,7 +102,7 @@ struct Fixtures {
         defer { fx.stop() }
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("cua-swift-\(UUID().uuidString)")
-        let cua = try Cua.embedded(stateDir: dir.path, fleetFromEnv: false)
+        let cua = try Cua.embedded(stateDir: dir.path)
         let sb = try await cua.sandboxes().connectUrl(url: fx.envURL, token: fx.envToken, name: "swift-direct")
         #expect(sb.location() == "direct")
         let env = try await sb.spacesd(probeTimeoutMs: 5000)

@@ -316,7 +316,7 @@ const routes: Array<[string, RegExp, Handler]> = [
         throw new HttpError(400, e instanceof Error ? e.message : String(e))
       }
       if (call.on === "cloud" && !s.backend.cloud)
-        throw new HttpError(501, "Cua Cloud is not signed in (run `cua auth login`, or set CUA_CLIENT_ID/SECRET)")
+        throw new HttpError(501, "Cua Cloud has ended. Create this Space on this machine instead.")
       const info = await s.backend.create(call)
       await s.select(info.id)
       return info

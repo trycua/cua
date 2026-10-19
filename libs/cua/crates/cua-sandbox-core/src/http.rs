@@ -39,8 +39,8 @@ pub type RequestBody = UnsyncBoxBody<Bytes, BodyError>;
 pub type StreamingResponse = http::Response<hyper::body::Incoming>;
 
 /// Where a service is reachable from this process: a base URL (requests go
-/// to `<url><path>`) and the headers every request needs (the Fleet
-/// gateway's bearer and claim; nothing for loopback or direct URLs).
+/// to `<url><path>`) and the headers every request needs (a provider's
+/// access headers; nothing for loopback or direct URLs).
 #[derive(Clone, PartialEq, Eq)]
 pub struct ServiceEndpoint {
     /// Base URL, no trailing slash.
@@ -218,7 +218,7 @@ pub async fn collect(resp: StreamingResponse) -> Result<HttpResponse> {
 
 /// Opens a streaming request to `endpoint` + `path`: the endpoint's own
 /// headers, then the caller's (hop-by-hop headers dropped; a caller header
-/// the endpoint sets, such as the Fleet bearer, is refused). Returns
+/// the endpoint sets, such as an access token, is refused). Returns
 /// once the response head arrives (bounded by `head_timeout`), with the
 /// body still streaming.
 pub async fn open(
@@ -239,7 +239,7 @@ pub async fn open(
         .find(|(k, _)| owned.contains(&k.to_ascii_lowercase()))
     {
         return Err(Error::InvalidArgument(format!(
-            "header {k:?} is set by the service route (for example the Fleet gateway)"
+            "header {k:?} is set by the service route (for example a provider's access header)"
         )));
     }
     let mut all = endpoint.headers.clone();

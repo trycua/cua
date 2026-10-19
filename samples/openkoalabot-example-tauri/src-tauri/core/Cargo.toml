@@ -15,7 +15,6 @@ path = "src/bin/openkoalabot-example-scenario.rs"
 [dependencies]
 cua-spaces.workspace = true
 cua-spaces-ext.workspace = true
-cua-fleet.workspace = true
 cua-sandbox-core.workspace = true
 tokio.workspace = true
 serde.workspace = true

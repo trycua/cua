@@ -1,6 +1,6 @@
 [package]
 name = "cua-sandbox-core"
-description = "One daemon-agnostic Sandbox over the Fleet, local (VMM) and direct providers, with cua-sandbox-compatible state files."
+description = "One daemon-agnostic Sandbox over the local (VMM), contrib and direct providers, with cua-sandbox-compatible state files."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,7 +22,6 @@ axum = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 futures-util.workspace = true
 cua-spacesd-client.workspace = true
-cua-fleet.workspace = true
 # `ImageInfo` from the one resolver's result.
 cua-image.workspace = true
 # Create progress (`progress`), reported by the runtimes.
@@ -50,6 +49,5 @@ url.workspace = true
 [dev-dependencies]
 cua-sandbox-core = { path = ".", features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-fleet = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 base64.workspace = true

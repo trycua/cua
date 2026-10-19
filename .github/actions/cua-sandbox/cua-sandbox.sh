@@ -71,7 +71,7 @@ mkdir -p "$state/artifacts"
 on="${CUA_SB_ON:-local}"
 case "$on" in
     local | docker | qemu | lume) ref="local:$name" ;;
-    cloud | fleet) ref="cloud:$name"; on=cloud ;;
+    cloud) ref="cloud:$name"; on=cloud ;;
     # Contrib providers (a cua built with --features contrib and the
     # provider's key in the step env).
     e2b | daytona | modal) ref="$on:$name" ;;

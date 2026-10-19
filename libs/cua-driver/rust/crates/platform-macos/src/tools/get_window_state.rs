@@ -35,7 +35,7 @@ fn def() -> &'static ToolDef {
             \n\
             A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
-            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
+            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -664,13 +664,32 @@ impl Tool for GetWindowStateTool {
         let app_lookup_timed_out = tree_result
             .as_ref()
             .is_some_and(|r| r.walk.reason() == Some("app_lookup_timeout"));
-        match degradation_for(
+        let degradation = degradation_for(
             tree_result.is_some(),
             element_count,
             window_scope.as_ref(),
             app_lookup_timed_out,
-        ) {
+        );
+        let degradation = explain_locked_screen(
+            degradation,
+            !matches!(degradation, Degradation::None) && crate::session::screen_locked(),
+        );
+        match degradation {
             Degradation::None => {}
+            Degradation::ScreenLocked => {
+                structured["degraded"] = serde_json::json!(true);
+                structured["degraded_reason"] = serde_json::json!(format!(
+                    "screen_locked: window_id {window_id} has no accessibility tree because {}.",
+                    cua_driver_core::background_input::SCREEN_LOCKED_HINT
+                ));
+                structured["escalation"] = serde_json::json!({
+                    "recommended": "wait_for_unlock",
+                    "reason": "observation-only while the screen is locked: no delivery \
+                               mode can reach the app, and foreground input would go to \
+                               the lock screen. Re-snapshot after the Mac is woken and \
+                               unlocked."
+                });
+            }
             Degradation::AxTreeEmpty => {
                 structured["degraded"] = serde_json::json!(true);
                 structured["degraded_reason"] = serde_json::json!(
@@ -957,6 +976,20 @@ enum Degradation {
     /// The window scope is unresolved because the app is still launching and
     /// did not answer accessibility within the caller's budget.
     AxAppLaunching,
+    /// The session's screen is locked (screen saver, display sleep or a
+    /// lock). macOS then reports no AXWindows for any app, so an empty or
+    /// unresolved tree has this cause rather than the app's own state.
+    ScreenLocked,
+}
+
+/// Name the locked screen as the cause of an empty or unresolved tree.
+/// `locked` is only probed when the walk already degraded.
+fn explain_locked_screen(degradation: Degradation, locked: bool) -> Degradation {
+    if locked && degradation != Degradation::None {
+        Degradation::ScreenLocked
+    } else {
+        degradation
+    }
 }
 
 /// Decide the degradation rung. Pure: `walk_attempted` is false in the
@@ -1226,6 +1259,28 @@ mod window_scope_contract_tests {
         assert_eq!(
             degradation_for(true, 0, Some(&WindowScope::Matched), true),
             Degradation::AxTreeEmpty
+        );
+    }
+
+    /// Screen saver or display sleep: every AXWindows list is empty, so the
+    /// window reads as unresolved. The reason names the lock instead, and a
+    /// healthy tree is never relabelled.
+    #[test]
+    fn a_locked_screen_explains_an_empty_or_unresolved_tree() {
+        let unresolved = degradation_for(
+            true,
+            0,
+            Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+            false,
+        );
+        assert_eq!(
+            explain_locked_screen(unresolved, true),
+            Degradation::ScreenLocked
+        );
+        assert_eq!(explain_locked_screen(unresolved, false), unresolved);
+        assert_eq!(
+            explain_locked_screen(Degradation::None, true),
+            Degradation::None
         );
     }
 

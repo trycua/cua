@@ -373,8 +373,16 @@ impl QemuRuntime {
         .ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                format!("install edk2 (Homebrew qemu ships it; {}){}", QemuPackageManager::linux_hint(),
-                    if windows_arm { "; Windows ARM needs AAVMF_CODE.secboot.fd + AAVMF_VARS.ms.fd in <qemu prefix>/share/AAVMF or /usr/share/AAVMF" } else { "" }),
+                if windows_arm {
+                    "Windows ARM requires a Secure Boot firmware pair: AAVMF_CODE.secboot.fd + \
+                     AAVMF_VARS.ms.fd in <qemu prefix>/share/AAVMF or /usr/share/AAVMF"
+                        .into()
+                } else {
+                    format!(
+                        "install edk2 (Homebrew qemu ships it; {})",
+                        QemuPackageManager::linux_hint()
+                    )
+                },
             )
         })?;
         match fw.vars_template {
@@ -634,7 +642,11 @@ impl QemuRuntime {
                 .trim()
                 .parse::<u32>()
                 .map_err(|e| {
-                    VmmError::other(format!("launch failed: {e}; see {dir:?}/swtpm.log"))
+                    let mut message = format!("could not launch {}: {e}", bin.display());
+                    if swtpm.is_some() {
+                        message.push_str(&format!("; see {}", dir.join("swtpm.log").display()));
+                    }
+                    VmmError::other(message)
                 })?;
             st.pid = Some(pid);
         }
@@ -838,7 +850,7 @@ impl QemuRuntime {
         let pidfile = self.dir(&st.name).join("swtpm.pid");
         if let Ok(pid) = std::fs::read_to_string(&pidfile) {
             if let Ok(pid) = pid.trim().parse() {
-                host::signal(pid, "KILL");
+                host::signal(pid, "TERM");
             }
             let _ = std::fs::remove_file(pidfile);
         }

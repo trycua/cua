@@ -10,12 +10,12 @@
 import nativeModule from "./cua_spaces_ffi-ffi";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSpacesFfiDecodedFrameSink, type UniffiVTableCallbackInterfaceCuaSpacesFfiPcmSink, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportApproval, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportRunListener, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportWindowDragListener,
 } from "./cua_spaces_ffi-ffi";
-import { type AgentInfo, type AgentSetupOutcome, type CuaLike, type DevicesLike, type DevicesSnapshot, type FleetBillingStatus, type HostLike, type HostStatus, type MediaEvent, type MediaOpenOptions, type MediaSessionLike, type SandboxLike, type SpaceLike, type SpaceSendFileReport, type SpacesHost, type SpacesdClientLike, type TeleportItem, type TeleportManifest, CuaError,
+import { type AgentInfo, type AgentSetupOutcome, type CuaLike, type DevicesLike, type DevicesSnapshot, type HostLike, type HostStatus, type MediaEvent, type MediaOpenOptions, type MediaSessionLike, type SandboxLike, type SpaceLike, type SpaceSendFileReport, type SpacesHost, type SpacesdClientLike, type TeleportItem, type TeleportManifest, CuaError,
 } from "./cua_sdk";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterFloat64, FfiConverterInt16, FfiConverterInt32, FfiConverterInt64, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTypeNameSymbol,
 } from "@ubjs/core";
 import uniffiCuaSdkModule from "./cua_sdk";
-const { FfiConverterTypeAgentInfo, FfiConverterTypeAgentSetupOutcome, FfiConverterTypeCua, FfiConverterTypeCuaError, FfiConverterTypeDevices, FfiConverterTypeDevicesSnapshot, FfiConverterTypeFleetBillingStatus, FfiConverterTypeHost, FfiConverterTypeHostStatus, FfiConverterTypeMediaEvent, FfiConverterTypeMediaOpenOptions, FfiConverterTypeMediaSession, FfiConverterTypeSandbox, FfiConverterTypeSpace, FfiConverterTypeSpaceSendFileReport, FfiConverterTypeSpacesHost, FfiConverterTypeSpacesdClient, FfiConverterTypeTeleportItem, FfiConverterTypeTeleportManifest } = uniffiCuaSdkModule.converters;
+const { FfiConverterTypeAgentInfo, FfiConverterTypeAgentSetupOutcome, FfiConverterTypeCua, FfiConverterTypeCuaError, FfiConverterTypeDevices, FfiConverterTypeDevicesSnapshot, FfiConverterTypeHost, FfiConverterTypeHostStatus, FfiConverterTypeMediaEvent, FfiConverterTypeMediaOpenOptions, FfiConverterTypeMediaSession, FfiConverterTypeSandbox, FfiConverterTypeSpace, FfiConverterTypeSpaceSendFileReport, FfiConverterTypeSpacesHost, FfiConverterTypeSpacesdClient, FfiConverterTypeTeleportItem, FfiConverterTypeTeleportManifest } = uniffiCuaSdkModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -701,27 +701,6 @@ export function appApproveView(state: AppApproveSheetState, devices: Array<AppDe
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_approve_view(
         FfiConverterTypeAppApproveSheetState.lower(state, nativeModule().rustbuffer_alloc),
         FfiConverterSequenceTypeAppDeviceInput.lower(devices, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * The SDK's billing status as the app core takes it (Settings' Billing
- * row).
- */
-export function appBillingStatus(status: FleetBillingStatus): AppBillingStatus {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterTypeAppBillingStatus.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_billing_status(
-        FfiConverterTypeFleetBillingStatus.lower(status, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -21224,7 +21203,7 @@ const FfiConverterTypeAppFact = (() => {
 
 export type AppGpuChoice = {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+     * `lume`, `qemu`, `container`, `gvisor`.
      */
     runtime: string,
     /**
@@ -60835,9 +60814,6 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_approve_view() !== 20205) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_approve_view");
-    }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_billing_status() !== 4162) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_billing_status");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json() !== 39250) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json");

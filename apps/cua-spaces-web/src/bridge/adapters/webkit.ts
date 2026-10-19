@@ -58,6 +58,7 @@ import { webkitSettingsOps } from "../ops/settings";
 import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
@@ -643,6 +644,7 @@ export function createWebkitAdapter(
       ? { "spaces.openStream": (target: OpArgs<"spaces.openStream">) => request<StreamTicket>("spaces.openStream", { ...target }) }
       : unsupportedStreamOps("webkit")),
     "relay.usage": () => request<RelayUsage | null>("relay.usage"),
+    "resources.get": ({ visible }) => request<ResourcesSnapshot | null>("resources.get", { visible }),
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     // Presence over the page's own video: the Mac app draws it natively.

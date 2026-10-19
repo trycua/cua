@@ -60,6 +60,7 @@ import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestI
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
@@ -75,6 +76,34 @@ const limits = list(object({ resource: str, used: num, limit: num, reason: str }
 const os = oneOf("macos", "windows", "linux", "unknown");
 
 /* ---- Spaces and machines --------------------------------------------------- */
+
+const DiskWarningShape = ref("DiskWarning", obj<DiskWarning>()({ level: oneOf("ok", "low", "critical"), free: num, total: num, threshold: num }));
+
+/** `resources.get`'s computers (CUA-1880). */
+const ComputerResourcesShape = ref(
+  "ComputerResources",
+  obj<ComputerResources>()({
+    id: str,
+    name: str,
+    online: bool,
+    sampledAtMs: num,
+    cpuCount: num,
+    cpuPercent: num,
+    loadAverage1m: num,
+    memoryTotal: num,
+    memoryUsed: num,
+    diskTotal: num,
+    diskFree: num,
+    spacesCount: num,
+    spacesRunning: num,
+    spacesCpuAllocated: num,
+    spacesMemoryAllocated: num,
+    spacesMemoryUsed: num,
+    spacesDiskBytes: num,
+    spacesDiskExact: bool,
+    warning: DiskWarningShape,
+  }),
+);
 
 const SpaceProgressShape = ref(
   "SpaceProgress",
@@ -839,6 +868,41 @@ export const OP_SHAPES: Record<OpName, Schema> = {
       upgradeUrl: nullable(str),
     }),
   ),
+  "resources.get": nullable(
+    obj<ResourcesSnapshot>()({
+      sequence: num,
+      sampledAtMs: num,
+      thisMac: ComputerResourcesShape,
+      spaces: list(
+        ref(
+          "SpaceResources",
+          obj<SpaceResources>()({
+            id: str,
+            powerState: oneOf("running", "stopped", "suspended", ""),
+            cpuAllocated: num,
+            memoryAllocated: num,
+            diskAllocated: num,
+            usage: nullable(
+              obj<GuestUsage>()({
+                cpuCount: num,
+                cpuPercent: num,
+                loadAverage1m: num,
+                memoryUsed: num,
+                memoryTotal: num,
+                memoryLimited: bool,
+                diskUsed: num,
+                diskTotal: num,
+                diskLimited: bool,
+              }),
+            ),
+            diskOnHost: nullable(obj<DiskOnHost>()({ bytes: nullable(num), allocated: num, sharesSpace: bool })),
+          }),
+        ),
+      ),
+      computers: list(ComputerResourcesShape),
+      warning: DiskWarningShape,
+    }),
+  ),
   "checklist.get": ChecklistAnswerShape,
   "checklist.send": ChecklistAnswerShape,
   "presence.join": obj<PresenceJoinInfo>()({
@@ -1224,6 +1288,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "startup.get": StartupShape,
   "startup.act": StartupShape,
   "relay.usage": OP_SHAPES["relay.usage"],
+  "resources.get": OP_SHAPES["resources.get"],
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
 };

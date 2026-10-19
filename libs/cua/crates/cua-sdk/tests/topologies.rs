@@ -622,7 +622,7 @@ async fn discovery_refusal(t: Topology) {
     match error {
         CuaError::Unauthenticated(message) => assert_eq!(
             message,
-            "Relay authentication failed. Sign in again to refresh your machines."
+            "Relay authentication failed. Sign in again to refresh your computers."
         ),
         other => panic!("unexpected discovery refusal: {other:?}"),
     }

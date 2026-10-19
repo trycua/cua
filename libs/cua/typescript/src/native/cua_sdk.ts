@@ -17416,7 +17416,7 @@ export const CuaError = (() => {
      * display, a local runtime) is not available.
      *
      * Fix: Install or start the prerequisite the message names on this
-     * machine.
+     * computer.
      */
     class HostCapabilityMissing extends UniffiError {
         /**

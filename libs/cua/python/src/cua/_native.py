@@ -21077,7 +21077,7 @@ class CuaError:  # type: ignore
         display, a local runtime) is not available.
 
         Fix: Install or start the prerequisite the message names on this
-        machine.
+        computer.
 """
         def __repr__(self):
             return "CuaError.HostCapabilityMissing({})".format(repr(str(self)))

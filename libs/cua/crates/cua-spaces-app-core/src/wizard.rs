@@ -3046,7 +3046,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         Location::Host => host_why
             .clone()
-            .unwrap_or_else(|| "Choose a machine.".to_string()),
+            .unwrap_or_else(|| "Choose a computer.".to_string()),
         Location::Local if runtime_switch.is_some() => match image.local {
             Some(LocalEngine::Container) => {
                 format!(
@@ -3360,7 +3360,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         resource_facts: if yours {
             let mut f = vec![fact_line("kind", "Kind", image.variant.label().into())];
             if let Some(o) = offer.filter(|o| !o.machine_type.is_empty()) {
-                f.push(fact_line("machine", "Machine", o.machine_type.clone()));
+                f.push(fact_line("machine", "Computer", o.machine_type.clone()));
             }
             if let Some(l) = lifetime.clone() {
                 f.push(fact_line("lifetime", "Deletes itself", l));

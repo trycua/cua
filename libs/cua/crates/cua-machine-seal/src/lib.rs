@@ -62,7 +62,7 @@ pub const MAX_PLAINTEXT_LEN: usize = 64 * 1024 * 1024;
 pub enum Error {
     /// `open` on ciphertext that does not decrypt: a tampered envelope, or
     /// the wrong recipient key.
-    #[error("the envelope does not decrypt: tampered, or sealed to a different machine key")]
+    #[error("the envelope does not decrypt: tampered, or sealed to a different computer key")]
     Tampered,
     /// `space_id` or `purpose` did not match what the envelope was sealed
     /// under (still fails decryption above; this is for callers that check

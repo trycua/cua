@@ -37238,7 +37238,7 @@ sealed class CuaException(message: String): kotlin.Exception(message) {
      * display, a local runtime) is not available.
      *
      * Fix: Install or start the prerequisite the message names on this
-     * machine.
+     * computer.
      */
         class HostCapabilityMissing(message: String) : CuaException(message)
 

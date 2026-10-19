@@ -12,7 +12,7 @@ from cua_sandbox.runtime.base import RuntimeInfo
 sandbox_module = importlib.import_module("cua_sandbox.sandbox")
 
 MESSAGE = (
-    "Cua Cloud has ended; use a local sandbox or your own machine. "
+    "Cua Cloud has ended; use a local sandbox or your own computer. "
     "See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended"
 )
 

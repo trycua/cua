@@ -1379,7 +1379,7 @@ impl Sandboxes {
             SandboxRef::Relay { .. } => Err(Error::Unsupported {
                 provider: ProviderKind::Direct,
                 op: format!(
-                    "{r}: relay machines are Spaces; open it with the Spaces API or `cua mcp` \
+                    "{r}: relay computers are Spaces; open it with the Spaces API or `cua mcp` \
                      (space {r})"
                 ),
             }),

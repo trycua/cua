@@ -276,7 +276,7 @@ fn host_name() -> String {
     std::env::var("HOSTNAME")
         .ok()
         .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| "this-machine".into())
+        .unwrap_or_else(|| "this-computer".into())
 }
 
 impl Persistent {

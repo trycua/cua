@@ -46,7 +46,7 @@ pub async fn session_token(_store: &Store) -> Result<Option<String>, CuaError> {
 pub struct LoginOptions {
     /// Do not open a browser (print the URL only).
     pub no_browser: bool,
-    /// Device code flow (for a machine without a local browser).
+    /// Device code flow (for a computer without a local browser).
     pub remote: bool,
     /// Force a flow: `pkce` / `browser` or `device` (`CUA_AUTH_FLOW`).
     pub flow: Option<String>,
@@ -77,7 +77,7 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
             } else {
                 line(
                     out,
-                    "Open the URL above in a browser on this machine to continue.",
+                    "Open the URL above in a browser on this computer to continue.",
                 );
             }
         }

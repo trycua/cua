@@ -370,11 +370,11 @@ async function checkTelemetry(page: Page, cps: Of<"telemetry">[]): Promise<numbe
   await track(page, [
     { type: "step", step: "signed_in", ok: true, identity: "maya@example.com" },
     { type: "feature", feature: "/Users/maya/secret" },
-    { type: "share", action: "share", role: "viewer", outcome: "ok", email: "grace@example.com" },
+    { type: "share", action: "share", role: "viewer", outcome: "ok", errorKind: "none", failedStage: "none", email: "grace@example.com" },
   ]);
   expect((await tracked(page)).slice(n), "only schema fields and fixed words are sent").toEqual([
     { type: "step", step: "signed_in", ok: true },
-    { type: "share", action: "share", role: "viewer", outcome: "ok" },
+    { type: "share", action: "share", role: "viewer", outcome: "ok", errorKind: "none", failedStage: "none" },
   ]);
   return cps.filter((c) => c.signals.length > 0).length;
 }

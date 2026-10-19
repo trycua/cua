@@ -55406,8 +55406,19 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          * `viewer`, `editor` or `none`.
          */role: String,
         /**
-         * `ok` or `error`.
-         */outcome: String
+         * `ok`, `error`, or `cancelled` when the confirmation prompt was
+         * dismissed.
+         */outcome: String,
+        /**
+         * Why it did not happen (`presence_denied`, `presence_cancelled`,
+         * `presence_unavailable`, `not_signed_in`, `device_not_enrolled`,
+         * `driver_unsupported`, `relay_refused`, `relay_unreachable`,
+         * `invalid_who` or `other`); `none` when it worked.
+         */errorKind: String,
+        /**
+         * Where it stopped (`request`, `presence`, `account`, `device`,
+         * `driver`, `relay` or `other`); `none` when it worked.
+         */failedStage: String
     )
     /**
      * An updater step (`cua_app_update`).
@@ -55504,7 +55515,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
         case 9: return .volumeSetup(surface: try FfiConverterString.read(from: &buf), storage: try FfiConverterString.read(from: &buf), addToFinder: try FfiConverterBool.read(from: &buf), mountMethod: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
         )
 
-        case 10: return .share(action: try FfiConverterString.read(from: &buf), role: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
+        case 10: return .share(action: try FfiConverterString.read(from: &buf), role: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), errorKind: try FfiConverterString.read(from: &buf), failedStage: try FfiConverterString.read(from: &buf)
         )
 
         case 11: return .appUpdate(action: try FfiConverterString.read(from: &buf), channel: try FfiConverterString.read(from: &buf), trigger: try FfiConverterString.read(from: &buf)
@@ -55590,11 +55601,13 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterString.write(outcome, into: &buf)
 
 
-        case let .share(action,role,outcome):
+        case let .share(action,role,outcome,errorKind,failedStage):
             writeInt(&buf, Int32(10))
             FfiConverterString.write(action, into: &buf)
             FfiConverterString.write(role, into: &buf)
             FfiConverterString.write(outcome, into: &buf)
+            FfiConverterString.write(errorKind, into: &buf)
+            FfiConverterString.write(failedStage, into: &buf)
 
 
         case let .appUpdate(action,channel,trigger):

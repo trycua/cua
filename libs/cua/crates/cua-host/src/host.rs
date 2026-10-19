@@ -689,7 +689,7 @@ pub(crate) fn hostname() -> String {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "this machine".into())
+        .unwrap_or_else(|| "this computer".into())
 }
 
 /// The name a person knows this machine by, for display and as the default
@@ -1407,7 +1407,7 @@ impl Host {
 
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
-            Error::NotFound("this machine is not set up for access (run `cua host setup`)".into())
+            Error::NotFound("this computer is not set up for access (run `cua host setup`)".into())
         })
     }
 
@@ -1525,7 +1525,7 @@ impl Host {
             && !owned_by(p, account)
         {
             return Err(Error::InvalidArgument(
-                "this machine is shared with another Cua account; remove the host setup \
+                "this computer is shared with another Cua account; remove the host setup \
                  and set it up again to share it with this one"
                     .into(),
             ));
@@ -1560,7 +1560,7 @@ impl Host {
         let mut config = self.require_config()?;
         let (Some(url), Some(id)) = (config.relay_url.clone(), config.machine_id.clone()) else {
             return Err(Error::InvalidArgument(
-                "name and allowlist live on the relay; this machine is in direct mode".into(),
+                "name and allowlist live on the relay; this computer is in direct mode".into(),
             ));
         };
         let token = tokens.access_token().await?;
@@ -1640,7 +1640,7 @@ impl Host {
         let provided = crate::provided::load_provided(&self.paths.dir)?;
         if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
-                "this machine still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
+                "this computer still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
                 provided.len(),
                 if provided.len() == 1 { "" } else { "s" },
                 provided

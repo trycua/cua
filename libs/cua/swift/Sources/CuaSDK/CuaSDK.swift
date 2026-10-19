@@ -33175,7 +33175,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * display, a local runtime) is not available.
      *
      * Fix: Install or start the prerequisite the message names on this
-     * machine.
+     * computer.
      */
     case HostCapabilityMissing(message: String)
 

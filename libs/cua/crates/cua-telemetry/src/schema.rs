@@ -458,6 +458,29 @@ pub const KEYVAULT_METHODS: &[&str] = &["os_key_store", "passphrase", "recovery_
 pub const SHARE_ACTIONS: &[&str] = &["share", "unshare", "change_role"];
 /// The role a Space is shared with.
 pub const SHARE_ROLES: &[&str] = &["viewer", "editor", "none"];
+/// Why a share, unshare or role change did not happen; `none` when it did.
+/// From the error's words, never the words themselves (CUA-1855).
+pub const SHARE_ERROR_KINDS: &[&str] = &[
+    "none",
+    // The user's confirmation (Touch ID, Windows Hello, polkit): refused,
+    // dismissed, or no prompt could be shown.
+    "presence_denied",
+    "presence_cancelled",
+    "presence_unavailable",
+    "not_signed_in",
+    "device_not_enrolled",
+    // The Space cannot be shared (its driver cannot attach to the relay).
+    "driver_unsupported",
+    "relay_refused",
+    "relay_unreachable",
+    // Not an email or account id.
+    "invalid_who",
+    "other",
+];
+/// Where a failed share stopped; `none` when it worked.
+pub const SHARE_STAGES: &[&str] = &[
+    "none", "request", "presence", "account", "device", "driver", "relay", "other",
+];
 /// Updater steps. In the product's words: `found` is update_available,
 /// `downloaded` is update_downloaded (the background download finished),
 /// `installed` is update_installed.
@@ -630,7 +653,7 @@ const AGENT_HARNESS: Prop = p(
 const AGENT_LOCATION: Prop = p(
     "location",
     Kind::Enum(LOCATIONS),
-    "Where the Space runs: local, cloud, relay (a machine of the account) or direct (added by address).",
+    "Where the Space runs: local, cloud, relay (a computer of the account) or direct (added by address).",
 );
 const AGENT_ENTRY: Prop = p(
     "entry",
@@ -1228,7 +1251,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "storage",
                 Kind::Enum(VOLUME_STORAGE),
-                "Where the files live: this machine, an S3-compatible bucket, or decide later.",
+                "Where the files live: this computer, an S3-compatible bucket, or decide later.",
             ),
             p(
                 "add_to_finder",
@@ -1284,7 +1307,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "signed_in",
                 Kind::Bool,
-                "A Cua account session is stored on this machine (no network, no keychain read).",
+                "A Cua account session is stored on this computer (no network, no keychain read).",
             ),
             p(
                 "token_state",
@@ -1302,7 +1325,7 @@ pub const EVENTS: &[EventSpec] = &[
                 "The HTTP status the relay or download answered a failure with; 0 when none.",
             ),
         ],
-        purpose: "Host Spaces adoption: machines set up for access, and by which profile.",
+        purpose: "Host Spaces adoption: computers set up for access, and by which profile.",
     },
     EventSpec {
         name: event::HOST_SPACE_PROVIDED,
@@ -1316,7 +1339,7 @@ pub const EVENTS: &[EventSpec] = &[
             OUTCOME,
             ERROR_KIND,
         ],
-        purpose: "Host Spaces use: Spaces a host machine created for the account's other devices.",
+        purpose: "Host Spaces use: Spaces a host computer created for the account's other devices.",
     },
     EventSpec {
         name: event::KEYVAULT_ACTION,
@@ -1341,7 +1364,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SHARE,
-        version: 1,
+        version: 2,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1357,8 +1380,18 @@ pub const EVENTS: &[EventSpec] = &[
                 "viewer (view-only) or editor; none for unshare.",
             ),
             OUTCOME,
+            p(
+                "error_kind",
+                Kind::Enum(SHARE_ERROR_KINDS),
+                "Why it did not happen: the confirmation was refused, dismissed or could not be shown, not signed in, device not approved, the Space cannot be shared, the relay refused or could not be reached, not an email; none when it worked. Never who.",
+            ),
+            p(
+                "failed_stage",
+                Kind::Enum(SHARE_STAGES),
+                "Where it stopped (request, presence, account, device, driver, relay); none when it worked.",
+            ),
         ],
-        purpose: "Sharing adoption, and how often Spaces are shared view-only.",
+        purpose: "Sharing adoption, how often Spaces are shared view-only, and why sharing fails.",
     },
     EventSpec {
         name: event::PRESENCE_SESSION,
@@ -1412,7 +1445,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "method",
                 Kind::Enum(ENROLL_METHODS),
-                "A fresh sign-in, an approval from an enrolled device, or a same-machine re-key.",
+                "A fresh sign-in, an approval from an enrolled device, or a same-computer re-key.",
             ),
             OUTCOME,
         ],

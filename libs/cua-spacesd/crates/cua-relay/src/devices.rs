@@ -1245,7 +1245,7 @@ impl DeviceStore {
                 AuditEvent::new("device_rekeyed")
                     .device(Some(by))
                     .subject(id.clone())
-                    .detail(format!("replaced {name} on the same machine")),
+                    .detail(format!("replaced {name} on the same computer")),
             );
         }
         replaced.into_iter().map(|(id, _)| id).collect()
@@ -1311,7 +1311,7 @@ impl DeviceStore {
                 if existing.state(now) == DeviceState::Revoked {
                     return Err(DeviceError::Forbidden(match &existing.superseded_by {
                         Some(by) => format!(
-                            "this device key was replaced by {by} on the same machine; create a new device key to enroll again"
+                            "this device key was replaced by {by} on the same computer; create a new device key to enroll again"
                         ),
                         None => {
                             "this device was revoked; create a new device key to enroll again".into()

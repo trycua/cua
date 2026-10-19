@@ -199,7 +199,7 @@ const LABELS: Record<OnboardingStep, string> = {
   agents: "AI agents",
   presentation: "Menu bar",
   drive: "Cua Volume",
-  mode: "This machine",
+  mode: "This computer",
   done: "Done",
 };
 
@@ -301,7 +301,7 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
       s.step === "done"
         ? [
             { label: "Shows in", value: s.menuBar ? "Menu bar only" : "Notch and menu bar" },
-            { label: "This machine", value: s.mode === "host" ? "Your other devices can reach it" : "Opens your other computers" },
+            { label: "This computer", value: s.mode === "host" ? "Your other devices can reach it" : "Opens your other computers" },
           ]
         : [],
     todos,

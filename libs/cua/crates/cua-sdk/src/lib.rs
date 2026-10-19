@@ -194,7 +194,7 @@ pub enum CuaError {
     /// display, a local runtime) is not available.
     ///
     /// Fix: Install or start the prerequisite the message names on this
-    /// machine.
+    /// computer.
     #[error("host capability missing: {0}")]
     HostCapabilityMissing(String),
     /// The teleport consent gate refused (or the approver declined).

@@ -31,7 +31,7 @@ function Harness({ team = null }: { team?: string | null }) {
   const { data: machines = [], setupGuide } = useMachines();
   return (
     <>
-      <ul aria-label="Machines">
+      <ul aria-label="Computers">
         {machines.map((m) => (
           <li key={m.id}>{m.name}</li>
         ))}
@@ -53,7 +53,7 @@ async function mount(adapter: DataAdapter, team: string | null = null) {
 const dialog = () => document.querySelector<HTMLElement>("[data-add-machine]")!;
 const phase = () => dialog()?.getAttribute("data-add-machine");
 
-describe("Add a machine by link or QR code", () => {
+describe("Add a computer by link or QR code", () => {
   it("makes a link on opening: QR code, link, both commands and how long it lasts", async () => {
     const { adapter, calls } = host();
     await mount(adapter);
@@ -82,7 +82,7 @@ describe("Add a machine by link or QR code", () => {
     expect(document.querySelector("[data-pairing-added]")?.textContent).toMatch(/^Added Office PC\./);
     // The machine list reads it again: the new computer is there.
     // (The page behind the dialog is inert, so not by role.)
-    await waitFor(() => expect(document.querySelector('ul[aria-label="Machines"]')?.textContent).toContain("Office PC"));
+    await waitFor(() => expect(document.querySelector('ul[aria-label="Computers"]')?.textContent).toContain("Office PC"));
     expect(screen.queryByText("Revoke link")).toBeNull();
   });
 
@@ -201,7 +201,7 @@ describe("Add a machine by link or QR code", () => {
     });
     await mount(flaky);
     await waitFor(() => expect(phase()).toBe("error"));
-    expect(screen.getByText(/This computer isn't set up for access yet\. Set it up first, then add machines\./)).toBeTruthy();
+    expect(screen.getByText(/This computer isn't set up for access yet\. Set it up first, then add computers\./)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/relay: no such device|not found:/);
     fail = false;
     fireEvent.click(screen.getByText("Try again"));
@@ -212,14 +212,14 @@ describe("Add a machine by link or QR code", () => {
   it("asks to sign in when signed out, and makes no link", async () => {
     const { adapter, calls } = host({ signedIn: false });
     await mount(adapter);
-    expect(screen.getByText(/Sign in to add a machine with a link/)).toBeTruthy();
+    expect(screen.getByText(/Sign in to add a computer with a link/)).toBeTruthy();
     expect(screen.getByText("Sign in")).toBeTruthy();
     expect(document.querySelector("[data-manual-steps]")?.tagName).toBe("DIV");
     expect(calls).toEqual([]);
   });
 
   it("makes no link on a device that is not enrolled", async () => {
-    const notice = { kind: "needs-enrollment", status: "Needs enrollment", text: "Enroll this Mac to open your machines.", actionLabel: "Enroll This Mac…" };
+    const notice = { kind: "needs-enrollment", status: "Needs enrollment", text: "Enroll this Mac to open your computers.", actionLabel: "Enroll This Mac…" };
     const { adapter, calls } = host(
       {},
       {
@@ -230,7 +230,7 @@ describe("Add a machine by link or QR code", () => {
       },
     );
     await mount(adapter);
-    await waitFor(() => expect(screen.getByText(/Enroll this Mac to open your machines\. Set the computer up by hand instead\./)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Enroll this Mac to open your computers\. Set the computer up by hand instead\./)).toBeTruthy());
     expect(calls).toEqual([]);
   });
 });

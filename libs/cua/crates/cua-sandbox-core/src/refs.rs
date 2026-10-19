@@ -217,7 +217,7 @@ impl SandboxRef {
                 "relay" if valid_machine_id(tail) => Ok(SandboxRef::Relay {
                     machine_id: tail.into(),
                 }),
-                "relay" => Err(bad("relay machine ids are [a-z0-9-]{8,64}")),
+                "relay" => Err(bad("relay computer ids are [a-z0-9-]{8,64}")),
                 _ => Err(bad("unknown location")),
             };
         }
@@ -247,7 +247,7 @@ impl SandboxRef {
             "relay" if valid_machine_id(rest) => Ok(SandboxRef::Relay {
                 machine_id: rest.into(),
             }),
-            "relay" => Err(bad("relay machine ids are [a-z0-9-]{8,64}")),
+            "relay" => Err(bad("relay computer ids are [a-z0-9-]{8,64}")),
             p if crate::provider::is_provider_location(p) && valid_name(rest) => {
                 Ok(SandboxRef::Contrib {
                     provider: p.into(),

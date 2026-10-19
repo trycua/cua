@@ -299,7 +299,7 @@ fn org_error(status: u16, body: &str) -> Error {
         return Error::Internal(format!("{TEAMS_NOT_AVAILABLE} (HTTP {status})"));
     }
     if status == 403 && code.as_deref() == Some("not_owner") {
-        return Error::PermissionDenied("Only the machine's owner can add it to a team.".into());
+        return Error::PermissionDenied("Only the computer's owner can add it to a team.".into());
     }
     http_error(status, body)
 }
@@ -1054,7 +1054,7 @@ mod tests {
         let e = org_error(403, r#"{"error":"not_owner"}"#);
         assert_eq!(
             e.to_string(),
-            "Only the machine's owner can add it to a team."
+            "Only the computer's owner can add it to a team."
         );
         assert!(is_teams_unavailable(&org_error(404, "404 page not found")));
         assert!(!is_teams_unavailable(&org_error(

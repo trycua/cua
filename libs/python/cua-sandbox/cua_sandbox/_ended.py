@@ -3,7 +3,7 @@
 from cua_sandbox._sdk import Unsupported
 
 CLOUD_ENDED = (
-    "Cua Cloud has ended; use a local sandbox or your own machine. "
+    "Cua Cloud has ended; use a local sandbox or your own computer. "
     "See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended"
 )
 

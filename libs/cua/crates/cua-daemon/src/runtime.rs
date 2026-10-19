@@ -514,7 +514,7 @@ impl Runtime {
             }
             On::Relay(id) => {
                 return Err(Error::Unsupported(format!(
-                    "relay:{id}: relay machines are Spaces; open it with the Spaces API or \
+                    "relay:{id}: relay computers are Spaces; open it with the Spaces API or \
                      `cua mcp` (space relay:{id})"
                 )));
             }

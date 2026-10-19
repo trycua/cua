@@ -216,7 +216,7 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
       const p = find(target);
       await wait(step * 2);
       if (!p.credentials?.found) {
-        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: `no ${p.title} sign-in on this machine` }] };
+        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: `no ${p.title} sign-in on this computer` }] };
       }
       const where = placeOf(p, target);
       return {
@@ -233,7 +233,7 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
     "clouds.connect": async ({ target, makeDefault }) => {
       const p = find(target);
       await wait(step * 2);
-      if (!p.credentials?.found) throw new HostError(`no ${p.title} sign-in on this machine`, "failed");
+      if (!p.credentials?.found) throw new HostError(`no ${p.title} sign-in on this computer`, "failed");
       const where = placeOf(p, target);
       p.connected = true;
       if (target.region) p.region = target.region;

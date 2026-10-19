@@ -1051,9 +1051,9 @@ pub fn activity(
         return Some(NotchActivity {
             kind: NotchActivityKind::RemoteAccess,
             label: if connected == 1 {
-                "Someone is connected to this machine".into()
+                "Someone is connected to this computer".into()
             } else {
-                format!("{connected} are connected to this machine")
+                format!("{connected} are connected to this computer")
             },
             symbol: Some(REMOTE_ACCESS_SYMBOL.into()),
             permille: None,
@@ -1824,7 +1824,7 @@ mod tests {
             "before the hotspot"
         );
         assert_eq!(a.symbol.as_deref(), Some(REMOTE_ACCESS_SYMBOL));
-        assert_eq!(a.label, "Someone is connected to this machine");
+        assert_eq!(a.label, "Someone is connected to this computer");
         // A transfer in flight still shows its progress first.
         let t = NotchTransfer {
             sent: Some(1),
@@ -1846,7 +1846,7 @@ mod tests {
         );
         assert_eq!(
             activity(&[two], false, None, None).unwrap().label,
-            "2 are connected to this machine"
+            "2 are connected to this computer"
         );
         let gone = this_machine_space(
             Some(&HostSummaryInput {

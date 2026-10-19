@@ -208,7 +208,7 @@ def resolve(
         if where != "local":
             if on is not None:
                 raise InvalidArgument(
-                    f"runtime={type(legacy).__name__}(...) runs the sandbox on this machine; "
+                    f"runtime={type(legacy).__name__}(...) runs the sandbox on this computer; "
                     f"drop on={on!r}, or pass an engine name (runtime='gvisor'/'qemu')"
                 )
             # Shipped behaviour (0.8.0): a Runtime object ran locally, even
@@ -226,7 +226,7 @@ def resolve(
     if where not in LOCATIONS:
         raise Unsupported(
             f"on={where!r}: cua-sandbox creates local sandboxes. Connect to an "
-            "existing machine with Sandbox.connect(url=...), or use the cua SDK for other "
+            "existing computer with Sandbox.connect(url=...), or use the cua SDK for other "
             "providers"
         )
 

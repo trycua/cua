@@ -194,7 +194,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::onboarding_page("welcome", s, "none"),
         events::space_wizard(s),
         events::persistent_agent(s, Some(s), Outcome::Ok, Some(s)),
-        events::share(s, s, Outcome::Ok),
+        events::share(s, s, Outcome::Ok, "none", "none"),
         events::app_update(s, s, s),
         events::device_enroll(s, Outcome::Ok),
         events::experiment(s, "sharing"),
@@ -214,7 +214,8 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::onboarding_page("volume", "completed", s).unwrap());
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
-    v.push(events::share("share", s, Outcome::Ok).unwrap());
+    v.push(events::share("share", s, Outcome::Ok, s, s).unwrap());
+    v.push(events::share("share", "viewer", Outcome::Error, s, s).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());
     v.push(events::app_update("downloaded", s, s).unwrap());
     v.push(events::device_enroll("rekey", Outcome::Ok).unwrap());
@@ -1137,15 +1138,44 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(failed.props["http_status"], 401);
     assert_eq!(failed.props["error_kind"], "unauthenticated");
     assert_eq!(
-        events::share("unshare", "editor", Outcome::Ok)
+        events::share("unshare", "editor", Outcome::Ok, "none", "none")
             .unwrap()
             .props["role"],
         "none"
     );
     assert_eq!(
-        events::share("share", "viewer", Outcome::Ok).unwrap().props["role"],
+        events::share("share", "viewer", Outcome::Ok, "none", "none")
+            .unwrap()
+            .props["role"],
         "viewer"
     );
+    // CUA-1855: why a share failed, in fixed words; a dismissed prompt is
+    // `cancelled`, an unknown kind `other`, and an ok never carries one.
+    let dismissed = events::share(
+        "share",
+        "viewer",
+        Outcome::Cancelled,
+        "presence_cancelled",
+        "presence",
+    )
+    .unwrap();
+    assert_eq!(dismissed.props["outcome"], "cancelled");
+    assert_eq!(dismissed.props["error_kind"], "presence_cancelled");
+    assert_eq!(dismissed.props["failed_stage"], "presence");
+    let unknown =
+        events::share("share", "editor", Outcome::Error, "grace@example.com", "x").unwrap();
+    assert_eq!(unknown.props["error_kind"], "other");
+    assert_eq!(unknown.props["failed_stage"], "other");
+    let ok = events::share(
+        "share",
+        "editor",
+        Outcome::Ok,
+        "presence_denied",
+        "presence",
+    )
+    .unwrap();
+    assert_eq!(ok.props["error_kind"], "none");
+    assert_eq!(ok.props["failed_stage"], "none");
     assert_eq!(
         events::persistent_agent("create", Some("hermes"), Outcome::Ok, None)
             .unwrap()

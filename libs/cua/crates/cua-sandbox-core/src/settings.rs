@@ -327,7 +327,7 @@ impl Settings {
         let (on, src) = self.parsed(KEYS[0], On::parse)?;
         if on.is_existing_machine() {
             return Err(SettingsError(format!(
-                "default.on ({src}): {on} names one machine; the default location is local, cloud or a provider"
+                "default.on ({src}): {on} names one computer; the default location is local, cloud or a provider"
             )));
         }
         Ok((on, src))
@@ -356,7 +356,7 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             }
             if on.is_existing_machine() {
                 return Err(SettingsError(format!(
-                    "default.on: {on} names one machine; use local, cloud or a provider"
+                    "default.on: {on} names one computer; use local, cloud or a provider"
                 )));
             }
             on.to_string()
@@ -587,7 +587,7 @@ mod tests {
         let e = s
             .set(key("default.on").unwrap(), "direct:1.2.3.4:3211")
             .unwrap_err();
-        assert!(e.0.contains("names one machine"), "{e}");
+        assert!(e.0.contains("names one computer"), "{e}");
         assert!(s.set(key("default.kind").unwrap(), "docker").is_err());
         assert_eq!(
             s.set(key("runtime.linux").unwrap(), "builtin").unwrap(),

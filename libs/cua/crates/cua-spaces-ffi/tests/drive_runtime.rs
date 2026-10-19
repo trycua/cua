@@ -57,7 +57,7 @@ async fn storage_mount_sync_and_cache_answer_through_the_sdk() {
     );
     assert_eq!(m.volume_name, "Cua Volume");
     let s = spaces.volume_sync_status().await.unwrap();
-    assert_eq!(s.feed, "off", "a store on this machine");
+    assert_eq!(s.feed, "off", "a store on this computer");
     assert!(s.devices.iter().any(|d| d.this_device));
     spaces
         .volume_write("public/a.md".into(), b"x".to_vec(), None, false, None)

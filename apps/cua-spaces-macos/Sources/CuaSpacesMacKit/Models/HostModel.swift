@@ -61,7 +61,7 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         current = HostStatus(
             configured: true, mode: request.mode, relayUrl: relay ? (request.relayUrl ?? "https://relay.cua.ai") : nil,
             directUrl: relay ? nil : "http://\(request.direct ?? "")", envTokenPath: nil, machineId: "0123abcd4567",
-            name: request.name ?? "This machine", sharing: true, serviceInstalled: true, serviceRunning: true,
+            name: request.name ?? "This computer", sharing: true, serviceInstalled: true, serviceRunning: true,
             serviceKind: "launchd", online: true, clients: [], allow: request.allow ?? [],
             permissions: [
                 HostPermission(id: "screen-recording", title: "Screen Recording",
@@ -125,7 +125,7 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         calls.append("resume:\(account)")
         guard current.pausedSignedOut else { return current }
         guard account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame else {
-            throw CuaError.InvalidArgument(message: "this machine is shared with another Cua account")
+            throw CuaError.InvalidArgument(message: "this computer is shared with another Cua account")
         }
         current.pausedSignedOut = false
         current.sharing = true

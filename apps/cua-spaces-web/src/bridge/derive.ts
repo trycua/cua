@@ -530,20 +530,20 @@ export function hostPanelFromState(core: CoreClient, state: object | null, statu
 }
 
 function fallbackPanel(s: HostStatus | null): HostPanelView {
-  const base: HostPanelView = { title: "This machine", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
+  const base: HostPanelView = { title: "This computer", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
   if (!s) return base;
   if (!s.configured) {
     return { ...base, summary: "Your other devices can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
   const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
-  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this machine’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
+  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this computer’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
   return {
     ...base,
     summary,
     configured: true,
     facts: [
-      { label: "Name", value: s.name || "This machine" },
+      { label: "Name", value: s.name || "This computer" },
       { label: "Access", value: access },
       { label: "Service", value: `${s.service.kind} · ${s.service.running ? "running" : s.service.installed ? "stopped" : "not installed"}` },
     ],

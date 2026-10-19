@@ -135,7 +135,7 @@ impl Spaces {
             .cloned()
             .ok_or_else(|| {
                 Error::invalid(format!(
-                    "{word} sandbox {} did not join the relay (no relay machine)",
+                    "{word} sandbox {} did not join the relay (no relay computer)",
                     sandbox.name()
                 ))
             })?;

@@ -11913,7 +11913,7 @@ inner: {surface: string; storage: string; addToFinder: boolean; mountMethod: str
     type Share__interface = {
         tag: AppTelemetrySignal_Tags.Share;
         inner:
-Readonly<{action: string; role: string; outcome: string}>
+Readonly<{action: string; role: string; outcome: string; errorKind: string; failedStage: string}>
     };
     /**
      * A Space was shared, unshared or its role changed (`cua_share`).
@@ -11926,15 +11926,15 @@ Readonly<{action: string; role: string; outcome: string}>
         readonly [uniffiTypeNameSymbol] = "AppTelemetrySignal";
         readonly tag = AppTelemetrySignal_Tags.Share;
         readonly inner:
-Readonly<{action: string; role: string; outcome: string}>;
+Readonly<{action: string; role: string; outcome: string; errorKind: string; failedStage: string}>;
         constructor(
-inner: {action: string; role: string; outcome: string }) {
+inner: {action: string; role: string; outcome: string; errorKind: string; failedStage: string }) {
             super("AppTelemetrySignal", "Share");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {action: string; role: string; outcome: string }): Share_ {
+inner: {action: string; role: string; outcome: string; errorKind: string; failedStage: string }): Share_ {
             return new Share_(inner);
         }
 
@@ -12126,7 +12126,7 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                 case 7: return new AppTelemetrySignal.SpaceCreate({location: FfiConverterString.read(from), guestOs: FfiConverterString.read(from), kind: FfiConverterString.read(from), outcome: FfiConverterString.read(from), failedPhase: FfiConverterString.read(from), stalled: FfiConverterBool.read(from), elapsedMs: FfiConverterUInt64.read(from), gpu: FfiConverterBool.read(from), errorVariant: FfiConverterString.read(from) });
                 case 8: return new AppTelemetrySignal.SpaceCreateStarted({location: FfiConverterString.read(from), guestOs: FfiConverterString.read(from), kind: FfiConverterString.read(from), gpu: FfiConverterBool.read(from) });
                 case 9: return new AppTelemetrySignal.VolumeSetup({surface: FfiConverterString.read(from), storage: FfiConverterString.read(from), addToFinder: FfiConverterBool.read(from), mountMethod: FfiConverterString.read(from), outcome: FfiConverterString.read(from) });
-                case 10: return new AppTelemetrySignal.Share({action: FfiConverterString.read(from), role: FfiConverterString.read(from), outcome: FfiConverterString.read(from) });
+                case 10: return new AppTelemetrySignal.Share({action: FfiConverterString.read(from), role: FfiConverterString.read(from), outcome: FfiConverterString.read(from), errorKind: FfiConverterString.read(from), failedStage: FfiConverterString.read(from) });
                 case 11: return new AppTelemetrySignal.AppUpdate({action: FfiConverterString.read(from), channel: FfiConverterString.read(from), trigger: FfiConverterString.read(from) });
                 case 12: return new AppTelemetrySignal.DeviceEnroll({method: FfiConverterString.read(from), outcome: FfiConverterString.read(from) });
                 case 13: return new AppTelemetrySignal.Experiment({action: FfiConverterString.read(from), experiment: FfiConverterString.read(from) });
@@ -12214,6 +12214,8 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                     FfiConverterString.write(inner.action, into);
                     FfiConverterString.write(inner.role, into);
                     FfiConverterString.write(inner.outcome, into);
+                    FfiConverterString.write(inner.errorKind, into);
+                    FfiConverterString.write(inner.failedStage, into);
                     return;
                 }
                 case AppTelemetrySignal_Tags.AppUpdate: {
@@ -12329,6 +12331,8 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                     size += FfiConverterString.allocationSize(inner.action);
                     size += FfiConverterString.allocationSize(inner.role);
                     size += FfiConverterString.allocationSize(inner.outcome);
+                    size += FfiConverterString.allocationSize(inner.errorKind);
+                    size += FfiConverterString.allocationSize(inner.failedStage);
                     return size;
                 }
                 case AppTelemetrySignal_Tags.AppUpdate: {

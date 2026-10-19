@@ -66,7 +66,7 @@ impl OnboardingStep {
             OnboardingStep::Signin => "Sign in",
             OnboardingStep::Agents => "AI agents",
             OnboardingStep::Drive => "Cua Volume",
-            OnboardingStep::Mode => "This machine",
+            OnboardingStep::Mode => "This computer",
             OnboardingStep::Done => "Done",
         }
     }
@@ -1349,7 +1349,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
                 warning: None,
             },
             Fact {
-                label: "This machine".into(),
+                label: "This computer".into(),
                 value: if s.mode == Some(OnboardingMode::Host) {
                     "Your other devices can reach it"
                 } else {
@@ -1586,7 +1586,7 @@ mod tests {
         assert!(
             v.summary
                 .iter()
-                .any(|f| f.label == "This machine" && f.value == "Opens your other computers")
+                .any(|f| f.label == "This computer" && f.value == "Opens your other computers")
         );
         // Sign in from Done, then back to Done.
         let at = reduce(

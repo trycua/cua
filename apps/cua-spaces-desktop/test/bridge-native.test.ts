@@ -247,7 +247,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const row = model.spaces.find((s) => s.id === "pending:mac")!;
     expect(row.progress).toMatchObject({ label: "Downloading macOS (first time only)…", transfer: "12.4 of 30.0 GB · 85 MB/s · about 4 min" });
     expect(row.progress!.permille).toBeGreaterThan(10);
-    expect(row.detail).toBe("Another machine · Downloading macOS (first time only)…");
+    expect(row.detail).toBe("Another computer · Downloading macOS (first time only)…");
     release();
     await create;
   });
@@ -479,7 +479,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const wait = () => new Promise((r) => setTimeout(r, 80));
     try {
       backend.rows = async () => {
-        throw sdkError("Unauthenticated", "Relay authentication failed. Sign in again to refresh your machines.");
+        throw sdkError("Unauthenticated", "Relay authentication failed. Sign in again to refresh your computers.");
       };
       await wait();
       await model.refresh();

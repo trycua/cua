@@ -51,7 +51,7 @@ export type TelemetrySignal =
     }
   | { type: "space-create-started"; location: string; guestOs: string; kind: string; gpu: boolean }
   | { type: "volume-setup"; surface: string; storage: string; addToFinder: boolean; mountMethod: string; outcome: string }
-  | { type: "share"; action: string; role: string; outcome: string }
+  | { type: "share"; action: string; role: string; outcome: string; errorKind: string; failedStage: string }
   | { type: "app-update"; action: string; channel: string; trigger: string }
   | { type: "device-enroll"; method: string; outcome: string }
   | { type: "experiment"; action: string; experiment: string }
@@ -133,7 +133,7 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
   },
   "space-create-started": { location: "word", guestOs: "word", kind: "word", gpu: "flag" },
   "volume-setup": { surface: "word", storage: "word", addToFinder: "flag", mountMethod: "word", outcome: "word" },
-  share: { action: "word", role: "word", outcome: "word" },
+  share: { action: "word", role: "word", outcome: "word", errorKind: "word", failedStage: "word" },
   "app-update": { action: "word", channel: "word", trigger: "word" },
   "device-enroll": { method: "word", outcome: "word" },
   experiment: { action: "word", experiment: "word" },

@@ -27,7 +27,7 @@ struct MachinesPageView: View {
                 .listStyle(.inset)
                 .accessibilityIdentifier("machines-list")
                 if rows.count <= 1 {
-                    Text("Only this machine so far. Add another to run Spaces on it from here.")
+                    Text("Only this computer so far. Add another to run Spaces on it from here.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .padding(12)
@@ -48,7 +48,7 @@ struct MachinesPageView: View {
                     }
                 } else {
                     ContentUnavailableView {
-                        Label("No machines yet", systemImage: "server.rack")
+                        Label("No computers yet", systemImage: "server.rack")
                     } description: {
                         Text("Set up a Mac, Linux or Windows computer for access and it shows here, ready to run Spaces.")
                     }
@@ -56,15 +56,15 @@ struct MachinesPageView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle("Machines")
+        .navigationTitle("Computers")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await model.openAddMachine() }
                 } label: {
-                    Label("Add a machine", systemImage: "plus.rectangle.on.rectangle")
+                    Label("Add a computer", systemImage: "plus.rectangle.on.rectangle")
                 }
-                .help("Add a machine")
+                .help("Add a computer")
                 .accessibilityIdentifier("machines-add")
             }
         }
@@ -101,7 +101,7 @@ struct MachineRowView: View {
                 HStack(spacing: 4) {
                     Text(row.name).lineLimit(1)
                     if row.current {
-                        Text("(this machine)").foregroundStyle(.secondary)
+                        Text("(this computer)").foregroundStyle(.secondary)
                     }
                 }
                 Text(status)

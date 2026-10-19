@@ -2191,7 +2191,9 @@ struct ParityTests {
         case let .volumeSetup(surface, storage, addToFinder, mountMethod, outcome):
             return ["type": "volume-setup", "surface": surface, "storage": storage, "addToFinder": addToFinder,
                     "mountMethod": mountMethod, "outcome": outcome]
-        case let .share(action, role, outcome): return ["type": "share", "action": action, "role": role, "outcome": outcome]
+        case let .share(action, role, outcome, errorKind, failedStage):
+            return ["type": "share", "action": action, "role": role, "outcome": outcome,
+                    "errorKind": errorKind, "failedStage": failedStage]
         case let .appUpdate(action, channel, trigger):
             return ["type": "app-update", "action": action, "channel": channel, "trigger": trigger]
         case let .deviceEnroll(method, outcome): return ["type": "device-enroll", "method": method, "outcome": outcome]

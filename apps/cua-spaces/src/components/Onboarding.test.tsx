@@ -24,7 +24,7 @@ describe("Onboarding", () => {
     render(<Onboarding host={host} onDone={onDone} />);
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(screen.getByRole("radio", { name: "Just use this Mac to open my other computers" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByTestId("mode-later")).toHaveTextContent("This machine");
+    expect(screen.getByTestId("mode-later")).toHaveTextContent("This computer");
     // Choosing a card only selects it.
     fireEvent.click(screen.getByRole("radio", { name: "Let my other devices reach this Mac" }));
     expect(onDone).not.toHaveBeenCalled();

@@ -24,7 +24,7 @@ use std::path::Path;
 #[derive(Subcommand, Debug, Clone)]
 pub enum TeamCmd {
     /// Create a team; you are its owner. Buy Teams for it at app.cua.ai
-    /// to add machines.
+    /// to add computers.
     #[command(after_help = "Examples:
   cua team create \"AIGIS\"")]
     Create {
@@ -39,7 +39,7 @@ pub enum TeamCmd {
   cua team ls --json"
     )]
     Ls,
-    /// A team: plan, members, machines, open invites and devices.
+    /// A team: plan, members, computers, open invites and devices.
     #[command(after_help = "Examples:
   cua team show AIGIS")]
     Show {
@@ -96,14 +96,14 @@ pub enum TeamCmd {
         #[arg(value_parser = ["member", "admin"])]
         role: String,
     },
-    /// Member devices and whether they may open team machines.
+    /// Member devices and whether they may open team computers.
     #[command(after_help = "Examples:
   cua team devices AIGIS")]
     Devices {
         /// Team id, alias or name.
         team: String,
     },
-    /// Approve a member device so it can open team machines.
+    /// Approve a member device so it can open team computers.
     #[command(after_help = "Examples:
   cua team approve AIGIS dev_0123456789abcdef01234567")]
     Approve {
@@ -112,7 +112,7 @@ pub enum TeamCmd {
         /// Device id (`cua team devices`).
         device: String,
     },
-    /// Decline a member device (it can no longer open team machines).
+    /// Decline a member device (it can no longer open team computers).
     #[command(after_help = "Examples:
   cua team deny AIGIS dev_0123456789abcdef01234567")]
     Deny {
@@ -128,9 +128,9 @@ pub enum TeamCmd {
         /// Team id, alias or name.
         team: String,
     },
-    /// Make a Space (or a machine you host) a team machine: every member
+    /// Make a Space (or a computer you host) a team computer: every member
     /// and their agents see it and can open it. Macs, Linux and Windows
-    /// machines all can. Each Space is added on its own: adding a host does
+    /// computers all can. Each Space is added on its own: adding a host does
     /// not add the Spaces it provides.
     #[command(after_help = "Examples:
   cua team add-machine AIGIS local:build-box
@@ -138,19 +138,20 @@ pub enum TeamCmd {
     AddMachine {
         /// Team id, alias or name.
         team: String,
-        /// Space id or name (`relay:<id>` for a machine you host).
+        /// Space id or name (`relay:<id>` for a computer you host).
         space: String,
         /// Confirm without a prompt.
         #[arg(long)]
         yes: bool,
     },
-    /// Take a machine off the team.
+    /// Take a computer off the team.
     #[command(after_help = "Examples:
   cua team remove-machine AIGIS relay:0123abcd4567ef89")]
     RemoveMachine {
         /// Team id, alias or name.
         team: String,
-        /// The machine (`relay:<id>` or its id, as `cua team show` lists it).
+        /// The computer (`relay:<id>` or its id, as `cua team show` lists it).
+        #[arg(value_name = "COMPUTER")]
         machine: String,
     },
     /// The team's audit log. Audit export is coming soon; for now see the
@@ -164,7 +165,7 @@ pub enum TeamCmd {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
-    /// Delete a team (owner; cancel its subscription first). Its machines
+    /// Delete a team (owner; cancel its subscription first). Its computers
     /// stay yours.
     #[command(after_help = "Examples:
   cua team delete AIGIS --yes")]
@@ -331,7 +332,7 @@ pub async fn run_with(
                 );
                 line(
                     out,
-                    "  buy Teams for it at app.cua.ai (team machines and device approval need it)",
+                    "  buy Teams for it at app.cua.ai (team computers and device approval need it)",
                 );
                 line(out, format!("  cua team invite {} <email>", t.id));
                 line(out, format!("  cua team add-machine {} <space>", t.id));
@@ -361,7 +362,7 @@ pub async fn run_with(
                         if o.has("team_machines") {
                             ""
                         } else {
-                            "  (no team machines: buy Teams at app.cua.ai)"
+                            "  (no team computers: buy Teams at app.cua.ai)"
                         }
                     ),
                 );
@@ -414,7 +415,7 @@ pub async fn run_with(
                     ),
                 );
             }
-            line(out, format!("Machines ({}):", machines.len()));
+            line(out, format!("Computers ({}):", machines.len()));
             if machines.is_empty() {
                 line(
                     out,
@@ -502,7 +503,7 @@ pub async fn run_with(
             if !json {
                 line(
                     out,
-                    format!("Removed {who}: their open sessions on team machines end."),
+                    format!("Removed {who}: their open sessions on team computers end."),
                 );
             }
         }
@@ -558,7 +559,7 @@ pub async fn run_with(
             } else {
                 line(
                     out,
-                    format!("relay:{m} is no longer a machine of {}.", org.label()),
+                    format!("relay:{m} is no longer a computer of {}.", org.label()),
                 );
             }
         }
@@ -566,7 +567,7 @@ pub async fn run_with(
         TeamCmd::Delete { yes, .. } => {
             if !yes
                 && !confirm(&format!(
-                    "Delete team {}? Members lose its machines.",
+                    "Delete team {}? Members lose its computers.",
                     org.label()
                 ))
             {
@@ -633,7 +634,7 @@ async fn decide(
         line(
             out,
             format!(
-                "Approved {} ({}): it can open the team's machines.",
+                "Approved {} ({}): it can open the team's computers.",
                 d.device_id, d.sub
             ),
         );

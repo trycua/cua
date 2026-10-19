@@ -571,7 +571,7 @@ const PATH_AX: &str = "ax";
 const PATH_KEY_EVENTS: &str = "key_events";
 const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 
-// The daemon transport has a 120-second request deadline. Character synthesis
+// The daemon transport has a 150-second reply deadline. Character synthesis
 // is synchronous and costs at least one 8ms key-down gap plus either the
 // requested delay or an 8ms key-up gap per character. Keep the complete
 // scheduled synthesis sleeps + read-back estimate within 100 seconds, reserving

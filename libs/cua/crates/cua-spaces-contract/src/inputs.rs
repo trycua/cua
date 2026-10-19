@@ -137,8 +137,8 @@ pub struct CreateSpace {
     /// (`ghcr.io/trycua/linux:24.04`), whose variant follows the kind.
     #[serde(default)]
     pub image: Option<String>,
-    /// Where it runs: `local` (this computer, free), `cloud` (Cua cloud,
-    /// metered), or `host:<computer>`: one of the user's own computers that
+    /// Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal` (your own
+    /// cloud account, billed there), or `host:<computer>`: one of the user's own computers that
     /// provides Spaces (`cua host setup --provide-spaces` on it), named by
     /// id or by words from its name ("host:spare mac mini" matches "Mac
     /// mini (spare)" or `dillons-mac-mini`). Default: the user's default

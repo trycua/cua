@@ -24,7 +24,7 @@ Driver SDK:
 pip install 'cua-sandbox[driver]'
 ```
 
-The `driver` extra pins `cua-driver==0.28.2`, which provides the typed-window API
+The `driver` extra pins `cua-driver==0.36.0`, which provides the typed-window API
 and the remote channel bridge. It requires that version to be published for your
 platform.
 

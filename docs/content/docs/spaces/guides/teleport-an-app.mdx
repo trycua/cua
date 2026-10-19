@@ -1,12 +1,12 @@
 ---
 title: Teleport an app
-description: 'Bring an app from this machine into a Space: install it there, open your files in it, or move its signed-in state, with a consent screen for everything that leaves.'
+description: 'Bring an app from this computer into a Space: install it there, open your files in it, or move its signed-in state, with a consent screen for everything that leaves.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-**Teleport an app** lists every app installed on this machine and says what
+**Teleport an app** lists every app installed on this computer and says what
 teleport can do with each one in a Space:
 
 | Level | What happens in the Space | Moves |
@@ -33,9 +33,9 @@ the entry's `sensitive_groups` and `TeleportPlanOptions.sensitive_groups`.
 
 Chrome (and Chromium) encrypts cookies and saved passwords at rest with a
 per-machine **Safe Storage** key held in this Mac's login Keychain, so they
-cannot simply be copied to another machine. When **Keep me signed in** is
+cannot simply be copied to another computer. When **Keep me signed in** is
 checked, teleport decrypts the cookies here (the OS asks you to allow that
-Keychain read) and carries the decrypted values, not the source machine's
+Keychain read) and carries the decrypted values, not the source computer's
 key; the Space re-encrypts them under its own Safe Storage key before Chrome
 ever reads them. The source's key never leaves this Mac.
 

@@ -1,6 +1,6 @@
 ---
 title: Create a Space
-description: 'Create a Space on a computer you own from the app, the CLI or code: any image, progress, cancel, GPUs, adding an existing machine by address, then list, delete or remove it.'
+description: 'Create a Space on a computer you own from the app, the CLI or code: any image, progress, cancel, GPUs, adding an existing computer by address, then list, delete or remove it.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -21,9 +21,9 @@ whole computer first, see [Add a computer](/spaces/guides/add-a-computer).
 
 If the create fails, see [Troubleshoot](/spaces/guides/troubleshoot).
 
-## Add an existing machine by address
+## Add an existing computer by address
 
-Choose **Connect by address** in New Space, or register a machine from code.
+Choose **Connect by address** in New Space, or register a computer from code.
 This example starts the canonical Linux image with a token:
 
 ```bash skip="no-runner"
@@ -123,7 +123,7 @@ result = await space.call_tool("add", '{"a": 2, "b": 3}', "mcp", None)
 | Lifecycle, declared services, tunnels, public URLs, `list_tools` / `call_tool` with `service` | `bash`, files, streaming, presence, teleport, agent runs, the `driver` tool registry |
 
 Spacesd features on an image without it fail with `CapabilityMissing`. The
-canonical images and machines set up with `cua host setup` run cua-spacesd.
+canonical images and computers set up with `cua host setup` run cua-spacesd.
 
 <Callout type="info">
   In the cloud, `command` and `env` work on container and VM images alike.
@@ -182,7 +182,7 @@ Sandboxes: `await sandboxes.cancel_create(name)` returns what was removed, or
 
 | Removed | Kept |
 |---|---|
-| The VM or container and its disks, the cloud claim, the relay machine, the registry entry, the create's journal | Anything that existed before the create |
+| The VM or container and its disks, the cloud claim, the relay computer, the registry entry, the create's journal | Anything that existed before the create |
 | Partial downloads | Finished image layers in the engine's cache (Docker's; Lume's when its cache is on), so the next create resumes |
 
 A Lume without `POST /lume/pull/cancel` cannot stop a pull: the create still
@@ -222,7 +222,7 @@ if cua set it. Metal apps in the guest may still need the per-workload shim:
 cua spaces ls
 ```
 
-Lists registered Spaces and, when you are signed in, your machines on the
+Lists registered Spaces and, when you are signed in, your computers on the
 relay (`relay:<machine-id>`, no `add` needed). Register or forget one from a
 shell:
 

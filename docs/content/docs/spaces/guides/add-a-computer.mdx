@@ -6,7 +6,7 @@ description: 'Connect another Mac, Windows or Linux computer you own to Cua Spac
 import { Callout } from 'fumadocs-ui/components/callout';
 
 A computer you add runs Spaces for you. Once it is added, it shows up in
-**Machines** on all your devices, your agents can create Spaces on it, and you
+**Computers** on all your devices, your agents can create Spaces on it, and you
 can open its desktop from anywhere, even when nobody is sitting at it. Cua
 doesn't rent computers: add a Mac on your desk, a spare box in the office, or a
 VM in your own cloud account.
@@ -17,7 +17,7 @@ VM in your own cloud account.
 
 You need Cua Spaces on the computer you are adding, or its install command.
 
-1. In Cua Spaces, open **Machines** and press **Add a machine**. You can also
+1. In Cua Spaces, open **Computers** and press **Add a computer**. You can also
    find it in the Getting Started checklist and the command palette.
 2. If you belong to a team, choose who the computer is for next to **Add it for**:
    **Just me** or the team. See [Team computers](/spaces/guides/teams#team-computers).
@@ -26,7 +26,7 @@ You need Cua Spaces on the computer you are adding, or its install command.
    - Scan the QR code with its camera.
    - Run the install command in its terminal. Choose **macOS / Linux** or
      **Windows (preview)** in the dialog to get the right command.
-4. If Cua Spaces is already on that computer, open **Machines** there, press
+4. If Cua Spaces is already on that computer, open **Computers** there, press
    **Join with a code** and paste the code. The app asks before it joins.
 5. Watch the dialog. It says "Waiting for the computer..." and then "Added", and
    the computer appears in your list.
@@ -47,7 +47,7 @@ If you can't use the link, set the computer up yourself:
 1. Install Cua Spaces on it. See [Install](/spaces/guides/install).
 2. Sign in with the same account you use here. A computer joins the account it
    is set up with.
-3. Open **This machine**, choose how to use it, and press **Set up for access**.
+3. Open **This computer**, choose how to use it, and press **Set up for access**.
 
 Or run this in a terminal on that computer:
 
@@ -61,7 +61,7 @@ forwarding and no token to copy. Your other devices, once
 [enrolled](#reach-it-from-your-other-devices), then see the computer as
 `relay:<machine-id>` in `cua spaces ls` and in the app.
 
-The computer keeps only its own machine token. If it is not signed in, setup
+The computer keeps only its own token. If it is not signed in, setup
 signs you in for that one command and stores no session, so a dedicated host
 holds no account credentials. The token lets the computer serve itself and stop
 sharing. It can't list or reach your other computers, change who the computer is
@@ -70,7 +70,7 @@ and rotates the token.
 
 | Option | Effect |
 |--------|--------|
-| `--remote` | When sign-in is needed, print a device code to approve in a browser on another machine (for example over SSH). The account session is not saved. Cannot be combined with `--direct`. |
+| `--remote` | When sign-in is needed, print a device code to approve in a browser on another computer (for example over SSH). The account session is not saved. Cannot be combined with `--direct`. |
 | `--direct ip:port` | Serve on your LAN (or a forwarded port) with a local env token instead of the relay. No account needed. |
 | `--relay URL` | Use a different relay (`CUA_RELAY_URL`). The default is `https://relay.cua.ai`. |
 | `--name NAME` | Display name (default: host name). |
@@ -169,7 +169,7 @@ cua host remove     # unregister, uninstall the service, delete ~/.cua/host
 `cua host stop` turns sharing off locally first, so it holds even when the relay
 is unreachable. In direct mode, `cua host status` prints the URL and the path of
 the env token. Add the computer elsewhere with
-[`spaces.add(url, token)`](/spaces/guides/add-a-space#add-an-existing-machine-by-address).
+[`spaces.add(url, token)`](/spaces/guides/add-a-space#add-an-existing-computer-by-address).
 
 Uninstalling the app turns sharing off too. On Linux, `sudo apt remove cua-spaces`
 (and `purge`) removes the computer, and the Spaces it provides, from the relay,
@@ -217,7 +217,7 @@ cua host config --desktop on --provide-spaces on   # share the desktop too
 cua host config --max-spaces 6                     # at most 6 Spaces at once (default 4)
 ```
 
-The app's **This machine** page has the same two switches, the Spaces the
+The app's **This computer** page has the same two switches, the Spaces the
 computer provides, and every remote create and delete.
 
 ### Over ssh or Tailscale
@@ -395,7 +395,7 @@ restarts, the Mac opens the same port again.
 
 | What you see | What to do |
 |---|---|
-| "That code didn't work" | A code works once and expires. Make a new link in **Add a machine**. |
+| "That code didn't work" | A code works once and expires. Make a new link in **Add a computer**. |
 | "This device isn't enrolled yet, so it can't make a link." | Enroll this device in **Settings, Devices**, or use `cua host setup` on the other computer. |
 | The computer never appears | On that computer, run `cua host status`. It shows the service state and any missing permission. |
 | The computer shows **Offline** | It is off, asleep or disconnected. Wake it or reconnect it, then run `cua host status` on it. |

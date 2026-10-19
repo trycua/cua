@@ -60,9 +60,9 @@ Sharing uses the same relay and allowlist as an
 
 - A host (`relay:<id>` from `cua host setup`) is shared directly.
 - Any other Space is published on the relay on its first share. The owner's
-  account registers a machine for it, and the Space's own driver dials out
+  account registers a computer for it, and the Space's own driver dials out
   over WSS, so no inbound port opens.
-- The relay keeps two lists per machine: `allow` (editors) and `viewers`.
+- The relay keeps two lists per computer: `allow` (editors) and `viewers`.
 - Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/add-a-computer#reach-it-from-your-other-devices).
 - Removing someone, or changing their role, cuts their open streams at once.
 - A team share works differently. The Space goes on the team's list of
@@ -124,7 +124,7 @@ tools are `relay_register_space` and `relay_unregister_space`.
 | Space | Shareable | Why |
 |---|---|---|
 | Host (`relay:<id>`) | yes | Already on the relay. |
-| Local container or VM | yes, while this machine runs it | Its driver dials the relay. Suspending it disconnects everyone. |
+| Local container or VM | yes, while this computer runs it | Its driver dials the relay. Suspending it disconnects everyone. |
 | In your own cloud (AWS, Google Cloud, Modal) | yes | Its driver dials the relay from the cloud. |
 | Added by address (`direct:`) | yes, if its driver supports `relay_attach` | Older drivers report `capability_missing`. |
 | A Space shared with you | no | Only the owner can share (`permission_denied`). |

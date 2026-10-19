@@ -25,8 +25,8 @@ bug in this page: tell us.
   (`libs/cua-spacesd/crates/cua-relay/README.md` in the cua repository)
   for the exact claims and how they are enforced in code.
 - A compromised relay process, relay host, or a memory dump of either, is
-  equivalent to a compromised session for every machine currently routed
-  through it: it can mint assertions the machines still trust, and read
+  equivalent to a compromised session for every computer currently routed
+  through it: it can mint assertions the computers still trust, and read
   whatever crosses it meanwhile.
 
 ## The mesh (beta, opt-in)
@@ -35,7 +35,7 @@ bug in this page: tell us.
 off by default. When you turn them on, a `relay:` Space no longer goes through
 the HTTPS path, and the relay forwards only ciphertext it cannot read or change.
 Everything in the next sections describes the HTTPS path, which stays in use for
-everything else: the browser viewer, web-hosted agents, machines and devices
+everything else: the browser viewer, web-hosted agents, computers and devices
 without the mesh, and `prefer` when the mesh is not available.
 
 ## What crosses the relay
@@ -51,7 +51,7 @@ without the mesh, and `prefer` when the mesh is not available.
 
 ## Sealed delivery: where it stands
 
-We seal teleport secrets end to end to the destination machine's own key, so
+We seal teleport secrets end to end to the destination computer's own key, so
 the relay forwards only ciphertext for a sealed delivery. The construction:
 an ephemeral X25519 key per delivery, HKDF-SHA256, XChaCha20Poly1305, bound
 to the Space id, a purpose string and a timestamp, with replay rejection
@@ -85,27 +85,27 @@ path, so there is nothing to seal against.
 ## Other hardening already shipped
 
 - **Device enrollment with MFA for new devices.** Re-signing in enrolls only
-  your own machine (a re-key, or your account's first device). A brand-new
+  your own computer (a re-key, or your account's first device). A brand-new
   device on an account that already has an enrolled device needs an approval
   from an enrolled device, or a sign-in whose token itself proves a second
   factor. A verified email alone is not enough.
-- **New machines are flagged.** A machine registered without an enrolled
+- **New computers are flagged.** A computer registered without an enrolled
   device's signature or MFA is marked unconfirmed until an enrolled device
   vouches for it.
-- **A separate origin for machine content.** Machines no longer render as
+- **A separate origin for computer content.** Computers no longer render as
   HTML, register a Service Worker, or set cookies on the relay's own
   origin outside the one known viewer path; a fully separate registrable
-  domain for machine content is designed and partly implemented in code,
+  domain for computer content is designed and partly implemented in code,
   pending a DNS/TLS rollout.
 - **Bounded relay memory.** A per-machine cap on buffered bytes and streams,
-  plus a relay-wide budget with backpressure, so one machine (or one
+  plus a relay-wide budget with backpressure, so one computer (or one
   account's worth of them) with slow-reading clients cannot take down every
-  other machine's connection.
+  other computer's connection.
 - **A tamper-evident, exportable audit log**, hash-chained like the
   Keyvault's own, with `GET /v1/audit?format=jsonl` for export to your own
   SIEM or backup.
 - **The migration grace period (a stolen session alone reaching every
-  machine) is off by default**, and time-boxed to an announced rollout
+  computer) is off by default**, and time-boxed to an announced rollout
   window when it does run.
 
 ## End-to-end encrypted connections (beta)
@@ -117,13 +117,13 @@ path, so there is nothing to seal against.
   relay's HTTPS path.
 </Callout>
 
-With the mesh on, a device that opens a Space on one of your machines
+With the mesh on, a device that opens a Space on one of your computers
 (`relay:<machine>`) connects to it over a WireGuard®-based mesh that runs
 inside Cua itself, instead of through the relay's HTTPS path. The relay
 coordinates the mesh but never holds a session key: shell, files, input,
 screen and Keyvault deliveries cross it only as ciphertext.
 
-- **End to end.** Each device and machine makes its own key pair on first
+- **End to end.** Each device and computer makes its own key pair on first
   use; the private half never leaves it. Traffic between two of them is
   encrypted with WireGuard between those two keys.
 - **Direct when possible.** Two ends on the same network connect directly.
@@ -137,7 +137,7 @@ screen and Keyvault deliveries cross it only as ciphertext.
 
 ### Turn it on
 
-Both ends opt in: the device you connect from and the machine you host.
+Both ends opt in: the device you connect from and the computer you host.
 
 | `CUA_MESH` | Behavior |
 |---|---|
@@ -148,21 +148,21 @@ Both ends opt in: the device you connect from and the machine you host.
 - **On the device:** set `CUA_MESH` where `cua` runs (your shell, or the
   environment of the cua daemon; restart the daemon with `cua daemon stop`
   after changing it).
-- **On a hosted machine:** run `cua host setup` with `CUA_MESH=prefer` set.
+- **On a hosted computer:** run `cua host setup` with `CUA_MESH=prefer` set.
   The setting is kept for the host's service until you run setup again
   without it.
 
-`cua spaces ls` lists the same machines either way. With `prefer`, a machine
+`cua spaces ls` lists the same computers either way. With `prefer`, a computer
 or relay that does not speak the mesh yet is used over HTTPS, so mixing
-updated and older machines works.
+updated and older computers works.
 
 ### Who can connect
 
 The relay applies the rules you already manage:
 
-- A device enrolled for your account reaches the machines your account owns
+- A device enrolled for your account reaches the computers your account owns
   and those shared with it, while their sharing is on.
-- The machine sees each device with the same identity as before (account,
+- The computer sees each device with the same identity as before (account,
   verified email, owner, editor or viewer), and its own host policy still
   decides what that caller may do.
 - Stopping sharing, removing someone from a share list, or revoking a device
@@ -173,7 +173,7 @@ The relay applies the rules you already manage:
 
 A desktop view, terminal or agent session over the mesh counts toward your
 plan's live sessions, the same as one over the relay's HTTPS path, and one
-machine reached both ways at once counts once. Remote hours count only the
+computer reached both ways at once counts once. Remote hours count only the
 time a session's traffic goes through the relay: a direct connection uses
 none. `cua usage` and the app's Settings show both.
 
@@ -190,7 +190,7 @@ going through the relay resumes when the relay is back.
 - The **browser viewer** and **web or Cloudflare-hosted agents** that cannot
   run Cua: they reach `https://<relay>/m/<machine>/…` as before. See
   [what the relay can see](#the-short-version).
-- Machines and devices without the mesh turned on, or on a version of Cua
+- Computers and devices without the mesh turned on, or on a version of Cua
   from before it.
 - Relays that do not coordinate a mesh, such as a self-hosted `cua-relay`:
   `prefer` uses their HTTPS path quietly.

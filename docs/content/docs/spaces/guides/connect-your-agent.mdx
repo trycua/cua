@@ -14,9 +14,10 @@ desktop and share a Space whenever you ask.
 
 ## Connect from the app
 
-On first run, the **AI agents** screen lists the supported agents it found on
-this computer. Tick the ones you use and press **Set up**. When it says "Your AI
-agents are set up", press **Continue**.
+On first run, the first screen offers **Connect Claude Code**, then Codex,
+Hermes, OpenClaw and **Other**. Press the one you use. The app adds Cua to that
+agent's settings and checks that the agent can use it. If the agent was already
+open, close it and open it again.
 
 To connect an agent later, or to remove one, open **Settings, AI agents**:
 
@@ -56,8 +57,13 @@ this computer shares the same Spaces, sandboxes and streams.
 3. If your agent asks permission to use a `cua` tool, allow it. Agents ask in
    their own window or terminal.
 
-Then try a real task. These are the prompts the app offers on its last first-run
-screen:
+Then try the request the app offers at the end of its first run. It works
+right away, on this computer:
+
+> List my computers and tell me what's on this Mac
+
+On Windows the request ends "on this PC", and on Linux "on this computer". When
+that works, try a bigger task:
 
 | Ask your agent | What it does |
 |---|---|
@@ -71,7 +77,7 @@ lists the tools it gets.
 ## What your agent can do
 
 The cua MCP server gives an agent 33 Spaces tools plus sandbox and computer
-tools. For the machine the agent runs on, use [Cua Driver](/cua-driver/quickstart)
+tools. For the computer the agent runs on, use [Cua Driver](/cua-driver/quickstart)
 instead. The main ones:
 
 ```text output

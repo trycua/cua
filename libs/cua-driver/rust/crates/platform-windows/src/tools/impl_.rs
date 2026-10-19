@@ -740,11 +740,13 @@ impl Tool for ListAppsTool {
         //    path (used to merge against Start-Menu / UWP launch_paths).
         // 3. Enumerate installed apps from Start-Menu shortcuts + WinRT
         //    PackageManager. Each installed entry has a launch_path.
-        // 4. Merge: a running pid whose executable path matches an installed
-        //    desktop launch_path becomes a single entry with running=true and
-        //    that launch_path. Remaining installed entries are emitted with
-        //    running=false, pid=0. Remaining running pids (no installed-app
-        //    match) are emitted as running=true with launch_path=null.
+        // 4. Merge: a running packaged pid whose OS-attested package identity
+        //    matches an installed UWP entry, or a running pid whose executable
+        //    path matches an installed desktop launch_path, becomes a single
+        //    entry with running=true and that launch_path. Remaining
+        //    installed entries are emitted with running=false, pid=0.
+        //    Remaining running pids (no installed-app match) are emitted as
+        //    running=true with launch_path=null.
         let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
             use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
             use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
@@ -809,9 +811,15 @@ impl Tool for ListAppsTool {
 
             for &pid in &running_pids {
                 let name = pid_to_name.get(&pid).cloned().unwrap_or_else(|| "<unknown>".into());
-                let key = name.to_ascii_lowercase();
-                let candidates = by_exe.get(&key).map(|v| v.as_slice()).unwrap_or(&[]);
-                let merged = disambiguate_installed_match(candidates, &installed, &name);
+                // A packaged process (Store / MSIX app) never matches a
+                // Start-Menu `.lnk` by basename, so it would otherwise surface
+                // with no identity and no bundle_id grant could ever match it.
+                let package = crate::win32::process_package_identity(pid);
+                let merged = packaged_installed_match(&package, &installed).or_else(|| {
+                    let key = name.to_ascii_lowercase();
+                    let candidates = by_exe.get(&key).map(|v| v.as_slice()).unwrap_or(&[]);
+                    disambiguate_installed_match(candidates, &installed, &name)
+                });
                 if let Some(idx) = merged { consumed_installed.insert(idx); }
                 let (display_name, bundle_id, launch_path, kind, last_used) = match merged {
                     Some(idx) => {
@@ -917,6 +925,37 @@ fn disambiguate_installed_match(
         })
         .or_else(|| candidates.first().copied())
 }
+
+/// Pick the installed UWP entry for a running packaged process from the
+/// identity Windows attests for it. Precedence:
+///   1. the entry whose launch_path is exactly `shell:appsFolder\{AUMID}`
+///   2. when the process has no AUMID (a packaged helper that was not
+///      activated as an application), the only entry of its package family
+///
+/// A process whose AUMID names a different app of the same package gets no
+/// match, so it never borrows a sibling app's launch_path.
+fn packaged_installed_match(
+    package: &crate::win32::PackageIdentity,
+    installed: &[crate::win32::InstalledApp],
+) -> Option<usize> {
+    let mut uwp = installed
+        .iter()
+        .enumerate()
+        .filter(|(_, app)| app.kind == "uwp");
+    if let Some(aumid) = package.app_user_model_id.as_deref() {
+        let launch_path = format!("shell:appsFolder\\{aumid}");
+        return uwp
+            .find(|(_, app)| app.launch_path.eq_ignore_ascii_case(&launch_path))
+            .map(|(index, _)| index);
+    }
+    let family = package.family_name.as_deref()?;
+    let mut matches = uwp.filter(|(_, app)| app.bundle_id.eq_ignore_ascii_case(family));
+    let (index, _) = matches.next()?;
+    matches.next().is_none().then_some(index)
+}
+
+#[cfg(test)]
+mod list_apps_packaged_identity_tests;
 
 // ── list_windows ─────────────────────────────────────────────────────────────
 

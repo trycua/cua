@@ -5,7 +5,10 @@ pub mod combo;
 pub mod installed_apps;
 pub mod windows;
 
-pub use apps::{list_descendants, list_processes, related_processes, ProcessInfo};
+pub use apps::{
+    list_descendants, list_processes, process_package_identity, related_processes, PackageIdentity,
+    ProcessInfo,
+};
 pub use installed_apps::{list_installed_apps, InstalledApp};
 pub(crate) use windows::{
     capture_foreground_target, find_window_by_pid_and_handle,

@@ -1370,29 +1370,36 @@ mod tests {
         });
     }
 
+    /// Each side waits for the other to have started. They can only both
+    /// finish if the capture is running while the walk runs; a capture that
+    /// follows the walk would leave both waiting out the timeout.
     #[test]
     fn a_prefetched_capture_overlaps_the_tree_walk() {
-        use std::time::{Duration, Instant};
-        const WORK: Duration = Duration::from_millis(120);
+        use std::sync::mpsc;
+        use std::time::Duration;
+        const LIMIT: Duration = Duration::from_secs(10);
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let started = Instant::now();
-        rt.block_on(async {
-            let capture = prefetch_capture(true, true, || std::thread::sleep(WORK)).unwrap();
-            // The walk runs while the capture is in flight.
-            tokio::task::spawn_blocking(|| std::thread::sleep(WORK))
-                .await
-                .unwrap();
-            capture.await.unwrap();
+        let (capture_started, capture_seen) = mpsc::channel::<()>();
+        let (walk_started, walk_seen) = mpsc::channel::<()>();
+        let (capture_ok, walk_ok) = rt.block_on(async {
+            let capture = prefetch_capture(true, true, move || {
+                capture_started.send(()).unwrap();
+                walk_seen.recv_timeout(LIMIT).is_ok()
+            })
+            .unwrap();
+            let walk = tokio::task::spawn_blocking(move || {
+                walk_started.send(()).unwrap();
+                capture_seen.recv_timeout(LIMIT).is_ok()
+            })
+            .await
+            .unwrap();
+            (capture.await.unwrap(), walk)
         });
-        let elapsed = started.elapsed();
-        assert!(elapsed >= WORK);
-        assert!(
-            elapsed < WORK * 2 - Duration::from_millis(20),
-            "walk and capture ran one after the other: {elapsed:?}"
-        );
+        assert!(capture_ok, "the capture never saw the walk start");
+        assert!(walk_ok, "the walk never saw the capture start");
     }
 
     #[test]

@@ -123,6 +123,10 @@ wait; it does not prove that the daemon stopped work or that a mutation did not
 apply. Do not replay a potentially applied mutation merely because its reply
 was cancelled.
 
+Cancellation before response headers arrives as a `TransportError`; during
+response-body reading it propagates a raw `AbortError`. Callers handling
+cancellation or timeouts should account for both.
+
 Tests: `node --test test/spaces-unit.test.mjs test/pip.test.mjs test/routines.test.mjs` (no native library needed) and
 `node --test test/spaces.test.mjs` (needs `cua-test-fixtures` and, for the
 daemon case, the `cua` CLI in `../target/debug`).

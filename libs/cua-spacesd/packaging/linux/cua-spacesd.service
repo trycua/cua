@@ -1,7 +1,7 @@
 # systemd unit for cua-spacesd inside a Linux guest.
 #
 # The token comes from /run/cua/env-token (written by cloud-init, the Lume
-# setup share or the Fleet template) or from CUA_ENV_TOKEN in
+# setup share or an orchestrator's token Secret) or from CUA_ENV_TOKEN in
 # /etc/cua/spacesd.env. With a token the driver listens on 0.0.0.0:3211;
 # without one it refuses any non-loopback bind.
 #

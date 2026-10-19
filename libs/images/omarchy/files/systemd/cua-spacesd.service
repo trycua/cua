@@ -3,8 +3,8 @@ Description=cua-spacesd (gRPC + gRPC-Web on :3211) in the Omarchy session
 # The Hyprland session (sddm autologin -> uwsm) publishes its environment to
 # /run/cua-desktop/desktop.env; cua-desktop-env.path restarts this unit when a
 # new session writes it. Token handling is libs/images/linux's (see
-# start-spacesd.sh); the Fleet claim token arrives through run-cua.mount and
-# cua-env-token-sync.service.
+# start-spacesd.sh); the orchestrator's claim token arrives through
+# run-cua.mount and cua-env-token-sync.service.
 # cloud-init-network.service is the unit name of newer cloud-init (Arch); cloud-init.service the older one.
 After=sddm.service network-online.target cloud-init.service cloud-init-network.service run-cua.mount cua-env-token-sync.service
 Wants=network-online.target cua-env-token-sync.service

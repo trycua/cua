@@ -398,9 +398,8 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   /**
-   * No estimate: the rates came from the retired Fleets API
-   * (`fleet().usagePricing()` on run.cua.ai), and the app does not offer new
-   * cloud Spaces. New Space never waits on it.
+   * No estimate: the rates came from the Cua Cloud API, which has ended, and
+   * the app does not offer new cloud Spaces. New Space never waits on it.
    */
   async cloudPricing(): Promise<AppCloudPricing | null> {
     return null;

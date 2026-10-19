@@ -236,7 +236,7 @@ async fn reserved_names_and_bad_sidecars_fail_before_anything_starts() {
         .build();
     cua_fleet::testing::set_image_variant(ROOTFS, cua_fleet::ImageVariant::Rootfs);
     for provider in [ProviderKind::Local, ProviderKind::Fleet] {
-        for reserved in cua_fleet::RESERVED_SERVICE_NAMES {
+        for reserved in cua_image::sidecar::RESERVED_SERVICE_NAMES {
             let mut o = CreateOptions::new(provider, ROOTFS)
                 .sidecar(redis())
                 .service(reserved, 8080);

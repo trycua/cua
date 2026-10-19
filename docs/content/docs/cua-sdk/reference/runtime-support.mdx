@@ -12,8 +12,8 @@ description: "Which images run on which local runtime, what customization each a
 
 {/* GENERATED:sandbox-package-facts:start */}
 This reference describes the Python Sandbox SDK in `cua-sandbox` **0.9.0**, exported
-by `cua` **0.4.1**. An accepted image specification or generated Fleet template is
-evidence of SDK behavior, not proof that a guest boots on every host or deployment.
+by `cua` **0.4.1**. An accepted image specification is evidence of SDK behavior,
+not proof that a guest boots on every host or deployment.
 {/* GENERATED:sandbox-package-facts:end */}
 
 ## Operating systems and image kinds
@@ -117,12 +117,10 @@ constants. They describe the clients built from this repository, not the
 versions inside a particular deployed image.
 
 {/* GENERATED:sandbox-evidence:start */}
-- `cua-sandbox` 0.9.0 source: image constructors, runtime selection, pool
-  claims, Fleet validation, firmware, and services.
+- `cua-sandbox` 0.9.0 source: image constructors, runtime selection,
+  firmware, and services.
 - `cua-image` source (`canonical.rs`): the canonical image references.
 - `cua` 0.4.1 source: public Python exports.
-- `cua-fleet` 0.1.17 package mapping: Python bound-claim service requests.
-- `@trycua/fleet` 0.1.2 package mapping: TypeScript service requests.
 - `cua-sandbox[driver]` 0.9.0 maps direct Driver use to `cua-driver`
   0.28.2. This client mapping is not the Driver version inside a particular
   published or deployment-qualified guest image.

@@ -200,6 +200,12 @@ pub fn canonical_image(os: &str, version: Option<&str>) -> Result<String> {
     Ok(canonical_for(os, version))
 }
 
+/// [`canonical_image`] with the default version for any OS name: an unknown
+/// name gets Linux, the safe default for a Space or sandbox image.
+pub fn canonical_image_or_linux(os: &str) -> String {
+    canonical_image(os, None).unwrap_or_else(|_| canonical_for(CanonicalOs::Linux, None))
+}
+
 /// [`canonical_image`] for a parsed OS.
 pub fn canonical_for(os: CanonicalOs, version: Option<&str>) -> String {
     canonical_for_with(os, version, &|n| std::env::var(n).ok())
@@ -481,6 +487,15 @@ mod tests {
         assert!(!is_canonical("ubuntu:24.04"));
         assert_eq!(alias("linux/amd64"), None);
         assert!(canonical_image("beos", None).is_err());
+        // Any OS name has an image: an unknown one gets Linux.
+        assert_eq!(
+            canonical_image_or_linux("beos"),
+            "ghcr.io/trycua/linux:24.04"
+        );
+        assert_eq!(
+            canonical_image_or_linux("windows"),
+            "ghcr.io/trycua/windows:2022"
+        );
         assert!(is_canonical("ghcr.io/trycua/linux:24.04-disk"));
         assert!(is_canonical(&format!(
             "ghcr.io/trycua/windows@sha256:{}",

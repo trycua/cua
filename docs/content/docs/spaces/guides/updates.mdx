@@ -1,47 +1,53 @@
 ---
 title: Updates
-description: 'How the Cua Spaces app for macOS updates itself, how to pick the Stable or Beta channel, and what it refreshes after an update.'
+description: 'How the Cua Spaces app updates itself on macOS, Windows and Linux, how to pick the Stable or Beta channel, and what it refreshes after an update.'
 ---
 
-The Cua Spaces app for macOS checks for new versions and installs them for
-you. Everything is in **Settings, About**.
+Cua Spaces checks for new versions and downloads them in the background on
+macOS, Windows and Linux. Everything is in **Settings, About**, which also shows
+your version.
 
 ## How updates work
 
-The app checks when it starts and again every few hours, and downloads a
-new version in the background. When one is ready, a line appears at the
-bottom of the sidebar: **Update ready**, with **Restart to update** and a
-**What's new** link to the release notes. Nothing restarts until you click.
-If an agent is still working, the app asks first. **Check Now** checks right
-away, and **Last check** says when it last looked. Turn off **Automatically
-check for updates** to only check by hand. With **Install updates
-automatically** on (Windows and Linux), a downloaded update is also installed
-when you quit the app.
+The app checks when it starts and again every few hours. When a new version is
+ready, a line appears at the bottom of the sidebar: **Update ready**, with
+**Restart to update** and a **What's new** link to the release notes. Nothing
+restarts until you click. If an agent is still working, the app asks first.
 
-Every update is the same notarized disk image as the download on the
-release page, and the app installs it only when its signature matches the
-key built into the app.
+In **Settings, About**:
+
+- **Check for and download updates automatically** turns the background checks on
+  or off. With it off, press **Check Now** to check by hand.
+- **Install a downloaded update when Cua Spaces quits** installs a downloaded
+  update when you quit the app. It needs automatic checks.
+- **Last check** says when the app last looked.
+
+On macOS, every update is the same notarized disk image as the download on the
+release page, and the app installs it only when its signature matches the key
+built into the app. Windows and Linux update through their own updater.
 
 ## Channels
 
-**Update to** picks what you get:
+**Update to:** picks what you get:
 
-- **Stable**: releases.
-- **Beta**: releases and prereleases, with new features sooner and rough
-  edges.
+- **Stable**: tested releases.
+- **Beta**: releases and prereleases, with new features sooner and rough edges.
 
-Going back to Stable from a newer beta keeps the version you have until a
-newer stable release is out.
+Going back to Stable from a newer beta keeps the version you have until a newer
+stable release is out.
 
 ## After an update
 
-The first time the new version opens, it refreshes what Cua installed into
-your AI agents, the way `cua agents update` does: the Cua skill folders and
-the Cua MCP entries in Claude Code, Cursor and the other agents you set up.
-A skill folder you edited is left as you left it. It also restarts the Cua
-daemon when the app started it, so the daemon runs the new version too.
+The first time the new version opens, it refreshes what Cua installed into your
+AI agents, the way `cua agents update` does: the Cua skill folders and the Cua
+MCP entries in Claude Code, Cursor and the other agents you set up. A skill
+folder you edited is left as you left it. It also restarts the Cua daemon when
+the app started it, so the daemon runs the new version too.
 
-This happens without any window. If something fails, the app shows one
-notice with what to run.
+This happens without any window. If something fails, the app shows one notice
+with what to run.
 
-On Linux and Windows, the Tauri app updates through its own updater.
+## Next
+
+- [Install](/spaces/guides/install): download a version by hand.
+- [Troubleshoot a failed create](/spaces/guides/troubleshoot-create): update first, then retry.

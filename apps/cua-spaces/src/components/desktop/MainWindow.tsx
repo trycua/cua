@@ -20,7 +20,6 @@ import {
 } from '../../model/window';
 import { createFileSendBridge, type FileSendBridge } from '../../native/fileSend';
 import {
-  type CloudPricing,
   type GpuChoice,
   createFleetBridge,
   type FleetBridge,
@@ -220,7 +219,6 @@ export function MainWindow({
   );
   const [hostStatus, setHostStatus] = useState<HostStatus | null>(null);
   const [local, setLocal] = useState<LocalStatus | null>(null);
-  const [cloudPricing, setCloudPricing] = useState<CloudPricing | null>(null);
   const [gpus, setGpus] = useState<GpuChoice[] | null>(null);
   const [hosts, setHosts] = useState<SpaceHost[]>([]);
   // Settings, Experiments: what the window shows (Share, your clouds).
@@ -344,20 +342,6 @@ export function MainWindow({
     };
   }, [fleet, live, wizard]);
 
-  // This account's cloud rates for the estimate, each time New Space opens
-  // (the SDK reuses an answer for five minutes).
-  useEffect(() => {
-    if (!live || !wizard || !sync.fleetConfigured || !fleet.cloudPricing) return;
-    let cancelled = false;
-    void fleet
-      .cloudPricing()
-      .then((next) => !cancelled && setCloudPricing(next))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [fleet, live, wizard, sync.fleetConfigured]);
-
   // The GPU option of each local runtime, each time New Space opens.
   useEffect(() => {
     if (!live || !wizard || !fleet.gpuSupport) return;
@@ -441,7 +425,8 @@ export function MainWindow({
   }, [teleport, usageId]);
   const chrome = mainChrome({
     identity: sync.identity,
-    cloudConfigured: sync.fleetConfigured,
+    // Cua Cloud has ended: no account signs in with an API key.
+    cloudConfigured: false,
     canSignIn: live,
     experiments,
   });
@@ -449,7 +434,8 @@ export function MainWindow({
   // experiment on (the core's `volumeLabel`); off, it shows the Spaces.
   const volumeShown = Boolean(chrome.volumeLabel);
 
-  const cloudAvailable = live ? sync.fleetConfigured : true;
+  // Cua Cloud has ended: it is never an available location.
+  const cloudAvailable = false;
   const localAvailable = live ? canRunContainer(local) || canRunMacos(local) : true;
 
   const startCreate = useCallback(
@@ -833,8 +819,6 @@ export function MainWindow({
                         .then(({ emit }) => emit('settings:changed', { menuBar: enabled }))
                         .catch(() => {});
                     }}
-                    fleetLive={sync.fleetConfigured}
-                    clientId={sync.clientId}
                     signedInIdentity={sync.identity}
                     auth={
                       fleet.isNative
@@ -953,7 +937,6 @@ export function MainWindow({
             localBackends={live ? (local?.backends ?? []) : undefined}
             hostArch={sync.hostArch ?? local?.hostArch}
             storage={live ? local?.storage : undefined}
-            cloudPricing={live && sync.fleetConfigured ? cloudPricing : null}
             gpus={live ? gpus : null}
             onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
             startActions={startActions}

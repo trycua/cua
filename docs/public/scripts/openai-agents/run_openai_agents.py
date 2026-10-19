@@ -5,9 +5,6 @@
 #   "cua-sandbox==0.9.0",
 #   "httpx>=0.27,<1",
 # ]
-# [[tool.uv.index]]
-# name = "cua-wheels"
-# url = "https://wheels.cua.ai/simple"
 # ///
 """Run an OpenAI Agents API self-hosted session in a Cua sandbox.
 

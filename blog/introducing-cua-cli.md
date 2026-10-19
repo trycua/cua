@@ -1,5 +1,7 @@
 # Introducing the Cua CLI: Manage Cloud Sandboxes from Your Terminal
 
+> Update, October 2026: Cua Cloud (Fleets) ended on 16 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+
 If you've been using our Cloud Sandboxes, you've probably been managing them through the web dashboard - clicking through forms to create instances, copying credentials, manually starting and stopping sandboxes. It works, but it's not exactly built for power users like yourself.
 
 Today we're launching the **Cua CLI**: a command-line interface that brings the full power of our Cloud Sandbox platform to your terminal. Create, manage, and connect to Linux, Windows, or macOS sandboxes in seconds—all from a single command.

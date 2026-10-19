@@ -11,13 +11,15 @@ const docs = path.resolve(__dirname, '..');
 const repo = path.resolve(docs, '..');
 const content = path.join(docs, 'content/docs');
 
+// In sidebar order: Cua Spaces first, then the products it builds on, then the
+// developer tools (SDK, CLI, Bench).
 const PRODUCTS: Array<[string, string]> = [
-  ['cua-sdk', 'Cua SDK'],
-  ['cua-driver', 'Cua Driver'],
   ['spaces', 'Cua Spaces'],
-  ['cua-bench', 'Cua Bench'],
+  ['cua-driver', 'Cua Driver'],
   ['lume', 'Lume'],
+  ['cua-sdk', 'Cua SDK'],
   ['cua-cli', 'Cua CLI'],
+  ['cua-bench', 'Cua Bench'],
 ];
 // Sections in their only allowed order; `examples` and `concepts` are optional.
 const SECTIONS = ['index', 'quickstart', 'guides', 'examples', 'concepts', 'reference'];
@@ -28,7 +30,8 @@ const SECTION_TITLES: Record<string, string> = {
   concepts: 'Concepts',
   reference: 'Reference',
 };
-// The one non-product section: curated end-to-end walkthroughs, listed first.
+// The one non-product section: end-to-end walkthroughs for the Cua Driver, Lume,
+// SDK and Bench products, listed first. Spaces walkthroughs live in Spaces.
 const START_HERE: [string, string] = ['start-here', 'Start here'];
 // The docs home is the designed landing; its frontmatter feeds it.
 // Each example: a title, a page, alt text and its media (an image, or a

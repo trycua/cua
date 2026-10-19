@@ -1,8 +1,8 @@
 ---
 title: Cua Bench
-description: 'Run the Cua Bench registry tasksets against any computer-use agent on local or cloud desktop sandboxes, or write your own verifiable tasks.'
+description: 'Run the Cua Bench registry tasksets against any computer-use agent on desktop sandboxes on your machine, or write your own verifiable tasks.'
 landing:
-  summary: 'Run and score computer-use benchmarks on local or cloud desktops, or write your own tasks.'
+  summary: 'Run and score computer-use benchmarks on desktops on your machine, or write your own tasks.'
   cta: Evaluate an agent
 ---
 
@@ -11,7 +11,7 @@ import { Card, Cards } from 'fumadocs-ui/components/card';
 Cua Bench (`cb`, MIT) runs verifiable computer-use tasks on real desktop
 sandboxes and scores any agent on them. Start from a taskset in the
 **[Cua Bench registry](https://cua.ai/cuabench/registry)**: one command runs it
-on this machine or in the cloud.
+on this machine.
 
 ```bash test="cli-shape" id="bench-index-run"
 cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514
@@ -48,7 +48,7 @@ Tasks run in a real sandbox from the [cua SDK](/cua-sdk) on this machine (`cb ru
 ## Next
 
 - [Quickstart](/cua-bench/quickstart): run a registry taskset, read the score, add an agent.
-- [Run a benchmark](/cua-bench/guides/benchmarks): every registry taskset, versions, pass@k, local or cloud.
+- [Run a benchmark](/cua-bench/guides/benchmarks): every registry taskset, versions, pass@k.
 - [Write a task](/cua-bench/guides/write-a-task): the task module contract.
 - [Adapter benchmarks](/cua-bench/guides/adapter-benchmarks): OSWorld-Verified, MiniWoB++, WebVoyager and other adapters.
 

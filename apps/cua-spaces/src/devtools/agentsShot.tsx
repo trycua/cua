@@ -126,7 +126,7 @@ const fleet = fakeFleetBridge({
     { id: "cloud:aurora", name: "aurora", provider: "cloud", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
     { id: "cloud:orion", name: "orion", provider: "cloud", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: false },
   ],
-  status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+  status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
 });
 
 const host = document.getElementById("root");

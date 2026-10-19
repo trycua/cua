@@ -41,11 +41,9 @@ dataset (every task and variant). It runs in the foreground with per-variant sta
 | `--on local` | Where. `local`: sandboxes on this machine through the cua SDK. `cloud` is removed (Cua Cloud has ended). Default: `CUA_DEFAULT_ON`, then `cua config set default.on`, then `local`. |
 | `--kind auto\|container\|vm` | What kind. `auto` (default): Linux runs as a container unless the task or the image's variant index says VM; Windows, macOS and Android are VM-only. Default: `CUA_DEFAULT_KIND`, then `default.kind`. |
 | `--runtime auto\|gvisor\|runc\|qemu\|lume\|kubevirt` | Which engine, and it implies the kind. Local containers: `gvisor`, `runc`; local VMs: `qemu`, `lume`. `auto` (default) lets the SDK pick. A combination that does not exist is an error listing the valid values. Default: `CUA_DEFAULT_RUNTIME`, then `default.runtime` (skipped for a task it does not fit). |
-| `--image REF` | Image for every task: an OS alias (`linux`, `windows`, `macos:tahoe`), `ghcr.io/trycua/<os>`, any registry ref or a digest, or `pool:<name>` to claim from an existing Fleet pool (`fleet:<name>` is a deprecated alias). Otherwise the task's `setup_config.image`, then `CUA_BENCH_IMAGE`, then the canonical image for the OS. |
-| `--cpu`, `--memory` | Resources per sandbox (`--memory 4G`), local and cloud. |
-| `-j`, `--max-parallel` | Variants at once. In the cloud this is also the pool's max size. |
-| `--warm` | Cloud: keep one replica ready when the pool is first created. |
-| `--claim-ttl` | Cloud: how long a claim outlives a crashed run (default 15m, renewed while running). |
+| `--image REF` | Image for every task: an OS alias (`linux`, `windows`, `macos:tahoe`), `ghcr.io/trycua/<os>`, any registry ref or a digest. Otherwise the task's `setup_config.image`, then `CUA_BENCH_IMAGE`, then the canonical image for the OS. |
+| `--cpu`, `--memory` | Resources per sandbox (`--memory 4G`). |
+| `-j`, `--max-parallel` | Variants at once. |
 | `--attempts N` | Run every variant N times (fresh sandbox each); `summary.json` reports pass@k. |
 | `--retries N` | Retry a variant that failed before evaluation (sandbox start, connection), with backoff. |
 | `--dry-run` | Print each variant's image, kind, variant and backend, then exit. |
@@ -83,20 +81,6 @@ another index (a path or URL), including a Harbor `registry.json`.
 Tasks run on the canonical `ghcr.io/trycua/{linux,windows,macos}` images unless they name
 another registry image. Each canonical image is one index with a rootfs (containers) and
 a `-disk` containerDisk (VMs); `cb image list` shows them.
-
-### Cloud
-
-Sign in once with `cua auth login` (or `cb login`), or set `CUA_CLIENT_ID` and
-`CUA_CLIENT_SECRET` (`cua auth keys create`), or `FLEETS_TOKEN`. The task image must be in a
-registry Fleet can pull.
-
-- Each image gets one managed pool (`cua-auto-*`), created on first use and reused by later
-  runs. It autoscales from zero: the first sandbox of an idle pool takes about a minute.
-- A batch claims one sandbox per running variant, up to `-j`, and releases each claim when
-  the variant ends, on Ctrl-C or on `cb run stop`. If the process dies, the claim expires
-  after its TTL.
-- Idle pools scale to zero and are deleted after a day without use. `cb env ls` lists them,
-  `cb env gc --idle 30m` deletes idle ones now.
 
 ### Tasks
 

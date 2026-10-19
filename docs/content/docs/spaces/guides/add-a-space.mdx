@@ -1,16 +1,91 @@
 ---
-title: Add a Space
-description: 'Create a Space on your machine, from any image, follow or cancel the create, add a GPU, add an existing machine, then list, delete or remove it.'
+title: Create a Space
+description: 'Create a Space on a computer you own from the app, the CLI or code: any image, progress, cancel, GPUs, adding an existing machine by address, then list, delete or remove it.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-The [Quickstart](/spaces/quickstart#run) adds an existing machine by URL. The
-same `spaces` object also creates Spaces. Ids are the sandbox refs `cua sb ls`
-prints (`local:<name>`, `aws:<name>`, `direct:<host:port>`,
-`relay:<machine-id>`); a bare name works when it matches one Space.
+A Space is one desktop on one of your computers. Ids are the sandbox refs
+`cua sb ls` prints (`local:<name>`, `aws:<name>`, `direct:<host:port>`,
+`relay:<machine-id>`); a bare name works when it matches one Space. To connect a
+whole computer first, see [Add a machine](/spaces/guides/add-a-machine).
 
-## Create a Space
+## Create a Space in the app
+
+1. Press **New Space** in Cua Spaces.
+2. Walk through **Choose a system**, **Resources** and **Options**. **Summary**
+   shows what you picked.
+3. Press **Create Space**. The Space appears in your list with a progress bar and
+   is ready when the bar finishes.
+
+If the create fails, see [Troubleshoot a failed create](/spaces/guides/troubleshoot-create).
+
+## Add an existing machine by address
+
+Choose **Connect by address** in New Space, or register a machine from code.
+This example starts the canonical Linux image with a token:
+
+```bash skip="no-runner"
+TOKEN=$(openssl rand -hex 24)
+docker run -d --name my-space -e CUA_ENV_TOKEN=$TOKEN -p 127.0.0.1:3211:3211 \
+  ghcr.io/trycua/linux:24.04
+```
+
+Register it and run a command in it (use `http://127.0.0.1:3211` and your
+`$TOKEN`):
+
+<Tabs items={['Python', 'TypeScript', 'Swift']}>
+  <Tab value="Python">
+    ```python test="docs" id="add-direct" session="add-direct" prelude="space-url"
+    import asyncio
+    import cua
+
+    async def main():
+        spaces = cua.embedded().spaces()      # or cua.connect().spaces()
+        info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")
+        space = await spaces.space(info.id)
+        out = await space.bash("uname -a", None)
+        print(info.id, out.stdout)
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  <Tab value="TypeScript">
+    ```ts test="docs" id="add-direct-ts" prelude="space-url"
+    import { embedded } from "@trycua/cua"
+
+    const spaces = embedded().spaces()        // or connect().spaces()
+    const info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")
+    const space = await spaces.space(info.id)
+    console.log(info.id, (await space.bash("uname -a", undefined)).stdout)
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="swift" id="add-direct-space"
+    import Cua
+
+    let spaces = try Cua.embedded().spaces()  // or Cua.connect(address: nil, token: nil)
+    let info = try await spaces.add(url: "http://10.0.0.5:3211", token: "TOKEN", name: "lab")
+    let space = try await spaces.space(space: info.id)
+    print(try await space.bash(command: "uname -a", timeoutMs: nil).stdout)
+    ```
+  </Tab>
+</Tabs>
+
+The program prints the Space id (`direct:127.0.0.1:3211`) and the guest's
+`uname -a`. The Space is now in the shared registry, so the app and the CLI see
+it too:
+
+```bash test="cli-shape" id="cua"
+cua --version
+cua auth status
+cua spaces ls
+```
+
+Clean up the container with `docker rm -f my-space`.
+
+## Create a Space from code
 
 ```python skip="pseudo"
 created = await spaces.create(cua.SpaceCreateOptions(cpus=2, memory_mb=4096))
@@ -161,7 +236,7 @@ MagicDNS name as the host:port): `cua spaces add` reaches it like any other
 address and the Space registers as `direct:<addr>`. That only attaches one
 already-running Space; hosting Spaces for `on="host:<name>"` still goes
 through the cua.ai relay, set up with
-[`cua host setup`](/start-here/host-spaces-on-your-spare-mac).
+[`cua host setup`](/spaces/guides/host-spaces-on-your-spare-mac).
 
  `spaces.delete(id)` deletes a
 Space's sandbox and forgets it (a Space added by address is only forgotten);

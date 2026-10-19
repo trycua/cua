@@ -484,9 +484,7 @@ pub async fn resolve_fleet_image_with(
 /// The canonical image for `os` (`linux`, `windows`, `macos`), honouring
 /// `CUA_IMAGE_<OS>` ([`cua_image::canonical`]). Unknown OS names get Linux.
 pub fn canonical_image(os: &str) -> String {
-    cua_image::canonical::canonical_image(os, None).unwrap_or_else(|_| {
-        cua_image::canonical::canonical_for(cua_image::canonical::CanonicalOs::Linux, None)
-    })
+    cua_image::canonical::canonical_image_or_linux(os)
 }
 
 /// A canonical alias (`linux`, `ubuntu`, `windows`, `macos[:version]`) to

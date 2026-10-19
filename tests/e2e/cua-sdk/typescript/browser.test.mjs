@@ -27,7 +27,7 @@ after(async () => fx?.stop())
 // The flow both hosts run (kept as a string so the page runs the same code).
 // The wasm transport uses globalThis.fetch, so Node runs it too.
 const FLOW = `async (sdk, cfg) => {
-  const c = sdk.Cua.embedded(sdk.CuaConfig.create({}))
+  const c = sdk.Cua.embedded()
   const env = await c.spacesd(cfg.env, cfg.envToken)
   const out = await env.sh("echo from-browser", undefined)
   let unauth = false

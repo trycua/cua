@@ -26,7 +26,7 @@ lists windows through the raw protocol, and deletes the sandbox.
   <Tab value="Python">
 
 ```bash skip="host-install"
-pip install cua-sandbox
+pip install cua-sandbox      # Python 3.11 to 3.13
 python harness.py
 ```
 
@@ -61,6 +61,7 @@ async def main():
         await sb.shell.run(OPEN_TERMINAL)
         await sb.keyboard.type("echo typed by my harness")
         await sb.keyboard.keypress("enter")
+        await asyncio.sleep(1)  # let the terminal draw
 
         # Screenshot (PNG bytes).
         Path("screen.png").write_bytes(await sb.screenshot())
@@ -83,8 +84,8 @@ asyncio.run(main())
   <Tab value="TypeScript">
 
 ```bash skip="host-install"
-npm install @trycua/cua
-npx tsx harness.ts
+npm install @trycua/cua tsx
+npx tsx harness.mts     # .mts: an ES module, so top-level await works
 ```
 
 ```ts test="container" id="harness-typescript"
@@ -117,6 +118,7 @@ try {
   await env.sh(OPEN_TERMINAL, undefined);
   await env.typeText('echo typed by my harness');
   await env.press('enter');
+  await new Promise((resolve) => setTimeout(resolve, 1000)); // let the terminal draw
 
   // Screenshot (PNG bytes).
   await writeFile('screen.png', Buffer.from((await env.screenshot(undefined)).image));
@@ -196,6 +198,7 @@ async fn drive(sb: &cua_sdk::Sandbox) -> Result<(), Box<dyn std::error::Error>> 
     env.sh(OPEN_TERMINAL.into(), None).await?;
     env.type_text("echo typed by my harness".into()).await?;
     env.press("enter".into()).await?;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await; // let the terminal draw
 
     // Screenshot (PNG bytes).
     std::fs::write("screen.png", env.screenshot(None).await?.image)?;
@@ -219,6 +222,20 @@ Run it with `cargo run`.
   </Tab>
 </Tabs>
 
+The Python program printed this on an Apple silicon Mac (the TypeScript and
+Rust programs print the same lines in their own formats):
+
+```text output
+exec: Linux aarch64
+file: hello from my harness
+screenshot: 1280 x 800
+window: harness {'x': 5.0, 'y': 29.0, 'width': 818.0, 'height': 483.0}
+```
+
+and saved this `screen.png`:
+
+![The sandbox desktop after the program ran: a terminal titled harness shows the typed command and its output](/img/cua-sdk/own-harness-screen.png)
+
 ## Connect to a sandbox you already have
 
 To drive a machine you did not create in this program, connect to it instead.
@@ -231,10 +248,17 @@ creates or deletes anything.
   <Tab value="Python">
 
 ```python test="docs" id="harness-connect-python" session="harness-connect-python" prelude="space-url"
+import asyncio
+
 from cua_sandbox import Sandbox
 
-async with Sandbox.connect(url="http://10.0.0.5:3211", token="TOKEN") as sb:
-    print((await sb.shell.run("uname -a")).stdout)
+
+async def main():
+    async with Sandbox.connect(url="http://10.0.0.5:3211", token="TOKEN") as sb:
+        print((await sb.shell.run("uname -a")).stdout)
+
+
+asyncio.run(main())
 ```
 
   </Tab>

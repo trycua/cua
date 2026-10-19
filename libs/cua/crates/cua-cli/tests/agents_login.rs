@@ -603,7 +603,9 @@ impl Pty {
         }
     }
 
-    /// Everything printed so far.
+    /// Everything printed so far. Only the Unix tests read it, so Windows clippy
+    /// (`-D warnings`) would flag it as dead code.
+    #[cfg(unix)]
     fn output(&self) -> String {
         self.buf.lock().unwrap().clone()
     }

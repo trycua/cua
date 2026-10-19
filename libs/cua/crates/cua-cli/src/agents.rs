@@ -143,18 +143,31 @@ impl Prompt {
         }
     }
 
+    /// One answer, lowercased and trimmed, or `None` when the input ended
+    /// before an answer came (Ctrl-D, a closed terminal). Running out of
+    /// input is never an answer: callers must not treat `None` as yes, no
+    /// or never.
     fn read(&self, out: &mut dyn Write, q: &str) -> Option<String> {
+        // Keys typed before the question was on screen (an extra Enter at
+        // an earlier prompt, a press while the browser sign-in ran) are not
+        // answers to it.
+        discard_typeahead();
         let _ = write!(out, "{q} ");
         let _ = out.flush();
         let mut s = String::new();
         // Bounded: one line.
         match std::io::stdin().lock().read_line(&mut s) {
-            Ok(0) | Err(_) => None,
+            Ok(0) | Err(_) => {
+                line(out, "");
+                None
+            }
             Ok(_) => Some(s.trim().to_ascii_lowercase()),
         }
     }
 
-    /// `[Y/n]` (default yes) or `[y/N]`.
+    /// `[Y/n]` (default yes) or `[y/N]`. Enter takes the default; with no
+    /// answer at all (the input ended) the step is skipped, with a line
+    /// saying so.
     pub fn confirm(&self, out: &mut dyn Write, q: &str, default: bool) -> bool {
         if self.yes {
             return true;
@@ -166,7 +179,10 @@ impl Prompt {
         // Re-ask a bounded number of times on nonsense.
         for _ in 0..5 {
             match self.read(out, &format!("{q} {hint}")).as_deref() {
-                None => return default,
+                None => {
+                    line(out, NO_ANSWER);
+                    return false;
+                }
                 Some("") => return default,
                 Some("y" | "yes") => return true,
                 Some("n" | "no") => return false,
@@ -176,21 +192,45 @@ impl Prompt {
         default
     }
 
-    /// `[y/n/never]`; `None` means never.
-    pub fn yes_no_never(&self, out: &mut dyn Write, q: &str) -> Option<bool> {
+    /// `[y/n/never]`.
+    pub fn yes_no_never(&self, out: &mut dyn Write, q: &str) -> Choice {
         if self.yes {
-            return Some(true);
+            return Choice::Yes;
         }
         for _ in 0..5 {
             match self.read(out, &format!("{q} [y/n/never]")).as_deref() {
-                None => return Some(false),
-                Some("y" | "yes") => return Some(true),
-                Some("n" | "no" | "") => return Some(false),
-                Some("never") => return None,
+                None => return Choice::NoAnswer,
+                Some("y" | "yes") => return Choice::Yes,
+                Some("n" | "no" | "") => return Choice::No,
+                Some("never") => return Choice::Never,
                 Some(_) => line(out, "Please answer y, n or never."),
             }
         }
-        Some(false)
+        Choice::No
+    }
+}
+
+/// The answer to a `[y/n/never]` question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choice {
+    Yes,
+    No,
+    /// Do not ask again.
+    Never,
+    /// The input ended before anyone answered. Not a "no": nothing is
+    /// recorded, and the caller says what to run later.
+    NoAnswer,
+}
+
+const NO_ANSWER: &str = "No answer (the input ended), so cua skipped this step.";
+
+/// Throws away input waiting on the terminal (see [`Prompt::read`]).
+fn discard_typeahead() {
+    #[cfg(unix)]
+    // SAFETY: tcflush only acts on the descriptor; it fails harmlessly when
+    // stdin is not a terminal.
+    unsafe {
+        libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH);
     }
 }
 
@@ -801,14 +841,21 @@ pub fn after_login(
         line(out, "");
         match prompt.yes_no_never(
             out,
-            "Configure cua skills and the cua MCP server for your AI coding agent(s)?",
+            "Let your AI coding agents (like Claude Code and Codex) use cua?",
         ) {
-            Some(true) => {}
-            Some(false) => {
+            Choice::Yes => {}
+            Choice::No => {
                 line(out, "Skipped. Run `cua agents setup` any time.");
                 return Ok(0);
             }
-            None => {
+            Choice::NoAnswer => {
+                line(
+                    out,
+                    "No answer (the input ended), so your agents are unchanged. Run `cua agents setup` when you are ready.",
+                );
+                return Ok(0);
+            }
+            Choice::Never => {
                 cua_agent_setup::config::set_onboarding_declined(setup.env(), true)
                     .map_err(|e| internal(e.to_string()))?;
                 line(

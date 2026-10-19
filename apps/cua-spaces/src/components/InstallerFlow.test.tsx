@@ -196,7 +196,7 @@ describe("InstallerFlow", () => {
     click("Continue");
 
     // Mode choice (§8.9), then done.
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     click("Continue");
     expect(await screen.findByText("You're all set")).toBeInTheDocument();
     expect(screen.getByText("/Users/ada/.local/bin/cua")).toBeInTheDocument();
@@ -270,7 +270,7 @@ describe("InstallerFlow", () => {
     click("Continue");
     await screen.findByRole("heading", { name: "Cua Volume" });
     click("Continue");
-    await screen.findByText("How will you use this machine?");
+    await screen.findByText("How do you want to use this Mac?");
     click("Continue");
     click(await screen.findByRole("button", { name: "Start using Cua Spaces" }).then((b) => b.textContent!));
     expect(telemetry.signals).toEqual([]);
@@ -411,9 +411,9 @@ describe("InstallerFlow", () => {
         onDone={onDone}
       />,
     );
-    click("Set up for access");
+    click("Turn on remote access");
     expect(await screen.findByText("You're all set")).toBeInTheDocument();
-    expect(screen.getByText("Set up for unattended access")).toBeInTheDocument();
+    expect(screen.getByText("Reachable from your other devices")).toBeInTheDocument();
     expect(screen.queryByText("Grant in System Settings")).toBeNull();
     click("Start using Cua Spaces");
     expect(onDone).toHaveBeenCalledWith("host");
@@ -449,7 +449,7 @@ describe("InstallerFlow Cua Volume page", () => {
     expect(within(card).getByText("Add Cua Volume to Finder")).toBeInTheDocument();
     fireEvent.click(box());
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     expect(drive.calls.map((c) => [c.tool, c.args])).toEqual([
       ["volume_mount_status", {}],
       ["volume_storage", {}],
@@ -485,7 +485,7 @@ describe("InstallerFlow Cua Volume page", () => {
     await waitFor(() => expect(asked()).toBeGreaterThan(before), { timeout: DRIVE_APPROVAL_POLL_MS + 1500 });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open System Settings" })).toBeNull());
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     expect(drive.tools().filter((t) => t === "volume_mount")).toHaveLength(1);
   });
 
@@ -507,7 +507,7 @@ describe("InstallerFlow Cua Volume page", () => {
     // No storage answer: no choice to make.
     expect(screen.queryByRole("radiogroup")).toBeNull();
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     expect(drive.tools()).toEqual(["volume_mount_status", "volume_storage"]);
   });
 
@@ -548,7 +548,7 @@ describe("InstallerFlow Cua Volume page", () => {
     await waitFor(() => expect(box()).toBeChecked());
     fireEvent.click(box());
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     expect(mounted.tools()).toEqual(["volume_mount_status", "volume_storage", "volume_unmount"]);
   });
 
@@ -580,7 +580,7 @@ describe("InstallerFlow Cua Volume page", () => {
     );
     await waitFor(() => expect(document.querySelector('li[aria-label="Cua Volume"]')).toBeNull());
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
   });
 
   it("has no Volume page without the Cua Volume experiment, and mounts nothing", async () => {
@@ -598,7 +598,7 @@ describe("InstallerFlow Cua Volume page", () => {
     );
     await waitFor(() => expect(document.querySelector('li[aria-label="Cua Volume"]')).toBeNull());
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     expect(drive.tools()).not.toContain("volume_mount");
   });
 });
@@ -633,7 +633,7 @@ describe("InstallerFlow Cua Volume storage choice", () => {
     await waitFor(() => expect(screen.getByRole("checkbox")).toBeEnabled());
     fireEvent.click(screen.getByRole("checkbox"));
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     expect(drive.calls.map((c) => [c.tool, c.args])).toEqual([
       ["volume_mount_status", {}],
       ["volume_storage", {}],
@@ -673,7 +673,7 @@ describe("InstallerFlow Cua Volume storage choice", () => {
     expect(tested).toBe(true);
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     const sets = drive.calls.filter((c) => c.tool === "volume_storage_set").map((c) => c.args);
     const bucket = { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "cua-volume", root: "", path_style: true };
     const keys = { access_key_id: "maya-drive", secret_access_key: "fixture-secret" };
@@ -755,7 +755,7 @@ describe("InstallerFlow Cua Volume storage choice", () => {
     const sets = drive.calls.filter((c) => c.tool === "volume_storage_set").map((c) => c.args);
     expect(sets).toEqual([{ backend: "s3", s3: S3.s3, access_key_id: null, secret_access_key: null, dry_run: false }]);
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     expect(drive.tools().filter((t) => t === "volume_storage_set")).toHaveLength(1);
   });
 
@@ -777,7 +777,7 @@ describe("InstallerFlow Cua Volume storage choice", () => {
     expect(screen.getByText("Settings, Storage, any time.")).toHaveClass("st-note");
     expect(screen.queryByRole("textbox")).toBeNull();
     click("Continue");
-    expect(await screen.findByText("How will you use this machine?")).toBeInTheDocument();
+    expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     expect(drive.tools()).toEqual(["volume_mount_status", "volume_storage"]);
   });
 });
@@ -795,7 +795,7 @@ describe("InstallerFlow on macOS", () => {
         onDone={onDone}
       />,
     );
-    click("Set up for access");
+    click("Turn on remote access");
     expect(await screen.findByText("Grant in System Settings")).toBeInTheDocument();
     expect(screen.getByText("Screen Recording")).toBeInTheDocument();
     expect(screen.getByText("Accessibility")).toBeInTheDocument();
@@ -887,7 +887,7 @@ describe("InstallerFlow launch at login", () => {
     expect(readLaunchChoice()).toBe(true);
   });
 
-  it("is ticked after choosing 'Access other machines' and registers nothing until Start", async () => {
+  it("is ticked after choosing 'open my other computers' and registers nothing until Start", async () => {
     const { fakeLoginItemBridge } = await import("../native/loginItem");
     window.localStorage.clear();
     const loginItem = fakeLoginItemBridge("notRegistered");

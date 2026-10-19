@@ -10,8 +10,7 @@
 //! Beyond the portal window, the shell hosts the cua SDK: [`core`] links
 //! `cua-spaces` in-process (the shared `~/.cua` Spaces registry, streams,
 //! files, teleport, hotspot, agents) and connects to or starts `cua daemon`
-//! (the webview media bridge for Fleet Spaces, and the process CLI / MCP
-//! clients share Spaces through). [`commands`] are thin Tauri wrappers over
+//! (the process CLI / MCP clients share Spaces through). [`commands`] are thin Tauri wrappers over
 //! it; [`viewer_windows`], [`window_drag`] and the notch stay app UI, and
 //! [`control`] lets `cua daemon mcp` ask the app to present a Space.
 
@@ -463,7 +462,6 @@ pub fn run() {
             commands::get_default_location,
             commands::set_default_location,
             commands::remove_space,
-            commands::keep_alive_space,
             commands::space_screenshot,
             commands::send_files_to_space,
             commands::list_remote_windows,
@@ -663,8 +661,7 @@ pub fn run() {
             control::spawn(app.handle().clone(), core.clone());
 
             // Connect to (or start) `cua daemon` in the background, so CLI and
-            // MCP clients share Spaces with the app and Fleet streams have
-            // their media bridge. Failure only disables Fleet streaming.
+            // MCP clients share Spaces with the app. A failure is only logged.
             {
                 let core = core.clone();
                 tauri::async_runtime::spawn(async move {

@@ -12,7 +12,12 @@ use cua_fleet::{
     AcquireOpts, BoundSandbox, ClaimOptions, FleetClient, ManagedClaim, PoolManager, PoolSpecKey,
     RuntimeKind,
 };
-pub use cua_fleet::{BuildFile, BuildSpec, ImageLayer, RegistryCredentials, Sidecar};
+pub use cua_image::{
+    RegistryCredentials,
+    build::{BuildFile, BuildSpec},
+    sidecar::Sidecar,
+    spec::ImageLayer,
+};
 use cua_spacesd_client::{ConnectOptions, SpacesdClient};
 
 use crate::placement::{self, Kind, On, Runtime};
@@ -399,7 +404,7 @@ impl CreateOptions {
                     }
                     _ => image,
                 };
-                c.for_registry(cua_fleet::registry_of(reference))
+                c.for_registry(cua_image::registry_of(reference))
             }
         })
     }
@@ -423,7 +428,7 @@ impl CreateOptions {
                 {
                     return None;
                 }
-                cua_fleet::is_canonical_image(&self.image).then_some(true)
+                cua_image::canonical::is_canonical(&self.image).then_some(true)
             })
     }
 
@@ -625,7 +630,7 @@ impl CreateOptions {
         if let Some(c) = &creds
             && std::iter::once(&image.image)
                 .chain(self.sidecars.iter().map(|s| &s.image))
-                .any(|i| c.applies_to(cua_fleet::registry_of(i)))
+                .any(|i| c.applies_to(cua_image::registry_of(i)))
         {
             let registry = c.registry.clone().unwrap_or_default();
             key.pull_secret = Some(cua_fleet::registry_secret_name(&registry, &c.username));
@@ -684,8 +689,8 @@ impl CreateOptions {
         if self.sidecars.is_empty() {
             return Ok(());
         }
-        cua_fleet::validate_sidecars(&self.sidecars, &[])?;
-        cua_fleet::check_reserved_service_names(self.services.keys(), true)?;
+        cua_image::sidecar::validate_sidecars(&self.sidecars, &[])?;
+        cua_image::sidecar::check_reserved_service_names(self.services.keys(), true)?;
         Ok(())
     }
 

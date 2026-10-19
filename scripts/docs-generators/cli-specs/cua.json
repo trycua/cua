@@ -2,7 +2,7 @@
  "abstract": "Cua: sandboxes, computer actions, MCP, skills and the cua daemon",
  "commands": [
   {
-   "abstract": "Log in to Cua and inspect Fleet identity",
+   "abstract": "Log in to Cua and manage the signed-in session",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -186,6 +186,20 @@
      "usage": "cua auth status [OPTIONS]"
     },
     {
+     "abstract": "Who is signed in: the account, its plan and its teams",
+     "after_help": "Examples:\n  cua auth whoami\n  cua auth whoami --json",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "whoami",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua auth whoami [OPTIONS]"
+    },
+    {
      "abstract": "Whether this cua can read the Cua items in the macOS keychain without a prompt (JSON; for the Spaces app, which asks before it starts anything that reads the session). A Cua-signed cua gives every item it reads the Cua access list, so later Cua builds read it without a prompt",
      "aliases": [],
      "arguments": [],
@@ -222,117 +236,28 @@
      "usage": "cua auth keychain [OPTIONS]"
     },
     {
-     "abstract": "The active Fleet identity, verified against Fleet",
-     "after_help": "Examples:\n  cua auth whoami",
+     "abstract": "Removed: Cua Cloud has ended",
      "aliases": [],
-     "arguments": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": true,
+       "name": "ARGS",
+       "possible_values": [],
+       "repeatable": true,
+       "type": "string"
+      }
+     ],
      "flags": [],
-     "hidden": false,
-     "hidden_aliases": [],
-     "name": "whoami",
-     "options": [],
-     "subcommand_optional": false,
-     "subcommands": [],
-     "usage": "cua auth whoami [OPTIONS]"
-    },
-    {
-     "abstract": "Fleet user API keys (client credentials)",
-     "aliases": [],
-     "arguments": [],
-     "flags": [],
-     "hidden": false,
+     "hidden": true,
      "hidden_aliases": [],
      "name": "keys",
      "options": [],
      "subcommand_optional": false,
-     "subcommands": [
-      {
-       "abstract": "List API keys",
-       "after_help": "Examples:\n  cua auth keys ls",
-       "aliases": [
-        "list"
-       ],
-       "arguments": [],
-       "flags": [],
-       "hidden": false,
-       "hidden_aliases": [],
-       "name": "ls",
-       "options": [],
-       "subcommand_optional": false,
-       "subcommands": [],
-       "usage": "cua auth keys ls [OPTIONS]"
-      },
-      {
-       "abstract": "Create an API key (prints CUA_CLIENT_ID / CUA_CLIENT_SECRET once)",
-       "after_help": "Examples:\n  # A key for CI\n  cua auth keys create ci",
-       "aliases": [],
-       "arguments": [
-        {
-         "default_value": null,
-         "help": "Key name",
-         "hidden": false,
-         "is_optional": false,
-         "name": "NAME",
-         "possible_values": [],
-         "repeatable": false,
-         "type": "string"
-        }
-       ],
-       "flags": [],
-       "hidden": false,
-       "hidden_aliases": [],
-       "name": "create",
-       "options": [
-        {
-         "aliases": [],
-         "default_value": null,
-         "env": null,
-         "help": "Scopes (repeatable)",
-         "hidden": false,
-         "is_optional": true,
-         "multiple_values": false,
-         "name": "scope",
-         "possible_values": [],
-         "repeatable": true,
-         "short_name": null,
-         "takes_value": true,
-         "type": "string",
-         "value_name": "SCOPE"
-        }
-       ],
-       "subcommand_optional": false,
-       "subcommands": [],
-       "usage": "cua auth keys create [OPTIONS] <NAME>"
-      },
-      {
-       "abstract": "Delete an API key by id",
-       "after_help": "Examples:\n  cua auth keys rm <key-id>",
-       "aliases": [
-        "delete"
-       ],
-       "arguments": [
-        {
-         "default_value": null,
-         "help": "Key id (from `cua auth keys ls`)",
-         "hidden": false,
-         "is_optional": false,
-         "name": "ID",
-         "possible_values": [],
-         "repeatable": false,
-         "type": "string"
-        }
-       ],
-       "flags": [],
-       "hidden": false,
-       "hidden_aliases": [],
-       "name": "rm",
-       "options": [],
-       "subcommand_optional": false,
-       "subcommands": [],
-       "usage": "cua auth keys rm [OPTIONS] <ID>"
-      }
-     ],
-     "usage": "cua auth keys [OPTIONS] <COMMAND>"
+     "subcommands": [],
+     "usage": "cua auth keys [OPTIONS] [ARGS]..."
     },
     {
      "abstract": "Keys of the contrib sandbox providers (`--on e2b`, `--on daytona`, `--on modal`)",
@@ -677,12 +602,12 @@
    "subcommands": [
     {
      "abstract": "Start a coding agent in a sandbox (returns at once unless --follow)",
-     "after_help": "Examples:\n  cua agent run local:dev claude-code \"fix the failing test\" --env-from-host ANTHROPIC_API_KEY -f\n  cua agent run cloud:ci openai-codex \"add tests\" --repo https://github.com/org/repo --exit-when-idle",
+     "after_help": "Examples:\n  cua agent run local:dev claude-code \"fix the failing test\" --env-from-host ANTHROPIC_API_KEY -f\n  cua agent run local:ci openai-codex \"add tests\" --repo https://github.com/org/repo --exit-when-idle",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox (`local:NAME`, `cloud:NAME`, `direct:HOST:PORT`, or NAME)",
+       "help": "Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME)",
        "hidden": false,
        "is_optional": false,
        "name": "SANDBOX",
@@ -727,8 +652,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -957,7 +882,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox (`local:NAME`, `cloud:NAME`, `direct:HOST:PORT`, or NAME)",
+       "help": "Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME)",
        "hidden": false,
        "is_optional": false,
        "name": "SANDBOX",
@@ -982,8 +907,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -1040,8 +965,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -1130,8 +1055,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -1199,8 +1124,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -1257,8 +1182,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -1315,8 +1240,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -1373,8 +1298,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -1431,8 +1356,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -1559,7 +1484,7 @@
     },
     {
      "abstract": "Create a persistent agent: a named harness whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space",
-     "after_help": "Examples:\n  cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY\n  cua agent create scout --harness claude-code --in cloud:scout --env-from-host ANTHROPIC_API_KEY",
+     "after_help": "Examples:\n  cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY\n  cua agent create scout --harness claude-code --in local:scout --env-from-host ANTHROPIC_API_KEY",
      "aliases": [],
      "arguments": [
       {
@@ -2221,7 +2146,7 @@
    "usage": "cua agent [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Sandboxes: local, cloud or an existing machine (direct)",
+   "abstract": "Sandboxes: local or an existing machine (direct)",
    "aliases": [
     "sb"
    ],
@@ -2234,13 +2159,13 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Create a sandbox: `cua sb create IMAGE [--on local|cloud|direct:<addr>] [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume|kubevirt]`",
-     "after_help": "Examples:\n  # A Linux desktop on this machine (a gVisor container)\n  cua sb create linux --name dev\n  # A web server container, ready when its HTTP service answers\n  cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000\n  # The same Linux image in the cloud instead, as a VM\n  cua sb create linux --on cloud --kind vm --name dev",
+     "abstract": "Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>] [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`",
+     "after_help": "Examples:\n  # A Linux desktop on this machine (a gVisor container)\n  cua sb create linux --name dev\n  # A web server container, ready when its HTTP service answers\n  cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000\n  # The same Linux image as a VM\n  cua sb create linux --kind vm --name dev",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Image: a registry reference (`ghcr.io/org/image:tag`), an alias (`linux`, `ubuntu`, `windows`, `macos[:tahoe|sequoia]`, `omarchy`), or locally `pool:<name>` to run that cloud pool's template image with its firmware, services and readiness probe (`fleet:<name>` is the deprecated spelling)",
+       "help": "Image: a registry reference (`ghcr.io/org/image:tag`), an alias (`linux`, `ubuntu`, `windows`, `macos[:tahoe|sequoia]`, `omarchy`)",
        "hidden": false,
        "is_optional": true,
        "name": "IMAGE",
@@ -2275,39 +2200,6 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Cloud: keep one warm sandbox of this image ready (the default for the canonical linux/windows/macos images)",
-       "hidden": false,
-       "name": "warm",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      },
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
-       "help": "Cloud: no warm sandbox, even for a canonical image",
-       "hidden": false,
-       "name": "no-warm",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      },
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
-       "help": "Cloud, with --pool: update the pool's template to the given fields instead of failing when they differ",
-       "hidden": false,
-       "name": "apply",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      },
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
        "help": "Open the desktop in the HTML5 viewer once the sandbox is ready (`cua sb view`)",
        "hidden": false,
        "name": "view",
@@ -2319,9 +2211,42 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Keep the sandbox (its cloud claim, VM or container) when it fails to become ready, to debug it; the ref and how to delete it are printed. Default: a failed create deletes it and releases its claim",
+       "help": "Keep the sandbox (VM or container) when it fails to become ready, to debug it; the ref and how to delete it are printed. Default: a failed create deletes it",
        "hidden": false,
        "name": "keep-on-failure",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "name": "apply",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "name": "warm",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "name": "no-warm",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -2335,7 +2260,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where it runs: local, cloud, direct:<addr> (an existing machine running cua-spacesd), or a registered provider. Default: `cua config get default.on` (`CUA_DEFAULT_ON`), else local",
+       "help": "Where it runs: local, direct:<addr> (an existing machine running cua-spacesd), or a registered provider. Default: `cua config get default.on` (`CUA_DEFAULT_ON`), else local",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -2367,7 +2292,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Which engine: auto (the safest available) or one the location offers for the kind. Local: gvisor or runc (containers), qemu or lume (VMs). Cloud: gvisor (containers), kubevirt (VMs). A local sandbox with --sidecar needs `--runtime runc` where gVisor would run (separate gVisor containers cannot share a network namespace)",
+       "help": "Which engine: auto (the safest available) or one the location offers for the kind. Local: gvisor or runc (containers), qemu or lume (VMs). A local sandbox with --sidecar needs `--runtime runc` where gVisor would run (separate gVisor containers cannot share a network namespace)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -2481,7 +2406,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Guest network: `default` (outbound network, like a Docker container) or `none` (no egress; published ports still work). `none` needs a local QEMU VM; containers, Lume and cloud sandboxes reject it",
+       "help": "Guest network: `default` (outbound network, like a Docker container) or `none` (no egress; published ports still work). `none` needs a local QEMU VM; containers and Lume reject it",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -2600,7 +2525,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "A sidecar container, reachable from the sandbox at its name (it reaches the sandbox at `main`): IMAGE[,port=PORT][,env=K=V][,name=NAME] (repeatable; `port=` and `env=` repeat too). Local containers and every cloud sandbox; locally it needs `--runtime runc` where gVisor would run. With sidecars the service names main, sidecars and sc are reserved",
+       "help": "A sidecar container, reachable from the sandbox at its name (it reaches the sandbox at `main`): IMAGE[,port=PORT][,env=K=V][,name=NAME] (repeatable; `port=` and `env=` repeat too). Local containers; it needs `--runtime runc` where gVisor would run. With sidecars the service names main, sidecars and sc are reserved",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -2627,54 +2552,6 @@
        "takes_value": true,
        "type": "string",
        "value_name": "REGISTRY_SECRET"
-      },
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Cloud: most sandboxes of this image at once",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "max-pool-size",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "integer",
-       "value_name": "MAX_POOL_SIZE"
-      },
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Cloud: how long the sandbox outlives this command without a keep-alive (`15m`, `900`); renewed while the daemon holds it",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "claim-ttl",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "integer",
-       "value_name": "CLAIM_TTL"
-      },
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Cloud: use this dedicated pool instead of shared capacity. The sandbox fields given (IMAGE, --cmd, --env, --port, --sidecar, --cpu, --memory) must match its template, or creation fails with the diff",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "pool",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": "POOL"
       },
       {
        "aliases": [],
@@ -2755,6 +2632,54 @@
        "takes_value": true,
        "type": "string",
        "value_name": "OPTION"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "pool",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "POOL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-pool-size",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MAX_POOL_SIZE"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "claim-ttl",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "CLAIM_TTL"
       }
      ],
      "subcommand_optional": false,
@@ -2762,8 +2687,8 @@
      "usage": "cua sandbox create [OPTIONS] [IMAGE] [-- <COMMAND>...]"
     },
     {
-     "abstract": "Deprecated alias of `create` that defaults to `--on cloud`",
-     "after_help": "Examples:\n  # A cloud Linux sandbox (same as `cua sb create linux --on cloud`)\n  cua sb launch linux --name dev",
+     "abstract": "Deprecated alias of `create`",
+     "after_help": "Examples:\n  cua sb launch linux --name dev",
      "aliases": [],
      "arguments": [
       {
@@ -2804,8 +2729,30 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Cloud: keep one warm sandbox of this image ready",
+       "help": "Keep the sandbox when it fails to become ready (see `sb create --keep-on-failure`)",
        "hidden": false,
+       "name": "keep-on-failure",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "name": "apply",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "",
+       "hidden": true,
        "name": "warm",
        "repeatable": false,
        "short_name": null,
@@ -2815,9 +2762,9 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Keep the sandbox when it fails to become ready (see `sb create --keep-on-failure`)",
-       "hidden": false,
-       "name": "keep-on-failure",
+       "help": "",
+       "hidden": true,
+       "name": "no-warm",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -2831,23 +2778,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Use this dedicated cloud pool (requires --name). With --on local, run that pool's template locally instead",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "pool",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": "POOL"
-      },
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Where it runs (default cloud for launch; see `sb create --on`)",
+       "help": "Where it runs (see `sb create --on`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -2961,7 +2892,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Cloud region (accepted for compatibility; the cloud places sandboxes)",
+       "help": "Region (accepted for compatibility; ignored)",
        "hidden": true,
        "is_optional": true,
        "multiple_values": false,
@@ -2995,8 +2926,24 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Cloud: most sandboxes of this image at once",
-       "hidden": false,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "pool",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "POOL"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "max-pool-size",
@@ -3011,8 +2958,8 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Cloud: how long the sandbox outlives this command without a keep-alive (`15m`, `900`)",
-       "hidden": false,
+       "help": "",
+       "hidden": true,
        "is_optional": true,
        "multiple_values": false,
        "name": "claim-ttl",
@@ -3020,7 +2967,7 @@
        "repeatable": false,
        "short_name": null,
        "takes_value": true,
-       "type": "integer",
+       "type": "string",
        "value_name": "CLAIM_TTL"
       }
      ],
@@ -3029,13 +2976,13 @@
      "usage": "cua sandbox launch [OPTIONS] [IMAGE]"
     },
     {
-     "abstract": "Reattach to a sandbox (NAME or a ref such as `cloud:NAME`) and print it",
-     "after_help": "Examples:\n  cua sb connect dev\n  cua sb connect cloud:dev",
+     "abstract": "Reattach to a sandbox (NAME or a ref such as `local:NAME`) and print it",
+     "after_help": "Examples:\n  cua sb connect dev\n  cua sb connect local:dev",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3060,8 +3007,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3077,8 +3024,8 @@
      "usage": "cua sandbox connect [OPTIONS] <NAME>"
     },
     {
-     "abstract": "List sandboxes: local, direct and cloud (live Fleet claims) by default, each with its `location`; `--local` or `--cloud` filters",
-     "after_help": "Examples:\n  cua sb ls\n  cua sb ls --cloud --json",
+     "abstract": "List sandboxes: local and direct, each with its `location`; `--local` filters",
+     "after_help": "Examples:\n  cua sb ls\n  cua sb ls --local --json",
      "aliases": [
       "list"
      ],
@@ -3099,8 +3046,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Only cloud sandboxes, listed live from Fleet",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3138,15 +3085,15 @@
      "usage": "cua sandbox ls [OPTIONS]"
     },
     {
-     "abstract": "Show one sandbox (or a Fleet pool of that name)",
-     "after_help": "Examples:\n  cua sb info dev\n  cua sb info cloud:dev --json",
+     "abstract": "Show one sandbox",
+     "after_help": "Examples:\n  cua sb info dev\n  cua sb info local:dev --json",
      "aliases": [
       "get"
      ],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3171,8 +3118,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3188,13 +3135,13 @@
      "usage": "cua sandbox info [OPTIONS] <NAME>"
     },
     {
-     "abstract": "Suspend (local: pause/snapshot; Fleet managed pool: release the claim and keep the record; explicit Fleet pool: scale to zero)",
+     "abstract": "Suspend (pause/snapshot)",
      "after_help": "Examples:\n  cua sb suspend dev",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3219,8 +3166,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3236,13 +3183,13 @@
      "usage": "cua sandbox suspend [OPTIONS] <NAME>"
     },
     {
-     "abstract": "Resume (Fleet managed pool: claim a fresh sandbox of the same shape)",
+     "abstract": "Resume",
      "after_help": "Examples:\n  cua sb resume dev",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3267,8 +3214,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3290,7 +3237,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3315,8 +3262,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3332,80 +3279,39 @@
      "usage": "cua sandbox restart [OPTIONS] <NAME>"
     },
     {
-     "abstract": "Extend a Fleet claim's lease",
-     "after_help": "Examples:\n  # Keep the claim for two more hours\n  cua sb keep-alive cloud:dev --for 2h",
+     "abstract": "Removed: Cua Cloud has ended",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "",
        "hidden": false,
-       "is_optional": false,
-       "name": "NAME",
+       "is_optional": true,
+       "name": "ARGS",
        "possible_values": [],
-       "repeatable": false,
+       "repeatable": true,
        "type": "string"
       }
      ],
-     "flags": [
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
-       "help": "Look NAME up among local sandboxes only (same as `local:NAME`)",
-       "hidden": false,
-       "name": "local",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      },
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
-       "name": "cloud",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      }
-     ],
-     "hidden": false,
+     "flags": [],
+     "hidden": true,
      "hidden_aliases": [],
      "name": "keep-alive",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": "15m",
-       "env": null,
-       "help": "Lease from now (`15m`, `2h`, `900`)",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "for",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "integer",
-       "value_name": "DURATION"
-      }
-     ],
+     "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua sandbox keep-alive [OPTIONS] <NAME>"
+     "usage": "cua sandbox keep-alive [OPTIONS] [ARGS]..."
     },
     {
-     "abstract": "Delete a sandbox (Fleet: release the claim; managed pools are kept for reuse)",
-     "after_help": "Examples:\n  cua sb rm dev\n  # Without the prompt (required in scripts and agents)\n  cua sb rm cloud:dev --force",
+     "abstract": "Delete a sandbox",
+     "after_help": "Examples:\n  cua sb rm dev\n  # Without the prompt (required in scripts and agents)\n  cua sb rm local:dev --force",
      "aliases": [
       "delete"
      ],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3441,8 +3347,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3464,7 +3370,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3499,8 +3405,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3522,7 +3428,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3557,8 +3463,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3648,8 +3554,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3671,7 +3577,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3706,8 +3612,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3746,7 +3652,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3771,8 +3677,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3821,15 +3727,15 @@
      "usage": "cua sandbox logs [OPTIONS] <NAME>"
     },
     {
-     "abstract": "Forward a guest port: `port-forward NAME PORT[:LOCAL]` (a local sandbox's port not published at create, and cloud sandboxes, tunnel through cua-spacesd when the image has it; cloud images without it get HTTP and WebSocket through a loopback proxy to the cloud gateway)",
-     "after_help": "Examples:\n  # Guest port 8080 on localhost:8080 until Ctrl-C\n  cua sb port-forward dev 8080\n  # Guest port 5432 on localhost:15432\n  cua sb port-forward cloud:dev 5432:15432",
+     "abstract": "Forward a guest port: `port-forward NAME PORT[:LOCAL]` (a local sandbox's port not published at create tunnels through cua-spacesd when the image has it)",
+     "after_help": "Examples:\n  # Guest port 8080 on localhost:8080 until Ctrl-C\n  cua sb port-forward dev 8080\n  # Guest port 5432 on localhost:15432\n  cua sb port-forward local:dev 5432:15432",
      "aliases": [
       "forward"
      ],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3864,8 +3770,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3892,13 +3798,13 @@
      "usage": "cua sandbox port-forward [OPTIONS] <NAME> <SPEC>"
     },
     {
-     "abstract": "Print a URL for a named service: usable from this machine (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; cloud: a signed URL; local: a token URL served by the cua daemon)",
-     "after_help": "Examples:\n  cua sb url dev web\n  # A shareable URL for 10 minutes\n  cua sb url cloud:dev web --public --ttl 10m",
+     "abstract": "Print a URL for a named service: usable from this machine (default), or `--public` for a shareable URL that expires (`--ttl`, default 1h; a token URL served by the cua daemon)",
+     "after_help": "Examples:\n  cua sb url dev web\n  # A shareable URL for 10 minutes\n  cua sb url local:dev web --public --ttl 10m",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -3933,8 +3839,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -3984,7 +3890,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -4009,8 +3915,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -4043,13 +3949,13 @@
      "usage": "cua sandbox screenshot [OPTIONS] <NAME>"
     },
     {
-     "abstract": "Talk to an MCP server a sandbox serves: `mcp NAME SERVICE tools`, `mcp NAME SERVICE call TOOL '{\"a\":1}'`. Generic streamable HTTP over the service (local or cloud); no cua-spacesd needed",
+     "abstract": "Talk to an MCP server a sandbox serves: `mcp NAME SERVICE tools`, `mcp NAME SERVICE call TOOL '{\"a\":1}'`. Generic streamable HTTP over the service; no cua-spacesd needed",
      "after_help": "Examples:\n  cua sb mcp dev mcp tools\n  cua sb mcp dev mcp call echo '{\"text\":\"hi\"}'",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -4084,8 +3990,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -4116,7 +4022,7 @@
      "subcommand_optional": false,
      "subcommands": [
       {
-       "abstract": "The endpoint URL and headers, for any MCP client. Credential headers print masked (`Bearer ****`) unless `--show-secrets`; Fleet bearers are short-lived",
+       "abstract": "The endpoint URL and headers, for any MCP client. Credential headers print masked (`Bearer ****`) unless `--show-secrets`",
        "after_help": "Examples:\n  cua sb mcp dev mcp config",
        "aliases": [],
        "arguments": [],
@@ -4385,7 +4291,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -4432,8 +4338,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -4503,7 +4409,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -4550,8 +4456,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -4621,7 +4527,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref (`local:NAME`, `cloud:NAME`)",
+       "help": "Sandbox name or ref (`local:NAME`)",
        "hidden": false,
        "is_optional": false,
        "name": "NAME",
@@ -4657,8 +4563,8 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Look NAME up among cloud sandboxes only (same as `cloud:NAME`)",
-       "hidden": false,
+       "help": "Removed: Cua Cloud has ended",
+       "hidden": true,
        "name": "cloud",
        "repeatable": false,
        "short_name": null,
@@ -4838,7 +4744,7 @@
    "usage": "cua sandbox [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "User defaults (~/.cua/config.toml): where sandboxes run when --on is not given (default.on), the default kind and runtime, cloud defaults",
+   "abstract": "User defaults (~/.cua/config.toml): where sandboxes run when --on is not given (default.on), the default kind and runtime",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -4871,7 +4777,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Setting (`default.on`, `default.kind`, `default.runtime`, `cloud.warm`, `cloud.max_pool_size`, `cloud.claim_ttl`)",
+       "help": "Setting (`default.on`, `default.kind`, `default.runtime`)",
        "hidden": false,
        "is_optional": false,
        "name": "KEY",
@@ -4891,7 +4797,7 @@
     },
     {
      "abstract": "Write a setting to the config file",
-     "after_help": "Examples:\n  # Create sandboxes in the cloud unless --on says otherwise\n  cua config set default.on cloud\n  # Back to this machine\n  cua config set default.on local\n  # Prefer VMs when the image offers both\n  cua config set default.kind vm",
+     "after_help": "Examples:\n  # Create sandboxes in your AWS account unless --on says otherwise\n  cua config set default.on aws\n  # Back to this machine\n  cua config set default.on local\n  # Prefer VMs when the image offers both\n  cua config set default.kind vm",
      "aliases": [],
      "arguments": [
       {
@@ -4906,7 +4812,7 @@
       },
       {
        "default_value": null,
-       "help": "Value (checked: `default.on` takes local, cloud or a provider)",
+       "help": "Value (checked: `default.on` takes local, aws, gcp, modal or a provider)",
        "hidden": false,
        "is_optional": false,
        "name": "VALUE",
@@ -5035,7 +4941,7 @@
    "subcommands": [
     {
      "abstract": "Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair",
-     "after_help": "Examples:\n  cua do switch dev\n  cua do switch cloud:dev\n  cua do switch relay:0123abcd4567ef89\n  # This machine (after `cua do-host-consent`)\n  cua do switch host",
+     "after_help": "Examples:\n  cua do switch dev\n  cua do switch relay:0123abcd4567ef89\n  # This machine (after `cua do-host-consent`)\n  cua do switch host",
      "aliases": [],
      "arguments": [
       {
@@ -6749,194 +6655,79 @@
    "usage": "cua trajectory [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Workload identity federation tokens",
+   "abstract": "Removed: Cua Cloud has ended",
    "aliases": [],
-   "arguments": [],
+   "arguments": [
+    {
+     "default_value": null,
+     "help": "",
+     "hidden": false,
+     "is_optional": true,
+     "name": "ARGS",
+     "possible_values": [],
+     "repeatable": true,
+     "type": "string"
+    }
+   ],
    "flags": [],
-   "hidden": false,
+   "hidden": true,
    "hidden_aliases": [],
    "name": "wif-token",
    "options": [],
    "subcommand_optional": false,
-   "subcommands": [
-    {
-     "abstract": "Print a GitHub Actions OIDC token for Fleets",
-     "after_help": "Examples:\n  # In a GitHub Actions job with `id-token: write`\n  cua wif-token github",
-     "aliases": [],
-     "arguments": [],
-     "flags": [],
-     "hidden": false,
-     "hidden_aliases": [],
-     "name": "github",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": "fleets",
-       "env": null,
-       "help": "Token audience",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "audience",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": "AUDIENCE"
-      }
-     ],
-     "subcommand_optional": false,
-     "subcommands": [],
-     "usage": "cua wif-token github [OPTIONS]"
-    }
-   ],
-   "usage": "cua wif-token [OPTIONS] <COMMAND>"
+   "subcommands": [],
+   "usage": "cua wif-token [OPTIONS] [ARGS]..."
   },
   {
-   "abstract": "Fleet: managed pools behind `cua sandbox create` without `--pool`",
+   "abstract": "Removed: Cua Cloud has ended",
    "aliases": [],
-   "arguments": [],
+   "arguments": [
+    {
+     "default_value": null,
+     "help": "",
+     "hidden": false,
+     "is_optional": true,
+     "name": "ARGS",
+     "possible_values": [],
+     "repeatable": true,
+     "type": "string"
+    }
+   ],
    "flags": [],
-   "hidden": false,
+   "hidden": true,
    "hidden_aliases": [],
    "name": "fleet",
    "options": [],
    "subcommand_optional": false,
-   "subcommands": [
-    {
-     "abstract": "Managed pools (`cua-auto-*`): reused per image and shape, autoscaled from zero, garbage-collected when idle",
-     "aliases": [],
-     "arguments": [],
-     "flags": [],
-     "hidden": false,
-     "hidden_aliases": [],
-     "name": "pools",
-     "options": [],
-     "subcommand_optional": false,
-     "subcommands": [
-      {
-       "abstract": "List this account's managed pools",
-       "after_help": "Examples:\n  cua fleet pools ls",
-       "aliases": [
-        "list"
-       ],
-       "arguments": [],
-       "flags": [],
-       "hidden": false,
-       "hidden_aliases": [],
-       "name": "ls",
-       "options": [],
-       "subcommand_optional": false,
-       "subcommands": [],
-       "usage": "cua fleet pools ls [OPTIONS]"
-      },
-      {
-       "abstract": "Delete managed pools idle for `--idle` and stuck claims",
-       "after_help": "Examples:\n  cua fleet pools gc\n  cua fleet pools gc --idle 2h",
-       "aliases": [],
-       "arguments": [],
-       "flags": [],
-       "hidden": false,
-       "hidden_aliases": [],
-       "name": "gc",
-       "options": [
-        {
-         "aliases": [],
-         "default_value": "30m",
-         "env": null,
-         "help": "Idle threshold (`30m`, `2h`, `1d`)",
-         "hidden": false,
-         "is_optional": true,
-         "multiple_values": false,
-         "name": "idle",
-         "possible_values": [],
-         "repeatable": false,
-         "short_name": null,
-         "takes_value": true,
-         "type": "string",
-         "value_name": "IDLE"
-        },
-        {
-         "aliases": [],
-         "default_value": null,
-         "env": null,
-         "help": "Only these pools (repeatable). Default: every managed pool",
-         "hidden": false,
-         "is_optional": true,
-         "multiple_values": false,
-         "name": "pool",
-         "possible_values": [],
-         "repeatable": true,
-         "short_name": null,
-         "takes_value": true,
-         "type": "string",
-         "value_name": "POOLS"
-        }
-       ],
-       "subcommand_optional": false,
-       "subcommands": [],
-       "usage": "cua fleet pools gc [OPTIONS]"
-      }
-     ],
-     "usage": "cua fleet pools [OPTIONS] <COMMAND>"
-    },
-    {
-     "abstract": "One pool (any pool you own, not only managed ones)",
-     "aliases": [],
-     "arguments": [],
-     "flags": [],
-     "hidden": false,
-     "hidden_aliases": [],
-     "name": "pool",
-     "options": [],
-     "subcommand_optional": false,
-     "subcommands": [
-      {
-       "abstract": "Print a pool's spec: the shared sandbox model as JSON, or with `--terraform` the equivalent `fleets_pool` resource block",
-       "after_help": "Examples:\n  cua fleet pool export ci-linux\n  cua fleet pool export ci-linux --terraform > pool.tf",
-       "aliases": [],
-       "arguments": [
-        {
-         "default_value": null,
-         "help": "Pool name",
-         "hidden": false,
-         "is_optional": false,
-         "name": "NAME",
-         "possible_values": [],
-         "repeatable": false,
-         "type": "string"
-        }
-       ],
-       "flags": [
-        {
-         "aliases": [],
-         "default_value": false,
-         "env": null,
-         "help": "Emit Terraform HCL (the cyclops-cs `fleets_pool` resource)",
-         "hidden": false,
-         "name": "terraform",
-         "repeatable": false,
-         "short_name": null,
-         "takes_value": false
-        }
-       ],
-       "hidden": false,
-       "hidden_aliases": [],
-       "name": "export",
-       "options": [],
-       "subcommand_optional": false,
-       "subcommands": [],
-       "usage": "cua fleet pool export [OPTIONS] <NAME>"
-      }
-     ],
-     "usage": "cua fleet pool [OPTIONS] <COMMAND>"
-    }
-   ],
-   "usage": "cua fleet [OPTIONS] <COMMAND>"
+   "subcommands": [],
+   "usage": "cua fleet [OPTIONS] [ARGS]..."
   },
   {
-   "abstract": "Images: local OCI pull/build/push and Fleet image resources",
+   "abstract": "Removed: Cua Cloud has ended",
+   "aliases": [],
+   "arguments": [
+    {
+     "default_value": null,
+     "help": "",
+     "hidden": false,
+     "is_optional": true,
+     "name": "ARGS",
+     "possible_values": [],
+     "repeatable": true,
+     "type": "string"
+    }
+   ],
+   "flags": [],
+   "hidden": true,
+   "hidden_aliases": [],
+   "name": "pools",
+   "options": [],
+   "subcommand_optional": false,
+   "subcommands": [],
+   "usage": "cua pools [OPTIONS] [ARGS]..."
+  },
+  {
+   "abstract": "Images: local OCI pull/build/push",
    "aliases": [
     "img"
    ],
@@ -7067,182 +6858,104 @@
      "usage": "cua image push [OPTIONS] <REFERENCE> <DESTINATION>"
     },
     {
-     "abstract": "List Fleet image resources",
-     "after_help": "Examples:\n  cua image ls\n  cua image ls --namespace acme",
-     "aliases": [
+     "abstract": "Removed: Cua Cloud has ended",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "",
+       "hidden": false,
+       "is_optional": true,
+       "name": "ARGS",
+       "possible_values": [],
+       "repeatable": true,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": true,
+     "hidden_aliases": [
       "list"
      ],
-     "arguments": [],
-     "flags": [],
-     "hidden": false,
-     "hidden_aliases": [],
      "name": "ls",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Namespace (default: every namespace, or CUA_FLEET_NAMESPACE)",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "namespace",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": "NAMESPACE"
-      }
-     ],
+     "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua image ls [OPTIONS]"
+     "usage": "cua image ls [OPTIONS] [ARGS]..."
     },
     {
-     "abstract": "Show a Fleet image resource",
-     "after_help": "Examples:\n  cua image info desktop",
+     "abstract": "Removed: Cua Cloud has ended",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Image resource name",
+       "help": "",
        "hidden": false,
-       "is_optional": false,
-       "name": "NAME",
+       "is_optional": true,
+       "name": "ARGS",
        "possible_values": [],
-       "repeatable": false,
+       "repeatable": true,
        "type": "string"
       }
      ],
      "flags": [],
-     "hidden": false,
+     "hidden": true,
      "hidden_aliases": [],
      "name": "info",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Namespace (default: CUA_FLEET_NAMESPACE)",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "namespace",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": "NAMESPACE"
-      }
-     ],
+     "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua image info [OPTIONS] <NAME>"
+     "usage": "cua image info [OPTIONS] [ARGS]..."
     },
     {
-     "abstract": "Delete a Fleet image resource",
-     "after_help": "Examples:\n  cua image rm desktop",
-     "aliases": [
-      "delete"
-     ],
+     "abstract": "Removed: Cua Cloud has ended",
+     "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Image resource name",
+       "help": "",
        "hidden": false,
-       "is_optional": false,
-       "name": "NAME",
+       "is_optional": true,
+       "name": "ARGS",
        "possible_values": [],
-       "repeatable": false,
+       "repeatable": true,
        "type": "string"
       }
      ],
-     "flags": [
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
-       "help": "Do not ask for confirmation",
-       "hidden": false,
-       "name": "force",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      }
+     "flags": [],
+     "hidden": true,
+     "hidden_aliases": [
+      "delete"
      ],
-     "hidden": false,
-     "hidden_aliases": [],
      "name": "rm",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Namespace (default: CUA_FLEET_NAMESPACE)",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "namespace",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": "NAMESPACE"
-      }
-     ],
+     "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua image rm [OPTIONS] <NAME>"
+     "usage": "cua image rm [OPTIONS] [ARGS]..."
     },
     {
-     "abstract": "Submit an Image manifest (JSON) to Fleet for a remote build",
-     "after_help": "Examples:\n  cua image create -f image.json",
+     "abstract": "Removed: Cua Cloud has ended",
      "aliases": [],
-     "arguments": [],
-     "flags": [],
-     "hidden": false,
-     "hidden_aliases": [],
-     "name": "create",
-     "options": [
+     "arguments": [
       {
-       "aliases": [],
        "default_value": null,
-       "env": null,
-       "help": "Image manifest file (JSON)",
-       "hidden": false,
-       "is_optional": false,
-       "multiple_values": false,
-       "name": "file",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": "f",
-       "takes_value": true,
-       "type": "path",
-       "value_name": "FILE"
-      },
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Namespace (default: CUA_FLEET_NAMESPACE)",
+       "help": "",
        "hidden": false,
        "is_optional": true,
-       "multiple_values": false,
-       "name": "namespace",
+       "name": "ARGS",
        "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": "NAMESPACE"
+       "repeatable": true,
+       "type": "string"
       }
      ],
+     "flags": [],
+     "hidden": true,
+     "hidden_aliases": [],
+     "name": "create",
+     "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua image create [OPTIONS] --file <FILE>"
+     "usage": "cua image create [OPTIONS] [ARGS]..."
     }
    ],
    "usage": "cua image [OPTIONS] <COMMAND>"
@@ -7259,7 +6972,7 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "List the catalog: ref, OS, container or VM, local and cloud runtime, cua-spacesd, browsers, summary",
+     "abstract": "List the catalog: ref, OS, container or VM, local runtime, cua-spacesd, browsers, summary",
      "after_help": "Examples:\n  cua images ls\n  # Images whose browser the cua-driver browser tools drive\n  cua images ls --browser\n  cua images ls --all --json",
      "aliases": [
       "list"
@@ -8854,12 +8567,12 @@
   },
   {
    "abstract": "Check the host, an image and a sandbox's guest in one report (`cua doctor [REF]`), or eval parity between two variants (`cua doctor parity A B`)",
-   "after_help": "Examples:\n  # Host checks only\n  cua doctor\n  # Host, image and guest checks for the sandbox dev\n  cua doctor dev\n  # CI: fail on warnings, write JUnit XML\n  cua doctor cloud:dev --strict --junit doctor.xml",
+   "after_help": "Examples:\n  # Host checks only\n  cua doctor\n  # Host, image and guest checks for the sandbox dev\n  cua doctor dev\n  # CI: fail on warnings, write JUnit XML\n  cua doctor local:dev --strict --junit doctor.xml",
    "aliases": [],
    "arguments": [
     {
      "default_value": null,
-     "help": "Sandbox to check: `local:<name>`, `cloud:<name>`, `direct:<host:port>`, a bare name, or a spacesd URL. Omit for the host checks only",
+     "help": "Sandbox to check: `local:<name>`, `direct:<host:port>`, a bare name, or a spacesd URL. Omit for the host checks only",
      "hidden": false,
      "is_optional": true,
      "name": "TARGET",
@@ -9953,7 +9666,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "The Space's cua-spacesd (`http(s)://host:port`, `host:port`, default port 3211), a Space id (`local:<name>`, `cloud:<name>`), or any MCP endpoint URL",
+       "help": "The Space's cua-spacesd (`http(s)://host:port`, `host:port`, default port 3211), a Space id (`local:<name>`), or any MCP endpoint URL",
        "hidden": false,
        "is_optional": false,
        "name": "URL",
@@ -10033,7 +9746,7 @@
      "usage": "cua spaces add [OPTIONS] <URL>"
     },
     {
-     "abstract": "Create Spaces: on this machine, on one of your machines that provides Spaces (`cua host setup --provide-spaces` there), or in the cloud",
+     "abstract": "Create Spaces: on this machine, on one of your machines that provides Spaces (`cua host setup --provide-spaces` there), or in your own cloud account",
      "after_help": "Examples:\n  cua spaces create linux\n  # Two macOS VMs on your spare Mac mini (matched by name)\n  cua spaces create macos:26 --on \"spare mac mini\" --count 2\n  cua spaces create --on host:0123abcd4567ef89 linux --json",
      "aliases": [],
      "arguments": [
@@ -10057,7 +9770,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where: `local`, `cloud`, `host:<machine>`, or a machine name (`mac-mini`, \"spare mac mini\"). Default: your default location",
+       "help": "Where: `local`, `aws`, `gcp`, `host:<machine>`, or a machine name (`mac-mini`, \"spare mac mini\"). Default: your default location",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -10228,7 +9941,7 @@
      "usage": "cua spaces cancel [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "The GPU options each runtime offers on this machine (or in the cloud)",
+     "abstract": "The GPU options each runtime offers on this machine (or in your own cloud account)",
      "after_help": "Examples:\n  cua spaces gpus\n  cua spaces gpus --json",
      "aliases": [],
      "arguments": [],
@@ -10241,7 +9954,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "`local` (default) or `cloud`",
+       "help": "`local` (default), `aws`, `gcp` or `modal`",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -10259,7 +9972,7 @@
      "usage": "cua spaces gpus [OPTIONS]"
     },
     {
-     "abstract": "Delete a Space's sandbox (on this machine, on the machine that provides it, or in the cloud) and forget it (asks first)",
+     "abstract": "Delete a Space's sandbox (on this machine, on the machine that provides it, or in your own cloud account) and forget it (asks first)",
      "after_help": "Examples:\n  cua spaces delete relay:space-0123456789abcdef\n  cua spaces delete local:studio --force",
      "aliases": [],
      "arguments": [
@@ -10296,7 +10009,7 @@
      "usage": "cua spaces delete [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your machines provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`; compute billing stops). Fleet cloud Spaces, Modal sandboxes and Spaces added by address cannot be turned off",
+     "abstract": "Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your machines provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`; compute billing stops). Modal sandboxes and Spaces added by address cannot be turned off",
      "after_help": "Examples:\n  cua spaces stop local:studio\n  cua spaces stop relay:space-0123456789abcdef --json",
      "aliases": [],
      "arguments": [
@@ -13238,7 +12951,7 @@
      "usage": "cua volume status [OPTIONS]"
     },
     {
-     "abstract": "Which store the drive uses (fs, s3, cloud)",
+     "abstract": "Which store the drive uses (fs, s3)",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -13288,7 +13001,7 @@
          "aliases": [],
          "default_value": null,
          "env": null,
-         "help": "`fs` (default), `s3`, or `cloud` (off unless the Cua cloud enables it)",
+         "help": "`fs` (default) or `s3`",
          "hidden": false,
          "is_optional": false,
          "multiple_values": false,
@@ -13563,7 +13276,7 @@
   },
   {
    "code": 2,
-   "meaning": "Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`, `cloud:NAME`)"
+   "meaning": "Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`)"
   },
   {
    "code": 3,
@@ -13571,7 +13284,7 @@
   },
   {
    "code": 4,
-   "meaning": "Not supported, or not configured (for example no cloud credentials)"
+   "meaning": "Not supported, or not configured (for example no provider credentials)"
   },
   {
    "code": 5,
@@ -13664,5 +13377,5 @@
  ],
  "name": "cua",
  "usage": "cua [OPTIONS] <COMMAND>",
- "version": "0.4.1"
+ "version": "0.5.0"
 }

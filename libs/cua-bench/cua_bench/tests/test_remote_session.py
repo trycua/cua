@@ -71,9 +71,8 @@ async def test_full_lifecycle_uses_the_runner_lifecycle(monkeypatch):
     assert sdk.live == 0 and sdk.released == 1
 
 
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
 @pytest.mark.asyncio
-async def test_full_lifecycle_windows_and_cloud(monkeypatch):
+async def test_full_lifecycle_windows(monkeypatch):
     from cua_bench import sandboxes
 
     from .fakes import FakeSDK
@@ -81,12 +80,28 @@ async def test_full_lifecycle_windows_and_cloud(monkeypatch):
     sdk = FakeSDK()
     monkeypatch.setattr(sandboxes, "_sdk", sdk.pair)
     monkeypatch.delenv("CUA_BENCH_IMAGE", raising=False)
-    async with remote.RemoteDesktopSession(os_type="win11", provider_type="cloud"):
+    async with remote.RemoteDesktopSession(os_type="win11"):
         pass
     (call,) = sdk.calls
-    assert call["on"] == "cloud" and call["image"].builtin == "windows"
+    assert call["on"] == "local" and call["image"].builtin == "windows"
     assert call["image"].kind == "vm"
     assert sdk.released == 1
+
+
+@pytest.mark.asyncio
+async def test_the_cloud_provider_type_ends_with_cua_cloud(monkeypatch):
+    from cua_bench import sandboxes
+    from cua_bench.targets import CloudEnded
+
+    from .fakes import FakeSDK
+
+    sdk = FakeSDK()
+    monkeypatch.setattr(sandboxes, "_sdk", sdk.pair)
+    monkeypatch.delenv("CUA_BENCH_IMAGE", raising=False)
+    with pytest.raises(CloudEnded, match="Cua Cloud has ended"):
+        async with remote.RemoteDesktopSession(os_type="win11", provider_type="cloud"):
+            pass
+    assert sdk.calls == []
 
 
 @pytest.mark.asyncio

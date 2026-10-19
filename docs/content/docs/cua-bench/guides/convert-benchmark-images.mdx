@@ -17,8 +17,8 @@ scripts/bench-images/publish.sh web                      # stage immutable pins,
 
 | Variant | Tag | Runs on | Init |
 | --- | --- | --- | --- |
-| `rootfs` | `<ver>` | gVisor or runc locally, gVisor in the cloud | supervisord |
-| `containerdisk` | `<ver>-disk` | QEMU locally, KubeVirt in the cloud | systemd |
+| `rootfs` | `<ver>` | gVisor or runc | supervisord |
+| `containerdisk` | `<ver>-disk` | QEMU | systemd |
 
 `--promote` moves `<ver>` and `<ver>-disk` only after `cua-spacesd doctor`
 passes on every staged digest, arch and variant. The converted images are

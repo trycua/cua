@@ -8,19 +8,21 @@
 //!
 //! Sidecars are addressed by name on every runtime: the sandbox reaches a
 //! sidecar at its name (on its declared ports) and a sidecar reaches the
-//! sandbox at [`MAIN_CONTAINER_NAME`]. Pod runtimes (gVisor) run them in the
-//! sandbox pod (so `localhost` works too); KubeVirt runs them in a companion
-//! gVisor pod and names them in the guest's `/etc/hosts` through cloud-init.
+//! sandbox at [`cua_image::sidecar::MAIN_CONTAINER_NAME`]. Pod runtimes
+//! (gVisor) run them in the sandbox pod (so `localhost` works too); KubeVirt
+//! runs them in a companion gVisor pod and names them in the guest's
+//! `/etc/hosts` through cloud-init.
 
 use crate::{Error, FleetClient, Result};
 use base64::Engine as _;
 use cyclops_sdk::{HttpHeader, HttpRequest, SdkError};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 
 pub use cua_image::RegistryCredentials;
+// The sidecar type and its rules are not Fleet's: they live in `cua-image`
+// (`cua_image::sidecar`) and apply to every provider.
+use cua_image::sidecar::Sidecar;
 
 /// Whether Fleet builds `kind: container` image recipes (remote builds of
 /// `Image` layers on a registry base). Off until Fleet's builder runs them.
@@ -30,184 +32,12 @@ pub const REMOTE_BUILDS_SUPPORTED: bool = cfg!(feature = "fleet-remote-builds");
 /// in #7887).
 pub const REGISTRY_SECRET_PREFIX: &str = "cua-registry-";
 
-/// Most sidecars a template may carry (Fleet's admission limit).
-pub const MAX_SIDECARS: usize = 8;
-
-/// The hostname sidecars reach the sandbox at, and a name no sidecar may
-/// take.
-pub const MAIN_CONTAINER_NAME: &str = "main";
-
-/// Service names a sandbox with sidecars may not use (Fleet's KubeVirt
-/// companion names its own Services with them; reserved on every runtime,
-/// locally too, so a spec stays portable).
-pub const RESERVED_SERVICE_NAMES: [&str; 3] = ["main", "sidecars", "sc"];
-
 /// The error for a remote image build Fleet cannot run yet.
 pub fn remote_builds_unsupported(what: &str) -> Error {
     Error::InvalidArgument(format!(
         "{what} on cloud sandboxes needs Fleet remote builds from a registry base, which are \
          not deployed yet; build the image locally, push it to a registry and reference it"
     ))
-}
-
-/// Refuses [`RESERVED_SERVICE_NAMES`] in `services` when `sidecars` is
-/// non-empty (Fleet's admission rule; a sandbox without sidecars may use
-/// them).
-pub fn check_reserved_service_names<'a>(
-    services: impl IntoIterator<Item = &'a String>,
-    has_sidecars: bool,
-) -> Result<()> {
-    if !has_sidecars {
-        return Ok(());
-    }
-    if let Some(n) = services
-        .into_iter()
-        .find(|n| RESERVED_SERVICE_NAMES.contains(&n.as_str()))
-    {
-        return Err(Error::InvalidArgument(format!(
-            "service name {n:?} is reserved in a sandbox with sidecars (reserved: {})",
-            RESERVED_SERVICE_NAMES.join(", ")
-        )));
-    }
-    Ok(())
-}
-
-/// An extra container next to a sandbox. The sandbox reaches it at its
-/// `name` as a hostname (on its declared `ports`), and it reaches the
-/// sandbox at [`MAIN_CONTAINER_NAME`]. Local containers and gVisor pods
-/// share one network namespace, so `localhost` works there too.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Sidecar {
-    /// Name, unique within the sandbox (DNS label, not `main`); also its
-    /// hostname.
-    pub name: String,
-    /// Image reference.
-    pub image: String,
-    /// argv replacing the image's ENTRYPOINT.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command: Option<Vec<String>>,
-    /// Environment (plain values, not secrets).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub env: BTreeMap<String, String>,
-    /// Ports it listens on.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ports: Vec<u16>,
-    /// Arguments after `command` (or the image's entrypoint).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub args: Option<Vec<String>>,
-    /// CPU request as a Kubernetes quantity (`500m`, `1`). Cloud only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu: Option<String>,
-    /// Memory request as a Kubernetes quantity (`256Mi`). Cloud only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory: Option<String>,
-}
-
-impl Sidecar {
-    /// A sidecar running `image`, named after the image's repository.
-    pub fn new(image: impl Into<String>) -> Self {
-        let image = image.into();
-        Self {
-            name: default_sidecar_name(&image),
-            image,
-            command: None,
-            env: BTreeMap::new(),
-            ports: vec![],
-            args: None,
-            cpu: None,
-            memory: None,
-        }
-    }
-}
-
-/// `redis` for `docker.io/library/redis:7-alpine`: the last path segment of
-/// the repository, lowercased to a DNS label.
-pub fn default_sidecar_name(image: &str) -> String {
-    let repo = image.split('@').next().unwrap_or(image);
-    let last = repo.rsplit('/').next().unwrap_or(repo);
-    let last = last.split(':').next().unwrap_or(last);
-    let mut name: String = last
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    name = name.trim_matches('-').to_string();
-    name.truncate(50);
-    let name = name.trim_end_matches('-').to_string();
-    if name.is_empty() || name == "main" {
-        "sidecar".into()
-    } else {
-        name
-    }
-}
-
-/// Checks sidecars the way Fleet's admission does (so a bad spec fails
-/// before any pool exists): at most [`MAX_SIDECARS`], unique DNS-label names
-/// other than `main`, an image each, valid env names, ports in range and
-/// not claimed by two sidecars. `reserved` ports belong to the sandbox
-/// itself (its spacesd); services may target sidecar ports.
-pub fn validate_sidecars(sidecars: &[Sidecar], reserved: &[u16]) -> Result<()> {
-    if sidecars.len() > MAX_SIDECARS {
-        return Err(Error::InvalidArgument(format!(
-            "at most {MAX_SIDECARS} sidecars (got {})",
-            sidecars.len()
-        )));
-    }
-    let mut names = std::collections::BTreeSet::new();
-    let mut ports: BTreeMap<u16, String> = BTreeMap::new();
-    for s in sidecars {
-        if cyclops_sdk::validate_dns_label(&s.name).is_err() || s.name == MAIN_CONTAINER_NAME {
-            return Err(Error::InvalidArgument(format!(
-                "sidecar name {:?} must be a DNS label other than \"main\"",
-                s.name
-            )));
-        }
-        if !names.insert(s.name.as_str()) {
-            return Err(Error::InvalidArgument(format!(
-                "sidecar name {:?} is used twice",
-                s.name
-            )));
-        }
-        if s.image.trim().is_empty() {
-            return Err(Error::InvalidArgument(format!(
-                "sidecar {:?} needs an image",
-                s.name
-            )));
-        }
-        if let Some(k) = s.env.keys().find(|k| !cua_image::spec::is_env_name(k)) {
-            return Err(Error::InvalidArgument(format!(
-                "sidecar {:?}: bad environment variable name {k:?}",
-                s.name
-            )));
-        }
-        for p in &s.ports {
-            if *p == 0 {
-                return Err(Error::InvalidArgument(format!(
-                    "sidecar {:?}: port 0",
-                    s.name
-                )));
-            }
-            if reserved.contains(p) {
-                return Err(Error::InvalidArgument(format!(
-                    "sidecar {:?} port {p} is also a sandbox port (containers share one \
-                     network namespace)",
-                    s.name
-                )));
-            }
-            if let Some(other) = ports.insert(*p, s.name.clone()) {
-                return Err(Error::InvalidArgument(format!(
-                    "port {p} is claimed by sidecars {other:?} and {:?}",
-                    s.name
-                )));
-            }
-        }
-    }
-    Ok(())
 }
 
 /// `vmTemplate.sidecars[]` entries (`SandboxSidecar`). CPU and memory are
@@ -491,60 +321,6 @@ fn secret_status(op: &str, name: &str, status: u16) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_names_are_dns_labels() {
-        assert_eq!(default_sidecar_name("redis:7-alpine"), "redis");
-        assert_eq!(
-            default_sidecar_name("docker.io/library/postgres@sha256:ab"),
-            "postgres"
-        );
-        assert_eq!(default_sidecar_name("ghcr.io/me/My_Svc:1"), "my-svc");
-        assert_eq!(default_sidecar_name("reg:5000/main"), "sidecar");
-    }
-
-    #[test]
-    fn sidecars_validate_like_admission() {
-        let db = Sidecar {
-            ports: vec![6379],
-            ..Sidecar::new("redis:7-alpine")
-        };
-        validate_sidecars(std::slice::from_ref(&db), &[8000]).unwrap();
-        assert!(
-            validate_sidecars(&[db.clone(), db.clone()], &[]).is_err(),
-            "dup name"
-        );
-        assert!(
-            validate_sidecars(std::slice::from_ref(&db), &[6379]).is_err(),
-            "port clash"
-        );
-        let twin = Sidecar {
-            name: "db2".into(),
-            ..db.clone()
-        };
-        assert!(
-            validate_sidecars(&[db.clone(), twin], &[]).is_err(),
-            "shared port"
-        );
-        let main = Sidecar {
-            name: "main".into(),
-            ..db.clone()
-        };
-        assert!(validate_sidecars(&[main], &[]).is_err());
-        let many: Vec<Sidecar> = (0..9)
-            .map(|i| Sidecar {
-                name: format!("s{i}"),
-                ports: vec![],
-                ..db.clone()
-            })
-            .collect();
-        assert!(validate_sidecars(&many, &[]).is_err());
-        let bad_env = Sidecar {
-            env: [("1X".to_string(), "v".to_string())].into(),
-            ..db
-        };
-        assert!(validate_sidecars(&[bad_env], &[]).is_err());
-    }
 
     #[test]
     fn sidecar_json_matches_the_7887_shape() {

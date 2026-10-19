@@ -140,7 +140,7 @@ class NativeRuntime(Runtime):
         return image.os_type or "linux"
 
     #: Whether this runtime mints the spacesd token itself (containers).
-    #: Otherwise the SDK mints one for Linux VMs (cloud-init, the Fleet
+    #: Otherwise the SDK mints one for Linux VMs (cloud-init, the
     #: /run/cua/env-token contract) and macOS VMs (the Lume setup share) and
     #: keeps it in the sandbox record, which ``_info`` reads back.
     delivers_guest_env = False

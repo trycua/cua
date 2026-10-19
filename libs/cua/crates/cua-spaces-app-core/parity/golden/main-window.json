@@ -34,14 +34,14 @@
       "host": false,
       "panel": {
         "actions": [
-          "set-up: Set up for access"
+          "set-up: Turn on remote access"
         ],
         "clients": null,
         "configured": false,
         "facts": [],
         "openSettings": "Open Settings",
         "permissions": [],
-        "summary": "Other devices can’t reach this machine yet.",
+        "summary": "Your other devices can’t reach this computer yet.",
         "title": "This machine"
       },
       "sidebar": {
@@ -316,17 +316,17 @@
       "frame": {
         "advanced": "Advanced",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] = ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = "
+          "name: Name [How it shows on your other devices] = ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = "
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.cua.ai direct=- name=- allow=-",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "initial"
     },
@@ -334,17 +334,17 @@
       "frame": {
         "advanced": "Advanced",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = "
+          "name: Name [How it shows on your other devices] =  Studio ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = "
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=-",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "set-name"
     },
@@ -352,17 +352,17 @@
       "frame": {
         "advanced": "Advanced",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com"
+          "name: Name [How it shows on your other devices] =  Studio ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "set-allow"
     },
@@ -370,19 +370,19 @@
       "frame": {
         "advanced": "Advanced (open)",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
+          "name: Name [How it shows on your other devices] =  Studio ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay [https://relay.cua.ai] = https://relay.cua.ai (advanced)"
+          "relay: Relay server [https://relay.cua.ai] = https://relay.cua.ai (advanced)"
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "toggle-advanced"
     },
@@ -390,19 +390,19 @@
       "frame": {
         "advanced": "Advanced (open)",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": false,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
+          "name: Name [How it shows on your other devices] =  Studio ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay [https://relay.cua.ai] = ftp://relay !invalid (advanced)"
+          "relay: Relay server [https://relay.cua.ai] = ftp://relay !invalid (advanced)"
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": null,
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "set-relay-url"
     },
@@ -410,19 +410,19 @@
       "frame": {
         "advanced": "Advanced (open)",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
+          "name: Name [How it shows on your other devices] =  Studio ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay [https://relay.cua.ai] = https://relay.example/ (advanced)"
+          "relay: Relay server [https://relay.cua.ai] = https://relay.example/ (advanced)"
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "set-relay-url"
     },
@@ -430,17 +430,17 @@
       "frame": {
         "advanced": "Advanced (open)",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
+          "name: Name [How it shows on your other devices] =  Studio ",
           "direct: Direct connection = on (advanced)",
           "listen: Listen on [0.0.0.0:3211] = 0.0.0.0:3211 (advanced)"
         ],
-        "lede": "Other machines connect to this address with an access token.",
+        "lede": "Other computers on your network connect to this address with an access token.",
         "request": "mode=direct relay=- direct=0.0.0.0:3211 name=Studio allow=-",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "set-direct"
     },
@@ -448,17 +448,17 @@
       "frame": {
         "advanced": "Advanced (open)",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": false,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
+          "name: Name [How it shows on your other devices] =  Studio ",
           "direct: Direct connection = on (advanced)",
           "listen: Listen on [0.0.0.0:3211] = somewhere !invalid (advanced)"
         ],
-        "lede": "Other machines connect to this address with an access token.",
+        "lede": "Other computers on your network connect to this address with an access token.",
         "request": null,
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "set-listen"
     },
@@ -466,17 +466,17 @@
       "frame": {
         "advanced": "Advanced (open)",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
+          "name: Name [How it shows on your other devices] =  Studio ",
           "direct: Direct connection = on (advanced)",
           "listen: Listen on [0.0.0.0:3211] = 0.0.0.0:3300 (advanced)"
         ],
-        "lede": "Other machines connect to this address with an access token.",
+        "lede": "Other computers on your network connect to this address with an access token.",
         "request": "mode=direct relay=- direct=0.0.0.0:3300 name=Studio allow=-",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "set-listen"
     },
@@ -488,13 +488,13 @@
         "canSubmit": false,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
+          "name: Name [How it shows on your other devices] =  Studio ",
           "direct: Direct connection = on (advanced)",
           "listen: Listen on [0.0.0.0:3211] = 0.0.0.0:3300 (advanced)"
         ],
-        "lede": "Other machines connect to this address with an access token.",
+        "lede": "Other computers on your network connect to this address with an access token.",
         "request": "mode=direct relay=- direct=0.0.0.0:3300 name=Studio allow=-",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "submit"
     },
@@ -502,17 +502,17 @@
       "frame": {
         "advanced": "Advanced (open)",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": "launchctl bootstrap failed",
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
+          "name: Name [How it shows on your other devices] =  Studio ",
           "direct: Direct connection = on (advanced)",
           "listen: Listen on [0.0.0.0:3211] = 0.0.0.0:3300 (advanced)"
         ],
-        "lede": "Other machines connect to this address with an access token.",
+        "lede": "Other computers on your network connect to this address with an access token.",
         "request": "mode=direct relay=- direct=0.0.0.0:3300 name=Studio allow=-",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "failed"
     },
@@ -520,19 +520,19 @@
       "frame": {
         "advanced": "Advanced (open)",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": "launchctl bootstrap failed",
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
+          "name: Name [How it shows on your other devices] =  Studio ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay [https://relay.cua.ai] = https://relay.example/ (advanced)"
+          "relay: Relay server [https://relay.cua.ai] = https://relay.example/ (advanced)"
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "set-direct"
     },
@@ -540,17 +540,17 @@
       "frame": {
         "advanced": "Advanced",
         "busy": false,
-        "buttons": "Back / Set up for access",
+        "buttons": "Back / Turn on remote access",
         "canSubmit": true,
         "error": "launchctl bootstrap failed",
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com"
+          "name: Name [How it shows on your other devices] =  Studio ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "toggle-advanced"
     },
@@ -562,13 +562,13 @@
         "canSubmit": false,
         "error": null,
         "fields": [
-          "name: Name [This computer’s name] =  Studio ",
-          "profile: Use for [-] = desktop",
-          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com"
+          "name: Name [How it shows on your other devices] =  Studio ",
+          "profile: Use it to [-] = desktop",
+          "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
-        "title": "Set up this machine"
+        "title": "Set up this computer"
       },
       "hostForm": "submit"
     },
@@ -799,7 +799,7 @@
         "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
+        "lede": "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -821,7 +821,7 @@
         "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
+        "lede": "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1009,13 +1009,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines",
-          "host: Set up this machine for unattended access (preselected)"
+          "client: Just use this Mac to open my other computers",
+          "host: Let my other devices reach this Mac (preselected)"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1024,7 +1024,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "onboarding": "presentation-done"
@@ -1059,13 +1059,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines",
-          "host: Set up this machine for unattended access (preselected)"
+          "client: Just use this Mac to open my other computers",
+          "host: Let my other devices reach this Mac (preselected)"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1074,7 +1074,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "onboarding": "presentation-done"
@@ -1084,13 +1084,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines",
-          "host: Set up this machine for unattended access (preselected)"
+          "client: Just use this Mac to open my other computers",
+          "host: Let my other devices reach this Mac (preselected)"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1099,7 +1099,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "onboarding": "drive-continue"
@@ -1130,7 +1130,7 @@
           "Account: ada@example.com",
           "AI agents: Codex",
           "Shows in: Menu bar only",
-          "This machine: Set up for unattended access"
+          "This machine: Reachable from your other devices"
         ],
         "title": "You're all set",
         "usage": null

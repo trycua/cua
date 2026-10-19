@@ -87,7 +87,7 @@ cua sb rm -f desk
 ## Typed Cua Driver
 
 ```bash skip="host-install"
-pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]==0.9.0'
+pip install 'cua-sandbox[driver]==0.9.0'
 ```
 
 ```python test="container" id="typed-driver" prelude="image-desktop"
@@ -161,8 +161,7 @@ Kotlin) returns `{url, expires_at_unix}`; options are `ttl_seconds`,
 
 The link's fragment carries a viewer ticket that authorizes only the viewer's
 calls (never processes or tokens), expires (default 1 hour, at most 24) and is
-revoked when the root token rotates. In the cloud it is a signed `env` service
-URL.
+revoked when the root token rotates.
 
 The toolbar has full screen, scaling, a keys menu, two-way clipboard, file
 upload (to `~/Downloads`), folder sharing, microphone and stats.
@@ -186,8 +185,8 @@ Sharing stops when you close the page or click Stop.
 
 <Callout type="info">
   The viewer needs a secure context (https or localhost) for WebCodecs,
-  clipboard and folder access. Local sandboxes use a loopback port and the
-  cloud uses https. Over plain http to a LAN address it falls back to PNG
+  clipboard and folder access. Local sandboxes use a loopback port, which
+  counts as secure. Over plain http to a LAN address it falls back to PNG
   frames without clipboard or folders.
 </Callout>
 

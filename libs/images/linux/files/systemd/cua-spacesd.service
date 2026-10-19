@@ -2,8 +2,8 @@
 Description=cua-spacesd (gRPC + gRPC-Web on :3211)
 # cloud-init.service: write_files (e.g. /etc/cua/env-token) lands before the token is resolved.
 # run-cua.mount (pulled in by udev when the claim share exists) and
-# cua-env-token-sync.service: Fleet claim token (await-token-file mode, see
-# /opt/cua/bin/env-token-mode.sh); both optional.
+# cua-env-token-sync.service: the orchestrator's claim token (await-token-file
+# mode, see /opt/cua/bin/env-token-mode.sh); both optional.
 After=cua-desktop.service network-online.target cloud-init.service run-cua.mount cua-env-token-sync.service
 Wants=network-online.target cua-desktop.service cua-env-token-sync.service
 
@@ -12,8 +12,9 @@ Type=simple
 User=cua
 Environment=HOME=/home/cua XDG_RUNTIME_DIR=/run/cua-desktop
 # Token: CUA_ENV_TOKEN here, or /run/cua/env-token, or /etc/cua/env-token
-# (e.g. written by cloud-init write_files). On Fleet the claim token file
-# /run/cua/env-token (run-cua.mount) is followed instead. See start-spacesd.sh.
+# (e.g. written by cloud-init write_files). In await-token-file mode the claim
+# token file /run/cua/env-token (run-cua.mount) is followed instead. See
+# start-spacesd.sh.
 # The older env files are still read (later files win: spacesd.env last).
 EnvironmentFile=-/etc/cua/env-driver.env
 EnvironmentFile=-/etc/cua/guestd.env

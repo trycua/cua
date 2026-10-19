@@ -533,7 +533,7 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
   const base: HostPanelView = { title: "This machine", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
   if (!s) return base;
   if (!s.configured) {
-    return { ...base, summary: "Other devices can’t reach this machine yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
+    return { ...base, summary: "Your other devices can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
   const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
@@ -554,10 +554,10 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
 }
 
 const FALLBACK_INTRO =
-  "This is the computer you are using now. Set it up for access to reach it and its Spaces from your other devices and your agents, over the Cua relay with no port forwarding.";
+  "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other devices. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
-  { id: "desktop", label: "Share this desktop", buttonLabel: "Set Up…" },
-  { id: "spare", label: "Use as a spare machine for Spaces", buttonLabel: "Set Up…" },
+  { id: "desktop", label: "Use this computer from my other devices", buttonLabel: "Set Up…" },
+  { id: "spare", label: "Run Spaces here and keep its screen private", buttonLabel: "Set Up…" },
 ];
 
 /** What "Add a machine" explains: the core's words for host setup, as the

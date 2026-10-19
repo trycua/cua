@@ -234,6 +234,8 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
     }
 
     public func beginSignIn() async throws -> SignInAttempt {
+        // The browser's sign-in page says where to go back to (the SDK reads it).
+        setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
         let attempt = try await auth.beginLogin(flow: nil)
         let url = URL(string: attempt.url())
         if let url {
@@ -271,9 +273,9 @@ public protocol BillingRunning: AnyObject, Sendable {
     func status() async throws -> AppBillingStatus
 }
 
-/// Billing no longer calls the retired Fleets API (`GET /api/billing/status`
-/// on run.cua.ai). It reports "billing not enabled" with no network call, so
-/// Settings hides the row and a refused cloud Space offers no Add credit.
+/// Billing has no service behind it: Cua Cloud has ended. It reports "billing
+/// not enabled" with no network call, so Settings hides the row and a refused
+/// cloud Space offers no Add credit.
 public final class LiveBilling: BillingRunning, @unchecked Sendable {
     let cua: Cua
     public init(cua: Cua) { self.cua = cua }

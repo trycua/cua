@@ -1979,4 +1979,5 @@ jobs:
             }
           fi
           gh release upload cua-install-latest assets/release-artifacts.json \
-            stamped/install.sh stamped/install.ps1 --clobber --repo "$GITHUB_REPOSITORY"
+            stamped/install.sh stamped/install.ps1 stamped/uninstall.sh stamped/uninstall.ps1 \
+            --clobber --repo "$GITHUB_REPOSITORY"

@@ -3643,8 +3643,7 @@ export type CloudOptions = {
     pool?: string,
     /**
      * With `pool`: update the pool's template to the given fields instead
-     * of failing on a mismatch (`Fleet.apply` semantics for the template;
-     * the pool's capacity is kept). Managed pools refuse it.
+     * of failing on a mismatch. Cua Cloud has ended: ignored.
      */
     apply: boolean
 }
@@ -4231,29 +4230,28 @@ const FfiConverterTypeContainer = (() => {
 })();
 
 /**
- * Fleet credentials and endpoints. Unset fields fall back to the
- * environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
- * `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
+ * Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
+ * reads them any more. Kept so existing callers still compile.
  */
 export type FleetSettings = {
     /**
-     * Fleet API base URL.
+     * Ignored.
      */
     baseUrl?: string,
     /**
-     * OAuth token URL.
+     * Ignored.
      */
     tokenUrl?: string,
     /**
-     * OAuth client id.
+     * Ignored.
      */
     clientId?: string,
     /**
-     * OAuth client secret.
+     * Ignored.
      */
     clientSecret?: string,
     /**
-     * Static Fleet token (wins over client credentials).
+     * Ignored.
      */
     token?: string
 }
@@ -4319,11 +4317,11 @@ export type CuaConfig = {
      */
     stateDir?: string,
     /**
-     * Fleet settings (merged over the environment).
+     * Ignored: Cua Cloud has ended.
      */
     fleet?: FleetSettings,
     /**
-     * Read Fleet settings from the environment.
+     * Ignored: Cua Cloud has ended.
      */
     fleetFromEnv: boolean,
     /**
@@ -4340,14 +4338,15 @@ export type CuaConfig = {
      */
     teleportHome?: string,
     /**
-     * When the settings and environment carry no Fleet credentials, use
-     * the signed-in session (`Cua.auth()`, `cua auth login`) from the
-     * shared credential store, refreshed as needed.
+     * Use the signed-in session (`Cua.auth()`, `cua auth login`) from the
+     * shared credential store, refreshed as needed, for the relay account
+     * the runtime lists the account's machines with ("My machines"). The
+     * name is historical: it no longer builds a Fleet client, because Cua
+     * Cloud has ended.
      */
     fleetFromSession: boolean,
     /**
-     * Where managed Fleet pools keep their name cache and machine-wide GC
-     * lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+     * Ignored: Cua Cloud has ended, so there are no managed pools.
      */
     fleetPoolHome?: string
 }
@@ -8774,7 +8773,7 @@ const FfiConverterTypeGpuOption = (() => {
  */
 export type GpuSupport = {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`, `fleet`, a provider's name.
+     * `lume`, `qemu`, `container`, `gvisor`, a provider's name.
      */
     runtime: string,
     /**
@@ -9968,10 +9967,10 @@ const FfiConverterTypeImageLayer = (() => {
 })();
 
 /**
- * Image layers built on top of a sandbox's image. Cloud: a remote build
- * (Fleet images API). Local: a build into the container engine (container
- * images only; VM images take no layers here). Both are cached by the same
- * content hash (`cua-b-<hash>`), so an identical spec never rebuilds.
+ * Image layers built on top of a sandbox's image. Local: a build into the
+ * container engine (container images only; VM images take no layers here),
+ * cached by a content hash (`cua-b-<hash>`), so an identical spec never
+ * rebuilds. (Cua Cloud's remote build has ended.)
  */
 export type ImageBuild = {
     /**
@@ -10484,7 +10483,7 @@ const FfiConverterTypeMcpConfig = (() => {
 export type MediaBridge = {
     /**
      * Loopback `ws://` URL carrying a short-lived bridge ticket. Speaks
-     * rcdp wire v2 unchanged; no Fleet bearer or env token is exposed.
+     * rcdp wire v2 unchanged; no env token is exposed.
      */
     wsUrl: string,
     /**
@@ -12460,9 +12459,8 @@ export type SandboxCreateOptions = {
      */
     token?: string,
     /**
-     * Fleet: claim from this existing (user-owned) pool. Unset: a managed,
-     * autoscaled pool keyed by image and shape. Local (with an empty
-     * image): run this Fleet pool's template locally.
+     * Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
+     * error.
      */
     pool?: string,
     /**
@@ -12478,7 +12476,7 @@ export type SandboxCreateOptions = {
      */
     memoryMb?: bigint,
     /**
-     * Extra guest ports (local: published; Fleet: `port-<n>` services).
+     * Extra guest ports (local: published).
      */
     ports: Array<number>,
     /**
@@ -12494,13 +12492,13 @@ export type SandboxCreateOptions = {
      */
     readyTimeoutMs?: number,
     /**
-     * Guest environment (local: container environment or cloud-init;
-     * cloud: the template environment with `processMode: Run`, on gVisor
-     * and KubeVirt; values are not secrets).
+     * Guest environment (local: container environment or cloud-init; values
+     * are not secrets).
      */
     env: Map<string, string>,
     /**
-     * Deprecated: initial replicas of a new managed pool (> 0 = warm).
+     * Deprecated, and Cua Cloud has ended: initial replicas of a new
+     * managed pool (> 0 = warm).
      */
     fleetReplicas?: number,
     /**
@@ -12841,8 +12839,9 @@ export type SandboxInfo = {
      */
     runtime: string,
     /**
-     * `runtime_type` as persisted (`fleet`, `direct`, `gvisor`, `qemu`,
-     * ...); prefer `location`, `kind` and `runtime`.
+     * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
+     * for a record of the Cua Cloud that has ended); prefer `location`,
+     * `kind` and `runtime`.
      */
     runtimeType: string,
     /**
@@ -12862,8 +12861,7 @@ export type SandboxInfo = {
      */
     services: Map<string, number>,
     /**
-     * Service base URLs by name (Fleet: gateway URLs that need the Fleet
-     * bearer).
+     * Service base URLs by name.
      */
     endpoints: Map<string, string>,
     /**
@@ -14015,14 +14013,11 @@ export type SpaceCreateOptions = {
      */
     name?: string,
     /**
-     * vCPUs. Local default 2; cloud 1-64 (most accounts run 1-8; Fleet
-     * decides), default the pool template's (4).
+     * vCPUs. Local default 2.
      */
     cpus?: number,
     /**
-     * Memory in MiB. Local default 4096; cloud 512 up to 524288 (most
-     * accounts run 1024-32768; Fleet decides), default the pool
-     * template's (4096).
+     * Memory in MiB. Local default 4096.
      */
     memoryMb?: bigint,
     /**
@@ -15475,8 +15470,8 @@ export type SpaceStreamTicket = {
      */
     height: number,
     /**
-     * Attaching needs [`Space::websocket_headers`] (Fleet gateway or the
-     * daemon passthrough).
+     * Attaching needs [`Space::websocket_headers`] (a gateway or the daemon
+     * passthrough).
      */
     needsHeaders: boolean
 }
@@ -16668,8 +16663,8 @@ export type SpacesdHttpRequest = {
      */
     path: string,
     /**
-     * Extra headers. Credentials (`authorization`, the env and Fleet claim
-     * headers) are the client's and cannot be set here.
+     * Extra headers. Credentials (`authorization` and the env headers) are
+     * the client's and cannot be set here.
      */
     headers: Array<SpacesdHttpHeader>,
     /**
@@ -17830,10 +17825,10 @@ export const CuaError = (() => {
         }
     }
     /**
-     * The provider is not configured (for example no Fleet credentials).
+     * The provider is not configured (for example no credentials for it).
      *
-     * Fix: Set `FLEETS_TOKEN`, or `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`, or
-     * run `cua auth login` and create the client with `fleet_from_session`.
+     * Fix: Set the credentials the message names (for a contrib provider, its
+     * environment variable or `cua auth provider set <name>`).
      */
     class ProviderNotConfigured extends UniffiError {
         /**
@@ -17950,10 +17945,11 @@ export const CuaError = (() => {
         }
     }
     /**
-     * Fleet API failure.
+     * Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
+     * this.
      *
-     * Fix: Read the status in the message. Retry a transient failure; check
-     * the credentials and the account's capacity otherwise.
+     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * ended guide.
      */
     class Fleet extends UniffiError {
         /**
@@ -17980,13 +17976,11 @@ export const CuaError = (() => {
         }
     }
     /**
-     * Fleet's admission refused the request: a sandbox or pool size over
-     * this account's limits, or a template its policy does not admit. The
-     * message is Fleet's own and names the limit.
+     * Fleet's admission refused the request. Cua Cloud has ended, so the SDK
+     * no longer raises this.
      *
-     * Fix: Pick a size within the limit the message names (most accounts
-     * run 1-8 vCPUs and 1-32 GiB per sandbox), or contact Cua support to
-     * raise the account's limits.
+     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * ended guide.
      */
     class FleetAdmissionDenied extends UniffiError {
         /**
@@ -18138,8 +18132,7 @@ export const CuaError = (() => {
     /**
      * Missing or wrong token or ticket.
      *
-     * Fix: Pass the sandbox's env token, refresh the Fleet credentials, or run
-     * `cua auth login` again.
+     * Fix: Pass the sandbox's env token, or run `cua auth login` again.
      */
     class Unauthenticated extends UniffiError {
         /**
@@ -18381,9 +18374,10 @@ export const CuaError = (() => {
     }
     /**
      * A named cloud pool's template differs from the requested sandbox
-     * fields; the message holds the diff (pass `apply` to update it).
+     * fields. Cua Cloud has ended, so the SDK no longer raises this.
      *
-     * Fix: Pass the pool's own fields, or pass `apply` to update its template.
+     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * ended guide.
      */
     class PoolSpecMismatch extends UniffiError {
         /**
@@ -18411,10 +18405,11 @@ export const CuaError = (() => {
     }
     /**
      * A claim bound but its per-claim secrets (the env token) never
-     * reached the sandbox within the bounded wait; the claim was released.
+     * reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
+     * this.
      *
-     * Fix: Retry. If it keeps failing, check the pool's claim-secrets setup
-     * and the Fleet status.
+     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
+     * ended guide.
      */
     class ClaimSecretsNotDelivered extends UniffiError {
         /**
@@ -22092,7 +22087,8 @@ const uniffiTypeFleetPoolsObjectFactory: UniffiObjectFactory<FleetPoolsLike> = (
 const FfiConverterTypeFleetPools = new FfiConverterObject(uniffiTypeFleetPoolsObjectFactory);
 
 /**
- * Fleet control plane.
+ * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+ * one, so none of its methods can be called.
  */
 export interface FleetLike {
 
@@ -22241,7 +22237,8 @@ export type FleetInterface = FleetLike;
 
 
 /**
- * Fleet control plane.
+ * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+ * one, so none of its methods can be called.
  */
 export class Fleet extends UniffiAbstractObject implements FleetLike {
 
@@ -23697,7 +23694,7 @@ export interface PortForwardLike {
  */
     localAddr(): string | undefined;
 /**
- * URL to use (loopback URL, or the Fleet gateway URL).
+ * URL to use (a loopback URL).
  */
     url(): string | undefined;
 }
@@ -23790,7 +23787,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * URL to use (loopback URL, or the Fleet gateway URL).
+ * URL to use (a loopback URL).
  */
     url(): string | undefined {
     return ((__rb: Uint8Array) => {
@@ -24626,16 +24623,14 @@ export interface ServiceLike {
 /**
  * A shareable URL for this service that stops working after
  * `ttl_seconds` (60 s to 24 h, default 1 h): the same as
- * `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
- * Local: a loopback URL with its own token, served by the cua daemon.
+ * `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+ * served by the cua daemon.
  */
     publicUrl(ttlSeconds: number | undefined, label: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PublicUrl>;
 /**
- * One HTTP request to `path` on the service. Credentials (Fleet bearer
- * and claim) are attached by the runtime. `headers` are sent as given
- * (for example `content-type`, or `accept` and `mcp-session-id` for
- * MCP over Fleet); `authorization` is refused on Fleet, where the
- * gateway bearer owns it.
+ * One HTTP request to `path` on the service. Credentials are attached by
+ * the runtime. `headers` are sent as given (for example `content-type`,
+ * or `accept` and `mcp-session-id` for MCP).
  */
     request(method: string, path: string, body: ArrayBuffer | undefined, timeoutMs: number | undefined, headers: Array<HttpHeader> | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
 /**
@@ -24800,8 +24795,8 @@ private constructor(pointer: UniffiHandle) {
 /**
  * A shareable URL for this service that stops working after
  * `ttl_seconds` (60 s to 24 h, default 1 h): the same as
- * `Sandbox.public_url(name, ...)`. Cloud: a Fleet signed service URL.
- * Local: a loopback URL with its own token, served by the cua daemon.
+ * `Sandbox.public_url(name, ...)`: a loopback URL with its own token,
+ * served by the cua daemon.
  */
     async publicUrl(ttlSeconds: number | undefined = undefined, label: string | undefined = undefined, asyncOpts_?: { signal: AbortSignal }): Promise<PublicUrl> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -24836,11 +24831,9 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * One HTTP request to `path` on the service. Credentials (Fleet bearer
- * and claim) are attached by the runtime. `headers` are sent as given
- * (for example `content-type`, or `accept` and `mcp-session-id` for
- * MCP over Fleet); `authorization` is refused on Fleet, where the
- * gateway bearer owns it.
+ * One HTTP request to `path` on the service. Credentials are attached by
+ * the runtime. `headers` are sent as given (for example `content-type`,
+ * or `accept` and `mcp-session-id` for MCP).
  */
     async request(method: string, path: string, body: ArrayBuffer | undefined, timeoutMs: number | undefined, headers: Array<HttpHeader> | undefined = undefined, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -27725,20 +27718,19 @@ export interface SandboxLike {
  */
     agents(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<AgentsLike>;
 /**
- * Deletes (Fleet: releases the claim and an ephemeral pool).
+ * Deletes (local: removes it; direct: forgets it; your cloud: deletes
+ * the machine).
  */
     delete_(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Managed Fleet claims: stop renewing the claim and forget the handle;
- * the claim runs until its current shutdown time. Embedded runtime
- * only (a daemon holds its claims by design).
+ * Forgets the handle this runtime holds (a Cua Cloud claim used to
+ * stop renewing; Cua Cloud has ended). Embedded runtime only.
  */
     detach() /*throws*/: void;
 /**
  * Forwards a loopback port to guest `port`: a TCP forward locally (and
- * over cua-spacesd's tunnel when the image has it); in the cloud
- * without cua-spacesd, a loopback HTTP/WebSocket proxy through the
- * Fleet gateway. Either way `url()` is a loopback URL.
+ * over cua-spacesd's tunnel when the image has it). `url()` is a
+ * loopback URL.
  */
     forward(port: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PortForwardLike>;
 /**
@@ -27781,7 +27773,7 @@ export interface SandboxLike {
  */
     isEphemeral(): boolean;
 /**
- * Extends a Fleet lease by `seconds`.
+ * Extends the sandbox's lease by `seconds`, for a provider that has one.
  */
     keepAlive(seconds: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
@@ -27807,9 +27799,8 @@ export interface SandboxLike {
 /**
  * Where the MCP server behind `service` is (URL of its endpoint at
  * `path`, default `/mcp`, plus the headers every request needs), for
- * any MCP client. Embedded: the service route itself (loopback, or the
- * Fleet gateway with a fresh bearer and claim header). Daemon: the
- * daemon's streaming passthrough with its loopback bearer.
+ * any MCP client. Embedded: the service route itself (loopback).
+ * Daemon: the daemon's streaming passthrough with its loopback bearer.
  */
     mcpConfig(service: string, path: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<McpConfig>;
 /**
@@ -27833,9 +27824,8 @@ export interface SandboxLike {
     overlay(overlays: Array<Overlay>, timeoutMs: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<OverlayResult>>;
 /**
  * A shareable URL for `service` that stops working after `ttl_seconds`
- * (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
- * Local: a loopback URL with its own token, served by the cua daemon
- * (started if needed; `CUA_BIN` names the CLI).
+ * (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+ * by the cua daemon (started if needed; `CUA_BIN` names the CLI).
  */
     publicUrl(service: string, ttlSeconds: number | undefined, label: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PublicUrl>;
 /**
@@ -27956,7 +27946,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Deletes (Fleet: releases the claim and an ephemeral pool).
+ * Deletes (local: removes it; direct: forgets it; your cloud: deletes
+ * the machine).
  */
     async delete_(asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -27986,9 +27977,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Managed Fleet claims: stop renewing the claim and forget the handle;
- * the claim runs until its current shutdown time. Embedded runtime
- * only (a daemon holds its claims by design).
+ * Forgets the handle this runtime holds (a Cua Cloud claim used to
+ * stop renewing; Cua Cloud has ended). Embedded runtime only.
  */
     detach(): void /*throws*/ {uniffiCaller.rustCallWithError(
             /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
@@ -28002,9 +27992,8 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Forwards a loopback port to guest `port`: a TCP forward locally (and
- * over cua-spacesd's tunnel when the image has it); in the cloud
- * without cua-spacesd, a loopback HTTP/WebSocket proxy through the
- * Fleet gateway. Either way `url()` is a loopback URL.
+ * over cua-spacesd's tunnel when the image has it). `url()` is a
+ * loopback URL.
  */
     async forward(port: number, asyncOpts_?: { signal: AbortSignal }): Promise<PortForwardLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -28229,7 +28218,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Extends a Fleet lease by `seconds`.
+ * Extends the sandbox's lease by `seconds`, for a provider that has one.
  */
     async keepAlive(seconds: number, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -28354,9 +28343,8 @@ private constructor(pointer: UniffiHandle) {
 /**
  * Where the MCP server behind `service` is (URL of its endpoint at
  * `path`, default `/mcp`, plus the headers every request needs), for
- * any MCP client. Embedded: the service route itself (loopback, or the
- * Fleet gateway with a fresh bearer and claim header). Daemon: the
- * daemon's streaming passthrough with its loopback bearer.
+ * any MCP client. Embedded: the service route itself (loopback).
+ * Daemon: the daemon's streaming passthrough with its loopback bearer.
  */
     async mcpConfig(service: string, path: string | undefined = undefined, asyncOpts_?: { signal: AbortSignal }): Promise<McpConfig> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -28489,9 +28477,8 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * A shareable URL for `service` that stops working after `ttl_seconds`
- * (60 s to 24 h, default 1 h). Cloud: a Fleet signed service URL.
- * Local: a loopback URL with its own token, served by the cua daemon
- * (started if needed; `CUA_BIN` names the CLI).
+ * (60 s to 24 h, default 1 h): a loopback URL with its own token, served
+ * by the cua daemon (started if needed; `CUA_BIN` names the CLI).
  */
     async publicUrl(service: string, ttlSeconds: number | undefined = undefined, label: string | undefined = undefined, asyncOpts_?: { signal: AbortSignal }): Promise<PublicUrl> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -28966,13 +28953,13 @@ export interface SandboxesLike {
     connect(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxLike>;
 /**
  * Connects directly to a machine by URL (`http(s)://host:port`, bare
- * `host:port`, a Fleet service URL or a relay URL) with an optional
- * spacesd token. No daemon is assumed and nothing is probed.
+ * `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
  */
     connectUrl(url: string, token: string | undefined, name: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxLike>;
 /**
- * Creates (Fleet, local) or connects (direct) a sandbox and waits for
- * the provider and every readiness probe.
+ * Creates (local, your cloud, a provider) or connects (direct) a sandbox
+ * and waits for the provider and every readiness probe. `on: "cloud"`
+ * fails with the "Cua Cloud has ended" error.
  */
     create(options: SandboxCreateOptions, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxLike>;
 /**
@@ -28988,10 +28975,8 @@ export interface SandboxesLike {
  * all of them, local, direct and the account's live cloud sandboxes,
  * whatever the default location is. `"local"`, `"cloud"` or
  * `"direct"`: only those.
- * Cloud sandboxes never fail the listing: without Fleet credentials
- * they are left out silently, and when Fleet fails or takes longer than
- * 5 s they are left out with a warning (logged here;
- * [`Sandboxes::list_with_warnings`] returns it).
+ * Cua Cloud has ended: its sandboxes are never listed, and listing
+ * never asks Fleet.
  */
     list(location: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SandboxInfo>>;
 /**
@@ -29108,8 +29093,7 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Connects directly to a machine by URL (`http(s)://host:port`, bare
- * `host:port`, a Fleet service URL or a relay URL) with an optional
- * spacesd token. No daemon is assumed and nothing is probed.
+ * `host:port` or a relay URL) with an optional spacesd token. No daemon is assumed and nothing is probed.
  */
     async connectUrl(url: string, token: string | undefined, name: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SandboxLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -29144,8 +29128,9 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Creates (Fleet, local) or connects (direct) a sandbox and waits for
- * the provider and every readiness probe.
+ * Creates (local, your cloud, a provider) or connects (direct) a sandbox
+ * and waits for the provider and every readiness probe. `on: "cloud"`
+ * fails with the "Cua Cloud has ended" error.
  */
     async create(options: SandboxCreateOptions, asyncOpts_?: { signal: AbortSignal }): Promise<SandboxLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -29249,10 +29234,8 @@ private constructor(pointer: UniffiHandle) {
  * all of them, local, direct and the account's live cloud sandboxes,
  * whatever the default location is. `"local"`, `"cloud"` or
  * `"direct"`: only those.
- * Cloud sandboxes never fail the listing: without Fleet credentials
- * they are left out silently, and when Fleet fails or takes longer than
- * 5 s they are left out with a warning (logged here;
- * [`Sandboxes::list_with_warnings`] returns it).
+ * Cua Cloud has ended: its sandboxes are never listed, and listing
+ * never asks Fleet.
  */
     async list(location: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<Array<SandboxInfo>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -32623,8 +32606,8 @@ const uniffiTypeSpaceObjectFactory: UniffiObjectFactory<SpaceLike> = (() => {
 const FfiConverterTypeSpace = new FfiConverterObject(uniffiTypeSpaceObjectFactory);
 
 /**
- * The Spaces registry: add a machine by URL, claim a Fleet Space,
- * provision a local one, and get [`Space`] handles.
+ * The Spaces registry: add a machine by URL, provision a local one, and get
+ * [`Space`] handles.
  */
 export interface SpacesLike {
 
@@ -32956,8 +32939,8 @@ export type SpacesInterface = SpacesLike;
 
 
 /**
- * The Spaces registry: add a machine by URL, claim a Fleet Space,
- * provision a local one, and get [`Space`] handles.
+ * The Spaces registry: add a machine by URL, provision a local one, and get
+ * [`Space`] handles.
  */
 export class Spaces extends UniffiAbstractObject implements SpacesLike {
 
@@ -35397,8 +35380,8 @@ const FfiConverterTypeSpaces = new FfiConverterObject(uniffiTypeSpacesObjectFact
 
 /**
  * The entry point of the SDK: create one with `Cua::embedded` or
- * `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
- * through its accessors.
+ * `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+ * accessors.
  */
 export interface CuaLike {
 
@@ -35413,9 +35396,8 @@ export interface CuaLike {
  */
     auth(): AuthLike;
 /**
- * Fleet pools, templates, claims and images. Always talks to Fleet
- * from this process with this SDK's credentials (in daemon mode, from
- * the environment).
+ * Fleet pools, templates, claims and images. Cua Cloud has ended: this
+ * always fails with the "Cua Cloud has ended" error and never connects.
  */
     fleet() /*throws*/: FleetLike;
 /**
@@ -35432,7 +35414,7 @@ export interface CuaLike {
  */
     mode(): CuaMode;
 /**
- * Sandboxes (Fleet, local, direct).
+ * Sandboxes (local, direct, your own cloud).
  */
     sandboxes(): SandboxesLike;
 /**
@@ -35444,8 +35426,8 @@ export interface CuaLike {
  */
     spaces(): SpacesLike;
 /**
- * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
- * Fleet service URL or a relay URL) without a sandbox.
+ * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+ * relay URL) without a sandbox.
  */
     spacesd(url: string, token: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacesdClientLike>;
 }
@@ -35457,8 +35439,8 @@ export type CuaInterface = CuaLike;
 
 /**
  * The entry point of the SDK: create one with `Cua::embedded` or
- * `Cua::connect`, then reach sandboxes, Fleet, Spaces and the rest
- * through its accessors.
+ * `Cua::connect`, then reach sandboxes, Spaces and the rest through its
+ * accessors.
  */
 export class Cua extends UniffiAbstractObject implements CuaLike {
 
@@ -35525,7 +35507,9 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Runs the SDK runtime in this process. Performs no I/O beyond
- * reading the credential store when `fleet_from_session` is set.
+ * reading the credential store when `fleet_from_session` is set (for
+ * the relay account). It never builds a Fleet client: Cua Cloud has
+ * ended.
  */
     static embedded(config: CuaConfig): CuaLike /*throws*/ {
     return FfiConverterTypeCua.lift(uniffiCaller.rustCallWithError(
@@ -35572,9 +35556,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Fleet pools, templates, claims and images. Always talks to Fleet
- * from this process with this SDK's credentials (in daemon mode, from
- * the environment).
+ * Fleet pools, templates, claims and images. Cua Cloud has ended: this
+ * always fails with the "Cua Cloud has ended" error and never connects.
  */
     fleet(): FleetLike /*throws*/ {
     return FfiConverterTypeFleet.lift(uniffiCaller.rustCallWithError(
@@ -35659,7 +35642,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Sandboxes (Fleet, local, direct).
+ * Sandboxes (local, direct, your own cloud).
  */
     sandboxes(): SandboxesLike {
     return FfiConverterTypeSandboxes.lift(uniffiCaller.rustCall(
@@ -35717,8 +35700,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
- * Fleet service URL or a relay URL) without a sandbox.
+ * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+ * relay URL) without a sandbox.
  */
     async spacesd(url: string, token: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpacesdClientLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -37308,7 +37291,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_connect() !== 19646) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_constructor_cua_connect");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_embedded() !== 36838) {
+    if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_embedded() !== 26623) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_constructor_cua_embedded");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_agent_setup() !== 50422) {
@@ -37317,7 +37300,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_auth() !== 19106) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_auth");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_fleet() !== 40955) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_fleet() !== 45933) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_fleet");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_info() !== 11159) {
@@ -37329,7 +37312,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_mode() !== 63626) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_mode");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_sandboxes() !== 8394) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_sandboxes() !== 892) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_sandboxes");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() !== 57559) {
@@ -37338,7 +37321,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spaces() !== 35262) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_spaces");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spacesd() !== 28670) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spacesd() !== 62689) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_spacesd");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_approve() !== 49147) {
@@ -37620,7 +37603,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_portforward_local_addr() !== 55098) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_portforward_local_addr");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_portforward_url() !== 43553) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_portforward_url() !== 60604) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_portforward_url");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_constructor_presenceview_new() !== 9981) {
@@ -37674,13 +37657,13 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_agents() !== 53699) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_agents");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_delete() !== 55409) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_delete() !== 17492) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_delete");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_detach() !== 34045) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_detach() !== 26534) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_detach");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_forward() !== 37775) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_forward() !== 19019) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_forward");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_guest_display() !== 23945) {
@@ -37704,7 +37687,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_is_ephemeral() !== 27021) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_is_ephemeral");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_keep_alive() !== 63020) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_keep_alive() !== 3593) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_keep_alive");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_kind() !== 13493) {
@@ -37719,7 +37702,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_mcp() !== 8773) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_mcp");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_mcp_config() !== 43800) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_mcp_config() !== 64194) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_mcp_config");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_name() !== 58395) {
@@ -37731,7 +37714,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_overlay() !== 32673) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_overlay");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_public_url() !== 36853) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_public_url() !== 6460) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_public_url");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_refresh() !== 45835) {
@@ -37776,10 +37759,10 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_connect() !== 12250) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_connect");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_connect_url() !== 55493) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_connect_url() !== 19950) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_connect_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_create() !== 63062) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_create() !== 52749) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_create");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_delete() !== 43939) {
@@ -37788,7 +37771,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_get() !== 32181) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_get");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list() !== 18675) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list() !== 6497) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_list");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list_all() !== 9098) {
@@ -37809,10 +37792,10 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_service_name() !== 19159) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_service_name");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_service_public_url() !== 16809) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_service_public_url() !== 37714) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_service_public_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_service_request() !== 12324) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_service_request() !== 31558) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_service_request");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_service_url() !== 25888) {

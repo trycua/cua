@@ -10,7 +10,7 @@ GPU paths the paravirtualized device can run. A small MIT shim, injected into
 one process, raises two answers: `supportsFamily:` up to a configured Apple
 family, and the maximum threadgroup memory. It does not pass a physical GPU
 through, patch the host, or touch the guest kernel. Background and benchmarks:
-[technical writeup](/blog/gpu-passthrough-macos-vms).
+[technical writeup](https://cua.ai/blog/gpu-passthrough-macos-vms).
 
 <Callout type="warn">
   Experimental. Tested on Lume 0.5.1, an M1 Ultra host on macOS 26.6.1, and the
@@ -146,4 +146,4 @@ The GPU acceleration checkbox in New Space (Resources), `--gpu` on
 cua sets the feature level before each start of that VM and removes it when
 the last GPU VM is deleted, if cua set it. While set, it applies to every VM
 your user starts. Steps 1 and 3 to 5 stay per workload. See
-[Add a Space](/spaces/guides/add-a-space#gpu-acceleration).
+[Create a Space](/spaces/guides/add-a-space#gpu-acceleration).

@@ -30,8 +30,10 @@ jobs:
 
 - `image`: a canonical image, a bench image or any registry reference.
 - `on`: `local` (the default: Docker on the runner, or QEMU with KVM for VM
-  images) or `cloud`. Cloud needs `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET` in the
-  job env. `claim-ttl` (default `60m`) is the backstop if cleanup never runs.
+  images), `docker`, `qemu`, or a [contrib provider](/cua-sdk/guides/contrib-providers)
+  such as `e2b`, `daytona` or `modal`. Cua Cloud (`cloud`) has ended: see
+  [Cua Cloud (Fleets) has ended](/cua-sdk/guides/cua-cloud-ended). `claim-ttl`
+  (default `60m`) is the backstop if cleanup never runs.
 - `run` runs on the runner with `CUA_SANDBOX` set to the sandbox ref.
   `guest-run` runs inside the sandbox. `guest-setup` runs as root inside it
   first, for example to install test dependencies.

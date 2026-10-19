@@ -1318,7 +1318,6 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
- "cua-auth",
  "cua-byoc",
  "cua-disk",
  "cua-fleet",
@@ -1568,7 +1567,6 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
- "js-sys",
  "pbjson-types",
  "prost",
  "serde",
@@ -1582,9 +1580,6 @@ dependencies = [
  "tonic-web-wasm-client",
  "tracing",
  "uniffi",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]

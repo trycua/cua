@@ -33,7 +33,6 @@ def copy_release_sources(destination: Path) -> None:
         "libs/python/som/pyproject.toml",
         "libs/python/cua-sandbox-apps/pyproject.toml",
         "libs/python/cua-sandbox-apps/uv.lock",
-        "libs/python/cua-train/pyproject.toml",
         "libs/typescript/core/package.json",
         "libs/typescript/playground/package.json",
         "libs/cuabot/package.json",

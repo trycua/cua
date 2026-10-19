@@ -125,6 +125,30 @@ overlay. Some apps only accept foreground input; see
 cua-driver stop
 ```
 
+## Approve macOS permissions on managed Macs, CI hosts and VMs
+
+Step 1 needs someone at the Mac to approve two prompts: Accessibility and
+Screen Recording. Use the first option that fits.
+
+1. **Managed Macs:** push an MDM profile with a Privacy Preferences Policy
+   Control (PPPC) payload for `com.trycua.driver`. It pre-approves
+   Accessibility. macOS does not let MDM grant Screen Recording silently, so
+   set `ScreenCapture` to `AllowStandardUserToSetSystemService`: a standard user
+   can then switch CuaDriver on without an administrator password.
+2. **Hosts you operate (dev boxes, CI hosts, VMs):** when you tell your agent in
+   the task that it may approve Cua Driver's prompts on this host, it runs
+   `cua-driver permissions grant` and clicks **Allow** through the host's own
+   VNC or Screen Sharing server. It clicks only prompts that name CuaDriver,
+   and it logs each approval.
+3. **Everyone else:** run `cua-driver permissions grant` and click through the
+   prompts yourself, as in step 1.
+
+Your agent never approves a prompt for another app, never does this without your
+explicit authorization in the task, and never does it on a machine you do not
+own or run. Approvals survive signed updates, so you approve once per Mac. The Cua
+Driver skill has the example profile, the VNC helper and the exact steps: see
+[Install and approve permissions](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/Skills/cua-driver/MACOS.md#install-and-approve-permissions).
+
 ## Next
 
 - [Connect your agent](/cua-driver/guides/connect-your-agent): every supported harness and local models.

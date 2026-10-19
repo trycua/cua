@@ -7,6 +7,21 @@ use std::{
     time::Duration,
 };
 
+/// The "Cua Cloud has ended" error every removed Cua Cloud command and option
+/// fails with (exit code 4, like the SDK).
+pub fn cloud_ended() -> CuaError {
+    CuaError::Unsupported(cua_sandbox_core::CLOUD_ENDED.into())
+}
+
+/// The arguments of a removed Cua Cloud command, accepted and ignored so
+/// that a script still calling it fails with the one ended message instead
+/// of a parse error. Such commands are hidden: not in `--help` or the docs.
+#[derive(clap::Args, Clone, Debug, Default)]
+pub struct EndedArgs {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    _args: Vec<String>,
+}
+
 /// `~/.cua` (or `$CUA_HOME`).
 pub fn cua_home() -> PathBuf {
     cua_daemon::cua_home()
@@ -371,12 +386,7 @@ mod secret_tests {
         ] {
             assert!(is_secret_header(h), "{h}");
         }
-        for h in [
-            "x-cua-fleet-claim",
-            "accept",
-            "content-type",
-            "mcp-session-id",
-        ] {
+        for h in ["x-request-id", "accept", "content-type", "mcp-session-id"] {
             assert!(!is_secret_header(h), "{h}");
         }
         assert_eq!(
@@ -389,7 +399,7 @@ mod secret_tests {
         );
         assert_eq!(header_for_display("x-api-key", "sk-123", false), "****");
         assert_eq!(header_for_display("x-api-key", "", false), "");
-        assert_eq!(header_for_display("x-cua-fleet-claim", "box", false), "box");
+        assert_eq!(header_for_display("x-request-id", "box", false), "box");
         // A scheme-less value with spaces is masked whole.
         assert_eq!(mask_secret("a/b c"), "****");
     }

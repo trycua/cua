@@ -48,8 +48,13 @@ pub use cyclops_sdk_schema as schema;
 pub const MISSING_CREDENTIALS: &str = "Fleet credentials missing: run `cua auth login` or set \
      CUA_CLIENT_ID/CUA_CLIENT_SECRET, or pass local=True";
 pub use billing::{BillingCard, BillingCredit, BillingStatus};
-pub use builds::{BuildFile, BuildSpec, BuiltImage};
+pub use builds::BuiltImage;
 pub use claim_secrets::{ClaimSecretsWait, TokenProbe, TokenState};
+pub use cua_image::build::{BuildFile, BuildSpec};
+pub use cua_image::sidecar::{
+    MAIN_CONTAINER_NAME, MAX_SIDECARS, RESERVED_SERVICE_NAMES, Sidecar,
+    check_reserved_service_names, default_sidecar_name, validate_sidecars,
+};
 pub use cua_image::spec::ImageLayer;
 pub use cua_image::{normalize_registry, registry_of};
 pub use limits::{
@@ -58,9 +63,8 @@ pub use limits::{
 };
 pub(crate) use parity::sidecars_json;
 pub use parity::{
-    MAIN_CONTAINER_NAME, MAX_SIDECARS, REGISTRY_SECRET_PREFIX, REMOTE_BUILDS_SUPPORTED,
-    RESERVED_SERVICE_NAMES, RegistryCredentials, Sidecar, check_reserved_service_names,
-    default_sidecar_name, registry_secret_name, remote_builds_unsupported, validate_sidecars,
+    REGISTRY_SECRET_PREFIX, REMOTE_BUILDS_SUPPORTED, RegistryCredentials, registry_secret_name,
+    remote_builds_unsupported,
 };
 pub use pool::{ClaimOptions, PoolHandle, PoolSpec, RuntimeKind, ephemeral_pool_name};
 pub use pricing::{PRICING_TTL, UsagePricing, clear_pricing_cache};
@@ -199,6 +203,13 @@ impl Error {
             Error::UnknownService { .. } => true,
             _ => false,
         }
+    }
+}
+
+impl From<cua_image::InvalidArgument> for Error {
+    /// A value `cua-image`'s build or sidecar rules refuse (the same message).
+    fn from(e: cua_image::InvalidArgument) -> Self {
+        Error::InvalidArgument(e.0)
     }
 }
 

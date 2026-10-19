@@ -181,6 +181,8 @@ export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
   if (firstRun) {
     return {
       configured: false,
+      // What the system calls this computer: the setup form starts with it.
+      name: "Ada’s MacBook Pro",
       sharing: false,
       service: { installed: false, running: false, kind: "launchd" },
       clients: [],

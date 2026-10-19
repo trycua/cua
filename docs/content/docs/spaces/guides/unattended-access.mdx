@@ -5,6 +5,11 @@ description: 'Make this machine a Space you reach from your other devices: cua h
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
+Unattended access makes a computer reachable from your other devices without
+anyone sitting at it, so your agents can use it any time. For the quick path with
+a link or a code, see [Add a machine](/spaces/guides/add-a-machine). This page
+has every option and the details.
+
 `cua host setup` installs cua-spacesd as a service. By default it joins the
 cua.ai relay over outbound WSS as your account: no port forwarding, no token to
 copy. Your other devices, once [enrolled](#reach-it-from-your-devices), then see
@@ -25,11 +30,11 @@ machine is shared with, or enroll devices.
 |--------|--------|
 | `--remote` | When sign-in is needed, print a device code to approve in a browser on another machine (for example over SSH). The account session is not saved. Cannot be combined with `--direct`. |
 | `--direct ip:port` | Serve on your LAN (or a forwarded port) with a local env token instead of the relay. No account needed. |
-| `--relay URL` | Another relay (`CUA_RELAY_URL`, default `https://relay.cua.ai`); any self-hosted `cua-relay` works. |
+| `--relay URL` | Use a different relay (`CUA_RELAY_URL`). The default is `https://relay.cua.ai`. |
 | `--name NAME` | Display name (default: host name). |
 | `--allow ACCOUNT` | Also allow this account (id or email). Repeatable. |
 | `--runner KIND` | `auto`, `systemd`, `launchd`, `windows-task` or `process`. |
-| `--profile spare` | A spare machine: do not share its desktop, create Spaces for your devices (`--no-desktop --provide-spaces`). See [Host Spaces on your spare Mac](/start-here/host-spaces-on-your-spare-mac). |
+| `--profile spare` | A spare machine: do not share its desktop, create Spaces for your devices (`--no-desktop --provide-spaces`). See [Host Spaces on a spare Mac](/spaces/guides/host-spaces-on-your-spare-mac). |
 | `--no-desktop` / `--provide-spaces` | Each of the two settings on its own. `cua host config` changes them later. |
 
 Running `setup` again updates the configuration and rotates the machine token.
@@ -74,7 +79,7 @@ Spaces and data under `~/.cua` stay on the machine (the Spaces are turned off).
 `cua host stop` turns sharing off locally first, so it holds even when the
 relay is unreachable. In direct mode `cua host status` prints the URL and the
 env token's path; add the machine elsewhere with
-[`spaces.add(url, token)`](/spaces/quickstart#run).
+[`spaces.add(url, token)`](/spaces/guides/add-a-space#add-an-existing-machine-by-address).
 
 <Callout type="warn">
   Everyone on the allowlist gets full control of this desktop. Keep the list

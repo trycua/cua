@@ -67,7 +67,6 @@ jobs:
             pins='cua-agent==0.7.38 cua-computer==0.5.17 cua-core==0.1.18 litellm>=1.80 Pillow>=10.0'
           fi
           uv pip install --no-sources --index-url https://pypi.org/simple \
-            --extra-index-url https://wheels.cua.ai/simple --index-strategy unsafe-best-match \
             -e libs/cua-bench -e libs/python/cua-sandbox -e libs/cua/python \
             "openenv-core==0.3.0" "pydantic>=2.0" "httpx>=0.27" "anyio>=4" \
             "requests>=2.28" "huggingface-hub>=0.28,<2" $pins

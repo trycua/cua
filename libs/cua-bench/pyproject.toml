@@ -80,8 +80,8 @@ otel = [
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
 
-# Cloud runs use Fleet through cua-sandbox (a core dependency); this extra
-# only adds OpenTelemetry export for long batches.
+# Deprecated: Cua Cloud has ended. Kept so `cua-bench[cloud]` still installs;
+# it only adds OpenTelemetry export for long batches.
 cloud = [
     "cua-bench[otel]",
 ]
@@ -205,10 +205,6 @@ testpaths = ["cua_bench/tests"]
 [tool.uv.sources]
 cua-agent = { path = "../python/agent", editable = true }
 cua-sandbox = { path = "../python/cua-sandbox", editable = true }
-
-[[tool.uv.index]]
-name = "cua-wheels"
-url = "https://wheels.cua.ai/simple"
 
 [tool.uv]
 constraint-dependencies = [

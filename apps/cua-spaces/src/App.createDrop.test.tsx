@@ -103,12 +103,7 @@ function fakeFleet(
   let created = false;
   return fakeFleetBridge({
     isNative: true,
-    status: async () => ({
-      configured: true,
-      authMode: "static-token",
-      baseUrl: "https://run.cua.ai",
-      tokenUrl: "",
-    }),
+    status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
     listSpaces: async () => (created ? [NEW_SPACE] : []),
     defaultLocation,
     createSpace: async (config, pendingId) => {

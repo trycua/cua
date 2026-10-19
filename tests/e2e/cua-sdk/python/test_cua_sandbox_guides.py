@@ -1,5 +1,5 @@
 """cua-sandbox lane: the guides' own public API (``cua_sandbox.Pool``,
-``Image``, ``ClaimSpec``, ``Sandbox.ephemeral``) on top of the cua SDK.
+``Image``, ``Sandbox.ephemeral``) on top of the cua SDK.
 
 Cua Cloud has ended (CUA-1854): every ``Pool`` call raises
 ``cua_sandbox._ended.CloudEnded``, so each check asserts that instead of a
@@ -37,7 +37,7 @@ def _expect_cloud_ended(py: str, call: str) -> None:
         py,
         f"""
         import asyncio
-        from cua_sandbox import Image, Pool, WarmPoolAutoscaling
+        from cua_sandbox import Image, Pool
         from cua_sandbox._ended import CloudEnded
         async def main():
             try:
@@ -68,8 +68,7 @@ def test_pool_apply_with_autoscaling_is_cloud_ended(sandbox_python):
     _expect_cloud_ended(
         sandbox_python,
         f"Pool.apply(Image.from_registry({e2e.LEGACY_FLEET_ROOTFS!r}), name={pool!r}, cpu=1, "
-        "memory_mb=2048, autoscaling=WarmPoolAutoscaling(min_pool_size=0, "
-        "initial_pool_size=0, max_pool_size=2), ttl_seconds_after_created=3600)",
+        "memory_mb=2048, autoscaling=None, ttl_seconds_after_created=3600)",
     )
 
 

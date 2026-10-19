@@ -7,6 +7,7 @@ import { useRef, type PointerEvent } from "react";
 import { LogOutIcon } from "lucide-react";
 
 import { signInCodeText, useBridge, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
+import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -52,8 +53,10 @@ export function Sidebar() {
                   <item.icon className={cn("size-4 text-muted-foreground", isActive && "text-brand-strong")} strokeWidth={1.75} />
                   <span className="flex-1 truncate">{item.label}</span>
                   {item.to === "/notifications" && unread > 0 ? (
-                    <span data-unread-badge className="min-w-4 rounded-full bg-brand px-1 text-center text-2xs font-medium tabular-nums text-white" aria-label={`${unread} unread`}>
-                      {unread}
+                    // The Cua key says they're Cua's; the count, in plain text, says how many are unread.
+                    <span data-unread-badge className="flex items-center gap-1" aria-label={`${unread} unread`}>
+                      <CuaKey size={16} />
+                      <span className="text-2xs font-medium tabular-nums text-foreground">{unread}</span>
                     </span>
                   ) : null}
                   {counts[item.to] !== undefined ? (

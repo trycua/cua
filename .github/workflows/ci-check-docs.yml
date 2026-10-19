@@ -9,7 +9,6 @@ on:
       - "libs/lume/src/**"
       - "libs/python/cua-sandbox/**"
       - "libs/cua/python/pyproject.toml"
-      - "libs/typescript/fleet/package.json"
       - "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json"
       - "docs/content/docs/cua-driver/reference/**"
       - "docs/content/docs/lume/reference/**"

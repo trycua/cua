@@ -50,6 +50,8 @@ impl Tool for Fake {
                 ]
             })),
             "launch_app" => ToolResult::text("launched").with_structured(json!({"pid": 42})),
+            _ if args["refuse"] == true => ToolResult::error(format!("{name} refused: stale token"))
+                .with_structured(json!({"code": "stale_element_token"})),
             _ if args["fail"] == true => ToolResult::error(format!("{name} refused: asked to fail")),
             _ => ToolResult::text(format!("{name} done")),
         }
@@ -186,6 +188,22 @@ async fn an_uncaught_driver_error_names_the_line_the_call_and_the_reason() {
     assert_eq!(error["line"], 3);
     assert_eq!(error["code"], "not_found");
     assert!(harness.calls("click").is_empty());
+}
+
+#[tokio::test]
+async fn a_refusal_in_a_script_carries_the_drivers_recovery_hint() {
+    let harness = Harness::new();
+    let result = harness
+        .run("const app = await cua.getApp('Notes');\nawait app.click('s00000009:2', {refuse: true});\nreturn 1;")
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    let message = text(&result);
+    assert!(
+        message.contains(
+            "click refused: stale token Hint: That element_token comes from an older read."
+        ),
+        "{message}"
+    );
 }
 
 #[tokio::test]

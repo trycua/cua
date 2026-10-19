@@ -348,8 +348,8 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
   {
     slug: 'maintenance',
     title: 'Configuration and maintenance tools',
-    summary: 'Configuration, permissions, health, updates and extensions',
-    tools: ['get_config', 'set_config', 'check_permissions', 'health_report', 'check_for_update', 'install_extension'],
+    summary: 'Configuration, permissions, health, updates, extensions and on-demand guides',
+    tools: ['get_config', 'set_config', 'check_permissions', 'health_report', 'check_for_update', 'install_extension', 'get_guide'],
   },
 ];
 

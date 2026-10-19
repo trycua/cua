@@ -42,7 +42,7 @@ One variant's outcome: the cua-bench fields of its `result.json`.
 | `on` | `str` | Where it ran: `local` or `cloud`. |
 | `backend` | `str` | What ran it, `<location>-<engine>` (`local-gvisor`, `local-qemu`, `cloud-gvisor`, `cloud-kubevirt`, `cloud-pool:<name>`). |
 | `image` | `str \| null` | The image as the task or `--image` named it. |
-| `pool` | `str \| null` | The Fleet pool that served the claim (cloud runs). |
+| `pool` | `str \| null` | The pool that served the sandbox (unused: always `None` since Cua Cloud ended). |
 | `output_dir` | `str` | The variant's output directory. |
 | `extra` | `dict` | Extra values the task or agent reported. |
 | `kind` | `str \| null` | `container` or `vm`. |
@@ -98,7 +98,7 @@ One row of `summary.json` `results`: a variant's outcome.
 | `results[].variant` | `int` | Variant index (`--variant-id`). |
 | `results[].status` | `str` | `completed`, `failed` or `cancelled`. |
 | `results[].reward` | `float \| null` | The mean of the evaluation's numbers (`true` counts as 1), or `null` when evaluation did not run. |
-| `results[].pool` | `str \| null` | The Fleet pool that served the claim (cloud runs). |
+| `results[].pool` | `str \| null` | The pool that served the sandbox (unused: always `None` since Cua Cloud ended). |
 | `results[].duration_s` | `float` | Wall time of the variant in seconds. |
 | `results[].error` | `str \| null` | The error message when the variant failed. |
 | `results[].kind` | `str \| null` | `container` or `vm`. |

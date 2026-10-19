@@ -166,13 +166,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other computers (preselected)",
+          "host: Let my other devices reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -181,7 +181,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "request": null,
@@ -216,7 +216,7 @@
           "AI agents: none",
           "Shows in: Notch and menu bar",
           "Cua Volume: Waiting for approval",
-          "This machine: Access other machines"
+          "This machine: Only used to open other computers"
         ],
         "title": "You're all set",
         "usage": null
@@ -306,13 +306,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other computers (preselected)",
+          "host: Let my other devices reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -321,7 +321,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "request": null,
@@ -356,7 +356,7 @@
           "AI agents: none",
           "Shows in: Notch and menu bar",
           "Cua Volume: /home/maya/Cua Volume",
-          "This machine: Access other machines"
+          "This machine: Only used to open other computers"
         ],
         "title": "You're all set",
         "usage": null
@@ -421,13 +421,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other computers (preselected)",
+          "host: Let my other devices reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -436,7 +436,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "request": null,
@@ -477,13 +477,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other computers (preselected)",
+          "host: Let my other devices reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -492,7 +492,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "request": null,
@@ -554,7 +554,7 @@
           "Account: not signed in",
           "AI agents: none",
           "Shows in: Notch and menu bar",
-          "This machine: Access other machines"
+          "This machine: Only used to open other computers"
         ],
         "title": "You're all set",
         "usage": null
@@ -599,13 +599,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other computers (preselected)",
+          "host: Let my other devices reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -614,7 +614,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "request": null,
@@ -945,13 +945,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other computers (preselected)",
+          "host: Let my other devices reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -960,7 +960,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "request": null,
@@ -1099,13 +1099,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other computers (preselected)",
+          "host: Let my other devices reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1114,7 +1114,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "request": null,
@@ -1156,13 +1156,13 @@
         "canBack": true,
         "canSkip": false,
         "choices": [
-          "client: Access other machines (preselected)",
-          "host: Set up this machine for unattended access"
+          "client: Just use this Mac to open my other computers (preselected)",
+          "host: Let my other devices reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1171,7 +1171,7 @@
         "showMark": false,
         "step": "mode",
         "summary": [],
-        "title": "How will you use this machine?",
+        "title": "How do you want to use this Mac?",
         "usage": null
       },
       "request": null,

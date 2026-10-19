@@ -325,8 +325,6 @@ jobs:
         run: |
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src \
             python -m unittest tests/test_uniffi_loader.py tests/test_remote_channel.py tests/test_cursor_motion.py -v
-          python -m pip install --extra-index-url https://wheels.cua.ai/simple cua-fleet==0.1.17
-          CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -m pytest tests/test_fleet.py -q
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -c \
             "import cua_driver; missing = [name for name in cua_driver.__all__ if not hasattr(cua_driver, name)]; assert not missing, f'unresolved package exports: {missing}'"
 
@@ -341,12 +339,11 @@ jobs:
         # ci-test-python.yml.
         run: |
           python -m pip install ./libs/cua/python
-          python -m pip install --extra-index-url https://wheels.cua.ai/simple './libs/python/cua-sandbox[dev]'
+          python -m pip install './libs/python/cua-sandbox[dev]'
           CUA_SANDBOX_REQUIRE_NATIVE_DRIVER=1 \
           PYTHONPATH=libs/python/cua-sandbox:libs/cua-driver/python/src \
             python -m pytest \
               libs/python/cua-sandbox/tests/test_typed_driver_native.py \
-              libs/python/cua-sandbox/tests/test_typed_driver.py \
               libs/python/cua-sandbox/tests/test_driver_mcp.py \
               libs/python/cua-sandbox/tests/test_driver_mcp_shared.py \
               libs/python/cua-sandbox/tests/test_driver_mcp_native.py \
@@ -382,7 +379,6 @@ jobs:
           tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz" > /tmp/cua-driver-npm/contents.txt
           grep -F 'package/dist/embedded.js' /tmp/cua-driver-npm/contents.txt
           grep -F 'package/dist/electron.js' /tmp/cua-driver-npm/contents.txt
-          grep -F 'package/dist/fleet.js' /tmp/cua-driver-npm/contents.txt
           tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
             grep -F 'package/libcua_driver_sdk.so'
           tar -tzf "/tmp/cua-driver-npm/trycua-cua-driver-linux-x64-gnu-$VERSION.tgz" | \
@@ -394,7 +390,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/libs/cua-driver/compat-fixtures/apps/typescript/app.mjs" .
           node app.mjs
           node --input-type=module -e \
-            "const sdk = await import('@trycua/cua-driver'); const embedded = await import('@trycua/cua-driver/embedded'); const fleet = await import('@trycua/cua-driver/fleet'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost || typeof fleet.connectFleetDriver !== 'function') process.exit(1)"
+            "const sdk = await import('@trycua/cua-driver'); const embedded = await import('@trycua/cua-driver/embedded'); if (embedded.EmbeddedCuaDriverHost !== sdk.EmbeddedCuaDriverHost) process.exit(1)"
 
       - name: Install Python agent SDK example dependencies
         working-directory: libs/cua-driver/examples/agent-sdks

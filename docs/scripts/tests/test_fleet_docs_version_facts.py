@@ -1,4 +1,4 @@
-"""Keep maintained Fleet and Sandbox documentation versions aligned with manifests."""
+"""Keep maintained Sandbox documentation versions aligned with manifests."""
 
 from __future__ import annotations
 
@@ -23,18 +23,9 @@ SANDBOX_PROJECT = load_project("libs/python/cua-sandbox/pyproject.toml")
 CUA_VERSION = (REPOSITORY / "libs/cua/VERSION").read_text().strip()
 CUA_PYTHON_PROJECT = load_project("libs/cua/python/pyproject.toml")
 TYPESCRIPT_CUA = json.loads((REPOSITORY / "libs/cua/typescript/package.json").read_text())
-TYPESCRIPT_FLEET = json.loads(
-    (REPOSITORY / "libs/typescript/fleet/package.json").read_text()
-)
 
 SANDBOX_VERSION = SANDBOX_PROJECT["version"]
 TYPESCRIPT_CUA_VERSION = TYPESCRIPT_CUA["version"]
-TYPESCRIPT_FLEET_VERSION = TYPESCRIPT_FLEET["version"]
-PYTHON_FLEET_VERSION = next(
-    dependency.removeprefix("cua-fleet==")
-    for dependency in SANDBOX_PROJECT["dependencies"]
-    if dependency.startswith("cua-fleet==")
-)
 
 
 EXPECTED_FACTS = {
@@ -52,8 +43,6 @@ EXPECTED_FACTS = {
     "cua-sdk/reference/runtime-support.mdx": (
         f"`cua-sandbox` **{SANDBOX_VERSION}**",
         f"`cua` **{CUA_VERSION}**",
-        f"`cua-fleet` {PYTHON_FLEET_VERSION}",
-        f"`@trycua/fleet` {TYPESCRIPT_FLEET_VERSION}",
     ),
     "cua-sdk/reference/typescript/index.mdx": (
         f"`npm install @trycua/cua` ({TYPESCRIPT_CUA_VERSION})",

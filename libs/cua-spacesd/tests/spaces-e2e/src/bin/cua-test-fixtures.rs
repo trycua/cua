@@ -17,8 +17,10 @@
 //! ```
 //!
 //! The env URL is a `MockServer` (simulated processes, in-memory files, a
-//! scripted `/media` socket). The fake Fleet routes every claim's `env`
-//! service to a second `MockServer`, so cloud sandboxes have a spacesd.
+//! scripted `/media` socket). The fake cloud service
+//! (`cua_fleet::testing::FakeFleet`, a test double for the ended Cua Cloud)
+//! routes every claim's `env` service to a second `MockServer`, so cloud
+//! sandboxes have a spacesd.
 //! `registry_mirror` (a `CUA_REGISTRY_MIRRORS` value) serves the manifests
 //! of `fixtures::sample_registry()`. The Spaces URL is a real cua-spacesd server
 //! core in this process (`cua_spaces_e2e`), reporting Linux like the docs'

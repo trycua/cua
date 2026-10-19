@@ -1347,7 +1347,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "cua-auth",
  "cua-disk",
  "cua-fleet",
  "cua-home",
@@ -1693,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app"
-version = "0.9.2"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1703,8 +1702,8 @@ dependencies = [
  "cua-agent-setup",
  "cua-auth",
  "cua-daemon",
- "cua-fleet",
  "cua-host",
+ "cua-image",
  "cua-keyvault",
  "cua-proto",
  "cua-sandbox-core",
@@ -1772,7 +1771,6 @@ dependencies = [
  "cua-auth",
  "cua-chromium-storage",
  "cua-daemon",
- "cua-fleet",
  "cua-home",
  "cua-keyvault",
  "cua-media-client",

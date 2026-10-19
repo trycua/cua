@@ -3,7 +3,7 @@
 One flag set drives every command:
 
 * ``--on local|cloud``: where. ``local`` runs sandboxes on this machine
-  through the cua SDK; ``cloud`` claims them from managed Fleet pools.
+  through the cua SDK; ``cloud`` (Cua Cloud) has ended and fails.
 * ``--kind auto|container|vm``: what kind. ``auto`` (the default) runs Linux
   as a container unless the task or the image's variant index says VM;
   Windows, macOS and Android are VM-only.
@@ -151,7 +151,7 @@ class TargetError(ValueError):
 
 
 class CloudEnded(TargetError):
-    """``--on cloud`` (Cua Cloud, Fleet-backed) no longer exists."""
+    """``--on cloud`` (Cua Cloud) no longer exists."""
 
     def __init__(self) -> None:
         super().__init__(CLOUD_ENDED)
@@ -216,7 +216,7 @@ class Target:
 
     @property
     def cloud(self) -> bool:
-        """Cua cloud (Fleet): managed pools, warm capacity, claim TTLs."""
+        """Cua Cloud, which has ended (``resolve_target`` refuses it)."""
         return self.on == "cloud"
 
     @property
@@ -456,7 +456,7 @@ class EnvSpec:
     #: What the task needs from the target (``setup_config.requires``): kvm,
     #: egress, openai, hf-gated, env:NAME. Checked by ``cb run`` up front.
     requires: tuple = ()
-    #: ``--image pool:<name>``: claim from this existing Fleet pool (its
+    #: ``--image pool:<name>``: claim from this existing Cua Cloud pool (its
     #: template decides image, kind and runtime) instead of a managed pool.
     pool: Optional[str] = None
     #: More guest ports the task reaches (``setup_config.ports``): exposed
@@ -546,7 +546,7 @@ def parse_image_alias(value: Any) -> Optional[tuple[str, Optional[str]]]:
 def parse_pool_image(value: Any) -> Optional[str]:
     """The pool name of a ``pool:<name>`` image (``fleet:<name>``: deprecated).
 
-    ``pool:`` names an existing Fleet pool (the unified refs scheme);
+    ``pool:`` named an existing Cua Cloud pool (which has ended);
     ``fleet:`` never names an image any more but still parses, with a warning.
     """
     if not isinstance(value, str):
@@ -690,28 +690,9 @@ def resolve_env_spec(
         raise TargetError(f"unsupported os_type {setup.get('os_type')!r}")
 
     image = target.image or setup.get("image") or default_image or None
-    pool = parse_pool_image(image)
-    if pool is not None:
-        # `pool:<name>`: an existing Fleet pool; its template decides the rest.
-        raise CloudEnded()  # pool:<name> names a Fleet pool; Cua Cloud has ended
-        if not target.cloud:
-            raise TargetError(f"pool:{pool} names a Fleet pool: run it with --on cloud")
-        kind = (
-            target.kind
-            or str(setup.get("kind") or "").strip().lower()
-            or ("container" if os_type == "linux" else "vm")
-        )
-        return EnvSpec(
-            provider="native",
-            os_type=os_type,
-            kind=kind if kind in KIND_CHOICES else "container",
-            image=None,
-            width=width,
-            height=height,
-            kind_source="task" if setup.get("kind") else "default",
-            requires=_task_requires(setup),
-            pool=pool,
-        )
+    if parse_pool_image(image) is not None:
+        # `pool:<name>` named a Cua Cloud pool; Cua Cloud has ended.
+        raise CloudEnded()
     os_version = None
     alias = parse_image_alias(image)
     if alias is not None:

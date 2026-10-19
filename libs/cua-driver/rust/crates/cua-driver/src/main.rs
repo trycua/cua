@@ -580,8 +580,8 @@ fn main() {
             let tools = inspect_tools_without_runtime();
             cli::run_describe(&tools, &name);
         }
-        cli::Command::McpConfig { client } => {
-            cli::run_mcp_config(client.as_deref());
+        cli::Command::McpConfig { client, no_skills } => {
+            cli::run_mcp_config(client.as_deref(), no_skills);
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
@@ -1007,8 +1007,8 @@ fn main() -> anyhow::Result<()> {
             cli::run_describe(&tools, &name);
             Ok(())
         }
-        cli::Command::McpConfig { client } => {
-            cli::run_mcp_config(client.as_deref());
+        cli::Command::McpConfig { client, no_skills } => {
+            cli::run_mcp_config(client.as_deref(), no_skills);
             Ok(())
         }
         cli::Command::Manifest { pretty } => {

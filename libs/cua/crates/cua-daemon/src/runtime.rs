@@ -1,7 +1,7 @@
 //! The SDK runtime shared by the embedded and daemon topologies.
 
 use crate::{Error, Result};
-use cua_fleet::{AutoPoolConfig, FleetClient, FleetConfig, PoolManager};
+use cua_fleet::{AutoPoolConfig, FleetClient, FleetConfig};
 use cua_sandbox_core::{
     CreateOptions, Forward, LocalRuntime, Location, PortTarget, Probe, ProviderKind, Sandbox,
     SandboxRef, Sandboxes, Status,
@@ -19,18 +19,17 @@ use std::{
 pub struct RuntimeConfig {
     /// State directory (default `~/.cua/sandboxes`).
     pub state_dir: Option<PathBuf>,
-    /// Managed Fleet pool settings (default [`cua_sandbox_core::settings::auto_pool_config`],
-    /// home `~/.cua` or next to `state_dir`).
+    /// Ignored: Cua Cloud has ended, so there are no managed pools. Kept so
+    /// existing callers still compile.
     pub auto_pools: Option<AutoPoolConfig>,
-    /// Fleet configuration. `None` disables the Fleet provider; a config
-    /// without credentials also disables it (calls then fail with
-    /// `ProviderNotConfigured`).
+    /// Ignored: Cua Cloud has ended and the runtime never builds a Fleet
+    /// client. Kept so existing callers still compile.
     pub fleet: Option<FleetConfig>,
-    /// A ready Fleet client (tests, foreign HTTP clients, a refreshing
-    /// session bearer). Wins over `fleet`.
+    /// Ignored: the runtime never uses a Fleet client (Cua Cloud has ended).
+    /// Kept so existing callers still compile.
     pub fleet_client: Option<FleetClient>,
-    /// Resolve image tags to digests for managed pools. Default: on, except
-    /// with an injected `fleet_client` (tests never reach a registry).
+    /// Ignored: there are no managed pools to pin to digests. Kept so
+    /// existing callers still compile.
     pub resolve_image_digests: Option<bool>,
     /// Local VM / container runtime. Wins over `vmm` for sandboxes.
     pub local: Option<Arc<dyn LocalRuntime>>,
@@ -56,7 +55,6 @@ impl std::fmt::Debug for RuntimeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RuntimeConfig")
             .field("state_dir", &self.state_dir)
-            .field("fleet", &self.fleet)
             .field("local", &self.local.is_some())
             .finish_non_exhaustive()
     }
@@ -184,8 +182,9 @@ pub struct SandboxRecord {
     pub stop_reason: Option<String>,
 }
 
-/// How long a listing waits for Fleet before it lists without the cloud
-/// sandboxes (and says so).
+/// How long a listing waited for Cua Cloud before it listed without the
+/// cloud sandboxes (and said so). Unused since Cua Cloud ended; kept for the
+/// callers that still name it.
 pub const LIST_CLOUD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A sandbox listing and what it could not include.
@@ -195,70 +194,6 @@ pub struct Listing {
     pub sandboxes: Vec<SandboxRecord>,
     /// Sources left out, for example "cloud sandboxes not listed: ...".
     pub warnings: Vec<String>,
-}
-
-/// The account's live Fleet claims as records (`location` `cloud`).
-/// Namespaces this principal may not read are skipped. Unused since Cua
-/// Cloud ended; removed with the Fleet runtime.
-#[allow(dead_code)]
-async fn cloud_claims(fleet: &FleetClient) -> Result<Vec<SandboxRecord>> {
-    let namespaces = fleet
-        .sdk()
-        .list_namespaces()
-        .await
-        .map_err(|e| Error::from(cua_fleet::Error::Sdk(e)))?;
-    let mut out = Vec::new();
-    for ns in namespaces {
-        let claims = match fleet.list_claims(&ns.name).await {
-            Ok(c) => c,
-            Err(cua_fleet::Error::Sdk(
-                cua_fleet::SdkError::Status { status: 403, .. }
-                | cua_fleet::SdkError::PoolAccessDenied { .. },
-            )) => continue,
-            Err(e) => return Err(e.into()),
-        };
-        for claim in claims {
-            let v = serde_json::to_value(&claim).unwrap_or_default();
-            let Some(name) = v["metadata"]["name"].as_str().map(str::to_string) else {
-                continue;
-            };
-            let phase = v["status"]["phase"]
-                .as_str()
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            let status = match phase.as_str() {
-                "bound" => Status::Running,
-                "" | "pending" => Status::Provisioning,
-                "failed" | "released" => Status::Stopped,
-                other => Status::Unknown(other.to_string()),
-            };
-            out.push(SandboxRecord {
-                id: format!("cloud:{name}"),
-                location: location_of(ProviderKind::Fleet).into(),
-                kind: String::new(),
-                runtime: String::new(),
-                name: name.clone(),
-                provider: ProviderKind::Fleet,
-                runtime_type: "fleet".into(),
-                status,
-                ephemeral: false,
-                services: BTreeMap::new(),
-                image: None,
-                labels: BTreeMap::new(),
-                endpoints: BTreeMap::new(),
-                created_at: None,
-                expires_at: None,
-                provider_details: BTreeMap::from([
-                    ("pool".to_string(), ns.name.clone()),
-                    ("namespace".to_string(), ns.name.clone()),
-                    ("claim".to_string(), name),
-                ]),
-                image_info: None,
-                stop_reason: None,
-            });
-        }
-    }
-    Ok(out)
 }
 
 /// The names of the contrib providers this build includes (empty without
@@ -309,27 +244,9 @@ pub fn location_of(p: ProviderKind) -> &'static str {
 pub struct SpacesdAttachment {
     /// Connected client.
     pub client: SpacesdClient,
-    /// Extra headers for WebSocket upgrades (Fleet bearer + claim).
+    /// Extra headers for WebSocket upgrades. Always empty now: only a Cua
+    /// Cloud sandbox needed them, and Cua Cloud has ended.
     pub ws_headers: Vec<(String, String)>,
-}
-
-/// WebSocket upgrade headers for a Fleet sandbox: the bearer and the claim.
-fn fleet_ws_headers(token: &str, claim: &str) -> Vec<(String, String)> {
-    vec![
-        ("authorization".into(), format!("Bearer {token}")),
-        (
-            cua_spacesd_client::transport::FLEET_CLAIM_HEADER.into(),
-            claim.to_owned(),
-        ),
-    ]
-}
-
-/// The Fleet claim in WebSocket headers built by [`fleet_ws_headers`].
-fn fleet_claim_of(headers: &[(String, String)]) -> Option<&str> {
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(cua_spacesd_client::transport::FLEET_CLAIM_HEADER))
-        .map(|(_, v)| v.as_str())
 }
 
 /// An active port forward.
@@ -388,8 +305,6 @@ impl Incarnation {
 
 struct Inner {
     sandboxes: Sandboxes,
-    fleet: Option<FleetClient>,
-    fleet_error: Option<String>,
     vmm: Option<Arc<crate::local::VmmLocal>>,
     env_probe_timeout: Duration,
     handles: Mutex<HashMap<String, Handle>>,
@@ -400,9 +315,6 @@ struct Inner {
     shares: crate::shares::Shares,
     /// This runtime is the daemon's: it hosts local public URLs itself.
     share_host: std::sync::atomic::AtomicBool,
-    /// Cloud service URLs handed out by `service_url` (signed, reused until
-    /// near expiry), by (sandbox, service).
-    service_urls: Mutex<HashMap<(String, String), (String, SystemTime)>>,
     #[cfg(feature = "spaces")]
     spaces: cua_spaces::Spaces,
     /// The attached extensions (the Keyvault broker, when the Cua Spaces
@@ -422,9 +334,7 @@ pub struct Runtime {
 
 impl std::fmt::Debug for Runtime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Runtime")
-            .field("fleet", &self.inner.fleet.is_some())
-            .finish_non_exhaustive()
+        f.debug_struct("Runtime").finish_non_exhaustive()
     }
 }
 
@@ -433,46 +343,7 @@ impl Runtime {
     /// local state, such as the Keyvault header; none unlocks anything).
     pub fn new(config: RuntimeConfig) -> Result<Self> {
         cua_spacesd_client::transport::ensure_crypto_provider();
-        let resolve_default = config
-            .resolve_image_digests
-            .unwrap_or(config.fleet_client.is_none());
-        let (fleet, fleet_error) = match (config.fleet_client, config.fleet) {
-            (Some(c), _) => (Some(c), None),
-            (None, Some(cfg)) if cfg.has_auth() => match FleetClient::connect(cfg) {
-                Ok(c) => (Some(c), None),
-                Err(e) => (None, Some(e.to_string())),
-            },
-            (None, _) => (None, None),
-        };
-        // One pool manager per runtime: in daemon mode every client's
-        // sandboxes share its pool cache, locks and claim heartbeats.
-        let pools = fleet.as_ref().map(|f| {
-            let mut cfg = config
-                .auto_pools
-                .clone()
-                .unwrap_or_else(cua_sandbox_core::settings::auto_pool_config);
-            if config.auto_pools.is_none()
-                && let Some(dir) = &config.state_dir
-            {
-                cfg = cfg.with_state_dir(dir);
-            }
-            let mgr = PoolManager::new(f.clone(), cfg);
-            // Tags resolve to digests so a moved tag gets a fresh pool.
-            // Injected (test) clients never reach a registry.
-            let resolve = std::env::var("CUA_FLEET_RESOLVE_DIGESTS").map_or(true, |v| v != "0");
-            if resolve_default && resolve {
-                mgr.with_resolver(Arc::new(RegistryDigests::default()))
-            } else {
-                mgr
-            }
-        });
         let mut builder = Sandboxes::builder();
-        if let Some(f) = &fleet {
-            builder = builder.fleet(f.clone());
-        }
-        if let Some(p) = &pools {
-            builder = builder.pool_manager(p.clone());
-        }
         let local = config
             .local
             .or_else(|| config.vmm.clone().map(|v| v as Arc<dyn LocalRuntime>));
@@ -503,9 +374,6 @@ impl Runtime {
         #[cfg(feature = "spaces")]
         let (spaces, attached, extension_names) = {
             let mut b = cua_spaces::Spaces::builder().sandboxes(sandboxes.clone());
-            if let Some(f) = &fleet {
-                b = b.fleet(f.clone());
-            }
             if let Some(h) = &config.spaces_home {
                 b = b.home(h.clone());
             }
@@ -513,7 +381,6 @@ impl Runtime {
             let cx = crate::extension::ExtensionContext {
                 home: &home,
                 home_explicit,
-                fleet: fleet.as_ref(),
                 teleport_home: config.teleport_home.as_deref(),
             };
             let mut extensions = crate::extension::registered();
@@ -542,8 +409,6 @@ impl Runtime {
                 #[cfg(feature = "spaces")]
                 extension_names,
                 sandboxes,
-                fleet,
-                fleet_error,
                 vmm: config.vmm,
                 env_probe_timeout: config.env_probe_timeout.unwrap_or(Duration::from_secs(15)),
                 handles: Mutex::new(HashMap::new()),
@@ -551,7 +416,6 @@ impl Runtime {
                 forwards: Mutex::new(HashMap::new()),
                 shares: Default::default(),
                 share_host: std::sync::atomic::AtomicBool::new(false),
-                service_urls: Mutex::new(HashMap::new()),
             }),
         })
     }
@@ -576,7 +440,7 @@ impl Runtime {
     }
 
     /// The Spaces runtime (registry, primitives, MCP tools), sharing this
-    /// runtime's sandboxes and Fleet client.
+    /// runtime's sandboxes.
     #[cfg(feature = "spaces")]
     pub fn spaces(&self) -> &cua_spaces::Spaces {
         &self.inner.spaces
@@ -611,24 +475,6 @@ impl Runtime {
         self.inner.attached.iter().find_map(|a| a.session_broker())
     }
 
-    /// The Fleet client, or `ProviderNotConfigured`.
-    pub fn fleet(&self) -> Result<&FleetClient> {
-        self.inner.fleet.as_ref().ok_or_else(|| {
-            Error::ProviderNotConfigured(
-                self.inner
-                    .fleet_error
-                    .clone()
-                    .unwrap_or_else(|| cua_fleet::MISSING_CREDENTIALS.into()),
-            )
-        })
-    }
-
-    /// The managed Fleet pool manager, or `ProviderNotConfigured`.
-    pub fn pools(&self) -> Result<&PoolManager> {
-        self.fleet()?;
-        Ok(self.inner.sandboxes.pools()?)
-    }
-
     /// The cua-vmm backends, or `ProviderNotConfigured`.
     pub fn vmm(&self) -> Result<&Arc<crate::local::VmmLocal>> {
         self.inner.vmm.as_ref().ok_or_else(|| {
@@ -638,7 +484,8 @@ impl Runtime {
 
     // ------------------------------------------------------------ lifecycle
 
-    /// Creates (Fleet/local) or connects (direct) a sandbox.
+    /// Creates (local, your cloud, a provider) or connects (direct) a
+    /// sandbox. `on="cloud"` fails with [`cua_sandbox_core::CLOUD_ENDED`].
     pub async fn create(&self, mut req: CreateRequest) -> Result<SandboxRecord> {
         use cua_sandbox_core::placement::{Kind, On, Runtime};
         let non_empty = |s: &Option<String>| {
@@ -720,18 +567,6 @@ impl Runtime {
                 ProviderKind::Contrib
             }
         };
-        if provider == ProviderKind::Fleet
-            && self.inner.fleet.is_none()
-            && let Some(hint) = cua_sandbox_core::settings::cloud_default_hint(&resolved.on_source)
-        {
-            return Err(Error::ProviderNotConfigured(format!(
-                "{}; {hint}",
-                self.inner
-                    .fleet_error
-                    .clone()
-                    .unwrap_or_else(|| cua_fleet::MISSING_CREDENTIALS.into())
-            )));
-        }
         if provider == ProviderKind::Direct {
             cua_sandbox_core::placement::validate(&resolved.on, resolved.kind, &resolved.runtime)?;
             let url = req
@@ -871,14 +706,13 @@ impl Runtime {
         })
     }
 
-    /// Drops what is cached for `key` (the handle, its env connection, its
-    /// public URLs and signed service URLs) when the sandbox it was made
-    /// for is gone or was created again under the same name; returns
-    /// whether it did. The Spaces runtime deletes a local Space by name in
-    /// the sandbox manager ([`cua_spaces::Spaces::delete`]), which these
-    /// caches never see, so without this check the new sandbox (new port,
-    /// new token) was reached through the old connection until the daemon
-    /// restarted.
+    /// Drops what is cached for `key` (the handle, its env connection and its
+    /// public URLs) when the sandbox it was made for is gone or was created
+    /// again under the same name; returns whether it did. The Spaces runtime
+    /// deletes a local Space by name in the sandbox manager
+    /// ([`cua_spaces::Spaces::delete`]), which these caches never see, so
+    /// without this check the new sandbox (new port, new token) was reached
+    /// through the old connection until the daemon restarted.
     async fn evict_if_stale(&self, key: &str) -> bool {
         let held = match self.inner.handles.lock().unwrap().get(key) {
             Some(h) => h.incarnation.clone(),
@@ -907,11 +741,6 @@ impl Runtime {
     async fn evict(&self, key: &str) {
         self.forget(key).await;
         self.inner.shares.revoke_sandbox(key);
-        self.inner
-            .service_urls
-            .lock()
-            .unwrap()
-            .retain(|(sb, _), _| sb != key);
     }
 
     /// Resolves any accepted spelling of a sandbox (a qualified ref, a
@@ -1024,18 +853,28 @@ impl Runtime {
             .unwrap_or_else(|_| key.to_string())
     }
 
+    /// Whether the state file named like `key` describes `key` itself: a
+    /// local and a cloud sandbox of one name share one state file, so the
+    /// name alone does not say whose it is.
+    fn owns_state(&self, key: &str) -> bool {
+        self.inner
+            .sandboxes
+            .state()
+            .load(&Self::state_name(key))
+            .is_some_and(|s| s.sandbox_ref().to_string() == key)
+    }
+
     /// Current record (with a fresh status).
     pub async fn record(&self, name: &str) -> Result<SandboxRecord> {
         let key = self.key(name).await?;
         let sandbox = match self.handle(&key).await {
             Ok(s) => s,
             Err(e) => {
-                // A suspended managed Fleet sandbox has no claim to attach
-                // to, a stopped local VM or container is not connected to
-                // until it is resumed (nor is a stopped VM in your cloud), and
-                // a local record whose VM or container is gone (`missing`)
-                // has nothing to connect to: report any of them from its
-                // record.
+                // A suspended sandbox has nothing to attach to, a stopped
+                // local VM or container is not connected to until it is
+                // resumed (nor is a stopped VM in your cloud), and a local
+                // record whose VM or container is gone (`missing`) has
+                // nothing to connect to: report any of them from its record.
                 if let Ok(info) = self.inner.sandboxes.get(&Self::state_name(&key)).await
                     && (info.status == Status::Suspended
                         || (matches!(info.provider, ProviderKind::Local | ProviderKind::Contrib)
@@ -1179,8 +1018,6 @@ impl Runtime {
         })
     }
 
-    /// Deletes (Fleet: release + ephemeral pool; local: remove; direct:
-    /// forget).
     /// Stops a named create still running here and waits until what it
     /// made is deleted (`None`: no create of that name was running).
     pub async fn cancel_create(&self, name: &str) -> Result<Option<String>> {
@@ -1192,6 +1029,8 @@ impl Runtime {
         Ok(self.inner.sandboxes.cancel_create(&name).await?)
     }
 
+    /// Deletes (local: remove; direct: forget; your cloud: delete the
+    /// machine).
     pub async fn delete(&self, name: &str) -> Result<()> {
         let key = self.key(name).await?;
         let sandbox = match self.handle(&key).await {
@@ -1201,9 +1040,7 @@ impl Runtime {
             // instance with no state file: the manager removes what is left.
             Err(e) => {
                 let state_name = Self::state_name(&key);
-                if self.inner.sandboxes.state().load(&state_name).is_some()
-                    || key.starts_with("local:")
-                {
+                if self.owns_state(&key) || key.starts_with("local:") {
                     self.forget(&key).await;
                     return match self.inner.sandboxes.delete(&state_name).await {
                         Err(cua_sandbox_core::Error::NotFound(_)) => Err(e),
@@ -1229,15 +1066,18 @@ impl Runtime {
         Ok(())
     }
 
-    /// Suspends. A managed Fleet sandbox's handle is dropped with it (its
-    /// claim is released; `resume` claims a new one).
+    /// Suspends.
     pub async fn suspend(&self, name: &str) -> Result<()> {
         let key = self.key(name).await?;
         let sandbox = match self.handle(&key).await {
             Ok(s) => s,
-            // Already suspended (no claim to attach to): nothing to do but
-            // go through the manager, which knows.
-            Err(_) => {
+            // Already suspended (nothing to attach to): nothing to do but go
+            // through the manager, which knows. Only when its record is this
+            // sandbox's own: a `cloud:box` ref never suspends `local:box`.
+            Err(e) => {
+                if !self.owns_state(&key) {
+                    return Err(e);
+                }
                 return Ok(self
                     .inner
                     .sandboxes
@@ -1245,28 +1085,12 @@ impl Runtime {
                     .await?);
             }
         };
-        sandbox.suspend().await?;
-        if sandbox.provider() == ProviderKind::Fleet {
-            self.forget(&key).await;
-        }
-        Ok(())
+        Ok(sandbox.suspend().await?)
     }
 
-    /// Resumes (managed Fleet: the new claim is held by this runtime).
+    /// Resumes.
     pub async fn resume(&self, name: &str) -> Result<()> {
         let key = self.key(name).await?;
-        let state_name = Self::state_name(&key);
-        let fleet_state = key.starts_with("cloud:")
-            && matches!(
-                self.inner.sandboxes.state().load(&state_name),
-                Some(cua_sandbox_core::SandboxState::Fleet(_))
-            );
-        if fleet_state {
-            self.forget(&key).await;
-            self.inner.sandboxes.resume(&state_name).await?;
-            self.connect(&key).await?;
-            return Ok(());
-        }
         match self.handle(&key).await {
             Ok(sandbox) => Ok(sandbox.resume().await?),
             // A stopped local VM or container is not connected to (connect
@@ -1294,8 +1118,7 @@ impl Runtime {
         .then_some(state_name)
     }
 
-    /// Stops holding a managed Fleet claim: no more renewals, the claim
-    /// runs until its current shutdown time. The handle is dropped. Needs a
+    /// Drops the handle of a sandbox (the runtime stops holding it). Needs a
     /// Tokio runtime context (the cached env connection is dropped on it).
     pub fn detach(&self, name: &str) {
         // No lookup here (it is sync): a bare name detaches the one handle
@@ -1336,26 +1159,15 @@ impl Runtime {
         self.inner.handles.lock().unwrap().remove(name);
     }
 
-    /// Reattached every running named sandbox on a managed Fleet pool after
-    /// a restart. Cua Cloud has ended: holds nothing.
+    /// Used to reattach managed Cua Cloud sandboxes after a restart. Cua
+    /// Cloud has ended: holds nothing.
     pub async fn adopt_managed_fleet_sandboxes(&self) -> Vec<String> {
-        // Cua Cloud has ended: nothing to reattach, and Fleet is never called.
         vec![]
     }
 
     /// Restarts.
     pub async fn restart(&self, name: &str) -> Result<()> {
         let key = self.key(name).await?;
-        if key.starts_with("cloud:")
-            && matches!(
-                self.inner.sandboxes.state().load(&Self::state_name(&key)),
-                Some(cua_sandbox_core::SandboxState::Fleet(ref f))
-                    if f.pool_name.starts_with(cua_fleet::autopool::AUTO_POOL_PREFIX)
-            )
-        {
-            self.suspend(&key).await?;
-            return self.resume(&key).await;
-        }
         self.inner.envs.lock().await.remove(&key);
         match self.handle(&key).await {
             Ok(sandbox) => Ok(sandbox.restart().await?),
@@ -1366,7 +1178,7 @@ impl Runtime {
         }
     }
 
-    /// Extends a Fleet lease.
+    /// Extends a sandbox lease (a no-op where the sandbox has none).
     pub async fn keep_alive(&self, name: &str, duration: Duration) -> Result<()> {
         Ok(self.handle(name).await?.keep_alive(duration).await?)
     }
@@ -1410,46 +1222,18 @@ impl Runtime {
             .await?)
     }
 
-    /// A URL for `service` usable from this machine with no credentials:
-    /// the published loopback port locally, a signed service URL (1 h,
-    /// reused until 5 min before it expires) in the cloud.
+    /// A URL for `service` usable from this machine with no credentials: the
+    /// published loopback port.
     pub async fn service_url(&self, name: &str, service: &str) -> Result<String> {
         let name = self.key(name).await?;
         let sandbox = self.handle(&name).await?;
         let svc = sandbox.service(service)?;
-        let Some(bound) = sandbox.fleet_sandbox() else {
-            return Ok(svc.url().trim_end_matches('/').to_string());
-        };
-        let key = (name.clone(), service.to_string());
-        let now = SystemTime::now();
-        if let Some((url, exp)) = self.inner.service_urls.lock().unwrap().get(&key)
-            && *exp > now + Duration::from_secs(300)
-        {
-            return Ok(url.clone());
-        }
-        let signed = self
-            .fleet()?
-            .create_signed_service_url(
-                bound,
-                service,
-                Some("cua service url".into()),
-                crate::shares::DEFAULT_TTL,
-            )
-            .await?;
-        let exp = parse_rfc3339(&signed.expires_at).unwrap_or(now + crate::shares::DEFAULT_TTL);
-        let url = signed.url.trim_end_matches('/').to_string();
-        self.inner
-            .service_urls
-            .lock()
-            .unwrap()
-            .insert(key, (url.clone(), exp));
-        Ok(url)
+        Ok(svc.url().trim_end_matches('/').to_string())
     }
 
     /// A shareable URL for `service` that stops working after `ttl` (60 s to
-    /// 24 h, default 1 h): a Fleet signed service URL in the cloud; locally a
-    /// loopback proxy URL with its own token, hosted by the cua daemon
-    /// (started if needed).
+    /// 24 h, default 1 h): a loopback proxy URL with its own token, hosted by
+    /// the cua daemon (started if needed).
     pub async fn public_url(
         &self,
         name: &str,
@@ -1457,6 +1241,7 @@ impl Runtime {
         ttl: Option<Duration>,
         label: Option<String>,
     ) -> Result<crate::shares::PublicUrl> {
+        let _ = label;
         let ttl = ttl.unwrap_or(crate::shares::DEFAULT_TTL);
         if ttl < Duration::from_secs(60) || ttl > crate::shares::MAX_TTL {
             return Err(Error::InvalidArgument(format!(
@@ -1467,30 +1252,6 @@ impl Runtime {
         let name = &self.key(name).await?;
         let sandbox = self.handle(name).await?;
         let svc = sandbox.service(service)?;
-        if let Some(bound) = sandbox.fleet_sandbox() {
-            let s = self
-                .fleet()?
-                .create_signed_service_url(bound, service, label.clone(), ttl)
-                .await?;
-            let mut details: BTreeMap<String, String> = [
-                ("provider".to_string(), "fleet".to_string()),
-                ("namespace".into(), s.namespace.clone()),
-                ("claim".into(), s.claim.clone()),
-                ("sandbox".into(), s.sandbox.clone()),
-            ]
-            .into();
-            if let Some(l) = s.label.clone() {
-                details.insert("label".into(), l);
-            }
-            return Ok(crate::shares::PublicUrl {
-                id: s.id,
-                url: s.url,
-                expires_at: parse_rfc3339(&s.expires_at).unwrap_or(SystemTime::now() + ttl),
-                sandbox: name.to_string(),
-                service: service.to_string(),
-                provider_details: details,
-            });
-        }
         let upstream = svc.url().trim_end_matches('/').to_string();
         self.share(&upstream, ttl, name, service).await
     }
@@ -1531,7 +1292,7 @@ impl Runtime {
         self.inner.shares.create(upstream, ttl, name, service).await
     }
 
-    /// Revokes a public URL (cloud: the signed URL; local: the share).
+    /// Revokes a public URL (a local share).
     pub async fn revoke_public_url(&self, name: &str, id: &str) -> Result<()> {
         if self.inner.shares.revoke(id) {
             return Ok(());
@@ -1544,18 +1305,7 @@ impl Runtime {
         {
             return d.revoke_public_url(name, id).await;
         }
-        let sandbox = self.handle(name).await?;
-        let Some(bound) = sandbox.fleet_sandbox() else {
-            return Err(Error::NotFound(format!("public URL {id} not found")));
-        };
-        let fleet = self.fleet()?;
-        let url = fleet
-            .list_signed_service_urls(bound)
-            .await?
-            .into_iter()
-            .find(|u| u.id == id)
-            .ok_or_else(|| Error::NotFound(format!("public URL {id} not found")))?;
-        Ok(fleet.revoke_signed_service_url(url).await?)
+        Err(Error::NotFound(format!("public URL {id} not found")))
     }
 
     /// Where a guest port is reachable.
@@ -1602,15 +1352,7 @@ impl Runtime {
         let key = self.key(name).await?;
         let name = key.as_str();
         let cached = self.inner.envs.lock().await.get(name).cloned();
-        if let Some(mut a) = cached {
-            // The client is reused; the WebSocket bearer is not: Fleet access
-            // tokens are short-lived, and a bearer kept with the attachment
-            // made every media bridge to a cloud Space fail (the gateway
-            // answers 302) a few minutes after the daemon first connected.
-            if let Some(claim) = fleet_claim_of(&a.ws_headers).map(str::to_owned) {
-                let token = self.fleet()?.access_token(false).await?;
-                a.ws_headers = fleet_ws_headers(&token, &claim);
-            }
+        if let Some(a) = cached {
             return Ok(a);
         }
         let sandbox = self.handle(name).await?;
@@ -1619,14 +1361,10 @@ impl Runtime {
                 probe_timeout: Some(probe_timeout.unwrap_or(self.inner.env_probe_timeout)),
             })
             .await?;
-        let ws_headers = match sandbox.fleet_sandbox() {
-            Some(bound) => {
-                let token = self.fleet()?.access_token(false).await?;
-                fleet_ws_headers(&token, &bound.claim)
-            }
-            None => vec![],
+        let a = SpacesdAttachment {
+            client,
+            ws_headers: vec![],
         };
-        let a = SpacesdAttachment { client, ws_headers };
         self.inner
             .envs
             .lock()
@@ -1701,97 +1439,7 @@ fn record_of(key: &str, h: &Handle, status: Status) -> SandboxRecord {
     }
 }
 
-/// RFC 3339 timestamps as Fleet writes them (`Z` or `+00:00`).
-fn parse_rfc3339(s: &str) -> Option<SystemTime> {
-    let s = s.trim();
-    let s = s
-        .strip_suffix("+00:00")
-        .map_or_else(|| s.to_string(), |b| format!("{b}Z"));
-    humantime::parse_rfc3339_weak(&s).ok()
-}
-
-/// Resolves image tags to `repo@sha256:...` through the registry (anonymous
-/// or docker-config credentials, like `cua image pull`). Failures keep the
-/// tag.
-#[derive(Default)]
-struct RegistryDigests(cua_image::RegistryClient);
-
-#[async_trait::async_trait]
-impl cua_fleet::ImageResolver for RegistryDigests {
-    async fn resolve(&self, image: &str) -> Option<String> {
-        let repo = strip_tag(image)?;
-        match tokio::time::timeout(Duration::from_secs(10), self.0.manifest(image)).await {
-            Ok(Ok((_, digest))) if digest.starts_with("sha256:") => {
-                Some(format!("{repo}@{digest}"))
-            }
-            Ok(Ok(_)) => None,
-            Ok(Err(e)) => {
-                tracing::debug!(image, error = %e, "could not resolve image digest; using the tag");
-                None
-            }
-            Err(_) => None,
-        }
-    }
-}
-
-/// `registry/repo:tag` -> `registry/repo` (`None` when already a digest).
-fn strip_tag(image: &str) -> Option<String> {
-    if image.contains('@') {
-        return None;
-    }
-    let (head, last) = image.rsplit_once('/').unwrap_or(("", image));
-    let name = last.split(':').next().unwrap_or(last);
-    Some(if head.is_empty() {
-        name.to_string()
-    } else {
-        format!("{head}/{name}")
-    })
-}
-
 /// Parses a Fleet runtime name.
 pub fn parse_runtime_kind(s: &str) -> Result<cua_fleet::RuntimeKind> {
     cua_fleet::parse_runtime(s)?.ok_or_else(|| Error::InvalidArgument("empty Fleet runtime".into()))
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn fleet_ws_headers_carry_the_claim_for_a_fresh_bearer() {
-        let first = super::fleet_ws_headers("old-token", "claim-1");
-        assert_eq!(super::fleet_claim_of(&first), Some("claim-1"));
-        // What `env` does for a cached attachment: same claim, new bearer.
-        let claim = super::fleet_claim_of(&first).unwrap().to_owned();
-        let fresh = super::fleet_ws_headers("new-token", &claim);
-        assert!(fresh.contains(&("authorization".into(), "Bearer new-token".into())));
-        assert_eq!(super::fleet_claim_of(&fresh), Some("claim-1"));
-        assert_eq!(
-            super::fleet_claim_of(&[]),
-            None,
-            "local sandboxes send no Fleet headers"
-        );
-    }
-
-    use super::strip_tag;
-
-    #[test]
-    fn fleet_timestamps_parse() {
-        let a = super::parse_rfc3339("2026-09-23T10:00:00Z").unwrap();
-        assert_eq!(super::parse_rfc3339("2026-09-23T10:00:00+00:00"), Some(a));
-        assert!(super::parse_rfc3339("2026-09-23T10:00:00.5Z").is_some());
-        assert_eq!(super::parse_rfc3339("nope"), None);
-    }
-
-    #[test]
-    fn strip_tag_keeps_registry_ports_and_digests() {
-        assert_eq!(
-            strip_tag("public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main").as_deref(),
-            Some("public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04")
-        );
-        assert_eq!(
-            strip_tag("localhost:5000/img:1").as_deref(),
-            Some("localhost:5000/img")
-        );
-        assert_eq!(strip_tag("ubuntu").as_deref(), Some("ubuntu"));
-        assert_eq!(strip_tag("x/y@sha256:ab"), None);
-    }
 }

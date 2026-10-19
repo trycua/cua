@@ -1477,13 +1477,6 @@ kbd {
   align-items: center;
   gap: 10px;
 }
-/* The "Signed in via API key" row shown above the account sign-in button when
-   only env credentials are present — same row layout as the signed-in state. */
-.settings-account-env {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
 .settings-account[data-state="out"] {
   flex-direction: column;
   align-items: stretch;
@@ -2555,7 +2548,7 @@ select {
 }
 
 /* ---------------------------------------------------------------------------
- * Fleet live data: tile pin affordance, real thumbnails
+ * Live data: tile pin affordance, real thumbnails
  * ------------------------------------------------------------------------- */
 
 .tile-wrap {

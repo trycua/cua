@@ -4,8 +4,9 @@
 //!
 //! This crate replaces `apps/cua-spaces/mcp/spaces_mcp.py` (and
 //! `agent_harness.py`) as the Spaces core. It is plain async Rust over the cua
-//! SDK crates: [`cua_spacesd_client`] for every guest call, [`cua_fleet`] for Fleet
-//! claims, [`cua_sandbox_core`] for local sandboxes. `cua-daemon` hosts it
+//! SDK crates: [`cua_spacesd_client`] for every guest call,
+//! [`cua_sandbox_core`] for local sandboxes. Cua Cloud (`cloud:<name>`) has
+//! ended: its Spaces fail with [`cua_sandbox_core::CLOUD_ENDED`]. `cua-daemon` hosts it
 //! (and serves [`mcp`] as `cua daemon mcp`); `cua-sdk` wraps it for UniFFI;
 //! the Tauri app links it directly.
 //!

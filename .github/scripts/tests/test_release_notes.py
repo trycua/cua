@@ -25,7 +25,6 @@ ENROLLED = {
     "libs/python/bench-ui": "bench-ui",
     "libs/python/som": "som",
     "libs/python/cua-sandbox-apps": "sandbox-apps",
-    "libs/python/cua-train": "train",
     "libs/typescript/core": "npm-core",
     "libs/typescript/playground": "npm-playground",
     "libs/cuabot": "cuabot",
@@ -111,7 +110,7 @@ def test_enrolled_packages_keep_their_legacy_tag_and_current_version():
 
 def test_legacy_bump_workflows_no_longer_release_enrolled_packages():
     services = ["pypi/agent", "pypi/bench", "pypi/bench-ui", "pypi/core", "pypi/sandbox-apps",
-                "pypi/som", "pypi/train", "npm/core", "npm/playground", "npm/cuabot"]
+                "pypi/som", "npm/core", "npm/playground", "npm/cuabot"]
     for workflow in ("release-bump-version.yml", "release-on-merge.yml",
                      "ci-release-reminder.yml", "release-unreleased-digest.yml"):
         text = (WORKFLOWS / workflow).read_text()

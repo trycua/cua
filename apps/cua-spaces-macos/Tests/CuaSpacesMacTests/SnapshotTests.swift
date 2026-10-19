@@ -422,6 +422,7 @@ struct SnapshotTests {
         #expect(m.host.panel.intro != nil)
         #expect(m.host.panel.setupChoices.map(\.id) == ["desktop", "spare"])
         try assertSnapshot(ThisMachineView(host: m.host), "this-machine-unset", size: CGSize(width: 640, height: 420))
+        m.host.computerName = { "Ada’s MacBook Pro" }
         m.host.openForm()
         try assertSnapshot(ThisMachineView(host: m.host), "host-setup", size: CGSize(width: 640, height: 420))
         m.host.send(.setName(name: "Studio"))
@@ -748,6 +749,7 @@ struct SnapshotTests {
         o.finishAgents(skipped: true)
         o.send(.presentationDone)
         o.send(.driveContinue)
+        o.host.computerName = { "Ada’s MacBook Pro" }
         o.host.openForm()
         try assertSnapshot(OnboardingView(onboarding: o), "onboarding-host-form", size: CGSize(width: 820, height: 560))
     }

@@ -1,9 +1,8 @@
 """Abstract transport protocol.
 
 A Transport moves commands and data between the sandbox client and the
-underlying computer: cua-spacesd through the ``cua`` SDK (EnvTransport,
-FleetTransport) or an agentless legacy path (QMP, VNC, SSH, ADB, OSWorld,
-the local host).
+underlying computer: cua-spacesd through the ``cua`` SDK (EnvTransport) or an
+agentless legacy path (QMP, VNC, SSH, ADB, OSWorld, the local host).
 """
 
 from __future__ import annotations
@@ -111,8 +110,8 @@ class Transport(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support port forwarding. "
-            "Supported transports: ADBTransport, EnvTransport, FleetCloudTransport, FleetTransport, "
-            "GRPCEmulatorTransport, SSHTransport."
+            "Supported transports: ADBTransport, EnvTransport, GRPCEmulatorTransport, "
+            "SSHTransport."
         )
 
     async def close_tunnel(self, info: "TunnelInfo") -> None:
@@ -148,9 +147,9 @@ class Transport(ABC):
         """Return a URL to view this sandbox's display.
 
         Args:
-            share: If True, return a public link with embedded credentials
-                   (cloud only). If False, return a direct connection URL
-                   (localhost VNC for local runtimes; auth-gated URL for cloud).
+            share: If True, return a shareable link with embedded credentials
+                   (where the transport supports one). If False, return a
+                   direct connection URL (localhost VNC for local runtimes).
 
         Raises NotImplementedError for transports that don't expose a display
         (e.g. HTTP, ADB).

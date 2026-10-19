@@ -10,6 +10,7 @@
 // here would churn every adapter's call sites for no runtime gain.
 #![allow(clippy::result_large_err)]
 
+pub mod guide;
 pub mod mcp_skills;
 pub mod mcp_wire;
 
@@ -94,6 +95,7 @@ pub mod recording_loader;
 pub mod recording_render;
 pub mod recording_tools;
 pub mod recording_zoom;
+pub mod recovery_hint;
 #[cfg(feature = "script")]
 pub mod script_tool;
 pub mod server;

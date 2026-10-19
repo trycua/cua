@@ -226,7 +226,10 @@ around each of its keychain calls then): a read that would need a prompt
 fails at once as "needs access", so the in-process SDK and the daemon start
 signed out instead of hanging, and the window asks. Only the clicked
 `cua auth keychain --prompt` runs without it. A `cua` run from a terminal
-stays interactive.
+stays interactive; one without a terminal (an agent, a script) is
+non-interactive unless `CUA_KEYCHAIN_NONINTERACTIVE=0`, and a call macOS does
+not answer within `CUA_KEYCHAIN_TIMEOUT_SECS` (default 5) fails as "needs
+access" too.
 
 New UI shows the same states and words through the bridge (`startup.get`,
 `startup.act`, `startup.changed`; `WebHost/WebUIBridge+Startup.swift` and
@@ -324,9 +327,11 @@ the key was, so installing is dragging the key into its place.
 `package-dmg.sh` lays the window out with a pinned
 [dmgbuild](https://github.com/dmgbuild/dmgbuild) (`scripts/dmg-settings.py`)
 and makes the alias with `scripts/make-alias.swift`. The art in
-`Support/dmg` and the app icon `Support/AppIcon.icns` are drawn from the
-site's keycap sprites by `scripts/dmg-art/render.sh` (headless Chrome); rerun
-it only when the art changes.
+`Support/dmg` and the app icon `Support/AppIcon.icns` (the key with the Spaces
+mark, the Cua mark in stacked squares, on a slate tile) are drawn from the site's keycap sprites by
+`scripts/dmg-art/render.sh` (headless Chrome), which also writes the same icon
+to `apps/cua-spaces/src-tauri/icons` for the other apps; rerun it only when
+the art changes.
 
 ## Updates (Sparkle)
 

@@ -1,4 +1,7 @@
-//! `Fleet`: pools, templates, claims and images (cyclops-sdk via cua-fleet).
+//! `Fleet`: pools, templates, claims and images of Cua Cloud (cyclops-sdk via
+//! cua-fleet). Cua Cloud has ended: [`Cua::fleet`](super::Cua::fleet) fails
+//! with the "Cua Cloud has ended" error and never returns one, so these
+//! types are kept only for the shape of the bindings.
 //!
 //! Resources cross as small records plus their full JSON (`json`), so the
 //! Fleet schema can evolve without regenerating every binding.
@@ -474,7 +477,8 @@ pub fn fleet_size_limits() -> FleetSizeLimits {
     }
 }
 
-/// Fleet control plane.
+/// Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
+/// one, so none of its methods can be called.
 #[derive(uniffi::Object)]
 pub struct Fleet {
     pub(crate) client: FleetClient,

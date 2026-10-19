@@ -1,10 +1,5 @@
-"""P2 sandbox parity: sidecars, private registry secrets, cloud image layers
-and warm capacity for the canonical images (hermetic).
-
-The pure tests need nothing; the ``fleet`` ones run the native SDK against
-the loopback fake Fleet (``cua-test-fixtures``), which admits sidecars like
-Fleet does (every runtime, reserved service names). Cloud image layers still
-fail with the "not deployed yet" error (Fleet's builder does not run them). The native option objects are checked by capturing what
+"""P2 sandbox parity: sidecars, private registry secrets and image layers
+(hermetic). The native option objects are checked by capturing what
 ``cua_sandbox`` hands the SDK.
 """
 
@@ -14,10 +9,8 @@ import asyncio
 import importlib
 
 import pytest
-from cua_sandbox import Container, Image, RegistrySecret, Sandbox, _autopool
+from cua_sandbox import Container, Image, RegistrySecret, Sandbox
 from cua_sandbox.containers import image_build, sidecars_of
-
-from tests._native_fleet import fleet  # noqa: F401 - fixture
 
 sandbox_module = importlib.import_module("cua_sandbox.sandbox")
 
@@ -98,15 +91,6 @@ def test_native_conversions():
         image_build(Image.from_registry("python:3.12-slim")._add_layer({"type": "brew_install"}))
 
 
-def test_warm_is_left_to_the_sdk_unless_chosen(monkeypatch):
-    monkeypatch.delenv("CUA_FLEET_WARM", raising=False)
-    assert _autopool.config().warm_set is False
-    assert _autopool.config(warm=False).warm_set is True
-    monkeypatch.setenv("CUA_FLEET_WARM", "1")
-    cfg = _autopool.config()
-    assert cfg.warm and cfg.warm_set
-
-
 def test_the_native_sdk_decides_warm_for_canonical_images():
     n = pytest.importorskip("cua")._native
     assert n.image_alias("linux") is not None
@@ -118,130 +102,6 @@ def test_the_native_sdk_decides_warm_for_canonical_images():
 
 class _Captured(Exception):
     pass
-
-
-def _capture(monkeypatch) -> list:
-    seen: list = []
-
-    class _Sandboxes:
-        async def create(self, options):
-            seen.append(options)
-            raise _Captured()
-
-    class _Cua:
-        def sandboxes(self):
-            return _Sandboxes()
-
-    monkeypatch.setattr(_autopool, "_native_cua", lambda: _Cua())
-    monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: api_key is None))
-    monkeypatch.setattr(sandbox_module, "_TELEMETRY_AVAILABLE", False)
-    monkeypatch.delenv("CUA_FLEET_WARM", raising=False)
-    return seen
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-def test_cloud_create_hands_sidecars_secret_and_layers_to_the_sdk(monkeypatch):
-    pytest.importorskip("cua")
-    seen = _capture(monkeypatch)
-    img = Image.from_registry("ghcr.io/me/app:1", secret=RegistrySecret("me", "tok")).pip_install(
-        "mcp"
-    )
-    with pytest.raises(_autopool.AutoPoolError):
-        asyncio.run(
-            Sandbox.create(
-                img,
-                sidecars=[Container("redis:7-alpine", ports=[6379])],
-                services={"db": 6379},
-                local=False,
-            )
-        )
-    [o] = seen
-    assert [s.image for s in o.sidecars] == ["redis:7-alpine"]
-    assert o.registry_secret.username == "me"
-    assert len(o.build.layers) == 1
-    assert o.services["db"] == 6379
-    assert o.cloud.warm is None, "unset: the SDK decides (canonical images warm)"
-    assert (o.on, o.runtime) == ("cloud", "gvisor"), "a build's output is a container rootfs"
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-def test_cloud_create_passes_an_explicit_warm(monkeypatch):
-    pytest.importorskip("cua")
-    seen = _capture(monkeypatch)
-    with pytest.raises(_autopool.AutoPoolError):
-        asyncio.run(Sandbox.create(Image.from_registry(IMAGE), warm=False, local=False))
-    assert seen[0].cloud.warm is False
-    assert seen[0].sidecars == [] and seen[0].registry_secret is None and seen[0].build is None
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-def test_an_existing_pool_compares_sidecars_with_its_template(monkeypatch):
-    from cua_sandbox import Pool, PoolSpecMismatch
-
-    seen: list = []
-
-    async def check(name, spec):
-        seen.append((name, spec))
-        raise PoolSpecMismatch("pool cua-e2e-x's template differs: sidecars")
-
-    monkeypatch.setattr(Pool, "check", staticmethod(check))
-    with pytest.raises(PoolSpecMismatch, match="sidecars"):
-        asyncio.run(Sandbox.create(pool="cua-e2e-x", sidecars=["redis:7-alpine"], local=False))
-    [(name, spec)] = seen
-    assert name == "cua-e2e-x"
-    assert [c.image for c in sidecars_of(spec.sidecars)] == ["redis:7-alpine"]
-
-
-# ── end to end on the fake Fleet ─────────────────────────────────────────
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-async def test_cloud_vm_images_take_sidecars(fleet):  # noqa: F811
-    # IMAGE is a KubeVirt containerDisk in the fake registry: Fleet runs its
-    # sidecars in a companion pod, addressed by name like on gVisor.
-    sb = await Sandbox.create(
-        Image.from_registry(IMAGE),
-        sidecars=[Container("redis:7-alpine", ports=[6379], name="db")],
-        services={"db": 6379},
-        local=False,
-    )
-    try:
-        client = fleet()
-        try:
-            template = await client.get_template(sb.pool_name, sb.pool_name)
-        finally:
-            await client.close()
-        assert str(template.spec.vm_template.runtime).lower().endswith("kubevirt")
-        assert "db" in [s.name for s in template.spec.vm_template.services]
-    finally:
-        await sb.close()
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-@pytest.mark.parametrize("reserved", ["main", "sidecars", "sc"])
-async def test_sidecars_reserve_service_names_before_creating_anything(
-    fleet,  # noqa: F811 - fixture
-    reserved,
-):
-    with pytest.raises(Exception, match="reserved"):
-        await Sandbox.create(
-            Image.from_registry(IMAGE),
-            sidecars=[Container("redis:7-alpine", ports=[6379], name="db")],
-            services={reserved: 6379},
-            local=False,
-        )
-    client = fleet()
-    try:
-        names = [n.name for n in await client.list_namespaces()]
-    finally:
-        await client.close()
-    assert not [n for n in names if n.startswith("cua-auto-")], "nothing was created"
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854)")
-async def test_cloud_layers_fail_clearly_until_fleet_builds_them(fleet):  # noqa: F811
-    with pytest.raises(Exception, match="not deployed yet"):
-        await Sandbox.create(Image.from_registry(IMAGE).pip_install("mcp"), local=False)
 
 
 def test_local_runc_opt_in_reaches_the_sdk(monkeypatch, tmp_path):

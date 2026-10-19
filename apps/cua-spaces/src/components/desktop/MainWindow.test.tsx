@@ -36,7 +36,7 @@ function setup(
     isNative: true,
     listSpaces: async () => ROWS,
     localStatus: async () => LOCAL,
-    status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+    status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
     screenshot: async () => "data:image/png;base64,AAAA",
     createSpace,
     setDefaultLocation,
@@ -53,7 +53,7 @@ describe("MainWindow", () => {
   it("first run shows the welcome flow in the window, then the Spaces", async () => {
     const { host } = setup({}, false);
     fireEvent.click(await screen.findByRole("button", { name: "Get started" }));
-    // Already signed in (the fleet status names the account): just continue.
+    // Already signed in (the account status names the user): just continue.
     await screen.findByText("Signed in as ada@example.com.");
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "AI agents" });
@@ -62,7 +62,7 @@ describe("MainWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     // No Cua Volume page without its experiment (Settings, Experiments).
     expect(screen.queryByRole("heading", { name: "Cua Volume" })).toBeNull();
-    await screen.findByText("Access other machines");
+    await screen.findByText("Just use this Mac to open my other computers");
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Start using Cua Spaces" }));
     expect(await screen.findByRole("listbox", { name: "Cua Cloud" })).toBeInTheDocument();
@@ -389,9 +389,9 @@ describe("MainWindow", () => {
       "Teleport",
     ]);
     fireEvent.click(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option"));
-    fireEvent.click(await screen.findByRole("button", { name: "Set up for access" }));
-    expect(await screen.findByText("Set up this machine")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Set up for access" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
+    expect(await screen.findByText("Set up this computer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeInTheDocument();
     await waitFor(() =>
       expect(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option")).toHaveAttribute(

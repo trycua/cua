@@ -53,9 +53,11 @@
 # live file in a directory selected for recursive deletion. Unproven entries
 # (including missing, relative and legacy-name-only commands) are kept.
 #
-# Revokes TCC grants on macOS by default (Accessibility + Screen Recording)
-# so the next install prompts cleanly under the new signing identity. Pass
-# --keep-tcc to preserve grants across uninstall/reinstall.
+# Keeps the macOS permissions (Accessibility + Screen Recording) by default, so
+# an accidental or deliberate uninstall followed by a reinstall of the same
+# signed app needs no new approval. Pass --reset-permissions to revoke them
+# (Accessibility, Screen Recording and Automation for com.trycua.driver).
+# --reset-tcc is the older spelling; --keep-tcc is accepted and does nothing.
 #
 # Usage:
 #   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)"
@@ -72,7 +74,7 @@ set -euo pipefail
 # flag flows through without edits.
 # ----------------------------------------------------------------------
 USE_RUST_BACKEND=1
-RESET_TCC=1
+RESET_TCC=0
 PURGE_DATA=0
 FORWARDED_ARGS=()
 PASSTHROUGH=0
@@ -84,8 +86,9 @@ while [[ $# -gt 0 ]]; do
         --experimental-rust) shift ;;  # legacy alias for default Rust path
         --backend=rust)      shift ;;
         --backend=swift)     shift ;;  # retired Swift (no-op)
-        --reset-tcc)         RESET_TCC=1; shift ;;  # legacy/explicit default: revoke TCC grants
-        --keep-tcc)          RESET_TCC=0; shift ;;  # preserve TCC grants across reinstall
+        --reset-permissions) RESET_TCC=1; shift ;;  # opt in: revoke the macOS permissions
+        --reset-tcc)         RESET_TCC=1; shift ;;  # older spelling of --reset-permissions
+        --keep-tcc)          RESET_TCC=0; shift ;;  # the default; accepted for old callers
         --purge)             PURGE_DATA=1; shift ;;  # also delete pseudonymous identity + preference
         --backend=*)
             printf 'error: unknown backend %q; supported: rust\n' "${1#*=}" >&2
@@ -358,10 +361,11 @@ reject_root_invocation() {
     fi
 }
 
-# TCC revocation is on by default so uninstall leaves the next macOS install
-# in a clean promptable state. The bundle id com.trycua.driver is shared with
-# the retired Swift driver, so `--keep-tcc` remains available for users who
-# intentionally want grants to survive uninstall/reinstall.
+# TCC revocation is opt-in (--reset-permissions). The grants belong to the
+# signed app identity, not to the files, so they survive an uninstall followed
+# by a reinstall; wiping them by default made every accidental uninstall cost a
+# manual re-approval in System Settings. Nothing that calls this script on a
+# user's behalf (cua uninstall.sh --all, tests) passes the flag.
 # When enabled, revoke Accessibility + Screen-Recording + Automation for
 # com.trycua.driver. macOS-only; no-op elsewhere.
 maybe_reset_tcc() {
@@ -391,7 +395,7 @@ maybe_reset_tcc() {
     fi
     log "revoking TCC grants for com.trycua.driver"
     log "  note: com.trycua.driver is shared with the retired Swift driver;"
-    log "  this clears grants for both. Pass --keep-tcc to preserve them."
+    log "  this clears grants for both."
     for SVC in Accessibility ScreenCapture AppleEvents; do
         if tccutil reset "$SVC" com.trycua.driver >/dev/null 2>&1; then
             log "  reset $SVC"
@@ -962,9 +966,9 @@ TELEMETRYUNMSG
         if [[ "$RESET_TCC" != "1" ]]; then
             cat << 'FINALUNMSG'
 
-TCC grants (Accessibility + Screen Recording) remain in System
-Settings > Privacy & Security because uninstall was run with --keep-tcc.
-Reset them explicitly if you want a clean re-install flow:
+macOS permissions (Accessibility + Screen Recording) were kept, so
+reinstalling Cua Driver needs no new approval. To revoke them as well,
+re-run with --reset-permissions, or run:
 
   tccutil reset Accessibility com.trycua.driver
   tccutil reset ScreenCapture com.trycua.driver
@@ -1205,9 +1209,9 @@ echo "cua-driver uninstalled."
 if [[ "$RESET_TCC" != "1" ]]; then
     cat << 'FINALUNMSG'
 
-TCC grants (Accessibility + Screen Recording) remain in System
-Settings > Privacy & Security because uninstall was run with --keep-tcc.
-Reset them explicitly if you want a clean re-install flow:
+macOS permissions (Accessibility + Screen Recording) were kept, so
+reinstalling Cua Driver needs no new approval. To revoke them as well,
+re-run with --reset-permissions, or run:
 
   tccutil reset Accessibility com.trycua.driver
   tccutil reset ScreenCapture com.trycua.driver

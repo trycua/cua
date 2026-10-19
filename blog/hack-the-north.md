@@ -2,7 +2,7 @@
 
 _Written by Francesco Bonacci — Reviewed by Parth Patel (HUD W25) — Sept 25, 2025_
 
-> Update, October 2026: Cua Cloud (Fleets) ended on 16 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
 
 ## Prologue
 

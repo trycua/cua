@@ -66,8 +66,6 @@ def test_owned_pages_drop_superseded_maintained_versions() -> None:
     stale_facts = (
         re.compile(r"cua-sandbox(?:`|\*\*)?[ =@]+0\.4\.3\b"),
         re.compile(r"cua-sandbox(?:`|\*\*)?[ =@]+0\.7\.0\b"),
-        re.compile(r"cua-fleet(?:`|\*\*)?[ =@]+0\.1\.14\b"),
-        re.compile(r"@trycua/fleet(?:`|\*\*)?[ =@]+0\.1\.1\b"),
         re.compile(r"cua-cli(?:`|\*\*)?[ =@]+0\.1\.14\b"),
     )
 

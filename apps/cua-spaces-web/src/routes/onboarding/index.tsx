@@ -6,6 +6,7 @@ import { CheckIcon, CopyIcon, PlusIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useFirstRun, type FirstRunArt, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunUpsell, type FirstRunView } from "@/bridge";
+import { CuaKey } from "@/components/cua-key";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
@@ -354,7 +355,7 @@ function UpsellCard({ card, fr }: { card: FirstRunUpsell; fr: FirstRunHook }) {
   return (
     <Card className="mt-4" data-first-run-upsell={card.plan}>
       <div className="flex items-start gap-3">
-        <img src="/cua-key-64.png" alt="" aria-hidden className="mt-0.5 size-5 shrink-0" />
+        <CuaKey size={20} className="mt-0.5" />
         <div className="min-w-0 flex-1">
           <h2 className="text-[15px] font-semibold">{card.title}</h2>
           {card.lines.map((l) => (

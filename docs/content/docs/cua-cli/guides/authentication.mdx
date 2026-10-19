@@ -1,6 +1,6 @@
 ---
 title: Authenticate
-description: 'Sign in with cua auth login, see which credential the CLI uses, and create API keys.'
+description: 'Sign in with cua auth login, see who is signed in, and sign out.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -13,7 +13,7 @@ share one credential store. Local sandboxes need no sign-in.
 ```bash test="cli-shape" id="cua-auth-login"
 cua auth login              # browser (PKCE, loopback redirect)
 cua auth login --remote     # device code, for SSH sessions
-cua auth whoami             # the credential in use
+cua auth whoami             # who is signed in, with plan and teams
 cua auth status             # session and expiry, no network
 cua auth logout             # revoke and remove the session
 ```
@@ -44,30 +44,9 @@ terminal once and choose Always Allow. `CUA_KEYCHAIN_NONINTERACTIVE=1` turns
 prompts off, `0` allows them without a terminal, and
 `CUA_KEYCHAIN_TIMEOUT_SECS` (default 5) sets how long a call may take.
 
-## Which credential the CLI uses
-
-The first that is set wins:
-
-| Order | Source | For |
-|-------|--------|-----|
-| 1 | `CUA_CLIENT_ID` + `CUA_CLIENT_SECRET` | An API key, for scripts and servers (`CUA_TOKEN_URL` overrides the endpoint). |
-| 2 | The `cua auth login` session | Interactive use. |
-
-Legacy `key_...` keys belong to the retired VM API and no longer work.
-
-## API keys
-
-Create keys from a login session (an API key cannot manage keys: exit `6`):
-
-```bash test="cli-shape" id="cua-auth-keys"
-cua auth keys create ci-runner      # prints CUA_CLIENT_ID and CUA_CLIENT_SECRET once
-cua auth keys ls
-cua auth keys rm <id>
-```
-
 <Callout type="warn">
   The stored refresh token mints access tokens until revoked. On shared hosts,
-  run `cua auth logout` when done, or use an API key.
+  run `cua auth logout` when done, or sign in again when you need it.
 </Callout>
 
 ## Targeting staging

@@ -23,7 +23,7 @@ pub enum PersistentCmd {
     /// Cua Volume (agents/NAME/) and outlives its Space.
     #[command(after_help = "Examples:
   cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
-  cua agent create scout --harness claude-code --in cloud:scout --env-from-host ANTHROPIC_API_KEY")]
+  cua agent create scout --harness claude-code --in local:scout --env-from-host ANTHROPIC_API_KEY")]
     Create {
         name: String,
         /// Harness id (`cua agent harnesses`).

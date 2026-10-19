@@ -92,13 +92,13 @@ export interface CuaDumpDocs {
 
 /** Command groups: one page each, in the order readers meet them. */
 export const CLI_GROUPS: CliGroup[] = [
-  { slug: 'auth', title: 'cua auth', summary: 'Sign in, inspect your Fleet identity, manage API keys and CI tokens', commands: ['auth', 'wif-token'] },
+  { slug: 'auth', title: 'cua auth', summary: 'Sign in and out, see who is signed in, and store sandbox provider keys', commands: ['auth'] },
   {
     slug: 'sandbox',
     title: 'cua sandbox',
-    summary: 'Create, list, connect to, suspend and delete sandboxes, local or in the cloud',
+    summary: 'Create, list, connect to, suspend and delete sandboxes, local or on your own machines',
     commands: ['sandbox'],
-    subcommands: ['create', 'launch', 'connect', 'ls', 'info', 'suspend', 'resume', 'restart', 'keep-alive', 'rm'],
+    subcommands: ['create', 'launch', 'connect', 'ls', 'info', 'suspend', 'resume', 'restart', 'rm'],
   },
   {
     slug: 'sandbox-access',
@@ -107,10 +107,10 @@ export const CLI_GROUPS: CliGroup[] = [
     commands: ['sandbox'],
     subcommands: ['exec', 'shell', 'cp', 'overlay', 'logs', 'port-forward', 'url', 'screenshot', 'mcp', 'view'],
   },
-  { slug: 'config', title: 'cua config', summary: 'User defaults: where sandboxes run (`default.on`), the default kind and runtime, cloud defaults', commands: ['config'] },
+  { slug: 'config', title: 'cua config', summary: 'User defaults: where sandboxes run (`default.on`), the default kind and runtime', commands: ['config'] },
   { slug: 'viewer', title: 'cua viewer', summary: 'One local browser page that lists every sandbox and opens its viewer', commands: ['viewer'] },
   { slug: 'do', title: 'cua do', summary: 'One-shot computer actions (screenshot, click, type, windows) against a selected target', commands: ['do', 'do-host-consent'] },
-  { slug: 'image', title: 'cua image', summary: 'Pull, build and push OCI images, and manage Fleet image resources; list the image catalog', commands: ['image', 'images'] },
+  { slug: 'image', title: 'cua image', summary: 'Pull, build and push OCI images; list the image catalog', commands: ['image', 'images'] },
   { slug: 'mcp', title: 'cua mcp', summary: 'The stdio MCP server for AI assistants', commands: ['mcp'] },
   { slug: 'agent', title: 'cua agent', summary: 'Run coding agents (Claude Code, Codex, Gemini CLI, ...) inside a sandbox and follow, continue or stop them', commands: ['agent'] },
   { slug: 'agents', title: 'cua agents', summary: 'Install cua skills and the cua MCP server into AI coding agents', commands: ['agents'] },
@@ -138,8 +138,6 @@ export function cliReference(cli: CLIDocumentation): CliReference {
     product: 'cua-cli',
     cli,
     groups: CLI_GROUPS,
-    // `cua fleet` manages the retired Cua Cloud (Fleets) pools; the command stays until cua 0.5.0.
-    omit: ['fleet'],
     generator: REGENERATE,
     source: 'cua dump-docs --type cli',
     intro: readHeader('cua-cli', 'cli'),
@@ -189,7 +187,7 @@ function mcpCategories(spaces: SpacesLinks): McpCategory[] {
       canonicalSection: (tool) => spaces.sections.get(tool)!,
     },
     { slug: 'images', title: 'Image tools', summary: 'The sandbox image catalog: which images exist and which ship a browser' },
-    { slug: 'sandbox', title: 'Sandbox tools', summary: 'Create and manage sandboxes, local or in the cloud' },
+    { slug: 'sandbox', title: 'Sandbox tools', summary: 'Create and manage sandboxes, local or on your own machines' },
     {
       slug: 'teleport',
       title: 'Teleport tools',

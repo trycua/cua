@@ -23,8 +23,10 @@
 //!
 //! [`WindowDragTracker`] is that state machine over any [`WindowSource`], so
 //! it is tested with fixture window lists. [`WindowDragMonitor`] runs it on
-//! the real machine: macOS today (a listen-only `CGEventTap` for the left
-//! mouse button, which needs no permission: only keyboard taps do). Linux and Windows return
+//! the real machine: macOS today (the left mouse button, polled, so it needs
+//! no permission; a listen-only `CGEventTap` only when Input Monitoring is
+//! already allowed, because creating one makes macOS ask for it). Linux and
+//! Windows return
 //! [`UxError::Unsupported`]: Wayland does not let a client observe other
 //! apps' windows or the global pointer, and the X11 and Windows backends are
 //! not built yet.
@@ -437,10 +439,10 @@ pub fn supported() -> bool {
     cfg!(target_os = "macos")
 }
 
-/// Whether this process may observe global mouse events. On macOS a
-/// listen-only tap on the left mouse button needs no permission (only
-/// keyboard taps need Input Monitoring or Accessibility), so this is `true`
-/// there; `false` elsewhere.
+/// Whether this process may observe global mouse events. On macOS the
+/// monitor polls the left mouse button unless Input Monitoring is already
+/// allowed, which needs no permission, so this is `true` there; `false`
+/// elsewhere.
 pub fn permission_granted() -> bool {
     cfg!(target_os = "macos")
 }
@@ -502,7 +504,7 @@ pub fn capture_thumbnail_png(window_id: u32, max_width: usize) -> Result<Option<
 }
 
 /// Global window-drag detection on the real machine. Dropping it (or
-/// [`Self::stop`]) removes the event tap.
+/// [`Self::stop`]) removes the event tap or stops the polling.
 pub struct WindowDragMonitor {
     #[cfg(target_os = "macos")]
     inner: super::window_macos::Monitor,
@@ -510,7 +512,8 @@ pub struct WindowDragMonitor {
 
 impl WindowDragMonitor {
     /// Starts watching; `on_event` runs on the monitor thread. Fails when
-    /// macOS refuses the event tap, and with `Unsupported` elsewhere.
+    /// macOS refuses the event tap (only tried with Input Monitoring
+    /// allowed), and with `Unsupported` elsewhere.
     pub fn start(on_event: Box<dyn Fn(WindowDragEvent) + Send + 'static>) -> Result<Self, UxError> {
         guard()?;
         #[cfg(target_os = "macos")]

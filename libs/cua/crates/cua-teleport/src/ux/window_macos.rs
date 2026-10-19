@@ -2,14 +2,17 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! macOS backend for [`super::window`]: CoreGraphics window lists, the
-//! dragged window's image, and a listen-only `CGEventTap`.
+//! dragged window's image, and the left mouse button: a listen-only
+//! `CGEventTap` when Input Monitoring is already allowed, otherwise polling.
 //!
 //! Only reached through the guarded functions in [`super::window`], which
 //! refuse under `cfg(test)` or `CUA_ENV_TEST_SANDBOX=1`.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
@@ -39,6 +42,14 @@ use super::window::{
 unsafe extern "C" {
     /// Whether this process may capture the screen. Never prompts.
     fn CGPreflightScreenCaptureAccess() -> bool;
+    /// Whether this process may listen to input events (Input Monitoring).
+    /// Never prompts.
+    fn CGPreflightListenEventAccess() -> bool;
+    /// Whether a mouse button is down (state 0: combined session state).
+    /// Needs no permission.
+    fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
+    fn CGEventCreate(source: *const c_void) -> *const c_void;
+    fn CGEventGetLocation(event: *const c_void) -> CGPoint;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -266,13 +277,80 @@ impl WindowSource for OnScreen {
     }
 }
 
-/// A running event tap.
+/// Watches the left mouse button: an event tap, or a polling thread.
 pub struct Monitor {
     run_loop: Mutex<Option<usize>>,
+    stop_polling: Arc<AtomicBool>,
+}
+
+/// The cursor, in global display coordinates (top-left origin, as event
+/// locations are).
+fn cursor() -> Option<(f64, f64)> {
+    // SAFETY: a NULL source is allowed; the event is released below.
+    let event = unsafe { CGEventCreate(std::ptr::null()) };
+    if event.is_null() {
+        return None;
+    }
+    // SAFETY: `event` is a valid CGEventRef we own.
+    let p = unsafe { CGEventGetLocation(event) };
+    unsafe { core_foundation::base::CFRelease(event) };
+    Some((p.x, p.y))
 }
 
 impl Monitor {
     pub fn start(on_event: Box<dyn Fn(WindowDragEvent) + Send + 'static>) -> Result<Self, UxError> {
+        // A listen-only tap still makes macOS ask for Input Monitoring
+        // ("would like to receive keystrokes"), which the app never asks
+        // for. Unless it is already allowed, poll the button every 16 ms
+        // instead: the same events, and no prompt.
+        // SAFETY: no arguments; never prompts.
+        if !unsafe { CGPreflightListenEventAccess() } {
+            return Self::poll(on_event);
+        }
+        Self::tap(on_event)
+    }
+
+    fn poll(on_event: Box<dyn Fn(WindowDragEvent) + Send + 'static>) -> Result<Self, UxError> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = stop.clone();
+        std::thread::Builder::new()
+            .name("cua-window-drag".into())
+            .spawn(move || {
+                let mut tracker = WindowDragTracker::new(OnScreen, std::process::id() as i64);
+                let mut was_down = false;
+                let mut last = (f64::NAN, f64::NAN);
+                while !stop2.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                    // SAFETY: plain value arguments (combined session state,
+                    // left button).
+                    let down = unsafe { CGEventSourceButtonState(0, 0) };
+                    let Some(p) = cursor() else { continue };
+                    let m = match (was_down, down) {
+                        (false, true) => Some(MouseEvent::Down),
+                        (true, true) if p != last => Some(MouseEvent::Dragged),
+                        (true, false) => Some(MouseEvent::Up),
+                        _ => None,
+                    };
+                    was_down = down;
+                    last = p;
+                    if let Some(m) = m
+                        && let Some(mut ev) = tracker.handle(m, p.0, p.1)
+                    {
+                        if let Some(w) = ev.window.as_mut().filter(|w| w.bundle_path.is_none()) {
+                            w.bundle_path = bundle_path(w.pid, &mut HashMap::new());
+                        }
+                        on_event(ev);
+                    }
+                }
+            })
+            .map_err(|e| UxError::Io(e.to_string()))?;
+        Ok(Self {
+            run_loop: Mutex::new(None),
+            stop_polling: stop,
+        })
+    }
+
+    fn tap(on_event: Box<dyn Fn(WindowDragEvent) + Send + 'static>) -> Result<Self, UxError> {
         let (tx, rx) = std::sync::mpsc::channel::<Result<usize, String>>();
         std::thread::Builder::new()
             .name("cua-window-drag".into())
@@ -332,6 +410,7 @@ impl Monitor {
         match rx.recv_timeout(std::time::Duration::from_secs(5)) {
             Ok(Ok(rl)) => Ok(Self {
                 run_loop: Mutex::new(Some(rl)),
+                stop_polling: Arc::new(AtomicBool::new(false)),
             }),
             Ok(Err(e)) => Err(UxError::PermissionDenied(e)),
             Err(_) => Err(UxError::Io("the event tap did not start".into())),
@@ -339,6 +418,7 @@ impl Monitor {
     }
 
     pub fn stop(&self) {
+        self.stop_polling.store(true, Ordering::Relaxed);
         if let Some(rl) = self
             .run_loop
             .lock()

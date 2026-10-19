@@ -29,7 +29,7 @@ let spaces = Spaces::builder()
 | Call | What |
 |---|---|
 | `spaces.add(url, token, name)` | `GetCapabilities` handshake, then stored. `url` is `http(s)://host:port`, `host:port`, or a Space id (`local:<name>`). |
-| `spaces.list()` / `spaces.resolve(s)` / `spaces.remove(s)` | Registry. `resolve` accepts ids, legacy `space://...` / `fleet:ns:claim`, URLs, names; a name in two locations is `AmbiguousSandbox`. |
+| `spaces.list()` / `spaces.resolve(s)` / `spaces.remove(s)` | Registry. `resolve` accepts ids, legacy `space://...`, URLs, names; a name in two locations is `AmbiguousSandbox`. |
 | `spaces.create(SpaceCreate{image, on, kind, runtime, name, reuse, wait, ..})` | A new sandbox registered as a Space, where `on` says (`None`: `default.on`, `CUA_DEFAULT_ON`, else local). Placement is validated once (`InvalidPlacement` lists the valid values); `on="cloud"` fails with the "Cua Cloud has ended" error. `reuse` returns a reachable registered Space in the same location first. |
 | `spaces.delete(s)` | Deletes the Space's sandbox and forgets it. A Space added by address is only forgotten. |
 | `spaces.space(s) -> Space` | A cached, connected handle. |
@@ -125,9 +125,7 @@ tool is JSON-RPC `-32601` (the CLI used `-32602`), and tool failures carry
 
 `cua_daemon::Runtime` owns one `Spaces` (sharing its sandboxes).
 `cua.daemon.v1.SpaceService` is a thin adapter: `AddSpace`, `ListSpaces`,
-`ResolveSpace`, `RemoveSpace`, `ClaimFleetSpace` (Cua Cloud has ended: it
-fails with the "Cua Cloud has ended" error), `ProvisionLocalSpace`,
-`ReleaseSpace`, `ListSpaceTools`, `CallSpaceTool`, and `ConnectSpace`, which
+`ResolveSpace`, `RemoveSpace`, `ProvisionLocalSpace`, `ReleaseSpace`, `ListSpaceTools`, `CallSpaceTool`, and `ConnectSpace`, which
 returns a loopback env passthrough (`/v1/spaces/<base64url id>/env`, daemon
 bearer only; the Space's env token is attached inside the daemon, WebSockets
 included).
@@ -160,7 +158,7 @@ The in-process tests run the real `cua-spacesd-server` on loopback with a temp
 - `local_rcdp` is `stream_endpoint` and returns a media ticket for any
   provider (no ssh-read per-boot token).
 - `add_space` / `remove_space` are new; hotspot tools are capability-gated
-  (`hotspot`) rather than Fleet-only, run in this process, and take an
+  (`hotspot`) rather than cloud-only, run in this process, and take an
   optional `space` for stop/status.
 - `send_file` lands through TeleportService in `~/Downloads[/subdir]`;
   `target_directory` must be under Downloads (use `upload` otherwise). No

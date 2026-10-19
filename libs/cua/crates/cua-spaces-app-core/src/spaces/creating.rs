@@ -363,7 +363,7 @@ pub enum CreateFamily {
     Macos,
     /// A Windows VM (QEMU; emulated on Apple silicon).
     Windows,
-    /// A cloud Space (a Fleet claim).
+    /// A cloud Space.
     Cloud,
 }
 

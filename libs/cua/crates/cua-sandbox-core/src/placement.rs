@@ -119,7 +119,6 @@ impl On {
             return Ok(On::Provider(lower));
         }
         let hint = match lower.as_str() {
-            "fleet" => " (Cua Cloud has ended)".to_string(),
             "docker" | "container" => {
                 " (`--on` says where it runs; use `--kind container`)".to_string()
             }
@@ -151,7 +150,7 @@ impl On {
                 let lower = t.to_ascii_lowercase();
                 let reserved = matches!(
                     lower.as_str(),
-                    "fleet" | "docker" | "container" | "vm" | "auto"
+                    "docker" | "container" | "vm" | "auto"
                 ) || Runtime::parse(&lower)
                     .is_ok_and(|r| !matches!(r, Runtime::Other(_)));
                 if t.is_empty() || t.contains(':') || reserved {
@@ -501,7 +500,7 @@ fn providers_lock() -> &'static RwLock<Vec<Capabilities>> {
 /// and `relay` are reserved.
 pub fn register_provider(caps: Capabilities) -> Result<(), PlacementError> {
     let name = caps.name.trim().to_ascii_lowercase();
-    if ["local", "cloud", "direct", "relay", "fleet", "auto"].contains(&name.as_str())
+    if ["local", "cloud", "direct", "relay", "auto"].contains(&name.as_str())
         || name.is_empty()
         || !name
             .chars()
@@ -904,7 +903,7 @@ pub fn select(
         return Err(PlacementError::new(
             Axis::On,
             "cloud",
-            cua_image::resolve::FLEET_MACOS_UNSUPPORTED.into(),
+            cua_image::resolve::CLOUD_MACOS_UNSUPPORTED.into(),
             vec!["local".into()],
         ));
     }
@@ -1003,7 +1002,7 @@ mod tests {
         );
         assert_eq!(On::parse_or_host("local").unwrap(), On::Local);
         // Engine and kind words keep their pointer to --runtime / --kind.
-        for word in ["docker", "vm", "qemu", "lume", "fleet", "x:y"] {
+        for word in ["docker", "vm", "qemu", "lume", "x:y"] {
             assert!(On::parse_or_host(word).is_err(), "{word}");
         }
         // A host runs what a local machine runs.
@@ -1039,7 +1038,6 @@ mod tests {
             ("gvisor", "--runtime gvisor"),
             ("docker", "--kind container"),
             ("vm", "--kind vm"),
-            ("fleet", "Cua Cloud has ended"),
         ] {
             let e = On::parse(word).unwrap_err();
             assert_eq!(e.axis, Axis::On, "{word}");

@@ -96,7 +96,7 @@ export interface PageSpec {
 /**
  * The public crate set: `cua-sdk` (the Rust host API, the same objects the
  * UniFFI bindings expose) plus the crates Rust hosts use directly next to it
- * (`cua-spacesd-client`, `cua-fleet`, `cua-sandbox-core`, `cua-spaces`; see
+ * (`cua-spacesd-client`, `cua-sandbox-core`, `cua-spaces`; see
  * rust/index.mdx for the stability tiers).
  */
 export const PAGES: PageSpec[] = [
@@ -117,18 +117,10 @@ export const PAGES: PageSpec[] = [
     fallback: true,
   },
   {
-    slug: 'cua-fleet',
-    crate: 'cua-fleet',
-    title: 'cua-fleet',
-    description: 'The Fleet (cloud sandboxes) crate: pools, claims, builds and claim secrets.',
-    sources: [],
-    fallback: true,
-  },
-  {
     slug: 'cua-sandbox-core',
     crate: 'cua-sandbox-core',
     title: 'cua-sandbox-core',
-    description: 'The daemon-agnostic Sandbox over the Fleet, local and direct providers.',
+    description: 'The daemon-agnostic Sandbox over the local, contrib and direct providers.',
     sources: [],
     fallback: true,
   },
@@ -469,8 +461,7 @@ export function renderCratePage(
     if (!group.length) continue;
     body.push(`## ${heading}`, freeItems(group, krate));
   }
-  // Re-exports of crates outside the public set (the Fleet SDK types, the
-  // protos): one line, since their own crates document them.
+  // Re-exports of crates outside the public set (the protos): one line, since their own crates document them.
   const reexports = rest.filter((i) => i.kind === 'reexport');
   if (reexports.length) {
     body.push(

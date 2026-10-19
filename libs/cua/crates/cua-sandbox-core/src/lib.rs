@@ -1,10 +1,9 @@
 //! One daemon-agnostic `Sandbox` over three providers:
 //!
-//! - **Fleet** (cloud pools and claims, via `cua-fleet`),
 //! - **Local** (a VM or container runtime behind [`LocalRuntime`], which
 //!   `cua-vmm` implements through a thin adapter),
 //! - **Direct** (`url` + optional token; any reachable machine, including a
-//!   Fleet service URL or a relay URL),
+//!   relay URL),
 //! - **Contrib** (a third-party platform behind [`Provider`], registered by
 //!   the `cua-contrib` crate: `--on e2b`, `--on daytona`, ...).
 //!
@@ -17,7 +16,6 @@
 //! State files (`~/.cua/sandboxes/<name>.json`) use cua-sandbox's format.
 
 pub mod byoc;
-pub mod fleet_local;
 pub mod http;
 pub mod mcp;
 pub mod placement;
@@ -43,7 +41,6 @@ pub async fn remove_builtin_runtimes() -> std::result::Result<(), String> {
 }
 /// Cancels a create ([`Sandboxes::create_cancellable`]).
 pub use tokio_util::sync::CancellationToken;
-pub mod pool_image;
 pub mod power;
 pub mod provider;
 pub mod proxy;
@@ -55,15 +52,9 @@ pub mod state;
 #[cfg(feature = "testing")]
 pub mod testing;
 
-pub use cua_fleet;
 pub use cua_spacesd_client;
-pub use fleet_local::{
-    LocalFleetPlan, MACOS_FLEET_UNSUPPORTED, POOL_PREFIX, local_from_fleet_template,
-    plan_from_template, pool_image,
-};
 pub use http::{HttpResponse, RequestBody, ServiceEndpoint, StreamingResponse};
 pub use mcp::{McpClient, McpConfig};
-pub use pool_image::pool_image_info;
 pub use power::{PowerControl, PowerState, StopReason};
 pub use provider::{
     CLOUD_LOCATIONS, CONTRIB_LOCATIONS, ImageMode, PortExposure, Provider, ProviderCapabilities,
@@ -77,20 +68,17 @@ pub use runtime::{
     RuntimeResult,
 };
 pub use sandbox::{
-    BuildFile, BuildSpec, ConnectOptionsOverride, CreateOptions, ENV_PORT, FleetOptions, Forward,
-    ForwardVia, ImageLayer, LOOKUP_CLOUD_TIMEOUT, MISSING, NetworkMode, PortTarget, Probe,
+    BuildFile, BuildSpec, ConnectOptionsOverride, CreateOptions, ENV_PORT, Forward, ForwardVia,
+    ImageLayer, MISSING, NetworkMode, PortTarget, Probe,
     ProviderKind, RegistryCredentials, SPACESD_READY_TIMEOUT, Sandbox, SandboxInfo, Sandboxes,
     SandboxesBuilder, Service, Sidecar, Status, Tunnel, placement_of_backend,
 };
-/// Why a cloud (Fleet) sandbox cannot have a GPU yet.
-pub const FLEET_NO_GPU_REASON: &str = sandbox::FLEET_NO_GPU;
-
 /// The one "Cua Cloud has ended" message: every Cua Cloud (`on="cloud"`,
-/// `cloud:` refs, pools) entry point in the SDKs, the CLI, the MCP server and
-/// Spaces fails with it ([`Error::CloudEnded`]) instead of calling Fleet.
+/// `cloud:` refs, `pool:<name>` images) entry point in the SDKs, the CLI, the
+/// MCP server and Spaces fails with it ([`Error::CloudEnded`]).
 pub const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own machine. \
      See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
-pub use state::{EphemeralLease, FleetState, LEASE_DIR, LocalState, SandboxState, StateStore};
+pub use state::{EphemeralLease, LEASE_DIR, LocalState, SandboxState, StateStore};
 
 /// Errors.
 #[derive(Debug, thiserror::Error)]
@@ -144,8 +132,9 @@ pub enum Error {
         /// Probe failure.
         reason: String,
     },
-    /// The image cannot run on the chosen provider (for example a Fleet
-    /// macOS template locally). The message names the alternative.
+    /// The image cannot run on the chosen provider (for example a Linux
+    /// image on a Mac without a container engine). The message names the
+    /// alternative.
     #[error("{0}")]
     UnsupportedImage(String),
     /// A readiness probe or provider wait timed out.
@@ -154,9 +143,6 @@ pub enum Error {
     /// HTTP failure.
     #[error("http: {0}")]
     Http(String),
-    /// Fleet.
-    #[error(transparent)]
-    Fleet(#[from] cua_fleet::Error),
     /// Local runtime.
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
@@ -185,7 +171,6 @@ pub enum Error {
 
 fn provider_not_configured(p: &ProviderKind) -> String {
     match p {
-        ProviderKind::Fleet => CLOUD_ENDED.into(),
         ProviderKind::Contrib => "no contrib provider is configured".into(),
         other => format!("provider {other:?} is not configured"),
     }

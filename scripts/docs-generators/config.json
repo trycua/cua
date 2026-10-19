@@ -336,21 +336,6 @@
         },
         {
           "type": "api",
-          "outputFile": "fleet/index.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "fleet/claims.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
-          "outputFile": "fleet/images.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "api",
           "outputFile": "local.mdx",
           "extractCommand": null
         },
@@ -545,7 +530,6 @@
       "generatorScript": "scripts/docs-generators/rust-crates.ts",
       "watchPaths": [
         "libs/cua/crates/cua-spacesd-client/src/**",
-        "libs/cua/crates/cua-fleet/src/**",
         "libs/cua/crates/cua-sandbox-core/src/**",
         "libs/cua/crates/cua-spaces/src/**",
         "libs/cua/crates/*/Cargo.toml",
@@ -568,9 +552,6 @@
         "docs/content/docs/cua-sdk/reference/spacesd/files.mdx",
         "docs/content/docs/cua-sdk/reference/spacesd/computer.mdx",
         "docs/content/docs/cua-sdk/reference/spacesd/media.mdx",
-        "docs/content/docs/cua-sdk/reference/fleet/index.mdx",
-        "docs/content/docs/cua-sdk/reference/fleet/claims.mdx",
-        "docs/content/docs/cua-sdk/reference/fleet/images.mdx",
         "docs/content/docs/cua-sdk/reference/local.mdx",
         "docs/content/docs/cua-sdk/reference/spaces/index.mdx",
         "docs/content/docs/cua-sdk/reference/spaces/space.mdx",
@@ -601,11 +582,6 @@
         {
           "type": "reference",
           "outputFile": "cua-spacesd-client.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "cua-fleet.mdx",
           "extractCommand": null
         },
         {

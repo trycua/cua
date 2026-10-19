@@ -771,7 +771,7 @@ impl Backend for DaemonBackend {
                 })
             })
         };
-        // The env token / Fleet bearer authenticate this channel and are never
+        // The env token / gateway bearer authenticate this channel and are never
         // exposed to the MCP caller; the guest wipes on its own at expiry.
         let result = cua_teleport::upload_bundle(
             spacesd,

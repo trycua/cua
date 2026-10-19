@@ -474,8 +474,8 @@ test("a non-local id is refused here rather than sent for the app to reject with
   await withControlServer(ok, async ({ controlFile, requests }) => {
     const host = new HostPresentation({ controlFile })
     for (const call of [
-      () => host.pin("space://fleet/ns/claim"),
-      () => host.openViewer("fleet:ns:claim"),
+      () => host.pin("space://cloud/claim"),
+      () => host.openViewer("cloud:claim"),
       () => host.streamWindow({ spaceId: "space://direct/h:1", windowId: "w", rcdpToken: "t" }),
     ]) {
       await assert.rejects(call, (e) => isSpacesError(e, "usage") && /local:<vm>/.test(e.message))

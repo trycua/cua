@@ -1539,7 +1539,7 @@ fn error_kind(e: &CuaError) -> &'static str {
         CuaError::CapabilityMissing(_) => "capability_missing",
         CuaError::HostCapabilityMissing(_) => "host_capability_missing",
         CuaError::TeleportRefused(_) => "teleport_refused",
-        CuaError::Timeout(_) | CuaError::ClaimSecretsNotDelivered(_) => "timeout",
+        CuaError::Timeout(_) => "timeout",
         CuaError::Unauthenticated(_) => "unauthenticated",
         CuaError::Cloud(_) => "cloud",
         CuaError::InsufficientDisk(_) => "insufficient_disk",

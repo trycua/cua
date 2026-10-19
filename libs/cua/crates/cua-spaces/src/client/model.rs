@@ -51,13 +51,12 @@ fn any_i64(row: &Map<String, Value>, keys: &[&str]) -> Option<i64> {
 
 /// Which kind of Space this is.
 ///
-/// `FRICTION.md` §6: Local and Fleet Spaces disagree on their vocabulary at
-/// every level. An app branches on a capability or a normalised value, never
-/// on a string it had to learn empirically.
+/// `FRICTION.md` §6: Spaces on different providers disagreed on their
+/// vocabulary at every level. An app branches on a capability or a
+/// normalised value, never on a string it had to learn empirically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpaceProvider {
     Local,
-    Fleet,
     /// Any machine running cua-spacesd, added by URL (`add_space`).
     Direct,
     Demo,
@@ -68,9 +67,6 @@ impl SpaceProvider {
     pub fn from_raw(raw: &str) -> Self {
         match raw.to_ascii_lowercase().as_str() {
             "local" => SpaceProvider::Local,
-            // `cloud` is the unified location word; the legacy Spaces
-            // server sends `fleet`.
-            "fleet" | "cloud" => SpaceProvider::Fleet,
             "direct" => SpaceProvider::Direct,
             "demo" => SpaceProvider::Demo,
             _ => SpaceProvider::Unknown,
@@ -80,7 +76,6 @@ impl SpaceProvider {
     pub fn as_str(self) -> &'static str {
         match self {
             SpaceProvider::Local => "local",
-            SpaceProvider::Fleet => "fleet",
             SpaceProvider::Direct => "direct",
             SpaceProvider::Demo => "demo",
             SpaceProvider::Unknown => "unknown",
@@ -93,7 +88,6 @@ impl SpaceProvider {
     pub fn home(self) -> &'static str {
         match self {
             SpaceProvider::Local => "/Users/lume",
-            SpaceProvider::Fleet => "/root",
             // Whoever the machine's spacesd runs as; the server expands `~`.
             SpaceProvider::Direct => "~",
             SpaceProvider::Demo | SpaceProvider::Unknown => "/tmp",
@@ -122,25 +116,6 @@ impl SpaceProvider {
                         .into(),
                     "teleport_app takes the Local branch first; this capability used to read \
                      false and was wrong."
-                        .into(),
-                ],
-            },
-            SpaceProvider::Fleet => ProviderCapabilities {
-                provider: "fleet".into(),
-                agents: true,
-                window_list: true,
-                upload: true,
-                download: true,
-                rcdp_streaming: true,
-                teleport: true,
-                provisioning: true,
-                server_backstop: false,
-                notes: vec![
-                    "download answers in prose rather than JSON on this provider \
-                     (FRICTION.md §4); the SDK normalises it."
-                        .into(),
-                    "stream_endpoint works here too: the media ticket comes from the SDK, not \
-                     from a token read over ssh."
                         .into(),
                 ],
             },
@@ -199,9 +174,9 @@ pub struct ProviderCapabilities {
     pub notes: Vec<String>,
 }
 
-/// One normalised readiness vocabulary. A ready Space reports `running` on
-/// Local and `Bound` on Fleet; both become `Ready`, and the string that
-/// produced it is kept on `raw_phase`.
+/// One normalised readiness vocabulary. A ready Space reports `running` or
+/// `Bound`; both become `Ready`, and the string that produced it is kept on
+/// `raw_phase`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpaceState {
     Ready,
@@ -1227,14 +1202,16 @@ mod tests {
         let local = SpaceInfo::from_row(&object(
             json!({ "id": "local:cua-space-1", "phase": "running", "os": "macos" }),
         ));
-        let fleet = SpaceInfo::from_row(&object(json!({ "id": "fleet:abc", "phase": "Bound" })));
-        assert!(local.is_ready() && fleet.is_ready());
+        let direct = SpaceInfo::from_row(&object(
+            json!({ "id": "direct:10.0.0.1:3211", "phase": "Bound" }),
+        ));
+        assert!(local.is_ready() && direct.is_ready());
         assert_eq!(local.raw_phase, "running");
-        assert_eq!(fleet.raw_phase, "Bound");
+        assert_eq!(direct.raw_phase, "Bound");
         assert_eq!(local.provider, SpaceProvider::Local);
-        assert_eq!(fleet.provider, SpaceProvider::Fleet);
+        assert_eq!(direct.provider, SpaceProvider::Direct);
         assert_eq!(local.provider.home(), "/Users/lume");
-        assert_eq!(fleet.provider.home(), "/root");
+        assert_eq!(direct.provider.home(), "~");
     }
 
     /// §7: two spellings for the same id. Reading only one yields an empty id
@@ -1355,7 +1332,6 @@ mod tests {
         const { assert!(!APPROVALS_ARE_ENFORCED) };
         for provider in [
             SpaceProvider::Local,
-            SpaceProvider::Fleet,
             SpaceProvider::Demo,
             SpaceProvider::Unknown,
         ] {

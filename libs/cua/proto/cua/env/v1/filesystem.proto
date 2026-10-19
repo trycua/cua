@@ -488,7 +488,7 @@ message CreateSignedUrlRequest {
 message CreateSignedUrlResponse {
   // Path and query to append to the spacesd's base URL, for example
   // "/files?path=%2Fhome%2Fu%2Fa.png&method=GET&exp=1767225600&sig=…". The
-  // server does not know how it is addressed (direct, Fleet gateway, relay),
+  // server does not know how it is addressed (direct, gateway, relay),
   // so it never returns an absolute URL. The signature is HMAC-SHA256 over
   // method, path and expiry with a key derived from the access token;
   // rotating the token revokes every outstanding URL.

@@ -9,7 +9,7 @@
 //!   in-process fakes (MockServer spacesd with presence), in the embedded
 //!   and daemon topologies;
 //! - static: every `pub async fn` in an exported impl either goes through
-//!   the runtime (`run(`, `env_call!`, `fleet_call!`) or only delegates to
+//!   the runtime (`run(`, `env_call!`) or only delegates to
 //!   methods that do, so new methods cannot skip it silently.
 //!
 //! Nothing touches host apps; every wait is bounded.
@@ -100,7 +100,6 @@ fn direct(url: &str, name: &str) -> SandboxCreateOptions {
         image: String::new(),
         name: Some(name.into()),
         token: Some(TOKEN.into()),
-        pool: None,
         os: None,
         cpus: None,
         memory_mb: None,
@@ -109,12 +108,7 @@ fn direct(url: &str, name: &str) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
         command: None,
-        cloud: None,
         sidecars: vec![],
         registry_secret: None,
         build: None,
@@ -229,10 +223,6 @@ async fn exercise(cua: Arc<Cua>, env_url: String) {
         .await
         .unwrap();
 
-    // ---- Fleet: Cua Cloud has ended, so the client never connects.
-    let e = cua.fleet().err().expect("Cua.fleet() fails");
-    assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
-
     // ---- sandboxes (direct)
     let sbx = cua.sandboxes();
     let sb = sbx.create(direct(&env_url, "ffi-direct")).await.unwrap();
@@ -322,7 +312,6 @@ fn exported_methods_run_without_a_tokio_runtime_embedded() {
         let dir = tempfile::tempdir().unwrap();
         let other = Cua::embedded(CuaConfig {
             state_dir: Some(dir.path().join("s").display().to_string()),
-            fleet_from_env: false,
             spaces_home: Some(dir.path().join("cua").display().to_string()),
             ..Default::default()
         })
@@ -429,7 +418,7 @@ fn body_uses_runtime(
     fns: &BTreeMap<String, Vec<String>>,
     seen: &mut HashSet<String>,
 ) -> bool {
-    if body.contains("run(") || body.contains("env_call!") || body.contains("fleet_call!") {
+    if body.contains("run(") || body.contains("env_call!") {
         return true;
     }
     // A delegator: it awaits a method (any same-named helper) that does.

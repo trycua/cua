@@ -391,7 +391,7 @@ function testGeneratorRouting(config: Config): void {
     ['libs/cua/crates/cua-spaces-contract/src/lib.rs', 'docs/content/docs/spaces/reference/agents.mdx', 'scripts/docs-generators/spaces.ts'],
     ['cua-cli', 'spaces']
   );
-  assertSelection(config, ['libs/cua/crates/cua-fleet/src/lib.rs'], ['cua-rust']);
+  assertSelection(config, ['libs/cua/crates/cua-sandbox-core/src/lib.rs'], ['cua-rust']);
   assertSelection(config, ['docs/content/docs/cua-cli/guides/mcp-server.mdx'], []);
   assertSelection(config, ['docs/content/docs/lume/reference/cli/vms.mdx'], ['lume']);
   assertSelection(
@@ -433,7 +433,7 @@ function testGeneratorRouting(config: Config): void {
     [
       'libs/cua/crates/cua-spaces/src/client/model.rs',
       'scripts/docs-generators/rustdoc-json/src/main.rs',
-      'docs/content/docs/cua-sdk/reference/rust/cua-fleet.mdx',
+      'docs/content/docs/cua-sdk/reference/rust/cua-sandbox-core.mdx',
     ],
     ['cua-rust']
   );

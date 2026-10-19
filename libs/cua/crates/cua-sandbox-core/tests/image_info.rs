@@ -205,4 +205,3 @@ async fn unresolved_local_images_and_direct_urls_report_none() {
     let direct = sbx.connect_url("http://127.0.0.1:1", None).unwrap();
     assert_eq!(direct.image_info(), None);
 }
-

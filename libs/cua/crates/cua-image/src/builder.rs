@@ -61,7 +61,8 @@ pub fn steps_from_spec(r: &ImageResource) -> Result<Vec<BuildStep>> {
     let recipe = &r.spec.recipe;
     if !recipe.files.is_empty() {
         return Err(ImageError::Spec(
-            "recipe.files reference server-side uploads; use BuildStep::Copy for local builds".into(),
+            "recipe.files reference server-side uploads; use BuildStep::Copy for local builds"
+                .into(),
         ));
     }
     let mut steps = Vec::new();

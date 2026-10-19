@@ -44,6 +44,7 @@ export const METHODS = [
   "window.setBackgroundColor", "window.setDragRegions", "window.setDropTargets",
   "startup.get", "startup.act",
   "relay.usage",
+  "nudges.pending", "nudges.answer",
   "resources.get",
   "checklist.get", "checklist.send",
 ] as const;

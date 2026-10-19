@@ -809,6 +809,16 @@ pub fn access_what(what: &str) -> String {
 /// Who, in words: the token holder is named by the credential (a name it
 /// sends is only its claim).
 pub fn access_who(via: &str, who: &str) -> String {
+    // An agent's call names its session after the caller
+    // (`crate::nudges::agent_session`): say which agent, not its id.
+    if let (caller, Some((agent, _))) = crate::nudges::agent_session(who) {
+        let caller = access_who(via, caller);
+        return if via == "token" {
+            caller
+        } else {
+            format!("{agent} for {caller}")
+        };
+    }
     if via == "token" {
         if let Some(claimed) = who
             .strip_prefix("token (claims ")

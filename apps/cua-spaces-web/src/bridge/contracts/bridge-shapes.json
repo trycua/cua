@@ -4849,6 +4849,39 @@
     "notifications.markRead": {
       "type": "null"
     },
+    "nudges.answer": {
+      "type": "null"
+    },
+    "nudges.pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "atMs": {
+            "type": "number"
+          },
+          "expiresMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "action",
+          "atMs",
+          "expiresMs"
+        ]
+      }
+    },
     "presence.join": {
       "type": "object",
       "properties": {
@@ -6429,6 +6462,39 @@
     },
     "onboarding.get": {
       "$ref": "#/$defs/WkOnboarding"
+    },
+    "nudges.answer": {
+      "type": "null"
+    },
+    "nudges.pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "atMs": {
+            "type": "number"
+          },
+          "expiresMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "action",
+          "atMs",
+          "expiresMs"
+        ]
+      }
     },
     "relay.usage": {
       "type": [

@@ -154,6 +154,8 @@ export const WEBKIT_METHODS = [
   "startup.get",
   "startup.act",
   "relay.usage",
+  "nudges.pending",
+  "nudges.answer",
   "resources.get",
   "checklist.get",
   "checklist.send",

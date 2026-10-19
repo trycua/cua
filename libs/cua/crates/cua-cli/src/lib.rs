@@ -44,6 +44,7 @@ pub mod keyvault_cmd;
 mod mcp;
 mod persistent_cmd;
 mod providers;
+mod risky;
 mod resources_view;
 pub mod sandbox;
 mod shell;

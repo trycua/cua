@@ -78,6 +78,7 @@ pub mod machines;
 pub mod model;
 pub mod notch;
 pub mod notifications;
+pub mod nudges;
 pub mod onboarding;
 pub mod onboarding_preview;
 pub mod palette;

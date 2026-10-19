@@ -95,6 +95,8 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.setupDriver": { agents: ["codex"] },
   "spaces.openStream": { spaceId: SPACE, tier: "tile" },
   "relay.usage": {},
+  "nudges.pending": {},
+  "nudges.answer": { id: "risky-1-1", choice: "here" },
   "resources.get": { visible: true },
   "checklist.get": {},
   "checklist.send": { action: { type: "done", step: "teleport" } },

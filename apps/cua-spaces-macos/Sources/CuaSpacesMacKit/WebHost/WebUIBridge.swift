@@ -112,6 +112,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
         "relay.usage",
+        // The risky-action question's request files (WebUIBridge+Nudges.swift).
+        "nudges.pending", "nudges.answer",
         // Processor, memory and disk (WebUIBridge+Pages.swift).
         "resources.get",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
@@ -391,6 +393,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try await routeThumbnail(method, args) { return result }
             if let result = try await routeFiles(method, args) { return result }
             if let result = try await routePage(method, args) { return result }
+            if let result = try routeNudges(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }

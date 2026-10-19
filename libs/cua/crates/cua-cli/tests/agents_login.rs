@@ -501,6 +501,61 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     assert!(!h.dir.path().join(".claude/skills/cua-driver").exists());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agents_setup_cua_driver_says_where_the_skill_went_and_no_skills_skips_it() {
+    let h = home();
+    mkdirs(&h, &[".codex", ".claude"]);
+    let skill = |rel: &str| h.dir.path().join(rel).join("cua-driver/SKILL.md");
+
+    // Default: the skill lands beside the MCP entry, with one line saying so.
+    let o = h
+        .run(&[
+            "agents",
+            "setup",
+            "--cua-driver",
+            "--agents",
+            "claude",
+            "--yes",
+            "--mcp-command",
+            "/opt/drv/cua-driver",
+        ])
+        .await;
+    o.ok();
+    let said: Vec<&str> = o
+        .stdout
+        .lines()
+        .filter(|l| l.contains("skill cua-driver"))
+        .collect();
+    assert_eq!(said.len(), 1, "{o:?}");
+    assert!(said[0].contains(".claude/skills/cua-driver"), "{o:?}");
+    assert!(skill(".claude/skills").is_file());
+
+    // --no-skills (the installers' flag): the server only, nothing printed
+    // about a skill, and Codex's skills folder is never created.
+    let o = h
+        .run(&[
+            "agents",
+            "setup",
+            "--cua-driver",
+            "--agents",
+            "codex",
+            "--no-skills",
+            "--yes",
+            "--mcp-command",
+            "/opt/drv/cua-driver",
+        ])
+        .await;
+    o.ok();
+    assert!(
+        o.stdout
+            .contains("MCP server cua-driver: ~/.codex/config.toml added"),
+        "{o:?}"
+    );
+    assert!(!o.stdout.contains("skill cua-driver"), "{o:?}");
+    assert!(!skill(".agents/skills").exists());
+    assert!(!h.dir.path().join(".agents/skills").exists());
+}
+
 // ------------------------------------------------------------ PTY (expect)
 
 /// A `cua` process on a pseudo-terminal, driven like `expect`.

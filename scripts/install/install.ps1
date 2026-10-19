@@ -60,6 +60,8 @@ Kept for older commands: the CLI directory is added to the user PATH by default.
 Do not add the CLI directory to the user PATH.
 .PARAMETER NoOnboarding
 Do not run `cua auth login` afterwards.
+.PARAMETER NoSkills
+With cua-driver, add only its MCP server to your agents, not its skill (by default both are added).
 .PARAMETER RequireSignature
 Fail unless a signature verifies.
 .PARAMETER Installer
@@ -83,6 +85,7 @@ param(
     [switch]$ModifyPath,
     [switch]$NoModifyPath,
     [switch]$NoOnboarding,
+    [switch]$NoSkills,
     [switch]$RequireSignature,
     [ValidateSet('msi', 'nsis')][string]$Installer = 'nsis',
     [switch]$DryRun,
@@ -490,8 +493,10 @@ function Install-CuaDriver([string]$Cua, [string]$Tmp, [string]$ManifestUrl) {
         try { & $exe -NoProfile -ExecutionPolicy Bypass -File $script @driverArgs } finally { $env:CUA_DRIVER_RS_INSTALL_DIR = $saved }
         if ($LASTEXITCODE -ne 0) { Stop-Install "the cua-driver installer failed (exit $LASTEXITCODE)" }
     }
-    Write-Info 'adding the cua-driver skill and MCP server to your agents'
+    if ($NoSkills) { Write-Info 'adding the cua-driver MCP server to your agents (no skill: -NoSkills)' }
+    else { Write-Info 'adding the cua-driver skill and MCP server to your agents' }
     $setup = @('agents', 'setup', '--cua-driver', '--agents', 'all', '--yes')
+    if ($NoSkills) { $setup += '--no-skills' }
     $driver = Join-Path $binDir 'cua-driver.exe'
     if ($DryRun -or (Test-Path -LiteralPath $driver)) { $setup += @('--mcp-command', $driver) }
     if ($DryRun) { Write-Host "[dry-run] $Cua $($setup -join ' ')"; return }

@@ -36,6 +36,8 @@
 #   --modify-path       add the bin dir to your shell profile without asking
 #   --no-modify-path    never edit your shell profile (print the one-line command)
 #   --no-onboarding     do not run `cua auth login` afterwards
+#   --no-skills         with cua-driver, add only its MCP server to your agents,
+#                       not its skill (by default both are added)
 #   -v, --verbose       print every step (manifest, downloads, signature checks)
 #   --require-signature fail unless a signature (minisign/cosign) verifies
 #   --dry-run           print what would happen, change nothing
@@ -90,6 +92,7 @@ verbose=0
 no_tty_noted=0
 signed_in=0
 onboarding=1
+driver_skills=1
 require_sig=0
 dry_run=0
 assume_yes=0
@@ -189,6 +192,7 @@ parse_args() {
         --modify-path) modify_path=1 ;;
         --no-modify-path) no_modify_path=1 ;;
         --no-onboarding) onboarding=0 ;;
+        --no-skills) driver_skills=0 ;;
         -v | --verbose) verbose=1 ;;
         --require-signature) require_sig=1 ;;
         --dry-run) dry_run=1 ;;
@@ -1017,8 +1021,13 @@ install_driver() {
         fetch "$driver_url" "$script"
         bash "$script" "$@" </dev/null || die "the cua-driver installer failed"
     fi
-    info "adding the cua-driver skill and MCP server to your agents"
+    if [ "$driver_skills" = 1 ]; then
+        info "adding the cua-driver skill and MCP server to your agents"
+    else
+        info "adding the cua-driver MCP server to your agents (no skill: --no-skills)"
+    fi
     set -- "$cua_bin" agents setup --cua-driver --agents all --yes
+    [ "$driver_skills" = 1 ] || set -- "$@" --no-skills
     if [ "$dry_run" = 1 ] || [ -x "$driver_dir/cua-driver" ]; then
         set -- "$@" --mcp-command "$driver_dir/cua-driver"
     fi

@@ -28,7 +28,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua spaces relay-register`](#cua-spaces-relay-register) | Publish a Space on the relay for your other devices (a phone off this network): its own driver dials out, as `cua host setup` does for this computer. |
 | [`cua spaces relay-unregister`](#cua-spaces-relay-unregister) | Take a Space off the relay (every share with it ends). |
 | [`cua host`](#cua-host) | Unattended access to this machine (setup, status, stop, start, remove). |
-| [`cua host setup`](#cua-host-setup) | Set this machine up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. |
+| [`cua host setup`](#cua-host-setup) | Set this machine up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account. |
 | [`cua host pair`](#cua-host-pair) | Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. |
 | [`cua host config`](#cua-host-config) | Show or change what this machine shares: its own desktop, and whether it creates Spaces for your other devices. |
 | [`cua host status`](#cua-host-status) | Show whether this machine is set up, the service, and who is connected. |
@@ -62,7 +62,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua team remove-machine`](#cua-team-remove-machine) | Take a machine off the team. |
 | [`cua team audit`](#cua-team-audit) | The team's audit log. |
 | [`cua team delete`](#cua-team-delete) | Delete a team (owner; cancel its subscription first). |
-| [`cua usage`](#cua-usage) | Your relay allowance this month: live sessions, relay hours, and your plan. |
+| [`cua usage`](#cua-usage) | Your remote use this month: live sessions, remote hours, and your plan. |
 | [`cua spacesd`](#cua-spacesd) | Talk to a cua-spacesd directly by URL. |
 | [`cua spacesd caps`](#cua-spacesd-caps) | Print capabilities. |
 | [`cua spacesd exec`](#cua-spacesd-exec) | Run a command (argv, no shell). |
@@ -97,7 +97,6 @@ Alias: `cua spaces list`.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-spaces-ls--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
 | <span id="cua-spaces-ls--no-size"></span>`--no-size` | boolean | `false` | Do not measure what each Space takes on this computer's disk (that walk can take a moment with many Spaces). |
 
 **Examples**
@@ -411,7 +410,7 @@ cua host [OPTIONS] <COMMAND>
 
 ### `cua host setup`
 
-Set this machine up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port.
+Set this machine up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account.
 
 ```text output
 cua host setup [OPTIONS]
@@ -419,9 +418,7 @@ cua host setup [OPTIONS]
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-host-setup--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
 | <span id="cua-host-setup--pair"></span>`--pair` | string |  | Join with a one-time pairing code (or add-machine link) made in the Cua Spaces app or with `cua host pair`, instead of signing in here. The machine joins the account (or team) that made it. |
-| <span id="cua-host-setup--direct"></span>`--direct` | string |  | Serve directly on ip:port with a local env token (LAN / port-forwarded) instead of joining a relay. |
 | <span id="cua-host-setup--name"></span>`--name` | string |  | Display name (default: the host name). |
 | <span id="cua-host-setup--allow"></span>`--allow` | string |  | Also allow this account (id or email). Repeatable. |
 | <span id="cua-host-setup--driver-bin"></span>`--driver-bin` | path |  | cua-spacesd binary (default $CUA_SPACESD_BIN, a bundled one, or the release download). |
@@ -433,7 +430,6 @@ cua host setup [OPTIONS]
 | <span id="cua-host-setup--no-desktop"></span>`--no-desktop` | boolean | `false` | Do not share this machine's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides. |
 | <span id="cua-host-setup--provide-spaces"></span>`--provide-spaces` | boolean | `false` | Create Spaces for your enrolled devices on this machine's runtimes (Lume macOS VMs, Docker Linux containers). |
 | <span id="cua-host-setup--no-provide-spaces"></span>`--no-provide-spaces` | boolean | `false` | Do not create Spaces for other devices. |
-| <span id="cua-host-setup--allow-any-address"></span>`--allow-any-address` | boolean | `false` | With --direct and Spaces: take host calls, and connections to the Spaces this machine forwards, from any address (and allow a public --direct address). By default only loopback, Tailscale and private LAN addresses may. The direct listener is plaintext and its token is a shell on this machine: prefer Tailscale. |
 
 **Examples**
 
@@ -444,12 +440,6 @@ cua host setup
 # A spare machine: do not share its desktop, run Spaces for your devices
 cua host setup --profile spare --name "Mac mini (spare)"
 cua host setup --no-desktop --provide-spaces
-
-# Serve on the LAN instead of the relay
-cua host setup --direct 0.0.0.0:3211 --name studio-mac
-
-# A spare Mac on your tailnet that runs Spaces, without the relay (prints the command that adds it on your laptop)
-cua host setup --direct 100.101.102.103:3211 --profile spare
 
 # Add this machine with a one-time code from the Cua Spaces app (Add a machine) or `cua host pair`: no sign-in needed here
 cua host setup --pair K7QM-4XPB-2RHD
@@ -469,7 +459,6 @@ cua host pair [OPTIONS]
 | <span id="cua-host-pair--name"></span>`--name` | string |  | Name the machine gets (default: its own host name). |
 | <span id="cua-host-pair--expires"></span>`--expires` | integer | `30` | Minutes until the code expires (1 to 1440). |
 | <span id="cua-host-pair--revoke"></span>`--revoke` | string |  | Revoke an unused code by id (`pc_…`). |
-| <span id="cua-host-pair--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
 | <span id="cua-host-pair--no-wait"></span>`--no-wait` | boolean | `false` | With --team: print the code and exit instead of waiting; add the machine later with `cua team add-machine <team> relay:<id>`. |
 | <span id="cua-host-pair--list"></span>`--list` | boolean | `false` | List your codes (used, unused, revoked, expired) instead. |
 
@@ -567,7 +556,6 @@ cua host share [OPTIONS] <WHO>...
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-host-share--machine"></span>`--machine` | string |  | Machine id (default: this machine). |
-| <span id="cua-host-share--relay"></span>`--relay` | string |  | Relay URL (default: the one this machine joined, else $CUA_RELAY_URL / https://relay.cua.ai). |
 | <span id="cua-host-share--yes"></span>`--yes` | boolean | `false` | Do not ask for confirmation. |
 
 **Examples**
@@ -592,7 +580,6 @@ cua host unshare [OPTIONS] <WHO>...
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-host-unshare--machine"></span>`--machine` | string |  | Machine id (default: this machine). |
-| <span id="cua-host-unshare--relay"></span>`--relay` | string |  | Relay URL. |
 
 **Examples**
 
@@ -647,10 +634,6 @@ This device: enrolled, waiting for approval, or not enrolled.
 cua devices status [OPTIONS]
 ```
 
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-devices-status--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
-
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-devices-status"
@@ -668,7 +651,6 @@ cua devices enroll [OPTIONS]
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-devices-enroll--name"></span>`--name` | string |  | Display name (default: the host name). |
-| <span id="cua-devices-enroll--relay"></span>`--relay` | string |  | Relay URL. |
 | <span id="cua-devices-enroll--wait"></span>`--wait` | boolean | `false` | Wait (up to 10 minutes) until an enrolled device approves. |
 
 **Examples**
@@ -693,7 +675,6 @@ cua devices approve [OPTIONS] [CODE]
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-devices-approve--device"></span>`--device` | string |  | Or the device id (`cua devices ls`). |
-| <span id="cua-devices-approve--relay"></span>`--relay` | string |  | Relay URL. |
 | <span id="cua-devices-approve--yes"></span>`--yes` | boolean | `false` | Do not ask for confirmation. |
 
 **Examples**
@@ -712,10 +693,6 @@ cua devices ls [OPTIONS]
 ```
 
 Alias: `cua devices list`.
-
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-devices-ls--relay"></span>`--relay` | string |  | Relay URL. |
 
 **Examples**
 
@@ -737,10 +714,6 @@ cua devices rename [OPTIONS] <ID> <NAME>
 | `<ID>` | string | required | Device id. |
 | `<NAME>` | string | required | New name. |
 
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-devices-rename--relay"></span>`--relay` | string |  | Relay URL. |
-
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-devices-rename"
@@ -761,7 +734,6 @@ cua devices revoke [OPTIONS] <ID>
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-devices-revoke--relay"></span>`--relay` | string |  | Relay URL. |
 | <span id="cua-devices-revoke--yes"></span>`--yes` | boolean | `false` | Do not ask for confirmation. |
 
 **Examples**
@@ -781,7 +753,6 @@ cua devices audit [OPTIONS]
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-devices-audit--limit"></span>`--limit` | integer | `50` | Newest events to show. |
-| <span id="cua-devices-audit--relay"></span>`--relay` | string |  | Relay URL. |
 
 **Examples**
 
@@ -1123,15 +1094,11 @@ cua team delete AIGIS --yes
 
 ## `cua usage`
 
-Your relay allowance this month: live sessions, relay hours, and your plan. Spaces on your own network use none of it.
+Your remote use this month: live sessions, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free.
 
 ```text output
 cua usage [OPTIONS]
 ```
-
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-usage--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
 
 **Examples**
 

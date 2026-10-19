@@ -354,14 +354,8 @@ struct HostFormView: View {
                     // Wraps: the lede says what the chosen option does.
                     Text(v.lede).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     ForEach(v.fields.filter { !$0.advanced }, id: \.id) { field($0) }
-                    Button {
-                        host.send(.toggleAdvanced)
-                    } label: {
-                        Label(v.advancedLabel, systemImage: v.advancedOpen ? "chevron.down" : "chevron.right")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("host-advanced")
+                    // Self-hosting (Direct, your own relay) opens only from
+                    // Settings → Advanced: no toggle here.
                     ForEach(v.fields.filter(\.advanced), id: \.id) { field($0) }
                     if let failure = host.setupFailure {
                         HostSetupFailureView(failure: failure, retrying: v.busy) {

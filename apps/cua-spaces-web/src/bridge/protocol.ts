@@ -45,6 +45,7 @@ import type { HostSetupOps } from "./ops/host-setup";
 import type { SpaceDetailOps } from "./ops/space-detail";
 import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
+import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
@@ -187,6 +188,7 @@ export interface HostOperations
     StartupOps,
     StreamOps,
     RelayUsageOps,
+    NudgesOps,
     ResourcesOps,
     ChecklistOps,
     PresenceOps,
@@ -292,6 +294,7 @@ export const OPERATIONS = [
   ...VOLUME_OPERATIONS,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...NUDGES_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,

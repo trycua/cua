@@ -16,8 +16,9 @@ use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
     CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
     drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
-    machines, notch, notifications, onboarding, onboarding_preview, palette, paths, persistent,
-    presence, relay_usage, resources, settings, share, telemetry, upsell, window, wizard,
+    machines, notch, notifications, nudges, onboarding, onboarding_preview, palette, paths,
+    persistent, presence, relay_usage, resources, settings, share, telemetry, upsell, window,
+    wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -301,6 +302,8 @@ pub const METHODS: &[&str] = &[
     "firstRun.agentUsed",
     "firstRun.leadAgent",
     "telemetry.upsell",
+    "nudge.secondAgent",
+    "nudge.riskyAction",
 ];
 
 struct Args(Value);
@@ -525,6 +528,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "firstRun.leadAgent" => out(crate::first_run::lead_agent(
             &a.get::<Vec<crate::first_run::FirstRunAgent>>("agents")?,
         )),
+        // The This Mac prompts: the moments, rules and words are `nudges`'.
+        "nudge.secondAgent" => out(nudges::second_agent(
+            &a.get::<Vec<host::HostAccess>>("recentAccess")?,
+            a.get("nowMs")?,
+            &a.get::<String>("today")?,
+            &a.get::<Option<nudges::NudgeMemory>>("memory")?
+                .unwrap_or_default(),
+        )),
+        "nudge.riskyAction" => out(nudges::risky_action(&a.get("request")?, a.get("nowMs")?)),
         "telemetry.upsell" => out(telemetry::upsell(
             &a.get::<String>("surface")?,
             &a.get::<String>("action")?,

@@ -809,6 +809,16 @@ pub fn access_what(what: &str) -> String {
 /// Who, in words: the token holder is named by the credential (a name it
 /// sends is only its claim).
 pub fn access_who(via: &str, who: &str) -> String {
+    // An agent's call names its session after the caller
+    // (`crate::nudges::agent_session`): say which agent, not its id.
+    if let (caller, Some((agent, _))) = crate::nudges::agent_session(who) {
+        let caller = access_who(via, caller);
+        return if via == "token" {
+            caller
+        } else {
+            format!("{agent} for {caller}")
+        };
+    }
     if via == "token" {
         if let Some(claimed) = who
             .strip_prefix("token (claims ")
@@ -1602,6 +1612,13 @@ pub struct HostFormView {
     pub request: Option<HostSetupRequest>,
 }
 
+/// The form's profile for a self-hosted relay or a direct connection
+/// (`set-profile`), opened only from Settings → Advanced. Setup, first run
+/// and the This machine page offer Cua's relay alone, so its fields
+/// (Direct connection, Relay) show only while Advanced is open, and the
+/// apps draw no Advanced toggle of their own.
+pub const SELF_HOSTED_PROFILE: &str = "self-hosted";
+
 /// The first form.
 pub fn form_initial() -> HostFormState {
     HostFormState::default()
@@ -1645,6 +1662,12 @@ pub fn form_reduce(s: &HostFormState, a: &HostFormAction) -> HostFormState {
         HostFormAction::SetDirect { on } => n.direct = *on,
         HostFormAction::SetListen { listen } => n.listen = listen.clone(),
         HostFormAction::SetRelayUrl { url } => n.relay_url = url.clone(),
+        HostFormAction::SetProfile { profile } if profile == SELF_HOSTED_PROFILE => {
+            // Settings → Advanced: the team's own relay (or Direct). The
+            // relay field starts empty, for their address.
+            n.advanced = true;
+            n.relay_url = String::new();
+        }
         HostFormAction::SetProfile { profile } => n.spare = profile == "spare",
         HostFormAction::Submit => {
             if !s.busy && form_request(s).is_ok() {
@@ -1749,7 +1772,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             fields.push(text(
                 "relay",
                 "Relay server",
-                &default_relay_url(),
+                "https://relay.example.com",
                 &s.relay_url,
                 bad,
                 true,
@@ -1765,6 +1788,16 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             "You and the people you share with can see and use this computer\u{2019}s screen from other devices. Cua connects them for you, with no network setup."
         };
         match identity.filter(|i| !i.is_empty()) {
+            _ if s.advanced => {
+                // Self-hosting: Cua's relay is not involved, so only the
+                // spare-computer sentence carries over.
+                let spare = if s.spare {
+                    format!(" {what}")
+                } else {
+                    String::new()
+                };
+                format!("For self-hosting teams: joins your own relay at the address below.{spare}")
+            }
             Some(id) => format!("{what} Signed in as {id}."),
             None => what.to_string(),
         }
@@ -2235,6 +2268,41 @@ mod tests {
         let mut other = me.clone();
         other.id = "local:x".into();
         assert_eq!(connected_now(&other), 0);
+    }
+
+    #[test]
+    fn self_hosting_opens_only_from_its_profile() {
+        // Setup and first run: Cua's relay, nothing about self-hosting.
+        let s = form_initial();
+        let v = form_view(&s, Some("ada@example.com"));
+        assert!(v.fields.iter().all(|f| !f.advanced), "{:?}", v.fields);
+        assert!(
+            v.lede.starts_with("You and the people you share with"),
+            "{}",
+            v.lede
+        );
+        // Settings → Advanced: the team's own relay, typed in.
+        let s = form_reduce(
+            &s,
+            &HostFormAction::SetProfile {
+                profile: SELF_HOSTED_PROFILE.into(),
+            },
+        );
+        let v = form_view(&s, Some("ada@example.com"));
+        assert!(v.advanced_open);
+        assert!(v.lede.starts_with("For self-hosting teams"), "{}", v.lede);
+        let relay = v.fields.iter().find(|f| f.id == "relay").unwrap();
+        assert_eq!(relay.value, "");
+        assert!(!v.can_submit, "needs the relay's address");
+        let s = form_reduce(
+            &s,
+            &HostFormAction::SetRelayUrl {
+                url: "https://relay.example.com".into(),
+            },
+        );
+        let r = form_view(&s, None).request.unwrap();
+        assert_eq!(r.relay_url.as_deref(), Some("https://relay.example.com"));
+        assert_eq!(r.profile.as_deref(), Some("desktop"));
     }
 
     #[test]

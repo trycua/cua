@@ -111,7 +111,7 @@ pub fn prompt(
         "machine" if kind == "free" => Some(UpsellPrompt {
             surface: "machine".into(),
             text: format!(
-                "Two machines now. Free includes {} live sessions and {} relay hours a month. Pro makes it {PRO_SESSIONS} and {PRO_HOURS}, for $18 a month.",
+                "Two machines now. Free includes {} live sessions and {} remote hours a month. Pro makes it {PRO_SESSIONS} and {PRO_HOURS}, for $18 a month.",
                 usage.live_sessions_limit.unwrap_or(2),
                 hours(usage.hours_limit.unwrap_or(20.0)),
             ),
@@ -163,7 +163,7 @@ mod tests {
         let p = prompt("machine", &usage("free"), APP, &state()).unwrap();
         assert_eq!(
             p.text,
-            "Two machines now. Free includes 2 live sessions and 20 relay hours a month. Pro makes it 5 and 200, for $18 a month."
+            "Two machines now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month."
         );
         assert_eq!(p.cta.label, "Get Pro");
         assert_eq!(p.cta.url, "https://app.cua.ai/buy/pro?from=app_machine");

@@ -310,7 +310,7 @@ function ManualSteps({ guide, open }: { guide: HostSetupGuide; open: boolean }) 
       </Step>
 
       <Step n={4} title={guide.form ? `Fill in the form and press ${quote(submitLabel(guide.form.submitLabel))}` : "Set it up for access"}>
-        <p>It connects through the Cua relay, so you don't need to forward ports. Under Advanced you can choose a direct connection instead.</p>
+        <p>It connects through the Cua relay, so you don't need to forward ports.</p>
         {basic.length ? (
           <dl className="mt-2 divide-y overflow-hidden rounded-lg border bg-card">
             {basic.map((f) => (

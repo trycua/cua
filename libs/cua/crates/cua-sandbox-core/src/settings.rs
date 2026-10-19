@@ -35,7 +35,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 6] = [
+pub const KEYS: [Key; 7] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -71,6 +71,12 @@ pub const KEYS: [Key; 6] = [
         env: "CUA_RUNTIME_LINUX",
         default: "auto",
         description: "the engine local Linux Spaces run on, on a Mac: auto (a working Docker engine on this Mac, else built-in; built-in once it exists), builtin (cua's own VM with Docker and gVisor, set up on first use) or system (only this Mac's own engine; nothing is downloaded)",
+    },
+    Key {
+        name: "nudges.risky_actions",
+        env: "CUA_NUDGE_RISKY_ACTIONS",
+        default: "off",
+        description: "before an agent does something risky on this Mac's own desktop through `cua mcp` (deleting files outside a project, emptying the Trash, uninstalling apps, system settings, passwords), the Cua app offers to run it in a separate Space (on, off). No answer in 30 s runs it here",
     },
 ];
 
@@ -373,6 +379,15 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             })?
             .as_str()
             .to_string(),
+        "nudges.risky_actions" => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => "on".into(),
+            "0" | "false" | "no" | "off" => "off".into(),
+            _ => {
+                return Err(SettingsError(format!(
+                    "nudges.risky_actions: expected on or off, got {v:?}"
+                )));
+            }
+        },
         "telemetry.enabled" => match v.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => "on".into(),
             "0" | "false" | "no" | "off" => "off".into(),

@@ -1,6 +1,6 @@
 # NeurIPS 2025: 45 Computer-Use Agent Papers You Should Know About
 
-> Update, October 2026: Cua Cloud (Fleets) ended on 16 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
 
 <img alt="neurips" src="https://github.com/user-attachments/assets/bd649067-bb2c-45f4-827b-087021ec3ad7" />
 

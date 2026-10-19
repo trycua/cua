@@ -1,6 +1,6 @@
 ---
 title: "Configuration and maintenance tools"
-description: "Configuration, permissions, health, updates and extensions."
+description: "Configuration, permissions, health, updates, extensions and on-demand guides."
 ---
 
 {/*
@@ -20,6 +20,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`health_report`](#health_report) | Single-call end-to-end driver diagnostics. | macOS, Linux, Windows |
 | [`check_for_update`](#check_for_update) | Check the saved stable/nightly Cua Driver channel for a release on GitHub. | macOS, Linux, Windows |
 | [`install_extension`](#install_extension) | Preview or install one Driver-managed optional extension. | macOS, Linux, Windows |
+| [`get_guide`](#get_guide) | Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). | macOS, Linux, Windows |
 
 Served by `cua-driver mcp`; see [MCP tools](/cua-driver/reference/mcp-tools) for every tool.
 
@@ -161,7 +162,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 Report TCC permission status for Accessibility and Screen Recording. By default also raises the system permission dialogs for any missing grants: Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check.
 
-Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured timeout/probe failure when applicable), `direct_capture_verification` (validated source, UTC time, and bundle identity from an explicit grant probe), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent.
+Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured timeout/probe failure when applicable), `direct_capture_verification` (validated source, UTC time, and bundle identity from an explicit grant probe), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent. How to get them granted: `get_guide({topic:"permissions"})`.
 
 **macOS parameters**
 
@@ -173,7 +174,7 @@ Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight A
 </Tab>
 <Tab value="Linux">
 
-Check required permissions for cua-driver-rs on Linux.
+Check required permissions for cua-driver-rs on Linux. How to get them granted: `get_guide({topic:"permissions"})`.
 
 **Linux parameters**
 
@@ -184,7 +185,7 @@ Check required permissions for cua-driver-rs on Linux.
 </Tab>
 <Tab value="Windows">
 
-Check required permissions for cua-driver-rs on Windows.
+Check required permissions for cua-driver-rs on Windows. How to get them granted: `get_guide({topic:"permissions"})`.
 
 **Windows parameters**
 
@@ -281,3 +282,14 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 ```json
 {"name":"perception"}
 ```
+
+## `get_guide`
+
+Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). Topics: overview, drag, browser, permissions, batching, menus. Call with no topic to list them. Read-only.
+
+Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="get_guide--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_guide--topic"></span>`topic` | `string` |  | One of: overview, drag, browser, permissions, batching, menus. Omit to list the topics. |

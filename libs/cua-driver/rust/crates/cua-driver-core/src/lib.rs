@@ -10,6 +10,7 @@
 // here would churn every adapter's call sites for no runtime gain.
 #![allow(clippy::result_large_err)]
 
+pub mod guide;
 pub mod mcp_skills;
 pub mod mcp_wire;
 

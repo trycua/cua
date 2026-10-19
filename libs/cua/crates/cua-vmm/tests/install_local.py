@@ -19,6 +19,7 @@ class LocalInstall(unittest.TestCase):
                 path.write_text('#!/bin/sh\nset -eu\n' + body)
                 path.chmod(0o755)
             tool('uname', 'echo x86_64\n')
+            tool('find', '/usr/bin/find "$@" | sort\n')
             tool('apt-get', '''
 case "$*" in *--download-only*)
     case "$*" in *--reinstall*--no-install-recommends*) ;; *) exit 20;; esac
@@ -29,7 +30,7 @@ esac
             tool('dpkg-deb', '''
 [ "${FAIL:-}" != yes ] || exit 21
 root=$3
-mkdir -p "$root/usr/bin" "$root/usr/lib/test/qemu" "$root/usr/share/qemu" "$root/usr/share/seabios"
+mkdir -p "$root/usr/bin" "$root/usr/lib/qemu" "$root/usr/lib/x86_64-linux-gnu/qemu" "$root/usr/share/qemu" "$root/usr/share/seabios"
 touch "$root/usr/share/seabios/bios.bin"
 ln -s /usr/share/seabios/bios.bin "$root/usr/share/qemu/bios.bin"
 ln -s /host-only "$root/usr/share/qemu/host"
@@ -47,7 +48,7 @@ done
             self.assertEqual(os.readlink(root / 'usr/share/qemu/host'), '/host-only')
             for binary in ('qemu-system-x86_64', 'qemu-img'):
                 output = subprocess.check_output([str(home / 'bin' / binary), 'a b', 'c"d'], env=env, text=True)
-                self.assertIn(str(root / 'usr/lib/test/qemu'), output)
+                self.assertEqual(output.splitlines()[0], str(root / 'usr/lib/x86_64-linux-gnu/qemu'))
                 self.assertIn('a b\nc"d\n', output)
                 self.assertEqual('\n-L\n' in output, binary != 'qemu-img')
             (root / 'sentinel').touch()

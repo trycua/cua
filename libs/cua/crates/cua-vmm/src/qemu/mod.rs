@@ -1694,7 +1694,7 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(), expected);
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn local_installer_fixtures() {
         let python = std::process::Command::new("python3")

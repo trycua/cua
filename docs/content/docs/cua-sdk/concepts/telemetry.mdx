@@ -48,28 +48,21 @@ program on the machine).
 
 ## Linked to your account when you're signed in
 
-When you're signed in, your usage data is linked to your Cua account so we
-can see where people get stuck, for example if you signed up but never made
-a Space. We see which steps you reached, not what you did in them.
+When you're signed in, usage data is linked to your account so we can see
+where people get stuck. We see which steps you reached, not what you did.
 
-- **A random account ID, not you.** The Cua service gives a signed-in app or
-  CLI an account ID like `acct_3f9c...`: a one-way code made from your
-  account on our servers. It is never your email, your name or your sign-in
-  id. Events then carry that ID instead of the install id, and one PostHog
-  `$identify` joins this install's earlier events to it.
+- **A random account ID.** The Cua service gives a signed-in app or CLI an ID
+  like `acct_3f9c...`, a one-way code made from your account. It is never your
+  email, name or sign-in id. One PostHog `$identify` joins this install's
+  earlier events to it.
 - **You see it first.** Nothing is linked before the notice has been shown on
-  this machine: the first-run notice says so, and installs that saw the
-  older "anonymous" wording get a one-time notice first ("We've updated how
-  usage data works"), with "Turn off usage data" right there.
-- **Off means off.** With usage data off, nothing is sent and nothing is
-  linked. Signing out, `cua telemetry off` and `cua telemetry reset-id` unlink
-  this machine; after a sign-out it starts again with a new random install id.
-- **`cua telemetry status`** shows whether this machine is linked.
+  this machine. Installs that saw the older "anonymous" wording get a one-time
+  notice with "Turn off usage data" right there.
+- **Off means off.** Signing out, `cua telemetry off` and `cua telemetry
+  reset-id` unlink this machine. `cua telemetry status` shows whether it's linked.
 
-Our own service also records what happens on it, such as a sign-up, a
-checkout or a subscription change, under the same account ID. Those are
-records of our service, not of your computer, so the switch above does not
-change them.
+Our service also records sign-ups, checkouts and subscription changes under
+the same ID. Those are records of our service, so the switch doesn't change them.
 
 ## How it works
 
@@ -97,31 +90,13 @@ property and why it is collected: [Telemetry events](/cua-sdk/concepts/telemetry
 
 ## What we use it for
 
-These are the questions the events answer, and nothing else:
-
-- How many people install and launch Cua Spaces, and how many finish the
-  first run? Where do they leave it (which page), and what do they pick on
-  each page?
-- How many make a first Space, of which kind and where? How long until it is
-  ready, and how often does a create fail (in which phase, or by stalling) or
-  get abandoned?
-- Do people teleport, and does it work? Do they run an agent?
-- Do they use the Cua Volume, persistent agents, host Spaces, the Keyvault,
-  sharing and multiplayer? Do they update?
-- Are they still using Cua a day, a week and a month later?
-
-The activation funnel joins events on the install id, and on the account ID
-once you sign in, in order: installer started and finished
-(`cua_installer_step`), app launched (`cua_onboarding_step` `app_launched`),
-first run completed
-(`onboarding_completed`), signed in (`signed_in`), first Space created
-(`first_space_created`), first Space ready (`first_space_ready`), first
-teleport (`first_teleport`), first agent run (`first_agent_run`) and an
-AI agent using a Space (`cua_agent_used_space`). The `first_*` steps are sent
-once per install.
-
-How the installers, an AI agent using a Space, agent runs and retention
-are counted: [How events are counted](/cua-sdk/concepts/telemetry-counting).
+To answer how many people install Cua Spaces, finish the first run, sign in,
+make a first Space, teleport and run an agent; where creates fail or stall;
+which features are used; and who still uses Cua a day, a week and a month
+later. The funnel joins events on the install id, and on the account ID once
+you sign in. The `first_*` steps are sent once per install. How installers,
+an AI agent using a Space, agent runs and retention are counted:
+[How events are counted](/cua-sdk/concepts/telemetry-counting).
 
 ## Never collected
 

@@ -1181,7 +1181,8 @@ linux_runtime() {
             return
         fi
     fi
-    die "Cua Spaces on Linux needs QEMU or Docker; install QEMU with: $(qemu_install_command) (or install Docker), then rerun the installer"
+    warn "Cua Spaces on Linux needs QEMU or Docker; install QEMU with: $(qemu_install_command) (or install Docker), then rerun the installer"
+    runtime_failed=1
 }
 
 write_mode() {
@@ -1418,9 +1419,14 @@ main() {
         tel_stage=cli
         install_cli
     fi
+    runtime_failed=0
     tel_stage=runtime
     if [ "$os" = linux ] && [ "$sel_spaces" = 1 ] && { [ "$dry_run" = 1 ] || has "$cua_bin"; }; then
         linux_runtime
+        # Diagnose only Linux Spaces installs with a CLI, never dry runs.
+        if [ "$dry_run" != 1 ] && { [ "$want_cli" = 1 ] || [ -n "$existing_cua" ]; }; then
+            "$cua_bin" runtime doctor || runtime_failed=1
+        fi
     fi
     if [ "$sel_spaces" = 1 ]; then
         tel_stage=app
@@ -1444,13 +1450,19 @@ main() {
         tel_stage=host
         host_setup
     fi
-    tel_stage=other
-    tel_send installer_completed
+    if [ "$runtime_failed" = 1 ]; then
+        tel_stage=runtime
+        tel_send installer_failed "$tel_stage" other
+    else
+        tel_stage=other
+        tel_send installer_completed
+    fi
     summary
     if [ -n "$path_hint" ]; then
         say ""
         say "$path_hint"
     fi
+    return "$runtime_failed"
 }
 
 main "$@"

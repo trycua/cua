@@ -670,11 +670,11 @@ enum DaemonCmd {
 
 #[derive(Subcommand, Debug)]
 enum RuntimeCmd {
-    /// Inspect local runtimes (read-only).
+    /// Inspect local runtimes (read-only). Exit 1 if any check is Error; warnings exit 0.
     #[command(after_help = "Examples:
   cua runtime doctor")]
     Doctor,
-    /// Provision local runtimes.
+    /// Provision local runtimes. Exit 1 if any step is Error; warnings exit 0.
     #[command(after_help = "Examples:
   # See what would be installed
   cua runtime setup --dry-run
@@ -982,7 +982,10 @@ Examples:
 /// reference (`cua dump-docs`). Keep in step with [`exit_code`].
 pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     (0, "Success"),
-    (1, "Failure, or `cua do` reported an error"),
+    (
+        1,
+        "Failure, or `cua do` / `cua runtime doctor` / `cua runtime setup` reported an error",
+    ),
     (
         2,
         "Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`)",
@@ -1893,30 +1896,14 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         Command::Runtime(RuntimeCmd::Doctor) => {
             let report = cua.local().doctor().await?;
-            if json {
-                line(out, &report.report_json);
-            } else {
-                for c in report.checks {
-                    line(
-                        out,
-                        format!(
-                            "{:<10} {:<12} {}{}",
-                            c.name,
-                            format!("{:?}", c.status).to_lowercase(),
-                            c.version.map(|v| format!("[{v}] ")).unwrap_or_default(),
-                            c.detail
-                        ),
-                    );
-                }
-            }
+            return Ok(runtime_doctor_output(out, &report, json));
         }
         Command::Runtime(RuntimeCmd::Setup {
             dry_run,
             components,
         }) => {
-            for s in cua.local().setup(components, dry_run).await? {
-                line(out, format!("{:<10} {:?}: {}", s.name, s.status, s.detail));
-            }
+            let steps = cua.local().setup(components, dry_run).await?;
+            return Ok(runtime_setup_output(out, &steps));
         }
         Command::Image(cmd) => {
             let local = cua.local();
@@ -2545,6 +2532,49 @@ pub fn main() {
     std::process::exit(code);
 }
 
+fn runtime_doctor_output(
+    out: &mut dyn std::io::Write,
+    report: &cua_sdk::DoctorReport,
+    json: bool,
+) -> i32 {
+    if json {
+        line(out, &report.report_json);
+    } else {
+        for c in &report.checks {
+            line(
+                out,
+                format!(
+                    "{:<10} {:<12} {}{}",
+                    c.name,
+                    format!("{:?}", c.status).to_lowercase(),
+                    c.version
+                        .as_ref()
+                        .map(|v| format!("[{v}] "))
+                        .unwrap_or_default(),
+                    c.detail
+                ),
+            );
+        }
+    }
+    i32::from(
+        report
+            .checks
+            .iter()
+            .any(|c| c.status == cua_sdk::RuntimeCheckStatus::Error),
+    )
+}
+
+fn runtime_setup_output(out: &mut dyn std::io::Write, steps: &[cua_sdk::SetupStep]) -> i32 {
+    for s in steps {
+        line(out, format!("{:<10} {:?}: {}", s.name, s.status, s.detail));
+    }
+    i32::from(
+        steps
+            .iter()
+            .any(|s| s.status == cua_sdk::RuntimeCheckStatus::Error),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2813,11 +2843,60 @@ mod tests {
         assert!(out.starts_with('{'));
     }
 
+    #[test]
+    fn runtime_output_exit_codes() {
+        use cua_sdk::{DoctorReport, RuntimeCheck, RuntimeCheckStatus as S, SetupStep};
+        for (status, expected) in [(S::Ok, 0), (S::Installable, 0), (S::Error, 1)] {
+            let checks = vec![
+                RuntimeCheck {
+                    name: "kvm".into(),
+                    status,
+                    version: None,
+                    detail: "first".into(),
+                },
+                RuntimeCheck {
+                    name: "later".into(),
+                    status: S::Ok,
+                    version: None,
+                    detail: "last".into(),
+                },
+            ];
+            let report = DoctorReport {
+                checks,
+                report_json: "{\"checks\":[]}".into(),
+            };
+            for json in [false, true] {
+                let mut out = Vec::new();
+                assert_eq!(
+                    super::runtime_doctor_output(&mut out, &report, json),
+                    expected
+                );
+                if json {
+                    serde_json::from_slice::<serde_json::Value>(&out).unwrap();
+                } else {
+                    assert!(String::from_utf8(out).unwrap().contains("last"));
+                }
+            }
+            let steps = report
+                .checks
+                .iter()
+                .map(|c| SetupStep {
+                    name: c.name.clone(),
+                    status: c.status,
+                    detail: c.detail.clone(),
+                })
+                .collect::<Vec<_>>();
+            let mut out = Vec::new();
+            assert_eq!(super::runtime_setup_output(&mut out, &steps), expected);
+            assert!(String::from_utf8(out).unwrap().contains("last"));
+        }
+    }
+
     #[tokio::test]
     #[ignore = "host: probes the developer's lume, qemu and Docker; run with --ignored"]
     async fn runtime_doctor_is_read_only_and_reports_backends() {
         let (r, out) = cli(&["--embedded", "runtime", "doctor"]).await;
-        assert_eq!(r.unwrap(), 0);
+        assert!([0, 1].contains(&r.unwrap()));
         assert!(out.contains("qemu") && out.contains("container"), "{out}");
         let (r, out) = cli(&["--embedded", "runtime", "setup", "--dry-run", "qemu"]).await;
         assert_eq!(r.unwrap(), 0);

@@ -1253,8 +1253,16 @@ pub fn doctor_checks(r: &DoctorReport) -> Vec<cua_proto::daemon::v1::RuntimeChec
     r.backends
         .iter()
         .map(|b| {
+            // Unavailable alternatives are not failures when another backend works.
+            let not_applicable = match b.backend {
+                BackendKind::Lume => !r.lume.supported_host,
+                BackendKind::Managed => !cua_vmm::managed::supported(),
+                _ => r.backends.iter().any(|other| other.ready),
+            };
             let status = if b.ready {
                 CheckStatus::Ok
+            } else if not_applicable {
+                CheckStatus::NotApplicable
             } else if b.provisionable {
                 CheckStatus::Installable
             } else {
@@ -1957,6 +1965,44 @@ mod tests {
             lume: Default::default(),
             container: Default::default(),
         }
+    }
+
+    #[test]
+    fn healthy_linux_does_not_require_alternative_backends() {
+        use cua_proto::daemon::v1::CheckStatus;
+        use cua_vmm::auto::BackendStatus;
+        let mut report = qemu_report(true);
+        report.host.kvm = true;
+        for backend in [
+            super::BackendKind::Lume,
+            super::BackendKind::Managed,
+            super::BackendKind::Container,
+        ] {
+            report.backends.push(BackendStatus {
+                backend,
+                ready: false,
+                provisionable: false,
+                detail: "unavailable".into(),
+                missing: vec![],
+                provisioning: vec![],
+            });
+        }
+        let checks = super::doctor_checks(&report);
+        assert_eq!(checks[0].status, CheckStatus::Ok as i32);
+        assert!(
+            checks[1..]
+                .iter()
+                .all(|c| c.status == CheckStatus::NotApplicable as i32)
+        );
+        // Docker alone is also a usable runtime, even without a QEMU installer.
+        report.backends[0].ready = false;
+        report.backends[0].provisionable = false;
+        report.backends[3].ready = true;
+        assert!(
+            super::doctor_checks(&report)
+                .iter()
+                .all(|c| c.status != CheckStatus::Error as i32)
+        );
     }
 
     fn kvm_step() -> Option<cua_proto::daemon::v1::SetupStep> {

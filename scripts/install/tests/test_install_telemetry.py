@@ -139,6 +139,32 @@ class InstallTelemetry(unittest.TestCase):
         self.assertNotIn(str(self.home), raw)
         self.assertNotIn(os.environ.get("USER", "nobody-here"), raw)
 
+    def test_deferred_runtime_failure_sends_failed_not_completed(self):
+        # Reuse a CLI; app installation is stubbed, not diagnostics or completion.
+        cli = self.home / "cua"
+        cli.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "cua {VERSION}"; fi\nif [ "$*" = "runtime doctor" ]; then echo "doctor Error"; exit 1; fi\nexit 0\n')
+        cli.chmod(0o755)
+        script = self.home / "install.sh"
+        script.write_text(SCRIPT.read_text().replace(
+            'main "$@"',
+            f'install_cli() {{ cua_bin="{cli}"; }}\ninstall_app_linux() {{ :; }}\nmain "$@"',
+        ))
+        e = dict(os.environ, HOME=str(self.home), CUA_HOME=str(self.home / ".cua"),
+                 PATH=f'{self.home}:{os.environ["PATH"]}',
+                 CUA_INSTALL_OS="linux", CUA_INSTALL_ARCH="x86_64",
+                 CUA_INSTALL_MANIFEST_URL=self.manifest,
+                 CUA_TELEMETRY_FORBID_NETWORK="1",
+                 CUA_TELEMETRY_ENDPOINT=f"{self.base}/batch/", CUA_POSTHOG_KEY="phc_test")
+        p = subprocess.run(["sh", str(script), "--yes", "--no-onboarding", "--select", "spaces"],
+                           env=e, capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("doctor Error", p.stdout)
+        self.assertIn("Next:", p.stdout)
+        evs = self.events()
+        self.assertEqual([e["properties"]["step"] for e in evs],
+                         ["installer_started", "installer_failed"])
+        self.assertEqual(evs[-1]["properties"]["install_stage"], "runtime")
+
     def test_an_existing_install_id_is_kept(self):
         d = self.home / ".cua" / "telemetry"
         d.mkdir(parents=True)

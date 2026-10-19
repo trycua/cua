@@ -203,9 +203,17 @@ fn focused_textedit_window_title() -> String {
 /// Open a second TextEdit document. TextEdit focuses the new document, so the
 /// first one becomes an unfocused sibling of a frontmost app.
 fn open_sibling_document(text: &str) {
-    let sibling_title = osascript(&format!(
-        r#"tell application id "{TEXTEDIT_BUNDLE}" to get name of (make new document with properties {{text:"{text}"}})"#
-    ));
+    // Unsaved document names need not match their AX window titles (for
+    // example, TextEdit can append an edited suffix). Use a stable file name.
+    let sibling_title = format!("{text}.txt");
+    let path = std::env::temp_dir().join(&sibling_title);
+    std::fs::write(&path, text).expect("write sibling document");
+    let opened = Command::new("open")
+        .args(["-b", TEXTEDIT_BUNDLE])
+        .arg(&path)
+        .status()
+        .expect("open sibling document");
+    assert!(opened.success(), "could not open sibling document");
     ensure_frontmost(TEXTEDIT_BUNDLE);
     let deadline = Instant::now() + Duration::from_secs(5);
     while focused_textedit_window_title() != sibling_title {
@@ -216,6 +224,7 @@ fn open_sibling_document(text: &str) {
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+    std::fs::remove_file(path).expect("remove sibling document fixture");
 }
 
 // ── End-to-end ladder behavior (interactive; needs a GUI session) ────────────

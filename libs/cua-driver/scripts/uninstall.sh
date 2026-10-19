@@ -32,9 +32,9 @@
 #     - Skill symlinks under ~/.claude/skills/cua-driver(-rs), ~/.agents/
 #       skills/…, ~/.openclaw/skills/…, ~/.config/opencode/skills/…
 #   macOS:
-#     - /Applications/CuaDriver.app bundle (+ legacy CuaDriverRs.app)
+#     - CuaDriver.app in /Applications or ~/Applications (+ legacy CuaDriverRs.app)
 #     - ~/.local/bin/cua-driver symlink (only when it resolves into
-#       /Applications/CuaDriver.app)
+#       that CuaDriver.app)
 #     - runtime payloads under ~/.cua-driver/ and legacy ~/.cua-driver-rs/;
 #       telemetry state remains unless --purge is passed
 #     - ~/Library/LaunchAgents/com.trycua.cua-driver.plist (if --autostart
@@ -377,10 +377,10 @@ maybe_reset_tcc() {
     # `tccutil reset <svc> com.trycua.driver` resolves the bundle id through
     # LaunchServices. If the bundle isn't registered — or this runs AFTER the
     # app was removed — tccutil fails with -10814 and the grant silently
-    # survives. This MUST run while /Applications/CuaDriver.app still exists;
+    # survives. This MUST run while CuaDriver.app still exists;
     # force a synchronous LaunchServices registration first so a present-but-
     # not-yet-registered bundle (fresh install race) still resolves.
-    local app_bundle="/Applications/CuaDriver.app"
+    local app_bundle="${APP_BUNDLE:-/Applications/CuaDriver.app}"
     if [[ -d "$app_bundle" ]]; then
         local lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
         if [[ -x "$lsregister" ]]; then
@@ -644,6 +644,18 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # `com.trycua.driver` with the Swift driver). The Rust install
     # replaces Swift here; both uninstallers target this path.
     APP_BUNDLE="/Applications/CuaDriver.app"
+    # Users who cannot write to /Applications get the bundle in
+    # ~/Applications instead (see _install-rust.sh). Target the copy the CLI
+    # symlink uses, or the per-user copy when it is the only one.
+    USER_APP_BUNDLE="$HOME/Applications/CuaDriver.app"
+    case "$(resolve_link "$USER_BIN_LINK")" in
+        "$USER_APP_BUNDLE"/*) APP_BUNDLE="$USER_APP_BUNDLE" ;;
+        *)
+            if [[ ! -d "$APP_BUNDLE" && -d "$USER_APP_BUNDLE" ]]; then
+                APP_BUNDLE="$USER_APP_BUNDLE"
+            fi
+            ;;
+    esac
     # Legacy bundle path from earlier Rust releases that coexisted with
     # Swift under a separate name. Cleaned up if found.
     LEGACY_APP_BUNDLE="/Applications/CuaDriverRs.app"

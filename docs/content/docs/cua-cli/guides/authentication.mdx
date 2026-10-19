@@ -73,8 +73,9 @@ cua auth keys rm <id>
 ## Targeting staging
 
 `CUA_ENV=staging` points the CLI, the SDK, `cua daemon` and the Cua Spaces app
-at the Cua staging deployment. Unset, or `prod`, is production. Any other value
-makes `cua` exit with code `2` rather than fall back to production.
+at the Cua staging deployment, which is for testing Cua itself. Unset, or
+`prod`, is production. Any other value makes `cua` exit with code `2` rather
+than fall back to production.
 
 ```bash test="cli-shape" id="cua-env-staging"
 export CUA_ENV=staging
@@ -82,15 +83,15 @@ cua auth login --remote     # device code against the staging realm
 cua auth status             # starts with "Environment: staging (...)"
 ```
 
-| Setting | Override (wins over `CUA_ENV`) | `prod` (default) | `staging` |
-|---------|--------------------------------|------------------|-----------|
-| Sign-in issuer | `CUA_OIDC_ISSUER` | `https://auth.cua.ai/realms/cyclops-cs` | `https://auth.staging.cua.ai/realms/cua-staging` |
-| OAuth client | `CUA_OIDC_CLIENT_ID` | `cua-cli` | `cua-cli` |
-| Relay | `CUA_RELAY_URL` (or `--relay`) | `https://relay.cua.ai` | `https://relay.staging.cua.ai` |
-| Spaces API | `CUA_SPACES_API_URL` | `https://api.cua.ai` | `https://api.staging.cua.ai` |
-| Spaces site (add-machine links `<site>/add/<code>`) | `CUA_SPACES_SITE_URL` | `https://spaces.cua.ai` | `https://spaces.staging.cua.ai` |
-| cua home | `CUA_HOME` | `~/.cua` | `~/.cua/envs/staging` |
-| Keychain / Credential Manager service | none | `run.cua.ai` | `staging.run.cua.ai` |
+| Setting | Override (wins over `CUA_ENV`) | `prod` (default) |
+|---------|--------------------------------|------------------|
+| Sign-in issuer | `CUA_OIDC_ISSUER` | `https://auth.cua.ai/realms/cyclops-cs` |
+| OAuth client | `CUA_OIDC_CLIENT_ID` | `cua-cli` |
+| Relay | `CUA_RELAY_URL` (or `--relay`) | `https://relay.cua.ai` |
+| Spaces API | `CUA_SPACES_API_URL` | `https://api.cua.ai` |
+| Spaces site (add-machine links `<site>/add/<code>`) | `CUA_SPACES_SITE_URL` | `https://spaces.cua.ai` |
+| cua home | `CUA_HOME` | `~/.cua` (`~/.cua/envs/staging` for staging) |
+| Keychain / Credential Manager service | none | `run.cua.ai` (`staging.run.cua.ai` for staging) |
 
 Each environment has its own session, host enrollment, Spaces registry and
 daemon, so signing in to staging never replaces or sends your production

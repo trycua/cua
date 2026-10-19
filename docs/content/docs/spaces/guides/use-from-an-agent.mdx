@@ -1,6 +1,6 @@
 ---
 title: Use Spaces from an agent
-description: 'Give an AI coding agent the Spaces tools through cua daemon mcp, and run agents inside a Space as long-lived threads.'
+description: 'The Spaces tools an AI coding agent gets through cua daemon mcp, and how to run agents inside a Space as long-lived threads.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -10,29 +10,11 @@ The cua MCP server gives an agent 33 Spaces tools plus sandbox and computer
 tools. For the machine the agent runs on, use
 [Cua Driver](/cua-driver/quickstart) instead.
 
-## Connect the agent
+## Tools your agent gets
 
-`cua agents setup` adds the cua skills and MCP server to detected agents
-([supported agents](/cua-cli/guides/mcp-server#supported-agents); the
-installer offers it after sign-in):
-
-```bash test="cli-shape" id="cua-agents-detect"
-cua agents detect          # read-only
-cua agents setup --agents claude,codex --yes
-cua agents status
-cua agents remove          # removes only what cua added
-```
-
-By hand:
-
-```bash skip="third-party-cli"
-claude mcp add cua -- cua daemon mcp
-codex mcp add cua -- cua daemon mcp
-```
-
-`cua daemon mcp` starts `cua daemon` if needed, so every agent on the machine
-shares the same Spaces, sandboxes and streams. Narrow the grant with
-`--permissions spaces:readonly` ([permissions](/cua-cli/guides/mcp-server#permissions)).
+To connect an agent, see [Connect your agent](/spaces/guides/connect-your-agent).
+Narrow what it can do with `--permissions spaces:readonly`
+([permissions](/cua-cli/guides/mcp-server#permissions)).
 
 ```text output
 list_spaces / create_space {reuse}  -> pick, reuse or create a Space

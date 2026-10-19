@@ -1,0 +1,99 @@
+---
+title: Connect your agent
+description: 'Give Claude Code, Codex, Cursor and other AI agents the Cua Spaces tools from the app or the terminal, and check that they work.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Connecting an agent gives it the `cua` skills and the `cua` MCP server. After
+that, it can create Spaces, run commands in them, send files, show you the
+desktop and share a Space whenever you ask.
+
+{/* VIDEO: Connect Claude Code to Cua Spaces and ask it to open a Space (about 45 seconds) */}
+
+## Connect from the app
+
+On first run, the **AI agents** screen lists the supported agents it found on
+this computer. Tick the ones you use and press **Set up**. When it says "Your AI
+agents are set up", press **Continue**.
+
+To connect an agent later, or to remove one, open **Settings, AI agents**:
+
+- Press **Configure** next to a detected agent to set it up, or **Remove** to
+  take out what Cua added.
+- Press **Configure all detected agents** to set up every one at once.
+
+## Connect from a terminal
+
+`cua agents setup` does the same as the app. It adds the `cua` skills and MCP
+server to each agent you name.
+
+```bash test="cli-shape" id="cua-agents-detect"
+cua agents detect          # read-only: which supported agents are installed
+cua agents setup --agents claude,codex --yes
+cua agents status          # what Cua configured for each agent
+cua agents remove          # removes only what Cua added
+```
+
+The [supported agents](/cua-cli/guides/mcp-server#supported-agents) include
+Claude Code, Codex, Cursor, Gemini CLI, Hermes, OpenClaw and more. If yours is
+not on the list, add the server by hand:
+
+```bash skip="third-party-cli"
+claude mcp add cua -- cua daemon mcp
+codex mcp add cua -- cua daemon mcp
+```
+
+`cua daemon mcp` starts `cua daemon` if it is not running, so every agent on
+this computer shares the same Spaces, sandboxes and streams.
+
+## Check that it works
+
+1. If your agent was already running, start a new session. Agents load their
+   tools when a session starts.
+2. Ask: "List my Cua Spaces."
+3. If your agent asks permission to use a `cua` tool, allow it. Agents ask in
+   their own window or terminal.
+
+Then try a real task. These are the prompts the app offers on its last first-run
+screen:
+
+| Ask your agent | What it does |
+|---|---|
+| "Open a Linux Space and run my test suite in it" | Creates a Space, uploads your project and runs the tests inside it (`create_space`, `upload`, `space_bash`). |
+| "Use my Space's browser to finish the checkout test and show me" | Moves your signed-in browser session into the Space, then drives the Space's browser (`teleport_browser_session`). |
+| "Share this Space with a teammate as a viewer" | Shares the Space with read-only access (`share_space`). Cua Spaces asks you to confirm first. |
+
+Open the Space in Cua Spaces to watch it work. For every tool an agent gets, see
+[Use Spaces from an agent](/spaces/guides/use-from-an-agent).
+
+## Limit what an agent can do
+
+Give an agent that only needs to look read-only access:
+
+```bash skip="third-party-cli"
+claude mcp add cua -- cua daemon mcp --permissions spaces:readonly
+```
+
+See [permissions](/cua-cli/guides/mcp-server#permissions) for the full list.
+
+<Callout type="warn">
+  `space_bash`, `send_file`, `teleport_app` and `hotspot_start` act with your
+  authority. Grant `spaces:readonly` to agents that don't need to change
+  anything.
+</Callout>
+
+## If it doesn't work
+
+| What you see | What to do |
+|---|---|
+| The agent has no `cua` tools | Run `cua agents status`. Then start a new session in the agent. In Hermes, run `/reload-mcp`. |
+| "The Cua daemon isn't running. Start Cua, or run `cua daemon start`." | Open Cua Spaces, or run `cua daemon start`. |
+| Your agent is not in the app's list | Run `cua agents detect` to see every supported agent, or add the server by hand as shown above. |
+| The agent can't reach a Space on another computer | Sign in on this computer, and make sure the device is enrolled. See [Add a machine](/spaces/guides/add-a-machine#reach-it-from-your-other-devices). |
+
+## Next
+
+- [Add a machine](/spaces/guides/add-a-machine): give your agent another computer.
+- [Use Spaces from an agent](/spaces/guides/use-from-an-agent): the tools, and agents that run inside a Space.
+- [Agent keys](/spaces/guides/agent-keys): give the agents that run inside a Space their provider key.

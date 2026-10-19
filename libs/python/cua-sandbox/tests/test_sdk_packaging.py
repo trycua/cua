@@ -1,41 +1,35 @@
 import tomllib
 import unittest
+from importlib.metadata import distribution
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 LOCK_PATH = PROJECT_ROOT / "uv.lock"
 CUA_SDK_PYPROJECT_PATH = PROJECT_ROOT.parents[1] / "cua" / "python" / "pyproject.toml"
-FLEET_IMPORTS = (
-    PROJECT_ROOT / "cua_sandbox" / "transport" / "cyclops_http_client.py",
-    PROJECT_ROOT / "cua_sandbox" / "transport" / "fleet.py",
-    PROJECT_ROOT / "cua_sandbox" / "transport" / "fleet_cloud.py",
-)
+PACKAGE_DIR = PROJECT_ROOT / "cua_sandbox"
 
 
-class FleetSdkPackagingTests(unittest.TestCase):
-    """cua-sandbox depends on two bindings: the published ``cua-fleet`` wheel
-    (``fleet_sdk``: the typed Fleet resource model re-exported publicly) and
-    the ``cua`` SDK (spacesd, Fleet sandboxes and local runtimes)."""
+class SdkPackagingTests(unittest.TestCase):
+    """cua-sandbox's one binding is the ``cua`` SDK (spacesd and the local
+    runtimes). It installs from PyPI alone: no extra index, no Cua Cloud
+    packages."""
 
-    def test_declares_published_fleet_without_a_direct_train_dependency(self):
+    def test_installs_from_pypi_alone(self):
         with PYPROJECT_PATH.open("rb") as pyproject_file:
             project = tomllib.load(pyproject_file)
 
         dependencies = project["project"]["dependencies"]
-        self.assertIn("cua-fleet==0.1.17", dependencies)
+        self.assertFalse(any(dependency.startswith("cua-fleet") for dependency in dependencies))
         self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))
-        self.assertNotIn("cua-fleet", project["tool"]["uv"]["sources"])
-        self.assertNotIn("cua-train", project["tool"]["uv"]["sources"])
-        self.assertEqual(
-            project["tool"]["uv"]["index"][0],
-            {
-                "name": "cua-wheels",
-                "url": "https://wheels.cua.ai/simple",
-            },
-        )
+        uv = project["tool"]["uv"]
+        self.assertNotIn("index", uv)
+        self.assertNotIn("cua-fleet", uv["sources"])
+        self.assertNotIn("pdm", project["tool"])
+        self.assertNotIn("wheels.cua.ai", PYPROJECT_PATH.read_text())
 
-    def test_lock_uses_the_published_fleet_bundle(self):
+    def test_lock_has_no_cloud_packages_and_no_extra_index(self):
+        lock_text = LOCK_PATH.read_text()
         with LOCK_PATH.open("rb") as lock_file:
             lock = tomllib.load(lock_file)
 
@@ -43,23 +37,10 @@ class FleetSdkPackagingTests(unittest.TestCase):
         sandbox_dependencies = {
             dependency["name"] for dependency in packages["cua-sandbox"]["dependencies"]
         }
-        sandbox_requires_dist = {
-            requirement["name"]
-            for requirement in packages["cua-sandbox"]["metadata"]["requires-dist"]
-        }
-        fleet_dependencies = {
-            dependency["name"] for dependency in packages["cua-fleet"].get("dependencies", [])
-        }
-        self.assertIn("cua-fleet", sandbox_dependencies)
-        self.assertNotIn("cua-train", sandbox_dependencies)
-        self.assertIn("cua-fleet", sandbox_requires_dist)
-        self.assertNotIn("cua-train", sandbox_requires_dist)
-        self.assertEqual(packages["cua-fleet"]["version"], "0.1.17")
-        self.assertEqual(
-            packages["cua-fleet"]["source"], {"registry": "https://wheels.cua.ai/simple"}
-        )
-        self.assertNotIn("cua-train", fleet_dependencies)
+        self.assertNotIn("cua-fleet", packages)
+        self.assertNotIn("cua-fleet", sandbox_dependencies)
         self.assertNotIn("cua-train", packages)
+        self.assertNotIn("wheels.cua.ai", lock_text)
 
     def test_depends_on_the_cua_sdk_for_the_data_plane(self):
         with PYPROJECT_PATH.open("rb") as pyproject_file:
@@ -96,14 +77,23 @@ class FleetSdkPackagingTests(unittest.TestCase):
             project = tomllib.load(pyproject_file)
         self.assertNotIn("hooks", project.get("tool", {}).get("hatch", {}).get("build", {}))
 
-    def test_fleet_runtime_imports_published_binding_directly(self):
-        for source_path in FLEET_IMPORTS:
+    def test_source_never_imports_the_fleet_sdk(self):
+        for source_path in PACKAGE_DIR.rglob("*.py"):
             source = source_path.read_text()
-            self.assertIn("from fleet_sdk import", source)
-            self.assertNotIn("from cua_train", source)
-            self.assertNotIn("sys.path", source)
-            self.assertNotIn("site.addsitedir", source)
-            self.assertNotIn("ctypes.CDLL", source)
+            self.assertNotIn("fleet_sdk", source, source_path)
+            self.assertNotIn("import cua_fleet", source, source_path)
+
+    def test_cua_sdk_is_the_native_binding_distribution(self):
+        """cua-sandbox's data plane is the cua SDK (``cua`` >= 0.2, UniFFI over
+        cua-sdk), not the old ``cua`` meta-package (0.1.x, pure re-exports)."""
+        import cua
+
+        cua_distribution = distribution("cua")
+        major, minor = (int(part) for part in cua_distribution.version.split(".")[:2])
+
+        self.assertGreaterEqual((major, minor), (0, 2))
+        self.assertTrue(hasattr(cua, "_native") and hasattr(cua._native, "Cua"))
+        self.assertTrue(hasattr(cua._native, "SpacesdClient"))
 
 
 if __name__ == "__main__":

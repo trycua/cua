@@ -270,7 +270,7 @@ class RemoteDesktopSession:
 
     Full lifecycle mode opens the sandbox exactly like ``cb run``: the
     canonical ``ghcr.io/trycua/<os>`` image unless ``image=`` names a registry
-    ref, locally unless ``provider_type="cloud"`` (Fleet).
+    ref, locally (``provider_type="cloud"``: Cua Cloud has ended, it raises).
 
     Supports full bench_ui integration when bench_ui is installed in the
     remote environment, enabling:
@@ -329,7 +329,7 @@ class RemoteDesktopSession:
             height: Screen height
             os_type: Operating system type ("linux", "windows", "android")
             image: Registry image (default: the canonical image for os_type)
-            provider_type: "cloud" runs on Fleet; anything else runs locally
+            provider_type: "cloud" raises (Cua Cloud has ended); anything else runs locally
             memory: VM memory allocation (e.g., "8GB")
             cpu: VM CPU allocation (e.g., "4")
             name: Container/VM name (auto-generated if empty)
@@ -416,7 +416,7 @@ class RemoteDesktopSession:
         """Wrap an already-connected ``cua_sandbox.Sandbox``.
 
         The caller owns the sandbox: :meth:`close` only drops the reference
-        (the runner releases the sandbox or its Fleet claim itself).
+        (the runner releases the sandbox itself).
         """
         session = cls(
             os_type=os_type,
@@ -568,7 +568,7 @@ class RemoteDesktopSession:
         if self._provider_type not in ("docker", "cloud", "local", "native", ""):
             _warn_deprecated(
                 f"RemoteDesktopSession(provider_type={self._provider_type!r}) is deprecated: "
-                "the sandbox runtime follows the image (use provider_type='cloud' for Fleet)"
+                "the sandbox runtime follows the image"
             )
         if self._storage:
             _warn_deprecated(
@@ -1111,8 +1111,8 @@ class RemoteDesktopSession:
             return
         lifecycle, self._lifecycle = self._lifecycle, None
         if lifecycle is not None:
-            # A sandbox this session opened: release it (local teardown or
-            # the Fleet claim) through the same context that created it.
+            # A sandbox this session opened: release it through the same
+            # context that created it.
             self._sandbox = None
             self._initialized = False
             try:

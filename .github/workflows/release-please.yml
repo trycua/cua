@@ -26,7 +26,6 @@ on:
           - bench-ui
           - som
           - sandbox-apps
-          - train
           - npm-core
           - npm-playground
           - cuabot

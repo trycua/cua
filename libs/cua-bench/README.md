@@ -58,8 +58,8 @@ Results land in `~/.local/share/cua-bench/runs/<run id>/<task>_v<n>/` (`run.log`
 `cb run list | info | watch | logs | stop` inspect runs; `cb dataset build <run dir>`
 exports traces (aguvis-stage-1, gui-r1).
 
-- `result.json` records what ran (`on`, `backend` such as `local-gvisor` or
-  `cloud-kubevirt`, the `sandbox` ref such as `local:<name>` or `cloud:<name>`,
+- `result.json` records what ran (`on`, `backend` such as `local-gvisor`, the
+  `sandbox` ref such as `local:<name>`,
   `kind`, `runtime` (the engine, when one was chosen), `image_ref`,
   `image_variant`, `image_digest` as the pinned `repo@sha256`, `arch`) and carries
   Harbor's trial fields (`task_name`, `trial_name`, `verifier_result.rewards`,
@@ -143,7 +143,7 @@ task's agent log directory (`harness-events.jsonl`, `harness-result.json`).
   Agents' Last Exam): `run_command` reports `return_code` 0 unless
   `strict_exit_codes=True`, there is no shell timeout unless `timeout=` is set, `api_url`
   sessions speak to computer-server (or cua-spacesd: port 3211 or a sandbox ref such as
-  `local:<name>`, `cloud:<name>`, `direct:<host:port>`), and `session.interface`
+  `local:<name>`, `direct:<host:port>`), and `session.interface`
   keeps the cua-computer method set. `scripts/ale_compat/check_ale.py` checks ALE against
   a checkout.
 
@@ -156,7 +156,7 @@ uv run pytest -q cua_bench/tests --ignore=cua_bench/tests/live
 
 The suite is hermetic: cua-sandbox is replaced by an in-memory sandbox
 (`cua_bench/tests/fakes.py`) and a loopback computer-server stand-in, so nothing starts a
-container, VM or cloud claim. It includes the CLI parser golden
+container or VM. It includes the CLI parser golden
 (`tests/golden/cli_tree.json`), export schema snapshots and the ALE compatibility tests.
 After a deliberate, additive CLI or schema change, regenerate the goldens with
 `CUA_BENCH_UPDATE_GOLDENS=1` and review the diff.

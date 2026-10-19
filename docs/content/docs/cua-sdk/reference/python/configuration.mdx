@@ -29,26 +29,12 @@ def configure(
 ) -> None
 ```
 
-Set global configuration for cloud sandboxes.
+Set global configuration.
 
-API-key cloud operations use `base_url`. Fleet uses `fleet_base_url` and
-OAuth client credentials.
-
-### fleet_auth_source
-
-```python
-def fleet_auth_source(*, read_session: bool = True) -> Optional[str]
-```
-
-Where Fleet credentials come from, in the order the SDK uses them.
-
-`"FLEETS_TOKEN"` (a workload token), `"client credentials"`
-(`CUA_CLIENT_ID`/`CUA_CLIENT_SECRET`), `"cua auth login session"`
-(the stored session, refreshed by the SDK while it is used) or `None`
-when nothing is configured. A stored session is only looked up when
-neither of the first two is set. `read_session=False` decides that from
-the non-secret session marker alone, without reading the OS credential
-vault (for dashboards and other implicit checks).
+`api_key` and `base_url` apply to the legacy `login()` and
+`whoami()` helpers. `fleet_base_url`, `token_url`, `client_id`,
+`client_secret` and `fleet_token` configured Cua Cloud, which has
+ended: they are accepted so existing calls keep working, and ignored.
 
 ### login
 
@@ -126,64 +112,7 @@ so older `except NotImplementedError` handlers still catch it.
 class CloudTransport(Transport)
 ```
 
-Compatibility shim for the removed API-key cloud transport.
-
-Constructing it still works (and keeps the requested image), so code that
-builds one fails at `connect()` with a message pointing to Fleet.
-
-| Attribute | Type | Description |
-| --- | --- | --- |
-| `name` | `Optional[str]` |  |
-
-#### CloudTransport.connect
-
-```python
-async def connect() -> None
-```
-
-#### CloudTransport.disconnect
-
-```python
-async def disconnect() -> None
-```
-
-#### CloudTransport.delete_vm
-
-```python
-async def delete_vm() -> None
-```
-
-Delete an existing API-key VM through the platform API.
-
-#### CloudTransport.create_snapshot
-
-```python
-async def create_snapshot(name: str | None = None, stateful: bool = False) -> dict
-```
-
-#### CloudTransport.send
-
-```python
-async def send(action: str, **params: Any) -> Any
-```
-
-#### CloudTransport.screenshot
-
-```python
-async def screenshot(format: str = 'png', quality: int = 95) -> bytes
-```
-
-#### CloudTransport.get_screen_size
-
-```python
-async def get_screen_size() -> Dict[str, int]
-```
-
-#### CloudTransport.get_environment
-
-```python
-async def get_environment() -> str
-```
+Retired: every Cua Cloud entry point raises `CloudEnded`.
 
 ### EnvTransport
 
@@ -195,9 +124,9 @@ Drives a sandbox through cua-spacesd.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `url` | `Optional[str]` | `None` | spacesd URL (`http://host:3211`, a relay or Fleet service URL). Ignored when `env_factory` is given. |
+| `url` | `Optional[str]` | `None` | spacesd URL (`http://host:3211` or a relay URL). Ignored when `env_factory` is given. |
 | `token` | `Optional[str]` | `None` | spacesd token, if the driver requires one. |
-| `env_factory` | `Optional[EnvFactory]` | `None` | coroutine returning a `cua.SpacesdClient` (used by Fleet and local runtimes, which know how to reach the driver). |
+| `env_factory` | `Optional[EnvFactory]` | `None` | coroutine returning a `cua.SpacesdClient` (used by local runtimes, which know how to reach the driver). |
 | `environment` | `Optional[str]` | `None` | OS hint (`linux`, `windows`, `mac`) used before the driver has been reached. |
 | `fallback` | `Optional[Transport]` | `None` | an agentless transport (QMP/VNC/SSH/ADB) to use when the sandbox has no spacesd. |
 | `ready_timeout` | `float` | `0.0` | how long to keep retrying the spacesd probe on first use (a freshly booted VM starts its driver late). `0` probes once. |

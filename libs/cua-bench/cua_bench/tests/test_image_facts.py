@@ -1,6 +1,5 @@
 """``image_facts``: what ran, recorded per result (kind, runtime, image ref,
-variant, digest, arch). Hermetic: fake sandboxes and a cua-sandbox Sandbox
-with a faked SDK answer; no network, container, VM or Fleet.
+variant, digest, arch). Hermetic: fake sandboxes; no network, container or VM.
 """
 
 from __future__ import annotations
@@ -63,21 +62,3 @@ def test_no_image_info_keeps_the_spec():
         facts = image_facts(sandbox, spec)
         assert facts["image_ref"] == "ghcr.io/trycua/linux:24.04"
         assert facts["image_digest"] is None and facts["arch"] is None
-
-
-async def test_a_cua_sandbox_named_pool_claim_feeds_image_facts(monkeypatch):
-    """End to end through cua-sandbox's claim hook with a faked SDK answer."""
-    from cua_sandbox import Sandbox, _sdk
-    from cua_sandbox import pool as pool_module
-    from cua_sandbox.transport.env import EnvTransport
-
-    async def pool_image_info(pool):
-        assert pool == "cua-e2e-named"
-        return _info()
-
-    monkeypatch.setattr(_sdk, "pool_image_info", pool_image_info)
-    sandbox = Sandbox(EnvTransport(url="http://127.0.0.1:1"), name="sb")
-    await pool_module._record_pool_image(sandbox, "cua-e2e-named")
-    facts = image_facts(sandbox, _pool_spec())
-    assert facts["image_digest"] == PINNED
-    assert facts["arch"] == "amd64"

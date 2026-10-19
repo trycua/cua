@@ -4,7 +4,7 @@
 on :7000, a small HTTP API over the browser's DevTools (``POST /reset
 {url}``, ``POST /navigate``, ``POST /eval {expression}``, ``GET /state``,
 ``GET /healthz``). Adapters talk to it through ``ep.request("server", ...)``,
-plain HTTP that works the same locally and through the Fleet gateway. The
+plain HTTP that works through the sandbox's service API. The
 agent acts on the visible browser through cua-driver like on any desktop.
 
 Answers: an agent that produces a final text answer sets

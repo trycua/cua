@@ -450,7 +450,12 @@ impl Tool for DragTool {
                                     button,
                                     true,
                                     observe,
-                                )
+                                )?;
+                                // Hold the front until AppKit finishes the
+                                // drop: restoring the previous app while the
+                                // session is still open cancels it.
+                                await_drag_session_end(pid);
+                                Ok(())
                             },
                         )
                         .map(|()| false);
@@ -607,8 +612,9 @@ impl DragTool {
         foreground_args["delivery_mode"] = serde_json::json!("foreground");
         let mut result = self.invoke(foreground_args).await;
 
-        // The foreground drag leaves the pointer on the drop point; this step
-        // promised to hand it back, so put it where the user left it.
+        // The foreground drag leaves the pointer on the drop point (after the
+        // drop has finished, see `await_drag_session_end`); this step promised
+        // to hand it back, so put it where the user left it.
         if let Some((x, y)) = pointer_before {
             let _ =
                 tokio::task::spawn_blocking(move || crate::input::mouse::move_cursor_desktop(x, y))
@@ -762,6 +768,17 @@ impl DragTool {
             }
         }
     }
+}
+
+/// Wait (up to 2 s) until `pid` shows no drag image, so a drag-and-drop
+/// session started by a foreground drag has finished dropping, then let AppKit
+/// settle briefly. A drag that started no session returns almost at once.
+fn await_drag_session_end(pid: i32) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !drag_image_windows(pid).is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(150));
 }
 
 /// Current hardware pointer location in global display points.

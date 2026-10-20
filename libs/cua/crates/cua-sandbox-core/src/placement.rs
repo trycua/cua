@@ -906,7 +906,7 @@ pub fn select(
         return Err(PlacementError::new(
             Axis::On,
             "cloud",
-            cua_image::resolve::FLEET_MACOS_UNSUPPORTED.into(),
+            cua_image::resolve::CLOUD_MACOS_UNSUPPORTED.into(),
             vec!["local".into()],
         ));
     }

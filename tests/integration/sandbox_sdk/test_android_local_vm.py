@@ -5,8 +5,7 @@
         await sb.mobile.tap(540, 960)
 
 Sandbox.ephemeral() auto-selects AndroidEmulatorRuntime for Android images on a
-local host with Android SDK installed. Use local=True to run on your machine;
-drop it to run on the Cua cloud instead.
+local host with Android SDK installed. Use local=True to run on your machine.
 
 The sb.mobile interface provides touch, gesture, and hardware key controls:
     sb.mobile.tap(x, y)
@@ -16,7 +15,6 @@ The sb.mobile interface provides touch, gesture, and hardware key controls:
 
 Contrast:
     Image.android("14")  + local=True  -> Android SDK emulator (this file)
-    Image.android("14")  + local=False -> Cua cloud Android VM
 """
 
 from __future__ import annotations

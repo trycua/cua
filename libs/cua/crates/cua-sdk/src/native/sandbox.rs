@@ -23,10 +23,10 @@ pub enum SandboxStatus {
     Unknown,
 }
 
-/// Portable lifecycle phase, the same words local and in the cloud.
+/// Portable lifecycle phase, the same words on every provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SandboxPhase {
-    /// Being created (cloud: capacity is being provisioned).
+    /// Being created.
     Provisioning,
     /// Booting; readiness probes have not passed yet.
     Starting,
@@ -92,14 +92,13 @@ pub struct SandboxInfo {
     /// Name.
     pub name: String,
     /// What kind of machine: `container` or `vm` (empty when not known:
-    /// an existing machine, or a cloud sandbox this client did not create).
+    /// an existing machine).
     pub kind: String,
-    /// The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or
-    /// `kubevirt` (empty when not known).
+    /// The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a
+    /// provider's own (empty when not known).
     pub runtime: String,
-    /// `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
-    /// for a record of the Cua Cloud that has ended); prefer `location`,
-    /// `kind` and `runtime`.
+    /// `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...); prefer
+    /// `location`, `kind` and `runtime`.
     pub runtime_type: String,
     /// Status.
     pub status: SandboxStatus,
@@ -113,23 +112,22 @@ pub struct SandboxInfo {
     pub endpoints: HashMap<String, String>,
     /// Image, when known.
     pub image: Option<String>,
-    /// Qualified ref, the same kind of value local and in the cloud:
-    /// `local:<name>`, `cloud:<name>` or `direct:<host:port>`. Every call
-    /// that takes a sandbox name accepts it.
+    /// Qualified ref: `local:<name>`, `direct:<host:port>` or
+    /// `<provider>:<name>`. Every call that takes a sandbox name accepts it.
     pub id: String,
     /// Portable phase: provisioning, starting, ready or stopped.
     pub phase: SandboxPhase,
-    /// Where it runs: `local`, `cloud`, `direct` (a machine by address) or
-    /// `relay`.
+    /// Where it runs: `local`, `direct` (a machine by address), `relay` or a
+    /// provider.
     pub location: String,
     /// When it expires unless kept alive (unix seconds), when known.
     pub expires_at_unix: Option<i64>,
-    /// Provider internals (cloud: `pool`, `namespace`, `claim`; local:
-    /// `backend`, `container_id`). Not part of the portable API.
+    /// Provider internals (local: `backend`, `container_id`). Not part of
+    /// the portable API.
     pub provider_details: HashMap<String, String>,
     /// The image as resolved and pinned at create time (digest, variant).
-    /// `None` for direct connections, named pools, images not resolved from
-    /// a registry, and the daemon topology.
+    /// `None` for direct connections, images not resolved from a registry,
+    /// and the daemon topology.
     #[uniffi(default = None)]
     pub image_info: Option<ImageInfo>,
     /// Why a local sandbox stopped without being asked to, in plain words
@@ -248,41 +246,12 @@ impl ReadinessProbe {
     }
 }
 
-/// Advanced options for cloud sandboxes (warm capacity, limits, TTL, a
-/// dedicated pool). Leave unset for the defaults. Setting them with `on`
-/// unset means the cloud; with `on = "local"` they are an error.
-#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
-pub struct CloudOptions {
-    /// Keep one warm replica of this image ready (faster next start).
-    #[uniffi(default = None)]
-    pub warm: Option<bool>,
-    /// Most sandboxes of this image at once (default 10).
-    #[uniffi(default = None)]
-    pub max_pool_size: Option<u32>,
-    /// Seconds the sandbox outlives this process without a keep-alive
-    /// (renewed while held; default 15 min).
-    #[uniffi(default = None)]
-    pub claim_ttl_seconds: Option<u32>,
-    /// Dedicated capacity: claim from this existing pool. The sandbox
-    /// fields given alongside (image, command, env, services, sidecars,
-    /// cpus, memory) must match its template, or creation fails with
-    /// `PoolSpecMismatch` and a diff.
-    #[uniffi(default = None)]
-    pub pool: Option<String>,
-    /// With `pool`: update the pool's template to the given fields instead
-    /// of failing on a mismatch. Cua Cloud has ended: ignored.
-    #[uniffi(default = false)]
-    pub apply: bool,
-}
-
 /// An extra container next to a sandbox (a compose-style sidecar),
 /// addressed by name on every runtime: the sandbox reaches it at its
 /// `name` (on its `ports`), it reaches the sandbox at `main`, and
 /// `services` may name its ports (`{"db": 5432}`). Local containers run it
 /// in the sandbox's network namespace (`localhost` works too; needs
-/// `runtime="runc"`); cloud gVisor sandboxes run it in the same pod; cloud
-/// VM (KubeVirt) sandboxes run it in a companion pod named in the guest's
-/// `/etc/hosts`. Local VM sandboxes refuse sidecars. With sidecars the
+/// `runtime="runc"`). Local VM sandboxes refuse sidecars. With sidecars the
 /// service names `main`, `sidecars` and `sc` are reserved.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Container {
@@ -304,16 +273,6 @@ pub struct Container {
 }
 
 impl Container {
-    pub(crate) fn from_core(s: cua_sandbox_core::Sidecar) -> Self {
-        Self {
-            image: s.image,
-            command: s.command,
-            env: s.env.into_iter().collect(),
-            ports: s.ports,
-            name: Some(s.name),
-        }
-    }
-
     pub(crate) fn to_core(&self) -> cua_sandbox_core::Sidecar {
         let mut s = cua_sandbox_core::Sidecar::new(self.image.clone());
         if let Some(n) = self.name.clone().filter(|n| !n.is_empty()) {
@@ -326,9 +285,8 @@ impl Container {
     }
 }
 
-/// Credentials for a private registry image. Local sandboxes pull with
-/// them; cloud sandboxes store them as the sandbox's registry pull Secret.
-/// Never logged or persisted.
+/// Credentials for a private registry image, used for the pull. Never
+/// logged or persisted.
 #[derive(Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum RegistrySecret {
     /// A user name and password (or access token).
@@ -508,7 +466,7 @@ pub struct BuildFile {
 /// Image layers built on top of a sandbox's image. Local: a build into the
 /// container engine (container images only; VM images take no layers here),
 /// cached by a content hash (`cua-b-<hash>`), so an identical spec never
-/// rebuilds. (Cua Cloud's remote build has ended.)
+/// rebuilds.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct ImageBuild {
     /// Steps, in order.
@@ -551,12 +509,11 @@ impl ImageBuild {
 /// Options for [`Sandboxes::create`].
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SandboxCreateOptions {
-    /// Where it runs: `local`, `cloud`, `direct:<addr>` (an existing
-    /// machine running cua-spacesd) or a registered provider. `None` (the
-    /// default): the cloud when `cloud` options (or the deprecated flat
-    /// cloud fields) are set, else the user default (`default.on` in
-    /// `~/.cua/config.toml`, `CUA_DEFAULT_ON`, else `local`). `local`
-    /// together with `cloud` is an `InvalidArgument`.
+    /// Where it runs: `local`, `direct:<addr>` (an existing machine running
+    /// cua-spacesd) or a registered provider. `None` (the default): the
+    /// user default (`default.on` in `~/.cua/config.toml`,
+    /// `CUA_DEFAULT_ON`, else `local`). `cloud` fails with the "Cua Cloud has
+    /// ended" error.
     #[uniffi(default = None)]
     pub on: Option<String>,
     /// What kind of machine: `auto`, `container` or `vm`. `None`: the user
@@ -566,28 +523,23 @@ pub struct SandboxCreateOptions {
     #[uniffi(default = None)]
     pub kind: Option<String>,
     /// Which engine: `auto` or one the location offers for the kind (local
-    /// `gvisor`, `runc`, `qemu`, `lume`; cloud `gvisor`, `kubevirt`). `None`:
+    /// `gvisor`, `runc`, `qemu`, `lume`). `None`:
     /// the user default (`default.runtime`, else `auto`, the safest
     /// available). A local sandbox with sidecars needs `runc` where gVisor
     /// would run. A combination that does not exist is `InvalidPlacement`,
     /// listing the valid values.
     #[uniffi(default = None)]
     pub runtime: Option<String>,
-    /// Image reference. Locally, `pool:<name>` runs that cloud pool's
-    /// template image.
+    /// Image reference. A `pool:<name>` image fails with the "Cua Cloud has
+    /// ended" error.
     #[uniffi(default = "")]
     pub image: String,
-    /// Name. `None`: ephemeral (cloud: released with the sandbox; the
-    /// managed capacity stays for reuse).
+    /// Name. `None`: ephemeral (no state file; deleted with the sandbox).
     #[uniffi(default = None)]
     pub name: Option<String>,
     /// spacesd token.
     #[uniffi(default = None)]
     pub token: Option<String>,
-    /// Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
-    /// error.
-    #[uniffi(default = None)]
-    pub pool: Option<String>,
     /// Guest OS (`linux`, `macos`, `windows`).
     #[uniffi(default = None)]
     pub os: Option<String>,
@@ -613,29 +565,12 @@ pub struct SandboxCreateOptions {
     /// are not secrets).
     #[uniffi(default)]
     pub env: HashMap<String, String>,
-    /// Deprecated, and Cua Cloud has ended: initial replicas of a new
-    /// managed pool (> 0 = warm).
-    #[uniffi(default = None)]
-    pub fleet_replicas: Option<u32>,
-    /// Deprecated: use `cloud.claim_ttl_seconds`.
-    #[uniffi(default = None)]
-    pub fleet_ttl_seconds: Option<u32>,
-    /// Deprecated: use `cloud.warm`.
-    #[uniffi(default = None)]
-    pub warm: Option<bool>,
-    /// Deprecated: use `cloud.max_pool_size`.
-    #[uniffi(default = None)]
-    pub max_pool_size: Option<u32>,
     /// The sandbox's command (argv), replacing the image's entrypoint.
     /// Same meaning local (container ENTRYPOINT, or run by cloud-init in a
     /// Linux VM) and in the cloud (the template command with
     /// `processMode: Run`, on gVisor and KubeVirt).
     #[uniffi(default = None)]
     pub command: Option<Vec<String>>,
-    /// Advanced cloud options (warm capacity, limits, TTL, runtime, a
-    /// dedicated pool). They win over the deprecated flat fields.
-    #[uniffi(default = None)]
-    pub cloud: Option<CloudOptions>,
     /// Sidecar containers, addressed by name (see [`Container`]).
     #[uniffi(default = [])]
     pub sidecars: Vec<Container>,
@@ -643,14 +578,13 @@ pub struct SandboxCreateOptions {
     /// registry).
     #[uniffi(default = None)]
     pub registry_secret: Option<RegistrySecret>,
-    /// Image layers built on top of `image` (cloud: a remote build; local:
-    /// a build into the container engine; both cached by content).
+    /// Image layers built on top of `image` (a build into the local
+    /// container engine, cached by content).
     #[uniffi(default = None)]
     pub build: Option<ImageBuild>,
     /// Guest network: `"default"` (unset) gives outbound network, like a
     /// Docker container; `"none"` cuts it while published ports still work.
-    /// Only local QEMU VMs honour `"none"`; containers, Lume and cloud
-    /// sandboxes reject it.
+    /// Only local QEMU VMs honour `"none"`; containers and Lume reject it.
     #[uniffi(default = None)]
     pub network: Option<String>,
     /// Binaries to inject once the sandbox is up, so tests run the build
@@ -659,10 +593,10 @@ pub struct SandboxCreateOptions {
     /// cua-spacesd in the image, or a local container.
     #[uniffi(default = [])]
     pub overlays: Vec<super::Overlay>,
-    /// Keep a named sandbox whose readiness check fails (its cloud claim,
-    /// VM or container, and its record) to debug it. `false` (the
-    /// default): a failed create deletes what it made and releases the
-    /// claim. Ephemeral sandboxes are always deleted.
+    /// Keep a named sandbox whose readiness check fails (its VM or
+    /// container, and its record) to debug it. `false` (the default): a
+    /// failed create deletes what it made. Ephemeral sandboxes are always
+    /// deleted.
     #[uniffi(default = false)]
     pub keep_on_failure: bool,
     /// A GPU option of the runtime it runs on (`Spaces.gpu_support` lists them):
@@ -681,8 +615,8 @@ impl Default for SandboxCreateOptions {
 }
 
 impl SandboxCreateOptions {
-    /// Options for `image` where `on` says (`local`, `cloud`,
-    /// `direct:<addr>`), everything else default.
+    /// Options for `image` where `on` says (`local`, `direct:<addr>`, a
+    /// provider), everything else default.
     pub fn new(on: impl Into<String>, image: impl Into<String>) -> Self {
         Self {
             on: Some(on.into()),
@@ -700,7 +634,6 @@ impl SandboxCreateOptions {
             image: image.into(),
             name: None,
             token: None,
-            pool: None,
             os: None,
             cpus: None,
             memory_mb: None,
@@ -709,12 +642,7 @@ impl SandboxCreateOptions {
             wait_for: vec![],
             ready_timeout_ms: None,
             env: HashMap::new(),
-            fleet_replicas: None,
-            fleet_ttl_seconds: None,
-            warm: None,
-            max_pool_size: None,
             command: None,
-            cloud: None,
             sidecars: vec![],
             registry_secret: None,
             build: None,
@@ -725,17 +653,8 @@ impl SandboxCreateOptions {
         }
     }
 
-    fn cloud_options(&self) -> bool {
-        self.cloud.is_some()
-            || self.fleet_replicas.is_some()
-            || self.fleet_ttl_seconds.is_some()
-            || self.warm.is_some()
-            || self.max_pool_size.is_some()
-    }
-
     /// The location, kind and runtime this create runs with, each with
-    /// where it came from: explicit values, else the cloud when cloud
-    /// options are set, else the user defaults
+    /// where it came from: explicit values, else the user defaults
     /// ([`cua_sandbox_core::settings`]).
     pub fn placement(&self) -> Result<cua_sandbox_core::settings::Resolved> {
         use cua_sandbox_core::placement::{Kind, On, Runtime};
@@ -747,20 +666,10 @@ impl SandboxCreateOptions {
         };
         let place =
             |e: cua_sandbox_core::placement::PlacementError| CuaError::InvalidPlacement(e.message);
-        let mut on = text(&self.on)
+        let on = text(&self.on)
             .map(|o| On::parse(&o))
             .transpose()
             .map_err(place)?;
-        if on.is_none() && self.cloud_options() {
-            on = Some(On::Cloud);
-        }
-        if on == Some(On::Local) && self.cloud.is_some() {
-            return Err(CuaError::InvalidArgument(
-                "cloud options were passed for a local sandbox: drop `cloud`, or run it in the \
-                 cloud (on=\"cloud\" / local=False)"
-                    .into(),
-            ));
-        }
         let kind = text(&self.kind)
             .map(|k| Kind::parse(&k))
             .transpose()
@@ -784,13 +693,12 @@ impl SandboxCreateOptions {
     fn to_request(&self) -> Result<CreateRequest> {
         use cua_sandbox_core::placement::On;
         let placement = self.placement()?;
-        let cloud = self.cloud.clone().unwrap_or_default();
         let (provider, url) = match &placement.on {
             On::Local => (Some(CoreProvider::Local), None),
-            On::Cloud => (Some(CoreProvider::Fleet), None),
             On::Direct(a) => (Some(CoreProvider::Direct), Some(a.clone())),
             On::Provider(_) => (Some(CoreProvider::Contrib), None),
-            On::Relay(_) | On::Host(_) => (None, None),
+            // `placement()` refused the cloud above.
+            On::Relay(_) | On::Host(_) | On::Cloud => (None, None),
         };
         Ok(CreateRequest {
             // Resolved here, in the caller's process: a daemon never applies
@@ -803,7 +711,6 @@ impl SandboxCreateOptions {
             name: self.name.clone(),
             image: self.image.clone(),
             token: self.token.clone(),
-            pool: cloud.pool.or_else(|| self.pool.clone()),
             os: self.os.clone(),
             cpus: self.cpus,
             memory_mb: self.memory_mb,
@@ -817,12 +724,6 @@ impl SandboxCreateOptions {
             ready_timeout: self.ready_timeout_ms.map(super::millis),
             env: self.env.clone().into_iter().collect(),
             command: self.command.clone().filter(|c| !c.is_empty()),
-            fleet_runtime: None,
-            fleet_replicas: self.fleet_replicas,
-            fleet_ttl_seconds: cloud.claim_ttl_seconds.or(self.fleet_ttl_seconds),
-            fleet_warm: cloud.warm.or(self.warm),
-            fleet_max_pool_size: cloud.max_pool_size.or(self.max_pool_size),
-            fleet_apply: cloud.apply,
             labels: Default::default(),
             sidecars: self.sidecars.iter().map(Container::to_core).collect(),
             // Resolved (env, AWS CLI) in `create`, in this process.
@@ -848,7 +749,7 @@ impl SandboxCreateOptions {
 pub struct SandboxListing {
     /// Sandboxes, each with its `location`.
     pub sandboxes: Vec<SandboxInfo>,
-    /// Sources left out, for example "cloud sandboxes not listed: ...".
+    /// Sources left out of the listing.
     pub warnings: Vec<String>,
 }
 
@@ -935,7 +836,7 @@ pub struct PublicUrl {
     pub expires_at_unix: i64,
     /// Service name.
     pub service: String,
-    /// Provider internals (cloud: namespace, claim; local: upstream).
+    /// Provider internals (local: upstream).
     pub provider_details: HashMap<String, String>,
 }
 
@@ -982,7 +883,6 @@ impl Sandboxes {
         options: SandboxCreateOptions,
         progress: Option<cua_sandbox_core::progress::Sink>,
     ) -> Result<Arc<Sandbox>> {
-        let placement = options.placement()?;
         let mut req = options.to_request()?;
         let backend = self.backend.clone();
         let secret = options.registry_secret.clone();
@@ -1000,17 +900,7 @@ impl Sandboxes {
                 (Backend::Daemon(d), None) => d.create(req).await?,
             })
         })
-        .await
-        .map_err(|e| match e {
-            // The cloud came from a default: say how to sign in or go back.
-            CuaError::ProviderNotConfigured(m) => {
-                match cua_sandbox_core::settings::cloud_default_hint(&placement.on_source) {
-                    Some(hint) => CuaError::ProviderNotConfigured(format!("{m}; {hint}")),
-                    None => CuaError::ProviderNotConfigured(m),
-                }
-            }
-            other => other,
-        })?;
+        .await?;
         Ok(self.handle(rec.into()))
     }
 
@@ -1138,11 +1028,9 @@ impl Sandboxes {
     }
 
     /// Sandboxes, each tagged with its `location`. `None` (the default):
-    /// all of them, local, direct and the account's live cloud sandboxes,
-    /// whatever the default location is. `"local"`, `"cloud"` or
-    /// `"direct"`: only those.
-    /// Cua Cloud has ended: its sandboxes are never listed, and listing
-    /// never asks Fleet.
+    /// all of them, local and direct, whatever the default location is.
+    /// `"local"` or `"direct"`: only those. Cua Cloud has ended, so
+    /// `"cloud"` lists none.
     pub async fn list(&self, location: Option<String>) -> Result<Vec<SandboxInfo>> {
         let listing = self.list_with_warnings(location).await?;
         for w in &listing.warnings {
@@ -1151,15 +1039,21 @@ impl Sandboxes {
         Ok(listing.sandboxes)
     }
 
-    /// [`Sandboxes::list`] with what the listing left out (for example
-    /// "cloud sandboxes not listed: <reason>").
+    /// [`Sandboxes::list`] with what the listing left out.
     pub async fn list_with_warnings(&self, location: Option<String>) -> Result<SandboxListing> {
         let backend = self.backend.clone();
         let p = location_filter(location.as_deref())?;
+        // Cua Cloud has ended: it has no sandboxes to list.
+        if location.as_deref().is_some_and(asks_for_cloud) {
+            return Ok(SandboxListing {
+                sandboxes: vec![],
+                warnings: vec![],
+            });
+        }
         let listing = run(async move {
             Ok(match &backend {
-                Backend::Embedded(rt) => rt.list_filtered(p, true).await?,
-                Backend::Daemon(d) => d.list_filtered(p, true).await?,
+                Backend::Embedded(rt) => rt.list_filtered(p).await?,
+                Backend::Daemon(d) => d.list_filtered(p).await?,
             })
         })
         .await?;
@@ -1176,7 +1070,7 @@ impl Sandboxes {
 
     /// Cancels the create of the named sandbox `name` that is still
     /// running (in this process or the daemon): the work in flight stops
-    /// (an image download, a boot, a claim) and what the create made is
+    /// (an image download, a boot) and what the create made is
     /// deleted; a sandbox of that name that existed before is never
     /// touched. Finished image downloads stay cached. Returns what was
     /// removed, or `None` when no create of that name was running. The
@@ -1228,8 +1122,8 @@ impl Sandboxes {
         let p = location_filter(location)?;
         let listing = run(async move {
             Ok(match &backend {
-                Backend::Embedded(rt) => rt.list_filtered(p, false).await?,
-                Backend::Daemon(d) => d.list_filtered(p, false).await?,
+                Backend::Embedded(rt) => rt.list_filtered(p).await?,
+                Backend::Daemon(d) => d.list_filtered(p).await?,
             })
         })
         .await?;
@@ -1237,17 +1131,23 @@ impl Sandboxes {
     }
 }
 
-/// A `location` filter (`local`, `cloud`, `direct`; empty or `None`: all).
+/// Whether a `location` filter asks for Cua Cloud, which has ended.
+fn asks_for_cloud(location: &str) -> bool {
+    cua_sandbox_core::Location::parse(location.trim()) == Some(cua_sandbox_core::Location::Cloud)
+}
+
+/// A `location` filter (`local`, `direct`; empty or `None`: all).
 fn location_filter(location: Option<&str>) -> Result<Option<CoreProvider>> {
     let Some(l) = location.map(str::trim).filter(|l| !l.is_empty()) else {
         return Ok(None);
     };
     match cua_sandbox_core::Location::parse(l) {
         Some(cua_sandbox_core::Location::Local) => Ok(Some(CoreProvider::Local)),
-        Some(cua_sandbox_core::Location::Cloud) => Ok(Some(CoreProvider::Fleet)),
+        // The caller returns an empty listing before using the filter.
+        Some(cua_sandbox_core::Location::Cloud) => Ok(None),
         Some(cua_sandbox_core::Location::Direct) => Ok(Some(CoreProvider::Direct)),
         _ => Err(CuaError::InvalidArgument(format!(
-            "location {l:?}: expected local, cloud or direct"
+            "location {l:?}: expected local or direct"
         ))),
     }
 }
@@ -1318,8 +1218,8 @@ impl Sandbox {
 
     /// The image this sandbox runs, as resolved and pinned at create time:
     /// the digest and variant that actually ran. `None` for direct (URL)
-    /// connections, claims on a named pool, images not resolved from a
-    /// registry, and the daemon topology.
+    /// connections, images not resolved from a registry, and the daemon
+    /// topology.
     pub fn image_info(&self) -> Option<ImageInfo> {
         self.info.image_info.clone()
     }
@@ -1443,9 +1343,8 @@ impl Sandbox {
     /// A named service (for example `"server"` or `"env"`).
     pub fn service(&self, name: String) -> Result<Arc<Service>> {
         if !self.info.services.contains_key(&name) && !self.info.endpoints.contains_key(&name) {
-            // Fleet only knows service names; direct/local accept declared
-            // services only. Let the backend decide when unknown locally.
-            if self.info.location != "cloud" && !self.info.services.is_empty() {
+            // Direct and local sandboxes accept declared services only.
+            if !self.info.services.is_empty() {
                 return Err(CuaError::NotFound(format!(
                     "sandbox {} has no service {name:?} (known: {:?})",
                     self.info.name,
@@ -1594,21 +1493,6 @@ impl Sandbox {
     /// Restarts.
     pub async fn restart(&self) -> Result<()> {
         self.lifecycle(Op::Restart).await
-    }
-
-    /// Forgets the handle this runtime holds (a Cua Cloud claim used to
-    /// stop renewing; Cua Cloud has ended). Embedded runtime only.
-    pub fn detach(&self) -> Result<()> {
-        match &self.backend {
-            Backend::Embedded(rt) => {
-                let _guard = super::runtime().enter();
-                rt.detach(&self.info.id);
-                Ok(())
-            }
-            Backend::Daemon(_) => Err(CuaError::Unsupported(
-                "detach: the cua daemon holds the handles; use delete or keep_alive".into(),
-            )),
-        }
     }
 
     /// Deletes (local: removes it; direct: forgets it; your cloud: deletes
@@ -1898,8 +1782,7 @@ impl Service {
     }
 
     /// A URL for the service usable from this machine with no credentials
-    /// (no trailing slash): the published loopback port locally, a signed
-    /// service URL (1 h, renewed on later calls) in the cloud.
+    /// (no trailing slash): the published loopback port locally.
     pub async fn url(&self) -> Result<String> {
         let backend = self.backend.clone();
         let (sb, svc) = (self.sandbox.clone(), self.name.clone());
@@ -2136,33 +2019,26 @@ mod tests {
     }
 
     /// With no `on`, the location is the user default (local unless
-    /// configured); cloud options imply the cloud; `local` plus cloud
-    /// options is an error. Runs with a private CUA_HOME and no default
-    /// overrides in the environment.
+    /// configured). Runs with a private CUA_HOME and no default overrides in
+    /// the environment.
     #[test]
-    fn the_location_defaults_and_cloud_options_imply_the_cloud() {
+    fn the_location_defaults_to_the_user_default() {
         use cua_sandbox_core::placement::{Kind, On, Runtime};
         let _env = super::super::test_env::EnvGuard::isolated();
-        let mut o = SandboxCreateOptions::auto("python:3.12-slim");
+        let o = SandboxCreateOptions::auto("python:3.12-slim");
         assert_eq!(o.placement().unwrap().on, On::Local);
         assert_eq!(SandboxCreateOptions::default().on, None);
         let r = o.to_request().unwrap();
         assert_eq!(r.location.as_deref(), Some("local"));
         assert_eq!(r.provider, Some(CoreProvider::Local));
-        // Cloud options imply the cloud, and Cua Cloud has ended.
-        o.cloud = Some(CloudOptions::default());
-        let e = o.placement().unwrap_err();
+        // Cua Cloud has ended.
+        let e = SandboxCreateOptions::new("cloud", "x")
+            .placement()
+            .unwrap_err();
         assert_eq!(
             e.to_string(),
             format!("unsupported: {}", cua_sandbox_core::CLOUD_ENDED)
         );
-        // ...and contradict an explicit local.
-        o.on = Some("local".into());
-        assert!(matches!(o.placement(), Err(CuaError::InvalidArgument(_))));
-        // A deprecated flat cloud field implies the cloud too.
-        let mut o = SandboxCreateOptions::auto("x");
-        o.warm = Some(true);
-        assert!(matches!(o.placement(), Err(CuaError::Unsupported(_))));
         // direct:<addr> carries the address.
         let o = SandboxCreateOptions::new("direct:127.0.0.1:3211", "");
         let r = o.to_request().unwrap();
@@ -2304,8 +2180,7 @@ pub fn contrib_providers_built() -> Vec<String> {
 
 /// Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
 /// `direct:<host:port>`, `relay:<machine-id>`, a legacy spelling
-/// (`space://fleet/<ns>/<claim>`, `fleet:<ns>:<claim>`, `url:<addr>`, a
-/// URL), or a bare name.
+/// (`space://cloud/<name>`, `url:<addr>`, a URL), or a bare name.
 #[uniffi::export]
 pub fn parse_sandbox_ref(input: String) -> Result<SandboxRefParts> {
     let r = cua_sandbox_core::SandboxRef::parse(&input)?;

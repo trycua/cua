@@ -84,7 +84,11 @@ frontmost is true'`). Mutating it is not.
 application's `AXMenuBarItem`: the visible macOS menu bar belongs to the
 frontmost app, and command items may be disabled otherwise. Use `invoke_menu`
 for a known application-menu path. With the app in the background it resolves
-the whole path without opening a menu and never activates the app; if macOS
+the whole path without opening a menu and never activates the app. Both the
+app's focused and main window must identify the requested window before menu
+lookup and again before dispatch; a sibling or unreadable context is refused
+with `window_not_key`. A requested window ID alone does not bind the app-wide
+menu. The tool does not silently change documents to satisfy this check. If macOS
 keeps the item unavailable to a background app it refuses with
 `background_unavailable` (then, if the user allows it, `bring_to_front` first).
 One exception: a disabled Save (the ⌘S item) of a document window is saved

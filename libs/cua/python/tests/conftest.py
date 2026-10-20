@@ -2,7 +2,7 @@
 
 `cua-test-fixtures` (built with `libs/cua/scripts/build-test-fixtures.sh`)
 serves a MockServer spacesd with
-a scripted media socket and a fake Fleet API on loopback. Nothing here
+a scripted media socket on loopback. Nothing here
 touches host apps; the fixture process exits when its stdin closes.
 """
 

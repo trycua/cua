@@ -27,8 +27,6 @@ import { sleep } from "./app.js"
 export interface RuntimeDirs {
   root: string
   teleportHome: string
-  /** Read Cua Cloud credentials from the environment. */
-  cloudFromEnv?: boolean
 }
 
 /** An embedded runtime rooted at `dirs.root`. */
@@ -38,7 +36,6 @@ export function openRuntime(dirs: RuntimeDirs): CuaLike {
     stateDir: join(dirs.root, "sandboxes"),
     spacesHome: join(dirs.root, "cua"),
     teleportHome: dirs.teleportHome,
-    fleetFromEnv: dirs.cloudFromEnv ?? false,
   })
 }
 
@@ -175,7 +172,7 @@ async function probeOnce(
 ): Promise<Omit<WebProbeResult, "client">> {
   if (opts.url && opts.token !== undefined) {
     const sdk = await loadBrowserSdk()
-    const env = await sdk.Cua.embedded(sdk.CuaConfig.create({})).spacesd(opts.url, opts.token)
+    const env = await sdk.Cua.embedded().spacesd(opts.url, opts.token)
     const media = await openDesktopMedia(env, opts.url, { maxFps: opts.maxFps, maxDimension: opts.maxDimension })
     try {
       const { ws, state, ticketVia } = await attachMedia(ctor as never, media, opts.timeoutMs)

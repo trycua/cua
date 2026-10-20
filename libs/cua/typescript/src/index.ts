@@ -17,7 +17,7 @@
  * ```
  *
  * The same objects work against a running `cua daemon` (`connect()`).
- * Browser builds use `@trycua/cua/browser` (env over gRPC-Web + Fleet).
+ * Browser builds use `@trycua/cua/browser` (env over gRPC-Web).
  */
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -29,13 +29,9 @@ import {
   CuaError,
   CuaError_Tags,
   type CuaLike,
-  type FleetLike,
-  type FleetPool,
-  PoolOptions,
   ReadinessProbe,
   RegistrySecret,
   type ResolvedImage,
-  SandboxSpec,
   ambiguousSandboxCandidates,
   canonicalImageTier,
   errorDocUrl,
@@ -115,9 +111,9 @@ function defaultCuaBin(): void {
 }
 
 /**
- * An SDK runtime in this process (no I/O until the first call). Fleet uses
- * `CUA_CLIENT_ID`/`CUA_CLIENT_SECRET` (or `FLEETS_TOKEN`); pass
- * `fleetFromSession: true` to fall back to the `cua auth login` session.
+ * An SDK runtime in this process (no I/O until the first call). Pass
+ * `accountFromSession: true` to use the `cua auth login` session for the
+ * relay account the runtime lists "My machines" with.
  */
 export function embedded(config: Partial<CuaConfig> = {}): CuaLike {
   defaultCuaBin()
@@ -226,47 +222,4 @@ export const registrySecret = {
   /** A private Amazon ECR image: a login token from the AWS CLI. */
   awsEcr: (region?: string): RegistrySecret =>
     new RegistrySecret.AwsEcr(region ? { region } : {}),
-}
-
-type StringMap = Record<string, string> | Map<string, string>
-type PortMap = Record<string, number> | Map<string, number>
-
-const toMap = <V>(m: Record<string, V> | Map<string, V> | undefined): Map<string, V> =>
-  m instanceof Map ? new Map(m) : new Map(Object.entries(m ?? {}))
-
-/**
- * What a sandbox runs: the one model behind `Sandbox.create`, managed pools
- * and `fleet.apply(name, spec, options)`. `env` and `services` take plain
- * objects too. Unset fields keep Fleet's defaults (and are not compared by
- * `fleet.checkPoolSpec`).
- *
- * ```ts
- * const spec = sandboxSpec("python:3.12-slim", {
- *   command: ["python", "-m", "srv"], services: { mcp: 8765 }, readiness: http("mcp", "/health") })
- * await c.fleet().apply("my-pool", spec, poolOptions({ warm: true, idleTtlSeconds: 3600 }))
- * ```
- */
-export function sandboxSpec(
-  image: string,
-  opts: Partial<Omit<SandboxSpec, "image" | "env" | "services">> & { env?: StringMap; services?: PortMap } = {},
-): SandboxSpec {
-  const { env, services, ...rest } = opts
-  return SandboxSpec.create({ ...rest, image, env: toMap(env), services: toMap(services) })
-}
-
-/** How a pool keeps capacity for a `SandboxSpec` (warm floor, size, TTLs, runtime). */
-export function poolOptions(opts: Partial<PoolOptions> = {}): PoolOptions {
-  return PoolOptions.create(opts)
-}
-
-/**
- * `Pool.apply(fleet, name, spec, options)`: the one pool writer, the same
- * call as `fleet.apply`. Named pools are compared against a spec with
- * `fleet.checkPoolSpec` (raises `CuaError.PoolSpecMismatch` with a diff) and
- * updated with `fleet.applyPoolTemplate`; `fleet.exportPool(name).terraform`
- * prints the equivalent `fleets_pool` block.
- */
-export const Pool = {
-  apply: (fleet: FleetLike, name: string, spec: SandboxSpec, options: PoolOptions = poolOptions()): Promise<FleetPool> =>
-    fleet.apply(name, spec, options),
 }

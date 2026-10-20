@@ -643,7 +643,7 @@ fn main() {
     }
 
     // React to the transport's PLAY / PAUSE / STOP (the human's one action that
-    // drives the whole coordinated fleet — like the master window in the sibling
+    // drives the whole coordinated ensemble — like the master window in the sibling
     // demo). PLAY resumes from the held offset; PAUSE freezes the position; STOP
     // resets to the top.
     use std::io::{BufRead, BufReader};

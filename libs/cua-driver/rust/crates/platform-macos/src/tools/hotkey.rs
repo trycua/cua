@@ -342,12 +342,9 @@ impl Tool for HotkeyTool {
                         super::invoke_menu::MenuRequest::KeyEquivalent(key_display.clone()),
                     )
                     .await;
-                    // The menu route is only a better route when it works. A
-                    // refusal (an item macOS keeps disabled while the app is in
-                    // the background, as LibreOffice's Format > Bold does) must
-                    // not end the call: the caller named a window, so the combo
-                    // goes to that window as key events below (CUA-1767).
-                    if menu_result.is_error != Some(true) {
+                    // Only unavailable background menus may fall back to keys;
+                    // target-safety refusals must survive this route unchanged.
+                    if !menu_allows_key_fallback(&menu_result) {
                         return menu_result;
                     }
                 }
@@ -619,6 +616,15 @@ impl Tool for HotkeyTool {
     }
 }
 
+fn menu_allows_key_fallback(result: &ToolResult) -> bool {
+    result.is_error == Some(true)
+        && result
+            .structured_content
+            .as_ref()
+            .and_then(|v| v["code"].as_str())
+            == Some("background_unavailable")
+}
+
 fn delivered_structured(foreground: bool) -> Value {
     serde_json::json!({
         "path": if foreground { "key_events_fg" } else { "key_events" },
@@ -630,6 +636,20 @@ fn delivered_structured(foreground: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_safety_refusals_do_not_fall_back_to_keys() {
+        for code in ["window_not_key", "background_unavailable"] {
+            let result =
+                ToolResult::error("refused").with_structured(serde_json::json!({ "code": code }));
+            assert_eq!(
+                menu_allows_key_fallback(&result),
+                code == "background_unavailable"
+            );
+        }
+        assert!(!menu_allows_key_fallback(&ToolResult::error("unknown")));
+        assert!(!menu_allows_key_fallback(&ToolResult::text("done")));
+    }
 
     #[test]
     fn a_delivered_combo_suggests_no_resend() {

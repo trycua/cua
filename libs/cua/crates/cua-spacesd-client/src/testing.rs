@@ -55,24 +55,21 @@ type Stream<T> = Pin<Box<dyn futures_util::Stream<Item = Result<T, Status>> + Se
 pub struct MockAuth {
     /// Required env token (direct mode: `authorization`).
     pub token: Option<String>,
-    /// Fleet gateway emulation: required path prefix, gateway bearer and
-    /// claim header. In this mode the env token is read from
-    /// `x-cua-env-authorization`.
+    /// Gateway emulation: required path prefix and gateway bearer. In this
+    /// mode the env token is read from `x-cua-env-authorization`.
     pub gateway: Option<MockGateway>,
     /// Path prefix to strip without gateway checks (relay emulation, e.g.
     /// `/m/<machine-id>`).
     pub prefix: Option<String>,
 }
 
-/// Fleet gateway emulation settings.
+/// Gateway emulation settings.
 #[derive(Clone, Debug)]
 pub struct MockGateway {
-    /// Path prefix, e.g. `/api/svc/ns/sbx-env`.
+    /// Path prefix, e.g. `/m/<machine-id>`.
     pub prefix: String,
     /// Expected gateway bearer.
     pub bearer: String,
-    /// Expected `X-Cua-Fleet-Claim`.
-    pub claim: String,
 }
 
 /// Observations the tests assert on.
@@ -197,8 +194,6 @@ pub struct TunnelAttach {
     pub path: String,
     /// `authorization` header.
     pub authorization: Option<String>,
-    /// `x-cua-fleet-claim` header.
-    pub claim: Option<String>,
     /// `x-cua-env-authorization` header.
     pub env_authorization: Option<String>,
     /// Whether the attach was accepted.
@@ -545,9 +540,6 @@ where
         if let Some(gw) = &state.auth.gateway {
             if header("authorization").as_deref() != Some(&format!("Bearer {}", gw.bearer)) {
                 denied = Some(Status::unauthenticated("gateway bearer"));
-            }
-            if header("x-cua-fleet-claim").as_deref() != Some(gw.claim.as_str()) {
-                denied = Some(Status::permission_denied("claim header"));
             }
             env_auth = header(crate::transport::ENV_TOKEN_HEADER);
         }
@@ -2683,7 +2675,6 @@ async fn serve_tunnel(stream: TcpStream, state: Arc<MockState>) {
         let mut attach = TunnelAttach {
             path: full.clone(),
             authorization: header("authorization"),
-            claim: header(crate::transport::FLEET_CLAIM_HEADER),
             env_authorization: header(crate::transport::ENV_TOKEN_HEADER),
             accepted: false,
         };
@@ -2704,13 +2695,10 @@ async fn serve_tunnel(stream: TcpStream, state: Arc<MockState>) {
             if path != format!("{prefix}{}", cua_proto::metadata::TUNNEL_WS_PATH) {
                 return Err(refuse(404, "no route"));
             }
-            if let Some(gw) = &cb_state.auth.gateway {
-                if attach.authorization.as_deref() != Some(&format!("Bearer {}", gw.bearer)) {
-                    return Err(refuse(401, "gateway bearer"));
-                }
-                if attach.claim.as_deref() != Some(gw.claim.as_str()) {
-                    return Err(refuse(403, "claim header"));
-                }
+            if let Some(gw) = &cb_state.auth.gateway
+                && attach.authorization.as_deref() != Some(&format!("Bearer {}", gw.bearer))
+            {
+                return Err(refuse(401, "gateway bearer"));
             }
             let ticket = req
                 .uri()

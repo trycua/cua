@@ -178,8 +178,25 @@ async fn plain_local(
     res
 }
 
+/// A loopback HTTP server that answers every request with 404: a URL where no
+/// spacesd answers. Returns its address; the listener lives for the process.
+fn plain_http_server() -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        }
+    });
+    format!("http://{addr}")
+}
+
 #[tokio::test]
-async fn agnostic_fake_fleet_and_direct() {
+async fn agnostic_cloud_ended_and_direct() {
     e2e(
         "daemon-agnostic",
         "hermetic",
@@ -187,17 +204,12 @@ async fn agnostic_fake_fleet_and_direct() {
         MIN,
         None,
         || async {
-            let fx = Fixtures::start()?;
-            let c = embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token)));
-            assert_cloud_ended(&c, |o| o.pool = Some(name("agnostic"))).await?;
-            // Direct URL where no spacesd answers (the fake Fleet API's HTTP server).
-            let d = embedded_local()
+            let c = embedded_local();
+            assert_cloud_ended(&c, |_| {}).await?;
+            // Direct URL where no spacesd answers.
+            let d = c
                 .sandboxes()
-                .connect_url(
-                    fx.fleet_base_url.clone(),
-                    Some("t".into()),
-                    Some(name("nodriver")),
-                )
+                .connect_url(plain_http_server(), Some("t".into()), Some(name("nodriver")))
                 .await?;
             assert!(matches!(
                 d.spacesd(Some(2000)).await,
@@ -282,66 +294,6 @@ async fn agnostic_qemu_ssh_only() {
                 1024,
             )
             .await
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn agnostic_fleet_legacy_image() {
-    e2e(
-        "daemon-agnostic",
-        "fleet",
-        "legacy computer-server image on Fleet (no spacesd)",
-        25 * MIN,
-        None,
-        || async {
-            let c = embedded_fleet(None);
-            let fleet = c.fleet()?;
-            let pool = name("agnostic");
-            let mut spec = pool_spec(&pool, LEGACY_FLEET_ROOTFS);
-            spec.runtime = Some("gvisor".into());
-            spec.services = HashMap::from([("server".to_string(), 8000)]);
-            spec.cpu = Some(1);
-            spec.memory_mb = Some(2048);
-            spec.ttl_seconds_after_created = Some(3600);
-            fleet.apply_pool(spec).await?;
-            let r = async {
-                let mut o = opts("cloud");
-                o.pool = Some(pool.clone());
-                o.name = Some(format!("{pool}-c"));
-                o.ready_timeout_ms = Some(900_000);
-                let sb = c.sandboxes().create(o).await?;
-                let r = async {
-                    let svc = sb.service("server".into())?;
-                    poll(
-                        "server /status",
-                        60,
-                        Duration::from_secs(5),
-                        |_| true,
-                        || async {
-                            Ok(svc
-                                .request("GET".into(), "/status".into(), None, Some(30_000), None)
-                                .await?
-                                .status
-                                .eq(&200)
-                                .then_some(()))
-                        },
-                    )
-                    .await?;
-                    assert!(matches!(
-                        sb.spacesd(Some(10_000)).await,
-                        Err(CuaError::SpacesdNotAvailable(_))
-                    ));
-                    Res::Ok(())
-                }
-                .await;
-                sb.delete().await?;
-                r
-            }
-            .await;
-            let _ = fleet.delete_pool(pool).await;
-            r
         },
     )
     .await;

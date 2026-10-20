@@ -330,7 +330,7 @@ jobs:
         run: |
           python -m pip install --force-reinstall dist/*.whl
           VERSION="${{ needs.version.outputs.version }}"
-          cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(fleet_from_env=False); sys.exit(v != sys.argv[1])" "$VERSION"
+          cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(); sys.exit(v != sys.argv[1])" "$VERSION"
           test "$(cua --version | tr -d '\r')" = "cua $VERSION"
       - uses: actions/upload-artifact@v4
         with:

@@ -93,8 +93,8 @@ pub mod metadata {
     /// Bearer token header: `authorization: Bearer <token>`.
     pub const AUTHORIZATION: &str = "authorization";
     /// Alternate spacesd token header, `x-cua-env-authorization: Bearer <token>`,
-    /// for paths where `authorization` belongs to an outer hop (the Fleet
-    /// gateway consumes and strips it). Servers accept either header.
+    /// for paths where `authorization` belongs to an outer hop (a gateway
+    /// consumes and strips it). Servers accept either header.
     pub const ENV_AUTHORIZATION: &str = "x-cua-env-authorization";
     /// Binary metadata carrying a serialized `cua.env.v1.Principal`.
     pub const PRINCIPAL_BIN: &str = "x-cua-principal-bin";

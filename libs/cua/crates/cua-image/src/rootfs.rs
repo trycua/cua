@@ -1,4 +1,4 @@
-//! gVisor/container rootfs images (the Fleet `docker-*` tags): pack a rootfs
+//! gVisor/container rootfs images (the `docker-*` tags): pack a rootfs
 //! tar as a single-layer OCI image, and unpack OCI layers (with whiteouts)
 //! into a directory.
 

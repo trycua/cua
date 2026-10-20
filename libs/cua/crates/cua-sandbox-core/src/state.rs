@@ -58,32 +58,12 @@ pub struct LocalState {
     pub extra: Map<String, Value>,
 }
 
-/// A named Fleet claim (`sandbox_state.save_fleet_claim`).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct FleetState {
-    /// Claim / sandbox name.
-    pub name: String,
-    /// Always `"fleet"`.
-    pub runtime_type: String,
-    /// Pool the claim belongs to.
-    pub pool_name: String,
-    /// Status.
-    pub status: String,
-    /// Creation time.
-    pub created_at: String,
-    /// Other fields (for example `namespace`, `service`).
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
-}
-
-/// One state file.
-// Plain data read and written a handful of times; not worth boxing.
-#[allow(clippy::large_enum_variant)]
+/// One state file. More kinds of record may be added, so callers match
+/// with a wildcard arm.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum SandboxState {
-    /// Fleet claim.
-    Fleet(FleetState),
     /// Local runtime (or direct connection, `runtime_type: "direct"`).
     Local(LocalState),
 }
@@ -92,7 +72,6 @@ impl SandboxState {
     /// Name.
     pub fn name(&self) -> &str {
         match self {
-            SandboxState::Fleet(f) => &f.name,
             SandboxState::Local(l) => &l.name,
         }
     }
@@ -100,7 +79,6 @@ impl SandboxState {
     /// `runtime_type`.
     pub fn runtime_type(&self) -> &str {
         match self {
-            SandboxState::Fleet(f) => &f.runtime_type,
             SandboxState::Local(l) => &l.runtime_type,
         }
     }
@@ -108,7 +86,6 @@ impl SandboxState {
     /// `status`.
     pub fn status(&self) -> &str {
         match self {
-            SandboxState::Fleet(f) => &f.status,
             SandboxState::Local(l) => &l.status,
         }
     }
@@ -117,7 +94,6 @@ impl SandboxState {
     /// before: any lifecycle change clears it.
     fn set_status(&mut self, status: &str) {
         match self {
-            SandboxState::Fleet(f) => f.status = status.into(),
             SandboxState::Local(l) => {
                 l.status = status.into();
                 l.extra.remove(STOP_REASON);
@@ -131,7 +107,6 @@ impl SandboxState {
             SandboxState::Local(l) => {
                 serde_json::from_value(l.extra.get(STOP_REASON)?.clone()).ok()
             }
-            SandboxState::Fleet(_) => None,
         }
     }
 }
@@ -262,18 +237,6 @@ impl StateStore {
         Ok(())
     }
 
-    /// `save_fleet_claim(name, pool_name)`.
-    pub fn save_fleet_claim(&self, name: &str, pool_name: &str) -> Result<()> {
-        self.save(&SandboxState::Fleet(FleetState {
-            name: name.into(),
-            runtime_type: "fleet".into(),
-            pool_name: pool_name.into(),
-            status: "running".into(),
-            created_at: python_utc_now(),
-            extra: Map::new(),
-        }))
-    }
-
     /// Loads a state file; `None` when missing or unreadable (as Python).
     pub fn load(&self, name: &str) -> Option<SandboxState> {
         let text = std::fs::read_to_string(self.path(name).ok()?).ok()?;
@@ -313,10 +276,9 @@ impl StateStore {
     pub fn record_stop(&self, name: &str, reason: &crate::StopReason) -> Result<()> {
         if let Some(mut s) = self.load(name) {
             s.set_status("stopped");
-            if let SandboxState::Local(l) = &mut s {
-                l.extra
-                    .insert(STOP_REASON.into(), serde_json::to_value(reason)?);
-            }
+            let SandboxState::Local(l) = &mut s;
+            l.extra
+                .insert(STOP_REASON.into(), serde_json::to_value(reason)?);
             self.save(&s)?;
         }
         Ok(())

@@ -294,8 +294,7 @@ pub struct HostConfig {
     pub paused_signed_out: bool,
     /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
     /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
-    /// service. Unset, the service follows its own default (off unless the
-    /// Cua Spaces app's channel turns it on).
+    /// service. Unset, the service follows its own default (prefer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<String>,
 }

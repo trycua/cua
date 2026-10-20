@@ -1,6 +1,6 @@
 ---
 title: What the relay can see
-description: 'A plain accounting of what relay.cua.ai can and cannot see, what we have done and are still doing about it, and the opt-in end-to-end encrypted connections (beta) that keep the relay from reading a session.'
+description: 'A plain accounting of what relay.cua.ai can and cannot see, what we have done and are still doing about it, and the end-to-end encrypted connections (on by default) that keep the relay from reading a session.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -29,14 +29,15 @@ bug in this page: tell us.
   through it: it can mint assertions the computers still trust, and read
   whatever crosses it meanwhile.
 
-## The mesh (beta, opt-in)
+## The mesh (on by default)
 
-[End-to-end encrypted connections](#end-to-end-encrypted-connections-beta) are
-off by default. When you turn them on, a `relay:` Space no longer goes through
+[End-to-end encrypted connections](#end-to-end-encrypted-connections) are
+on by default. When both ends and the relay support them, a `relay:` Space no longer goes through
 the HTTPS path, and the relay forwards only ciphertext it cannot read or change.
 Everything in the next sections describes the HTTPS path, which stays in use for
 everything else: the browser viewer, web-hosted agents, computers and devices
-without the mesh, and `prefer` when the mesh is not available.
+without the mesh, and anything where the mesh is not available (or you set
+`CUA_MESH=off`).
 
 ## What crosses the relay
 
@@ -108,13 +109,14 @@ path, so there is nothing to seal against.
   computer) is off by default**, and time-boxed to an announced rollout
   window when it does run.
 
-## End-to-end encrypted connections (beta)
+## End-to-end encrypted connections
 
 <Callout type="info">
-  **Beta, off by default.** Nothing changes unless you turn the mesh on with
-  `CUA_MESH` (below). It is meant for the Beta channel of the Cua Spaces app
-  and will be on by default there in a later beta; stable releases keep the
-  relay's HTTPS path.
+  **On by default** in the Cua Spaces app (every channel), the `cua` CLI and
+  hosted computers, once they are on a version that includes it. Where the mesh
+  cannot be used (a self-hosted relay without one, an older computer, a
+  network that blocks it) Cua uses the relay's HTTPS path, as before. To turn
+  it off, set `CUA_MESH=off` (below).
 </Callout>
 
 With the mesh on, a device that opens a Space on one of your computers
@@ -135,25 +137,26 @@ screen and Keyvault deliveries cross it only as ciphertext.
   conflicts with Tailscale or another VPN you already run, and it carries
   Spaces traffic only.
 
-### Turn it on
+### Turn it off, or require it
 
-Both ends opt in: the device you connect from and the computer you host.
+Both ends use the mesh when it is available: the device you connect from and
+the computer you host. Each end decides for itself with `CUA_MESH`.
 
 | `CUA_MESH` | Behavior |
 |---|---|
-| unset or `off` (default) | The relay's HTTPS path only, as before. |
-| `prefer` | The mesh when both ends and the relay support it; the relay's HTTPS path otherwise, with a log line saying why. |
+| unset or `prefer` (default) | The mesh when both ends and the relay support it; the relay's HTTPS path otherwise, with a log line saying why. |
+| `off` | The relay's HTTPS path only, as before the mesh. |
 | `require` | The mesh or nothing: a relay that could read the session is never used. |
 
 - **On the device:** set `CUA_MESH` where `cua` runs (your shell, or the
   environment of the cua daemon; restart the daemon with `cua daemon stop`
   after changing it).
-- **On a hosted computer:** run `cua host setup` with `CUA_MESH=prefer` set.
-  The setting is kept for the host's service until you run setup again
-  without it.
+- **On a hosted computer:** to turn it off there, run `cua host setup` with
+  `CUA_MESH=off` set. The setting is kept for the host's service until you run
+  setup again without it.
 
 `cua spaces ls` lists the same computers either way. With `prefer`, a computer
-or relay that does not speak the mesh yet is used over HTTPS, so mixing
+or relay that does not speak the mesh is used over HTTPS, so mixing
 updated and older computers works.
 
 ### Who can connect
@@ -190,8 +193,8 @@ going through the relay resumes when the relay is back.
 - The **browser viewer** and **web or Cloudflare-hosted agents** that cannot
   run Cua: they reach `https://<relay>/m/<machine>/…` as before. See
   [what the relay can see](#the-short-version).
-- Computers and devices without the mesh turned on, or on a version of Cua
-  from before it.
+- Computers and devices with `CUA_MESH=off`, or on a version of Cua from
+  before the mesh.
 - Relays that do not coordinate a mesh, such as a self-hosted `cua-relay`:
   `prefer` uses their HTTPS path quietly.
 

@@ -520,11 +520,6 @@ impl ServerContext {
         };
         let quic_port = self.config().media_quic_port;
         let auth = self.inner.auth.clone();
-        let home = self
-            .config()
-            .data_dir
-            .parent()
-            .map(std::path::Path::to_path_buf);
         crate::mesh_host::MeshHostConfig {
             relay_url: relay_url.to_owned(),
             relay_token: relay_token.to_owned(),
@@ -536,7 +531,7 @@ impl ServerContext {
             account,
             env_token: Arc::new(move || auth.token().map(|t| t.to_string())),
             name: cua_mesh::node::hostname(),
-            policy: Arc::new(move || cua_mesh::Policy::current(home.as_deref())),
+            policy: Arc::new(cua_mesh::Policy::current),
             recheck: crate::mesh_host::GATE_RECHECK,
         }
     }

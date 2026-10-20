@@ -70,7 +70,7 @@ use util::line;
     version = cua_sdk::VERSION,
     disable_version_flag = true,
     about = "Cua: sandboxes, computer actions, MCP, skills and the cua daemon",
-    after_help = "Docs: https://cua.ai/docs/cua-cli/reference/cli"
+    after_help = "Remote Spaces use the end-to-end encrypted mesh when both ends and the relay\nsupport it, and the relay's HTTPS path otherwise. CUA_MESH=off turns the mesh\noff; CUA_MESH=require refuses any other path.\n\nDocs: https://cua.ai/docs/cua-cli/reference/cli"
 )]
 struct Cli {
     /// Print the version.

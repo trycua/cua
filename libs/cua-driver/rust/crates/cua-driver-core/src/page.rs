@@ -64,9 +64,7 @@ pub struct ClickElementResult {
     pub message: String,
 }
 
-/// Provenance for a successful legacy page read. macOS uses this to make its
-/// JavaScript/CDP-to-AX compatibility fallback explicit without changing the
-/// existing textual response.
+/// Backend provenance for a successful legacy page read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PageReadSource {
@@ -75,9 +73,7 @@ pub enum PageReadSource {
     AxFallback,
 }
 
-/// Compatibility result for `get_text` and `query_dom`. `content` remains the
-/// exact legacy text payload while the optional fields serialize as MCP
-/// structured content. Backends without provenance return [`PageReadResult::text`].
+/// Legacy text payload plus optional MCP structured provenance; use [`Self::text`] without provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PageReadResult {
     #[serde(skip)]

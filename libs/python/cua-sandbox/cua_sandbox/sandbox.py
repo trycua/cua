@@ -52,7 +52,7 @@ import time
 import warnings
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -105,7 +105,6 @@ from cua_sandbox.interfaces import (
 from cua_sandbox.interfaces import mcp as _mcp
 from cua_sandbox.interfaces.driver import Driver
 from cua_sandbox.options import (
-    CloudOptions,
     Probe,
     PublicUrl,
     WaitFor,
@@ -119,7 +118,6 @@ from cua_sandbox.transport.env import EnvTransport, env_url
 
 if TYPE_CHECKING:
     from cua_sandbox.interfaces.services import ServiceHandle
-    from cua_sandbox.pool import Pool
     from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 
 logger = logging.getLogger(__name__)
@@ -175,18 +173,15 @@ def validate_server_port(server_port: Any) -> None:
         raise ValueError("server_port must be an integer between 1 and 65535")
 
 
-def _reject_cloud_args(
-    *, pool: Any = None, claim_spec: Any = None, replicas: int = 1, service: str = ENV_SERVICE
-) -> None:
-    """``pool=``, ``claim_spec=``, ``replicas=`` and ``service=`` only meant
-    something on Cua Cloud, which has ended."""
-    if pool is not None or claim_spec is not None or replicas != 1 or service != ENV_SERVICE:
+def _reject_pool(pool: Optional[str]) -> None:
+    """``pool=`` named a Cua Cloud pool, and Cua Cloud has ended."""
+    if pool is not None:
         raise CloudEnded()
 
 
 def _is_local_sandbox(name: str) -> bool:
     """Whether ``name`` is a local sandbox (a state file that is not a stale
-    Cua Cloud claim record)."""
+    record of a Cua Cloud claim, which an older release left behind)."""
     from cua_sandbox import sandbox_state
 
     state = sandbox_state.load(name)
@@ -244,16 +239,6 @@ class SandboxInfo:
         if self.id is None and self.location and self.name:
             self.id = f"{self.location}:{self.name}"
 
-    def __getattr__(self, name: str) -> Any:
-        if name == "pool":
-            warnings.warn(
-                "SandboxInfo.pool is deprecated; use provider_details.get('pool')",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return self.__dict__.get("provider_details", {}).get("pool")
-        raise AttributeError(name)
-
 
 _PHASE_WORDS = {
     "PROVISIONING": "provisioning",
@@ -263,46 +248,11 @@ _PHASE_WORDS = {
 }
 
 
-def _cloud_only_args(
-    *,
-    pool: Any = None,
-    warm: Any = None,
-    max_pool_size: Any = None,
-    claim_ttl: Any = None,
-    claim_spec: Any = None,
-    api_key: Any = None,
-    replicas: int = 1,
-    service: str = ENV_SERVICE,
-    region: str = "us-east-1",
-    keep_alive_minutes: Any = None,
-    progress: Any = None,
-) -> list[str]:
-    """The keyword arguments given that only meant something on Cua Cloud, which
-    has ended: given without ``on=``/``local=`` they select the cloud, and
-    placement raises :class:`CloudEnded`."""
-    given = {
-        "pool": pool is not None,
-        "warm": warm is not None,
-        "max_pool_size": max_pool_size is not None,
-        "claim_ttl": claim_ttl is not None,
-        "claim_spec": claim_spec is not None,
-        "api_key": api_key is not None,
-        "replicas": replicas != 1,
-        "service": service != ENV_SERVICE,
-        "region": region != "us-east-1",
-        "keep_alive_minutes": keep_alive_minutes is not None,
-        "progress": progress is not None,
-    }
-    return [k for k, v in given.items() if v]
-
-
 def _apply_on(
     on: Optional[str],
     local: Optional[bool],
     runtime: Any,
     *,
-    cloud: Optional[CloudOptions] = None,
-    pool: Any = None,
     cpu: Optional[int] = None,
     memory_mb: Optional[int] = None,
     time_to_start: Optional[float] = None,
@@ -311,29 +261,23 @@ def _apply_on(
     (``"e2b"``, ``"daytona"``, ``"modal"``; opt-in SDK builds) or your own
     cloud (``"aws"``, ``"gcp"``, ``"modal"``; connect it with ``cua cloud
     connect``). ``"local"``, ``"direct:<addr>"`` and ``"relay:<id>"`` fall
-    through to the placement model (:mod:`cua_sandbox._placement`); so do
-    ``"cloud"`` and ``"fleet"``, which raise :class:`CloudEnded`. Returns
+    through to the placement model (:mod:`cua_sandbox._placement`); so does
+    ``"cloud"``, which raises :class:`CloudEnded`. Returns
     ``(on, local, runtime)``; a contrib provider becomes ``(None, True,
     ContribRuntime(...))``, a local sandbox served through the provider's SDK
     handle."""
     if on is None or not str(on).strip():
         return on, local, runtime
     word = str(on).strip().lower()
-    if (
-        word in ("local", "cloud", "fleet")
-        or word.startswith("direct:")
-        or word.startswith("relay:")
-    ):
+    if word in ("local", "cloud") or word.startswith("direct:") or word.startswith("relay:"):
         return on, local, runtime
     from cua_sandbox.runtime.contrib import ContribRuntime, contrib_locations
 
     if word not in contrib_locations():
         # Not a known provider: let the placement model raise the proper error.
         return on, local, runtime
-    if local is not None or runtime is not None or cloud is not None or pool is not None:
-        raise InvalidArgument(
-            f"on={word!r} picks the provider; drop local=, runtime=, cloud= and pool="
-        )
+    if local is not None or runtime is not None:
+        raise InvalidArgument(f"on={word!r} picks the provider; drop local= and runtime=")
     kwargs: dict[str, Any] = {"ephemeral": True, "cpus": cpu, "memory_mb": memory_mb}
     if time_to_start is not None:
         kwargs["ready_timeout"] = float(time_to_start)
@@ -347,8 +291,6 @@ def _place_new(
     local: Optional[bool],
     kind: Optional[str],
     runtime: Any,
-    cloud: Optional[CloudOptions],
-    cloud_only: list[str],
 ) -> "tuple[_placement.Placement, Optional[Image]]":
     """Where, what kind and which engine for a new sandbox (see
     :mod:`cua_sandbox._placement`), and the image with the resolved kind."""
@@ -357,8 +299,6 @@ def _place_new(
         local=local,
         kind=kind,
         runtime=runtime,
-        cloud=cloud,
-        cloud_only=cloud_only,
         image_kind=image.kind if image is not None else None,
     )
     if image is not None and place.kind and place.kind != image.kind:
@@ -763,16 +703,6 @@ class Sandbox:
         return [h for h in found if h is not None]
 
     @property
-    def claim_name(self) -> str | None:
-        """Always ``None``: claims belonged to Cua Cloud, which has ended."""
-        return None
-
-    @property
-    def pool_name(self) -> str | None:
-        """Always ``None``: pools belonged to Cua Cloud, which has ended."""
-        return None
-
-    @property
     def location(self) -> str:
         """Where it runs: ``local`` or ``direct``."""
         if self._direct_url is not None:
@@ -864,32 +794,6 @@ class Sandbox:
         """Revokes a URL from :meth:`public_url` (or its id)."""
         handle = await self._native_handle()
         await handle.revoke_public_url(url if isinstance(url, str) else url.id)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Always raises :class:`CloudEnded`: durable references were Cua Cloud
-        claims."""
-        raise CloudEnded()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "_ConnectResult":
-        """Always raises :class:`CloudEnded`: durable references were Cua Cloud
-        claims."""
-        raise CloudEnded()
-
-    async def keep_alive(self, *, minutes: float) -> None:
-        """Always raises :class:`CloudEnded`: only Cua Cloud claims had a
-        shutdown time to push back."""
-        raise CloudEnded()
-
-    async def close(self) -> None:
-        """Always raises :class:`CloudEnded`: only Cua Cloud claims were
-        released. ``destroy()`` deletes a local sandbox."""
-        raise CloudEnded()
-
-    async def snapshot(self, name: str | None = None, stateful: bool = False) -> "Image":
-        """Always raises :class:`CloudEnded`: snapshots were a Cua Cloud
-        feature."""
-        raise CloudEnded()
 
     async def destroy(self) -> None:
         """Disconnect and permanently delete the sandbox (VM/container)."""
@@ -1010,13 +914,8 @@ class Sandbox:
         cls,
         image: Image | None = None,
         *,
-        pool: "Pool | str | None" = None,
+        pool: Optional[str] = None,
         name: Optional[str] = None,
-        replicas: int = 1,
-        service: str = ENV_SERVICE,
-        claim_spec: Any = None,
-        keep_alive_minutes: float | None = None,
-        api_key: Optional[str] = None,
         on: Optional[str] = None,
         local: Optional[bool] = None,
         kind: Optional[str] = None,
@@ -1024,21 +923,15 @@ class Sandbox:
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
-        region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         server_port: Optional[int] = None,
         telemetry_enabled: bool = True,
-        warm: Optional[bool] = None,
-        max_pool_size: Optional[int] = None,
-        claim_ttl: "float | timedelta | None" = None,
-        progress: Optional[Callable[[Any], Any]] = None,
         command: Optional[list[str]] = None,
         sidecars: Optional[list] = None,
         env: Optional[dict[str, str]] = None,
         services: Optional[dict[str, int]] = None,
         wait_for: WaitFor = None,
-        cloud: Optional[CloudOptions] = None,
         memory: "str | int | None" = None,
         network: Optional[str] = None,
         overlay: "dict[str, Any] | list | None" = None,
@@ -1052,9 +945,8 @@ class Sandbox:
           user default applies (``CUA_DEFAULT_ON``, else ``cua config set
           default.on`` in ``$CUA_HOME/config.toml``, else local, with a
           one-time notice that ``CUA_QUIET_DEFAULT=1`` hides). Cua Cloud has
-          ended: ``on="cloud"``, ``local=False``, ``cloud=`` and the other
-          Cua Cloud arguments (``pool``, ``claim_spec``, ``api_key``, ...)
-          raise :class:`CloudEnded`.
+          ended: ``on="cloud"``, ``local=False`` and ``pool=`` raise
+          :class:`CloudEnded`.
         * ``kind``: ``"auto"``, ``"container"`` or ``"vm"``. Unset: the
           image's ``kind`` when it has one, else ``default.kind``, else auto
           (macOS and Windows images are VMs, a container rootfs is a
@@ -1094,51 +986,25 @@ class Sandbox:
           it is restarted. If it fails, the sandbox is deleted and the error
           raised. See :meth:`overlay`.
 
-        ``warm``, ``max_pool_size``, ``claim_ttl``, ``progress`` and
-        ``keep_alive_minutes`` configured Cua Cloud claims; a local sandbox
-        ignores them.
-
         ``server_port`` names a port your image serves itself: it becomes the
         readiness probe. Leave it unset for the default, daemon-agnostic
         readiness (the provider reports the sandbox running; cua-spacesd on
         3211 is used by the interfaces when the image has it).
         """
         validate_server_port(server_port)
+        _reject_pool(pool)
         on, local, runtime = _apply_on(
             on,
             local,
             runtime,
-            cloud=cloud,
-            pool=pool,
             cpu=cpu,
             memory_mb=memory_mb,
             time_to_start=time_to_start,
         )
-        place, image = _place_new(
-            image,
-            on=on,
-            local=local,
-            kind=kind,
-            runtime=runtime,
-            cloud=cloud,
-            cloud_only=_cloud_only_args(
-                pool=pool,
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                claim_spec=claim_spec,
-                api_key=api_key,
-                replicas=replicas,
-                service=service,
-                region=region,
-                keep_alive_minutes=keep_alive_minutes,
-                progress=progress,
-            ),
-        )
+        place, image = _place_new(image, on=on, local=local, kind=kind, runtime=runtime)
         # The engine (a string) and a legacy local Runtime object.
         engine, runtime = place.runtime, place.legacy_runtime
         network = check_network(network)
-        _reject_cloud_args(pool=pool, claim_spec=claim_spec, replicas=replicas, service=service)
         if memory is not None:
             if memory_mb is not None:
                 raise ValueError("pass memory= or memory_mb=, not both")
@@ -1152,13 +1018,11 @@ class Sandbox:
             image=image,
             name=name,
             ephemeral=False,
-            api_key=api_key,
             local=True,
             runtime=runtime,
             cpu=cpu,
             memory_mb=memory_mb,
             disk_gb=disk_gb,
-            region=region,
             time_to_start=time_to_start,
             request_timeout=request_timeout,
             server_port=server_port,
@@ -1188,7 +1052,6 @@ class Sandbox:
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
-        region: str = "us-east-1",
         telemetry_enabled: bool = True,
     ) -> "_ConnectResult":
         """Connect to an existing sandbox by name.
@@ -1210,7 +1073,6 @@ class Sandbox:
             ws_url: Removed (the computer-server WebSocket protocol is gone).
             http_url: Base URL of a cua-spacesd (same as ``url``).
             container_name: Unused; kept for compatibility.
-            region: Unused; kept for compatibility.
 
         Examples::
 
@@ -1245,7 +1107,6 @@ class Sandbox:
                 cpu=cpu,
                 memory_mb=memory_mb,
                 disk_gb=disk_gb,
-                region=region,
                 telemetry_enabled=telemetry_enabled,
             )
 
@@ -1257,14 +1118,8 @@ class Sandbox:
         cls,
         image: Image | None = None,
         *,
-        pool: "Pool | str | None" = None,
+        pool: Optional[str] = None,
         name: Optional[str] = None,
-        replicas: int = 1,
-        service: str = ENV_SERVICE,
-        claim_spec: Any = None,
-        keep_alive_minutes: float | None = None,
-        keep_pool: bool = False,
-        api_key: Optional[str] = None,
         on: Optional[str] = None,
         local: Optional[bool] = None,
         kind: Optional[str] = None,
@@ -1272,66 +1127,37 @@ class Sandbox:
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
-        region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         server_port: Optional[int] = None,
         telemetry_enabled: bool = True,
-        warm: Optional[bool] = None,
-        max_pool_size: Optional[int] = None,
-        claim_ttl: "float | timedelta | None" = None,
-        progress: Optional[Callable[[Any], Any]] = None,
         command: Optional[list[str]] = None,
         sidecars: Optional[list] = None,
         env: Optional[dict[str, str]] = None,
         services: Optional[dict[str, int]] = None,
         wait_for: WaitFor = None,
-        cloud: Optional[CloudOptions] = None,
         memory: "str | int | None" = None,
         network: Optional[str] = None,
     ) -> AsyncIterator["Sandbox"]:
         """A local sandbox that is deleted when the ``async with`` block exits.
 
         Takes the same ``on``/``local``, ``kind``, ``runtime``, ``command``,
-        ``env``, ``services``, ``wait_for``, ``cloud``, ``memory`` and
-        ``network`` options as :meth:`create`. ``keep_pool`` is deprecated and
-        has no effect.
+        ``env``, ``services``, ``wait_for``, ``memory`` and ``network``
+        options as :meth:`create`.
         """
+        _reject_pool(pool)
         on, local, runtime = _apply_on(
             on,
             local,
             runtime,
-            cloud=cloud,
-            pool=pool,
             cpu=cpu,
             memory_mb=memory_mb,
             time_to_start=time_to_start,
         )
-        place, image = _place_new(
-            image,
-            on=on,
-            local=local,
-            kind=kind,
-            runtime=runtime,
-            cloud=cloud,
-            cloud_only=_cloud_only_args(
-                pool=pool,
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                claim_spec=claim_spec,
-                api_key=api_key,
-                replicas=replicas,
-                service=service,
-                region=region,
-                keep_alive_minutes=keep_alive_minutes,
-                progress=progress,
-            ),
-        )
+        place, image = _place_new(image, on=on, local=local, kind=kind, runtime=runtime)
         # The engine (a string) and a legacy local Runtime object.
         engine, runtime = place.runtime, place.legacy_runtime
         network = check_network(network)
-        _reject_cloud_args(pool=pool, claim_spec=claim_spec, replicas=replicas, service=service)
         if memory is not None:
             if memory_mb is not None:
                 raise ValueError("pass memory= or memory_mb=, not both")
@@ -1345,13 +1171,11 @@ class Sandbox:
             image=image,
             name=name,
             ephemeral=True,
-            api_key=api_key,
             local=True,
             runtime=runtime,
             cpu=cpu,
             memory_mb=memory_mb,
             disk_gb=disk_gb,
-            region=region,
             time_to_start=time_to_start,
             request_timeout=request_timeout,
             server_port=server_port,
@@ -1740,7 +1564,6 @@ class Sandbox:
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
-        region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         server_port: Optional[int] = None,
@@ -2061,7 +1884,7 @@ _ADJECTIVES = [
     "chilly",
     "dim",
     "eerie",
-    "fleet",
+    "frosty",
     "gnarly",
     "hushed",
     "inky",
@@ -2344,11 +2167,6 @@ async def sandbox(
     cpu: Optional[int] = None,
     memory_mb: Optional[int] = None,
     disk_gb: Optional[int] = None,
-    region: str = "us-east-1",
-    warm: Optional[bool] = None,
-    max_pool_size: Optional[int] = None,
-    claim_ttl: Any = None,
-    progress: Optional[Callable[[Any], Any]] = None,
 ) -> AsyncIterator[Sandbox]:
     """Async context manager for a sandboxed environment.
 
@@ -2363,22 +2181,7 @@ async def sandbox(
     if image is not None and not (url or http_url or ws_url):
         # A new sandbox: the same placement rules as Sandbox.create.
         on, local, runtime = _apply_on(on, local, runtime, cpu=cpu, memory_mb=memory_mb)
-        place, image = _place_new(
-            image,
-            on=on,
-            local=local,
-            kind=kind,
-            runtime=runtime,
-            cloud=None,
-            cloud_only=_cloud_only_args(
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                api_key=api_key,
-                region=region,
-                progress=progress,
-            ),
-        )
+        place, image = _place_new(image, on=on, local=local, kind=kind, runtime=runtime)
         local, engine, runtime = place.local, place.runtime, place.legacy_runtime
     elif on is not None:
         local = _placement.resolve(on=on, local=local).local
@@ -2397,7 +2200,6 @@ async def sandbox(
         cpu=cpu,
         memory_mb=memory_mb,
         disk_gb=disk_gb,
-        region=region,
         engine=engine,
     )
     try:

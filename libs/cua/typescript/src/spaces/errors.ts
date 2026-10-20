@@ -108,13 +108,6 @@ const CUA_TAGS: Record<string, SpacesErrorCode> = {
   Unsupported: 'unsupported',
   SpacesdNotAvailable: 'spacesd_not_available',
   Timeout: 'timeout',
-  Fleet: 'http',
-  // Fleet's admission refused a size over the account's limits (Fleet's
-  // message names the limit): pick a smaller size.
-  FleetAdmissionDenied: 'usage',
-  // Out of Cua Cloud credit (the message names the billing page): add
-  // credit there, or run locally.
-  CloudCreditExhausted: 'usage',
   Runtime: 'space_command',
   Env: 'space_command',
   Http: 'http',

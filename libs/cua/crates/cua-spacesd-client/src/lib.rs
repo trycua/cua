@@ -10,10 +10,10 @@
 //! # let _ = png; Ok(()) }
 //! ```
 //!
-//! - Endpoints: `http(s)://host:port`, bare `host:port` (default 3211), a
-//!   Fleet gateway service URL, or a relay URL (`https://relay/m/<id>`).
+//! - Endpoints: `http(s)://host:port`, bare `host:port` (default 3211), or a
+//!   relay URL (`https://relay/m/<id>`).
 //! - Transports: native gRPC (HTTP/2, h2c or TLS) or gRPC-Web over
-//!   HTTP/1.1 (Fleet gateway, relays, anything HTTP/1-only). `Auto` probes
+//!   HTTP/1.1 (relays, anything HTTP/1-only). `Auto` probes
 //!   `GetCapabilities` over HTTP/2 and falls back to gRPC-Web.
 //! - Proxies: RPC and raw HTTP connections honor `HTTP_PROXY` / `HTTPS_PROXY`,
 //!   then `ALL_PROXY`, with `NO_PROXY` exclusions (including hosts and CIDRs).
@@ -24,8 +24,8 @@
 //!   a selected proxy failure never falls back to a direct connection. This does
 //!   not change the separate WebSocket media and tunnel transports.
 //! - Auth: `authorization: Bearer <token>`; `x-cua-principal-bin`; through
-//!   the Fleet gateway the Fleet bearer plus `X-Cua-Fleet-Claim`, with the
-//!   env token moved to `x-cua-env-authorization`.
+//!   a gateway (the relay) the gateway bearer, with the env token moved to
+//!   `x-cua-env-authorization`.
 //! - Errors: `google.rpc.Status` + `cua.env.v1.ErrorInfo` → [`Error`].
 
 mod client;

@@ -197,7 +197,7 @@ runs teleport; an SDK runtime without Cua Spaces raises
     ```
   </Tab>
   <Tab value="Rust">
-    ```rust test="excerpt" id="rs-teleport" source="samples/openkoalabot-example-tauri/src-tauri/core/src/teleport.rs#rs-teleport"
+    ```rust test="excerpt" id="rs-teleport" source="examples/openkoalabot-example-tauri/src-tauri/core/src/teleport.rs#rs-teleport"
     let v = core
         .spaces()
         .call_extension(
@@ -216,7 +216,7 @@ runs teleport; an SDK runtime without Cua Spaces raises
     ```
   </Tab>
   <Tab value="Swift">
-    ```swift test="excerpt" id="sw-teleport" source="samples/cua-bots-macos/Sources/CuaBotsCua/Keyvault.swift#sw-teleport"
+    ```swift test="excerpt" id="sw-teleport" source="examples/cua-bots-macos/Sources/CuaBotsCua/Keyvault.swift#sw-teleport"
     let receipt = try await space.teleport(app: item.providerId, scope: nil,
                                            approver: SelectItems(label: item.label))
     ```

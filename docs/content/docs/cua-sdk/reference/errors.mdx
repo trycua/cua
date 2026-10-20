@@ -107,9 +107,6 @@ try {
 | [`Unsupported`](#unsupported) | `unsupported: <detail>` | Not supported by this provider, guest or build. |
 | [`SpacesdNotAvailable`](#spacesdnotavailable) | `cua-spacesd is not available: <detail>` | No cua-spacesd answered in the sandbox or at the URL. |
 | [`Timeout`](#timeout) | `timed out: <detail>` | A deadline elapsed. |
-| [`Fleet`](#fleet) | `fleet: <detail>` | Fleet API failure. |
-| [`FleetAdmissionDenied`](#fleetadmissiondenied) | `fleet admission denied: <detail>` | Fleet's admission refused the request. |
-| [`CloudCreditExhausted`](#cloudcreditexhausted) | `<detail>` | The account is out of Cua Cloud credit: no credit left, and no card or plan. |
 | [`Runtime`](#runtime) | `local runtime: <detail>` | Local runtime failure. |
 | [`Env`](#env) | `env: <detail>` | spacesd call failure. |
 | [`Http`](#http) | `http: <detail>` | HTTP failure talking to a sandbox service. |
@@ -121,8 +118,6 @@ try {
 | [`CapabilityMissing`](#capabilitymissing) | `capability missing: <detail>` | The Space's spacesd reports a feature this call needs as unsupported (the message names it). |
 | [`HostCapabilityMissing`](#hostcapabilitymissing) | `host capability missing: <detail>` | A host-side prerequisite (app-session providers, an operator display, a local runtime) is not available. |
 | [`TeleportRefused`](#teleportrefused) | `teleport refused: <detail>` | The teleport consent gate refused (or the approver declined). |
-| [`PoolSpecMismatch`](#poolspecmismatch) | `pool spec mismatch: <detail>` | A named cloud pool's template differs from the requested sandbox fields. |
-| [`ClaimSecretsNotDelivered`](#claimsecretsnotdelivered) | `claim secrets not delivered: <detail>` | A claim bound but its per-claim secrets (the env token) never reached the sandbox. |
 | [`Internal`](#internal) | `internal: <detail>` | Bug or I/O failure. |
 | [`AmbiguousSandbox`](#ambiguoussandbox) | `ambiguous sandbox name: <detail>` | A bare sandbox name matches sandboxes in more than one location. |
 | [`InsufficientDisk`](#insufficientdisk) | `insufficient disk: <detail>` | A pull, build or VM create would leave less than the configured minimum free disk space (`CUA_DISK_MIN_FREE`, default 5 GiB); nothing was written. |
@@ -139,7 +134,7 @@ argument and what it accepts.
 
 **Message** `invalid argument: <detail>`
 
-**Raised by** [`canonical_image_tier`](/cua-sdk/reference/image#canonical_image_tier), [`error_doc_url`](/cua-sdk/reference/cua#error_doc_url), [`fleet_resolve_runtime`](/cua-sdk/reference/fleet/images#fleet_resolve_runtime), [`qualify_sandbox_ref`](/cua-sdk/reference/sandbox#qualify_sandbox_ref)
+**Raised by** [`canonical_image_tier`](/cua-sdk/reference/image#canonical_image_tier), [`error_doc_url`](/cua-sdk/reference/cua#error_doc_url), [`qualify_sandbox_ref`](/cua-sdk/reference/sandbox#qualify_sandbox_ref)
 
 ## `InvalidPlacement`
 
@@ -184,7 +179,7 @@ message names what is missing.
 
 **Message** `unsupported: <detail>`
 
-**Raised by** [`Sandbox.guest_sh`](/cua-sdk/reference/spacesd#sandboxguest_sh), [`fleet_image_variant`](/cua-sdk/reference/fleet/images#fleet_image_variant), [`fleet_resolve_runtime`](/cua-sdk/reference/fleet/images#fleet_resolve_runtime), [`resolve_image`](/cua-sdk/reference/image#resolve_image)
+**Raised by** [`Sandbox.guest_sh`](/cua-sdk/reference/spacesd#sandboxguest_sh), [`resolve_image`](/cua-sdk/reference/image#resolve_image)
 
 ## `SpacesdNotAvailable`
 
@@ -205,40 +200,6 @@ or reach the sandbox through the services it declares.
 the sandbox or service actually starts.
 
 **Message** `timed out: <detail>`
-
-## `Fleet`
-
-**Cause** Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
-this.
-
-**Fix** Use a local sandbox or your own computer; see the Cua Cloud has
-ended guide.
-
-**Message** `fleet: <detail>`
-
-## `FleetAdmissionDenied`
-
-**Cause** Fleet's admission refused the request. Cua Cloud has ended, so the SDK
-no longer raises this.
-
-**Fix** Use a local sandbox or your own computer; see the Cua Cloud has
-ended guide.
-
-**Message** `fleet admission denied: <detail>`
-
-**Raised by** [`fleet_size_limits`](/cua-sdk/reference/fleet/images#fleet_size_limits)
-
-## `CloudCreditExhausted`
-
-**Cause** The account is out of Cua Cloud credit: no credit left, and no card
-or plan. New cloud sandboxes and Spaces are refused; running ones
-keep running, and local ones are never affected. The message ends
-with the website billing page's URL.
-
-**Fix** Add credit on that page (a plan, or a card for pay as you go),
-or run the sandbox locally.
-
-**Message** `<detail>`
 
 ## `Runtime`
 
@@ -351,31 +312,6 @@ scope.
 **Message** `teleport refused: <detail>`
 
 **Raised by** [`Space.teleport`](/cua-sdk/reference/spaces/space#spaceteleport)
-
-## `PoolSpecMismatch`
-
-**Cause** A named cloud pool's template differs from the requested sandbox
-fields. Cua Cloud has ended, so the SDK no longer raises this.
-
-**Fix** Use a local sandbox or your own computer; see the Cua Cloud has
-ended guide.
-
-**Message** `pool spec mismatch: <detail>`
-
-**Raised by** [`Fleet.check_pool_spec`](/cua-sdk/reference/fleet#fleetcheck_pool_spec)
-
-## `ClaimSecretsNotDelivered`
-
-**Cause** A claim bound but its per-claim secrets (the env token) never
-reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
-this.
-
-**Fix** Use a local sandbox or your own computer; see the Cua Cloud has
-ended guide.
-
-**Message** `claim secrets not delivered: <detail>`
-
-**Raised by** [`Fleet.acquire_with`](/cua-sdk/reference/fleet/claims#fleetacquire_with)
 
 ## `Internal`
 

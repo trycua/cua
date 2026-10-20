@@ -1298,9 +1298,6 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::Unsupported(m) => E::Unsupported(f(m)),
         E::SpacesdNotAvailable(m) => E::SpacesdNotAvailable(f(m)),
         E::Timeout(m) => E::Timeout(f(m)),
-        E::Fleet(m) => E::Fleet(f(m)),
-        E::FleetAdmissionDenied(m) => E::FleetAdmissionDenied(f(m)),
-        E::CloudCreditExhausted(m) => E::CloudCreditExhausted(f(m)),
         E::Runtime(m) => E::Runtime(f(m)),
         E::Env(m) => E::Env(f(m)),
         E::Http(m) => E::Http(f(m)),
@@ -1312,8 +1309,6 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::CapabilityMissing(m) => E::CapabilityMissing(f(m)),
         E::HostCapabilityMissing(m) => E::HostCapabilityMissing(f(m)),
         E::TeleportRefused(m) => E::TeleportRefused(f(m)),
-        E::PoolSpecMismatch(m) => E::PoolSpecMismatch(f(m)),
-        E::ClaimSecretsNotDelivered(m) => E::ClaimSecretsNotDelivered(f(m)),
         E::Internal(m) => E::Internal(f(m)),
         E::AmbiguousSandbox(m) => E::AmbiguousSandbox(f(m)),
         E::InsufficientDisk(m) => E::InsufficientDisk(f(m)),
@@ -1489,22 +1484,7 @@ async fn create(
     {
         eprintln!("{}", kept_message(&info));
     }
-    let sb = created
-        .map_err(|e| match e {
-            // A default placement that is not configured: say how to go back
-            // (once: some SDK paths have said it already).
-            CuaError::ProviderNotConfigured(mut m) => {
-                if let Some(hint) =
-                    cua_sandbox_core::settings::cloud_default_hint(&placement.on_source)
-                    && !m.contains(&hint)
-                {
-                    m = format!("{m}; {hint}");
-                }
-                CuaError::ProviderNotConfigured(m)
-            }
-            other => other,
-        })
-        .map_err(|e| on_backend(e, &label))?;
+    let sb = created.map_err(|e| on_backend(e, &label))?;
     let i = sb.info();
     if i.location == "direct" {
         save_env_token(&i.name, token.as_deref())?;
@@ -1681,7 +1661,7 @@ pub async fn run(
             let _ = all; // deprecated no-op: everything is the default
             return ls(cua, local, !no_size, json_global, out).await;
         }
-        // Extended a Fleet claim's lease: Cua Cloud has ended.
+        // Extended a Cua Cloud sandbox's lease: Cua Cloud has ended.
         SandboxCmd::KeepAlive(_) => return Err(util::cloud_ended()),
         SandboxCmd::Cp { src, dst, at } => return cp(cua, &src, &dst, at, json_global, out).await,
         SandboxCmd::Url {

@@ -159,7 +159,7 @@ def block(src, name):
 
 
 out = [
-    # cua-spaces-ffi is FSL-1.1-MIT (see LICENSING.md and scripts/spdx-headers.py).
+    # cua-spaces-ffi is FSL-1.1-MIT (see legal/LICENSING.md and scripts/spdx-headers.py).
     "// SPDX-License-Identifier: FSL-1.1-MIT",
     "// Copyright (c) 2026 Cua AI, Inc.",
     "",

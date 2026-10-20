@@ -470,7 +470,7 @@ pub struct SpaceInfo {
     pub id: String,
     /// Display name.
     pub name: String,
-    /// `fleet`, `local` or `direct`.
+    /// `local`, `direct` or `relay`.
     pub provider: Provider,
     /// spacesd version at the last handshake.
     pub spacesd_version: String,

@@ -208,7 +208,7 @@ Request for `SystemService.Init`.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `token` | 1 | `string` | Access token to install. If the driver has no token yet (first claim), the call must arrive over an already-authenticated channel such as the Fleet gateway or loopback. If a token is configured, the call must be authenticated with it, and a different value here rotates it. Empty leaves the token unchanged. |
+| `token` | 1 | `string` | Access token to install. If the driver has no token yet (first claim), the call must arrive over an already-authenticated channel such as a gateway or loopback. If a token is configured, the call must be authenticated with it, and a different value here rotates it. Empty leaves the token unchanged. |
 | `env` | 2 | map of `string` to `string` | Environment variables added to every process started afterwards. Keys present here replace earlier values; an empty value unsets the key. |
 | `default_user` | 3 | `string` | Default OS user for processes and file operations. Empty keeps the current default (the driver's own user). |
 | `default_workdir` | 4 | `string` | Default working directory for processes. Empty keeps the user's home. |
@@ -393,7 +393,7 @@ How the guest is hosted.
 | --- | --- | --- |
 | `RUNTIME_UNSPECIFIED` | 0 | Not reported. |
 | `RUNTIME_UNKNOWN` | 1 | Could not be determined. |
-| `RUNTIME_KUBEVIRT` | 2 | A KubeVirt virtual machine (Fleet). |
+| `RUNTIME_KUBEVIRT` | 2 | A KubeVirt virtual machine. |
 | `RUNTIME_GVISOR` | 3 | A gVisor (runsc) sandboxed container. |
 | `RUNTIME_LUME` | 4 | A Lume (Apple Virtualization.framework) virtual machine. |
 | `RUNTIME_QEMU` | 5 | A QEMU virtual machine outside KubeVirt. |
@@ -774,8 +774,8 @@ Machine-readable error detail, packed as `google.protobuf.Any` inside the
 
 ### KeepAlive
 
-Periodic empty message sent on long-lived server streams so proxies (the
-Fleet gateway, load balancers) do not time out an idle stream. Clients
+Periodic empty message sent on long-lived server streams so proxies (gateways,
+load balancers) do not time out an idle stream. Clients
 ignore it apart from resetting their own liveness timers.
 
 No fields.

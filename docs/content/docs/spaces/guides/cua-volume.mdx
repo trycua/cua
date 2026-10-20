@@ -224,7 +224,7 @@ From [the examples in other languages](/spaces/guides/create-a-space-with-the-sd
 
 <Tabs items={['TypeScript', 'Rust', 'Swift']}>
   <Tab value="TypeScript">
-    ```ts test="excerpt" id="ts-send-file" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-send-file"
+    ```ts test="excerpt" id="ts-send-file" source="examples/openkoalabot-example-ts/src/core/app.ts#ts-send-file"
     const report = await this.space.sendFile(localPath, {
       targetDirectory: subdir,
       respectIgnoreFiles: true,
@@ -234,7 +234,7 @@ From [the examples in other languages](/spaces/guides/create-a-space-with-the-sd
     ```
   </Tab>
   <Tab value="Rust">
-    ```rust test="excerpt" id="rs-send-file" source="samples/openkoalabot-example-tauri/src-tauri/core/src/files.rs#rs-send-file"
+    ```rust test="excerpt" id="rs-send-file" source="examples/openkoalabot-example-tauri/src-tauri/core/src/files.rs#rs-send-file"
     let report: SendFileReport = space
         .send_file(
             path,
@@ -247,7 +247,7 @@ From [the examples in other languages](/spaces/guides/create-a-space-with-the-sd
     ```
   </Tab>
   <Tab value="Swift">
-    ```swift test="excerpt" id="sw-send-file" source="samples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Scenario/ScenarioRunner.swift#sw-send-file"
+    ```swift test="excerpt" id="sw-send-file" source="examples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Scenario/ScenarioRunner.swift#sw-send-file"
     let report = try await handle().sendFile(
         localPath: file.path,
         options: SpaceSendFileOptions(targetDirectory: step["subdir"] as? String,

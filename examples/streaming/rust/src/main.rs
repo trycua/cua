@@ -543,10 +543,7 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     };
     let result = async {
-        let cua = Cua::embedded(CuaConfig {
-            fleet_from_env: false,
-            ..CuaConfig::default()
-        })?;
+        let cua = Cua::embedded(CuaConfig::default())?;
         let env = cua.spacesd(url, Some(token)).await?;
         let run = async {
             match std::env::var("CUA_BENCH_JSONL") {

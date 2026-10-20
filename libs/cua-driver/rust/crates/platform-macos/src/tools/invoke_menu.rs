@@ -561,6 +561,11 @@ enum BackgroundPressError {
         is_save: bool,
     },
     Other(String),
+    UnboundWindow {
+        requested: u32,
+        focused: Option<u32>,
+        main: Option<u32>,
+    },
 }
 
 /// What the background route knows about the pressed item.
@@ -582,6 +587,57 @@ unsafe fn item_is_save(item: AXUIElementRef) -> bool {
 const ENABLE_WAIT: Duration = Duration::from_millis(600);
 const ENABLE_POLL: Duration = Duration::from_millis(40);
 
+/// AppKit resolves document menus against its key/main window, not the ID
+/// supplied by a caller. Unknown or sibling context must fail before lookup.
+fn require_menu_window(
+    requested: u32,
+    focused: Option<u32>,
+    main: Option<u32>,
+) -> Result<(), BackgroundPressError> {
+    if focused == Some(requested) && main == Some(requested) {
+        Ok(())
+    } else {
+        Err(BackgroundPressError::UnboundWindow {
+            requested,
+            focused,
+            main,
+        })
+    }
+}
+
+unsafe fn require_live_menu_window(
+    app: AXUIElementRef,
+    requested: u32,
+) -> Result<(), BackgroundPressError> {
+    let read = |name| {
+        let window = copy_element_attr(app, name)?;
+        let id = ax_get_window_id(window);
+        CFRelease(window as CFTypeRef);
+        id
+    };
+    require_menu_window(requested, read("AXFocusedWindow"), read("AXMainWindow"))
+}
+
+fn unbound_menu_window(
+    pid: i32,
+    requested: u32,
+    focused: Option<u32>,
+    main: Option<u32>,
+) -> ToolResult {
+    super::background_refusal_result(
+        pid,
+        requested,
+        &cua_driver_core::background_input::BackgroundRefusal {
+            code: super::WINDOW_NOT_KEY,
+            reason: format!(
+                "invoke_menu: requested window {requested} is not the confirmed document menu context \
+                 (focused={focused:?}, main={main:?}); no menu action was dispatched"
+            ),
+            advice: Some("foreground"),
+        },
+    )
+}
+
 /// Resolve the whole path from the app's live menu bar without opening any
 /// level, then perform the final item's action. Used for a background app:
 /// opening a menu-bar menu would take key focus and draw over the user's
@@ -598,6 +654,10 @@ unsafe fn invoke_path_in_background(
         ));
     }
     set_messaging_timeout(app);
+    if let Err(error) = require_live_menu_window(app, window_id) {
+        CFRelease(app as CFTypeRef);
+        return Err(error);
+    }
     let menu_bar = copy_element_attr(app, "AXMenuBar");
     CFRelease(app as CFTypeRef);
     let menu_bar = menu_bar.ok_or_else(|| {
@@ -610,14 +670,12 @@ unsafe fn invoke_path_in_background(
     set_messaging_timeout(target);
     let is_save = item_is_save(target);
     let result = (|| {
-        // AppKit validates menu items against the key window. Make the target
-        // window AppKit-key without raising it or touching the user's window
-        // (the focus record only), so items that need a key window enable.
+        // Preserve enablement priming for an already-bound document. The
+        // context check above prevents this from switching to a sibling after
+        // resolving that sibling's menu; the check below revalidates dispatch.
         if copy_bool_attr(target, "AXEnabled") == Some(false)
             && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
         {
-            // AppKit revalidates the item once the window is key; wait for it
-            // instead of reading the stale flag after a fixed pause.
             let mut waited = Duration::ZERO;
             while waited < ENABLE_WAIT && copy_bool_attr(target, "AXEnabled") == Some(false) {
                 std::thread::sleep(ENABLE_POLL);
@@ -639,6 +697,18 @@ unsafe fn invoke_path_in_background(
                 "invoke_menu: the final menu item has no usable native menu action".to_owned(),
             )
         })?;
+        // Revalidate after path resolution, immediately before the only
+        // dispatch. Never fix a mismatch by silently switching documents.
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return Err(BackgroundPressError::Other(
+                "invoke_menu: target application is unavailable before dispatch".into(),
+            ));
+        }
+        set_messaging_timeout(app);
+        let bound = require_live_menu_window(app, window_id);
+        CFRelease(app as CFTypeRef);
+        bound?;
         let error = perform_action(target, action);
         if error != kAXErrorSuccess {
             return Err(BackgroundPressError::Other(format!(
@@ -706,6 +776,7 @@ pub(super) async fn run_in_background(
     path: Vec<String>,
     request: MenuRequest,
 ) -> ToolResult {
+    let _mutation = super::acquire_background_mutation(pid).await;
     let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
         .await
         .ok()
@@ -813,6 +884,11 @@ pub(super) async fn run_in_background(
         Ok(Err(BackgroundPressError::Disabled { message, .. })) => {
             background_unavailable(format!("{preface}{message}"))
         }
+        Ok(Err(BackgroundPressError::UnboundWindow {
+            requested,
+            focused,
+            main,
+        })) => unbound_menu_window(pid, requested, focused, main),
         Ok(Err(BackgroundPressError::Other(error))) => refusal(error),
         Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
     }
@@ -952,6 +1028,40 @@ impl Tool for InvokeMenuTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_menu_requires_both_exact_document_contexts() {
+        assert!(require_menu_window(7, Some(7), Some(7)).is_ok());
+        for (focused, main) in [
+            (Some(8), Some(8)),
+            (Some(7), Some(8)),
+            (Some(8), Some(7)),
+            (None, Some(7)),
+            (Some(7), None),
+            (None, None),
+        ] {
+            assert!(matches!(
+                require_menu_window(7, focused, main),
+                Err(BackgroundPressError::UnboundWindow { requested: 7, focused: f, main: m })
+                    if f == focused && m == main
+            ));
+        }
+    }
+
+    #[test]
+    fn unbound_menu_refuses_before_dispatch_with_the_exact_target() {
+        let result = unbound_menu_window(42, 7, Some(8), None);
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "window_not_key");
+        assert_eq!(data["effect"], "refused");
+        assert_eq!(data["pid"], 42);
+        assert_eq!(data["window_id"], 7);
+        assert!(data["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no menu action was dispatched"));
+    }
 
     #[test]
     fn a_background_menu_refusal_names_the_code_and_the_route() {

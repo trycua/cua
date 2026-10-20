@@ -151,11 +151,11 @@ JSON: the registered Space, `phase: "ready"` and `reused` (true when `reuse` ret
 
 #### Errors
 
-[`invalid_argument`](/spaces/reference#invalid_argument), [`invalid_placement`](/spaces/reference#invalid_placement), [`fleet`](/spaces/reference#fleet), [`fleet_admission_denied`](/spaces/reference#fleet_admission_denied), [`cloud_credit_exhausted`](/spaces/reference#cloud_credit_exhausted), [`sandbox`](/spaces/reference#sandbox), [`timeout`](/spaces/reference#timeout), [`ambiguous_host`](/spaces/reference#ambiguous_host), [`limit_exceeded`](/spaces/reference#limit_exceeded)
+[`invalid_argument`](/spaces/reference#invalid_argument), [`invalid_placement`](/spaces/reference#invalid_placement), [`sandbox`](/spaces/reference#sandbox), [`timeout`](/spaces/reference#timeout), [`ambiguous_host`](/spaces/reference#ambiguous_host), [`limit_exceeded`](/spaces/reference#limit_exceeded)
 
 #### Notes
 
-- Cloud needs Fleet credentials (`cua auth login`); local needs a container engine, QEMU or Lume (`cua runtime doctor`).
+- Local needs a container engine, QEMU or Lume (`cua runtime doctor`).
 
 ### delete_space
 
@@ -184,13 +184,13 @@ Text: what was deleted (`Deleted <id> (...)`), or `Removed <id> (...)` for a Spa
 
 #### Errors
 
-[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`fleet`](/spaces/reference#fleet), [`sandbox`](/spaces/reference#sandbox)
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`sandbox`](/spaces/reference#sandbox)
 
 ### stop_space
 
 Turn a Space off: suspend it (memory kept) or stop it (disk kept).
 
-Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on="aws", "gcp") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Fleet cloud Space, a Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.
+Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on="aws", "gcp") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.
 
 | | |
 | --- | --- |

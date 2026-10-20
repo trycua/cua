@@ -35,14 +35,13 @@ logger = logging.getLogger(__name__)
 LOCATIONS = ("local", "cloud")
 KINDS = ("auto", "container", "vm")
 #: Every engine; which ones a location offers is the native SDK's rule.
-ENGINES = ("auto", "gvisor", "runc", "qemu", "lume", "kubevirt")
+ENGINES = ("auto", "gvisor", "runc", "qemu", "lume")
 #: The kind an engine runs.
 ENGINE_KIND = {
     "gvisor": "container",
     "runc": "container",
     "qemu": "vm",
     "lume": "vm",
-    "kubevirt": "vm",
 }
 
 _ENV = {"default.on": "CUA_DEFAULT_ON", "default.kind": "CUA_DEFAULT_KIND"}
@@ -134,9 +133,8 @@ class Placement:
     """The resolved location, kind and engine of a new sandbox."""
 
     on: str
-    #: ``explicit`` (on=/local=), ``implied`` (cloud options, a legacy
-    #: Runtime object), or the default's source (``env``, ``config``,
-    #: ``default``).
+    #: ``explicit`` (on=/local=), ``implied`` (a legacy Runtime object), or
+    #: the default's source (``env``, ``config``, ``default``).
     on_source: str
     on_origin: str = ""
     #: ``container``/``vm``, or ``None`` for auto.
@@ -170,18 +168,15 @@ def resolve(
     local: Optional[bool] = None,
     kind: Optional[str] = None,
     runtime: Any = None,
-    cloud: Any = None,
-    cloud_only: Optional[list[str]] = None,
     image_kind: Optional[str] = None,
 ) -> Placement:
     """Where, what kind and which engine (see the module docstring).
 
     Location: ``on=`` or ``local=`` (contradicting each other is
-    :class:`InvalidArgument`); else ``cloud=`` or a cloud-only argument means
-    the cloud; else a legacy ``Runtime`` object means local; else
-    ``default.on``. The cloud is gone: it raises :class:`CloudEnded`. The
-    one-time "defaulting to a local sandbox" notice appears only when
-    ``default.on`` is the built-in default.
+    :class:`InvalidArgument`); else a legacy ``Runtime`` object means local;
+    else ``default.on``. The cloud is gone: asking for it raises
+    :class:`CloudEnded`. The one-time "defaulting to a local sandbox" notice
+    appears only when ``default.on`` is the built-in default.
 
     Kind: ``kind=`` > the image's ``kind`` > the engine's kind >
     ``default.kind`` (skipped when it does not fit) > auto.
@@ -198,22 +193,8 @@ def resolve(
             raise InvalidArgument(
                 f"on={on!r} and local={local!r} contradict each other; pass one of them"
             )
-        if where == "local" and cloud is not None:
-            raise InvalidArgument(
-                "on='local' and cloud=CloudOptions(...) contradict each other: cloud options "
-                "run the sandbox in the cloud. Drop cloud=, or pass on='cloud'"
-            )
     elif local is not None:
-        if local and cloud is not None:
-            raise InvalidArgument(
-                "local=True and cloud=CloudOptions(...) contradict each other: cloud options "
-                "run the sandbox in the cloud. Drop cloud=, or pass local=False"
-            )
         where, source, origin = ("local" if local else "cloud"), "explicit", ""
-    elif cloud is not None:
-        where, source, origin = "cloud", "implied", ""
-    elif cloud_only:
-        where, source, origin = "cloud", "implied", ""
     elif legacy is not None:
         # A Runtime object is a local adapter (Docker, QEMU, Lume, Tart, ...).
         where, source, origin = "local", "implied", ""
@@ -228,7 +209,7 @@ def resolve(
             if on is not None:
                 raise InvalidArgument(
                     f"runtime={type(legacy).__name__}(...) runs the sandbox on this computer; "
-                    "drop on='cloud', or pass an engine name (runtime='gvisor'/'kubevirt')"
+                    f"drop on={on!r}, or pass an engine name (runtime='gvisor'/'qemu')"
                 )
             # Shipped behaviour (0.8.0): a Runtime object ran locally, even
             # with local=False.
@@ -237,7 +218,7 @@ def resolve(
             check("local", explicit_kind, None)
         return Placement(where, source, origin, explicit_kind or image_kind, None, legacy)
 
-    if where.partition(":")[0] in ("cloud", "fleet"):
+    if where.partition(":")[0] == "cloud":
         raise CloudEnded()
 
     # Validate what was asked for before defaults fill the rest.

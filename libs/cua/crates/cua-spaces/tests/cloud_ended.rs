@@ -1,5 +1,5 @@
 //! Cua Cloud has ended: `create_space(on="cloud")` fails with the one
-//! message and never reaches Fleet.
+//! message.
 
 use cua_sandbox_core::placement::On;
 use cua_spaces::{SpaceCreate, Spaces};
@@ -24,8 +24,8 @@ fn ended(e: impl std::fmt::Display) -> bool {
 }
 
 /// A `cloud:` Space an earlier version registered: every operation that
-/// needed Cua Cloud answers with the one message and no Fleet client exists
-/// to reach, and `remove` still forgets the stale record locally.
+/// needed Cua Cloud answers with the one message, and `remove` still forgets
+/// the stale record locally.
 #[tokio::test]
 async fn a_registered_cloud_space_answers_cloud_ended_and_can_be_forgotten() {
     let home = tempfile::tempdir().unwrap();

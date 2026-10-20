@@ -12,6 +12,7 @@ export {
   useAgentTimeline,
   useAgents,
   useBridge,
+  useFeatureRecorded,
   useKeyvault,
   useMachines,
   useOnboarding,

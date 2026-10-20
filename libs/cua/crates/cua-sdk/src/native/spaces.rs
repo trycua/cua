@@ -340,8 +340,9 @@ pub struct SpaceCreateOptions {
     /// Image (default: the canonical Linux image).
     #[uniffi(default = None)]
     pub image: Option<String>,
-    /// Where: `local` (free) or `cloud` (metered). `None`: the user default
-    /// (`default.on`, `CUA_DEFAULT_ON`, else `local`).
+    /// Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+    /// `modal`) or `host:<name>`. `None`: the user default (`default.on`,
+    /// `CUA_DEFAULT_ON`, else `local`).
     #[uniffi(default = None)]
     pub on: Option<String>,
     /// `auto` (default), `container` or `vm`.
@@ -1840,9 +1841,6 @@ fn tag_error(kind: &str, message: String) -> CuaError {
         "timeout" => CuaError::Timeout(message),
         "cancelled" => CuaError::Cancelled(message),
         "unauthenticated" => CuaError::Unauthenticated(message),
-        "fleet" => CuaError::Fleet(message),
-        "fleet_admission_denied" => CuaError::FleetAdmissionDenied(message),
-        "cloud_credit_exhausted" => CuaError::CloudCreditExhausted(message),
         "cloud" => CuaError::Cloud(message),
         "sandbox" => CuaError::Runtime(message),
         // Cua Volume: refusals by the access rules or a declined presence
@@ -1864,7 +1862,6 @@ impl From<cua_spaces::Error> for CuaError {
         let message = e.to_string();
         match e {
             cua_spaces::Error::Env(env) => env.into(),
-            cua_spaces::Error::Fleet(f) => f.into(),
             // The refusal's own words: `CuaError::TeleportRefused` says
             // "teleport refused:" itself (not twice).
             cua_spaces::Error::TeleportRefused(why) => CuaError::TeleportRefused(why),
@@ -2583,9 +2580,9 @@ impl Spaces {
     /// Cancels a create that is still running: `space` is the create's
     /// `create_id`, the id the Space will have (`local:<name>`, carried by
     /// every progress report) or its name. The work in flight stops (an
-    /// image download, a boot, a claim, a relay registration) and what the
-    /// create made is removed (its VM or container and disks, its cloud
-    /// claim, its relay machine); nothing that existed before is touched.
+    /// image download, a boot, a relay registration) and what the
+    /// create made is removed (its VM or container and disks, its relay
+    /// machine); nothing that existed before is touched.
     /// Finished image downloads stay cached, so the next create resumes.
     /// Returns once the clean-up is done; the create itself fails with
     /// `Cancelled`. Idempotent: a second call says `not_creating`. Works

@@ -3,7 +3,7 @@
 //! polls, results appended to `$CUA_E2E_RESULTS/rust.jsonl`.
 //!
 //! The SDK is used exactly as a Rust application would: the `cua-sdk`
-//! crate's exported API (`Cua`, `Sandboxes`, `SpacesdClient`, `Fleet`, ...).
+//! crate's exported API (`Cua`, `Sandboxes`, `SpacesdClient`, ...).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -15,9 +15,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 pub use cua_sdk::{self as cua, CuaError};
-use cua_sdk::{
-    Cua, CuaConfig, SpacesdClient, SpacesdCommand, FleetPoolSpec, FleetSettings, ReadinessProbe, SandboxCreateOptions,
-};
+use cua_sdk::{Cua, CuaConfig, ReadinessProbe, SandboxCreateOptions, SpacesdClient, SpacesdCommand};
 
 pub type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -89,10 +87,6 @@ pub fn disk_path(image: &str) -> PathBuf {
     })
 }
 
-pub const LEGACY_FLEET_ROOTFS: &str =
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81";
-pub const LEGACY_FLEET_IMAGE: &str = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d";
-
 fn binary(var: &str, exe: &str) -> Option<PathBuf> {
     if let Ok(p) = std::env::var(var) {
         return Some(p.into());
@@ -107,42 +101,17 @@ fn flag(v: &str) -> bool {
     std::env::var(v).map(|x| x == "1").unwrap_or(false)
 }
 
-/// Fleet pools have no env/secret field yet: a gVisor pod of the spacesd
-/// image gets its token through an entrypoint override (the image reads
-/// /etc/cua/env-token). KubeVirt containerDisk guests have no such hook.
-pub const KUBEVIRT_ENV_SKIP: &str = "KubeVirt spacesd lane needs a per-claim secret field (cloud PR): \
-     no way to deliver the env token to a containerDisk guest yet";
-
-/// Pod command that installs `token` as the spacesd token, then runs the
-/// image's entrypoint.
-pub fn env_token_command(token: &str) -> Vec<String> {
-    vec![
-        "/bin/sh".into(),
-        "-c".into(),
-        format!(
-            "mkdir -p /etc/cua && printf %s {token} >/etc/cua/env-token && exec /opt/cua/desktop/entrypoint.sh"
-        ),
-    ]
-}
-
-/// Cua Cloud has ended: `Cua::fleet()` and every cloud create fail with this
-/// message (`CLOUD_ENDED` in cua-sandbox-core). The live Fleet lanes skip
-/// with `CLOUD_ENDED_SKIP`, which run.py allows under --strict.
+/// Cua Cloud has ended: every cloud create fails with this message
+/// (`CLOUD_ENDED` in cua-sandbox-core).
 pub const CLOUD_ENDED: &str = "Cua Cloud has ended";
-pub const CLOUD_ENDED_SKIP: &str = "Cua Cloud has ended (CUA-1854): there is no live Fleet lane";
 
 pub fn is_cloud_ended(e: &CuaError) -> bool {
     matches!(e, CuaError::Unsupported(m) if m.contains(CLOUD_ENDED))
 }
 
-/// `c.fleet()` and a cloud create (`on: "cloud"`, shaped further by `shape`)
-/// fail with the one `Unsupported` message, even when `c` holds Fleet
-/// credentials; nothing is created.
+/// A cloud create (`on: "cloud"`, shaped further by `shape`) fails with the
+/// one `Unsupported` message; nothing is created.
 pub async fn assert_cloud_ended(c: &Arc<Cua>, shape: impl FnOnce(&mut SandboxCreateOptions)) -> Res {
-    match c.fleet() {
-        Err(e) => assert!(is_cloud_ended(&e), "{e}"),
-        Ok(_) => panic!("fleet() must fail: Cua Cloud has ended"),
-    }
     let mut o = opts("cloud");
     o.image = "registry.test/cua-e2e:fake".into();
     shape(&mut o);
@@ -163,8 +132,6 @@ pub fn lane_enabled(lane: &str) -> Option<String> {
         "container" => (!flag("CUA_E2E_CONTAINER")).then(|| "set CUA_E2E_CONTAINER=1 for the container lane".into()),
         "qemu" => (!flag("CUA_E2E_QEMU")).then(|| "set CUA_E2E_QEMU=1 for the QEMU lane".into()),
         "lume" => (!flag("CUA_E2E_LUME")).then(|| "set CUA_E2E_LUME=1 for the Lume lane".into()),
-        // Cua Cloud has ended (CUA-1854): there is no live Fleet to run on.
-        "fleet" | "fleet-env" => Some(CLOUD_ENDED_SKIP.into()),
         "conformance" => (!flag("CUA_E2E_CONFORMANCE") || !flag("CUA_E2E_CONTAINER"))
             .then(|| "set CUA_E2E_CONTAINER=1 CUA_E2E_CONFORMANCE=1 to run the spacesd conformance suite".into()),
         other => panic!("unknown lane {other}"),
@@ -228,7 +195,7 @@ pub async fn e2e<F, Fut>(
     // Lanes that start a local container or VM run one at a time even when
     // the harness uses several test threads: two desktops booting at once
     // double the host's memory footprint (see AGENT_BRIEF memory rules).
-    // Fleet and hermetic lanes stay parallel.
+    // Hermetic lanes stay parallel.
     static LOCAL_RUNTIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _local = if matches!(lane, "container" | "qemu" | "lume" | "conformance") {
         Some(LOCAL_RUNTIME.lock().await)
@@ -288,27 +255,6 @@ pub fn tmp_dir(tag: &str) -> PathBuf {
 pub fn embedded_local() -> Arc<Cua> {
     Cua::embedded(CuaConfig {
         state_dir: Some(tmp_dir("state").display().to_string()),
-        fleet: None,
-        fleet_from_env: false,
-        env_probe_timeout_ms: None,
-        spaces_home: Some(tmp_dir("spaces").display().to_string()),
-        ..Default::default()
-    })
-    .unwrap()
-}
-
-pub fn embedded_fleet(fake: Option<(&str, &str)>) -> Arc<Cua> {
-    Cua::embedded(CuaConfig {
-        state_dir: Some(tmp_dir("state").display().to_string()),
-        fleet: fake.map(|(base, token)| FleetSettings {
-            base_url: Some(base.into()),
-            token_url: None,
-            client_id: None,
-            client_secret: None,
-            token: Some(token.into()),
-        }),
-        fleet_from_env: fake.is_none(),
-        env_probe_timeout_ms: None,
         spaces_home: Some(tmp_dir("spaces").display().to_string()),
         ..Default::default()
     })
@@ -318,49 +264,7 @@ pub fn embedded_fleet(fake: Option<(&str, &str)>) -> Arc<Cua> {
 pub fn opts(on: &str) -> SandboxCreateOptions {
     SandboxCreateOptions {
         on: Some(on.into()),
-        kind: None,
-        runtime: None,
-        image: String::new(),
-        name: None,
-        token: None,
-        pool: None,
-        os: None,
-        cpus: None,
-        memory_mb: None,
-        ports: vec![],
-        services: HashMap::new(),
-        wait_for: vec![],
-        ready_timeout_ms: None,
-        env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
-        command: None,
-        cloud: None,
-        sidecars: vec![],
-        registry_secret: None,
-        build: None,
-        network: None,
-        overlays: vec![],
-        keep_on_failure: false,
-        gpu: None,
-    }
-}
-
-pub fn pool_spec(name: &str, image: &str) -> FleetPoolSpec {
-    FleetPoolSpec {
-        name: name.into(),
-        image: image.into(),
-        runtime: None,
-        replicas: None,
-        cpu: None,
-        memory_mb: None,
-        services: HashMap::new(),
-        readiness_tcp_port: None,
-        efi: false,
-        command: None,
-        ttl_seconds_after_created: None,
+        ..Default::default()
     }
 }
 
@@ -549,8 +453,6 @@ impl Drop for DriverContainer {
 pub struct Fixtures {
     pub env_url: String,
     pub env_token: String,
-    pub fleet_base_url: String,
-    pub fleet_token: String,
     child: std::process::Child,
 }
 
@@ -576,8 +478,6 @@ impl Fixtures {
         Ok(Fixtures {
             env_url: s("env_url"),
             env_token: s("env_token"),
-            fleet_base_url: s("fleet_base_url"),
-            fleet_token: s("fleet_token"),
             child,
         })
     }

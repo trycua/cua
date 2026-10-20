@@ -204,7 +204,7 @@ where
             let _ = forward.signal(name.into(), true).await;
         }
     }));
-    let result = async {
+    async {
         loop {
             let Some(ev) = p.next_event().await? else {
                 return Ok(1);
@@ -236,8 +236,7 @@ where
             }
         }
     }
-    .await;
-    result
+    .await
 }
 
 /// Exit code of a finished process.

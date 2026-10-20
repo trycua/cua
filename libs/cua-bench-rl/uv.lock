@@ -700,7 +700,7 @@ dependencies = [
 requires-dist = [
     { name = "cua", editable = "../cua/python" },
     { name = "cua-core", specifier = ">=0.1.18,<0.4.0" },
-    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.36.0" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.37.0" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10" },

@@ -34,7 +34,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua host status`](#cua-host-status) | Show whether this computer is set up, the service, and who is connected. |
 | [`cua host stop`](#cua-host-stop) | Stop sharing: disconnect everyone and refuse new connections. |
 | [`cua host start`](#cua-host-start) | Start sharing again after `stop`. |
-| [`cua host share`](#cua-host-share) | Share a relay computer (this one, or `--machine`) with other cua.ai accounts (id or verified email). |
+| [`cua host share`](#cua-host-share) | Share a relay computer (this one, or `--machine`) with people in your team (id or verified email). |
 | [`cua host unshare`](#cua-host-unshare) | Stop sharing a relay computer with accounts; their open connections are cut. |
 | [`cua host remove`](#cua-host-remove) | Unregister from the relay, uninstall the service and delete the host configuration (asks first). |
 | [`cua devices`](#cua-devices) | This device as a client of your cua.ai account on the relay: enroll (second factor), approve other devices, list, rename, revoke, and the audit log of who accessed what. |
@@ -293,7 +293,7 @@ cua spaces rm studio
 
 ### `cua spaces share`
 
-Let another cua.ai account watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`.
+Let someone in your team watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`. Sharing is for teams: you need a team, and they must be in it (or share with the whole team as team:<id>).
 
 ```text output
 cua spaces share [OPTIONS] <SPACE> <WHO>
@@ -302,7 +302,7 @@ cua spaces share [OPTIONS] <SPACE> <WHO>
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `<SPACE>` | string | required | Space id, address or display name. |
-| `<WHO>` | string | required | Their email (verified by cua.ai) or account id. |
+| `<WHO>` | string | required | Their email (verified by cua.ai) or account id, in your team; or team:<id> for the whole team. |
 
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -543,7 +543,7 @@ cua host start
 
 ### `cua host share`
 
-Share a relay computer (this one, or `--machine`) with other cua.ai accounts (id or verified email). Run from an enrolled device; every change is in the owner's audit log (`cua devices audit`).
+Share a relay computer (this one, or `--machine`) with people in your team (id or verified email). Run from an enrolled device; every change is in the owner's audit log (`cua devices audit`).
 
 ```text output
 cua host share [OPTIONS] <WHO>...

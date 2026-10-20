@@ -144,11 +144,12 @@ and when). When another device asks to join, the app shows an approval sheet:
 Approve asks for Touch ID or your login password first, and Deny revokes that
 device.
 
-## Share it with other accounts
+## Share it with your team
 
 `--allow` at setup, or later from an enrolled device, shares the computer with
-another account (id or verified email). Sharing asks for confirmation.
-Unsharing cuts that account's open connections.
+someone in your team (id or verified email). Sharing is for teams: you need a
+team, and they must be in it. See [Share a Space](/spaces/guides/share-a-space).
+Sharing asks for confirmation. Unsharing cuts that account's open connections.
 
 ```bash test="cli-shape" id="cua-host-share"
 cua host share friend@example.com

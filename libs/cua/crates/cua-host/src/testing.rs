@@ -1361,6 +1361,8 @@ struct ApiState {
     entitlement_reads: usize,
     /// Every org route answers 410, as a server without Teams.
     gone: bool,
+    /// (owner sub, removal) not yet acknowledged.
+    removals: Vec<(String, crate::spaces_api::ApiShareRemoval)>,
 }
 
 type A = Arc<Mutex<ApiState>>;
@@ -1463,8 +1465,11 @@ impl FakeSpacesApi {
             )
             .route(
                 "/v1/orgs/{org}/machines/{id}",
-                axum::routing::delete(api_remove_machine),
+                axum::routing::delete(api_remove_machine).patch(api_set_machine_role),
             )
+            .route("/v1/me/sharing", get(api_sharing))
+            .route("/v1/me/share-removals", get(api_share_removals))
+            .route("/v1/me/share-removals/ack", post(api_ack_share_removals))
             .route("/v1/orgs/{org}/devices", get(api_devices))
             .route("/v1/orgs/{org}/devices/request", post(api_request_device))
             .route(
@@ -1534,6 +1539,32 @@ impl FakeSpacesApi {
     /// How often `GET /v1/me/entitlements` was read.
     pub fn entitlement_reads(&self) -> usize {
         self.state.lock().unwrap().entitlement_reads
+    }
+
+    /// Records that `who` lost access to a computer of `owner` (a sub).
+    pub fn add_share_removal(&self, owner: &str, machine_name: &str, who: &str) {
+        self.state.lock().unwrap().removals.push((
+            owner.into(),
+            crate::spaces_api::ApiShareRemoval {
+                machine_id: "m1".into(),
+                machine_name: machine_name.into(),
+                who: who.into(),
+                removed_at: api_now(),
+            },
+        ));
+    }
+
+    /// The role of `machine` on `org` (`editor` or `viewer`).
+    pub fn machine_role(&self, org: &str, machine: &str) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .orgs
+            .get(org)?
+            .machines
+            .iter()
+            .find(|m| m.machine_id == machine)
+            .map(|m| m.role.clone())
     }
 
     /// The machine ids bound to `org`.
@@ -1814,6 +1845,7 @@ async fn api_add_machine(
         platform: b["platform"].as_str().unwrap_or("").into(),
         label: b["label"].as_str().unwrap_or("").into(),
         added_by: sub,
+        role: b["role"].as_str().unwrap_or("editor").into(),
         added_at: api_now(),
     });
     (
@@ -1821,6 +1853,76 @@ async fn api_add_machine(
         Json(serde_json::json!({ "machine_id": machine })),
     )
         .into_response()
+}
+
+async fn api_set_machine_role(
+    State(s): State<A>,
+    h: HeaderMap,
+    Path((org, machine)): Path<(String, String)>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    let (id, _) = tri!(api_org(&st, &org, &sub, "admin"));
+    let role = b["role"].as_str().unwrap_or("");
+    if role != "viewer" && role != "editor" {
+        return api_fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bad_role",
+            "role is viewer or editor",
+        );
+    }
+    let o = st.orgs.get_mut(&id).unwrap();
+    let Some(m) = o.machines.iter_mut().find(|m| m.machine_id == machine) else {
+        return api_fail(StatusCode::NOT_FOUND, "machine_not_found", "");
+    };
+    m.role = role.into();
+    Json(serde_json::json!({ "machine_id": machine, "role": role })).into_response()
+}
+
+/// `GET /v1/me/sharing`: can share when in an org with `space_sharing`.
+async fn api_sharing(State(s): State<A>, h: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    if st.gone {
+        return api_fail(StatusCode::GONE, "gone", "retired");
+    }
+    let teams: Vec<_> = st
+        .orgs
+        .values()
+        .filter(|o| o.members.contains_key(&sub) && o.features.iter().any(|f| f == "space_sharing"))
+        .map(|o| {
+            let role = o.members[&sub].as_str();
+            serde_json::json!({
+                "id": o.id, "alias": o.alias, "name": o.name,
+                "can_add": role == "owner" || role == "admin",
+            })
+        })
+        .collect();
+    let mut out = serde_json::json!({ "can_share": !teams.is_empty(), "teams": teams });
+    if teams.is_empty() {
+        out["reason"] = "no_team".into();
+    }
+    Json(out).into_response()
+}
+
+async fn api_share_removals(State(s): State<A>, h: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    let rows: Vec<_> = st
+        .removals
+        .iter()
+        .filter(|(owner, _)| *owner == sub)
+        .map(|(_, r)| r.clone())
+        .collect();
+    Json(serde_json::json!({ "removals": rows })).into_response()
+}
+
+async fn api_ack_share_removals(State(s): State<A>, h: HeaderMap) -> Response {
+    let mut st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    st.removals.retain(|(owner, _)| *owner != sub);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn api_remove_machine(

@@ -157,8 +157,8 @@ pub enum HostCmd {
     #[command(after_help = "Examples:
   cua host start")]
     Start,
-    /// Share a relay computer (this one, or `--machine`) with other cua.ai
-    /// accounts (id or verified email). Run from an enrolled device; every
+    /// Share a relay computer (this one, or `--machine`) with people in your
+    /// team (id or verified email). Run from an enrolled device; every
     /// change is in the owner's audit log (`cua devices audit`).
     #[command(after_help = "Examples:
   cua host share friend@example.com
@@ -377,18 +377,23 @@ Examples:
         /// Space id, address or display name (as `cua spaces ls` shows).
         space: String,
     },
-    /// Let another cua.ai account watch (viewer) or use (editor) a Space,
-    /// through the relay. They open it as `relay:<computer>`.
+    /// Let someone in your team watch (viewer) or use (editor) a Space,
+    /// through the relay. They open it as `relay:<computer>`. Sharing is for
+    /// teams: you need a team, and they must be in it (or share with the
+    /// whole team as team:<id>).
     #[command(after_help = "Examples:
   cua spaces share local:studio bob@example.com
   cua spaces share local:studio bob@example.com --role editor
   cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer
+  # The whole team, to watch
+  cua spaces share local:studio team:acme --role viewer
   # From a script or agent: confirm with Touch ID or your password here
   cua spaces share local:studio bob@example.com --yes")]
     Share {
         /// Space id, address or display name.
         space: String,
-        /// Their email (verified by cua.ai) or account id.
+        /// Their email (verified by cua.ai) or account id, in your team; or
+        /// team:<id> for the whole team.
         who: String,
         /// `viewer`: presence and a view-only stream. `editor`: full use.
         #[arg(long, default_value = "viewer", value_parser = ["viewer", "editor"])]

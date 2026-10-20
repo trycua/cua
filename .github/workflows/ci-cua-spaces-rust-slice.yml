@@ -18,6 +18,12 @@ on:
       - "libs/cua-spacesd/VERSION"
       - ".github/actions/spaces-rust-slice/**"
       - ".github/workflows/ci-cua-spaces-rust-slice.yml"
+  # A change to the producer itself proves its contract: the first run builds,
+  # a re-run of the same commit restores (the pull request's own cache scope).
+  pull_request:
+    paths:
+      - ".github/actions/spaces-rust-slice/**"
+      - ".github/workflows/ci-cua-spaces-rust-slice.yml"
   workflow_dispatch:
 
 permissions:

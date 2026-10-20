@@ -1070,7 +1070,7 @@ cua runtime [OPTIONS] <COMMAND>
 
 ### `cua runtime doctor`
 
-Inspect local runtimes (read-only).
+Inspect local runtimes (read-only). Exit 1 if any check is Error; warnings exit 0.
 
 ```text output
 cua runtime doctor [OPTIONS]
@@ -1084,7 +1084,7 @@ cua runtime doctor
 
 ### `cua runtime setup`
 
-Provision local runtimes.
+Provision local runtimes. Exit 1 if any step is Error; warnings exit 0.
 
 ```text output
 cua runtime setup [OPTIONS] [COMPONENTS]...

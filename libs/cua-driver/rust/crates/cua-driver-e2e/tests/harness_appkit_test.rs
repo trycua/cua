@@ -2675,38 +2675,3 @@ fn harness_appkit_accessibility_only_surface_contract() {
         )
     });
 }
-
-fn find_on_screen_window(driver: &mut McpDriver, pid: u32) -> u64 {
-    let deadline = std::time::Instant::now() + Duration::from_secs(12);
-    loop {
-        let response = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
-        if let Some(window_id) = response.structured()["windows"]
-            .as_array()
-            .and_then(|windows| {
-                windows
-                    .iter()
-                    .filter(|window| {
-                        window["pid"].as_u64() == Some(pid as u64)
-                            && window["is_on_screen"].as_bool() == Some(true)
-                            && window["layer"].as_i64() == Some(0)
-                    })
-                    .max_by(|left, right| {
-                        let area = |window: &serde_json::Value| {
-                            window["bounds"]["width"].as_f64().unwrap_or(0.0)
-                                * window["bounds"]["height"].as_f64().unwrap_or(0.0)
-                        };
-                        area(left).total_cmp(&area(right))
-                    })
-                    .and_then(|window| window["window_id"].as_u64())
-            })
-        {
-            return window_id;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "AppKit on-screen exact window not found: {}",
-            response.structured()
-        );
-        std::thread::sleep(Duration::from_millis(150));
-    }
-}

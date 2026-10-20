@@ -25,6 +25,7 @@
     "drag",
     "end_session",
     "escalate_session",
+    "get_accessibility_surfaces",
     "get_accessibility_tree",
     "get_agent_cursor_state",
     "get_browser_state",

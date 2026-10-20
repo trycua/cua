@@ -24,6 +24,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`debug_window_info`](#debug_window_info) | Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. | Windows |
 | [`get_window_state`](#get_window_state) | Snapshot a window: the accessibility tree plus a screenshot. | macOS, Linux, Windows |
 | [`get_accessibility_tree`](#get_accessibility_tree) | Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid. | macOS, Linux, Windows |
+| [`get_accessibility_surfaces`](#get_accessibility_surfaces) | Observe the bounded semantic trees of top-level accessibility windows for one process that have no native window id. | macOS, Linux, Windows |
 | [`verify_state`](#verify_state) | Deterministically verify bounded predicates against one exact window. | macOS, Linux, Windows |
 | [`parse_visual_regions`](#parse_visual_regions) | Parse one immutable registered capture into model-neutral text and icon regions. | macOS, Linux, Windows |
 | [`get_desktop_state`](#get_desktop_state) | Capture the full display. | macOS, Linux, Windows |
@@ -576,6 +577,25 @@ For the full UIA subtree of a single window (with interactive element indices yo
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="get_accessibility_tree--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+
+### `get_accessibility_surfaces`
+
+Observe the bounded semantic trees of top-level accessibility windows for one process that have no native window id. Results preserve each AXWindow boundary and expose no screenshot, element_index, element_token, or action-cache side effect. Native windows with an exact window_id remain observable through get_window_state. Supported on macOS; unsupported on Windows and Linux.
+
+Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="get_accessibility_surfaces--max_depth"></span>`max_depth` | `integer` | `25` | Maximum accessibility tree depth to traverse. Range: 1 to 25. |
+| <span id="get_accessibility_surfaces--max_elements"></span>`max_elements` | `integer` | `2000` | Maximum number of accessibility elements to return. Range: 1 to 2000. |
+| <span id="get_accessibility_surfaces--pid"></span>`pid` | `integer` | required | Process ID to observe. Minimum: 1. |
+| <span id="get_accessibility_surfaces--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+
+**Example arguments**
+
+```json
+{"pid":1}
+```
 
 ### `verify_state`
 

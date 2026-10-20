@@ -49,6 +49,22 @@ pub fn identity<T: PartialEq>(expected: &T, observed: &Fact<Option<T>>) -> Resul
     }
 }
 
+/// Whether the adapter's input transport can bind delivery to the confirmed
+/// target. A transport that only reaches whatever surface is focused when
+/// the compositor processes the event refuses, as does an unknown one;
+/// more focus checks before dispatch do not bind the input.
+pub fn delivery(target_bound: &Fact<bool>) -> Result<()> {
+    match target_bound {
+        Fact::Known(true) => Ok(()),
+        Fact::Known(false) => bail!(
+            "foreground_unavailable: the target window is verified, but this compositor offers only focus-bound input; refusing raw input until a target-bound input path exists"
+        ),
+        Fact::Unknown(why) => {
+            bail!("foreground_unavailable: the input binding is unknown ({why}); refusing raw input")
+        }
+    }
+}
+
 /// An exact focus read-back permits delivery. A known different or absent
 /// focus needs activation and another read-back; unknown focus cannot
 /// confirm delivery. Command acceptance alone is not a focus fact.
@@ -92,6 +108,17 @@ mod tests {
         lock(Scope::TargetBoundInput, &unknown(), false).unwrap();
         lock(Scope::DesktopInput, &unknown(), false).unwrap();
         lock(Scope::Capture, &unknown(), false).unwrap();
+    }
+
+    #[test]
+    fn delivery_requires_a_known_target_bound_transport() {
+        delivery(&Fact::Known(true)).unwrap();
+        for binding in [Fact::Known(false), unknown()] {
+            assert!(delivery(&binding)
+                .unwrap_err()
+                .to_string()
+                .starts_with("foreground_unavailable:"));
+        }
     }
 
     #[test]

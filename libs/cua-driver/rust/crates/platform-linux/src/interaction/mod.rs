@@ -71,7 +71,7 @@ pub fn with_target_foreground<T>(
         return sway_ipc::with_focused_container(pid, window_id, body);
     }
     if kwin_helper::trusted_window_for_id(pid, window_id).is_some() {
-        return kwin_helper::with_focused_window(pid, window_id, body);
+        policy::delivery(&facts::Fact::Known(kwin_helper::available()))?;
     }
     if shell_helper::trusted_window_for_id(pid, window_id).is_some() {
         return shell_helper::with_focused_window(pid, window_id, body);

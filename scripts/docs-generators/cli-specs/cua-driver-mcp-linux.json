@@ -2246,7 +2246,7 @@
    "read_only": false
   },
   {
-   "description": "Return a lightweight snapshot of the desktop: running processes and on-screen visible X11 windows with their bounds and owner pid.\n\nFor the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.",
+   "description": "Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.\n\nFor the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {

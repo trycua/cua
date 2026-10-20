@@ -5209,14 +5209,21 @@ impl Tool for TypeTextTool {
 }
 
 fn focused_document_route(args: &Value, chromium: bool) -> bool {
-    !chromium && ["element_token", "x", "y"].iter().all(|key| args.get(*key).is_none())
+    !chromium
+        && ["element_token", "x", "y"]
+            .iter()
+            .all(|key| args.get(*key).is_none())
 }
 
 #[test]
 fn focused_document_route_excludes_explicit_targets_and_chromium() {
     assert!(focused_document_route(&json!({}), false));
     assert!(!focused_document_route(&json!({}), true));
-    for args in [json!({"element_token": "s00000000:0"}), json!({"x": 1}), json!({"y": 1})] {
+    for args in [
+        json!({"element_token": "s00000000:0"}),
+        json!({"x": 1}),
+        json!({"y": 1}),
+    ] {
         assert!(!focused_document_route(&args, false));
     }
 }

@@ -138,12 +138,19 @@ CHECKS = [
 # by the next sync (fleet-mirror-guard), so the bump must land upstream instead.
 MIRRORED = ("libs/fleet/",)
 
+# Test harnesses that never ship and never connect to Cua endpoints. Each needs a reason.
+EXEMPT = {
+    # Electron 42 fails to install on the Windows E2E runners (npm install leaves no electron.exe,
+    # build.ps1 aborts); the fixture is a UI-automation target, not a client. Revisit with the E2E owners.
+    "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/": "UI-automation fixture pinned at Electron 39.8.5",
+}
+
 
 def main(root="."):
     files = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True).stdout.split("\n")
     failures = []
     for f in filter(None, files):
-        if f.startswith(MIRRORED):
+        if f.startswith(MIRRORED) or f.startswith(tuple(EXEMPT)):
             continue
         for match, fn in CHECKS:
             if match(f):

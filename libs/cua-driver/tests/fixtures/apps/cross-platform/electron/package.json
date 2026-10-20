@@ -13,7 +13,7 @@
     "build:macos": "electron-builder --mac dir --universal"
   },
   "devDependencies": {
-    "electron": "42.11.16",
+    "electron": "39.8.5",
     "electron-builder": "25.0.5"
   },
   "build": {

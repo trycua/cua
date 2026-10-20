@@ -1,11 +1,12 @@
 //! The tool call a blocking input worker serves.
 //!
 //! A tool call stops waiting for its blocking worker at its deadline, but
-//! the worker cannot be cancelled: it keeps running on the blocking pool,
-//! and the desktop may meanwhile admit another action. An input route reads
-//! the [`Action`] bound to its thread and hands no further event to the
-//! compositor once the call is over. Releasing a held button or key is
-//! cleanup and still goes out.
+//! the worker cannot be cancelled: it keeps running on the blocking pool.
+//! An input route reads the [`Action`] bound to its thread and hands no
+//! further event to the compositor once the call is over. Releasing a held
+//! button or key is cleanup and still goes out. The action keeps the call's
+//! desktop lease until its last holder drops, so that cleanup ends before
+//! the next desktop action starts.
 
 use std::cell::RefCell;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
@@ -13,12 +14,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
+use cua_driver_core::tool::DesktopLease;
 
-/// One tool call: its deadline, and whether its caller stopped waiting.
+/// One tool call: its deadline, whether its caller stopped waiting, and
+/// the desktop lease of the task that started it.
 pub struct Action {
     deadline: Instant,
     abandoned: Mutex<bool>,
     fenced: Mutex<(bool, Vec<OwnedFd>)>,
+    _lease: Option<DesktopLease>,
 }
 
 impl Action {
@@ -27,6 +31,7 @@ impl Action {
             deadline: Instant::now() + budget,
             abandoned: Mutex::new(false),
             fenced: Mutex::new((false, Vec::new())),
+            _lease: DesktopLease::current(),
         })
     }
 
@@ -153,9 +158,9 @@ pub fn fence(socket: impl AsFd) -> std::io::Result<()> {
 /// holding a server grab) must surface as a structured `foreground_timeout`
 /// error instead of a tool call that never returns. The blocking task is not
 /// cancellable; it is left to finish (or leak) on the blocking pool, with its
-/// [`Action`] abandoned so its input routes send nothing more. The worker
-/// keeps the call's desktop lease, so the next desktop action waits until it
-/// has stopped. Started from a thread already bound to an action, the worker
+/// [`Action`] abandoned so its input routes send nothing more. The action
+/// keeps the call's desktop lease, so the next desktop action waits until
+/// the worker has stopped. Started from a thread already bound to an action, the worker
 /// runs under that action, within what is left of its deadline, and its
 /// timeout abandons that action too.
 pub async fn spawn_blocking_bounded<T: Send + 'static>(
@@ -167,11 +172,9 @@ pub async fn spawn_blocking_bounded<T: Send + 'static>(
     let action = outer.clone().unwrap_or_else(|| Action::new(budget));
     let budget = budget.min(action.deadline.saturating_duration_since(Instant::now()));
     let _abandon = outer.is_none().then(|| action.abandon_on_drop());
-    let lease = cua_driver_core::tool::DesktopLease::current();
     let worker = {
         let action = action.clone();
         move || {
-            let _lease = lease;
             let _bound = bind(action);
             f()
         }
@@ -337,6 +340,49 @@ mod tests {
         assert!(inner.is_err());
         assert!(started.elapsed() < Duration::from_secs(5));
         admit(|| panic!("the outer call sent after its inner worker timed out")).unwrap_err();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cleanup_that_outlives_a_timed_out_worker_ends_before_the_next_call() {
+        use cua_driver_core::tool::DesktopCall;
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let cleanup = Arc::new(Mutex::new(None));
+        let call_1 = {
+            let events = events.clone();
+            let cleanup = cleanup.clone();
+            DesktopCall::acquire()
+                .await
+                .unwrap()
+                .scope(spawn_blocking_bounded(
+                    "call 1",
+                    Duration::from_millis(50),
+                    move || {
+                        std::thread::sleep(Duration::from_millis(100));
+                        let action = current().unwrap();
+                        *cleanup.lock().unwrap() = Some(std::thread::spawn(move || {
+                            let _desktop = action;
+                            std::thread::sleep(Duration::from_millis(300));
+                            events.lock().unwrap().push("call 1 released its press");
+                        }));
+                        Ok(())
+                    },
+                ))
+                .await
+                .unwrap()
+        };
+        assert!(call_1.is_err());
+        DesktopCall::acquire()
+            .await
+            .unwrap()
+            .scope(async { events.lock().unwrap().push("call 2 pressed") })
+            .await;
+        if let Some(cleanup) = cleanup.lock().unwrap().take() {
+            cleanup.join().unwrap();
+        }
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["call 1 released its press", "call 2 pressed"]
+        );
     }
 
     #[test]

@@ -3146,8 +3146,9 @@ const ABANDONED_RELEASE_WAIT: Duration = Duration::from_secs(2);
 /// XTest presses this call queued, and whether each is still held. A route
 /// releases what is held on its own connection, even after a failure.
 /// Abandoning the call shuts that connection, so the releases it still owes
-/// cannot go out there: dropping this then sends them on a fresh connection,
-/// while the call still holds the desktop. The server ignores a release for
+/// cannot go out there: dropping this then sends them on a fresh connection
+/// from a thread that holds the call's [`action::Action`], and with it the
+/// desktop, until the releases are done or abandoned. The server ignores a release for
 /// a key or button that is already up.
 #[derive(Default)]
 struct Delivered(Vec<(u8, u8, bool)>);
@@ -3197,23 +3198,27 @@ impl Delivered {
 
 impl Drop for Delivered {
     fn drop(&mut self) {
-        if self.0.is_empty() || !action::current().is_some_and(|action| action.is_abandoned()) {
+        let Some(action) = action::current().filter(|action| action.is_abandoned()) else {
+            return;
+        };
+        if self.0.is_empty() {
             return;
         }
         let presses = self
             .0
             .drain(..)
             .map(|(release, detail, _)| (release, detail));
-        if let Err(error) = release_abandoned(presses.collect()) {
+        if let Err(error) = release_abandoned(action, presses.collect()) {
             tracing::warn!("releasing the input of an abandoned call failed: {error:#}");
         }
     }
 }
 
-fn release_abandoned(presses: Vec<(u8, u8)>) -> Result<()> {
+fn release_abandoned(action: Arc<action::Action>, presses: Vec<(u8, u8)>) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (done, finished) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
+        let _desktop = action;
         let released = (|| -> Result<()> {
             let (conn, _) = RustConnection::connect(None)?;
             for &(kind, detail) in presses.iter().rev() {

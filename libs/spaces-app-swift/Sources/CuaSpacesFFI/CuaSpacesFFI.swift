@@ -14936,7 +14936,7 @@ public func FfiConverterTypeAppFileView_lower(_ value: AppFileView) -> RustBuffe
 
 public struct AppGpuChoice: Equatable, Hashable {
     /**
-     * `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+     * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
      */
     public var runtime: String
     /**
@@ -14968,7 +14968,7 @@ public struct AppGpuChoice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+         * `lume`, `qemu`, `container`, `gvisor`, `cloud`.
          */runtime: String,
         /**
          * What the create passes as `gpu` (`paravirtual`).
@@ -66899,17 +66899,6 @@ public func appApproveView(state: AppApproveSheetState, devices: [AppDeviceInput
 })
 }
 /**
- * The SDK's billing status as the app core takes it (Settings' Billing
- * row).
- */
-public func appBillingStatus(status: FleetBillingStatus) -> AppBillingStatus  {
-    return try!  FfiConverterTypeAppBillingStatus_lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_app_billing_status(
-        FfiConverterTypeFleetBillingStatus_lower(status),$0
-    )
-})
-}
-/**
  * Picker catalog entries from JSON (fixtures, parity flows).
  */
 public func appCatalogEntriesFromJson(json: String)throws  -> [AppCatalogEntry]  {
@@ -69965,9 +69954,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_approve_view() != 20205) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_billing_status() != 4162) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json() != 39250) {

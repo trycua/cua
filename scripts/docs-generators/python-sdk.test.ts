@@ -92,13 +92,7 @@ test('every page section maps to a unique anchor on its page', () => {
   }
 });
 
-test('coverage fails on an undocumented public name and tolerates fleet_sdk re-exports', () => {
-  assert.doesNotThrow(() =>
-    assertCoverage({
-      objects: [],
-      modules: [module(['Image', 'VmTemplate'], { VmTemplate: 'fleet_sdk' })],
-    })
-  );
+test('coverage fails on an undocumented public name', () => {
   assert.throws(
     () => assertCoverage({ objects: [], modules: [module(['Image', 'Brand New'])] }),
     /Brand New/
@@ -107,10 +101,10 @@ test('coverage fails on an undocumented public name and tolerates fleet_sdk re-e
 
 test('re-exports are grouped by source module', () => {
   const text = renderReexports(
-    module(['Image', 'B', 'A'], { A: 'fleet_sdk', B: 'fleet_sdk' }),
+    module(['Image', 'B', 'A'], { A: 'other_sdk', B: 'other_sdk' }),
     new Set(['Image'])
   );
-  assert.match(text, /\| `fleet_sdk` \| `A`, `B` \|/);
+  assert.match(text, /\| `other_sdk` \| `A`, `B` \|/);
   assert.equal(renderReexports(module(['Image']), new Set(['Image'])), '');
 });
 

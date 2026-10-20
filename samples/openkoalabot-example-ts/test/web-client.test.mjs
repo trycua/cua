@@ -24,7 +24,7 @@ test(
     try {
       const fx = JSON.parse(await new Promise((r) => createInterface({ input: child.stdout }).once("line", r)))
       const sdk = await loadBrowserSdk()
-      const env = await sdk.Cua.embedded(sdk.CuaConfig.create({})).spacesd(fx.env_url, fx.env_token)
+      const env = await sdk.Cua.embedded().spacesd(fx.env_url, fx.env_token)
       const media = await openDesktopMedia(env, fx.env_url, { maxFps: 5, maxDimension: 640 })
       assert.match(media.wsUrl, /^ws:\/\/127\.0\.0\.1:\d+\/media\?ticket=/)
       // Two fixture limits shape this: its `/media` sniffing is per TCP

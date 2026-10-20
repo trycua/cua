@@ -1,4 +1,4 @@
-//! gRPC-Web through a buffering proxy: the Fleet gateway (nginx) delivers a
+//! gRPC-Web through a buffering proxy: nginx delivers a
 //! unary response's data frame and trailers frame in ONE chunk, which
 //! tonic-web 0.14's client decoder alone mis-reads as "missing grpc-status
 //! trailer". This fake proxy answers exactly that way.

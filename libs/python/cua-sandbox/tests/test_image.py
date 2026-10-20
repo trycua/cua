@@ -1,7 +1,7 @@
 """Unit tests for the Image builder (no runtime needed)."""
 
 import pytest
-from cua_sandbox.image import Image, cloud_registry_image
+from cua_sandbox.image import Image, registry_image
 
 LINUX = "ghcr.io/trycua/linux:24.04"
 WINDOWS = "ghcr.io/trycua/windows:2022"
@@ -48,7 +48,7 @@ class TestBuiltinRegistryImages:
         ],
     )
     def test_builtin_descriptors_are_canonical(self, image, expected):
-        assert cloud_registry_image(image) == expected
+        assert registry_image(image) == expected
 
     @pytest.mark.parametrize(
         "image",
@@ -61,13 +61,13 @@ class TestBuiltinRegistryImages:
         ],
     )
     def test_other_descriptors_have_no_canonical_image(self, image):
-        assert cloud_registry_image(image) is None
+        assert registry_image(image) is None
 
     @pytest.mark.parametrize("image", [Image.linux(), Image.windows()])
     def test_explicit_registry_overrides_the_canonical_image(self, image):
         override = image._with(_registry="registry.example/custom:latest")
 
-        assert cloud_registry_image(override) == "registry.example/custom:latest"
+        assert registry_image(override) == "registry.example/custom:latest"
 
     @pytest.mark.parametrize(
         "variable",
@@ -75,11 +75,9 @@ class TestBuiltinRegistryImages:
     )
     def test_one_override_per_os_and_the_old_names(self, monkeypatch, variable):
         monkeypatch.setenv(variable, "registry.example/linux:1")
-        assert cloud_registry_image(Image.linux()) == "registry.example/linux:1"
+        assert registry_image(Image.linux()) == "registry.example/linux:1"
         # Only the default version is overridden.
-        assert cloud_registry_image(Image.linux("ubuntu", "22.04")) == (
-            "ghcr.io/trycua/linux:22.04"
-        )
+        assert registry_image(Image.linux("ubuntu", "22.04")) == ("ghcr.io/trycua/linux:22.04")
 
     def test_linux_kind_defaults_to_the_image(self):
         assert Image.linux().kind is None
@@ -299,7 +297,7 @@ class TestTiersAndOmarchy:
 
     def test_full_is_the_default(self):
         assert Image.linux(tier="full")._registry is None
-        assert cloud_registry_image(Image.linux(tier="full")) == LINUX
+        assert registry_image(Image.linux(tier="full")) == LINUX
 
     @pytest.mark.parametrize(
         "make, ref",
@@ -314,7 +312,7 @@ class TestTiersAndOmarchy:
 
         if _published(ref):
             img = make()
-            assert cloud_registry_image(img) == ref
+            assert registry_image(img) == ref
             assert img.to_dict()["registry"] == ref
         else:
             with pytest.raises(native().CuaError.ImageNotPublished, match="not published yet"):

@@ -356,7 +356,7 @@ impl QemuRuntime {
     }
 
     /// Firmware for a new instance. aarch64 always boots UEFI. On x86 an
-    /// explicit preference wins (a Fleet template's `firmware`); otherwise
+    /// explicit preference wins (an image's `firmware`); otherwise
     /// UEFI for Windows and SeaBIOS for everything else (KubeVirt's default
     /// for containerDisks).
     async fn setup_firmware(
@@ -900,7 +900,7 @@ impl QemuRuntime {
 }
 
 /// Guest OS and firmware for a new x86 instance. What the caller said wins;
-/// what it left open comes from the disk's partition table, so any Fleet
+/// what it left open comes from the disk's partition table, so any
 /// containerDisk boots without per-image flags: a GPT with an ESP and no BIOS
 /// boot partition needs UEFI, and Microsoft partitions mean a Windows guest.
 async fn boot_hints(

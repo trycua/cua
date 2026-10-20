@@ -250,7 +250,7 @@ async function presence(ctx: Ctx, step: Step): Promise<string> {
   const cursor = (step.cursor ?? { x: 0.25, y: 0.75 }) as { x: number; y: number }
 
   // The second client is a separate runtime with its own temp registry.
-  const other = openRuntime({ root: join(ctx.tmp, "client-b"), teleportHome: join(ctx.tmp, "empty-home"), cloudFromEnv: ctx.opts.lane === "cloud" })
+  const other = openRuntime({ root: join(ctx.tmp, "client-b"), teleportHome: join(ctx.tmp, "empty-home") })
   ctx.extra.push(other)
   const target = ctx.opts.lane === "cloud" ? info.id : need(ctx.opts.url, "OPENKOALABOTS_SCENARIO_URL")
   const infoB = await other.spaces().add(target, ctx.opts.token, `${info.name}-b`)
@@ -471,7 +471,7 @@ export async function runScenario(opts: RunOptions): Promise<ScenarioResult> {
   const profile = JSON.parse(readFileSync(resolve(opts.specDir, "fixtures/firefox-profile.json"), "utf8")) as ProfileFixture
   const teleportHome = join(tmp, "teleport-home")
   writeProfile(teleportHome, profile, marker)
-  const cua = openRuntime({ root: join(tmp, "client-a"), teleportHome, cloudFromEnv: opts.lane === "cloud" })
+  const cua = openRuntime({ root: join(tmp, "client-a"), teleportHome })
   const ctx: Ctx = {
     opts,
     nonce,

@@ -39,15 +39,14 @@ class Unsupported(NotImplementedError):
 
 class InvalidArgument(ValueError):
     """Contradictory or invalid options (the native SDK's
-    ``CuaError.InvalidArgument``), for example ``local=True`` together with
-    ``cloud=CloudOptions(...)``."""
+    ``CuaError.InvalidArgument``), for example ``on="local"`` together with
+    ``local=False``."""
 
 
 class InvalidPlacement(InvalidArgument):
     """A location, kind and runtime that do not go together (the native
     SDK's ``CuaError.InvalidPlacement``), for example ``kind="container"``
-    with ``runtime="qemu"``, or ``runtime="kubevirt"`` locally. The message
-    lists the valid values."""
+    with ``runtime="qemu"``. The message lists the valid values."""
 
 
 def sdk() -> Any:
@@ -110,10 +109,7 @@ def runtime(*, state_dir: Optional[os.PathLike | str] = None) -> Any:
         existing = _RUNTIMES.get(key)
         if existing is not None:
             return existing
-        created = sdk().embedded(
-            state_dir=None if state_dir is None else str(state_dir),
-            fleet_from_env=False,
-        )
+        created = sdk().embedded(state_dir=None if state_dir is None else str(state_dir))
         _RUNTIMES[key] = created
         return created
 

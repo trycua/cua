@@ -1089,7 +1089,7 @@ async function startDirect(url: string, envToken: string): Promise<void> {
     await startStream(async () => {
       const sdk = await import("@trycua/cua/browser")
       await sdk.initialize()
-      const env = (await sdk.Cua.embedded(sdk.CuaConfig.create({})).spacesd(url, envToken || undefined)) as unknown as JsonRpc
+      const env = (await sdk.Cua.embedded().spacesd(url, envToken || undefined)) as unknown as JsonRpc
       const media = await openDesktopMedia(env, url, { maxFps: 30, maxDimension: 1280 })
       return { media, close: () => closeMedia(env, media.mediaSessionId) }
     })

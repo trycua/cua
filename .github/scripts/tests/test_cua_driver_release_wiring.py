@@ -526,7 +526,7 @@ fi
             "- name: Generate post-publication GitHub App token", bake_job
         )
         advance = workflow.index(
-            "- name: Advance public installer version on main", app_token
+            "- name: Advance public installer version through a pull request", app_token
         )
 
         self.assertLess(release_job, control_checkout)
@@ -548,8 +548,10 @@ fi
             '"$UPDATE_ROOT/.github/release-state/cua-driver-rs-published-version"',
             workflow,
         )
-        self.assertIn("-F force=false", workflow)
-        self.assertIn("[skip ci]", workflow)
+        self.assertNotIn("git/refs/heads/main", workflow)
+        self.assertNotIn("[skip ci]\"", workflow)
+        self.assertIn("gh pr create", workflow)
+        self.assertIn("gh pr merge", workflow)
 
     def test_release_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-rust.sh")

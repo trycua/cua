@@ -18,10 +18,8 @@
 #            --mock-llm is its Linux binary (default: the cargo target's
 #            <arch>-unknown-linux-musl/release/cua-mock-llm). Without it
 #            those steps skip.
-#   cloud    gated: needs OPENKOALABOTS_CLOUD_IMAGE (a linux
-#            spacesd image Cua Cloud can pull) and cloud credentials in the
-#            environment (CUA_CLIENT_ID/SECRET or FLEETS_TOKEN). The runner
-#            creates a Space named openkoalabot-example-scenario-* and deletes it.
+#   cloud    gated: needs OPENKOALABOTS_CLOUD_IMAGE. Cua Cloud has ended, so
+#            the create step reports the "Cua Cloud has ended" error.
 #
 # Runners never open a window and never touch ~/.cua, ~/.claude, a real app
 # profile or the keychain: each uses temp Spaces registries and a generated

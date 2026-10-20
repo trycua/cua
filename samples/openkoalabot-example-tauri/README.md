@@ -20,7 +20,7 @@ This example depends on the cua SDK by path, as a local workspace override:
 
 | Dependency | Where it comes from today |
 |---|---|
-| `cua-spaces`, `cua-fleet`, `cua-sandbox-core`, `cua-daemon` | `../../../libs/cua/crates/*` (path dependencies in `src-tauri/Cargo.toml`) |
+| `cua-spaces`, `cua-sandbox-core`, `cua-daemon` | `../../../libs/cua/crates/*` (path dependencies in `src-tauri/Cargo.toml`) |
 | The sandbox image list | `../../libs/images/sandbox-images.json`, imported by the UI (`ui/src/images.ts`) and compiled into the core (`src-tauri/core/src/plan.rs`) |
 
 None of these are on crates.io or npm yet. Once they are, the path

@@ -16,9 +16,7 @@
  *    listing each generated path, so renamed bindings are pruned;
  *  - `--check` regenerates into a temporary directory and compares.
  *
- * The cdylib also links cyclops-sdk, which carries its own UniFFI
- * namespaces (`fleet_sdk`, `cyclops_sdk_schema`). The cua SDK never exposes
- * their types, so only the `cua_sdk` namespace is generated.
+ * Only the `cua_sdk` namespace is generated.
  *
  * Usage: node generate-uniffi-bindings.mjs [--check] [--skip-build]
  *        [--only=python,swift,kotlin,typescript]
@@ -273,19 +271,10 @@ try {
     )
     const files = {}
     const names = readdirSync(out).filter((name) => name.endsWith(".ts"))
-    // Other UniFFI namespaces linked into the cdylib (cyclops-sdk's).
-    const foreign = names
-      .filter((name) => !name.endsWith("-ffi.ts") && name !== "index.ts")
-      .map((name) => name.slice(0, -".ts".length))
-      .filter((namespace) => namespace !== CRATE)
     for (const name of names) {
       if (name === "index.ts") {
-        // Keep UBRN's initializer, minus the namespaces we do not ship.
-        const index = readFileSync(join(out, name), "utf8")
-          .split("\n")
-          .filter((line) => !foreign.some((namespace) => line.includes(namespace)))
-          .join("\n")
-        files["src/native/index.ts"] = normalizeTypeScript(name, index)
+        // UBRN's initializer.
+        files["src/native/index.ts"] = normalizeTypeScript(name, readFileSync(join(out, name), "utf8"))
         continue
       }
       // Only the cua_sdk namespace (see the header comment).

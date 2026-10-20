@@ -14,14 +14,13 @@ One `Cua` object, embedded in this process or connected to a running
 
     asyncio.run(main())
 
-Modules: sandboxes (Fleet, local, direct), env (cua-spacesd, with
+Modules: sandboxes (local, direct, your own cloud), env (cua-spacesd, with
 `call_json` for every `cua.env.v1` RPC), media sessions with `FrameSink` /
 `AudioSink` callbacks (encoded) or `DecodedFrameSink` / `PcmSink` callbacks
-(decoded BGRA frames and PCM audio), fleet (pools, claims, images), local
-runtimes and images, and spaces (`c.spaces()`: add a machine by URL, claim a
-Fleet Space, provision a local one; then bash, files, send_file, driver
-tools, streams, presence, teleport with an approval callback, hotspot,
-agents).
+(decoded BGRA frames and PCM audio), local runtimes and images, and spaces
+(`c.spaces()`: add a machine by URL, provision a local one; then bash,
+files, send_file, driver tools, streams, presence, teleport with an
+approval callback, hotspot, agents).
 
 Everything is generated from the Rust `cua-sdk` crate by UniFFI
 (`cua._native`); this module only adds two constructors.
@@ -31,7 +30,7 @@ High-level API (optional extras)
 `cua` also carries the convenience surface of the former `cua` meta-package
 (0.1.x), resolved lazily from the optional extras::
 
-    pip install "cua[sandbox]"   # cua-sandbox: Sandbox, Image, Pool, runtimes ...
+    pip install "cua[sandbox]"   # cua-sandbox: Sandbox, Image, runtimes ...
     pip install "cua[agent]"     # cua-agent: ComputerAgent, callbacks, tools
     pip install "cua[all]"
 
@@ -60,7 +59,7 @@ except Exception:  # noqa: BLE001 - optional convenience
     pass
 
 from ._native import *  # noqa: F401,F403
-from ._native import Cua, CuaConfig, FleetSettings
+from ._native import Cua, CuaConfig
 from ._native import Sandbox as SandboxHandle
 from ._native import cua_sdk_version
 
@@ -103,34 +102,26 @@ del Sandbox  # type: ignore[name-defined]  # noqa: F821
 def embedded(
     *,
     state_dir: Optional[str] = None,
-    fleet: Optional[FleetSettings] = None,
-    fleet_from_env: bool = True,
-    fleet_from_session: bool = False,
+    account_from_session: bool = False,
     env_probe_timeout_ms: Optional[int] = None,
     spaces_home: Optional[str] = None,
     teleport_home: Optional[str] = None,
-    fleet_pool_home: Optional[str] = None,
 ) -> Cua:
     """An SDK runtime in this process (no I/O until the first call).
 
-    Fleet uses ``CUA_CLIENT_ID``/``CUA_CLIENT_SECRET`` (or ``FLEETS_TOKEN``);
-    ``fleet_from_session=True`` falls back to the ``cua auth login`` session
-    (cua-sandbox's ``Sandbox`` does this by default).
+    ``account_from_session=True`` uses the ``cua auth login`` session for
+    the relay account the runtime lists "My machines" with.
     ``spaces_home`` is the Spaces registry directory (default ``~/.cua``);
     ``teleport_home`` makes teleport read app sessions under that directory
-    with no host side effects (tests); ``fleet_pool_home`` is where managed Fleet pools keep their name
-    cache and GC lock (default ``~/.cua``).
+    with no host side effects (tests).
     """
     return Cua.embedded(
         CuaConfig(
             state_dir=state_dir,
-            fleet=fleet,
-            fleet_from_env=fleet_from_env,
-            fleet_from_session=fleet_from_session,
+            account_from_session=account_from_session,
             env_probe_timeout_ms=env_probe_timeout_ms,
             spaces_home=spaces_home,
             teleport_home=teleport_home,
-            fleet_pool_home=fleet_pool_home,
         )
     )
 
@@ -176,9 +167,6 @@ def connect(address: Optional[str] = None, token: Optional[str] = None) -> Cua:
 _SANDBOX_NAMES = (
     "Sandbox",
     "SandboxInfo",
-    "Pool",
-    "Template",
-    "PoolAccessDeniedError",
     "sandbox",
     "configure",
     "login",

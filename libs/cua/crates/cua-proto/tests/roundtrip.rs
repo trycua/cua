@@ -451,7 +451,7 @@ fn daemon_messages_roundtrip() {
         socket_path: "/home/u/.cua/cua.sock".into(),
         loopback_url: "http://127.0.0.1:52011".into(),
         loopback_token: "t".into(),
-        features: vec!["env".into(), "fleet".into()],
+        features: vec!["env".into(), "sandboxes".into()],
         started_at: Some(ts(1, 0)),
         executable: "/Applications/Cua Spaces.app/Contents/MacOS/cua".into(),
         build_id: "0.2.0-7a1c-18f2".into(),

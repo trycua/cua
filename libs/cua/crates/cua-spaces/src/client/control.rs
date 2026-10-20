@@ -113,8 +113,9 @@ impl Connection {
     }
 
     /// `create_space`: makes a new sandbox and registers it as a Space.
-    /// `options.on` says where: `cloud` is metered, `local` is free, and
-    /// unset is the user's default location (local unless configured).
+    /// `options.on` says where: a connected cloud account (`aws`, `gcp`,
+    /// `modal`) is billed there, `local` is free, and unset is the user's
+    /// default location (local unless configured).
     /// With `reuse`, a reachable registered Space in that location is
     /// returned instead.
     pub fn create_space(self: &Arc<Self>, options: CreateSpaceOptions) -> Result<Space> {
@@ -727,8 +728,8 @@ impl Space {
         Ok(format!("{directory}/{}", base_name(local_path)))
     }
 
-    /// `download`. The Local path answers with JSON and the Fleet path with
-    /// prose (§4); both return a path here.
+    /// `download`. Providers answered with JSON or with prose (§4); both
+    /// return a path here.
     pub fn download(&self, remote_path: &str, into_directory: Option<String>) -> Result<String> {
         self.require("download", self.capabilities().download, "no file transfer")?;
         let mut arguments = json!({ "path": self.guest_path(remote_path) });
@@ -1332,7 +1333,7 @@ mod tests {
             r#"{{"script":"cua.control.script/1","responses":{{{LIST_SPACES}}}}}"#
         ));
         let error = connection
-            .attach("fleet:nope", true)
+            .attach("local:nope", true)
             .err()
             .expect("attaching to an absent Space must fail");
         assert_eq!(error.tag(), "SpaceUnavailable");
@@ -1381,9 +1382,8 @@ mod tests {
     }
 
     /// §6. A provider that cannot do a thing says so before the call, rather
-    /// than after, in prose. (Fleet used to be that provider for streaming;
-    /// `stream_endpoint` now serves every real provider, so the check is
-    /// pinned on a provider the client cannot identify.)
+    /// than after, in prose. (`stream_endpoint` serves every real provider, so
+    /// the check is pinned on a provider the client cannot identify.)
     #[test]
     fn an_unknown_provider_refuses_streaming_before_calling_anything() {
         let script = r#"{"script":"cua.control.script/1","responses":{
@@ -1501,7 +1501,7 @@ mod tests {
             .unwrap();
         let approval = manifest
             .approving(
-                "fleet:somewhere-else",
+                "local:somewhere-else",
                 &["claude/.credentials.json".into()],
                 true,
             )

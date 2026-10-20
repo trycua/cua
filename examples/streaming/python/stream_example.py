@@ -530,7 +530,7 @@ async def click_during(env: Any, window: dict):
 
 
 async def connect(url: str, token: str) -> Any:
-    c = cua.embedded(fleet_from_env=False)
+    c = cua.embedded()
     return await c.spacesd(url, token)
 
 

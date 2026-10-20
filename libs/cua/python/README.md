@@ -23,7 +23,7 @@ asyncio.run(main())
 ```python
 c = cua.embedded()
 sb = await c.sandboxes().create(cua.SandboxCreateOptions(
-    on="local",                                   # or "cloud": same options
+    on="local",                                   # or "aws": same options
     image="python:3.12-slim",
     command=["python", "-m", "my_mcp", "--port", "8765"],
     env={"FOO": "bar"},
@@ -54,7 +54,7 @@ layers (a remote build) are not available yet and fail with a clear error.
 resolve lazily from optional extras:
 
 ```bash
-pip install "cua[sandbox]"   # cua-sandbox: Sandbox, Image, Pool, QEMURuntime, ...
+pip install "cua[sandbox]"   # cua-sandbox: Sandbox, Image, QEMURuntime, ...
 pip install "cua[agent]"     # cua-agent: ComputerAgent, cua.callbacks, cua.tools
 pip install "cua[all]"       # both (the `cua` command is the Rust CLI in libs/cua)
 ```
@@ -82,5 +82,4 @@ cargo build --release -p cua-sdk
 scripts/build-test-fixtures.sh
 node scripts/stage-uniffi-library.mjs          # copies the library here
 cd python && uv run --with pytest pytest -q    # smoke tests against fixtures
-CUA_E2E_FLEET=1 uv run --with pytest pytest -q tests/test_live_fleet.py  # live Fleet
 ```

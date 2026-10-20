@@ -151,7 +151,7 @@ fn relay_failures_that_pass_on_their_own_are_transient() {
         (Error::Relay("HTTP 500: boom".into()), false),
         (Error::Relay("bad relay response: EOF".into()), false),
         (Error::Unauthenticated("relay: no".into()), false),
-        (Error::NotFound("relay: no such machine".into()), false),
+        (Error::NotFound("relay: no such computer".into()), false),
     ] {
         assert_eq!(e.is_transient(), transient, "{e}");
     }

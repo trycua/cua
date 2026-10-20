@@ -483,7 +483,17 @@ impl<'a> Api<'a> {
         if let Some(session) = &self.session {
             args.insert("session".into(), json!(session));
         }
-        let result = self.registry.invoke(tool, Value::Object(args)).await;
+        // A script chains its actions, so each one returns without waiting out
+        // the cursor glide or the full window-change report; the script's own
+        // reads (`getState`, `waitFor`) see what an action opened.
+        let pacing = if BATCHABLE_TOOLS.contains(&tool) {
+            crate::step_pacing::StepPacing::Batched
+        } else {
+            crate::step_pacing::StepPacing::Single
+        };
+        let result =
+            crate::step_pacing::scope(pacing, self.registry.invoke(tool, Value::Object(args)))
+                .await;
         let mut text = String::new();
         for content in &result.content {
             match content {
@@ -508,10 +518,16 @@ impl<'a> Api<'a> {
                 .and_then(|value| value.get("code"))
                 .and_then(Value::as_str)
                 .unwrap_or("tool_error");
-            return Err(HostError::new(
-                clip(text.lines().next().unwrap_or("failed"), 500),
-                code,
-            ));
+            let mut message = clip(text.lines().next().unwrap_or("failed"), 500);
+            if let Some(hint) = result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("hint"))
+                .and_then(Value::as_str)
+            {
+                message = format!("{message} Hint: {hint}");
+            }
+            return Err(HostError::new(message, code));
         }
         let mut value = match result.structured_content {
             Some(Value::Object(object)) => Value::Object(object),

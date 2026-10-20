@@ -162,3 +162,37 @@ struct SettingsView: View {
         }
     }
 }
+
+/// A prompt to hand to a coding agent: a label, the text in a quiet
+/// read-only box (selectable, wrapping) and Copy.
+struct PromptBox: View {
+    let label: String
+    let text: String
+    let copyLabel: String
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(label).foregroundStyle(.secondary)
+                Spacer()
+                Button(copyLabel) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    copied = true
+                }
+                .controlSize(.small)
+                .accessibilityIdentifier("storage-prompt-copy")
+            }
+            Text(text)
+                .font(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+                .accessibilityIdentifier("storage-prompt")
+        }
+    }
+}

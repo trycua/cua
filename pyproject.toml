@@ -74,15 +74,10 @@ cua-agent = { workspace = true }
 cua-core = { workspace = true }
 cua-som = { workspace = true }
 cua-bench-ui = { workspace = true }
-# cua-sandbox is not a workspace member (it pulls the native cua-fleet wheel
-# from the cua-wheels index); consumers resolve it from the in-repo path.
+# cua-sandbox is not a workspace member; consumers resolve it from the in-repo path.
 cua-sandbox = { path = "libs/python/cua-sandbox", editable = true }
 # cua-sandbox depends on the cua SDK (UniFFI binding), built from the repo.
 cua = { path = "libs/cua/python", editable = true }
-
-[[tool.uv.index]]
-name = "cua-wheels"
-url = "https://wheels.cua.ai/simple"
 
 [tool.black]
 line-length = 100
@@ -118,6 +113,26 @@ show_error_codes = true
 strict = true
 warn_return_any = true
 warn_unused_ignores = false
+
+[tool.pyright]
+include = ["**/*.py"]
+exclude = [
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/.*/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/dist/**",
+    "**/build/**",
+    ".pdm-build/**",
+    "**/.git/**",
+    "logs/**",
+    "screenshots/**",
+]
+typeCheckingMode = "basic"
+useLibraryCodeForTypes = true
+reportMissingImports = false
+reportMissingModuleSource = false
 
 [tool.isort]
 profile = "black"

@@ -7,9 +7,9 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Each recipe gives a third-party agent its own desktop instead of yours.
 Sandboxes run on this machine by default; to run them in your own AWS, Google
-Cloud or Modal account, see [Use your own cloud](/cua-sdk/guides/your-cloud).
+Cloud or Modal account, see [Choose where sandboxes run](/cua-sdk/guides/local-runtimes#your-own-cloud).
 The Python script needs Python `>=3.11,<3.14` with
-[`uv`](https://docs.astral.sh/uv/) and pins `cua-sandbox==0.9.0`. Your
+[`uv`](https://docs.astral.sh/uv/) and pins `cua-sandbox==0.9.1`. Your
 controller owns the sandbox and must delete it.
 
 ## OpenAI Agents API
@@ -48,7 +48,7 @@ interactive.
 
 Cursor's self-hosted Team Pool worker can run in a Linux Space on your Mac or
 on a machine you set up with
-[`cua host setup --provide-spaces`](/start-here/host-spaces-on-your-spare-mac)
+[`cua host setup --provide-spaces`](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces)
 (add `--on "<machine>"` and use the id `create` prints). It needs Cursor
 Enterprise with [Self-Hosted Machines](https://cursor.com/docs/cloud-agent/self-hosted)
 allowed and a service-account API key. Create the Space, install the Cursor
@@ -123,8 +123,8 @@ For Omarchy on Apple silicon, see [Lume](/lume).
 
 ## Minecraft
 
-Build the Prism launcher into an image once, then run it in the cloud or
-locally. Describe it as `minecraft.json`:
+Build the Prism launcher into an image once, then run it locally or in your
+own cloud. Describe it as `minecraft.json`:
 
 ```json title="minecraft.json" test="config" id="json-config" schema="cua-image"
 {
@@ -149,7 +149,7 @@ locally. Describe it as `minecraft.json`:
 }
 ```
 
-Build on an x86_64 host with KVM (the cloud runs amd64), push, and run it:
+Build on an x86_64 host with KVM, push, and run it:
 
 ```bash test="cli-shape" id="cua-image-build"
 cua image build minecraft.json \

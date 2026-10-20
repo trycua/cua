@@ -15,6 +15,8 @@ import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
 import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
+import { NUDGES_ARGS } from "../ops/nudges";
+import { RESOURCES_ARGS } from "../ops/resources";
 import { CHECKLIST_ARGS } from "../ops/checklist";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
@@ -112,6 +114,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "notifications.markAllRead": {},
   "notifications.markRead": { ids: ["n1"] },
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
+  "telemetry.linkNotice": {},
+  "telemetry.acknowledgeLinkNotice": {},
   "spaces.usage": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
@@ -127,6 +131,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "startup.act": { action: "allowAccess" },
   ...STREAM_ARGS,
   ...RELAY_USAGE_ARGS,
+  ...NUDGES_ARGS,
+  ...RESOURCES_ARGS,
   ...CHECKLIST_ARGS,
   ...PRESENCE_ARGS,
   ...RUNTIME_FIX_ARGS,

@@ -54,7 +54,7 @@ export function JoinWithCodeDialog({
         <form onSubmit={submit} className="px-6 pt-5 pb-4">
           <DialogTitle className="text-[15px] font-semibold">Join with a code</DialogTitle>
           <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-            Paste the code from Add a machine on your other device. This computer is added to the account that made it, and that account can then reach it. Only use a code you made yourself or got from someone you trust.
+            Paste the code from Add a computer on your other device. This computer is added to the account that made it, and that account can then reach it. Only use a code you made yourself or got from someone you trust.
           </DialogDescription>
           {relay ? (
             <p className="mt-2 text-xs text-muted-foreground" data-join-relay>
@@ -64,7 +64,7 @@ export function JoinWithCodeDialog({
           {joined ? (
             <div className="mt-4 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-join-joined>
               <CheckIcon className="size-4 shrink-0 text-success" aria-hidden />
-              <span>This computer joined. It shows in your machines.</span>
+              <span>This computer joined. It shows in your computers.</span>
             </div>
           ) : (
             <>

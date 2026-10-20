@@ -4,7 +4,7 @@
 //! The Cua Spaces daemon extension: what `cua daemon` hosts in the Cua
 //! Spaces build, registered through [`cua_daemon::extension`].
 //!
-//! - The Cua Volume (local, S3-compatible or the Cua cloud) behind the drive
+//! - The Cua Volume (local or S3-compatible) behind the drive
 //!   tools and persistent agents ([`crate::DriveExtension`]), asking for the
 //!   same user presence as the Keyvault before it widens access.
 //! - Teleport ([`crate::TeleportExtension`]) over the host's app-session
@@ -100,7 +100,7 @@ impl DaemonExtension for CuaSpacesDaemon {
         // widens anyone's access.
         let drive_presence: Arc<dyn cua_volume::Presence> =
             Arc::new(drive::KeyvaultPresence(self.presence()));
-        let drive = drive::open(cx.home, cx.fleet, drive_presence);
+        let drive = drive::open(cx.home, drive_presence);
         let sessions = Arc::new(match self.fake_host(cx) {
             Some(h) => crate::teleport::AppSessions::with_host(h),
             None => crate::teleport::AppSessions::builtin(),

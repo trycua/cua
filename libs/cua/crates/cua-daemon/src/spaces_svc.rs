@@ -1,5 +1,5 @@
 //! `cua.daemon.v1.SpaceService`: a thin adapter over the runtime's
-//! [`cua_spaces::Spaces`]. The registry, Fleet claims, local provisioning
+//! [`cua_spaces::Spaces`]. The registry, local provisioning
 //! and every MCP tool are `cua-spaces` code; this module only converts
 //! messages. Without the `spaces` feature every call is `Unsupported`.
 
@@ -234,54 +234,6 @@ mod imp {
             ok(pb::ResolveSpaceResponse {
                 space: Some(record(self.spaces(), &id.to_string()).await.map_err(st)?),
             })
-        }
-
-        async fn claim_fleet_space(
-            &self,
-            req: tonic::Request<pb::ClaimFleetSpaceRequest>,
-        ) -> R<pb::ClaimFleetSpaceResponse> {
-            let r = req.into_inner();
-            let runtime = match opt(r.runtime) {
-                Some(v) => {
-                    match cua_spaces::fleet_runtime::parse_runtime(&v).map_err(|e| st(e.into()))? {
-                        cua_spaces::contract::inputs::FleetRuntime::Gvisor => Runtime::Gvisor,
-                        cua_spaces::contract::inputs::FleetRuntime::Kubevirt => Runtime::Kubevirt,
-                    }
-                }
-                None => Runtime::Auto,
-            };
-            let created = self
-                .spaces()
-                .create(cua_spaces::SpaceCreate {
-                    on: Some(On::Cloud),
-                    image: opt(r.image),
-                    runtime,
-                    name: opt(r.name),
-                    wait: r.wait,
-                    reuse: r.reuse,
-                    command: (!r.command.is_empty()).then_some(r.command),
-                    env: r.env.into_iter().collect(),
-                    services: ports(r.services).map_err(st)?,
-                    spacesd: r.spacesd,
-                    ..Default::default()
-                })
-                .await
-                .map_err(|e| st(e.into()))?;
-            match created {
-                cua_spaces::SpaceCreated::Ready { info, reused } => {
-                    ok(pb::ClaimFleetSpaceResponse {
-                        space: Some(record(self.spaces(), &info.id).await.map_err(st)?),
-                        pending_json: String::new(),
-                        reused,
-                    })
-                }
-                cua_spaces::SpaceCreated::Starting(pending) => ok(pb::ClaimFleetSpaceResponse {
-                    space: None,
-                    pending_json: serde_json::to_string(&pending)
-                        .map_err(|e| st(Error::Internal(e.to_string())))?,
-                    reused: false,
-                }),
-            }
         }
 
         async fn provision_local_space(
@@ -564,6 +516,52 @@ mod imp {
                 captured_at: Some(crate::convert::ts(t.captured_at)),
             })
         }
+
+        async fn get_resources(
+            &self,
+            req: tonic::Request<pb::GetResourcesRequest>,
+        ) -> R<pb::GetResourcesResponse> {
+            let snapshot = self
+                .spaces()
+                .resources(req.into_inner().visible)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::GetResourcesResponse {
+                snapshot: Some((&snapshot).into()),
+            })
+        }
+
+        type WatchResourcesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchResourcesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_resources(
+            &self,
+            req: tonic::Request<pb::WatchResourcesRequest>,
+        ) -> R<Self::WatchResourcesStream> {
+            let mut watch = self.spaces().watch_resources(req.into_inner().visible);
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            // The watch is the interest: it ends with the stream, so the
+            // sampler stops when the last reader is gone.
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        event = watch.next() => {
+                            let Some(event) = event else { break };
+                            if tx.send(Ok((&event).into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        _ = tx.closed() => break,
+                    }
+                }
+            });
+            ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        }
     }
 }
 
@@ -601,12 +599,6 @@ mod imp {
             &self,
             _: tonic::Request<pb::ResolveSpaceRequest>,
         ) -> R<pb::ResolveSpaceResponse> {
-            off()
-        }
-        async fn claim_fleet_space(
-            &self,
-            _: tonic::Request<pb::ClaimFleetSpaceRequest>,
-        ) -> R<pb::ClaimFleetSpaceResponse> {
             off()
         }
         async fn provision_local_space(
@@ -678,6 +670,27 @@ mod imp {
             &self,
             _: tonic::Request<pb::GetSpaceThumbnailRequest>,
         ) -> R<pb::GetSpaceThumbnailResponse> {
+            off()
+        }
+        async fn get_resources(
+            &self,
+            _: tonic::Request<pb::GetResourcesRequest>,
+        ) -> R<pb::GetResourcesResponse> {
+            off()
+        }
+
+        type WatchResourcesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchResourcesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_resources(
+            &self,
+            _: tonic::Request<pb::WatchResourcesRequest>,
+        ) -> R<Self::WatchResourcesStream> {
             off()
         }
     }

@@ -11,14 +11,13 @@
 //!   `~/.cua/spaces.json` (shared with `cua daemon`, the `cua` CLI and
 //!   `cua daemon mcp`), and the primitives (files, streams, teleport,
 //!   hotspot, agents) are SDK calls. No ssh, no rcdp CLI, no Python.
-//! - Fleet is one `cua_fleet::FleetClient` whose bearer comes from the
-//!   signed-in user when there is one and from the environment
-//!   credentials otherwise ([`AppTokens`]).
-//! - `cua daemon` is connected (or started) for what a webview cannot do by
-//!   itself: attaching to a Fleet Space's media socket, which needs gateway
-//!   headers. The daemon's `OpenMediaBridge` hands back a loopback ticket
-//!   URL instead. Direct and local Spaces need no bridge: their media
-//!   tickets are safe in a URL.
+//! - The signed-in user ([`SessionHandle`], the device-authorization grant)
+//!   drives the relay account and this device's enrollment. There is no
+//!   other credential source: Cua Cloud has ended, so the app builds no
+//!   Fleet client and calls no Cua Cloud API.
+//! - `cua daemon` is connected (or started) so CLI and MCP clients share
+//!   Spaces with the app. Every Space's media tickets are safe in a URL, so
+//!   the webview attaches to them directly.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,8 +26,6 @@ use std::time::Duration;
 
 use base64::Engine;
 use cua_daemon::client::{DaemonAddress, DaemonClient};
-use cua_fleet::sdk::{AccessTokenProvider, AccessTokenProviderError};
-use cua_fleet::{FleetClient, FleetConfig};
 use cua_sandbox_core::placement::{Kind, On, Runtime};
 use cua_sandbox_core::settings::{Settings, Source};
 use cua_sandbox_core::LocalRuntime;
@@ -43,7 +40,7 @@ use cua_spaces_ext::teleport_app::{SpaceAppTeleport as _, SpaceAppTeleportFacts 
 use cua_spacesd_client::pb;
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{Credentials, SessionHandle, Store, TokenError};
+use crate::auth::{Credentials, SessionHandle, Store};
 
 /// Result type of every command: the error is the user-facing message.
 pub type CmdResult<T> = Result<T, String>;
@@ -78,7 +75,7 @@ const DAEMON_START_BUDGET: Duration = Duration::from_secs(20);
 /// How the app reaches `cua daemon`.
 #[derive(Clone, Debug)]
 pub enum DaemonMode {
-    /// Never talk to a daemon (tests; Fleet streams then fail clearly).
+    /// Never talk to a daemon (tests).
     Disabled,
     /// Connect through `<home>/daemon.json`; when nothing answers and
     /// `cua_bin` is set, run `<cua_bin> daemon start` once.
@@ -93,12 +90,6 @@ pub enum DaemonMode {
 pub struct CoreConfig {
     /// `~/.cua` (or `$CUA_HOME`): registry, daemon discovery, control file.
     pub home: PathBuf,
-    /// Fleet endpoint and environment credentials.
-    pub fleet: FleetConfig,
-    /// A ready Fleet client (tests: `FakeFleet`). Replaces [`AppTokens`].
-    pub fleet_client: Option<FleetClient>,
-    /// Fleet namespace for claimed Spaces; `None` derives one.
-    pub fleet_namespace: Option<String>,
     /// Where the signed-in user's session is persisted.
     pub token_store: Store,
     /// Local runtime (`cua-vmm`: containers, gVisor, QEMU, Lume).
@@ -144,6 +135,12 @@ pub fn cua_home() -> PathBuf {
     cua_daemon::cua_home()
 }
 
+/// The canonical Linux image (`CUA_IMAGE_LINUX` overrides it).
+fn canonical_linux_image() -> String {
+    use cua_image::canonical::{canonical_for, canonical_image, CanonicalOs};
+    canonical_image("linux", None).unwrap_or_else(|_| canonical_for(CanonicalOs::Linux, None))
+}
+
 /// The `cua` binary: `$CUA_BIN`, a `cua` next to the app executable
 /// (bundled sidecar), then `cua` on `PATH`.
 pub fn find_cua_bin() -> Option<PathBuf> {
@@ -168,13 +165,10 @@ pub fn find_cua_bin() -> Option<PathBuf> {
 }
 
 impl CoreConfig {
-    /// The app's configuration: real host, environment credentials.
+    /// The app's configuration: real host, the signed-in user's session.
     pub fn from_env() -> Self {
         let home = cua_home();
         Self {
-            fleet: FleetConfig::from_env(),
-            fleet_client: None,
-            fleet_namespace: non_empty_env("CUA_SPACES_NAMESPACE"),
             // The credential store shared with the cua CLI and daemon; the
             // app's former session file moves into it.
             token_store: {
@@ -196,7 +190,7 @@ impl CoreConfig {
             // The canonical Linux image (`CUA_IMAGE_LINUX` overrides it); kind
             // `auto` picks its container rootfs variant.
             local_container_image: non_empty_env("CUA_SPACES_LOCAL_IMAGE")
-                .unwrap_or_else(|| cua_fleet::canonical_image("linux")),
+                .unwrap_or_else(canonical_linux_image),
             local_macos_image: non_empty_env("CUA_SPACES_MACOS_IMAGE")
                 .or_else(|| non_empty_env("CUA_LUME_GOLDEN_IMAGE"))
                 .map(|i| {
@@ -213,14 +207,11 @@ impl CoreConfig {
         }
     }
 
-    /// A hermetic configuration rooted at `home`: no Fleet credentials, no
+    /// A hermetic configuration rooted at `home`: no signed-in user, no
     /// local runtime, no daemon, fake teleport host. Tests adjust from here.
     pub fn hermetic(home: &Path) -> Self {
         Self {
             home: home.to_path_buf(),
-            fleet: FleetConfig::default(),
-            fleet_client: None,
-            fleet_namespace: Some("cua-e2e-app".into()),
             token_store: Store::File(home.join("no-user-session.json")),
             local_runtime: None,
             state_dir: Some(home.join("sandboxes")),
@@ -240,79 +231,30 @@ impl CoreConfig {
     }
 }
 
-// ----------------------------------------------------------- Fleet tokens
-
-/// Fleet bearer source: the signed-in user's token (refreshed as needed),
-/// else the environment credentials, else a clear "sign in" error.
-pub struct AppTokens {
-    session: Arc<SessionHandle>,
-    signed_in: Arc<AtomicBool>,
-    env: Option<FleetClient>,
-}
-
-#[async_trait::async_trait]
-impl AccessTokenProvider for AppTokens {
-    async fn get_access_token(&self, force: bool) -> Result<String, AccessTokenProviderError> {
-        if self.signed_in.load(Ordering::Relaxed) {
-            match self.session.get_valid_token(force).await {
-                Ok(token) => return Ok(token),
-                Err(TokenError::NoSession) => self.signed_in.store(false, Ordering::Relaxed),
-                Err(TokenError::Refresh(reason)) => {
-                    tracing::warn!("user session refresh failed, falling back: {reason}");
-                    self.signed_in.store(false, Ordering::Relaxed);
-                }
-            }
-        }
-        match &self.env {
-            Some(client) => {
-                client
-                    .access_token(force)
-                    .await
-                    .map_err(|e| AccessTokenProviderError::Failed {
-                        reason: e.to_string(),
-                    })
-            }
-            None => Err(AccessTokenProviderError::Failed {
-                reason: "Cua Cloud is not configured: sign in to Cua (or run `cua auth login`), \
-                         or set CUA_CLIENT_ID and CUA_CLIENT_SECRET (or FLEETS_TOKEN)"
-                    .into(),
-            }),
-        }
-    }
-}
-
 // ------------------------------------------------------------- wire types
 
-/// How the Fleet bearer is obtained (Settings shows it).
+/// Whether a user is signed in (Settings and the sidebar show the account).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthMode {
-    /// A signed-in user's device-grant token.
+    /// A signed-in user's device-grant session.
     User,
-    /// `CUA_CLIENT_ID` + `CUA_CLIENT_SECRET`.
-    ClientCredentials,
-    /// `FLEETS_TOKEN`.
-    StaticToken,
-    /// Nothing.
+    /// Nobody is signed in.
     None,
 }
 
-/// `fleet_status`.
+/// `fleet_status`: the signed-in account. The command keeps its name for
+/// the web UI bridge that still calls it; it reads the local session and
+/// makes no network call.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FleetStatus {
+pub struct AccountStatus {
+    /// A user is signed in.
     pub configured: bool,
     pub auth_mode: AuthMode,
-    pub base_url: String,
-    pub token_url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    /// The signed-in user (email or subject), when the session names one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub namespaces: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub probe_error: Option<String>,
 }
 
 /// `daemon_status` / `ensure_daemon`.
@@ -507,17 +449,18 @@ impl SpaceRow {
 #[serde(rename_all = "camelCase")]
 pub struct SpaceCreateConfig {
     pub image: Option<String>,
-    /// `local` or `cloud`.
+    /// `local`, or a machine or cloud of your own (`aws`, `gcp`, `modal`).
+    /// `cloud` (Cua Cloud) has ended and fails with the SDK's message.
     pub on: Option<String>,
     /// `auto`, `container` or `vm`.
     pub kind: Option<String>,
     /// `auto`, or an engine the location offers (local: gvisor, runc, qemu,
-    /// lume; cloud: gvisor, kubevirt).
+    /// lume).
     pub runtime: Option<String>,
     pub name: Option<String>,
-    /// vCPUs (local and Cua Cloud, within `cua_fleet::FLEET_ABSOLUTE_CPUS`).
+    /// vCPUs.
     pub cpus: Option<u32>,
-    /// Memory MB (local and Cua Cloud, within `cua_fleet::FLEET_ABSOLUTE_MEMORY_MB`).
+    /// Memory MB.
     pub memory_mb: Option<u64>,
     /// Local VMs only: grow the disk to this many GB.
     pub disk_gb: Option<u32>,
@@ -658,7 +601,8 @@ pub struct StreamTicketInfo {
     pub codec: String,
     pub wire_version: u32,
     pub frame_size: [u32; 2],
-    /// `direct` (spacesd ticket URL) or `daemon` (loopback bridge).
+    /// Always `direct`: the spacesd ticket URL, safe in a URL. (`daemon`
+    /// named the loopback bridge Cua Cloud streams needed.)
     pub via: &'static str,
     pub audio: bool,
 }
@@ -791,11 +735,8 @@ pub struct HotspotStatus {
 /// The app's SDK state. Cheap to share (`Arc<AppCore>`).
 pub struct AppCore {
     home: PathBuf,
-    fleet_config: FleetConfig,
-    fleet_client: Option<FleetClient>,
     session: Arc<SessionHandle>,
     signed_in: Arc<AtomicBool>,
-    env_auth: bool,
     spaces: RwLock<Spaces>,
     app_sessions: Arc<AppSessions>,
     teleport_app_roots: Option<Vec<PathBuf>>,
@@ -819,7 +760,6 @@ struct SpacesParts {
     operator_display: Option<Arc<dyn OperatorDisplay>>,
     download_dir: Option<PathBuf>,
     probe_timeout: Duration,
-    fleet_namespace: Option<String>,
     relay: Option<cua_spaces::RelayAccount>,
     /// Where this device's relay key lives (the session's vault).
     device_keys: Store,
@@ -831,34 +771,12 @@ impl AppCore {
         let device_keys = cfg.token_store.clone();
         let (session, restored) = SessionHandle::new(cfg.token_store);
         let signed_in = Arc::new(AtomicBool::new(restored));
-        let env_auth = cfg.fleet.has_auth();
-        let fleet_client = match cfg.fleet_client {
-            Some(c) => Some(c),
-            None => {
-                let env = if env_auth {
-                    FleetClient::connect(cfg.fleet.clone())
-                        .map_err(|e| tracing::warn!("Fleet credentials rejected: {e}"))
-                        .ok()
-                } else {
-                    None
-                };
-                let tokens = Arc::new(AppTokens {
-                    session: session.clone(),
-                    signed_in: signed_in.clone(),
-                    env,
-                });
-                FleetClient::connect_with_token_provider(cfg.fleet.clone(), tokens, None)
-                    .map_err(|e| tracing::warn!("Fleet client: {e}"))
-                    .ok()
-            }
-        };
         let rebuild = SpacesParts {
             local_runtime: cfg.local_runtime,
             state_dir: cfg.state_dir,
             operator_display: cfg.operator_display,
             download_dir: cfg.download_dir,
             probe_timeout: cfg.probe_timeout,
-            fleet_namespace: cfg.fleet_namespace,
             relay: cfg.relay,
             device_keys,
         };
@@ -866,11 +784,8 @@ impl AppCore {
             has_local: rebuild.local_runtime.is_some(),
             spaces: RwLock::new(Spaces::builder().build()),
             home: cfg.home,
-            fleet_config: cfg.fleet,
-            fleet_client,
             session,
             signed_in,
-            env_auth,
             app_sessions: cfg.app_sessions,
             teleport_app_roots: cfg.teleport_app_roots,
             teleport_recents: cfg.teleport_recents,
@@ -882,12 +797,12 @@ impl AppCore {
             rebuild,
             device: Mutex::new(None),
         };
-        let spaces = core.build_spaces(None);
+        let spaces = core.build_spaces();
         *core.spaces.write().unwrap_or_else(|p| p.into_inner()) = spaces;
         Arc::new(core)
     }
 
-    fn build_spaces(&self, identity: Option<&str>) -> Spaces {
+    fn build_spaces(&self) -> Spaces {
         let p = &self.rebuild;
         // The Cua Spaces extensions: teleport over this app's providers, the
         // Cua Volume tools and persistent agents over the local drive.
@@ -899,10 +814,6 @@ impl AppCore {
             Some(self.app_sessions.clone()),
         );
         let mut sandboxes = cua_sandbox_core::Sandboxes::builder();
-        if let Some(f) = &self.fleet_client {
-            b = b.fleet(f.clone());
-            sandboxes = sandboxes.fleet(f.clone());
-        }
         if let Some(l) = &p.local_runtime {
             b = b.local_runtime(l.clone());
             sandboxes = sandboxes.local(l.clone());
@@ -911,15 +822,6 @@ impl AppCore {
             sandboxes = sandboxes.state_dir(d);
         }
         b = b.sandboxes(sandboxes.build());
-        let ns = p.fleet_namespace.clone().or_else(|| {
-            identity
-                .map(cua_spaces::sanitize_label)
-                .filter(|l| !l.is_empty())
-                .map(|l| cua_spaces::sanitize_label(&format!("cua-spaces-{l}")))
-        });
-        if let Some(ns) = ns {
-            b = b.fleet_namespace(ns);
-        }
         if let Some(d) = &p.operator_display {
             b = b.operator_display(d.clone());
         } else {
@@ -1003,61 +905,38 @@ impl AppCore {
         &self.home
     }
 
-    /// Rebuilds the Spaces handle after the Fleet identity changed (the
-    /// namespace follows the signed-in account). Hotspots stop.
+    /// Rebuilds the Spaces handle after the signed-in identity changed (the
+    /// relay account follows it). Hotspots stop.
     async fn identity_changed(&self) {
         let old = self.spaces();
         let _ = old.hotspot_stop(None).await;
         *self.hotspot.lock().unwrap_or_else(|p| p.into_inner()) = None;
         // A new identity gets a fresh device session.
         *self.device.lock().unwrap_or_else(|p| p.into_inner()) = None;
-        let identity = self.session.identity().await;
-        let fresh = self.build_spaces(identity.as_deref());
+        let fresh = self.build_spaces();
         *self.spaces.write().unwrap_or_else(|p| p.into_inner()) = fresh;
     }
 
     // --------------------------------------------------------- account
 
-    fn auth_mode(&self) -> AuthMode {
-        if self.signed_in.load(Ordering::Relaxed) {
-            AuthMode::User
-        } else if self.fleet_config.fleet_token.is_some() {
-            AuthMode::StaticToken
-        } else if self.env_auth {
-            AuthMode::ClientCredentials
-        } else {
-            AuthMode::None
-        }
-    }
-
-    /// `fleet_status`.
-    pub async fn fleet_status(&self, probe: bool) -> FleetStatus {
-        let mode = self.auth_mode();
-        let identity = if mode == AuthMode::User {
+    /// `fleet_status`: who is signed in. Reads the local session; no
+    /// network call.
+    pub async fn account_status(&self) -> AccountStatus {
+        let signed_in = self.signed_in.load(Ordering::Relaxed);
+        let identity = if signed_in {
             self.session.identity().await
         } else {
             None
         };
-        let mut status = FleetStatus {
-            configured: mode != AuthMode::None,
-            auth_mode: mode,
-            base_url: self.fleet_config.base_url.clone(),
-            token_url: self.fleet_config.token_url.clone(),
-            client_id: self.fleet_config.client_id.clone(),
+        AccountStatus {
+            configured: signed_in,
+            auth_mode: if signed_in {
+                AuthMode::User
+            } else {
+                AuthMode::None
+            },
             identity,
-            namespaces: None,
-            probe_error: None,
-        };
-        if probe && status.configured {
-            match &self.fleet_client {
-                Some(f) => match f.sdk().list_namespaces().await {
-                    Ok(ns) => status.namespaces = Some(ns.into_iter().map(|n| n.name).collect()),
-                    Err(e) => status.probe_error = Some(e.to_string()),
-                },
-                None => status.probe_error = Some("no Fleet client".into()),
-            }
         }
-        status
     }
 
     /// The shared user session (device-grant sign-in drives it).
@@ -1070,11 +949,21 @@ impl AppCore {
         let identity = self.session.install(c).await?;
         self.signed_in.store(true, Ordering::Relaxed);
         self.identity_changed().await;
+        self.sync_usage_link().await;
         Ok(identity)
     }
 
-    /// Signs out; environment credentials resume.
+    /// Links usage data to the signed-in account when the Spaces API offers
+    /// an account id (CUA-1881); none unlinks. Best effort: offline or
+    /// signed out, nothing changes. Called at launch and after a sign-in.
+    pub async fn sync_usage_link(&self) {
+        crate::telemetry::sync_account(&self.session).await;
+    }
+
+    /// Signs out.
     pub async fn sign_out(&self) {
+        // Usage data goes back to a new anonymous install id.
+        let _ = cua_telemetry::global().forget_account();
         self.session.clear().await;
         self.signed_in.store(false, Ordering::Relaxed);
         self.identity_changed().await;
@@ -1186,15 +1075,14 @@ impl AppCore {
     // ----------------------------------------------------------- cloud
 
     /// `cloud_pricing`: always `None` (no estimate). The rates came from the
-    /// retired Fleets API (run.cua.ai), and the app does not offer new cloud
+    /// Cua Cloud API, which has ended, and the app does not offer new cloud
     /// Spaces.
     pub async fn cloud_pricing(&self) -> Option<cua_spaces_app_core::wizard::CloudPricing> {
         None
     }
 
-    /// `billing_status`: always `None`. The Fleets billing API
-    /// (`GET /api/billing/status` on run.cua.ai) is retired, so the app no
-    /// longer calls it and Settings hides the Billing row.
+    /// `billing_status`: always `None`. The Cua Cloud billing API has ended,
+    /// so the app no longer calls it and Settings hides the Billing row.
     pub async fn billing_status(
         &self,
     ) -> CmdResult<Option<cua_spaces_app_core::billing::BillingStatus>> {
@@ -1329,7 +1217,7 @@ impl AppCore {
         let parsed = On::parse(on).map_err(msg)?;
         if parsed.is_existing_machine() {
             return Err(format!(
-                "{parsed} names one machine; the default location is local or cloud"
+                "{parsed} names one computer; the default location is local or cloud"
             ));
         }
         let mut settings = self.settings()?;
@@ -1444,9 +1332,9 @@ impl AppCore {
             .collect()
     }
 
-    /// Deletes a Space the app created (cloud: the sandbox is deleted and
-    /// metering stops; local: the instance is deleted). A Space added by
-    /// address is only forgotten.
+    /// Deletes a Space the app created (its instance is deleted). A Space
+    /// added by address is only forgotten; a legacy Cua Cloud Space answers
+    /// the ended message (use [`Self::remove_space`] to drop it).
     pub async fn delete_space(&self, space: &str) -> CmdResult<String> {
         let spaces = self.spaces();
         let id = spaces.resolve(space).map_err(msg)?.to_string();
@@ -1477,37 +1365,6 @@ impl AppCore {
         let id = spaces.resolve(space).map_err(msg)?.to_string();
         self.forget_hotspot(&id);
         spaces.remove(&id).await.map(drop).map_err(msg)
-    }
-
-    /// Extends a Fleet Space's lease.
-    pub async fn keep_alive_space(&self, space: &str, seconds: u64) -> CmdResult<()> {
-        let spaces = self.spaces();
-        match spaces.resolve(space).map_err(msg)? {
-            cua_spaces::SpaceId::Cloud { name, namespace } => {
-                let fleet = self
-                    .fleet_client
-                    .as_ref()
-                    .ok_or("Fleet is not configured")?;
-                // `cloud:<name>` carries no namespace: find the claim.
-                let namespace = match namespace {
-                    Some(ns) => ns,
-                    None => fleet
-                        .find_claims(&name)
-                        .await
-                        .map_err(msg)?
-                        .into_iter()
-                        .next()
-                        .map(|c| c.metadata.namespace)
-                        .ok_or_else(|| format!("cloud:{name} not found"))?,
-                };
-                fleet
-                    .keep_alive(&namespace, &name, Duration::from_secs(seconds))
-                    .await
-                    .map(drop)
-                    .map_err(msg)
-            }
-            other => Err(format!("{other} has no lease to extend")),
-        }
     }
 
     async fn space(&self, space: &str) -> CmdResult<Space> {
@@ -1598,11 +1455,15 @@ impl AppCore {
             .collect())
     }
 
-    /// Memory and storage use now (the app core's `SpaceUsage` shape).
+    /// Processor, memory and storage use now (the app core's `SpaceUsage`
+    /// shape).
     pub async fn space_usage(&self, space: &str) -> CmdResult<serde_json::Value> {
         let s = self.space(space).await?;
         let u = s.usage().await.map_err(msg)?;
         Ok(serde_json::json!({
+            "cpuCount": u.cpu_count,
+            "cpuPercent": u.cpu_percent,
+            "loadAverage1m": u.load_average_1m,
             "memoryUsed": u.memory_used,
             "memoryTotal": u.memory_total,
             "memoryLimited": u.memory_limited,
@@ -1773,19 +1634,6 @@ impl AppCore {
         let s = self.space(space).await?;
         let req = open_media_request(&s, &target, &opts)?;
         let audio = req.audio.is_some();
-        if s.provider() == Provider::Cloud {
-            // The Fleet gateway needs a bearer + claim header on the media
-            // socket, which a webview cannot send: bridge through the daemon.
-            let daemon = self.daemon(true).await?;
-            let json = serde_json::to_string(&req).map_err(msg)?;
-            let r = daemon
-                .open_media_bridge(&s.id().to_string(), Some(json))
-                .await
-                .map_err(|e| format!("cua daemon media bridge: {e}"))?;
-            let raw: pb::OpenMediaResponse =
-                serde_json::from_str(&r.open_media_response_json).map_err(msg)?;
-            return Ok(ticket_info(&s, raw, r.ws_url, r.ticket, "daemon", audio));
-        }
         let raw = s
             .spacesd()
             .map_err(msg)?
@@ -1801,7 +1649,7 @@ impl AppCore {
         };
         let ws_url = s.websocket_url(&ws_path).map_err(msg)?;
         let ticket = raw.ticket.clone();
-        Ok(ticket_info(&s, raw, ws_url, ticket, "direct", audio))
+        Ok(ticket_info(&s, raw, ws_url, ticket, audio))
     }
 
     /// `CloseMedia`.
@@ -2134,7 +1982,6 @@ fn ticket_info(
     raw: pb::OpenMediaResponse,
     ws_url: String,
     ticket: String,
-    via: &'static str,
     audio: bool,
 ) -> StreamTicketInfo {
     let size = raw
@@ -2155,7 +2002,7 @@ fn ticket_info(
         codec: codec_name(raw.codec),
         wire_version: raw.wire_version,
         frame_size: size,
-        via,
+        via: "direct",
         audio,
     }
 }

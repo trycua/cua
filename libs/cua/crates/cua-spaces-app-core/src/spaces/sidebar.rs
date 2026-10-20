@@ -12,14 +12,14 @@ use crate::model::{
 use serde::{Deserialize, Serialize};
 
 /// Section titles, in order.
-pub const SECTION_ORDER: [&str; 4] = ["Cua Cloud", "This Mac", "Connected", "My machines"];
+pub const SECTION_ORDER: [&str; 4] = ["Cua Cloud", "This Mac", "Connected", "My computers"];
 
 fn section_of(p: Option<SpaceProvider>) -> &'static str {
     match p.unwrap_or(SpaceProvider::Cloud) {
         SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "Connected",
-        SpaceProvider::Relay => "My machines",
+        SpaceProvider::Relay => "My computers",
     }
 }
 
@@ -733,12 +733,22 @@ pub fn delete_failed_text(name: &str, error: &str) -> String {
     )
 }
 
-/// Memory and storage use of a Space (the SDK's `Space.usage`), for its
-/// Memory and Storage facts. A size shows only when it is the guest's own
+/// Processor, memory and storage use of a Space (the SDK's `Space.usage`),
+/// for its Memory and Storage facts and its resource panel
+/// ([`crate::resources`]). A size shows only when it is the guest's own
 /// limit (`*_limited`: a VM, a container's cgroup memory limit).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpaceUsage {
+    /// Cores the guest sees (0 from a guest that does not report it).
+    #[serde(default)]
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    #[serde(default)]
+    pub cpu_percent: f64,
+    /// 1-minute load average.
+    #[serde(default)]
+    pub load_average_1m: f64,
     /// Memory in use, bytes.
     pub memory_used: u64,
     /// Memory size, bytes.
@@ -1484,8 +1494,8 @@ mod tests {
             let mine = view
                 .sections
                 .iter()
-                .find(|s| s.title == "My machines")
-                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
+                .find(|s| s.title == "My computers")
+                .unwrap_or_else(|| panic!("no My computers for {features:?} {error:?}: {view:?}"));
             assert_eq!(
                 mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                 [other.as_str()],
@@ -1775,7 +1785,7 @@ mod tests {
         let mine = v
             .sections
             .iter()
-            .find(|s| s.title == "My machines")
+            .find(|s| s.title == "My computers")
             .unwrap();
         let rows: Vec<(&str, bool)> = mine
             .rows

@@ -295,7 +295,6 @@ CONFIG_ONLY_PACKAGES = (
     "libs/python/bench-ui",
     "libs/python/som",
     "libs/python/cua-sandbox-apps",
-    "libs/python/cua-train",
     "libs/typescript/core",
     "libs/typescript/playground",
     "libs/cuabot",

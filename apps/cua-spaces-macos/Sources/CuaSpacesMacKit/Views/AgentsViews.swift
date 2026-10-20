@@ -234,7 +234,10 @@ struct NotificationsPageView: View {
             Section(v.title) {
                 if v.rows.isEmpty { Text(v.emptyText).foregroundStyle(.secondary) }
                 ForEach(v.rows, id: \.id) { l in
-                    HStack {
+                    HStack(spacing: 10) {
+                        if let key = CuaKey.image {
+                            Image(nsImage: key).resizable().interpolation(.high).frame(width: 20, height: 20).accessibilityHidden(true)
+                        }
                         Text(l.text).lineLimit(1).fontWeight(l.on == true ? .semibold : .regular)
                         Spacer()
                         Text(l.trailing).foregroundStyle(.secondary)

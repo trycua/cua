@@ -156,6 +156,19 @@ pub fn is_ci(env: Env<'_>) -> bool {
     })
 }
 
+/// Whether this process is a test run: pytest, vitest, jest, a Node test
+/// environment or `cargo test`. SDK processes under a test harness are
+/// marked synthetic so reports leave them out.
+pub fn is_test_run(env: Env<'_>) -> bool {
+    let set = |v: &str| env(v).is_some_and(|s| !s.trim().is_empty());
+    set("PYTEST_CURRENT_TEST")
+        || set("PYTEST_VERSION")
+        || set("VITEST")
+        || set("JEST_WORKER_ID")
+        || set("RUST_TEST_THREADS")
+        || env("NODE_ENV").is_some_and(|s| s.trim().eq_ignore_ascii_case("test"))
+}
+
 /// The cua home: `$CUA_HOME`, else `~/.cua`.
 pub fn cua_home(env: Env<'_>) -> Option<PathBuf> {
     if let Some(h) = env("CUA_HOME").filter(|h| !h.trim().is_empty()) {

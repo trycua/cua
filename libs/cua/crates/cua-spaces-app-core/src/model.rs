@@ -558,7 +558,7 @@ impl Location {
             Location::Cloud => "Cua Cloud",
             Location::Local => os.this_machine(),
             Location::Yours => "Your cloud",
-            Location::Host => "Your machine",
+            Location::Host => "Your computer",
         }
     }
 

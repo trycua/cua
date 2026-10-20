@@ -97,7 +97,7 @@ impl ServiceProvider for HostSpacesProvider {
             if providing {
                 ""
             } else {
-                "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)"
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)"
             },
         )]
     }
@@ -169,7 +169,7 @@ fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
             return Err(status(
                 Code::Unauthenticated,
                 ErrorReason::Unauthenticated,
-                "HostSpacesService needs a relay-verified account or this machine's token",
+                "HostSpacesService needs a relay-verified account or this computer's token",
             ))
         }
     };
@@ -281,7 +281,7 @@ impl HostSpacesImpl {
             return Err(status(
                 Code::FailedPrecondition,
                 ErrorReason::FeatureUnsupported,
-                "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
             ));
         }
         let daemon = policy.spaces_daemon.ok_or_else(|| {

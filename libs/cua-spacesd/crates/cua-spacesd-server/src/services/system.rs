@@ -277,8 +277,8 @@ fn read_trimmed(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Whether the kernel is gVisor's synthetic one: older releases (still
-/// what Fleet's runsc reports) say exactly "4.4.0", current ones name
+/// Whether the kernel is gVisor's synthetic one: older runsc releases say
+/// exactly "4.4.0", current ones name
 /// themselves ("4.19.0-gvisor", and "gVisor" in /proc/version). A real
 /// "4.4.0-<abi>-generic" kernel (Ubuntu 16.04) is not gVisor.
 pub fn is_gvisor(kernel: &str, proc_version: &str) -> bool {
@@ -394,7 +394,7 @@ mod windows_bios {
 pub fn detect_runtime(kernel: &str) -> (Runtime, String) {
     if cfg!(target_os = "linux") {
         // gVisor's synthetic kernel is only ever seen inside runsc, and a
-        // Kubernetes pod under containerd (Fleet) has none of docker's or
+        // Kubernetes pod under containerd has none of docker's or
         // podman's marker files, so the kernel decides on its own.
         if is_gvisor(kernel, &read_trimmed("/proc/version")) {
             return (Runtime::Gvisor, "runsc".into());
@@ -555,7 +555,7 @@ fn require_root(caller: &crate::auth::CallerIdentity, what: &str) -> Result<(), 
 /// Why the desktop's features are unsupported for a relayed caller of a
 /// machine that does not share its desktop (it only provides Spaces).
 pub const DESKTOP_NOT_SHARED: &str =
-    "this machine does not share its desktop (it only provides Spaces)";
+    "this computer does not share its desktop (it only provides Spaces)";
 
 /// `features` with every desktop feature ([`crate::provider::DESKTOP_FEATURES`])
 /// unsupported because the desktop is not shared.

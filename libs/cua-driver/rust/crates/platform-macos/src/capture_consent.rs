@@ -15,7 +15,9 @@
 //!   `~/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist`,
 //!   keyed by the app bundle's file URL, as soon as the alert is shown. With
 //!   an entry present, later captures (also after the entry's hint date)
-//!   raise nothing.
+//!   raise nothing. An entry keyed by the bundle identifier also counts:
+//!   that is how a managed or pre-provisioned machine (and the hosted CI
+//!   runner) records the approval ahead of time.
 //!
 //! So the driver surfaces the consent in `cua-driver permissions grant`,
 //! where the user expects system prompts (see `check_permissions`), and
@@ -67,7 +69,12 @@ pub fn capture_blocked_reason() -> Option<String> {
         }
     }
     let home = std::env::var_os("HOME")?;
-    match consent_state(&Path::new(&home).join(APPROVALS_RELATIVE_PATH), &bundle) {
+    let bundle_id = crate::tools::main_bundle_identifier();
+    match consent_state(
+        &Path::new(&home).join(APPROVALS_RELATIVE_PATH),
+        &bundle,
+        bundle_id.as_deref(),
+    ) {
         ConsentState::Recorded | ConsentState::Unknown => {
             RECORDED.store(true, Ordering::Relaxed);
             None
@@ -105,14 +112,14 @@ enum ConsentState {
     Unknown,
 }
 
-fn consent_state(approvals: &Path, bundle: &Path) -> ConsentState {
+fn consent_state(approvals: &Path, bundle: &Path, bundle_id: Option<&str>) -> ConsentState {
     let bytes = match std::fs::read(approvals) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return ConsentState::Missing,
         Err(_) => return ConsentState::Unknown,
     };
     match approval_keys(&bytes) {
-        Some(keys) if keys.iter().any(|key| key_names_bundle(key, bundle)) => {
+        Some(keys) if keys.iter().any(|key| key_names_app(key, bundle, bundle_id)) => {
             ConsentState::Recorded
         }
         Some(_) => ConsentState::Missing,
@@ -145,6 +152,12 @@ fn approval_keys(bytes: &[u8]) -> Option<Vec<String>> {
             })
             .collect(),
     )
+}
+
+/// Whether an approvals key names this app: its bundle file URL, as replayd
+/// writes it, or its bundle identifier, as a pre-provisioned approval does.
+fn key_names_app(key: &str, bundle: &Path, bundle_id: Option<&str>) -> bool {
+    bundle_id.is_some_and(|id| !id.is_empty() && key == id) || key_names_bundle(key, bundle)
 }
 
 /// Whether an approvals key (`file:///…/CuaDriver.app/`) names `bundle`.
@@ -265,12 +278,21 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("ScreenCaptureApprovals.plist");
         let bundle = Path::new("/Applications/CuaDriver.app");
+        let id = Some("com.trycua.driver");
 
         let _ = std::fs::remove_file(&file);
-        assert_eq!(consent_state(&file, bundle), ConsentState::Missing);
+        assert_eq!(consent_state(&file, bundle, id), ConsentState::Missing);
 
         write_plist(&file, &["file:///Applications/Other.app/"]);
-        assert_eq!(consent_state(&file, bundle), ConsentState::Missing);
+        assert_eq!(consent_state(&file, bundle, id), ConsentState::Missing);
+
+        write_plist(&file, &["com.trycua.driver"]);
+        assert_eq!(consent_state(&file, bundle, id), ConsentState::Recorded);
+        assert_eq!(consent_state(&file, bundle, None), ConsentState::Missing);
+        assert_eq!(
+            consent_state(&file, bundle, Some("com.trycua.driver.local")),
+            ConsentState::Missing
+        );
 
         write_plist(
             &file,
@@ -279,10 +301,10 @@ mod tests {
                 "file:///Applications/CuaDriver.app/",
             ],
         );
-        assert_eq!(consent_state(&file, bundle), ConsentState::Recorded);
+        assert_eq!(consent_state(&file, bundle, id), ConsentState::Recorded);
 
         std::fs::write(&file, b"not a plist").unwrap();
-        assert_eq!(consent_state(&file, bundle), ConsentState::Unknown);
+        assert_eq!(consent_state(&file, bundle, id), ConsentState::Unknown);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

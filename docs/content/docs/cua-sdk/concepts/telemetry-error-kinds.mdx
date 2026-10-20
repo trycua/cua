@@ -1,0 +1,34 @@
+---
+title: Create failure kinds
+description: The fixed error_kind words a failed sandbox or Space create sends, and what each means.
+---
+
+When a create fails, `cua_space_create`, `cua_sandbox_created` and
+`cua_host_space_provided` set `error_kind` to a fixed word for the cause. The
+program reads the error on your machine and sends only the word, never the
+error text.
+
+| `error_kind` | Cause |
+|---|---|
+| `image_pull_not_found` | The image is not in the registry. |
+| `image_pull_auth` | The registry refused the download. |
+| `image_pull_network` | The network failed or timed out during the download. |
+| `image_pull_rate_limited` | The registry rate-limited the download. |
+| `image_pull` | The download failed for another reason, or stopped partway. |
+| `insufficient_disk` | Not enough disk space. |
+| `runtime_missing`, `runtime_not_running`, `runtime_permission` | The local runtime (Docker, Lume, QEMU) is not installed, not running, or not allowed. |
+| `virtualization_unavailable` | The machine cannot run VMs (no Virtualization.framework, KVM or hardware virtualization). |
+| `vm_limit` | The Mac already runs the two macOS VMs Apple allows. |
+| `vm_boot_timeout` | The VM did not finish booting in time. |
+| `services_unreachable` | The Space booted but its services never answered. |
+| `local_network` | macOS Local Network privacy blocked the connection to the new VM. |
+| `out_of_memory` | The machine ran out of memory for the guest. |
+| `port_in_use` | A port the Space needs is already taken. |
+| `file_access` | A file or folder could not be written (access denied, in use, path too long). |
+| `network` | The machine could not reach the network (DNS, proxy, certificate) outside the image download. |
+| `quota_exceeded` | The account's quota, plan limit or credits ran out. |
+| `cancelled` | You cancelled the create. |
+
+Otherwise it is the error's type (for example `unauthenticated`, `timeout`,
+`runtime`), and `other` only when nothing names the cause. A failed create
+never reports `none`.

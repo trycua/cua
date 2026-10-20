@@ -30,7 +30,7 @@ interface ThumbnailProps {
 
 // Measured Lume lifecycle (avg of 3 clone→ready→teardown cycles): clone ~2s +
 // boot→running ~15s ≈ ~17s to a streamable/running tile; stop ~7s + delete ~2s
-// ≈ ~8s teardown. Cua Cloud keeps the default ~80s estimate.
+// ≈ ~8s teardown. Other Spaces keep the default ~80s estimate.
 const LOCAL_START_ESTIMATE_MS = 17_000;
 const LOCAL_DELETE_ESTIMATE_MS = 8_000;
 

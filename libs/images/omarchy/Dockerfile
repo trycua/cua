@@ -135,7 +135,7 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
     if [ -x "$bin" ]; then ldd "$bin" | grep 'not found' && exit 1 || true; fi; \
     mkdir -p /etc/cua-image; echo "$CUA_SPACESD_SOURCE" >/etc/cua-image/spacesd-source
 
-# Token handling, Fleet claim token sync and the in-guest fixtures are shared
+# Token handling, claim token sync and the in-guest fixtures are shared
 # with libs/images/linux; the session glue and units are Omarchy's own.
 COPY linux/files/ensure-env-token.sh linux/files/env-token-mode.sh \
      linux/files/start-spacesd.sh linux/files/start-token-sync.sh \

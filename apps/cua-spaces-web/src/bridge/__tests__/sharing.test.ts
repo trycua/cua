@@ -110,8 +110,8 @@ describe.skipIf(!wasmBuilt)("share usage events", () => {
     await s.send({ type: "submit" });
     await s.send({ type: "remove", who: "grace@cua.ai" });
     expect(sent).toEqual([
-      { type: "share", action: "share", role: "viewer", outcome: "ok" },
-      { type: "share", action: "unshare", role: "none", outcome: "ok" },
+      { type: "share", action: "share", role: "viewer", outcome: "ok", errorKind: "none", failedStage: "none" },
+      { type: "share", action: "unshare", role: "none", outcome: "ok", errorKind: "none", failedStage: "none" },
     ]);
     expect(JSON.stringify(sent)).not.toMatch(/@/);
   });
@@ -119,11 +119,29 @@ describe.skipIf(!wasmBuilt)("share usage events", () => {
   it("records a share that failed", async () => {
     const sent: TelemetrySignal[] = [];
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 2 });
-    const failing = { ...demo, call: (op: string, args: unknown) => (op === "sharing.share" ? Promise.reject(new Error("relay down")) : demo.call(op as never, args as never)) };
+    const failing = { ...demo, call: (op: string, args: unknown) => (op === "sharing.share" ? Promise.reject(new Error("relay: error sending request for url (https://relay.cua.ai/v1/machines)")) : demo.call(op as never, args as never)) };
     const s = new ShareStore(failing as typeof demo, await testCore(), (signals) => sent.push(...signals));
     s.open(space, true);
     await s.send({ type: "set-who", who: "bob@example.com" });
     await s.send({ type: "submit" });
-    expect(sent).toEqual([{ type: "share", action: "share", role: "viewer", outcome: "error" }]);
+    expect(sent).toEqual([{ type: "share", action: "share", role: "viewer", outcome: "error", errorKind: "relay_unreachable", failedStage: "relay" }]);
+  });
+
+  it("records a dismissed confirmation as cancelled, and says why a share failed (CUA-1855)", async () => {
+    const sent: TelemetrySignal[] = [];
+    const demo = createDemoAdapter({ latencyMs: 0, stepMs: 2 });
+    let why = "not shared: user presence was not confirmed: biometric authorization was cancelled";
+    const failing = { ...demo, call: (op: string, args: unknown) => (op === "sharing.share" ? Promise.reject(new Error(why)) : demo.call(op as never, args as never)) };
+    const s = new ShareStore(failing as typeof demo, await testCore(), (signals) => sent.push(...signals));
+    s.open(space, true);
+    await s.send({ type: "set-who", who: "bob@example.com" });
+    await s.send({ type: "submit" });
+    why = "not shared: user presence was not confirmed: user confirmation is unavailable: on Linux this needs Cua Spaces installed from the .deb";
+    await s.send({ type: "submit" });
+    expect(sent).toEqual([
+      { type: "share", action: "share", role: "viewer", outcome: "cancelled", errorKind: "presence_cancelled", failedStage: "presence" },
+      { type: "share", action: "share", role: "viewer", outcome: "error", errorKind: "presence_unavailable", failedStage: "presence" },
+    ]);
+    expect(JSON.stringify(sent)).not.toMatch(/@|deb/);
   });
 });

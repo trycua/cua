@@ -61,7 +61,7 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     const { view, opened } = host(reached);
     view();
     const notice = await screen.findByRole("status");
-    expect(notice.textContent).toContain("You've used your free relay allowance for this month. Your Spaces keep working.");
+    expect(notice.textContent).toContain("You've reached the free plan's remote limit for this month. Your Spaces keep working.");
     fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_meter"]));
   });
@@ -86,7 +86,7 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     view();
     const notice = await screen.findByRole("status");
     expect(notice.getAttribute("data-relay-allowance")).toBe("warn");
-    expect(notice.textContent).toContain("You've used 16.5 of 20 relay hours this month. Nothing stops at the limit.");
+    expect(notice.textContent).toContain("You've used 16.5 of 20 remote hours this month. Nothing stops at the limit.");
     fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_meter"]));
   });

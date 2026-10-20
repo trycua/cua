@@ -530,20 +530,20 @@ export function hostPanelFromState(core: CoreClient, state: object | null, statu
 }
 
 function fallbackPanel(s: HostStatus | null): HostPanelView {
-  const base: HostPanelView = { title: "This machine", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
+  const base: HostPanelView = { title: "This computer", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
   if (!s) return base;
   if (!s.configured) {
-    return { ...base, summary: "Other devices can’t reach this machine yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
+    return { ...base, summary: "Your other devices can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
   const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
-  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this machine’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
+  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this computer’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
   return {
     ...base,
     summary,
     configured: true,
     facts: [
-      { label: "Name", value: s.name || "This machine" },
+      { label: "Name", value: s.name || "This computer" },
       { label: "Access", value: access },
       { label: "Service", value: `${s.service.kind} · ${s.service.running ? "running" : s.service.installed ? "stopped" : "not installed"}` },
     ],
@@ -554,10 +554,10 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
 }
 
 const FALLBACK_INTRO =
-  "This is the computer you are using now. Set it up for access to reach it and its Spaces from your other devices and your agents, over the Cua relay with no port forwarding.";
+  "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other devices. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
-  { id: "desktop", label: "Share this desktop", buttonLabel: "Set Up…" },
-  { id: "spare", label: "Use as a spare machine for Spaces", buttonLabel: "Set Up…" },
+  { id: "desktop", label: "Use this computer from my other devices", buttonLabel: "Set Up…" },
+  { id: "spare", label: "Run Spaces here and keep its screen private", buttonLabel: "Set Up…" },
 ];
 
 /** What "Add a machine" explains: the core's words for host setup, as the
@@ -567,15 +567,15 @@ export interface HostSetupGuide {
   intro: string;
   /** The ways to set it up (`host::setup_choices`). */
   choices: HostSetupChoice[];
-  /** The setup form with Advanced open (`host.formView`), when the core is loaded. */
+  /** The setup form (`host.formView`), when the core is loaded. */
   form: HostFormView | null;
 }
 
 export function hostSetupGuide(core: CoreClient): HostSetupGuide {
   const panel = hostPanel(core, { configured: false, sharing: false, service: { installed: false, running: false, kind: "process" }, clients: [], permissions: [] });
   const initial = core.tryCall<unknown>("host.formInitial");
-  const state = initial === undefined ? undefined : core.tryCall<unknown>("host.formReduce", { state: initial, action: { type: "toggle-advanced" } });
-  const form = state === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state, identity: null }) ?? null);
+  // As setup shows it: Cua's relay. Self-hosting is under Settings → Advanced.
+  const form = initial === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state: initial, identity: null }) ?? null);
   return { intro: panel.intro ?? FALLBACK_INTRO, choices: panel.setupChoices?.length ? panel.setupChoices : FALLBACK_CHOICES, form };
 }
 
@@ -597,7 +597,7 @@ export function settingsPage(
     signIn: signIn ?? { kind: "idle" },
     canSignOut: session?.fleet.authMode === "user",
     menuBar: settings.values.menuBar,
-    defaultLocation: loc === "cloud" ? "cloud" : loc === "local" ? "local" : loc.startsWith("host:") ? "host" : "yours",
+    defaultLocation: loc === "cloud" || loc === "local" ? "local" : loc.startsWith("host:") ? "host" : "yours",
     locationLockedBy: settings.defaultLocation?.source === "env" ? (settings.defaultLocation.env ?? null) : null,
     telemetry: settings.telemetry
       ? {

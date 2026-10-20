@@ -200,7 +200,7 @@ fn every_client_stream_has_a_unary_fallback() {
 
 #[test]
 fn no_bidirectional_streams() {
-    // Bidi streams cannot cross gRPC-Web or the Fleet gateway at all.
+    // Bidi streams cannot cross gRPC-Web or a gateway at all.
     let bidi: Vec<String> = methods(&descriptor_set())
         .into_iter()
         .filter(|(_, (c, s))| *c && *s)

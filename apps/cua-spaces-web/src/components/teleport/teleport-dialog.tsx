@@ -6,7 +6,7 @@ import { RadioGroup } from "@base-ui/react/radio-group";
 import { LoaderCircleIcon, SearchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { useTeleport, type PickerState, type TeleportMove, type TeleportSession, type TeleportStore } from "@/bridge";
+import { useFeatureRecorded, useTeleport, type PickerState, type TeleportMove, type TeleportSession, type TeleportStore } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -32,6 +32,7 @@ export const MOVE_LABEL: Record<TeleportMove, string> = {
  */
 export default function TeleportDialog() {
   const { session, images, teleport } = useTeleport();
+  useFeatureRecorded("teleport_app_picker", Boolean(session));
   if (!session || !teleport) return null;
   return (
     <Dialog open onOpenChange={(open) => !open && teleport.close()}>

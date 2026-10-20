@@ -9,7 +9,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="previous", required=True)
     args = parser.parse_args(argv)
     version = (args.root / "libs/cua/VERSION").read_text().strip()
-    paths = [path for folder in ("cua-cli", "cua-sdk", "fleets")
+    paths = [path for folder in ("cua-cli", "cua-sdk")
              for path in (args.root / "docs/content/docs" / folder).rglob("*.mdx")]
     for path in [*paths, args.root / "scripts/docs-generators/cli-specs/cua.json"]:
         content = path.read_text()

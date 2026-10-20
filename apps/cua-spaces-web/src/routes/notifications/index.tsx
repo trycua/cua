@@ -6,6 +6,7 @@ import { BellIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useNotifications, type NotificationInput, type NotificationLine } from "@/bridge";
+import { CuaKey } from "@/components/cua-key";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
@@ -88,6 +89,7 @@ function NotificationRow({ row, entry, open, onToggle }: { row: NotificationLine
         data-notification-toggle
       >
         <span className={cn("size-1.5 shrink-0 rounded-full", row.on ? "bg-brand" : "bg-transparent")} aria-hidden />
+        <CuaKey size={20} />
         <span className={cn("min-w-0 flex-1 text-[13px]", open ? "break-words" : "truncate", row.on && "font-semibold")} data-notification-text>
           {open ? (entry?.title ?? row.text) : row.text}
         </span>
@@ -96,7 +98,7 @@ function NotificationRow({ row, entry, open, onToggle }: { row: NotificationLine
         </span>
       </button>
       {open ? (
-        <div id={detailId} className="space-y-2.5 pr-4 pb-3 pl-[2.125rem]" data-notification-detail>
+        <div id={detailId} className="space-y-2.5 pr-4 pb-3 pl-[4.125rem]" data-notification-detail>
           {entry && body ? (
             <p className="whitespace-pre-wrap break-words text-[13px] text-muted-foreground" data-notification-body>
               {body}

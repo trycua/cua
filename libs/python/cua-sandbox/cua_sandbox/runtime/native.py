@@ -9,9 +9,8 @@ the instance running, plus the image's own ``server_port`` probe when one is
 declared.
 
 Image layers (``pip_install``, ``run``, ``copy``, ``env``, ...) on a container
-image are built into the local container engine before boot, the same way
-the cloud builds them remotely (cached by the same content hash,
-``cua-b-<hash>``), so they work on any image. A VM image takes them after
+image are built into the local container engine before boot (cached by
+content hash, ``cua-b-<hash>``), so they work on any image. A VM image takes them after
 boot through cua-spacesd, and only when it runs one (otherwise
 :class:`~cua_sandbox.Unsupported`).
 """
@@ -140,7 +139,7 @@ class NativeRuntime(Runtime):
         return image.os_type or "linux"
 
     #: Whether this runtime mints the spacesd token itself (containers).
-    #: Otherwise the SDK mints one for Linux VMs (cloud-init, the Fleet
+    #: Otherwise the SDK mints one for Linux VMs (cloud-init, the
     #: /run/cua/env-token contract) and macOS VMs (the Lume setup share) and
     #: keeps it in the sandbox record, which ``_info`` reads back.
     delivers_guest_env = False
@@ -190,7 +189,7 @@ class NativeRuntime(Runtime):
             if ref.startswith(("container:", "docker:")) and buildable(image):
                 from cua_sandbox.containers import image_build
 
-                build = image_build(image, where="local")
+                build = image_build(image)
             else:
                 # A VM, or layers a container build cannot run (app_install,
                 # brew_install, ...): after boot, through cua-spacesd.

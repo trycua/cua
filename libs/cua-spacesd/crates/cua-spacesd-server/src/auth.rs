@@ -440,8 +440,9 @@ impl Auth {
     }
 
     /// Checks the token in `authorization` **or** `x-cua-env-authorization`
-    /// (the Fleet gateway consumes and strips `authorization`, so the SDK
-    /// sends the env token in the alternate header through `/api/svc`).
+    /// (a gateway in front of the daemon may consume and strip
+    /// `authorization`, so the SDK sends the env token in the alternate header
+    /// when it goes through one).
     /// Always true with no token.
     pub fn check_headers(&self, headers: &http::HeaderMap) -> bool {
         match self.authenticate_external(headers) {
@@ -696,6 +697,40 @@ pub fn token_label(claimed: Option<Principal>) -> String {
     }
 }
 
+/// Separates an access line's caller from the agent session that made the
+/// call (` · agent Claude Code (agent:claude-code-4242)`).
+pub const AGENT_SESSION_TAG: &str = " \u{b7} agent ";
+
+/// The agent session a caller says it is, as an access line's suffix:
+/// ` · agent <name> (<id>)` for an agent principal (`agent:<label>-<pid>`,
+/// one per `cua mcp` process), empty for anything else. The name and id
+/// are the client's claim; the line's caller before the tag stays the
+/// verified identity. Readers use it to tell two agents of one account
+/// apart (the second-agent prompt in the apps).
+pub fn agent_session_suffix(claimed: Option<&Principal>) -> String {
+    let Some(p) = claimed.filter(|p| {
+        p.kind == cua_proto::env::v1::PrincipalKind::Agent as i32 && p.id.starts_with("agent:")
+    }) else {
+        return String::new();
+    };
+    let clean = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !c.is_control() && !matches!(c, '(' | ')'))
+            .take(64)
+            .collect::<String>()
+            .trim()
+            .to_string()
+    };
+    let id = clean(&p.id);
+    let name = clean(&p.display_name);
+    let name = if name.is_empty() {
+        "Agent".to_string()
+    } else {
+        name
+    };
+    format!("{AGENT_SESSION_TAG}{name} ({id})")
+}
+
 /// The gRPC service of a `/pkg.Service/Method` path (`ProcessService`).
 pub fn grpc_service(path: &str) -> &str {
     let service = path.trim_start_matches('/').split('/').next().unwrap_or("");
@@ -933,7 +968,7 @@ where
                             tonic::Code::PermissionDenied,
                             cua_proto::env::v1::ErrorReason::PermissionDenied,
                             format!(
-                                "this machine does not share its desktop (it only provides Spaces): \
+                                "this computer does not share its desktop (it only provides Spaces): \
                                  {who} cannot call {path}"
                             ),
                         )
@@ -969,7 +1004,7 @@ where
                             tonic::Code::PermissionDenied,
                             cua_proto::env::v1::ErrorReason::PermissionDenied,
                             format!(
-                                "this machine does not share its desktop (it only provides Spaces): \
+                                "this computer does not share its desktop (it only provides Spaces): \
                                  {who} cannot call {path}"
                             ),
                         )
@@ -977,10 +1012,19 @@ where
                         return Box::pin(async move { Ok(response) });
                     }
                     let owner = grant.account.as_ref().is_some_and(|a| a.role == "owner");
+                    // Only an owner keeps the agent kind (`principal_for`):
+                    // name which of its agent sessions this is.
+                    let session = if grant.principal.kind
+                        == cua_proto::env::v1::PrincipalKind::Agent as i32
+                    {
+                        agent_session_suffix(principal_from_headers(req.headers()).as_ref())
+                    } else {
+                        String::new()
+                    };
                     self.auth.record_call(
                         req.extensions_mut(),
                         "relay",
-                        &principal_label(&grant.principal),
+                        &format!("{}{session}", principal_label(&grant.principal)),
                         &path,
                         owner,
                     );
@@ -1092,13 +1136,13 @@ where
                 let principal = principal_from_headers(req.headers());
                 if token_verified {
                     let path = req.uri().path().to_owned();
-                    self.auth.record_call(
-                        req.extensions_mut(),
-                        "token",
-                        &token_label(principal.clone()),
-                        &path,
-                        true,
+                    let who = format!(
+                        "{}{}",
+                        token_label(principal.clone()),
+                        agent_session_suffix(principal.as_ref())
                     );
+                    self.auth
+                        .record_call(req.extensions_mut(), "token", &who, &path, true);
                 }
                 req.extensions_mut().insert(CallerIdentity {
                     principal,
@@ -1346,6 +1390,33 @@ mod tests {
         let found = ticket_from_parts(&"/tunnel".parse().unwrap(), &headers).unwrap();
         assert_eq!(found.ticket, "v1.c.d");
         assert_eq!(found.subprotocol.as_deref(), Some("cua.ticket.v1.c.d"));
+    }
+
+    #[test]
+    fn an_agent_caller_names_its_session_on_the_access_line() {
+        let agent = |id: &str, name: &str| Principal {
+            id: id.into(),
+            display_name: name.into(),
+            color: String::new(),
+            kind: cua_proto::env::v1::PrincipalKind::Agent as i32,
+        };
+        assert_eq!(
+            agent_session_suffix(Some(&agent("agent:claude-code-4242", "Claude Code"))),
+            " \u{b7} agent Claude Code (agent:claude-code-4242)"
+        );
+        // A person, a non-agent id, or nobody: nothing added.
+        let human = Principal {
+            kind: cua_proto::env::v1::PrincipalKind::Human as i32,
+            ..agent("agent:x-1", "Ada")
+        };
+        assert_eq!(agent_session_suffix(Some(&human)), "");
+        assert_eq!(agent_session_suffix(Some(&agent("u1", "Codex"))), "");
+        assert_eq!(agent_session_suffix(None), "");
+        // The claim can't break the line's shape.
+        assert_eq!(
+            agent_session_suffix(Some(&agent("agent:a-1", "Evil) (x\n"))),
+            " \u{b7} agent Evil x (agent:a-1)"
+        );
     }
 
     #[test]

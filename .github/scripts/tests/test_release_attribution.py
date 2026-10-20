@@ -357,6 +357,9 @@ def test_published_installer_bump_subject_is_recognized_narrowly():
     assert PUBLISHED_INSTALLER_BUMP_RE.match(
         "chore(cua-driver): advance published installer version to 0.19.3 [skip ci]"
     )
+    assert PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to 0.19.3 (#5536)"
+    )
     assert not PUBLISHED_INSTALLER_BUMP_RE.match(
         "chore(cua-driver): advance published installer version to nightly [skip ci]"
     )

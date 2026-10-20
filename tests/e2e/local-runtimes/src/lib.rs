@@ -6,10 +6,9 @@
 //! |---|---|
 //! | `CUA_E2E_DOCKER=1` | container backend against the local engine (gVisor if present) |
 //! | `CUA_E2E_QEMU=1` | QEMU backend: arm64 cloud image under hvf/kvm, SSH exec, checkpoint |
-//! | `CUA_E2E_QEMU_X86=1` | QEMU backend: Fleet x86_64 containerDisk under TCG (slow) |
+//! | `CUA_E2E_QEMU_X86=1` | QEMU backend: x86_64 containerDisk under TCG (slow) |
 //! | `CUA_E2E_LUME=1` | Lume backend against `lume serve` |
 //! | `CUA_E2E_IMAGE=1` | cua-image registry pulls + local builder |
-//! | `CUA_E2E_FLEET_CATALOG=1` | every Fleet catalog image through the SDK local provider (`tests/fleet_catalog.rs`) |
 //! | `CUA_E2E_BUILTIN_LINUX=1` | a Linux Space on the built-in Linux runtime (macOS; `tests/builtin_linux.rs`) |
 
 use std::time::Instant;

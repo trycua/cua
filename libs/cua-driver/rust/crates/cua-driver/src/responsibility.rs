@@ -181,7 +181,7 @@ fn unbundled_warning(embedded: bool, inside_bundle: bool) -> Option<&'static str
         "warning: running unbundled (outside CuaDriver.app). The daemon is its own responsible \
          process, so macOS gives it no valid WindowServer connection: background (no-raise) \
          focus steps fail with status 1002 and background actions will be refused. Run the \
-         app-bundle daemon instead: `open -n -g -a CuaDriver --args serve`.",
+         app-bundle daemon instead: `cua-driver permissions grant`.",
     )
 }
 
@@ -207,7 +207,8 @@ mod tests {
     #[test]
     fn unbundled_daemon_gets_a_startup_warning_and_bundled_or_embedded_does_not() {
         let message = unbundled_warning(false, false).expect("warns when unbundled");
-        assert!(message.contains("open -n -g -a CuaDriver --args serve"));
+        assert!(message.contains("cua-driver permissions grant"));
+        assert!(!message.contains("-a CuaDriver"));
         assert!(unbundled_warning(false, true).is_none());
         assert!(unbundled_warning(true, false).is_none());
     }

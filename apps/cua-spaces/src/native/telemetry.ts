@@ -5,7 +5,7 @@ import type { TelemetrySignal } from "../model/telemetry";
 import { hasTauri } from "./bridge";
 
 /**
- * Anonymous usage telemetry (the shell's `telemetry_*` commands in
+ * Usage telemetry (the shell's `telemetry_*` commands in
  * `src-tauri/src/telemetry.rs`, on the SDK's cua-telemetry core). The switch
  * is the same `$CUA_HOME/config.toml` setting as `cua telemetry off`.
  */

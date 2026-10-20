@@ -106,8 +106,22 @@ export interface McpReference {
   footer?: string;
   /** One page for every tool instead of a folder of category pages. */
   singlePage?: boolean;
+  /**
+   * Folder mode: group categories onto fewer pages (each category a section
+   * of its page). Without it, every category gets its own page.
+   */
+  pages?: McpPage[];
   /** Every platform the server runs on, in tab order (for per-platform variants). */
   platforms?: string[];
+}
+
+/** A page of the folder-mode reference holding several categories. */
+export interface McpPage {
+  slug: string;
+  title: string;
+  summary: string;
+  /** Category slugs on this page, in order. */
+  categories: string[];
 }
 
 // ---------------------------------------------------------------- schema
@@ -430,62 +444,113 @@ export function renderMcpReference(ref: McpReference): Map<string, string> {
   const all = ref.platforms ?? [];
 
   if (ref.singlePage) {
-    const body: string[] = [];
-    if (ref.header) body.push(ref.header.trim(), '');
-    for (const cat of ref.categories) {
-      const tools = groups.get(cat.slug) ?? [];
-      if (!tools.length) continue;
-      body.push(`## ${cat.title}`, '');
-      if (cat.intro) body.push(cat.intro.trim(), '');
-      for (const tool of tools) body.push(...toolSection(tool, 3, all));
-    }
-    if (ref.footer) body.push(ref.footer.trim(), '');
-    out.set('mcp-tools.mdx', page('MCP tools', ref.description, body));
+    out.set('mcp-tools.mdx', page('MCP tools', ref.description, mcpBody(ref, 2)));
     return out;
   }
 
+  const pages = mcpPages(ref);
+  const pageOf = new Map(pages.flatMap((p) => p.categories.map((c) => [c, p.slug] as const)));
   const index: string[] = [];
   if (ref.header) index.push(ref.header.trim(), '');
   for (const cat of ref.categories) {
     const tools = groups.get(cat.slug) ?? [];
     if (!tools.length) continue;
-    index.push(`## ${cat.title}`, '', `${escapeMdxText(sentence(cat.summary))} [Reference](${mcpUrl(ref, cat.slug)}).`, '');
-    index.push(...indexTable(tools, cat.canonical ?? ((t) => `${mcpUrl(ref, cat.slug)}#${t}`), withPlatforms));
+    const at = pageOf.get(cat.slug)!;
+    const catHref = ref.pages ? `${mcpUrl(ref, at)}#${slug(cat.title)}` : mcpUrl(ref, at);
+    index.push(`## ${cat.title}`, '', `${escapeMdxText(sentence(cat.summary))} [Reference](${catHref}).`, '');
+    index.push(...indexTable(tools, cat.canonical ?? ((t) => `${mcpUrl(ref, at)}#${t}`), withPlatforms));
   }
   if (ref.footer) index.push(ref.footer.trim(), '');
   out.set('mcp-tools/index.mdx', page('All tools', ref.description, index));
 
   const slugs: string[] = [];
-  for (const cat of ref.categories) {
-    const tools = groups.get(cat.slug) ?? [];
-    if (!tools.length) continue;
-    slugs.push(cat.slug);
+  for (const p of pages) {
+    const cats = p.categories
+      .map((c) => ref.categories.find((x) => x.slug === c)!)
+      .filter((cat) => (groups.get(cat.slug) ?? []).length);
+    if (!cats.length) continue;
+    slugs.push(p.slug);
     const body: string[] = [];
-    if (cat.canonical) {
-      if (cat.intro) body.push(cat.intro.trim(), '');
-      const sections = new Map<string, { href: string; tools: McpToolEntry[] }>();
-      for (const tool of tools) {
-        const sec = cat.canonicalSection?.(tool.name) ?? { title: '', href: '' };
-        const entry = sections.get(sec.title) ?? { href: sec.href, tools: [] };
-        entry.tools.push(tool);
-        sections.set(sec.title, entry);
-      }
-      for (const [title, sec] of sections) {
-        if (title) body.push(`## ${title}`, '', `Full entries: [${title}](${sec.href}).`, '');
-        body.push(...indexTable(sec.tools, cat.canonical, withPlatforms));
-      }
-      body.push(`Served by \`${ref.server}\`; see [MCP tools](${mcpUrl(ref)}) for every tool.`, '');
-      out.set(`mcp-tools/${cat.slug}.mdx`, page(cat.title, sentence(cat.summary), body));
-      continue;
+    // One category per page: its tools are the page's sections. Several: each
+    // category is a section and its tools sit one level below.
+    const level = ref.pages ? 3 : 2;
+    if (ref.pages) {
+      const listed = cats.flatMap((cat) => (cat.canonical ? [] : groups.get(cat.slug)!));
+      if (listed.length > 1) body.push(...indexTable(listed, (t) => `#${t}`, withPlatforms).map((l) => l.replace(/<span id="[^"]*"><\/span>/, '')));
     }
-    if (tools.length > 1) body.push(...indexTable(tools, (t) => `#${t}`, withPlatforms).map((l) => l.replace(/<span id="[^"]*"><\/span>/, '')));
-    if (cat.intro) body.push(cat.intro.trim(), '');
     body.push(`Served by \`${ref.server}\`; see [MCP tools](${mcpUrl(ref)}) for every tool.`, '');
-    for (const tool of tools) body.push(...toolSection(tool, 2, all));
-    out.set(`mcp-tools/${cat.slug}.mdx`, page(cat.title, sentence(cat.summary), body));
+    for (const cat of cats) {
+      const tools = groups.get(cat.slug)!;
+      if (ref.pages) body.push(`## ${cat.title}`, '', escapeMdxText(sentence(cat.summary)), '');
+      if (cat.canonical) {
+        body.push(...canonicalTables(cat, tools, withPlatforms, ref.pages ? 3 : 2));
+        continue;
+      }
+      if (!ref.pages && tools.length > 1) body.push(...indexTable(tools, (t) => `#${t}`, withPlatforms).map((l) => l.replace(/<span id="[^"]*"><\/span>/, '')));
+      if (cat.intro) body.push(cat.intro.trim(), '');
+      for (const tool of tools) body.push(...toolSection(tool, level, all));
+    }
+    out.set(`mcp-tools/${p.slug}.mdx`, page(p.title, sentence(p.summary), body));
   }
   out.set('mcp-tools/meta.json', metaJson('MCP tools', ['index', ...slugs]));
   return out;
+}
+
+/** The folder-mode pages: the configured groups, or one page per category. */
+function mcpPages(ref: McpReference): McpPage[] {
+  if (!ref.pages) return ref.categories.map((c) => ({ slug: c.slug, title: c.title, summary: c.summary, categories: [c.slug] }));
+  const placed = ref.pages.flatMap((p) => p.categories);
+  const known = ref.categories.map((c) => c.slug);
+  const left = known.filter((c) => !placed.includes(c));
+  const stray = placed.filter((c, i) => !known.includes(c) || placed.indexOf(c) !== i);
+  if (left.length || stray.length) {
+    throw new Error(`MCP pages of ${ref.server} do not cover the categories once. Unplaced: ${left.join(', ') || 'none'}; unknown or repeated: ${stray.join(', ') || 'none'}`);
+  }
+  return ref.pages;
+}
+
+/** A canonical category: tables linking to where each tool is documented, tool anchors kept. */
+function canonicalTables(cat: McpCategory, tools: McpToolEntry[], withPlatforms: boolean, level: number): string[] {
+  const body: string[] = [];
+  if (cat.intro) body.push(cat.intro.trim(), '');
+  const sections = new Map<string, { href: string; tools: McpToolEntry[] }>();
+  for (const tool of tools) {
+    const sec = cat.canonicalSection?.(tool.name) ?? { title: '', href: '' };
+    const entry = sections.get(sec.title) ?? { href: sec.href, tools: [] };
+    entry.tools.push(tool);
+    sections.set(sec.title, entry);
+  }
+  for (const [title, sec] of sections) {
+    if (title) body.push(`${'#'.repeat(level)} ${title}`, '', `Full entries: [${title}](${sec.href}).`, '');
+    body.push(...indexTable(sec.tools, cat.canonical!, withPlatforms));
+  }
+  return body;
+}
+
+/**
+ * The whole tool reference as one body: header, one section per category
+ * (canonical categories as linking tables), tools a level below, footer.
+ * `level` is the category heading level.
+ */
+export function mcpBody(ref: McpReference, level: number): string[] {
+  const groups = byCategory(ref);
+  const withPlatforms = ref.tools.some((t) => t.platforms?.length);
+  const body: string[] = [];
+  if (ref.header) body.push(ref.header.trim(), '');
+  for (const cat of ref.categories) {
+    const tools = groups.get(cat.slug) ?? [];
+    if (!tools.length) continue;
+    body.push(`${'#'.repeat(level)} ${cat.title}`, '');
+    if (cat.canonical) {
+      body.push(escapeMdxText(sentence(cat.summary)), '');
+      body.push(...canonicalTables(cat, tools, withPlatforms, level + 1));
+      continue;
+    }
+    if (cat.intro) body.push(cat.intro.trim(), '');
+    for (const tool of tools) body.push(...toolSection(tool, level + 1, ref.platforms ?? []));
+  }
+  if (ref.footer) body.push(ref.footer.trim(), '');
+  return body;
 }
 
 /** Rows for a product Reference index: one per MCP category. */
@@ -496,12 +561,13 @@ export function mcpIndexRows(ref: McpReference): Array<{ name: string; href: str
   }
   return [
     { name: 'All tools', href: mcpUrl(ref), description: `Every \`${ref.server}\` tool with a one-line summary.` },
-    ...ref.categories
-      .filter((c) => (groups.get(c.slug) ?? []).length)
-      .map((c) => ({
-        name: c.title,
-        href: mcpUrl(ref, c.slug),
-        description: `${sentence(c.summary)} ${(groups.get(c.slug) ?? []).length} tools.`,
+    ...mcpPages(ref)
+      .map((p) => ({ p, count: p.categories.reduce((n, c) => n + (groups.get(c)?.length ?? 0), 0) }))
+      .filter(({ count }) => count)
+      .map(({ p, count }) => ({
+        name: p.title,
+        href: mcpUrl(ref, p.slug),
+        description: `${sentence(p.summary)} ${count} tools.`,
       })),
   ];
 }

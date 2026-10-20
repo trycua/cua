@@ -3,6 +3,8 @@
 <!-- Copyright (c) 2026 Cua AI, Inc. -->
 <meta charset="utf-8">
 <style>
+  @font-face { font-family: "Outfit"; font-weight: 400; src: url(src/outfit-latin-400-normal.woff2) format("woff2"); }
+  @font-face { font-family: "Outfit"; font-weight: 500; src: url(src/outfit-latin-500-normal.woff2) format("woff2"); }
   html, body { margin: 0; background: transparent; overflow: hidden; }
   .stage { position: relative; overflow: hidden; }
   .sky { position: absolute; inset: -12px; }
@@ -14,12 +16,16 @@
   .legend { position: absolute; left: 0; top: 0; width: 100px; height: 100px; transform-origin: 0 0; }
   .legend > img { position: absolute; inset: 24%; width: 52%; height: 52%; object-fit: contain; }
   .legend > svg { position: absolute; inset: 17%; width: 66%; height: 66%; overflow: visible; }
+  /* Baked into the image, so it reads the same in light and dark Finder. */
+  .copy { position: absolute; left: 42px; top: 34px; z-index: 30; font-family: "Outfit", sans-serif; color: #fff; text-shadow: 0 0 6px #000, 0 0 18px #000; }
+  .copy h1 { margin: 0; font-size: 44px; font-weight: 500; letter-spacing: -0.035em; line-height: 1; white-space: nowrap; }
+  .copy p { margin: 14px 0 0 1px; font-size: 13.5px; font-weight: 400; color: #b4b8bf; letter-spacing: -0.005em; white-space: nowrap; }
 </style>
 <div class="stage" id="stage"></div>
 <script>
   const WIN = { w: 720, h: 480 };
   const CANVAS = { w: 2560, h: 1440 };
-  const APP = { x: 173, y: 240, label: 65 }, APPS = { x: 566, y: 147, label: 68 };
+  const APP = { x: 150, y: 300, label: 65 }, APPS = { x: 600, y: 196, label: 68 };
   const LABEL_DX = -0.75, LABEL_DY = 91.25;
   const ALIAS_DY = 128;
   const ALIAS_DX = -43;
@@ -34,19 +40,20 @@
     "near-1": { w: 473, h: 397 }, "near-2": { w: 467, h: 471 }, "near-3": { w: 463, h: 459 },
     "far-1": { w: 236, h: 220 }, "far-2": { w: 225, h: 212 }, "far-3": { w: 220, h: 220 }, "far-4": { w: 237, h: 226 },
   };
+  // In-window keys, as % of WIN. The Spaces key (TARGET) is not drawn: it is
+  // the app's Finder icon. Nothing else sits near the Applications slot.
   const LAYOUT = [
-    { src: "far-2", x: 54, y: 47, size: 5.2, depth: .1, rot: -8 }, { src: "far-4", x: 44, y: 74, size: 5, depth: .1, rot: 12 },
-    { src: "far-1", x: 58, y: 90, size: 5.6, depth: .12, rot: 4 }, { src: "far-3", x: 97, y: 50, size: 5, depth: .1, rot: 6 },
-    { src: "ivory-3", x: 85, y: 13, size: 9.5, depth: .45, rot: 4 }, { src: "ivory-1", x: 64, y: 60, size: 13.5, depth: .5, rot: -6 },
-    { src: "ivory-5", x: 95, y: 68, size: 10, depth: .45, rot: 8 }, { src: "ivory-6", x: 70, y: 86, size: 9, depth: .45, rot: -3 },
-    { src: "product-4", x: 61, y: 30, size: 14, depth: .55, rot: -4 },
-    { src: "product-1", x: 78, y: 40, size: 15, depth: .6, rot: 6, legend: "spaces" },
-    { src: "product-2", x: 93, y: 27, size: 13, depth: .55, rot: -9, legend: "driver" },
-    { src: "product-3", x: 77, y: 66, size: 14, depth: .6, rot: 3, legend: "lume" },
-    { src: "near-2", x: 56, y: 6, size: 15, depth: .9, rot: 0 }, { src: "near-1", x: 3, y: 92, size: 19, depth: 1, rot: 0, soft: true },
-    { src: "near-3", x: 92, y: 96, size: 19, depth: .95, rot: 0 },
+    { src: "far-2", x: 8.5, y: 42, size: 5.2, depth: .1, rot: -8 }, { src: "far-4", x: 34.7, y: 91.7, size: 5, depth: .1, rot: 12 },
+    { src: "far-1", x: 65.5, y: 15, size: 5.6, depth: .12, rot: 4 }, { src: "far-3", x: 97.2, y: 69, size: 5, depth: .1, rot: 6 },
+    { src: "ivory-3", x: 99, y: 9, size: 11, depth: .45, rot: 4 },
+    { src: "product-1", x: 20.8, y: 62.5, size: 15, depth: .6, rot: 6, legend: "spaces" },
+    { src: "product-2", x: 65, y: 57, size: 14.5, depth: .6, rot: -22, legend: "driver" },
+    { src: "product-3", x: 48.8, y: 73.5, size: 12.5, depth: .6, rot: -8, legend: "lume" },
+    { src: "near-2", x: 60, y: 0, size: 13, depth: .9, rot: 0, soft: true }, { src: "near-1", x: 3, y: 98, size: 17, depth: 1, rot: 0, soft: true },
+    { src: "near-3", x: 97, y: 96, size: 19, depth: .95, rot: 0 },
   ];
   const LEGEND = {
+    // Also the app icon's legend: the Spaces stack, the official Cua mark (unaltered) in the front square.
     spaces: '<img src="src/spaces-tray-template.svg" style="opacity:.8;mix-blend-mode:multiply">',
     driver: '<img src="src/cua-driver-cursor.svg" style="opacity:.88">',
     lume: '<img src="src/lume-icon-white.svg" style="opacity:.88">',
@@ -113,9 +120,9 @@
   function guides() {
     const pill = (c) => { const w = c.label + 22, h = 20, x = c.x + LABEL_DX - w / 2, y = c.y + LABEL_DY - h / 2;
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="#5b5954" stroke="#fff" stroke-opacity=".22"/>`; };
-    const P = [[250, 234], [318, 180], [415, 204], [494, 192]];
+    const P = [[214, 265], [320, 140], [480, 128], [545, 212]];
     const at = (t) => [0, 1].map((i) => (1 - t) ** 3 * P[0][i] + 3 * (1 - t) ** 2 * t * P[1][i] + 3 * (1 - t) * t * t * P[2][i] + t ** 3 * P[3][i]);
-    let dots = "", n = 26;
+    let dots = "", n = 34;
     for (let i = 0; i < n; i++) {
       const t = i / (n - 1) * .94, [x, y] = at(t);
       dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(1.1 + t * .7).toFixed(2)}" fill="#f0f3fa" fill-opacity="${(.22 + t * .6).toFixed(2)}"/>`;
@@ -132,14 +139,14 @@
       EXTRA_KEYS.map((e) => item(e.src, e.x, e.y, e.w, e.rot)).join("") +
       LAYOUT.filter((e) => e.src !== TARGET).map((e) =>
         item(e.src, e.x / 100 * WIN.w, e.y / 100 * WIN.h, e.size / 100 * WIN.w, e.rot, { legend: e.legend, z: Math.round(e.depth * 10), soft: e.soft })).join("") +
-      guides();
+      guides() +
+      `<div class="copy"><h1>One more key.</h1><p>Drag Cua Spaces into Applications.</p></div>`;
   } else if (mode === "icon") {
     Object.assign(stage.style, { width: ICON + "px", height: ICON + "px" });
     const clip = `path('${squircle(ICON, (ICON - TILE) / 2)}')`;
-    stage.innerHTML = `<div style="position:absolute;inset:0;clip-path:${clip};background:#050607;overflow:hidden">
-        <div style="position:absolute;inset:${(ICON - TILE) / 2}px;overflow:hidden">${sky}</div>
-        <div style="position:absolute;inset:0;background:radial-gradient(60% 55% at 50% 42%, rgba(120,170,215,.10), rgba(0,0,0,0) 70%)"></div>
-        ${iconKey((w) => sprite(TARGET, w, "spaces"))}
+    // Slate night (variant B): a vertical slate gradient, the key on a soft drop shadow.
+    stage.innerHTML = `<div style="position:absolute;inset:0;clip-path:${clip};background:linear-gradient(#33415a, #121a27);overflow:hidden">
+        <div style="position:absolute;inset:0;filter:drop-shadow(0 26px 28px rgba(0,0,0,.35))">${iconKey((w) => sprite(TARGET, w, "spaces"))}</div>
       </div>`;
   } else if (mode === "alias") {
     Object.assign(stage.style, { width: ICON + "px", height: ICON + "px" });

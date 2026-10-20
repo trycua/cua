@@ -3,9 +3,9 @@
 
 /*
  * The main Cua Spaces window: a plain, opaque desktop app (sidebar, toolbar,
- * detail), styled after the Fleets dashboard: neutral greys, hairline
- * borders, a light-blue accent used sparingly, white-on-black (or
- * black-on-white) primary buttons. The platform system font throughout.
+ * detail): neutral greys, hairline borders, a light-blue accent used
+ * sparingly, white-on-black (or black-on-white) primary buttons. The
+ * platform system font throughout.
  *
  * Nothing here is translucent: no backdrop-filter, no rgba window
  * backgrounds. Screenshots of the window come out the same every time.

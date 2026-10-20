@@ -292,7 +292,7 @@ pub fn seal_unusable_dir(dir: &Path, why: &str) -> std::io::Result<bool> {
         "Cua Volume is not mounted in this Space: {why}.\n\
          Nothing can be saved here; this folder is read-only so nothing is lost\n\
          by writing to it. Use the Cua Volume through the volume tools of the\n\
-         machine that runs this Space, or create the Space with gVisor or as a VM.\n"
+         computer that runs this Space, or create the Space with gVisor or as a VM.\n"
     );
     let mode = std::fs::metadata(dir)?.permissions().mode() & 0o777;
     if mode & 0o222 == 0 && std::fs::read_to_string(&note).ok().as_deref() == Some(&body) {

@@ -112,7 +112,7 @@ export function InstallerFlow({
   identity?: string;
   installerMode?: OnboardingMode | null;
   initialStep?: InstallerStep;
-  /** Opens a website page in the browser (the Teams waitlist). */
+  /** Opens a website page in the browser (the Teams page). */
   onOpenExternal?: (url: string) => void;
   /** Usage telemetry (the shell's; nothing outside it). */
   telemetry?: TelemetryBridge;
@@ -152,7 +152,7 @@ export function InstallerFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialIdentity]);
 
-  const view = onboardingView(state);
+  const view = onboardingView(state, true);
   // Welcome's usage-data switch starts from the machine's setting (the
   // same one as Settings, Privacy and `cua telemetry off`).
   useEffect(() => {
@@ -447,11 +447,28 @@ export function InstallerFlow({
             </button>
           }
         >
+          <ul className="onboarding-todos">
+            {(view.todos ?? []).map((t) => (
+              <li key={t.id} data-done={t.done || undefined}>
+                <span aria-hidden>{t.done ? "\u2713" : "\u25cb"}</span>
+                <div>
+                  <strong>{t.title}</strong>
+                  <p className="st-note">{t.note}</p>
+                </div>
+                {/* Cua Volume opens its page once its experiment is on (Settings, Experiments). */}
+                {t.action && (t.id !== "volume" || state.experiments?.cuaVolume) ? (
+                  <button type="button" className="secondary-button" onClick={() => send({ type: "todo-chosen", id: t.id })}>
+                    {t.action}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
           <dl className="this-machine-facts">
             {view.summary.map((f) => (
               <div key={f.label}>
                 <dt>{f.label}</dt>
-                <dd>{f.label === "cua command" && state.cliTarget ? <code>{f.value}</code> : f.value}</dd>
+                <dd>{f.value}</dd>
               </div>
             ))}
           </dl>

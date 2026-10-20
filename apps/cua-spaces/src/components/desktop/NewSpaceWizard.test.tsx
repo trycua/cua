@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(() => vi.restoreAllMocks());
 
 import list from "../../../../../libs/images/sandbox-images.json";
 import {
@@ -258,7 +260,15 @@ describe("New Space wizard", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
+  it("shows Windows as coming soon on a Mac and cannot pick it", () => {
+    renderWizard();
+    const tile = screen.getByRole("button", { name: /^Windows/ });
+    expect(tile).toHaveTextContent("coming soon");
+    expect(tile).toBeDisabled();
+  });
+
   it("the OS tiles pick that system's first image", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
     renderWizard();
     fireEvent.click(screen.getByRole("button", { name: /^Windows/ }));
     expect(imageField()).toHaveValue("ghcr.io/trycua/windows:2022");
@@ -472,6 +482,7 @@ describe("QEMU VMs", () => {
   });
 
   it("are offered once QEMU is ready", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     renderWizard({ localBackends: ["docker", "qemu"] });
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");

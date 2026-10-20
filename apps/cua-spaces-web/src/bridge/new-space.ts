@@ -108,7 +108,7 @@ export interface EnvInput {
 
 function location(core: CoreClient, on: string | undefined): WizardLocation {
   if (!on || on === "local") return "local";
-  if (on === "cloud") return "cloud";
+  if (on === "cloud") return "local"; // Cua Cloud has ended
   if (on.startsWith("host:")) return "host";
   return isCloudWord(core, on) ? "yours" : "local";
 }

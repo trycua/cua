@@ -2685,8 +2685,8 @@ mod tests {
                 tracing::error!(target: "boringtun::noise::timers", "CONNECTION_EXPIRED(REKEY_ATTEMPT_TIME)");
                 tracing::warn!(target: "cua_mesh::node", "kept warning");
             });
-            let out = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
-            out
+            let bytes = buf.0.lock().unwrap().clone();
+            String::from_utf8(bytes).unwrap()
         };
         for daemon in [false, true] {
             for spec in [None, Some(""), Some("info"), Some("debug"), Some(" warn ")] {

@@ -22,21 +22,17 @@ pub fn tool_def() -> &'static ToolDef {
         description: "Observe the bounded semantic trees of top-level accessibility windows for \
             one process that have no native window id. Results preserve each AXWindow boundary \
             and expose no screenshot, element_index, element_token, or action-cache side effect. \
-            Native windows with an exact window_id remain observable through get_window_state."
+            Native windows with an exact window_id remain observable through get_window_state. \
+            Supported on macOS; unsupported on Windows and Linux."
             .into(),
         input_schema: json!({
             "type": "object",
             "required": ["pid"],
             "properties": {
-                "session": { "type": "string" },
-                "pid": { "type": "integer", "minimum": 1 },
-                "max_elements": { "type": "integer", "minimum": 1, "maximum": MAX_ELEMENTS, "default": MAX_ELEMENTS },
-                "max_depth": { "type": "integer", "minimum": 1, "maximum": MAX_DEPTH, "default": MAX_DEPTH }
-            },
-            "x-cua-platform-support": {
-                "macos": "supported",
-                "windows": "unsupported",
-                "linux": "unsupported"
+                "session": crate::tool_schema::session_schema(),
+                "pid": { "type": "integer", "minimum": 1, "description": "Process ID to observe." },
+                "max_elements": { "type": "integer", "minimum": 1, "maximum": MAX_ELEMENTS, "default": MAX_ELEMENTS, "description": "Maximum number of accessibility elements to return." },
+                "max_depth": { "type": "integer", "minimum": 1, "maximum": MAX_DEPTH, "default": MAX_DEPTH, "description": "Maximum accessibility tree depth to traverse." }
             },
             "additionalProperties": false
         }),
@@ -105,8 +101,10 @@ mod tests {
         ] {
             assert!(schema["properties"].get(forbidden).is_none());
         }
-        assert_eq!(schema["x-cua-platform-support"]["macos"], "supported");
-        assert_eq!(schema["x-cua-platform-support"]["windows"], "unsupported");
+        assert!(schema.get("x-cua-platform-support").is_none());
+        for parameter in schema["properties"].as_object().unwrap().values() {
+            assert!(!parameter["description"].as_str().unwrap().is_empty());
+        }
     }
 
     #[tokio::test]

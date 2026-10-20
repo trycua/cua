@@ -65,7 +65,14 @@ struct Harness {
 
 impl Harness {
     fn launch_with_accessibility_only_surface() -> Self {
-        Self::spawn(None, None, false, None, &[("CUA_HARNESS_AX_ONLY_SURFACE", "1")]).presented()
+        Self::spawn(
+            None,
+            None,
+            false,
+            None,
+            &[("CUA_HARNESS_AX_ONLY_SURFACE", "1")],
+        )
+        .presented()
     }
     fn launch() -> Self {
         Self::launch_with_command_oracle(None)
@@ -2669,7 +2676,6 @@ fn harness_appkit_accessibility_only_surface_contract() {
     });
 }
 
-
 fn find_on_screen_window(driver: &mut McpDriver, pid: u32) -> u64 {
     let deadline = std::time::Instant::now() + Duration::from_secs(12);
     loop {
@@ -2704,4 +2710,3 @@ fn find_on_screen_window(driver: &mut McpDriver, pid: u32) -> u64 {
         std::thread::sleep(Duration::from_millis(150));
     }
 }
-

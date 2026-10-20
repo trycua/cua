@@ -1222,6 +1222,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_power_button": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -2962,6 +2967,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_power_button": {
       args: [],
       ret: FfiType.UInt16,
@@ -4230,6 +4240,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_picker_sensitive_options(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_status(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_window_grid(windows: Uint8Array, query: Uint8Array, selected: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice(error: Uint8Array, accountApp: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_power_button(space: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_presence_name(name: Uint8Array, email: Uint8Array, username: Uint8Array, osFullName: Uint8Array, osUser: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_presence_principal_id(email: Uint8Array, subject: Uint8Array, username: Uint8Array, osUser: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4578,6 +4589,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_picker_sensitive_options(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_status(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_power_button(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_presence_name(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_presence_principal_id(): number;

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { isSpacesError, toSpacesError, SpacesError } from "../dist/spaces/errors.js"
+import { isSpacesError, toSpacesError, parsePlanLimit, PlanLimitError, SpacesError } from "../dist/spaces/errors.js"
 import { TranscriptAdapter, detectApproval } from "../dist/spaces/events.js"
 import { SpaceTurnLock, Thread, validatePlacement, startThread } from "../dist/spaces/thread.js"
 import { HostPresentation, cuaHome, readControlEndpoint } from "../dist/spaces/host.js"
@@ -566,4 +566,41 @@ test("the control file lives under CUA_HOME, like the Rust core", async () => {
     if (saved === undefined) delete process.env.CUA_HOME
     else process.env.CUA_HOME = saved
   }
+})
+
+// -- plan limit --------------------------------------------------------------
+
+test("the relay's plan-limit refusal is a PlanLimitError with its numbers and the upgrade link", () => {
+  const sentence = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+  const native = Object.assign(new Error(`${sentence} Upgrade: https://app.cua.ai/buy/teams?from=plan_limit`), { tag: "Http" })
+  const error = toSpacesError(native)
+  assert.ok(error instanceof PlanLimitError)
+  assert.ok(isSpacesError(error, "plan_limit"))
+  assert.equal(error.message, sentence)
+  assert.equal(error.kind, "sessions")
+  assert.equal(error.plan, "pro")
+  assert.equal(error.used, 5)
+  assert.equal(error.limit, 5)
+  assert.equal(error.status, 429)
+  assert.equal(error.upgradeUrl, "https://app.cua.ai/buy/teams?from=plan_limit")
+  assert.equal(error.cause, native)
+})
+
+test("remote hours on the free plan, with no link", () => {
+  const p = parsePlanLimit("relay: You've used 20.5 of 20 remote hours this month on the free plan. Upgrade to Pro for more.")
+  assert.deepEqual(p, {
+    kind: "hours",
+    plan: "free",
+    used: 20.5,
+    limit: 20,
+    upgradeUrl: undefined,
+    message: "You've used 20.5 of 20 remote hours this month on the free plan. Upgrade to Pro for more.",
+  })
+})
+
+test("other errors are not plan limits", () => {
+  assert.equal(parsePlanLimit("timed out"), undefined)
+  const e = toSpacesError(Object.assign(new Error("http 500"), { tag: "Http" }))
+  assert.ok(!(e instanceof PlanLimitError))
+  assert.equal(e.code, "http")
 })

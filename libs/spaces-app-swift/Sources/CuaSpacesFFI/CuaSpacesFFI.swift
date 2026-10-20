@@ -26494,7 +26494,7 @@ public func FfiConverterTypeAppRefreshReport_lower(_ value: AppRefreshReport) ->
 
 public struct AppRelayAllowanceNotice: Equatable, Hashable {
     /**
-     * "You've used your free relay allowance for this month. ..."
+     * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
      */
     public var text: String
     /**
@@ -26526,7 +26526,7 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "You've used your free relay allowance for this month. ..."
+         * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
          */text: String,
         /**
          * [`UPGRADE`].
@@ -68672,6 +68672,18 @@ public func appPickerWindowGrid(windows: [AppOpenWindow], query: String, selecte
 })
 }
 /**
+ * The relay refusing a new session over the plan's cap, from the error's
+ * text: the sentence and Upgrade. None for any other error.
+ */
+public func appPlanLimitNotice(error: String, accountApp: String) -> AppRelayAllowanceNotice?  {
+    return try!  FfiConverterOptionTypeAppRelayAllowanceNotice.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice(
+        FfiConverterString.lower(error),
+        FfiConverterString.lower(accountApp),$0
+    )
+})
+}
+/**
  * The power button next to Delete, for a Space that turns off and on.
  */
 public func appPowerButton(space: AppSpace) -> AppPowerButton?  {
@@ -70773,6 +70785,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid() != 8477) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice() != 24944) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_power_button() != 25513) {

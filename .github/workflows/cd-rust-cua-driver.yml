@@ -73,6 +73,15 @@ on:
         required: false
         type: boolean
         default: true
+      skip_staging_gate:
+        description: "BREAK-GLASS: publish without a green staging smoke for this commit (needs skip_staging_reason; logged loudly)"
+        required: false
+        type: boolean
+        default: false
+      skip_staging_reason:
+        description: "Why the staging gate is skipped (required with skip_staging_gate)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -1240,8 +1249,30 @@ jobs:
   # the GitHub release (and therefore the PyPI/npm SDK packages) never becomes
   # public before that evidence exists. Nightly and manual build-only runs skip
   # it.
+  # Staging first (CUA-1907): a release publishes only when the staging smoke
+  # is recorded green for this exact commit as the commit status
+  # "staging-smoke/cua-driver" (description carries the artifact digest).
+  # Break-glass: skip_staging_gate with skip_staging_reason.
+  staging-gate:
+    name: staging smoke is green
+    if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') && (github.event_name == 'push' || inputs.skip_staging_gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a green staging smoke for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SKIP_STAGING_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_gate }}
+          SKIP_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_reason || '' }}
+        run: .github/scripts/require_staging_smoke.sh cua-driver "$GITHUB_SHA"
+
   release:
     needs:
+      - staging-gate
       - build-linux
       - build-windows
       - build-macos-universal
@@ -1255,7 +1286,11 @@ jobs:
       - e2e-windows
       - e2e-macos
       - e2e-standalone-browsers
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    # A tag push publishes. Break-glass: a manual run on the tag with
+    # skip_staging_gate (the gate job logs the reason) publishes too.
+    if: >-
+      startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+      && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.skip_staging_gate))
     runs-on: ubuntu-latest
     # id-token: keyless Sigstore bundles for every release asset. The
     # attribution collector reads pull requests and issues.

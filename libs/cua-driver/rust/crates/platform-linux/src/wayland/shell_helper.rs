@@ -31,6 +31,7 @@ use std::time::Duration;
 use crate::x11::WindowInfo;
 
 const DEST: &str = "org.cua.WinRects";
+const COMPOSITOR_DEST: &str = "org.gnome.Shell";
 const PATH: &str = "/org/cua/WinRects";
 const IFACE: &str = "org.cua.WinRects";
 const DBUS_DEST: &str = "org.freedesktop.DBus";
@@ -104,51 +105,147 @@ fn shell_owner(require_browser_api: bool) -> Option<String> {
 }
 
 fn shell_owner_with_min_version(min_version: Option<u32>) -> Option<String> {
-    let owner_raw = gdbus_call_to(
-        DBUS_DEST,
-        DBUS_PATH,
-        &format!("{DBUS_IFACE}.GetNameOwner"),
-        &[DEST.to_owned()],
-        Duration::from_millis(800),
-    )?;
-    let owner = parse_quoted_string(&owner_raw)?;
-    if !owner.starts_with(':') {
+    select_shell_owner(&SessionShellProbe, min_version)
+}
+
+/// Session-bus and procfs observations behind [`select_shell_owner`]. The
+/// selection rules live in that function so they can be tested without a
+/// running Shell; this trait only reads the facts.
+trait ShellOwnerProbe {
+    type ProcessPin;
+    fn name_owner(&self, name: &str) -> Option<String>;
+    fn connection_identity(&self, owner: &str) -> Option<(u32, u32)>;
+    fn current_uid(&self) -> u32;
+    fn pin_process(&self, pid: u32) -> Option<Self::ProcessPin>;
+    fn process_still_pinned(&self, pid: u32, pin: &Self::ProcessPin) -> bool;
+    fn trusted_shell(&self, pid: u32) -> bool;
+    fn helper_version(&self, owner: &str) -> Option<u32>;
+}
+
+fn select_shell_owner<P: ShellOwnerProbe>(probe: &P, min_version: Option<u32>) -> Option<String> {
+    let (owner, version) = attest_shell_owner(probe, min_version.is_some())?;
+    min_version
+        .is_none_or(|minimum| version.is_some_and(|version| version >= minimum))
+        .then_some(owner)
+}
+
+/// The helper is trusted only when its unique owner is also the owner of
+/// `org.gnome.Shell`, belongs to this user, and is hosted by an attested Shell
+/// process. A second genuine `gnome-shell` of the same user (a nested or
+/// development Shell) therefore cannot serve the helper for the session's
+/// compositor. Every name and credential check is repeated after the optional
+/// version call, so a re-owned name or recycled PID refuses and a returned
+/// version belongs to the attested owner.
+fn attest_shell_owner<P: ShellOwnerProbe>(
+    probe: &P,
+    read_version: bool,
+) -> Option<(String, Option<u32>)> {
+    let unique_owner = |name: &str| {
+        probe
+            .name_owner(name)
+            .filter(|owner| owner.starts_with(':'))
+    };
+    let owner = unique_owner(DEST)?;
+    if unique_owner(COMPOSITOR_DEST)? != owner {
         return None;
     }
 
-    let pid_raw = gdbus_call_to(
-        DBUS_DEST,
-        DBUS_PATH,
-        &format!("{DBUS_IFACE}.GetConnectionUnixProcessID"),
-        std::slice::from_ref(&owner),
-        Duration::from_millis(800),
-    )?;
-    let uid_raw = gdbus_call_to(
-        DBUS_DEST,
-        DBUS_PATH,
-        &format!("{DBUS_IFACE}.GetConnectionUnixUser"),
-        std::slice::from_ref(&owner),
-        Duration::from_millis(800),
-    )?;
-    let pid = parse_first_u32(&pid_raw)?;
-    let uid = parse_first_u32(&uid_raw)?;
-    if uid != current_uid() || !is_trusted_gnome_shell(pid) {
+    let (pid, uid) = probe.connection_identity(&owner)?;
+    if uid != probe.current_uid() {
+        return None;
+    }
+    let pin = probe.pin_process(pid)?;
+    if !probe.trusted_shell(pid) {
         return None;
     }
 
-    if let Some(min_version) = min_version {
-        let version_raw = gdbus_call_to(
-            &owner,
+    let version = if read_version {
+        Some(probe.helper_version(&owner)?)
+    } else {
+        None
+    };
+
+    if unique_owner(DEST)? != owner
+        || unique_owner(COMPOSITOR_DEST)? != owner
+        || probe.connection_identity(&owner)? != (pid, uid)
+        || !probe.trusted_shell(pid)
+        || !probe.process_still_pinned(pid, &pin)
+    {
+        return None;
+    }
+    Some((owner, version))
+}
+
+struct SessionShellProbe;
+
+impl ShellOwnerProbe for SessionShellProbe {
+    type ProcessPin = std::fs::File;
+
+    fn name_owner(&self, name: &str) -> Option<String> {
+        let raw = gdbus_call_to(
+            DBUS_DEST,
+            DBUS_PATH,
+            &format!("{DBUS_IFACE}.GetNameOwner"),
+            &[name.to_owned()],
+            Duration::from_millis(800),
+        )?;
+        parse_quoted_string(&raw)
+    }
+
+    fn connection_identity(&self, owner: &str) -> Option<(u32, u32)> {
+        let scalar = |method: &str| {
+            let raw = gdbus_call_to(
+                DBUS_DEST,
+                DBUS_PATH,
+                &format!("{DBUS_IFACE}.{method}"),
+                &[owner.to_owned()],
+                Duration::from_millis(800),
+            )?;
+            parse_first_u32(&raw)
+        };
+        Some((
+            scalar("GetConnectionUnixProcessID")?,
+            scalar("GetConnectionUnixUser")?,
+        ))
+    }
+
+    fn current_uid(&self) -> u32 {
+        current_uid()
+    }
+
+    /// An open `/proc/PID` directory: if the process exits and its PID is
+    /// reused, the directory reached by that path is a different inode.
+    fn pin_process(&self, pid: u32) -> Option<std::fs::File> {
+        let process_directory = std::fs::File::open(format!("/proc/{pid}")).ok()?;
+        process_directory
+            .metadata()
+            .ok()?
+            .is_dir()
+            .then_some(process_directory)
+    }
+
+    fn process_still_pinned(&self, pid: u32, pin: &std::fs::File) -> bool {
+        let (Ok(pinned), Ok(current)) = (pin.metadata(), std::fs::metadata(format!("/proc/{pid}")))
+        else {
+            return false;
+        };
+        current.dev() == pinned.dev() && current.ino() == pinned.ino()
+    }
+
+    fn trusted_shell(&self, pid: u32) -> bool {
+        is_trusted_gnome_shell(pid)
+    }
+
+    fn helper_version(&self, owner: &str) -> Option<u32> {
+        let raw = gdbus_call_to(
+            owner,
             PATH,
             &format!("{IFACE}.GetVersion"),
             &[],
             Duration::from_millis(800),
         )?;
-        if parse_first_u32(&version_raw)? < min_version {
-            return None;
-        }
+        parse_first_u32(&raw)
     }
-    Some(owner)
 }
 
 fn parse_quoted_string(raw: &str) -> Option<String> {
@@ -203,17 +300,10 @@ pub enum WindowCapture {
     Png(Vec<u8>),
 }
 
-/// The verified helper owner and its API version.
+/// The verified helper owner and the API version that same owner reported.
 fn attested_owner_with_version() -> Option<(String, u32)> {
-    let owner = shell_owner_with_min_version(None)?;
-    let raw = gdbus_call_to(
-        &owner,
-        PATH,
-        &format!("{IFACE}.GetVersion"),
-        &[],
-        Duration::from_millis(800),
-    )?;
-    Some((owner, parse_first_u32(&raw)?))
+    let (owner, version) = attest_shell_owner(&SessionShellProbe, true)?;
+    Some((owner, version?))
 }
 
 /// Capture one window's compositor actor without activating it. Covered
@@ -697,6 +787,178 @@ mod tests {
         assert_eq!(parse_first_u32("(6079,)"), Some(6079));
         assert_eq!(parse_quoted_string("(nothing,)"), None);
         assert_eq!(parse_first_u32("(nothing,)"), None);
+    }
+
+    /// Scripted bus and procfs answers. Each name or connection maps to a
+    /// queue whose last answer repeats, so a test can re-own a name between
+    /// the first check and the recheck.
+    struct FakeShellBus {
+        names: std::cell::RefCell<std::collections::HashMap<&'static str, Vec<&'static str>>>,
+        identities: std::cell::RefCell<std::collections::HashMap<&'static str, Vec<(u32, u32)>>>,
+        uid: u32,
+        trusted_pids: Vec<u32>,
+        version: Option<u32>,
+        pin_holds: bool,
+    }
+
+    fn next_answer<K: std::hash::Hash + Eq, V: Clone>(
+        answers: &std::cell::RefCell<std::collections::HashMap<K, Vec<V>>>,
+        key: &K,
+    ) -> Option<V> {
+        let mut answers = answers.borrow_mut();
+        let queue = answers.get_mut(key)?;
+        if queue.len() > 1 {
+            Some(queue.remove(0))
+        } else {
+            queue.first().cloned()
+        }
+    }
+
+    impl FakeShellBus {
+        /// `:1.97` is the session's Shell (PID 5112). `:1.42` is a second
+        /// genuine `gnome-shell` of the same user (PID 4242).
+        fn genuine() -> Self {
+            Self {
+                names: std::cell::RefCell::new(
+                    [(DEST, vec![":1.97"]), (COMPOSITOR_DEST, vec![":1.97"])].into(),
+                ),
+                identities: std::cell::RefCell::new(
+                    [(":1.97", vec![(5112, 1000)]), (":1.42", vec![(4242, 1000)])].into(),
+                ),
+                uid: 1000,
+                trusted_pids: vec![5112, 4242],
+                version: Some(8),
+                pin_holds: true,
+            }
+        }
+
+        fn with_names(self, helper: Vec<&'static str>, shell: Vec<&'static str>) -> Self {
+            *self.names.borrow_mut() = [(DEST, helper), (COMPOSITOR_DEST, shell)].into();
+            self
+        }
+    }
+
+    impl ShellOwnerProbe for FakeShellBus {
+        type ProcessPin = u32;
+
+        fn name_owner(&self, name: &str) -> Option<String> {
+            let key = [DEST, COMPOSITOR_DEST]
+                .into_iter()
+                .find(|known| *known == name)?;
+            next_answer(&self.names, &key).map(str::to_owned)
+        }
+
+        fn connection_identity(&self, owner: &str) -> Option<(u32, u32)> {
+            let key = [":1.97", ":1.42"]
+                .into_iter()
+                .find(|known| *known == owner)?;
+            next_answer(&self.identities, &key)
+        }
+
+        fn current_uid(&self) -> u32 {
+            self.uid
+        }
+
+        fn pin_process(&self, pid: u32) -> Option<u32> {
+            Some(pid)
+        }
+
+        fn process_still_pinned(&self, pid: u32, pin: &u32) -> bool {
+            self.pin_holds && pid == *pin
+        }
+
+        fn trusted_shell(&self, pid: u32) -> bool {
+            self.trusted_pids.contains(&pid)
+        }
+
+        fn helper_version(&self, _owner: &str) -> Option<u32> {
+            self.version
+        }
+    }
+
+    #[test]
+    fn helper_hosted_by_the_session_shell_is_selected() {
+        let bus = FakeShellBus::genuine();
+        assert_eq!(select_shell_owner(&bus, None).as_deref(), Some(":1.97"));
+        assert_eq!(
+            select_shell_owner(&bus, Some(SEMANTIC_CURSOR_API_VERSION)).as_deref(),
+            Some(":1.97")
+        );
+        assert_eq!(
+            attest_shell_owner(&bus, true),
+            Some((":1.97".to_owned(), Some(8)))
+        );
+    }
+
+    #[test]
+    fn winrects_owner_must_equal_the_gnome_shell_owner() {
+        // :1.42 passes every executable check but does not own org.gnome.Shell.
+        let decoy = FakeShellBus::genuine().with_names(vec![":1.42"], vec![":1.97"]);
+        assert!(decoy.trusted_shell(4242));
+        assert_eq!(select_shell_owner(&decoy, None), None);
+        let no_shell = FakeShellBus::genuine().with_names(vec![":1.97"], vec![]);
+        assert_eq!(select_shell_owner(&no_shell, None), None);
+        let no_helper = FakeShellBus::genuine().with_names(vec![], vec![":1.97"]);
+        assert_eq!(select_shell_owner(&no_helper, None), None);
+        let well_known = FakeShellBus::genuine().with_names(vec![DEST], vec![DEST]);
+        assert_eq!(select_shell_owner(&well_known, None), None);
+    }
+
+    #[test]
+    fn owner_recheck_refuses_reowned_names_and_changed_credentials() {
+        let helper_moved =
+            FakeShellBus::genuine().with_names(vec![":1.97", ":1.42"], vec![":1.97"]);
+        assert_eq!(select_shell_owner(&helper_moved, None), None);
+        let shell_moved = FakeShellBus::genuine().with_names(vec![":1.97"], vec![":1.97", ":1.42"]);
+        assert_eq!(select_shell_owner(&shell_moved, None), None);
+        let recycled = FakeShellBus::genuine();
+        recycled
+            .identities
+            .borrow_mut()
+            .insert(":1.97", vec![(5112, 1000), (4242, 1000)]);
+        assert_eq!(select_shell_owner(&recycled, None), None);
+        let lost_pin = FakeShellBus {
+            pin_holds: false,
+            ..FakeShellBus::genuine()
+        };
+        assert_eq!(select_shell_owner(&lost_pin, None), None);
+        // The version is read between the checks: a helper that moves after
+        // answering cannot lend its version to the attested owner.
+        let moved_after_version =
+            FakeShellBus::genuine().with_names(vec![":1.97", ":1.42"], vec![":1.97"]);
+        assert_eq!(attest_shell_owner(&moved_after_version, true), None);
+    }
+
+    #[test]
+    fn owner_selection_refuses_wrong_uid_untrusted_process_and_old_api() {
+        let other_user = FakeShellBus {
+            uid: 1001,
+            ..FakeShellBus::genuine()
+        };
+        assert_eq!(select_shell_owner(&other_user, None), None);
+        let untrusted = FakeShellBus {
+            trusted_pids: vec![4242],
+            ..FakeShellBus::genuine()
+        };
+        assert_eq!(select_shell_owner(&untrusted, None), None);
+        let old_api = FakeShellBus {
+            version: Some(7),
+            ..FakeShellBus::genuine()
+        };
+        assert_eq!(select_shell_owner(&old_api, None).as_deref(), Some(":1.97"));
+        assert_eq!(
+            select_shell_owner(&old_api, Some(SEMANTIC_CURSOR_API_VERSION)),
+            None
+        );
+        let silent_api = FakeShellBus {
+            version: None,
+            ..FakeShellBus::genuine()
+        };
+        assert_eq!(
+            select_shell_owner(&silent_api, Some(BROWSER_HELPER_API_VERSION)),
+            None
+        );
+        assert_eq!(attest_shell_owner(&silent_api, true), None);
     }
 
     #[test]

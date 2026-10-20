@@ -70,7 +70,12 @@ pub fn all_windows() -> Vec<WindowInfo> {
 }
 
 pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
-    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::ZeroOnly)
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroOnly,
+        None,
+        true,
+    )
 }
 
 /// Enumerate only on-screen windows.
@@ -82,7 +87,57 @@ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
+        None,
+        true,
     )
+}
+
+pub(crate) fn pid_windows_with_space_snapshot(pid: i32, on_screen_only: bool) -> WindowEnumeration {
+    let on_screen = if on_screen_only {
+        kCGWindowListOptionOnScreenOnly
+    } else {
+        0
+    };
+    enumerate_windows(
+        on_screen | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(pid),
+        true,
+    )
+}
+
+/// On-screen windows of `pid` on every layer, without the Space snapshot.
+/// Cheap enough to poll during a gesture (the drag tool watches for a
+/// drag-image window at the dragging level).
+pub(crate) fn pid_on_screen_windows_any_layer(pid: i32) -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(pid),
+        false,
+    )
+    .windows
+}
+
+/// On-screen windows of every app on every layer, front to back, without the
+/// Space snapshot. Use this, not [`all_windows_any_layer`], to compare two
+/// apps' window order: the all-windows list (off-screen windows included) did
+/// not follow a raise in Bench v2 (a Chromium window raised over the user's
+/// window still read as behind it), while the on-screen list does.
+pub(crate) fn on_screen_windows_any_layer() -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        None,
+        false,
+    )
+    .windows
+}
+
+pub(crate) fn prefer_layer0(windows: &mut Vec<WindowInfo>) {
+    if windows.iter().any(|w| w.layer == 0) {
+        windows.retain(|w| w.layer == 0);
+    }
 }
 
 /// Enumerate windows on every CGWindow layer, including the accessory layers
@@ -95,7 +150,13 @@ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
 /// `get_window_state` tell "no such window" apart from "exists, but is not a
 /// layer-0 window" (issue #2237).
 pub(crate) fn all_windows_any_layer() -> Vec<WindowInfo> {
-    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::AnyLayer).windows
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        None,
+        false,
+    )
+    .windows
 }
 
 /// Which CGWindow layers an enumeration admits.
@@ -107,7 +168,12 @@ enum LayerFilter {
     AnyLayer,
 }
 
-fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
+fn enumerate_windows(
+    options: u32,
+    layers: LayerFilter,
+    pid_filter: Option<i32>,
+    spaces: bool,
+) -> WindowEnumeration {
     use core_foundation::{
         array::CFArray,
         base::{CFGetTypeID, CFTypeRef, TCFType},
@@ -118,7 +184,7 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
     };
     use std::os::raw::c_void;
 
-    let space_query = (layers == LayerFilter::ZeroOnly)
+    let space_query = spaces
         .then(crate::input::skylight::SpaceQuery::new)
         .flatten();
     let current_space_id = space_query
@@ -202,6 +268,9 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
         if layer != 0 && layers == LayerFilter::ZeroOnly {
             continue;
         }
+        if pid_filter.is_some_and(|wanted| wanted != pid) {
+            continue;
+        }
 
         // Parse bounds dict.
         let bounds = {
@@ -252,13 +321,7 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
         });
     }
 
-    if layers == LayerFilter::ZeroOnly {
-        let Some(query) = &space_query else {
-            return WindowEnumeration {
-                windows: results,
-                current_space_id,
-            };
-        };
+    if let Some(query) = &space_query {
         for window in &mut results {
             let space_ids = query.window_space_ids(window.window_id);
             let display_space_id = space_ids
@@ -452,12 +515,18 @@ pub fn resolve_window_owner(pid: i32, window_id: u32) -> WindowOwner {
 
 /// Select the best window_id for a pid.
 pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
-    let windows = all_windows();
-    let pid_windows: Vec<&WindowInfo> = windows.iter().filter(|w| w.pid == pid).collect();
+    let mut pid_windows = enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(pid),
+        false,
+    )
+    .windows;
+    prefer_layer0(&mut pid_windows);
     if pid_windows.is_empty() {
         anyhow::bail!("pid {pid} has no windows");
     }
-    let mut on_screen: Vec<&&WindowInfo> = pid_windows.iter().filter(|w| w.is_on_screen).collect();
+    let mut on_screen: Vec<&WindowInfo> = pid_windows.iter().filter(|w| w.is_on_screen).collect();
     if !on_screen.is_empty() {
         on_screen.sort_by_key(|window| std::cmp::Reverse(window.z_index));
         return Ok(on_screen[0].window_id);
@@ -606,6 +675,33 @@ mod tests {
             on_current_space: None,
             space_ids: None,
         }
+    }
+
+    #[test]
+    fn layer0_windows_win_over_accessory_windows() {
+        let accessory = WindowInfo {
+            layer: 3,
+            ..window(41, 800, "TextEdit")
+        };
+        let mut windows = vec![accessory, window(42, 800, "TextEdit")];
+        prefer_layer0(&mut windows);
+        assert_eq!(
+            windows.iter().map(|w| w.window_id).collect::<Vec<_>>(),
+            [42]
+        );
+    }
+
+    #[test]
+    fn accessory_only_app_keeps_its_accessory_windows() {
+        let mut windows = vec![WindowInfo {
+            layer: 3,
+            ..window(194, 800, "OnboardingApp")
+        }];
+        prefer_layer0(&mut windows);
+        assert_eq!(
+            windows.iter().map(|w| w.window_id).collect::<Vec<_>>(),
+            [194]
+        );
     }
 
     #[test]

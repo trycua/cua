@@ -592,6 +592,744 @@
         "cpusText": "2 cores",
         "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "disk: 20",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "edit-resource"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "2 cores",
+        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk !Macintosh HD has room for up to 500 GB."
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "disk: 9999 !Macintosh HD has room for up to 500 GB.",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "set-resource-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "2 cores",
+        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk !Macintosh HD has room for up to 500 GB."
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "disk: 9999 !Macintosh HD has room for up to 500 GB.",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "commit-resource"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "disk: 80 GB",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "set-resource-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "commit-resource"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "cpus: 2",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "edit-resource"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores !Choose 1 to 8 cores.",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "cpus: 99 !Choose 1 to 8 cores.",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "set-resource-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores !Choose 1 to 8 cores.",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "cpus: 99 !Choose 1 to 8 cores.",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "next"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "cancel-resource"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "memory: 4",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "edit-resource"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory !Enter a whole number.",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "memory: six !Enter a whole number.",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "set-resource-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceEdit": "memory: 6",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "set-resource-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "6 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Download: 1.1 GB",
+          "Available: 212 GB on Macintosh HD"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 1
+      },
+      "wizard": "commit-resource"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
           "placement: Run on",
@@ -613,7 +1351,7 @@
           "vm"
         ],
         "labels": "Cancel | Back | Advanced",
-        "memoryText": "4 GB",
+        "memoryText": "6 GB",
         "nameInvalid": false,
         "placement": "local",
         "placementError": null,
@@ -1154,7 +1892,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -1212,7 +1950,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -1270,12 +2008,16 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "cpus: CPU cores",
-          "memory: Memory"
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/windows:2022",
@@ -1312,7 +2054,7 @@
           "auto",
           "qemu"
         ],
-        "step": 1
+        "step": 0
       },
       "wizard": "next"
     },
@@ -1324,7 +2066,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -1664,7 +2406,7 @@
         "cpusText": "4 cores",
         "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 32 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
-          "name: Name [Optional]",
+          "name: Name [space-000000002a]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1765,11 +2507,12 @@
           "image": "ghcr.io/trycua/macos:26",
           "kind": "vm",
           "memoryMb": 8192,
+          "name": "space-000000002a",
           "on": "local",
           "runtime": "auto",
           "spacesd": true
         },
-        "creating": "Creating macOS Tahoe 26. It appears in the list when it is ready.",
+        "creating": "Creating space-000000002a. It appears in the list when it is ready.",
         "failed": "Could not create the Space: Not enough disk space for this Space. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
         "openDesktop": true,
         "summary": [
@@ -1780,7 +2523,7 @@
           "Architecture: ARM",
           "Runtime: Lume virtual machine (Apple silicon)",
           "Resources: 4 cores, 8 GB memory, 200 GB disk",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ]
       }

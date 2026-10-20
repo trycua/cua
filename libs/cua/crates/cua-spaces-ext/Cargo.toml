@@ -10,8 +10,8 @@ repository.workspace = true
 publish = false
 
 [features]
-# The Cua Volume on an S3-compatible bucket or the Cua cloud (the AWS SDK);
-# the local store needs no feature.
+# The Cua Volume on an S3-compatible bucket (the AWS SDK); the local store
+# needs no feature.
 s3 = ["cua-volume/s3"]
 # This machine's mount of Cua Volume: the localhost NFS server macOS mounts,
 # FUSE on Linux. (A Space's guest mount needs neither: NFS for macOS guests
@@ -27,7 +27,6 @@ cua-keyvault.workspace = true
 # Persistent-agent adoption counts (fixed words only).
 cua-telemetry.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client", "spaces"] }
-cua-fleet.workspace = true
 cua-auth.workspace = true
 cua-teleport.workspace = true
 cua-chromium-storage.workspace = true

@@ -63,7 +63,10 @@ class Files:
         out: list[FileEntry] = []
         for item in raw:
             if isinstance(item, str):
-                out.append(FileEntry(name=item, path=f"{path.rstrip('/')}/{item}", is_dir=False))
+                entry_path = f"{path.rstrip('/')}/{item}"
+                out.append(
+                    FileEntry(name=item, path=entry_path, is_dir=await self.is_dir(entry_path))
+                )
             elif isinstance(item, dict):
                 out.append(
                     FileEntry(

@@ -4,8 +4,9 @@
 //!
 //! This crate replaces `apps/cua-spaces/mcp/spaces_mcp.py` (and
 //! `agent_harness.py`) as the Spaces core. It is plain async Rust over the cua
-//! SDK crates: [`cua_spacesd_client`] for every guest call, [`cua_fleet`] for Fleet
-//! claims, [`cua_sandbox_core`] for local sandboxes. `cua-daemon` hosts it
+//! SDK crates: [`cua_spacesd_client`] for every guest call,
+//! [`cua_sandbox_core`] for local sandboxes. Cua Cloud (`cloud:<name>`) has
+//! ended: its Spaces fail with [`cua_sandbox_core::CLOUD_ENDED`]. `cua-daemon` hosts it
 //! (and serves [`mcp`] as `cua daemon mcp`); `cua-sdk` wraps it for UniFFI;
 //! the Tauri app links it directly.
 //!
@@ -67,7 +68,6 @@ pub mod cloud;
 pub mod creating;
 pub mod error;
 pub mod exec;
-pub mod fleet_runtime;
 pub mod groups;
 pub mod host_spaces;
 pub mod id;
@@ -75,6 +75,7 @@ pub mod mesh;
 pub mod operator;
 pub mod registry;
 pub mod relay;
+pub mod resources;
 pub mod routines;
 pub mod services;
 mod space;
@@ -124,7 +125,7 @@ pub use space::{SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, Sp
 pub use spaces::{
     CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace, ProgressSink,
     RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces, SpacesBuilder,
-    expects_spacesd, pool_key, sanitize_label, sized_pool_key,
+    expects_spacesd, is_generated_name, sanitize_label,
 };
 
 /// The Spaces tool contract (manifest, input types).

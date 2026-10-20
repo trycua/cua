@@ -9,7 +9,7 @@
 //! | mode | detected by | contract |
 //! |---|---|---|
 //! | `local` | `/run/cua` is not a mount | `/run/cua/env-token` is `0640 root:<desktop user>` (written by `ensure-env-token.sh`) |
-//! | `pod-secret` | `/run/cua` is a mount (Fleet pod Secret, or a local claim-secrets share) | `/run/cua/env-token` is root-owned with no world bits; the unprivileged copy `/run/cua-env/env-token` is `0600 <desktop user>` in a root `0755` directory |
+//! | `pod-secret` | `/run/cua` is a mount (a pod Secret written by the orchestrator, or a local claim-secrets share) | `/run/cua/env-token` is root-owned with no world bits; the unprivileged copy `/run/cua-env/env-token` is `0600 <desktop user>` in a root `0755` directory |
 //! | `kubevirt-bridge` | `/run/cua-claim/share` is a virtiofs mount (cloud #7888) | the share shows `0644` (expected), `/run/cua` is the bridge's tmpfs, `/run/cua/env-token` is `0600 root`, `cua-claim-secrets-sync` is active, and the copy is as above |
 
 use std::path::Path;

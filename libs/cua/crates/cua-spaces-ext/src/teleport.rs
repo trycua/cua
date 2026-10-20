@@ -572,6 +572,9 @@ pub struct TeleportSelection {
     /// only when the user ticked them in the review. They are re-encrypted
     /// for the destination browser's own key.
     pub include_passwords: bool,
+    /// The sites whose saved passwords to send (the review's own choice of
+    /// passwords); `None`: those of `cookie_domains`.
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// Session teleport on a [`Space`]: what it can import, and the export and
@@ -749,6 +752,10 @@ impl SpaceTeleport for Space {
             paths: Some(approval.paths.clone()),
             domains: selection.cookie_domains.clone(),
             passwords: selection.include_passwords,
+            password_domains: selection
+                .password_domains
+                .clone()
+                .filter(|_| selection.include_passwords),
         };
         let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
             .await
@@ -777,16 +784,29 @@ impl SpaceTeleport for Space {
                 stage(cua_keyvault::broker::TeleportStage::Importing);
                 out
             }
-            None => client
-                .import_and_teleport_launching(
-                    spec,
-                    self.id().to_string(),
-                    options.save_to_keyvault,
-                    options.launch_after,
-                    stage,
-                )
-                .await
-                .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?,
+            None => {
+                // A narrower choice of passwords goes only to a daemon that
+                // enforces it: an older one would read the passwords of
+                // every chosen site instead.
+                if spec.password_domains.is_some() {
+                    let status = client
+                        .status()
+                        .await
+                        .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
+                    password_domains_enforced(&status)
+                        .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
+                }
+                client
+                    .import_and_teleport_launching(
+                        spec,
+                        self.id().to_string(),
+                        options.save_to_keyvault,
+                        options.launch_after,
+                        stage,
+                    )
+                    .await
+                    .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?
+            }
         };
         let delivery = outcome.deliveries.first();
         Ok(TeleportReceipt {
@@ -800,6 +820,28 @@ impl SpaceTeleport for Space {
             skipped: delivery.map(|d| d.skipped.clone()).unwrap_or_default(),
             launched: delivery.is_some_and(|d| d.launched),
         })
+    }
+}
+
+/// Whether the daemon reads only the saved passwords of the sites picked
+/// for them ([`cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS`]). One that
+/// predates it would ignore the choice and send the passwords of every
+/// chosen site, so a teleport with a narrower choice is refused instead.
+pub fn password_domains_enforced(
+    status: &cua_keyvault::broker::Status,
+) -> std::result::Result<(), String> {
+    if status
+        .features
+        .iter()
+        .any(|f| f == cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS)
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "the Cua Keyvault (version {}) cannot send the passwords of only the sites you picked; \
+             quit and reopen Cua to update it, or send the passwords of the chosen sites",
+            status.version
+        ))
     }
 }
 
@@ -852,24 +894,42 @@ pub(crate) async fn tool(
             // user approves in Cua (Touch ID) or the Keyvault matches an
             // unattended rule. The Keyvault broker performs the delivery over
             // the daemon's authenticated channel; it is never done here.
+            //
+            // What moves is exactly what the caller selected: the selection
+            // is validated here (a path the manifest does not offer, an empty
+            // list, a sensitive item without `acknowledge_sensitive`, a saved
+            // password store are all refused BEFORE any request is filed) and
+            // then rides the Keyvault request, so approval captures those
+            // parts only and the grant covers nothing else. A retry carries
+            // only the `request_id`: it collects what that request's grant
+            // already covers and cannot change the selection.
             let a: i::TeleportApp = crate::args(tool, args)?;
             let scope = TeleportScope::parse(a.scope.as_deref())?;
             let s = spaces.space(&a.space).await?;
             let target = s.id().to_string();
             let manifest = sessions.manifest(&a.app, scope)?;
-            let selected = match &a.include {
-                Some(paths) => manifest.approving(&target, paths, false),
-                None => manifest.approving_default(&target, false),
+            // The provider's catalog id (`chrome` for Microsoft Edge).
+            let provider = sessions
+                .provider_id(&a.app)
+                .unwrap_or_else(|| manifest.app.clone());
+            let selection = select_for_request(
+                &manifest,
+                &provider,
+                &target,
+                a.include.as_deref(),
+                a.acknowledge_sensitive.unwrap_or(false),
+            );
+            let selection = if a.request_id.is_some() {
+                selection.ok()
+            } else {
+                Some(selection?)
             };
-            // Report the selection (or why it is ambiguous) without moving it.
-            let would_send = serde_json::to_value(&manifest)?;
             teleport_app_broker(
                 broker,
-                &manifest.app,
+                &manifest,
                 &target,
                 a.request_id.as_deref(),
-                selected.is_ok(),
-                would_send,
+                selection.as_ref(),
             )
             .await
         }
@@ -919,15 +979,22 @@ pub(crate) async fn tool(
 /// consent requirement and moves nothing.
 async fn teleport_app_broker(
     broker: Option<&std::sync::Arc<dyn cua_spaces::teleport_broker::SessionBroker>>,
-    app: &str,
+    manifest: &TeleportManifest,
     target: &str,
     request_id: Option<&str>,
-    selection_ok: bool,
-    would_send: Value,
+    selection: Option<&Approval>,
 ) -> Result<ToolOutcome> {
     use cua_spaces::teleport_broker::{SessionBrokerError, SessionDelivery};
     const DURATION_SECS: u64 = 15 * 60;
     const WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+    let app = manifest.app.as_str();
+    // What would move: the SELECTED items only, never the whole manifest.
+    let would_send = match selection {
+        Some(sel) => serde_json::to_value(selected_manifest(manifest, sel))?,
+        None => Value::Null,
+    };
+    let selected_paths: Vec<String> = selection.map(|s| s.paths.clone()).unwrap_or_default();
 
     let broker_error = |e: SessionBrokerError| -> ToolOutcome {
         let out = json!({
@@ -950,7 +1017,8 @@ async fn teleport_app_broker(
             "moved": false,
             "app": app,
             "space": target,
-            "selection_ok": selection_ok,
+            "selection_ok": true,
+            "selected_paths": selected_paths,
             "would_send": would_send,
             "message": format!(
                 "Teleporting {app}'s signed-in session moves a credential into Space {target}. \
@@ -958,7 +1026,7 @@ async fn teleport_app_broker(
                  with Touch ID or your login password), or set an unattended rule for this app \
                  and Space. The Keyvault delivers it; this tool cannot."
             ),
-            "instructions": "Show the user what would move and ask them to approve it in Cua. \
+            "instructions": "Show the user what would move (would_send) and ask them to approve it in Cua. \
                              Do not retry expecting delivery: this tool is consent-gated by design.",
         });
         return Ok(ToolOutcome::json(&out));
@@ -966,9 +1034,23 @@ async fn teleport_app_broker(
 
     match request_id {
         None => {
-            let reason = format!("teleport_app: move {app}'s signed-in session into {target}");
+            // Only reachable with a selection (the caller validated it and
+            // refused otherwise); never file a request without one.
+            let Some(sel) = selection else {
+                return Err(Error::TeleportRefused(
+                    "teleport_app needs a valid selection to file a request".into(),
+                ));
+            };
+            // The reason is bounded (the Keyvault refuses a long one).
+            let reason: String = format!(
+                "teleport_app: move {} into {target}",
+                describe_selection(manifest, sel)
+            )
+            .chars()
+            .take(400)
+            .collect();
             match broker
-                .request_access(app, target, DURATION_SECS, &reason)
+                .request_access(app, target, &selected_paths, DURATION_SECS, &reason)
                 .await
             {
                 Ok(id) => {
@@ -978,15 +1060,17 @@ async fn teleport_app_broker(
                         "request_id": id,
                         "app": app,
                         "space": target,
-                        "selection_ok": selection_ok,
+                        "selection_ok": true,
+                        "selected_paths": selected_paths,
                         "would_send": would_send,
                         "message": format!(
-                            "Moving {app}'s signed-in session into Space {target} needs the user's approval."
+                            "Moving {} into Space {target} needs the user's approval.",
+                            describe_selection(manifest, sel)
                         ),
                         "approve": format!(
-                            "The user approves request {id} in Cua (Keyvault page), which asks for Touch ID or the login password."
+                            "The user approves request {id} in Cua (Keyvault page), which asks for Touch ID or the login password. Only the selected items in would_send move."
                         ),
-                        "instructions": "Show the user what would move and ask them to approve it in Cua. Then call teleport_app again with the same app and space and this request_id. Do not retry without the user.",
+                        "instructions": "Show the user exactly what is in would_send (only those items move) and ask them to approve it in Cua. Then call teleport_app again with the same app and space and this request_id. Do not retry without the user.",
                     });
                     Ok(ToolOutcome::json(&out))
                 }
@@ -1032,9 +1116,103 @@ async fn teleport_app_broker(
     }
 }
 
+/// Validates the selection a `teleport_app` call asks for, before anything is
+/// filed: the explicit `include` (or the manifest's default-checked set), with
+/// sensitive items only when acknowledged, and never a saved-password store
+/// (those sign in through `request_site_login`; the Keyvault never delivers
+/// them to an automation caller).
+fn select_for_request(
+    manifest: &TeleportManifest,
+    provider: &str,
+    target: &str,
+    include: Option<&[String]>,
+    acknowledge_sensitive: bool,
+) -> Result<Approval> {
+    let approval = match include {
+        Some(paths) => manifest.approving(target, paths, acknowledge_sensitive)?,
+        None => manifest.approving_default(target, acknowledge_sensitive)?,
+    };
+    let stores: Vec<&str> = approval
+        .paths
+        .iter()
+        .filter(|p| {
+            cua_teleport::ux::SensitiveGroup::of_item(provider, p)
+                == Some(cua_teleport::ux::SensitiveGroup::Passwords)
+        })
+        .map(String::as_str)
+        .collect();
+    if !stores.is_empty() {
+        return Err(Error::TeleportRefused(format!(
+            "saved password stores are never moved by teleport_app ({}); use request_site_login \
+             to sign in with a saved password",
+            stores.join(", ")
+        )));
+    }
+    Ok(approval)
+}
+
+/// The manifest narrowed to the selected items: what the user is shown, and
+/// what the request moves.
+fn selected_manifest(manifest: &TeleportManifest, selection: &Approval) -> TeleportManifest {
+    let items: Vec<TeleportItem> = selection
+        .paths
+        .iter()
+        .filter_map(|p| manifest.items.iter().find(|i| &i.relative_path == p))
+        .cloned()
+        .collect();
+    TeleportManifest {
+        total_estimated_bytes: items.iter().map(|i| i.estimated_bytes).sum(),
+        items,
+        ..manifest.clone()
+    }
+}
+
+/// A short line naming the selected items, for the request's reason and the
+/// reply (the Keyvault shows the reason to the person approving).
+fn describe_selection(manifest: &TeleportManifest, selection: &Approval) -> String {
+    let labels: Vec<&str> = selection
+        .paths
+        .iter()
+        .filter_map(|p| manifest.items.iter().find(|i| &i.relative_path == p))
+        .map(|i| i.label.as_str())
+        .collect();
+    let shown = labels
+        .iter()
+        .take(3)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    match labels.len().saturating_sub(3) {
+        0 => format!("{}'s {shown}", manifest.app),
+        more => format!("{}'s {shown} and {more} more", manifest.app),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An older daemon's status has no `features`: a narrower choice of
+    /// passwords is refused, never sent for it to widen (CUA-1641).
+    #[test]
+    fn a_daemon_that_predates_password_domains_is_refused() {
+        let old: cua_keyvault::broker::Status = serde_json::from_value(serde_json::json!({
+            "version": "0.8.0", "initialized": true, "unlocked": true, "disabled": false,
+            "caller_first_party": true, "caller_display": "Cua", "items": 3, "pending": 0,
+        }))
+        .unwrap();
+        assert!(old.features.is_empty());
+        let why = password_domains_enforced(&old).unwrap_err();
+        assert!(
+            why.contains("0.8.0") && why.contains("only the sites you picked"),
+            "{why}"
+        );
+        let new = cua_keyvault::broker::Status {
+            features: vec![cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS.into()],
+            ..old
+        };
+        assert!(password_domains_enforced(&new).is_ok());
+    }
 
     #[test]
     fn catalog_lists_every_provider_with_names_and_aliases() {
@@ -1261,5 +1439,185 @@ mod tests {
             TeleportScope::Tabs
         );
         assert!(TeleportScope::parse(Some("everything")).is_err());
+    }
+
+    /// A Firefox-shaped manifest: preferences, the cookie store and the saved
+    /// logins.
+    fn selection_manifest() -> TeleportManifest {
+        let item = |path: &str, label: &str, sensitive: bool| TeleportItem {
+            relative_path: path.into(),
+            label: label.into(),
+            estimated_bytes: 100,
+            is_sensitive: sensitive,
+            is_checked_by_default: !sensitive,
+            count: None,
+            count_noun: None,
+        };
+        TeleportManifest {
+            app: "firefox".into(),
+            display_name: "Firefox".into(),
+            scope: TeleportScope::Full,
+            total_estimated_bytes: 300,
+            notes: vec![],
+            items: vec![
+                item("firefox/prefs.js", "Preferences", false),
+                item("firefox/cookies.sqlite", "Cookies", true),
+                item("firefox/logins.json", "Saved logins", true),
+            ],
+        }
+    }
+
+    /// A narrow, non-sensitive selection is accepted as asked, and what the
+    /// reply says would move is that selection and nothing more.
+    #[test]
+    fn would_send_is_the_selection_not_the_whole_manifest() {
+        let m = selection_manifest();
+        let sel = select_for_request(
+            &m,
+            "firefox",
+            "space-1",
+            Some(&["firefox/prefs.js".to_string()]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(sel.approved_paths(), ["firefox/prefs.js"]);
+        let would = selected_manifest(&m, &sel);
+        let paths: Vec<&str> = would
+            .items
+            .iter()
+            .map(|i| i.relative_path.as_str())
+            .collect();
+        assert_eq!(paths, ["firefox/prefs.js"]);
+        assert_eq!(would.total_estimated_bytes, 100);
+        let said = describe_selection(&m, &sel);
+        assert!(said.contains("Preferences"), "{said}");
+        assert!(!said.contains("Cookies"), "{said}");
+    }
+
+    /// A sensitive item is refused unless the caller acknowledged it, for an
+    /// explicit selection and for the default one alike.
+    #[test]
+    fn sensitive_items_need_the_acknowledgement_to_be_selected() {
+        let m = selection_manifest();
+        let cookies = ["firefox/cookies.sqlite".to_string()];
+        let err = select_for_request(&m, "firefox", "space-1", Some(&cookies), false).unwrap_err();
+        assert_eq!(err.tag(), "teleport_refused");
+        assert!(err.to_string().contains("sensitive"), "{err}");
+        assert!(select_for_request(&m, "firefox", "space-1", Some(&cookies), true).is_ok());
+        // The Claude Code default set holds a credential: refused too.
+        let cc = claude_code_manifest();
+        assert!(select_for_request(&cc, "claude-code", "space-1", None, false).is_err());
+        assert!(select_for_request(&cc, "claude-code", "space-1", None, true).is_ok());
+    }
+
+    /// Saved password stores are never moved by this tool, acknowledged or
+    /// not; an unknown or empty selection is refused as before.
+    #[test]
+    fn password_stores_and_unknown_paths_are_refused() {
+        let m = selection_manifest();
+        let err = select_for_request(
+            &m,
+            "firefox",
+            "space-1",
+            Some(&["firefox/prefs.js".into(), "firefox/logins.json".into()]),
+            true,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("request_site_login"), "{err}");
+        assert!(
+            select_for_request(&m, "firefox", "space-1", Some(&["nope".into()]), true).is_err()
+        );
+        assert!(select_for_request(&m, "firefox", "space-1", Some(&[]), true).is_err());
+    }
+
+    /// One access request as filed: app, target, paths, reason.
+    type Filed = (String, String, Vec<String>, String);
+
+    /// A Keyvault that records what it was asked for.
+    #[derive(Default)]
+    struct Recorder {
+        filed: std::sync::Mutex<Vec<Filed>>,
+    }
+
+    #[async_trait::async_trait]
+    impl cua_spaces::teleport_broker::SessionBroker for Recorder {
+        async fn request_access(
+            &self,
+            app: &str,
+            target: &str,
+            paths: &[String],
+            _duration_secs: u64,
+            reason: &str,
+        ) -> std::result::Result<String, cua_spaces::teleport_broker::SessionBrokerError> {
+            self.filed.lock().unwrap().push((
+                app.into(),
+                target.into(),
+                paths.to_vec(),
+                reason.into(),
+            ));
+            Ok("req-1".into())
+        }
+
+        async fn await_and_deliver(
+            &self,
+            _app: &str,
+            _target: &str,
+            _request_id: &str,
+            _timeout: std::time::Duration,
+        ) -> std::result::Result<
+            cua_spaces::teleport_broker::SessionDelivery,
+            cua_spaces::teleport_broker::SessionBrokerError,
+        > {
+            Ok(cua_spaces::teleport_broker::SessionDelivery::Pending)
+        }
+    }
+
+    /// The first call files the request with the selected paths, not the
+    /// whole app, and says so in the reply and the reason.
+    #[tokio::test]
+    async fn the_request_filed_carries_the_selection() {
+        let m = selection_manifest();
+        let sel = select_for_request(
+            &m,
+            "firefox",
+            "space-1",
+            Some(&["firefox/prefs.js".to_string()]),
+            false,
+        )
+        .unwrap();
+        let rec = Arc::new(Recorder::default());
+        let dynamic: Arc<dyn cua_spaces::teleport_broker::SessionBroker> = rec.clone();
+        let out = teleport_app_broker(Some(&dynamic), &m, "space-1", None, Some(&sel))
+            .await
+            .unwrap();
+        let filed = rec.filed.lock().unwrap().clone();
+        assert_eq!(filed.len(), 1);
+        assert_eq!(filed[0].0, "firefox");
+        assert_eq!(filed[0].2, ["firefox/prefs.js"]);
+        assert!(filed[0].3.contains("Preferences"), "{}", filed[0].3);
+        let reply: Value =
+            serde_json::from_str(out.content[0]["text"].as_str().expect("a text reply")).unwrap();
+        assert_eq!(reply["request_id"], "req-1");
+        assert_eq!(reply["selected_paths"], json!(["firefox/prefs.js"]));
+        let sent: Vec<&str> = reply["would_send"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["relative_path"].as_str().unwrap())
+            .collect();
+        assert_eq!(sent, ["firefox/prefs.js"]);
+    }
+
+    /// Without a valid selection nothing is ever filed.
+    #[tokio::test]
+    async fn no_request_is_filed_without_a_selection() {
+        let m = selection_manifest();
+        let rec = Arc::new(Recorder::default());
+        let dynamic: Arc<dyn cua_spaces::teleport_broker::SessionBroker> = rec.clone();
+        let err = teleport_app_broker(Some(&dynamic), &m, "space-1", None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.tag(), "teleport_refused");
+        assert!(rec.filed.lock().unwrap().is_empty());
     }
 }

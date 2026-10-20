@@ -265,7 +265,7 @@
     },
     {
      "default_value": null,
-     "help": "Override the pid-file path on Unix targets.",
+     "help": "Override the pid-file path.",
      "is_optional": true,
      "name": "pid-file",
      "short_name": null,
@@ -461,7 +461,7 @@
     },
     {
      "default_value": null,
-     "help": "Override the pid-file path on Unix targets.",
+     "help": "Override the pid-file path.",
      "is_optional": true,
      "name": "pid-file",
      "short_name": null,
@@ -783,9 +783,9 @@
    ]
   },
   {
-   "abstract": "Print client-specific connection guidance (MCP config where supported).",
+   "abstract": "Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.",
    "arguments": [],
-   "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode.",
+   "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.",
    "examples": [
     {
      "command": "cua-driver mcp-config",
@@ -793,10 +793,21 @@
     },
     {
      "command": "cua-driver mcp-config --client codex",
-     "description": "Print setup for Codex"
+     "description": "Print setup for Codex and install its skill pack"
+    },
+    {
+     "command": "cua-driver mcp-config --client codex --no-skills",
+     "description": "Print setup for Codex only"
     }
    ],
-   "flags": [],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "With --client, do not install the cua-driver skill pack for that agent.",
+     "name": "no-skills",
+     "short_name": null
+    }
+   ],
    "name": "mcp-config",
    "options": [
     {
@@ -1301,7 +1312,7 @@
   {
    "abstract": "Run platform-aware diagnostic probes.",
    "arguments": [],
-   "discussion": "Exit code is non-zero when any probe is an error.",
+   "discussion": "Exit code is non-zero when any probe is an error. On macOS it warns about other copies of CuaDriver.app that macOS can launch instead of the installed one, and about permission rows tied to a different path or version.",
    "examples": [
     {
      "command": "cua-driver doctor",
@@ -1310,6 +1321,10 @@
     {
      "command": "cua-driver doctor --json",
      "description": "Emit the probe report as JSON"
+    },
+    {
+     "command": "cua-driver doctor --fix",
+     "description": "macOS: make macOS forget extra copies of the app (deletes no files)"
     }
    ],
    "flags": [
@@ -1317,6 +1332,12 @@
      "default_value": false,
      "help": "Emit the probe report as JSON.",
      "name": "json",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "macOS: make LaunchServices forget every other copy of CuaDriver.app. No files are deleted.",
+     "name": "fix",
      "short_name": null
     }
    ],
@@ -2272,5 +2293,5 @@
   }
  ],
  "name": "cua-driver",
- "version": "0.35.3"
+ "version": "0.37.0"
 }

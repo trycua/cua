@@ -10,7 +10,7 @@ Reference guest images for the cua SDK, built for amd64 and arm64:
 | `macos` | The Lume macOS base plus **cua-spacesd** at login, TCC grants seeded (see [macOS](#macos-lume)) | `ghcr.io/trycua/macos`, local Lume on Apple silicon |
 | `omarchy` | Omarchy edge (Arch, Hyprland) with Omarchy's `cua-driver-bin` and `cua-hyprland-plugin` turned on, plus **cua-spacesd**. VM only, amd64 | `ghcr.io/trycua/omarchy:edge` ([guide](../../docs/content/docs/cua-sdk/guides/omarchy.mdx)) |
 
-`cua sb create linux` resolves to `ghcr.io/trycua/linux:24.04`; pass any of these references (or a local tag) as the image, with `--on local|docker|qemu|fleet`. The same image runs locally and on Fleet.
+`cua sb create linux` resolves to `ghcr.io/trycua/linux:24.04`; pass any of these references (or a local tag) as the image, with `--on local|docker|qemu`.
 
 ## Canonical published images
 
@@ -270,13 +270,13 @@ It gets its token through the `CUA_ENV_TOKEN` environment variable, never throug
 1. `$CUA_ENV_TOKEN`
 2. `$CUA_ENV_TOKEN_FILE`
 3. `/run/cua/env-token`
-4. `/etc/cua/env-token`, for example from cloud-init `write_files` on Fleet
+4. `/etc/cua/env-token`, for example from cloud-init `write_files`
 
 If none of them is set, a random token is generated into `/run/cua/env-token` (root:cua, 0640).
 
-#### Fleet claim token (await-token-file mode)
+#### Claim token (await-token-file mode)
 
-On Fleet the env token is per claim. The operator puts it in a Secret: `/run/cua/env-token`, root 0600, empty until a claim binds, rewritten on rotation, emptied on release. The driver never accepts a token over the network.
+With an orchestrator, the env token is per claim. The orchestrator writes it to a Secret: `/run/cua/env-token`, root 0600, empty until a claim binds, rewritten on rotation, emptied on release. The driver never accepts a token over the network.
 
 - **Detection** (`files/env-token-mode.sh`): await mode is on when `/run/cua` is a mount point and neither `CUA_ENV_TOKEN` nor `/etc/cua/env-token` is set. `CUA_ENV_AWAIT_TOKEN_FILE=1|0` forces it. Local docker (the SDK passes `CUA_ENV_TOKEN`) and plain QEMU boots are unchanged.
 - **Driver:** starts as `cua` with `--await-token-file` and binds `:3211` with no token. Until a token arrives it answers only `GetCapabilities` and `Health`. It then installs, rotates and revokes the token as the file changes (polled every 500 ms).
@@ -286,7 +286,7 @@ On Fleet the env token is per claim. The operator puts it in a Secret: `/run/cua
 - **Local VM test:** `linux/smoke-claim-token-vm.sh` boots the disk with a 9p share (macOS QEMU has no virtiofsd) under the same tag, plus a `run-cua.mount` drop-in for `Type=9p`. Everything above the mount is the real path. virtiofs itself is only exercised on KubeVirt.
 - `ensure-env-token.sh` leaves `/run/cua` alone in await mode.
 
-Requirements for the cloud pod spec (trycua/cloud#7885):
+Requirements for the pod spec (trycua/cloud#7885):
 
 - Mount the Secret as a directory at `/run/cua`. Do not use `subPath`: a `subPath` file is not a mount point of `/run/cua` and never receives updates.
 - Keep the container's user root (the image default). supervisord runs the root sync helper and drops the desktop, driver and other programs to `cua`.
@@ -296,7 +296,7 @@ Requirements for the cloud pod spec (trycua/cloud#7885):
 
 ```bash
 libs/images/linux/smoke-test.sh --runtime runc    # or runsc (gVisor)
-libs/images/linux/smoke-claim-token.sh --runtime runsc   # Fleet claim token path (tmpfs /run/cua)
+libs/images/linux/smoke-claim-token.sh --runtime runsc   # claim token path (tmpfs /run/cua)
 libs/images/plain/smoke-test.sh ubuntu-xfce-vnc --runtime runsc
 libs/images/plain/smoke-test.sh ubuntu-server --runtime runsc
 libs/images/common/boot-qemu.sh ~/.cache/cua-images/linux/arm64/disk.img \

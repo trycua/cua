@@ -18,7 +18,7 @@ stubBrowserApis();
 const NOTICE = {
   kind: "needs-enrollment",
   status: "Not enrolled",
-  text: "Enroll this Mac to connect to your other machines.",
+  text: "Enroll this Mac to connect to your other computers.",
   actionLabel: "Enroll This Mac…",
 };
 

@@ -132,3 +132,26 @@ export function feedNotch(notch: Pick<Notch, "setSpaces" | "setShown" | "setActi
   ];
   return () => stops.forEach((s) => s());
 }
+
+/** What `followDragReadiness` reads of the launch (`StartupModel`). */
+export interface DragReadiness {
+  readonly isReady: boolean;
+  /** Called on every change; returns the unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+/**
+ * Window-drag tracking needs the SDK (the launch's end) and the notch (its
+ * helper connecting). Either may come first, so this checks now, once the
+ * notch is connected, and again on every launch change while it is ready;
+ * the helper's own (re)connects check again too (`startNotch`). The check
+ * is idempotent: a running monitor stays as it is. Returns the stop.
+ */
+export function followDragReadiness(notch: Pick<Notch, "recheckPermission">, startup: DragReadiness): () => void {
+  const check = () => {
+    if (startup.isReady) notch.recheckPermission();
+  };
+  const stop = startup.subscribe(check);
+  check();
+  return stop;
+}

@@ -78,8 +78,6 @@ def test_state_goes_to_cua_home_never_the_real_home(fake_homes):
     config = importlib.import_module("cua_sandbox._config")
     assert config._read_credentials_key() == "test-key"
 
-    autopool = importlib.import_module("cua_sandbox._autopool")
-    assert autopool.cua_dir() == cua_home
     image = importlib.import_module("cua_sandbox.image")
     assert image._image_cache() == cua_home / "cua-sandbox" / "image-cache"
 

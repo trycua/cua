@@ -1069,6 +1069,12 @@ pub fn app_wizard_action_from_json(json: String) -> Result<AppWizardAction> {
     from_json("wizard action", &json)
 }
 
+/// A teleport picker event from JSON (fixtures, parity).
+#[uniffi::export]
+pub fn app_picker_event_from_json(json: String) -> Result<AppPickerEvent> {
+    from_json("picker event", &json)
+}
+
 /// One of your machines that provides Spaces (the SDK's `Spaces.hosts()`)
 /// as the wizard reads it.
 #[uniffi::export]
@@ -1859,23 +1865,6 @@ pub fn app_onboarding_view(state: AppOnboardingState) -> AppOnboardingView {
     core::onboarding::view(&state)
 }
 
-/// The SDK's billing status as the app core takes it (Settings' Billing
-/// row).
-#[uniffi::export]
-pub fn app_billing_status(status: cua_sdk::FleetBillingStatus) -> AppBillingStatus {
-    core::billing::BillingStatus {
-        billing_enabled: status.billing_enabled,
-        card: status.card.map(|c| core::billing::BillingCard {
-            brand: c.brand,
-            last4: c.last4,
-        }),
-        credit: status.credit.map(|c| core::billing::BillingCredit {
-            balance_usd_cents: c.balance_usd_cents,
-        }),
-        billing_url: status.billing_url,
-    }
-}
-
 /// The account's relay allowance this month (`GET /v1/usage` on the relay
 /// `devices` uses, as `cua usage` reads it) with `account_token`; none
 /// from a relay that meters nothing. Both Spaces apps read it here.
@@ -1914,11 +1903,116 @@ fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
     })
 }
 
+/// The account's Teams (the organizations of `GET /v1/me` on the Spaces
+/// API for this environment, `api.cua.ai` or `api.staging.cua.ai`), each
+/// with its members and pending invites, read with `account_token`.
+/// Both Spaces apps read Teams here; Settings words them
+/// (`app_settings_page`'s `teams`).
+#[uniffi::export]
+pub async fn app_teams(account_token: String) -> Result<AppTeamsInput> {
+    cua_sdk::support::run(async move {
+        let snapshot = cua_host::spaces_api::SpacesApiClient::current()?
+            .teams(&account_token)
+            .await?;
+        Ok(teams_input(snapshot, cua_home::env::account_app_url()))
+    })
+    .await
+}
+
+fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) -> AppTeamsInput {
+    core::teams::TeamsInput {
+        account_app_url,
+        state: core::teams::TeamsState::Ready {
+            teams: s
+                .teams
+                .into_iter()
+                .map(|t| core::teams::TeamInput {
+                    id: t.org.id,
+                    alias: t.org.alias,
+                    name: t.org.name,
+                    role: t.org.role,
+                    plan: t.org.plan,
+                    seats: t.org.seats,
+                    members: t
+                        .members
+                        .into_iter()
+                        .map(|m| core::teams::TeamPersonInput {
+                            email: m.email,
+                            role: m.role,
+                        })
+                        .collect(),
+                    invites: t.invites.into_iter().map(|i| i.email).collect(),
+                })
+                .collect(),
+        },
+        // The apps fill the saved team in from their settings.
+        current_team_id: None,
+    }
+}
+
+/// The account app for this environment (`CUA_ACCOUNT_APP_URL`, else
+/// `https://app.cua.ai`, or `https://app.staging.cua.ai` under
+/// `CUA_ENV=staging`): billing, plans and team administration, which the
+/// apps open in the browser.
+#[uniffi::export]
+pub fn app_account_app_url() -> String {
+    cua_home::env::account_app_url()
+}
+
 /// Settings' "Relay usage" row and the notice past the allowance; none
 /// when the relay meters nothing.
 #[uniffi::export]
 pub fn app_relay_usage_view(usage: AppRelayUsage) -> Option<AppRelayUsageView> {
     core::relay_usage::view(&usage)
+}
+
+/// An SDK record as the app core's (the same JSON, the same names).
+fn core_of<T: serde::Serialize, U: serde::de::DeserializeOwned + Default>(v: &T) -> U {
+    serde_json::to_value(v)
+        .and_then(serde_json::from_value)
+        .unwrap_or_default()
+}
+
+/// Everything the apps draw from one snapshot of what this Mac, its extra
+/// Spaces and your other computers use (`Spaces.resources`, or a snapshot
+/// event of `Spaces.watch_resources`): this Mac's rows and warning, each
+/// extra Space's rows and what it costs this Mac, each other computer's
+/// rows. The words are the core's; no shell formats a number. `now_ms` is
+/// the shell's clock (Unix ms), for how old another computer's numbers are.
+#[uniffi::export]
+pub fn app_resources_view(snapshot: cua_sdk::ResourcesSnapshot, now_ms: u64) -> AppResourcesView {
+    let snapshot: core::resources::ResourcesSnapshot = core_of(&snapshot);
+    core::resources::view(&snapshot, now_ms)
+}
+
+/// This Mac's panel (Processor, Memory, Space for files, what the extra
+/// Spaces use, the warning).
+#[uniffi::export]
+pub fn app_resources_this_mac(computer: cua_sdk::ComputerResources) -> AppThisMacView {
+    core::resources::this_mac_view(&core_of(&computer))
+}
+
+/// One extra Space's panel: what it was given and uses now, and what it
+/// costs this Mac.
+#[uniffi::export]
+pub fn app_resources_space(space: cua_sdk::SpaceResources) -> AppSpaceResourcesView {
+    core::resources::space_view(&core_of(&space))
+}
+
+/// Another of your computers' panel.
+#[uniffi::export]
+pub fn app_resources_computer(
+    computer: cua_sdk::ComputerResources,
+    now_ms: u64,
+) -> AppComputerView {
+    core::resources::computer_view(&core_of(&computer), now_ms)
+}
+
+/// The menu bar's low-disk warning (from a `LowDisk` event or a
+/// snapshot's `warning`); none when the disk is fine.
+#[uniffi::export]
+pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarningView> {
+    core::resources::warning_view(&core_of(&warning))
 }
 
 /// Reads the settings file (defaults when missing or damaged).
@@ -2196,10 +2290,11 @@ pub fn app_agent_setup_summary(
 /// The SDK's agent detection as the app core reads it.
 #[uniffi::export]
 pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
+    let installed = agent_really_installed(&info);
     AppAgentSetupStatus {
         id: info.id,
         name: info.name,
-        installed: info.installed,
+        installed,
         skills_dir: info.skills_dir,
         mcp_config: info.mcp_config,
         cua_configured: info.cua_configured,
@@ -2207,6 +2302,18 @@ pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
         skills_outdated: info.skills_outdated,
         error: info.error,
     }
+}
+
+/// Whether first-run onboarding should treat the agent as installed: its
+/// program (`bin:`) or app bundle (`app:`) was found. A leftover or
+/// cua-created config folder alone (`path:`) is not enough: the AI agents
+/// step ticks and sets up only agents the user actually has (CUA-1771).
+fn agent_really_installed(info: &cua_sdk::AgentInfo) -> bool {
+    info.installed
+        && info
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("bin:") || e.starts_with("app:"))
 }
 
 /// The SDK's setup outcome as the app core reads it.
@@ -2321,6 +2428,7 @@ impl AppCliInstaller {
                 path_env,
                 profile: profile.into(),
                 prefer_symlink: false,
+                search_dirs: vec![],
             },
         })
     }
@@ -2346,7 +2454,8 @@ impl AppCliInstaller {
 // ---- Usage telemetry ------------------------------------------------------------
 
 /// The app started: attributes this process's events to `spaces_app` at
-/// `version`, lets the app show the first-run notice itself (nothing is
+/// `version`, links usage data to the signed-in account in the background
+/// when the Spaces API offers it, lets the app show the first-run notice itself (nothing is
 /// sent before it has been shown once), and records `app_launched` (on a
 /// first run, once the notice shows). Call once at launch, before the
 /// first `Cua`. `onboarding_eligible`: the first run is still to finish
@@ -2357,6 +2466,11 @@ pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -
     let t = cua_telemetry::global();
     t.set_product("spaces_app", &version);
     t.set_notice_mode(cua_telemetry::NoticeMode::External);
+    // Links usage data to the signed-in account when the Spaces API offers
+    // it (CUA-1881); the SDK's sign-in does the same. Off the launch path.
+    cua_sdk::support::spawn(async {
+        cua_sdk::telemetry_sync_account().await;
+    });
     core::telemetry::start_with(t, onboarding_eligible)
 }
 
@@ -2708,38 +2822,6 @@ mod host_setup_tests {
 }
 
 #[cfg(test)]
-mod size_limit_tests {
-    use cua_spaces_app_core::wizard::{CLOUD_CPU_RANGE, CLOUD_MEMORY_GB_RANGE};
-
-    /// The wizard's cloud sliders offer the everyday range
-    /// (`cua_fleet::CLOUD_DEFAULT_RANGE_*`, what `fleet_size_limits`
-    /// returns), which sits inside what the SDK accepts
-    /// (`cua_fleet::FLEET_ABSOLUTE_*`).
-    #[test]
-    fn the_wizard_offers_the_everyday_cloud_sizes() {
-        let (cpus, mem) = (
-            cua_fleet::CLOUD_DEFAULT_RANGE_CPUS,
-            cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB,
-        );
-        assert_eq!(CLOUD_CPU_RANGE, (*cpus.start(), *cpus.end()));
-        assert!(CLOUD_MEMORY_GB_RANGE.0 * 1024 >= *mem.start());
-        assert_eq!(CLOUD_MEMORY_GB_RANGE.1 * 1024, *mem.end());
-        let l = cua_sdk::fleet_size_limits();
-        assert_eq!((l.min_cpus, l.max_cpus), (*cpus.start(), *cpus.end()));
-        assert_eq!(
-            (l.min_memory_mb, l.max_memory_mb),
-            (*mem.start(), *mem.end())
-        );
-        let (abs_cpus, abs_mem) = (
-            cua_fleet::FLEET_ABSOLUTE_CPUS,
-            cua_fleet::FLEET_ABSOLUTE_MEMORY_MB,
-        );
-        assert!(abs_cpus.contains(cpus.start()) && abs_cpus.contains(cpus.end()));
-        assert!(abs_mem.contains(mem.start()) && abs_mem.contains(mem.end()));
-    }
-}
-
-#[cfg(test)]
 mod keyvault_home_tests {
     use super::*;
     use std::ffi::OsString;
@@ -2796,6 +2878,46 @@ mod keyvault_home_tests {
 }
 
 #[cfg(test)]
+mod teams_tests {
+    use super::*;
+    use cua_host::spaces_api::{ApiInvite, ApiMember, ApiOrg, TeamDetail, TeamsSnapshot};
+
+    #[test]
+    fn a_snapshot_becomes_the_cores_teams_input() {
+        let snapshot = TeamsSnapshot {
+            email: "ada@example.com".into(),
+            plan: "pro".into(),
+            teams: vec![TeamDetail {
+                org: ApiOrg {
+                    id: "o1".into(),
+                    alias: "acme".into(),
+                    name: "".into(),
+                    role: "admin".into(),
+                    plan: "teams".into(),
+                    status: "active".into(),
+                    seats: 3,
+                    features: vec!["team_machines".into()],
+                },
+                members: vec![ApiMember {
+                    sub: "u1".into(),
+                    email: "ada@example.com".into(),
+                    role: "admin".into(),
+                }],
+                invites: vec![ApiInvite {
+                    id: "i1".into(),
+                    email: "cy@example.com".into(),
+                }],
+            }],
+        };
+        let input = teams_input(snapshot, "https://app.cua.ai".into());
+        let rows = core::teams::rows(&input);
+        assert_eq!(rows[0].label, "acme");
+        assert_eq!(rows[2].label, "cy@example.com");
+        assert_eq!(rows[2].value.as_deref(), Some("(Invited)"));
+    }
+}
+
+#[cfg(test)]
 mod relay_usage_tests {
     use super::*;
 
@@ -2823,7 +2945,7 @@ mod relay_usage_tests {
         let notice = app_relay_usage_view(u).unwrap().notice.unwrap();
         assert_eq!(
             notice.upgrade_url.as_deref(),
-            Some("https://cua.ai/pricing")
+            Some("https://app.cua.ai/buy/pro?from=app_meter")
         );
         assert_eq!(notice.dismiss_key, "2026-10:hours");
 
@@ -2832,5 +2954,186 @@ mod relay_usage_tests {
             ..raw
         });
         assert_eq!(plain.upgrade_url, None);
+    }
+}
+
+#[cfg(test)]
+mod agent_detection_tests {
+    use super::*;
+
+    fn info(id: &str, installed: bool, evidence: &[&str]) -> cua_sdk::AgentInfo {
+        cua_sdk::AgentInfo {
+            id: id.into(),
+            name: id.into(),
+            installed,
+            evidence: evidence.iter().map(|e| e.to_string()).collect(),
+            skills_dir: None,
+            mcp_config: None,
+            mcp_format: None,
+            cua_configured: false,
+            cua_managed: false,
+            cua_driver_configured: false,
+            skills_installed: vec![],
+            skills_outdated: vec![],
+            error: None,
+            unverified: None,
+        }
+    }
+
+    /// Onboarding only ticks agents whose program or app is on the machine;
+    /// a leftover config folder is not an install (CUA-1771).
+    #[test]
+    fn onboarding_counts_a_program_or_an_app_not_a_config_folder() {
+        let s = |i| app_agent_setup_status(i).installed;
+        assert!(s(info(
+            "claude-code",
+            true,
+            &["bin:/usr/local/bin/claude", "path:/h/.claude"]
+        )));
+        assert!(s(info(
+            "vscode",
+            true,
+            &["app:/Applications/Visual Studio Code.app"]
+        )));
+        assert!(!s(info("copilot-cli", true, &["path:/h/.copilot"])));
+        assert!(!s(info("gemini-cli", false, &[])));
+    }
+}
+
+#[cfg(test)]
+mod resources_tests {
+    use super::*;
+    use cua_spaces::resources as rt;
+
+    const GIB: u64 = 1 << 30;
+
+    fn sdk_snapshot() -> cua_sdk::ResourcesSnapshot {
+        let runtime = rt::Resources {
+            sequence: 2,
+            sampled_at_ms: 1_000_000,
+            this_mac: rt::ComputerResources {
+                id: rt::THIS_MAC.into(),
+                online: true,
+                sampled_at_ms: 1_000_000,
+                cpu_count: 12,
+                cpu_percent: 38.0,
+                memory_total: 64 * GIB,
+                memory_used: 41 * GIB,
+                disk_total: 1024 * GIB,
+                disk_free: 41 * GIB,
+                spaces_count: 1,
+                spaces_running: 1,
+                spaces_cpu_allocated: 4,
+                spaces_memory_allocated: 8 * GIB,
+                spaces_disk_bytes: 31 * GIB,
+                spaces_disk_exact: true,
+                warning: rt::DiskWarning::assess(41 * GIB, 1024 * GIB, 5 * GIB, rt::DiskLevel::Ok),
+                ..Default::default()
+            },
+            spaces: vec![rt::SpaceResources {
+                id: "local:aurora".into(),
+                power_state: "running".into(),
+                cpu_allocated: 4,
+                memory_allocated: 8 * GIB,
+                disk_allocated: 80 * GIB,
+                usage: Some(rt::GuestUsage {
+                    cpu_count: 4,
+                    cpu_percent: 22.0,
+                    memory_used: 3 * GIB + GIB / 10,
+                    memory_total: 8 * GIB,
+                    memory_limited: true,
+                    ..Default::default()
+                }),
+                disk_on_host: Some(rt::DiskOnHost {
+                    bytes: Some(31 * GIB),
+                    allocated: 87 * GIB,
+                    shares_space: true,
+                }),
+            }],
+            computers: vec![rt::ComputerResources {
+                id: "mini".into(),
+                name: "Mac mini".into(),
+                online: true,
+                sampled_at_ms: 1_000_000,
+                cpu_count: 10,
+                cpu_percent: 5.0,
+                memory_total: 32 * GIB,
+                memory_used: 12 * GIB,
+                disk_total: 512 * GIB,
+                disk_free: 300 * GIB,
+                ..Default::default()
+            }],
+            warning: rt::DiskWarning::assess(41 * GIB, 1024 * GIB, 5 * GIB, rt::DiskLevel::Ok),
+        };
+        serde_json::from_value(serde_json::to_value(&runtime).unwrap()).unwrap()
+    }
+
+    /// The SDK's snapshot becomes the app core's without losing a field.
+    #[test]
+    fn the_sdk_snapshot_reaches_the_core_whole() {
+        let sdk = sdk_snapshot();
+        let core: core::resources::ResourcesSnapshot = core_of(&sdk);
+        assert_eq!(core.sequence, 2);
+        assert_eq!(core.this_mac.cpu_count, 12);
+        assert_eq!(core.this_mac.warning.level, core::resources::DiskLevel::Low);
+        assert_eq!(core.spaces[0].usage.unwrap().cpu_percent, 22.0);
+        assert_eq!(core.spaces[0].disk_on_host.unwrap().bytes, Some(31 * GIB));
+        assert_eq!(core.computers[0].name, "Mac mini");
+    }
+
+    /// What Swift draws from `app_resources_view`: the core's rows.
+    #[test]
+    fn the_view_has_the_rows_and_the_warning() {
+        let v = app_resources_view(sdk_snapshot(), 1_000_000);
+        assert_eq!(v.this_mac.rows[0].value, "12 cores \u{b7} 38% busy");
+        assert_eq!(v.spaces[0].rows[1].value, "3.1 of 8 GB");
+        assert_eq!(
+            v.spaces[0].on_this_mac.as_deref(),
+            Some("Uses about 31 GB on this Mac (shares space with other copies)")
+        );
+        assert_eq!(v.computers[0].rows[2].value, "300 GB free of 512 GB");
+        assert!(v.warning.is_some());
+        let w = app_resources_warning(sdk_snapshot().warning).unwrap();
+        assert_eq!(w.button, "See what's using space");
+    }
+
+    /// The CLI and the apps say the same things with the same numbers.
+    #[test]
+    fn the_cli_and_the_apps_use_the_same_words() {
+        let sdk = sdk_snapshot();
+        let v = app_resources_view(sdk.clone(), 1_000_000);
+        let runtime: rt::Resources =
+            serde_json::from_value(serde_json::to_value(&sdk).unwrap()).unwrap();
+        // This Mac.
+        let m = &runtime.this_mac;
+        assert_eq!(
+            v.this_mac.rows[0].value,
+            rt::words::processor(m.cpu_count, Some(m.cpu_percent))
+        );
+        assert_eq!(
+            v.this_mac.rows[1].value,
+            rt::words::memory_in_use(m.memory_used, m.memory_total)
+        );
+        assert_eq!(
+            v.this_mac.rows[2].value,
+            rt::words::disk_free(m.disk_free, m.disk_total)
+        );
+        assert_eq!(v.this_mac.extra_spaces, rt::words::extra_spaces_use(m));
+        assert_eq!(
+            v.this_mac.warning.as_ref().map(|w| w.text.as_str()),
+            rt::words::warning(&runtime.warning)
+        );
+        // A running Space.
+        let s = &runtime.spaces[0];
+        assert_eq!(v.spaces[0].rows[0].value, rt::words::space_cpu(s));
+        assert_eq!(v.spaces[0].rows[1].value, rt::words::space_memory(s));
+        // Another computer.
+        let c = &runtime.computers[0];
+        assert_eq!(v.computers[0].rows[0].value, rt::words::computer_cpu(c));
+        assert_eq!(
+            v.computers[0].rows[1].value,
+            format!("{} in use", rt::words::computer_memory(c))
+        );
+        assert_eq!(v.computers[0].rows[2].value, rt::words::computer_disk(c));
     }
 }

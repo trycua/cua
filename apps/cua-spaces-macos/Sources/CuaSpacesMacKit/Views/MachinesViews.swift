@@ -20,14 +20,14 @@ struct MachinesPageView: View {
             VStack(alignment: .leading, spacing: 0) {
                 List(selection: $selectedId) {
                     ForEach(rows, id: \.id) { row in
-                        MachineRowView(row: row, status: status(row), spaces: spacesCount(row))
+                        MachineRowView(row: row, status: status(row))
                             .tag(row.id)
                     }
                 }
                 .listStyle(.inset)
                 .accessibilityIdentifier("machines-list")
                 if rows.count <= 1 {
-                    Text("Only this machine so far. Add another to run Spaces on it from here.")
+                    Text("Only this computer so far. Add another to run Spaces on it from here.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .padding(12)
@@ -48,7 +48,7 @@ struct MachinesPageView: View {
                     }
                 } else {
                     ContentUnavailableView {
-                        Label("No machines yet", systemImage: "server.rack")
+                        Label("No computers yet", systemImage: "server.rack")
                     } description: {
                         Text("Set up a Mac, Linux or Windows computer for access and it shows here, ready to run Spaces.")
                     }
@@ -56,50 +56,40 @@ struct MachinesPageView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle("Machines")
+        .navigationTitle("Computers")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await model.openAddMachine() }
                 } label: {
-                    Label("Add a machine", systemImage: "plus.rectangle.on.rectangle")
+                    Label("Add a computer", systemImage: "plus.rectangle.on.rectangle")
                 }
-                .help("Add a machine")
+                .help("Add a computer")
                 .accessibilityIdentifier("machines-add")
             }
         }
     }
 
-    /// The row's second line: the sidebar's status for a machine with a
-    /// desktop row, the device's platform, state and last session for a
-    /// device of its own, else whether it is online.
+    /// The row's second line: the device's platform, state and last
+    /// session for a device of its own, else the core's status word
+    /// (`machines::status_word`: "Online", "Not sharing", "Offline"), the
+    /// same the New UI shows. Never a Space's word ("Suspended").
     private func status(_ row: AppMachinePageRow) -> String {
-        if let id = row.spaceId,
-           let s = model.sidebar.sections.flatMap(\.rows).first(where: { $0.id == id }) ?? model.sidebar.thisMachine.flatMap({ $0.id == id ? $0 : nil }) {
-            return s.statusText
-        }
         if row.deviceOnly, let d = model.devices.view.rows.first(where: { $0.id == row.device }) {
             return model.devices.rowDetail(d)
         }
-        return row.online ? "Online" : "Offline"
-    }
-
-    /// The Spaces a machine provides (none for this machine or a device).
-    private func spacesCount(_ row: AppMachinePageRow) -> Int? {
-        guard !row.current, !row.deviceOnly else { return nil }
-        return model.hostedRows(row.spaceId ?? "relay:\(row.id)").count
+        return row.status
     }
 }
 
 /// The OS mark for a page row's system (`os-macos`, ..., `computer`).
 private func osIcon(_ os: String) -> String { os.isEmpty ? "computer" : "os-\(os)" }
 
-/// One machine: its OS mark, name, status line and how many Spaces it runs.
+/// One machine: its OS mark, name, status line and how many Spaces it runs
+/// (the core's `spacesLabel`, none for a device of its own).
 struct MachineRowView: View {
     let row: AppMachinePageRow
     let status: String
-    /// Spaces it provides (nil for This machine and a device).
-    let spaces: Int?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -111,7 +101,7 @@ struct MachineRowView: View {
                 HStack(spacing: 4) {
                     Text(row.name).lineLimit(1)
                     if row.current {
-                        Text("(this machine)").foregroundStyle(.secondary)
+                        Text("(this computer)").foregroundStyle(.secondary)
                     }
                 }
                 Text(status)
@@ -120,8 +110,8 @@ struct MachineRowView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            if let spaces {
-                Text(spaces == 1 ? "1 Space" : "\(spaces) Spaces")
+            if !row.spacesLabel.isEmpty {
+                Text(row.spacesLabel)
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -147,7 +137,7 @@ struct MachineInfoView: View {
         let hosted = row.deviceOnly ? [] : model.hostedRows("relay:\(row.id)")
         Form {
             Section {
-                LabeledContent("Status", value: row.online ? "Online" : "Offline")
+                LabeledContent("Status", value: row.status)
                 if !row.os.isEmpty {
                     LabeledContent("System", value: device?.platform.isEmpty == false ? device!.platform : row.os)
                 }

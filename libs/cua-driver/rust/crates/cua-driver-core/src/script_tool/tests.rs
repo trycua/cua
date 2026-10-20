@@ -13,11 +13,13 @@ use crate::{
 };
 
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;
+type Pacings = Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>>;
 
 /// Fake app: pid 42, window 7, a "Name" field and a "Save" button.
 struct Fake {
     def: ToolDef,
     calls: Calls,
+    pacings: Pacings,
 }
 
 #[async_trait]
@@ -28,6 +30,10 @@ impl Tool for Fake {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let name = self.def.name.clone();
+        self.pacings
+            .lock()
+            .unwrap()
+            .push((name.clone(), crate::step_pacing::current()));
         self.calls
             .lock()
             .unwrap()
@@ -50,6 +56,8 @@ impl Tool for Fake {
                 ]
             })),
             "launch_app" => ToolResult::text("launched").with_structured(json!({"pid": 42})),
+            _ if args["refuse"] == true => ToolResult::error(format!("{name} refused: stale token"))
+                .with_structured(json!({"code": "stale_element_token"})),
             _ if args["fail"] == true => ToolResult::error(format!("{name} refused: asked to fail")),
             _ => ToolResult::text(format!("{name} done")),
         }
@@ -59,11 +67,13 @@ impl Tool for Fake {
 struct Harness {
     registry: Arc<ToolRegistry>,
     calls: Calls,
+    pacings: Pacings,
 }
 
 impl Harness {
     fn new() -> Self {
         let calls: Calls = Arc::default();
+        let pacings: Pacings = Arc::default();
         let mut registry = ToolRegistry::new();
         for name in crate::batch_tools::BATCHABLE_TOOLS
             .iter()
@@ -82,13 +92,18 @@ impl Harness {
                     open_world: false,
                 },
                 calls: calls.clone(),
+                pacings: pacings.clone(),
             }));
         }
         registry.register_session_tools();
         registry.register_script_tool();
         let registry = Arc::new(registry);
         registry.init_self_weak();
-        Self { registry, calls }
+        Self {
+            registry,
+            calls,
+            pacings,
+        }
     }
 
     async fn run(&self, script: &str) -> ToolResult {
@@ -186,6 +201,22 @@ async fn an_uncaught_driver_error_names_the_line_the_call_and_the_reason() {
     assert_eq!(error["line"], 3);
     assert_eq!(error["code"], "not_found");
     assert!(harness.calls("click").is_empty());
+}
+
+#[tokio::test]
+async fn a_refusal_in_a_script_carries_the_drivers_recovery_hint() {
+    let harness = Harness::new();
+    let result = harness
+        .run("const app = await cua.getApp('Notes');\nawait app.click('s00000009:2', {refuse: true});\nreturn 1;")
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    let message = text(&result);
+    assert!(
+        message.contains(
+            "click refused: stale token Hint: That element_token comes from an older read."
+        ),
+        "{message}"
+    );
 }
 
 #[tokio::test]
@@ -523,4 +554,37 @@ async fn query_returns_static_text_rows_with_their_value() {
     assert_eq!(value["rows"][0]["label"], "Saved");
     assert_eq!(value["rows"][0]["window"]["window_id"], 7);
     assert_eq!(value["kinds"], json!(["AXButton", "text"]));
+}
+
+#[tokio::test]
+async fn script_actions_are_paced_as_batched_steps_and_reads_are_not() {
+    let harness = Harness::new();
+    let result = harness
+        .run(
+            "const app = await cua.getApp({pid: 42, windowId: 7});\n\
+             await app.getState();\n\
+             await app.click({role: 'AXButton', name: 'Save'});\n\
+             await app.pressKey('return');\n\
+             return 'ok';",
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    let pacings = harness.pacings.lock().unwrap().clone();
+    let of = |tool: &str| -> Vec<crate::step_pacing::StepPacing> {
+        pacings
+            .iter()
+            .filter(|(name, _)| name == tool)
+            .map(|(_, pacing)| *pacing)
+            .collect()
+    };
+    use crate::step_pacing::StepPacing::{Batched, Single};
+    assert_eq!(of("click"), vec![Batched]);
+    assert_eq!(of("press_key"), vec![Batched]);
+    assert!(
+        of("get_window_state")
+            .iter()
+            .all(|pacing| *pacing == Single),
+        "reads keep their own timing: {:?}",
+        of("get_window_state")
+    );
 }

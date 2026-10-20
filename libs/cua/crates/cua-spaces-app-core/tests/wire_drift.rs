@@ -169,9 +169,11 @@ fn items_callers_grants_rules_deliveries_status() {
         browse_until_ms: Some(9),
         skip_unlock_prompt: Some(true),
         reset_notice: Some("set aside".into()),
+        features: vec![cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS.into()],
     };
     let kv: KvStatus = round(&st);
     assert_eq!(kv.unlock_protectors, ["passphrase", "recovery"]);
+    assert_eq!(kv.features, ["password_domains"]);
     assert_eq!(kv.auto_wipe, Some(true));
     assert_eq!(kv.browse_until_ms, Some(9));
     assert_eq!(kv.skip_unlock_prompt, Some(true));

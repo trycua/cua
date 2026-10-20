@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::agents::SpaceAgentRun;
 use crate::core::{
-    AppCore, CmdResult, DaemonStatus, DefaultLocation, FleetStatus, HotspotStatus, LocalStatus,
+    AccountStatus, AppCore, CmdResult, DaemonStatus, DefaultLocation, HotspotStatus, LocalStatus,
     RemoteWindow, SentFile, SpaceCreateConfig, SpaceRow, StreamOpts, StreamTargetArg,
     StreamTicketInfo, TeleportResult, TransferManifest,
 };
@@ -33,12 +33,11 @@ fn hotspot_changed(app: &AppHandle, status: &HotspotStatus) {
 
 // ------------------------------------------------------------- account
 
+/// Who is signed in. Named `fleet_status` for the web UI bridge that still
+/// calls it; it reads the local session and makes no network call.
 #[tauri::command]
-pub async fn fleet_status(
-    state: State<'_, AppState>,
-    probe: Option<bool>,
-) -> CmdResult<FleetStatus> {
-    Ok(state.0.fleet_status(probe.unwrap_or(false)).await)
+pub async fn fleet_status(state: State<'_, AppState>) -> CmdResult<AccountStatus> {
+    Ok(state.0.account_status().await)
 }
 
 /// What `begin_sign_in` returns at once; approval arrives as an event.
@@ -130,7 +129,7 @@ pub async fn ensure_daemon(state: State<'_, AppState>) -> CmdResult<DaemonStatus
     Ok(state.0.daemon_status(true).await)
 }
 
-/// This account's Cua Cloud rates, when known (the wizard's estimate).
+/// Always `None`: Cua Cloud has ended, so there are no rates to estimate with.
 #[tauri::command]
 pub async fn cloud_pricing(
     state: State<'_, AppState>,
@@ -138,7 +137,7 @@ pub async fn cloud_pricing(
     Ok(state.0.cloud_pricing().await)
 }
 
-/// The account's Cua Cloud billing (Settings' Billing row).
+/// Always `None`: Cua Cloud has ended, so Settings has no Billing row.
 #[tauri::command]
 pub async fn billing_status(
     state: State<'_, AppState>,
@@ -339,15 +338,6 @@ pub async fn remove_space(
     changed(&app);
     hotspot_changed(&app, &state.0.hotspot_status());
     r
-}
-
-#[tauri::command]
-pub async fn keep_alive_space(
-    state: State<'_, AppState>,
-    space_id: String,
-    seconds: u64,
-) -> CmdResult<()> {
-    state.0.keep_alive_space(&space_id, seconds).await
 }
 
 // ----------------------------------------------------------- space ops
@@ -996,6 +986,12 @@ pub async fn devices_create_pairing_code(
     team: Option<String>,
 ) -> CmdResult<crate::devices::PairingCodeView> {
     state.0.devices()?.create_pairing_code(team).await
+}
+
+/// The account's Teams, for "Add a machine" and "Share".
+#[tauri::command]
+pub async fn teams_list(state: State<'_, AppState>) -> CmdResult<crate::devices::TeamsListView> {
+    state.0.devices()?.teams().await
 }
 
 /// The account's pairing codes, newest first (without the codes).

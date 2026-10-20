@@ -49,7 +49,7 @@ describe("host model", () => {
 
   it("builds the This machine entry, first in the roster, and the setup form", () => {
     const space = thisMachineSpace(null, 5, "linux");
-    expect(space).toMatchObject({ id: "this-mac", name: "This machine", status: "suspended", detail: "Set up for access" });
+    expect(space).toMatchObject({ id: "this-mac", name: "This computer", status: "suspended", detail: "Set up for access" });
     expect(withThisMachine([], sharing, 5, "macos").map((s) => s.detail)).toEqual(["Sharing · 1 connected"]);
     expect(clientLabel({ id: "u", email: "e@x" })).toBe("e@x");
     let form = hostFormInitial();
@@ -67,7 +67,7 @@ describe("host model", () => {
     const roster = withThisMachine([], sharing, 5, "macos");
     expect(notchActivity(roster, true)).toMatchObject({
       kind: "remote-access",
-      label: "Someone is connected to this machine",
+      label: "Someone is connected to this computer",
     });
     expect(notchActivity(withThisMachine([], { ...sharing, clients: [] }, 5, "macos"), false)).toBeNull();
   });
@@ -86,18 +86,18 @@ describe("host model", () => {
       FIXTURE_NOW,
     );
     expect(space.provider).toBe("relay");
-    expect(space.detail).toBe("My machines · via relay");
+    expect(space.detail).toBe("My computers · via relay");
     expect(space.fleetId).toBe("relay");
   });
 });
 
 describe("ThisMachinePanel", () => {
-  it("unconfigured: offers Set up for access and runs the host flow", async () => {
+  it("unconfigured: offers Turn on remote access and runs the host flow", async () => {
     const host = createFakeHostBridge({ platform: "linux" });
     const onStatus = vi.fn();
     render(<ThisMachinePanel host={host} onStatus={onStatus} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Set up for access" }));
-    fireEvent.click(screen.getByRole("button", { name: "Set up for access" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeInTheDocument();
     expect(host.calls).toEqual(["setup:relay:https://relay.cua.ai"]);
     expect(onStatus).toHaveBeenLastCalledWith(expect.objectContaining({ configured: true, sharing: true }));
@@ -127,7 +127,7 @@ describe("ThisMachinePanel", () => {
         name: "Remove",
       }),
     );
-    expect(await screen.findByRole("button", { name: "Set up for access" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Turn on remote access" })).toBeInTheDocument();
     expect(host.calls).toEqual(["stop", "start", "remove"]);
   });
 
@@ -156,16 +156,16 @@ describe("ThisMachinePanel: a spare machine", () => {
   it("sets up a spare machine: desktop private, Spaces on, limits shown", async () => {
     const host = createFakeHostBridge({ platform: "macos" });
     render(<ThisMachinePanel host={host} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Set up for access" }));
-    fireEvent.click(screen.getByRole("radio", { name: "A spare machine for Spaces" }));
-    expect(screen.getByText(/its desktop stays private/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Set up for access" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Run Spaces here and keep its screen private" }));
+    expect(screen.getByText(/Its own screen stays private/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start running Spaces" }));
     const desktop = await screen.findByRole("switch", { name: /Share this desktop/ });
     expect(desktop).not.toBeChecked();
     expect(screen.getByRole("switch", { name: /Provide Spaces/ })).toBeChecked();
     // Both may be off (sharing then stops), so the only one on can go off.
     expect(screen.getByRole("switch", { name: /Provide Spaces/ })).not.toBeDisabled();
-    expect(screen.getByText(/2 macOS VMs \(Apple’s license allows two per Mac\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Up to 4 Spaces · 2 macOS VMs$/)).toBeInTheDocument();
     expect(screen.getByText("None yet")).toBeInTheDocument();
     // No desktop, so no screen permissions to grant.
     expect(screen.queryByText("Screen Recording")).toBeNull();
@@ -239,10 +239,10 @@ describe("roster", () => {
         .getAllByRole("option")
         .filter((el) => !el.classList.contains("tile-new"))
         .map((el) => el.getAttribute("aria-label")?.split(",")[0]);
-      expect([...names].sort()).toEqual(["This machine", "office-pc"]);
+      expect([...names].sort()).toEqual(["This computer", "office-pc"]);
     });
     // This machine's page opens in the main window, not inside the notch.
-    await user.click(within(listbox).getByRole("option", { name: /This machine/ }));
+    await user.click(within(listbox).getByRole("option", { name: /This computer/ }));
     expect(screen.queryByRole("button", { name: "Stop sharing" })).toBeNull();
   });
 });

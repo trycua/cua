@@ -159,6 +159,18 @@ or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 
+The result's optional `lifecycle` object describes how long the browser
+process lives: `owner` is `session`, `idle_expires_in_seconds` is how long the
+session may stay idle after this call before it and the browser end,
+`process_ends_with_session` is `true`, and
+`profile_persists_after_session` is `true` only for `isolated_named`. The
+value is advisory, not a lease. `get_session` reports the remaining time later
+but does not keep the browser alive, and explicit `end_session`, disconnect,
+revocation, or shutdown ends the browser earlier. A named profile keeps its
+files, not the process or its open pages. Attachments to an existing profile
+or endpoint the driver did not launch, and sessions already ending, have no
+`lifecycle`.
+
 ### Existing profile
 
 Attaching to an authenticated profile requires explicit trusted launch or host

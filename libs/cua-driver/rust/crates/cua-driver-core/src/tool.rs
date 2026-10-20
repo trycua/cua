@@ -166,9 +166,15 @@ impl ToolDef {
         let input_schema = advertised_runtime_input_schema(&self.name, &self.input_schema);
         let caps = advertised_capabilities_for(&self.name, &input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
+        // Tools that most often need a guide point at `get_guide`, so an agent
+        // that never reads the skill still learns where the guidance lives.
+        let description = match crate::guide::description_hint(&self.name) {
+            Some(hint) => format!("{} {hint}", self.description),
+            None => self.description.clone(),
+        };
         let mut entry = serde_json::json!({
             "name": self.name,
-            "description": self.description,
+            "description": description,
             "inputSchema": input_schema,
             "annotations": {
                 "readOnlyHint": self.read_only,
@@ -668,6 +674,8 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 ///   `input.pointer.click.right`, `input.pointer.click.double`,
 ///   `input.pointer.drag`, `input.pointer.scroll`,
 ///   `input.pointer.move`, `input.pointer.button` (raw down/up)
+/// - `input.scroll.coordinates` (the live scroll schema accepts numeric x/y;
+///   does not imply focus-free background delivery)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
 /// - `input.delivery_mode` (the live tool schema accepts the shared
@@ -698,7 +706,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 /// - `browser.state`, `browser.prepare`, `browser.navigate`,
 ///   `browser.input.click`, `browser.input.type`, `browser.input.files`,
 ///   `browser.dialog`
-/// - `driver.update_check`, `driver.probe`
+/// - `driver.update_check`, `driver.guide`, `driver.probe`
 /// - `history.status`, `history.query`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
@@ -835,6 +843,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
+        "browser_select" => &["browser.input.select"],
         "browser_dialog" => &["browser.dialog"],
         "browser_set_input_files" => &["browser.input.files"],
         "browser_download" => &["browser.download"],
@@ -842,6 +851,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
+        "get_guide" => &["driver.guide"],
         "probe" => &["driver.probe"],
 
         // ── encrypted local Computer History ─────────────────────────
@@ -857,10 +867,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// Capabilities advertised by a concrete runtime tool definition.
 ///
 /// Most capabilities are stable properties of a tool name and come from the
-/// typed portable contract (or the legacy runtime-only map). Delivery mode is
-/// different: the typed desktop SDK intentionally exposes a narrower,
-/// desktop-only input while the live platform schemas additionally accept
-/// window-targeted `delivery_mode`. Deriving this one token from the concrete
+/// typed portable contract (or the legacy runtime-only map). Delivery mode and
+/// scroll coordinates are derived from the live schema. The typed desktop SDK
+/// exposes a narrower, desktop-only input while the live schemas additionally accept
+/// window-targeted `delivery_mode`. Deriving these tokens from the concrete
 /// schema keeps `tools/list` truthful on every platform and prevents either
 /// overclaiming a tool that cannot accept the field or omitting support from a
 /// richer live schema.
@@ -873,6 +883,16 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
             .any(|capability| capability == "input.delivery_mode")
     {
         capabilities.push("input.delivery_mode".into());
+    }
+    if tool_name == "scroll"
+        && ["x", "y"].iter().all(|field| {
+            matches!(
+                input_schema["properties"][field]["type"].as_str(),
+                Some("number" | "integer")
+            )
+        })
+    {
+        capabilities.push("input.scroll.coordinates".into());
     }
     capabilities
 }
@@ -1348,6 +1368,7 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+        self.register(Box::new(crate::guide::GetGuideTool));
         self.register_batch_tools();
     }
 
@@ -1656,7 +1677,32 @@ impl ToolRegistry {
             .await
     }
 
+    /// The canonical native dispatch boundary. Every refusal and every
+    /// unconfirmed action leaves it with a `hint` (and a `next_call` when one
+    /// exists); see [`crate::recovery_hint`].
     async fn invoke_authorized(
+        &self,
+        name: &str,
+        args: Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        evidence: &TrustedInvocationEvidence,
+    ) -> ToolResult {
+        let seed = crate::recovery_hint::Seed::from_args(&args);
+        let session = args
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let in_batch = crate::step_pacing::in_batch();
+        let mut result = self
+            .invoke_authorized_unannotated(name, args, context, evidence)
+            .await;
+        let tool = renamed_tool(name).unwrap_or(name);
+        crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
+        result
+    }
+
+    async fn invoke_authorized_unannotated(
         &self,
         name: &str,
         mut args: Value,
@@ -2263,6 +2309,7 @@ impl ToolRegistry {
         // Desktop pixels read off a capped get_desktop_state image are mapped
         // back to the uncapped capture before any platform interprets them.
         crate::desktop_capture_scale::map_desktop_args(&mut args);
+        crate::tool_activity::note_tool_activity();
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),
@@ -3441,6 +3488,7 @@ fn session_requiring_tool(tool_name: &str) -> bool {
         tool_name,
         "check_permissions"
             | "health_report"
+            | "get_guide"
             | "get_session"
             | "list_sessions"
             | "get_session_state"
@@ -4950,9 +4998,18 @@ resources:
                 .invoke_with_context("click", args, standard_context())
                 .await;
             assert_eq!(result.is_error, Some(true));
+            let mut structured = result.structured_content.expect("structured refusal");
+            // The refusal also carries a recovery hint (see `recovery_hint`).
+            let hint = structured
+                .as_object_mut()
+                .and_then(|object| object.remove("hint"))
+                .expect("a desktop background refusal carries a hint");
+            assert!(hint
+                .as_str()
+                .is_some_and(|hint| hint.contains("target {kind:\"window\"")));
             assert_eq!(
-                result.structured_content,
-                Some(serde_json::json!({
+                structured,
+                serde_json::json!({
                     "code": "background_unavailable",
                     "effect": "refused",
                     "suggestion": "Retry this action with delivery_mode:\"foreground\".",
@@ -4960,7 +5017,7 @@ resources:
                         "recommended": "foreground",
                         "reason": cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE,
                     },
-                }))
+                })
             );
             assert_eq!(
                 hits.load(Ordering::SeqCst),
@@ -5749,9 +5806,29 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route", "summary"]
+            [
+                "delivery",
+                "effect",
+                "hint",
+                "next_call",
+                "route",
+                "summary"
+            ]
         );
         assert_eq!(structured["effect"], "unverifiable");
+        // An unconfirmed click says what to read next, built from the request.
+        assert_eq!(
+            structured["next_call"],
+            serde_json::json!({
+                "tool": "get_window_state",
+                "arguments": {
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "projection",
+                    "since": "latest",
+                },
+            })
+        );
         assert_eq!(structured["delivery"]["mode"], "unknown");
         // The producer's text travels inside the closed contract for clients
         // that surface only structuredContent.
@@ -6373,6 +6450,7 @@ mod capability_tests {
         // misc
         "page",
         "check_for_update",
+        "get_guide",
         "probe",
         // browser-tool v1
         "get_browser_state",
@@ -6380,6 +6458,7 @@ mod capability_tests {
         "browser_navigate",
         "browser_click",
         "browser_type",
+        "browser_select",
         "browser_dialog",
         "browser_set_input_files",
         "browser_download",
@@ -6401,6 +6480,7 @@ mod capability_tests {
         "input.pointer.click.double",
         "input.pointer.drag",
         "input.pointer.scroll",
+        "input.scroll.coordinates",
         "input.pointer.move",
         "input.pointer.button",
         // keyboard
@@ -6470,12 +6550,14 @@ mod capability_tests {
         "browser.navigate",
         "browser.input.click",
         "browser.input.type",
+        "browser.input.select",
         "browser.input.files",
         "browser.dialog",
         "browser.download",
         "browser.input.pointer",
         // driver self
         "driver.update_check",
+        "driver.guide",
         "driver.probe",
         // encrypted local history
         "history.status",
@@ -6685,6 +6767,61 @@ mod capability_tests {
             .expect("capabilities array")
             .iter()
             .any(|capability| capability == "input.delivery_mode"));
+    }
+
+    #[test]
+    fn to_list_entry_advertises_scroll_coordinates_only_when_accepted() {
+        use serde_json::json;
+
+        for (name, properties, expected) in [
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                true,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
+                true,
+            ),
+            ("scroll", json!({}), false),
+            ("scroll", json!({"x": {"type": "number"}}), false),
+            ("scroll", json!({"y": {"type": "number"}}), false),
+            (
+                "scroll",
+                json!({"x": {"type": "string"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "string"}}),
+                false,
+            ),
+            (
+                "click",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "unknown",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+        ] {
+            let mut def = dummy_def(name);
+            def.input_schema = json!({"type": "object", "properties": properties});
+            let entry = def.to_list_entry();
+            let capabilities = entry["capabilities"].as_array().unwrap();
+            assert_eq!(
+                capabilities
+                    .iter()
+                    .filter(|capability| *capability == "input.scroll.coordinates")
+                    .count(),
+                usize::from(expected),
+                "{name}: {}",
+                def.input_schema
+            );
+        }
     }
 
     #[test]

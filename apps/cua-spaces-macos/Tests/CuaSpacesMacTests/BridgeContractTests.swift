@@ -201,6 +201,9 @@ struct BridgeContractTests {
         [
             // The relay allowance before the sign-out below (signed out, it is null).
             ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("session.signOut", [:]),
+            // No request is waiting on the fixtures: an answer to none is left alone.
+            ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
@@ -225,13 +228,16 @@ struct BridgeContractTests {
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
             ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
+            ("update.get", [:]), ("update.install", [:]),
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
             ("devices.createPairingCode", ["team": NSNull()]), ("devices.pairingCodes", [:]),
+            ("teams.list", [:]),
             ("devices.revokePairingCode", ["id": "pc_fixture1"]),
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
-            ("notifications.list", [:]), ("notifications.markAllRead", [:]),
+            ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
+            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]),
             ("spaces.usage", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
             ("spaces.thumbnail", ["spaceId": space]),
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),
@@ -245,7 +251,7 @@ struct BridgeContractTests {
             ("keyvault.run", ["command": ["type": "revoke-grant", "id": "grant-1"]]),
             ("teleport.remembered", ["providerId": "chrome", "spaceId": space]),
             ("window.setBackgroundColor", ["color": "#16181c"]),
-            ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 38]]]),
+            ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 48]]]),
             ("window.setDropTargets", ["targets": [["spaceId": space, "x": 20, "y": 60, "width": 232, "height": 180]]]),
             ("startup.get", [:]),
         ]
@@ -255,11 +261,14 @@ struct BridgeContractTests {
     /// must be in `cases`).
     static let skipped: [String: String] = [
         "session.signIn": "starts a device sign-in that waits for the browser",
+        "onboarding.get": "FirstRunTests covers it (answers depend on the state file)",
+        "onboarding.complete": "FirstRunTests covers it (writes the state file, hands the window over)",
         "spaces.create": "runs a create to the end; CreateOptionsTests and ViewModelTests cover it",
         "spaces.delete": "removes the fixture Space the later cases use",
         "spaces.add": "needs a running cua-spacesd at the address",
         "host.setUp": "installs the host service", "host.action": "changes the host service",
         "host.openSettings": "opens System Settings",
+        "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",

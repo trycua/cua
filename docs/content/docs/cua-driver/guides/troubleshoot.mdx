@@ -20,8 +20,9 @@ before sharing.
 | --- | --- |
 | `list_apps` or `list_windows` returns `[]` | The daemon cannot see the desktop. On Windows over SSH, see [Windows over SSH](/cua-driver/guides/vms-and-remote#windows-over-ssh); on Linux, start `serve` inside the desktop session. |
 | No screenshot in `get_window_state` on macOS | Screen Recording is missing: without this grant it returns the tree only (no PNG). Accessibility is needed for every tree read and input. |
-| `permissions status` says `unknown` | No app-owned daemon answered. Run `open -n -g -a CuaDriver --args serve`. |
+| `permissions status` says `unknown` | No app-owned daemon answered. Run `cua-driver permissions grant`. |
 | Permission granted in System Settings but reported false | Stale grant: [reset it](#reset-stale-macos-permissions). |
+| System Settings names Cua Driver with an old version (for example `CuaDriver-0.34.0`), or `open` starts the wrong copy | Another copy of the app is registered with macOS. See [Extra copies of CuaDriver.app](#extra-copies-of-cuadriverapp). |
 | `libXi.so.6: cannot open shared object file` | `sudo apt install libxi6 at-spi2-core`. |
 | `doctor` warns AT-SPI is unreachable | `get_window_state` needs the accessibility bus; start the app inside a full desktop session. |
 | Action returned success but nothing changed | Check `effect` and follow `escalation`; see [the action ladder](/cua-driver/concepts/how-cua-driver-works#the-action-ladder). |
@@ -29,6 +30,24 @@ before sharing.
 | `screenshot_context_missing` | A window-relative pixel action came before a screenshot read of that window in the same session. Call `get_window_state` (with its screenshot) first, using the same `session` label for one-shot CLI calls. |
 | `invalid_arguments` (`unknown argument element_index`) | Action tools take `element_token` only; read it from the latest `get_window_state` row. |
 | `desktop_scope_disabled` | A legacy window-less call: pass a window target, or `target: {kind: "desktop", display_id: "primary"}`. |
+
+## Extra copies of CuaDriver.app
+
+macOS can hold several copies of the app (an old release in Downloads, the Trash
+or a benchmark folder) and picks one of them when something asks for
+`com.trycua.driver`. That copy can start instead of the installed one and label
+the permission rows with its own name. `doctor` lists the extra copies and any
+permission rows tied to a different path or version:
+
+```bash test="cli-shape" id="cua-driver-doctor-copies"
+cua-driver doctor
+cua-driver doctor --fix
+```
+
+`doctor --fix` makes macOS forget the extra copies. It deletes no files, so
+remove the old copies yourself if you no longer need them. The installer does
+the same step after every install. A stale permission row has to be removed in
+System Settings: select the extra Cua Driver entry and click the minus button.
 
 ## Reset stale macOS permissions
 

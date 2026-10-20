@@ -405,6 +405,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                 paths: None,
                 domains: None,
                 passwords: false,
+                password_domains: None,
             };
             let r = c.import(spec).await.map_err(kv_error)?;
             if json {
@@ -430,6 +431,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                         serde_json::json!({"id": p.id, "caller": p.caller_display,
                             "agent": p.request.agent, "actions": p.request.actions,
                             "targets": p.request.targets,
+                            "selected_paths": p.request.paths,
                             "items": p.items.iter().map(|i| i.redacted().label()).collect::<Vec<_>>()})
                     })
                     .collect();
@@ -468,11 +470,21 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                             p.request.targets.join(", ")
                         ),
                     );
+                    if let Some(note) = selection_note(p) {
+                        line(out, format!("    {note}"));
+                    }
                 }
             }
         }
         KeyvaultCmd::Approve { id } => {
             if !json {
+                // The system prompt (polkit on Linux) cannot show what the
+                // request is for, so say it here before asking.
+                if let Ok(pending) = c.list_pending().await
+                    && let Some(p) = pending.iter().find(|p| p.id == id)
+                {
+                    eprintln!("{}", describe_pending(p));
+                }
                 eprintln!("The Cua daemon asks for Touch ID or your login password to approve.");
             }
             let g = c.approve(&id, Default::default()).await.map_err(kv_error)?;
@@ -497,6 +509,62 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
     Ok(0)
 }
 
+/// The parts of an app a request is limited to, when its requester named
+/// them (`teleport_app` with a selection), or what it would import.
+fn selection_note(p: &cua_keyvault::broker::PendingView) -> Option<String> {
+    let paths = p.request.paths.as_ref()?;
+    let app = p.request.selectors.iter().find_map(|s| match s {
+        cua_keyvault::broker::Selector::App { app } => Some(app.as_str()),
+        _ => None,
+    });
+    Some(format!(
+        "only these parts{}: {}",
+        app.map(|a| format!(" of {a}")).unwrap_or_default(),
+        paths.join(", ")
+    ))
+}
+
+/// What approving `p` would allow, in plain words, for the approver to read
+/// before the system prompt (which, on Linux, shows fixed text only).
+fn describe_pending(p: &cua_keyvault::broker::PendingView) -> String {
+    let who = match &p.request.agent {
+        Some(a) => format!("agent {a} ({})", p.caller_display),
+        None => p.caller_display.clone(),
+    };
+    let mut text = format!(
+        "Request {}: {who} asks to move app data into {}.",
+        p.id,
+        p.request.targets.join(", ")
+    );
+    match selection_note(p) {
+        Some(note) => text.push_str(&format!("\n  Limited to {note}.")),
+        None => {
+            let whole: Vec<String> = p
+                .request
+                .selectors
+                .iter()
+                .filter_map(|s| match s {
+                    cua_keyvault::broker::Selector::App { app } => Some(app.clone()),
+                    _ => None,
+                })
+                .collect();
+            if !whole.is_empty() {
+                text.push_str(&format!(
+                    "\n  Covers the stored session of {}.",
+                    whole.join(", ")
+                ));
+            }
+        }
+    }
+    if !p.request.reason.is_empty() {
+        text.push_str(&format!(
+            "\n  The app says (unverified): {}",
+            p.request.reason
+        ));
+    }
+    text
+}
+
 /// "Saved 4 items: 3 new, 1 updated" (counts only; never a name or a value).
 fn import_summary(r: &cua_keyvault::broker::ImportReport, noun: &str) -> String {
     let plural = if r.saved == 1 { "" } else { "s" };
@@ -516,6 +584,38 @@ fn import_summary(r: &cua_keyvault::broker::ImportReport, noun: &str) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pending(paths: Option<Vec<String>>) -> cua_keyvault::broker::PendingView {
+        cua_keyvault::broker::PendingView {
+            id: "req-1".into(),
+            caller: cua_keyvault::CallerIdentity::for_tests("com.example.bot", false),
+            caller_fp: "fp".into(),
+            caller_display: "Example bot".into(),
+            request: cua_keyvault::broker::AccessRequest {
+                selectors: vec![cua_keyvault::broker::Selector::App {
+                    app: "firefox".into(),
+                }],
+                targets: vec!["dev-1".into()],
+                reason: "teleport_app: move firefox's Preferences into dev-1".into(),
+                paths,
+                ..Default::default()
+            },
+            items: vec![],
+            needs_import: vec![],
+            created_ms: 0,
+        }
+    }
+
+    /// What the approver reads before a system prompt that cannot show it.
+    #[test]
+    fn approve_describes_the_selection_the_request_is_limited_to() {
+        let narrow = describe_pending(&pending(Some(vec!["firefox/prefs.js".into()])));
+        assert!(narrow.contains("Limited to only these parts of firefox: firefox/prefs.js"));
+        assert!(narrow.contains("Example bot"), "{narrow}");
+        let whole = describe_pending(&pending(None));
+        assert!(whole.contains("stored session of firefox"), "{whole}");
+        assert_eq!(selection_note(&pending(None)), None);
+    }
 
     #[test]
     fn only_the_line_ending_is_stripped() {

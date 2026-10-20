@@ -132,8 +132,8 @@ fn audio_desktop_limitation(audio: bool, gvisor: bool, no_audio: &str) -> String
 }
 
 /// Whether the driver runs under gVisor (runsc): current releases name
-/// themselves in the kernel version; older ones (still what Fleet's runsc
-/// reports) have the synthetic release exactly "4.4.0". Same rule as
+/// themselves in the kernel version; older runsc releases have the
+/// synthetic release exactly "4.4.0". Same rule as
 /// `cua_spacesd_server::services::system::is_gvisor`.
 fn under_gvisor() -> bool {
     let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();

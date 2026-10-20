@@ -9,7 +9,7 @@
 // runtimes, launch at login, usage data, the update channel, the
 // experiments, Welcome's "Show again", the coding agents (`model.agents`)
 // and the Keyvault's switches (`model.keyvault`).
-import type { AppLoginItemStatus, AppSettingsInput, AppTelemetryInput } from "../native/generated/index";
+import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput } from "../native/generated/index";
 import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
@@ -44,6 +44,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
+    // Teams from the Spaces API (read by `settings.get`).
+    teams: model.teams.input(),
     // No Cua Cloud billing in the apps (the row stays hidden).
     billing: undefined,
     loginItem:
@@ -79,13 +81,16 @@ export function experimentsPage(model: AppModel) {
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
- * no updater) and the global shortcut (null: none here). */
+ * no updater), the global shortcut (null: none here) and the account app. */
 export function settingsState(model: AppModel, parts: HostParts) {
   return {
     page: encode(settingsPage(model, parts)),
     experiments: encode(experimentsPage(model)),
     updateChannel: parts.updates.updater === null ? null : parts.updates.channelWord,
     globalShortcut: parts.system?.globalShortcut?.() ?? null,
+    // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
+    // environment, so Upgrade's billing fallback names this one.
+    accountUrl: model.native.appAccountAppUrl(),
   };
 }
 
@@ -112,6 +117,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   const load = async () => {
     parts().loginItem.read();
     if (!model.servicesIn) return;
+    // Teams: the account's organizations (a failure shows in its row).
+    await bounded(10, () => model.teams.reload());
     if (model.agents.coding.rows === null) await bounded(10, () => model.agents.coding.reload());
     const [lume, linux] = await Promise.all([bounded(5, () => model.backend.lumeSource()), bounded(5, () => model.backend.linuxSource())]);
     if (lume !== null) model.lumeSource = lume;
@@ -121,6 +128,10 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   /** A choice row changed (`AppModel.choose`). */
   const choose = async (row: string, option: string): Promise<void> => {
     switch (row) {
+      case "team-current":
+        // Settings, Teams: the team to work in (saved; the option is its id).
+        save({ currentTeamId: option });
+        return;
       case "notch":
         // "Spaces tab in the notch" (shown) or the menu bar only (hide); the notch follows `settings.changed`.
         save({ menuBar: option === "hide" });
@@ -136,7 +147,7 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         model.changed("settings");
         return;
       case "default-location":
-        save({ defaultLocation: option === "cloud" ? model.native.AppLocation.Cloud : model.native.AppLocation.Local });
+        save({ defaultLocation: model.native.AppLocation.Local }); // Cua Cloud has ended
         return;
       case "auto-connect":
         save({ autoConnect: option === "on" });
@@ -163,6 +174,9 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
+        // The switch sits beside the usage note (Welcome, Settings): the
+        // notice was seen.
+        model.telemetry?.acknowledgeNotice();
         model.changed("settings");
         return;
       default:
@@ -171,6 +185,17 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   };
 
   return {
+    // "Add a machine" and "Share": the account's Teams (Settings, Teams) and the current one.
+    "teams.list": async () => {
+      if (model.servicesIn) await bounded(10, () => model.teams.reload());
+      const input = model.teams.input();
+      const state = input.state as { tag: string; inner?: { teams?: AppTeamInput[] } };
+      const teams = state.tag === "Ready" ? (state.inner?.teams ?? []) : [];
+      return {
+        teams: teams.map((t) => ({ id: t.id, alias: t.alias, name: t.name, role: t.role, plan: t.plan })),
+        currentTeamId: input.currentTeamId ?? null,
+      };
+    },
     "settings.get": async () => {
       await load();
       return settingsState(model, parts());

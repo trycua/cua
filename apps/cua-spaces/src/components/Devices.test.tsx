@@ -257,8 +257,8 @@ describe("approval watch", () => {
     await waitFor(() => expect(screen.getByTestId("approving").textContent).toBe("dev_p"));
     const notes = bridge.calls.filter((c) => c.startsWith("notify:"));
     expect(notes).toEqual([
-      "notify:Approve “Work laptop”?:A device signed in to your Cua account and asks to reach your machines.",
-      "notify:Re-verify “Old laptop”?:It needs one approval to keep reaching your machines.",
+      "notify:Approve “Work laptop”?:A device signed in to your Cua account and asks to reach your computers.",
+      "notify:Re-verify “Old laptop”?:It needs one approval to keep reaching your computers.",
     ]);
   });
 

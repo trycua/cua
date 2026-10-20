@@ -90,28 +90,43 @@ struct LoginItemTests {
         #expect(general(m).first?.enabled == false)
     }
 
+    /// The page's Done checkbox arrives with `onboarding.complete`.
     @Test func doneAppliesTheCheckbox() async {
         let ticked = FixtureLoginItem()
         let a = ViewModelTests().makeModel(loginItem: ticked)
-        for action: AppOnboardingAction in [.start, .signinDone, .agentsDone(configured: []), .presentationDone,
-                                            .driveContinue, .modeChosen(mode: .host)] {
-            a.onboarding.send(action)
-        }
-        #expect(a.onboarding.view.launchAtLogin?.checked == true)
-        a.onboarding.finish()
+        a.onboarding.finish(mode: .host, launchAtLogin: true)
         #expect(ticked.calls == ["register"])
         #expect(a.settings.launchAtLogin == true)
 
         let unticked = FixtureLoginItem()
         let b = ViewModelTests().makeModel(loginItem: unticked)
-        for a: AppOnboardingAction in [.start, .signinDone, .agentsDone(configured: []), .presentationDone,
-                                       .driveContinue, .modeChosen(mode: .client)] {
-            b.onboarding.send(a)
-        }
-        #expect(b.onboarding.view.launchAtLogin?.checked == false)
-        b.onboarding.finish()
+        b.onboarding.finish(mode: .client, launchAtLogin: false)
         #expect(unticked.calls == ["unregister"])
         #expect(b.settings.launchAtLogin == false)
+
+        // No answer: nothing changes (the launch rule decides later).
+        let silent = FixtureLoginItem()
+        let c = ViewModelTests().makeModel(loginItem: silent)
+        c.onboarding.finish()
+        #expect(silent.calls.isEmpty)
+        #expect(c.settings.launchAtLogin == nil)
+    }
+
+    /// macOS shows "Login Item Added" the moment an app registers. Nothing
+    /// registers on a fresh install until the first run finishes: not the
+    /// first launch, not the page's walk through its steps.
+    @Test func nothingRegistersBeforeStart() async {
+        let item = FixtureLoginItem()
+        let m = ViewModelTests().makeModel(loginItem: item)
+        #expect(!m.onboarding.completed)
+        await m.applyLaunchAtLogin()
+        m.readLoginItem()
+        #expect(item.calls.isEmpty, "the first launch registers nothing")
+        m.onboarding.restart()
+        await m.applyLaunchAtLogin()
+        #expect(item.calls.isEmpty, "showing the first run again registers nothing")
+        m.onboarding.finish(mode: .host, launchAtLogin: true)
+        #expect(item.calls == ["register"], "Start registers it, once")
     }
 
     @Test func atLaunchAnUnchosenServingMacTurnsOnAndAChoiceStands() async throws {
@@ -133,7 +148,7 @@ struct LoginItemTests {
         #expect(serving.calls == ["register", "unregister"])
         #expect(m.loginItemStatus == .notRegistered)
         let note = general(m).first { $0.id == "launch-at-login-note" }?.label
-        #expect(note == "This machine provides Spaces, which stop after a restart until you open Cua Spaces.")
+        #expect(note == "This computer provides Spaces, which stop after a restart until you open Cua Spaces.")
 
         // Not serving and never chosen: left alone.
         let idle = FixtureLoginItem()

@@ -1,10 +1,11 @@
 ---
 title: Manage sandbox lifecycle
-description: Create, keep, reconnect to, list, suspend and delete sandboxes, keep cloud sandboxes alive, and run many at once.
+description: Create, keep, reconnect to, list, suspend and delete sandboxes, run many at once, and keep local disk use bounded.
 ---
 
 Sandboxes run on this machine by default, so the examples pass no location.
-Every lifecycle call takes the same `local=` switch as `Sandbox.create`.
+To use [your own cloud](/cua-sdk/guides/local-runtimes#your-own-cloud), pass
+`on="aws"` (or `"gcp"`, `"modal"`) to `Sandbox.create`.
 
 ## Ephemeral or kept
 
@@ -29,20 +30,19 @@ lifetimes.
 print(sb.id)                   # its ref, like local:dev: what connect() and delete() take
 info = await sb.info()
 info.status                    # provisioning, starting, ready or stopped
-info.location                  # local or cloud
+info.location                  # local, direct or the cloud you chose
 info.services                  # {"web": 8000, ...}
-info.expires_at                # cloud: when the sandbox lapses without a keep-alive
-info.provider_details          # backend internals (local runtime; cloud pool and claim)
+info.provider_details          # backend internals (for example the local runtime)
 ```
 
 | Status | Meaning |
 | --- | --- |
-| `provisioning` | Capacity is being found or created (image pull, cloud capacity) |
+| `provisioning` | Capacity is being found or created (image pull) |
 | `starting` | Booting, or `wait_for` probes have not passed yet |
 | `ready` | Running and every probe passed |
 | `stopped` | Exited, suspended or released |
 
-Refs are `local:<name>`, `cloud:<name>` or `direct:<host:port>`. A bare name
+Refs are `local:<name>`, `aws:<name>` (also `gcp:` and `modal:`) or `direct:<host:port>`. A bare name
 works when it is unique; otherwise the call raises `AmbiguousSandbox`.
 
 ## Reconnect, list, delete
@@ -57,46 +57,101 @@ await Sandbox.delete("dev")
 ```
 
 `await sb.destroy()` deletes the sandbox you hold. Suspend, resume and restart
-are local only: in the cloud `suspend` and `restart` raise `Unsupported`, and
+are local only: elsewhere `suspend` and `restart` raise `Unsupported`, and
 `resume` of a running sandbox reconnects. The CLI and the SDK share local state
 in `~/.cua/sandboxes`, so either can reconnect to the other's sandboxes.
 
 ```bash test="cli-shape" id="cua-sb-create-linux"
 cua sb create linux --name dev
-cua sb ls                               # local and cloud; --local or --cloud filters
+cua sb ls                               # every location; --local filters
 cua sb info dev
 cua sb suspend dev && cua sb resume dev
-cua sb keep-alive dev --for 2h          # cloud
 cua sb rm dev -f
 ```
 
-## Cloud lifetime
-
-A cloud sandbox has a TTL (15 minutes by default) that the SDK renews while
-your process holds it. When the process exits, it lapses after the TTL. Set a
-longer TTL or extend it:
-
-```python test="docs" id="cloud-lifetime" session="cloud" prelude="fakefleet,image"
-from datetime import timedelta
-from cua_sandbox import CloudOptions
-
-sb = await Sandbox.create(image, cloud=CloudOptions(claim_ttl=timedelta(hours=2)))
-await sb.keep_alive(minutes=60)
-```
-
-- `cloud=` implies the cloud; passing it with `local=True` is an error.
-- `sb.to_dict()` and `Sandbox.from_dict(...)` carry a cloud sandbox to another
-  process.
-- With `cua daemon` running, CLI-created cloud sandboxes keep being renewed
-  after the command exits.
-
-Local sandboxes run until you delete them. For pool and claim TTLs, see
-[Capacity and claims](/fleets/guides/capacity-and-claims#expiry).
+Local sandboxes run until you delete them. In your own cloud, a sandbox
+deletes itself at its [time limit](/cua-sdk/guides/local-runtimes#time-limits-and-cleanup).
 
 ## Run many at once
 
 `Sandbox.ephemeral` is async, so `asyncio.gather` runs sandboxes in parallel.
 Cap concurrency with an `asyncio.Semaphore` (every local sandbox uses host CPU,
 memory and disk) and pass `return_exceptions=True` so one failure does not
-cancel the rest. In the cloud, one image runs at most 10 at once unless you
-raise `CloudOptions(max_pool_size=...)`.
+cancel the rest.
+
+## Disk usage and cleanup
+
+Images, VM disks and logs live under `~/.cua` (`CUA_HOME` moves them).
+
+```bash test="cli-shape" id="cua-cache-du"
+cua cache du                        # usage per category, budget, free space
+cua sb ls                           # SIZE column (--no-size skips it)
+```
+
+### Automatic cleanup
+
+- **Cache budget.** Pulled images, macOS base VMs and local builds share one
+  budget: 30 GiB or 10% of free space, whichever is smaller. Least recently
+  used entries go first, after every pull and build and when the daemon is
+  idle.
+- **Never removed:** sandboxes (running or stopped), anything a sandbox uses,
+  checkpoints, and Docker objects the SDK did not create or pull.
+- **Base images stay over budget** when a sandbox was created from them, when
+  they are this release's macOS or Linux default, or when a create from them
+  failed (so the retry does not download it again). `cua cache prune --all`
+  removes every base no sandbox uses.
+- **Ephemeral sandboxes** are deleted with their handle. If the program
+  crashes, the next `cua sb` command or the daemon deletes them 10 minutes
+  later.
+- **Logs** are capped at 10 MiB per file (also the Lume installer's `/tmp`
+  logs when cua installed Lume).
+- **Screenshots** from `cua do screenshot` without `--save` go to
+  `~/.cua/screenshots`; the newest 20 are kept.
+
+### Free space now
+
+```bash test="cli-shape" id="cua-cache-prune"
+cua cache prune --dry-run   # what would go
+cua cache prune             # down to the budget
+cua cache prune --all       # every unused cache entry
+cua sb rm my-box -f         # a sandbox and all its disks
+```
+
+### Settings
+
+```bash test="cli-shape" id="cua-cache-config"
+cua cache config --budget 50G --min-free 10G
+```
+
+```json title="~/.cua/cache.json" test="config" id="cua-cache-json"
+{
+  "budget": "50G",
+  "min_free": "10G",
+  "warn_free": "20G",
+  "orphan_reap_minutes": 10,
+  "auto_gc": true
+}
+```
+
+The environment wins: `CUA_CACHE_BUDGET` (`auto`, `off` or a size),
+`CUA_DISK_MIN_FREE` (default `5G`), `CUA_DISK_WARN_FREE` (`20G`),
+`CUA_ORPHAN_REAP_MINUTES` (`10`), `CUA_CACHE_AUTO_GC` (`0` turns it off).
+
+### Low disk
+
+A pull, build or VM create that would leave less than `CUA_DISK_MIN_FREE`
+fails before writing anything: `CuaError.InsufficientDisk` in the SDKs, exit
+code 7 in the CLI.
+
+```text output
+cua: insufficient disk: not enough disk space to pull ghcr.io/trycua/linux:24.04:
+it needs about 3.2 GiB and cua keeps 5.0 GiB free, but only 6.1 GiB is available
+on /Users/me/.cua/images (run `cua cache prune` to free space, or lower
+CUA_DISK_MIN_FREE)
+```
+
+### cua-bench results
+
+Kept until you remove them; cua-bench warns past 10 GiB
+(`CUA_BENCH_WARN_SIZE`). Keep fewer with `cb run ... --keep-runs 20` or
+`cb prune --runs --keep 20`.

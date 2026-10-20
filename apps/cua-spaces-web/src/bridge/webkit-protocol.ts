@@ -50,6 +50,8 @@ export const WEBKIT_METHODS = [
   "session.get",
   "session.signIn",
   "session.signOut",
+  "onboarding.get",
+  "onboarding.complete",
   "spaces.list",
   "spaces.open",
   "spaces.createOptions",
@@ -103,6 +105,8 @@ export const WEBKIT_METHODS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
@@ -116,11 +120,15 @@ export const WEBKIT_METHODS = [
   "devices.createPairingCode",
   "devices.pairingCodes",
   "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
   "notifications.list",
   "notifications.markAllRead",
+  "notifications.markRead",
   "telemetry.track",
+  "telemetry.linkNotice",
+  "telemetry.acknowledgeLinkNotice",
   "spaces.usage",
   "spaces.windows",
   "stream.pip",
@@ -129,6 +137,7 @@ export const WEBKIT_METHODS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   "settings.get",
@@ -147,6 +156,9 @@ export const WEBKIT_METHODS = [
   "startup.get",
   "startup.act",
   "relay.usage",
+  "nudges.pending",
+  "nudges.answer",
+  "resources.get",
   "checklist.get",
   "checklist.send",
 ] as const;
@@ -155,11 +167,10 @@ export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
 
 /** What only the Electron host answers: it draws a Space's video in the
  * page (WebCodecs), so the page asks it for a media ticket
- * (`ops/stream.ts`), and its first run is this page's (`onboarding.get`,
- * `onboarding.complete`); the Mac app draws video and its first run
- * natively. It also joins presence for the video the page draws
+ * (`ops/stream.ts`); the Mac app draws video natively. (Both hosts run
+ * this page's first run: `onboarding.get`, `onboarding.complete`.) It also joins presence for the video the page draws
  * (`presence.*`, `ops/presence.ts`). */
-export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave"] as const;
+export const ELECTRON_HOST_METHODS = ["spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 /** `onboarding.get` and `onboarding.complete`'s answer: whether the first run finished, and as what. */
 export interface WkOnboarding {
@@ -182,6 +193,7 @@ export const WEBKIT_EVENTS = [
   "keyvault.changed",
   "session.changed",
   "settings.changed",
+  "update.changed",
   "agents.changed",
   "teleport.progress",
   "startup.changed",
@@ -230,7 +242,7 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
-  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null } | null;
+  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;
   cloudDelete?: string | null;
@@ -311,6 +323,8 @@ export interface WkSettings {
   updateChannel?: string | null;
   /** The global shortcut the host registered; absent or null: none. */
   globalShortcut?: { label: string; registered: boolean } | null;
+  /** The host's account app (`app_account_app_url`); absent or null: none named. */
+  accountUrl?: string | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */

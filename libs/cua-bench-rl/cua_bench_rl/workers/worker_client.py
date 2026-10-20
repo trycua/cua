@@ -160,6 +160,8 @@ class CBEnvWorkerClient:
         self.step_count = 0
         self.done = False
         self.prompt = None
+        # Set when /step answers 404: the server no longer has env_id.
+        self.env_gone = False
 
     def reset(self):
         ret, meta_info = self.reset_attempt()
@@ -216,6 +218,7 @@ class CBEnvWorkerClient:
         self.uid = str(uuid.uuid4())
         self.step_count = 0
         self.done = False
+        self.env_gone = False
 
         obs = self.prompt_to_input_obs(self.prompt)
         ret = {"obs": obs, "done": False, "is_init": True}
@@ -329,8 +332,21 @@ class CBEnvWorkerClient:
         return jpg_string_rs
 
     def step(self, action):
+        """Run one step; if the server no longer has the env, start a new episode.
+
+        /step answers 404 when the server no longer has env_id, for example after
+        the env's timeout passed or the worker restarted. No retry of the step can
+        succeed then, so this returns the new episode's first observation
+        (``is_init`` is True) instead.
+        """
         ret, meta_info = self.step_attempt(action)
         while ret is None:
+            if self.env_gone:
+                print_debug(
+                    f"[CBEnvWorkerClient ID: {self.env_id}] Env released by the server, "
+                    "starting a new episode"
+                )
+                return self.reset()
             print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Step failed, retrying...")
             ret, meta_info = self.step_attempt(action)
         return ret, meta_info
@@ -398,6 +414,8 @@ class CBEnvWorkerClient:
             self.done = done
         except Exception as e:
             print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] ERROR in step execution: {e}")
+            if isinstance(e, requests.HTTPError) and e.response is not None:
+                self.env_gone = e.response.status_code == 404
             return None, None
 
         action_clean = (

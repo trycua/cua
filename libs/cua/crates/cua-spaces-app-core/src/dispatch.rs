@@ -14,10 +14,11 @@ use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, drive_mount_preview,
-    drive_page, drive_settings, driver_preview, experiments, host, login_item, machines, notch,
-    notifications, onboarding, onboarding_preview, palette, paths, persistent, presence,
-    relay_usage, settings, share, telemetry, window, wizard,
+    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
+    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
+    machines, notch, notifications, nudges, onboarding, onboarding_preview, palette, paths,
+    persistent, presence, relay_usage, resources, settings, share, telemetry, upsell, window,
+    wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -178,6 +179,9 @@ pub const METHODS: &[&str] = &[
     "agentKeys.removeConfirm",
     "agentKeys.nameProblem",
     "about.view",
+    "diagnostics.createReport",
+    "diagnostics.reportMailto",
+    "diagnostics.redact",
     "about.afterLaunch",
     "about.restartDaemon",
     "about.refreshNotice",
@@ -286,6 +290,20 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "resources.view",
+    "resources.thisMac",
+    "resources.space",
+    "resources.computer",
+    "resources.warning",
+    "upsell.prompt",
+    "upsell.allows",
+    "firstRun.view",
+    "firstRun.todos",
+    "firstRun.agentUsed",
+    "firstRun.leadAgent",
+    "telemetry.upsell",
+    "nudge.secondAgent",
+    "nudge.riskyAction",
 ];
 
 struct Args(Value);
@@ -465,7 +483,64 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
         )),
-        "relayUsage.view" => out(relay_usage::view(&a.get("usage")?)),
+        // The page's core has no environment: the host names its account app
+        // (`settings.get`'s `accountUrl`), the Upgrade fallback's billing page.
+        "relayUsage.view" => {
+            let usage = a.get("usage")?;
+            out(match a.get::<Option<String>>("accountApp")? {
+                Some(app) if app.starts_with("https://") => relay_usage::view_for(&usage, &app),
+                _ => relay_usage::view(&usage),
+            })
+        }
+        // Processor, memory and disk: the rows, bars and warning the apps
+        // draw from the runtime's snapshot (`Spaces.resources`).
+        // `nowMs` is the shell's clock: the core has none (wasm).
+        "resources.view" => out(resources::view(&a.get("snapshot")?, a.get("nowMs")?)),
+        "resources.thisMac" => out(resources::this_mac_view(&a.get("computer")?)),
+        "resources.space" => out(resources::space_view(&a.get("space")?)),
+        "resources.computer" => out(resources::computer_view(
+            &a.get("computer")?,
+            a.get("nowMs")?,
+        )),
+        "resources.warning" => out(resources::warning_view(&a.get("warning")?)),
+        // The Pro and Teams prompts: the rules and words are `upsell`'s.
+        "upsell.prompt" => {
+            let usage = a.get("usage")?;
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::prompt(
+                &a.get::<String>("surface")?,
+                &usage,
+                &app,
+                &a.get("state")?,
+            ))
+        }
+        "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
+        "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
+        "firstRun.agentUsed" => out(crate::first_run::agent_used(
+            &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,
+            a.get::<u64>("sinceMs")?,
+            &a.get::<String>("agentName")?,
+        )),
+        "firstRun.leadAgent" => out(crate::first_run::lead_agent(
+            &a.get::<Vec<crate::first_run::FirstRunAgent>>("agents")?,
+        )),
+        // The This Mac prompts: the moments, rules and words are `nudges`'.
+        "nudge.secondAgent" => out(nudges::second_agent(
+            &a.get::<Vec<host::HostAccess>>("recentAccess")?,
+            a.get("nowMs")?,
+            &a.get::<String>("today")?,
+            &a.get::<Option<nudges::NudgeMemory>>("memory")?
+                .unwrap_or_default(),
+        )),
+        "nudge.riskyAction" => out(nudges::risky_action(&a.get("request")?, a.get("nowMs")?)),
+        "telemetry.upsell" => out(telemetry::upsell(
+            &a.get::<String>("surface")?,
+            &a.get::<String>("action")?,
+        )),
         "wizard.pickerImages" => out(wizard::picker_images()),
         "wizard.pickerGroups" => out(wizard::picker_groups()),
         "wizard.findImage" => out(wizard::find_image(&a.get::<String>("ref")?)),
@@ -678,10 +753,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "onboarding.reduce" => out(onboarding::reduce(&a.get("state")?, &a.get("action")?)),
         // `hostOs`: the shell's system, for its words (macOS when absent).
-        "onboarding.view" => out(onboarding::view_on(
+        // `withoutCli`: a shell with no Command line page (the web UI):
+        // Done neither lists the Cua CLI nor waits for it.
+        "onboarding.view" => out(onboarding::view_for(
             &a.get("state")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
+            !a.get::<Option<bool>>("withoutCli")?.unwrap_or(false),
         )),
         "onboarding.copy" => out(onboarding::copy()),
         "onboarding.signedInText" => out(onboarding::signed_in_text(
@@ -726,6 +804,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "agentKeys.nameProblem" => out(agent_keys::name_problem(&a.get::<String>("name")?)),
         "about.view" => out(about::view(&a.get::<about::AboutInput>("input")?)),
+        "diagnostics.createReport" => out(diagnostics::create_report(&a.get("input")?)),
+        "diagnostics.reportMailto" => out(diagnostics::report_mailto(
+            &a.get("send")?,
+            &a.get::<Option<Vec<String>>>("names")?.unwrap_or_default(),
+        )),
+        "diagnostics.redact" => out(diagnostics::redact(&a.get::<String>("text")?)),
         "about.afterLaunch" => out(about::after_launch(&a.get::<about::LaunchInput>("input")?)),
         "about.restartDaemon" => out(about::restart_daemon(
             &a.get::<about::DaemonCheck>("check")?,
@@ -1089,6 +1173,48 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn upsell_prompts_follow_the_rules_through_dispatch() {
+        let usage =
+            json!({"metered": true, "plan": "free", "liveSessionsLimit": 2, "hoursLimit": 20.0});
+        let state = |quiet: bool| json!({"nowMs": 1_000_000_000_000u64, "quiet": quiet});
+        let p = call_value(
+            "upsell.prompt",
+            json!({"surface": "share", "usage": usage, "accountApp": "https://app.cua.ai", "state": state(false)}),
+        )
+        .unwrap();
+        assert_eq!(
+            p["cta"]["url"],
+            "https://app.cua.ai/buy/teams?from=app_share"
+        );
+        let quiet = call_value(
+            "upsell.prompt",
+            json!({"surface": "share", "usage": usage, "state": state(true)}),
+        )
+        .unwrap();
+        assert!(quiet.is_null());
+        assert_eq!(
+            call_value("upsell.allows", json!({"state": state(true)})).unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "meter", "action": "shown"})
+            )
+            .unwrap(),
+            json!([{"type": "feature", "feature": "upsell_meter_shown"}])
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "plan_card", "action": "shown"})
+            )
+            .unwrap(),
+            json!([])
+        );
+    }
+
+    #[test]
     fn dispatch_covers_every_method() {
         for m in METHODS {
             let r = call_value(m, Value::Object(Default::default()));
@@ -1103,6 +1229,37 @@ mod tests {
             call("nope.nope", "{}"),
             Err(CoreError::Invalid(e)) if e.starts_with("unknown method")
         ));
+    }
+
+    /// The page's core has no environment: Upgrade's checkout is on the
+    /// account app the host names, else production's; only https is taken.
+    #[test]
+    fn relay_upgrade_opens_the_hosts_account_app() {
+        let usage = json!({
+            "metered": true, "plan": "free", "hoursUsed": 20.2, "hoursLimit": 20.0,
+            "softLimitReached": true, "reasons": ["hours"], "upgradeUrl": null,
+        });
+        let upgrade = |args: Value| {
+            call_value("relayUsage.view", args).unwrap()["notice"]["upgradeUrl"].clone()
+        };
+        assert_eq!(
+            upgrade(json!({"usage": usage, "accountApp": "https://app.staging.cua.ai"})),
+            json!("https://app.staging.cua.ai/buy/pro?from=app_meter")
+        );
+        assert_eq!(
+            upgrade(json!({"usage": usage, "accountApp": "javascript:alert(1)"})),
+            json!(format!(
+                "{}/buy/pro?from=app_meter",
+                cua_home::env::account_app_url()
+            ))
+        );
+        assert_eq!(
+            upgrade(json!({"usage": usage})),
+            json!(format!(
+                "{}/buy/pro?from=app_meter",
+                cua_home::env::account_app_url()
+            ))
+        );
     }
 
     /// The web asks the core whether a machine shares its desktop before it
@@ -1145,6 +1302,9 @@ mod tests {
         .unwrap();
         let mut done = state.clone();
         done["step"] = json!("done");
+        done["identity"] = json!("ada@example.com");
+        done["cliTarget"] = json!("/h/.local/bin/cua");
+        done["agents"] = json!(["Claude Code"]);
         let lede = |os: Value| {
             call_value("onboarding.view", json!({ "state": done, "hostOs": os })).unwrap()["lede"]
                 .as_str()

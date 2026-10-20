@@ -23,7 +23,7 @@ pub enum PersistentCmd {
     /// Cua Volume (agents/NAME/) and outlives its Space.
     #[command(after_help = "Examples:
   cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
-  cua agent create scout --harness claude-code --in cloud:scout --env-from-host ANTHROPIC_API_KEY")]
+  cua agent create scout --harness claude-code --in local:scout --env-from-host ANTHROPIC_API_KEY")]
     Create {
         name: String,
         /// Harness id (`cua agent harnesses`).
@@ -82,7 +82,8 @@ pub enum PersistentCmd {
   cua agent allow-computer ada relay:0123456789abcdef")]
     AllowComputer {
         name: String,
-        /// The machine's Space id (`cua host status` shows this machine's).
+        /// The computer's Space id (`cua host status` shows this computer's).
+        #[arg(value_name = "COMPUTER")]
         machine: String,
         /// End the grant after this many seconds.
         #[arg(long = "for", value_name = "SECS")]
@@ -94,6 +95,7 @@ pub enum PersistentCmd {
   cua agent revoke-computer ada relay:0123456789abcdef")]
     RevokeComputer {
         name: String,
+        #[arg(value_name = "COMPUTER")]
         machine: Option<String>,
     },
     /// Which agents may use which computers, and the audit log.

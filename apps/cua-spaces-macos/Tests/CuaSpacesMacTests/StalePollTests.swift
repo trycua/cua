@@ -77,7 +77,7 @@ import Testing
                     spacesdVersion: "0.5.3", features: ["desktop_stream"], addedAt: nil, os: .linux,
                     osName: nil, osPrettyName: nil, image: "ghcr.io/trycua/linux:24.04", imageDigest: nil,
                     kind: .container, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                    power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                    power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
     }
 
     func eventually(_ seconds: Double = 120, _ condition: @MainActor () -> Bool) async -> Bool {
@@ -167,7 +167,7 @@ import Testing
     /// 3-core CI runner when the real 3 s staleness passed between polls).
     @Test func aListTheDaemonRefusesIsNotAStaleConnection() async throws {
         let first = Connection(rows: [Self.row("local:a")])
-        first.refuse(CuaError.Unauthenticated(message: "Relay authentication failed. Sign in again to refresh your machines."))
+        first.refuse(CuaError.Unauthenticated(message: "Relay authentication failed. Sign in again to refresh your computers."))
         let gate = LiveGate<LiveServices>()
         gate.resolve(LiveServices(backend: first))
         let model = makeModel(gate: gate) { first }

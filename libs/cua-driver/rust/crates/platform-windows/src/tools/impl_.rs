@@ -6585,7 +6585,18 @@ impl Tool for ScrollTool {
                 return ToolResult::error("scroll requires x and y together.");
             }
             let center = if let (Some(x), Some(y)) = (px, py) {
-                Some(bitmap_to_screen(hwnd, x as i32, y as i32))
+                let (x, y) = match super::scroll_coordinates::window_bitmap_point(
+                    &self.state.snapshots,
+                    &args,
+                    pid,
+                    hwnd,
+                    x,
+                    y,
+                ) {
+                    Ok(point) => point,
+                    Err(refusal) => return refusal,
+                };
+                Some(bitmap_to_screen(hwnd, x, y))
             } else {
                 tokio::task::spawn_blocking({
                     let admitted = admitted.clone();
@@ -8547,7 +8558,7 @@ impl Tool for CheckPermissionsTool {
         PERMS_DEF.get_or_init(|| ToolDef {
             name: "check_permissions".into(),
             description: "Check required permissions for cua-driver-rs on Windows.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{"prompt":{"type":"boolean","description":"Ignored: Windows has no permission prompts."}},"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,

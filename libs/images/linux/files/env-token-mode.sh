@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Sourced by the spacesd scripts: decides whether this boot uses Fleet's
-# per-claim token file (await-token-file mode) or a local token.
+# Sourced by the spacesd scripts: decides whether this boot uses an
+# orchestrator's per-claim token file (await-token-file mode) or a local token.
 #
-# Fleet delivers the claim's env token as a Secret mounted read-only at
-# /run/cua (gVisor/macOS pods: a Secret volume; KubeVirt: virtiofs tag
-# cua-claim-secrets, mounted by run-cua.mount). The file /run/cua/env-token is
-# root-owned 0600, empty until a claim binds, rewritten on rotation and
-# emptied on release.
+# The orchestrator delivers the claim's env token as a Secret mounted
+# read-only at /run/cua (gVisor/macOS pods: a Secret volume; KubeVirt: virtiofs
+# tag cua-claim-secrets, mounted by run-cua.mount). The file
+# /run/cua/env-token is root-owned 0600, empty until a claim binds, rewritten
+# on rotation and emptied on release.
 #
 # Await mode when, in order:
 #   CUA_ENV_AWAIT_TOKEN_FILE=1        forced on (=0 forces it off)
 #   CUA_ENV_TOKEN or /etc/cua/env-token is set   -> off (local docker / QEMU)
-#   /run/cua is a mount point         -> on (Fleet claim secrets)
+#   /run/cua is a mount point         -> on (claim secrets)
 
 # CUA_SPACESD_* is the new spelling of every CUA_ENV_* variable. The old
 # names keep working, as does the interim CUA_GUESTD_* spelling; precedence
@@ -37,10 +37,10 @@ cua_is_mountpoint() {
     awk -v p="$1" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo 2>/dev/null
 }
 
-# KubeVirt: a virtio-fs device (virtio id 0x001a) means Fleet shares claim
-# secrets. The udev rule pulls in run-cua.mount asynchronously, so a unit
-# that checks the mount point during boot can run before it lands and fall
-# back to a local token for good. Start the mount (idempotent, waits for it)
+# KubeVirt: a virtio-fs device (virtio id 0x001a) means the orchestrator
+# shares claim secrets. The udev rule pulls in run-cua.mount asynchronously,
+# so a unit that checks the mount point during boot can run before it lands
+# and fall back to a local token for good. Start the mount (idempotent, waits for it)
 # before deciding. No-op without the device, without systemd, or in pods.
 cua_wait_claim_mount() {
     cua_is_mountpoint "$CUA_CLAIM_SECRETS_DIR" && return 0

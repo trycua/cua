@@ -48,6 +48,8 @@ pub enum Command {
     },
     McpConfig {
         client: Option<String>,
+        /// Skip installing the skill pack for `client` (`--no-skills`).
+        no_skills: bool,
     },
     Serve {
         socket: Option<String>,
@@ -89,6 +91,7 @@ pub enum Command {
     },
     Status {
         socket: Option<String>,
+        pid_file: Option<String>,
     },
     /// `cua-driver sessions list [--json]` — content-free operator view of
     /// the live sessions owned by the selected daemon runtime.
@@ -133,6 +136,8 @@ pub enum Command {
     },
     Doctor {
         json: bool,
+        /// macOS: make LaunchServices forget every other copy of the app.
+        fix: bool,
     },
     Diagnose,
     /// `cua-driver permissions status|grant [--json]` — report TCC status
@@ -842,7 +847,10 @@ pub fn parse_command() -> Command {
             grants: grants.clone(),
         },
         Some("list-tools") => Command::ListTools,
-        Some("mcp-config") => Command::McpConfig { client: mcp_client },
+        Some("mcp-config") => Command::McpConfig {
+            client: mcp_client,
+            no_skills: args.iter().any(|a| a == "--no-skills"),
+        },
         Some("serve") => Command::Serve {
             socket,
             pid_file: flag_value(&args, "--pid-file"),
@@ -880,7 +888,10 @@ pub fn parse_command() -> Command {
                 all,
             }
         }
-        Some("status") => Command::Status { socket },
+        Some("status") => Command::Status {
+            socket,
+            pid_file: flag_value(&args, "--pid-file"),
+        },
         Some("sessions") => {
             let subcommand = pos.next().unwrap_or("list");
             if subcommand != "list" {
@@ -955,7 +966,8 @@ pub fn parse_command() -> Command {
             // `--json` switches to machine-readable output for scripting.
             // Bare flag — no value, position-independent.
             let json = args.iter().any(|a| a == "--json");
-            Command::Doctor { json }
+            let fix = args.iter().any(|a| a == "--fix");
+            Command::Doctor { json, fix }
         }
         Some("diagnose") => Command::Diagnose,
         Some("permissions") => {
@@ -1438,9 +1450,14 @@ fn launch_daemon_with_state_and_wait(
     // actually differs from the default, so the common case keeps the
     // shorter `open` argv (and matches Swift's invocation byte-for-byte).
     let app_name = crate::bundle::app_name();
+    let cli_name = crate::bundle::cli_name();
     let app_path = crate::bundle::app_bundle_path();
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let open_args = daemon_launch_arguments(app_name, socket_path, state, experimental_history);
+    // Launch the resolved bundle by path rather than `-a <name>`: when more
+    // than one copy is registered (for example `/Applications` and
+    // `~/Applications`), LaunchServices may otherwise pick a different copy
+    // than the one this CLI belongs to, with different TCC grants.
+    let open_args = daemon_launch_arguments(&app_path, socket_path, state, experimental_history);
     // Thread the Claude-Code compat flag through to the daemon. Without this
     // the proxy-spawned daemon always called build_macos_registry() (compat
     // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
@@ -1473,14 +1490,14 @@ fn launch_daemon_with_state_and_wait(
         return Err(LaunchDaemonError {
             kind: LaunchDaemonErrorKind::Failed,
             message: format!(
-                "`open -n -g -a {app_name} --args serve{}` exited {:?}. \
-             Check that `{app_path}` is installed.",
+                "launching `{app_path}` exited {:?}{}. Check that {app_name} is installed \
+             at that path, then run `{cli_name} permissions grant`.",
+                status.code(),
                 if pass_socket {
-                    format!(" --socket {socket_path}")
+                    format!(" (socket {socket_path})")
                 } else {
                     String::new()
                 },
-                status.code()
             ),
         });
     }
@@ -1736,7 +1753,7 @@ fn restart_managed_daemon_if_present(_executable: &std::path::Path) -> bool {
 
 #[cfg(target_os = "macos")]
 fn daemon_launch_arguments(
-    app_name: &str,
+    app: &str,
     socket_path: &str,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
@@ -1744,8 +1761,7 @@ fn daemon_launch_arguments(
     let mut args = vec![
         "-n".to_owned(),
         "-g".to_owned(),
-        "-a".to_owned(),
-        app_name.to_owned(),
+        app.to_owned(),
         "--args".to_owned(),
         "serve".to_owned(),
     ];
@@ -1856,14 +1872,9 @@ where
         #[cfg(target_os = "macos")]
         {
             let app_name = crate::bundle::app_name();
-            let socket_suffix = if socket_path != crate::serve::default_socket_path() {
-                format!(" --socket {socket_path}")
-            } else {
-                String::new()
-            };
             eprintln!(
                 "{}: mcp launched without {app_name}.app's TCC grants; \
-                 auto-launching the daemon via `open -n -g -a {app_name} --args serve{socket_suffix}` \
+                 auto-launching the installed {app_name}.app daemon \
                  and proxying MCP requests through it.",
                 crate::bundle::cli_name()
             );
@@ -2079,8 +2090,11 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "mcp-config",
-              "description": "Print client-specific connection guidance (MCP config where supported).",
-              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode. Omit for the generic snippet." } ] },
+              "description": "Print client-specific connection guidance (MCP config where supported) and, with --client, install the skill pack for that agent.",
+              "args": [
+                  { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode. Omit for the generic snippet." },
+                  { "name": "--no-skills", "type": "flag", "description": "With --client, do not install the cua-driver skill pack for that agent." }
+              ] },
             { "name": "manifest",
               "description": "Emit this machine-readable description of the CLI surface.",
               "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
@@ -2125,7 +2139,10 @@ pub fn build_manifest() -> serde_json::Value {
               ] },
             { "name": "doctor",
               "description": "Self-diagnose probes for runtime prerequisites (permissions, accessibility, capture, etc.).",
-              "args": [ { "name": "--json", "type": "flag", "description": "Machine-readable doctor report." } ] },
+              "args": [
+                  { "name": "--json", "type": "flag", "description": "Machine-readable doctor report." },
+                  { "name": "--fix", "type": "flag", "description": "macOS: make LaunchServices forget every other copy of CuaDriver.app (no files are deleted)." }
+              ] },
             { "name": "diagnose",
               "description": "Emit a developer-focused diagnostic dump suitable for bug reports.",
               "args": [] },
@@ -2204,7 +2221,14 @@ pub fn build_manifest() -> serde_json::Value {
 /// `--client <name>` selects one of: claude, codex, cursor, hermes,
 /// antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode.
 /// Omit for the generic JSON snippet.
-pub fn run_mcp_config(client: Option<&str>) {
+///
+/// A named client also gets the skill pack for its agent, because agents
+/// connected over MCP rarely read the skill resource on their own. One line
+/// on stderr (stdout stays the pasteable config) says where it went; pass
+/// `no_skills` (`--no-skills`) to leave the agent's skills folder alone. Only a
+/// failure to print the config exits nonzero: a skill pack that cannot be
+/// installed is reported and does not fail the command.
+pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
     let binary = std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(str::to_owned))
@@ -2432,6 +2456,15 @@ pub fn run_mcp_config(client: Option<&str>) {
         Some(other) => {
             eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode.");
             process::exit(2);
+        }
+    }
+
+    // A client that got past the match above is a known one.
+    if let Some(client) = client.filter(|client| !client.is_empty()) {
+        if !no_skills {
+            if let Some(line) = crate::skills::install_for_client_line(client) {
+                eprintln!("{line}");
+            }
         }
     }
 }
@@ -3440,7 +3473,7 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
         "grant" => run_permissions_grant(),
         other => {
             eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant.");
-            process::exit(2);
+            process::exit(64);
         }
     }
 }
@@ -3476,10 +3509,21 @@ fn run_permissions_status(json: bool) {
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
-        crate::serve::send_request(&socket, &req)
+        let result = crate::serve::send_request(&socket, &req)
             .ok()
             .filter(|r| r.ok)
-            .and_then(|r| r.result)
+            .and_then(|r| r.result);
+        if let Some(content) = result
+            .as_ref()
+            .filter(|res| !json && res["structuredContent"].get("accessibility").is_none())
+            .and_then(|res| res["content"].as_array())
+        {
+            for text in content.iter().filter_map(|item| item["text"].as_str()) {
+                println!("{text}");
+            }
+            return;
+        }
+        result
             .and_then(|res| res.get("structuredContent").cloned())
             // Trust the booleans ONLY when the answering daemon is its own
             // responsible process (`driver-daemon`). Otherwise those grants
@@ -3509,8 +3553,8 @@ fn run_permissions_status(json: bool) {
             format!(
                 "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
                  so its real TCC status can't be read from this process. \
-                 Run `{cli_name} permissions grant` to grant + verify, or start the daemon \
-                 (`open -n -g -a {app_name} --args serve`) and re-run this command."
+                 Run `{cli_name} permissions grant` to grant + verify and start the daemon, \
+                 then re-run this command."
             )
         };
         if json {
@@ -4376,7 +4420,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
-                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"Path","default_value":null,"is_optional":true},
+                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path.","type":"Path","default_value":null,"is_optional":true},
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
                     {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"Path","default_value":null,"is_optional":true},
@@ -4435,7 +4479,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
-                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"Path","default_value":null,"is_optional":true}
+                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path.","type":"Path","default_value":null,"is_optional":true}
                 ],
                 "flags": no_flags,
                 "subcommands": no_subcommands
@@ -4484,11 +4528,11 @@ fn cli_docs_literal() -> serde_json::Value {
             },
             {
                 "name": "mcp-config",
-                "abstract": "Print client-specific connection guidance (MCP config where supported).",
-                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode.",
+                "abstract": "Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.",
                 "arguments": no_args,
                 "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
-                "flags": no_flags,
+                "flags": [{"name":"no-skills","short_name":null,"help":"With --client, do not install the cua-driver skill pack for that agent.","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
@@ -4608,10 +4652,10 @@ fn cli_docs_literal() -> serde_json::Value {
             {
                 "name": "doctor",
                 "abstract": "Run platform-aware diagnostic probes.",
-                "discussion": "Exit code is non-zero when any probe is an error.",
+                "discussion": "Exit code is non-zero when any probe is an error. On macOS it warns about other copies of CuaDriver.app that macOS can launch instead of the installed one, and about permission rows tied to a different path or version.",
                 "arguments": no_args,
                 "options": no_options,
-                "flags": [{"name":"json","short_name":null,"help":"Emit the probe report as JSON.","default_value":false}],
+                "flags": [{"name":"json","short_name":null,"help":"Emit the probe report as JSON.","default_value":false},{"name":"fix","short_name":null,"help":"macOS: make LaunchServices forget every other copy of CuaDriver.app. No files are deleted.","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
@@ -4775,7 +4819,8 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("permissions grant", &[("cua-driver permissions grant", "Request the grants for CuaDriver.app")]),
     ("mcp-config", &[
         ("cua-driver mcp-config", "Print a generic mcpServers entry"),
-        ("cua-driver mcp-config --client codex", "Print setup for Codex"),
+        ("cua-driver mcp-config --client codex", "Print setup for Codex and install its skill pack"),
+        ("cua-driver mcp-config --client codex --no-skills", "Print setup for Codex only"),
     ]),
     ("recording", &[("cua-driver recording", "Print the current recording state")]),
     ("recording start", &[("cua-driver recording start ~/cua-trajectories/demo1", "Record turns into a directory")]),
@@ -4813,6 +4858,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("doctor", &[
         ("cua-driver doctor", "Run the diagnostic probes"),
         ("cua-driver doctor --json", "Emit the probe report as JSON"),
+        ("cua-driver doctor --fix", "macOS: make macOS forget extra copies of the app (deletes no files)"),
     ]),
     ("diagnose", &[("cua-driver diagnose", "Print an install and permission report to paste into an issue")]),
     ("autostart", &[("cua-driver autostart status", "Check the autostart entry")]),
@@ -5375,11 +5421,13 @@ pub fn run_config_cmd(
 ///
 /// See [`crate::doctor`] for the probe catalog. Output is plain text by
 /// default; `--json` switches to a machine-readable shape for scripting.
+/// `--fix` (macOS) also makes LaunchServices forget every other copy of the
+/// app; it never deletes a file.
 /// Exit code is `0` when every probe is `[ok]` or `[warn]`, non-zero when
 /// at least one `[err]` probe failed (e.g. the binary cannot resolve its
 /// own install dir).
-pub fn run_doctor_cmd(json: bool) {
-    let report = crate::doctor::run();
+pub fn run_doctor_cmd(json: bool, fix: bool) {
+    let report = crate::doctor::run(fix);
 
     if json {
         let val = report.to_json();
@@ -5733,7 +5781,12 @@ mod tests {
             grants,
         };
         #[cfg(target_os = "macos")]
-        let launch = daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true);
+        let launch = daemon_launch_arguments(
+            "/Applications/CuaDriver.app",
+            "/tmp/history-test.sock",
+            &state,
+            true,
+        );
         #[cfg(not(target_os = "macos"))]
         let launch = daemon_process_arguments("history-test.sock", &state, true);
         assert!(launch
@@ -5756,6 +5809,27 @@ mod tests {
         assert!(launch
             .windows(2)
             .any(|pair| pair == ["--socket", "/tmp/history-test.sock"]));
+    }
+
+    /// The daemon must be launched from the exact installed bundle path. `open -a
+    /// CuaDriver` lets LaunchServices pick any registered copy named CuaDriver
+    /// (an old version in the Trash or a benchmark folder), which then owns the
+    /// permission prompts and the System Settings entry.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn daemon_launch_targets_the_exact_bundle_path_not_the_app_name() {
+        let launch = daemon_launch_arguments(
+            "/Applications/CuaDriver.app",
+            &crate::serve::default_socket_path(),
+            &crate::history_runtime::DaemonLaunchState::default(),
+            false,
+        );
+        assert_eq!(
+            launch,
+            ["-n", "-g", "/Applications/CuaDriver.app", "--args", "serve"]
+        );
+        assert!(!launch.contains(&"-a".to_owned()));
+        assert!(!launch.contains(&"CuaDriver".to_owned()));
     }
 
     #[test]

@@ -618,6 +618,106 @@ fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
 
 #[test]
 #[ignore]
+fn harness_appkit_middle_click_px_background_reaches_exact_window() {
+    let case = native_background_case(
+        "appkit",
+        "middle_click",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-middle-click")
+            .expect("start macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().expect("create middle-click journal directory");
+        let journal = directory.path().join("pointer.jsonl");
+        std::fs::write(&journal, "").expect("initialize native pointer journal");
+        let harness = Harness::launch_with_oracles(None, Some(&journal));
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("find middle-click receiver window");
+        let read_events = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&journal)
+                .expect("read native pointer journal")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("parse native pointer event"))
+                .collect()
+        };
+        let initial = read_events();
+        assert_eq!(initial.len(), 1, "receiver must be idle: {initial:?}");
+        assert_eq!(initial[0]["kind"], "ready");
+        assert_eq!(initial[0]["window_id"].as_u64(), Some(wid));
+        let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        assert!(
+            !snapshot.is_error(),
+            "capture receiver: {}",
+            snapshot.text()
+        );
+        let width = snapshot.structured()["screenshot_width"]
+            .as_f64()
+            .expect("screenshot width");
+        let height = snapshot.structured()["screenshot_height"]
+            .as_f64()
+            .expect("screenshot height");
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: harness.pid,
+                native_id: wid,
+            },
+            |driver| {
+                let response = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": harness.pid, "window_id": wid,
+                        "x": width / 2.0, "y": height / 2.0,
+                        "button": "middle", "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    !response.is_error(),
+                    "middle-click request: {}",
+                    response.text()
+                );
+                assert_eq!(response.action_delivery_mode(), Some("background"));
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let events = read_events();
+                    if events.iter().any(|event| event["kind"] == "middle_up") {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "middle-click did not arrive: {events:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                std::thread::sleep(Duration::from_millis(750));
+                let events = read_events();
+                let received = &events[1..];
+                assert_eq!(
+                    received.len(),
+                    2,
+                    "one request must deliver one native middle down/up pair: {received:?}"
+                );
+                assert_eq!(received[0]["kind"], "middle_down");
+                assert_eq!(received[1]["kind"], "middle_up");
+                let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
+                let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
+                for event in received {
+                    assert_eq!(event["window_id"].as_u64(), Some(wid));
+                    assert!((event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0);
+                    assert!((event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0);
+                }
+            },
+        )
+        .expect("middle-click must preserve background desktop state");
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_appkit_smoke() {
     run_case(
         native_readonly_case(
@@ -2073,12 +2173,14 @@ fn harness_appkit_slider_drag_px_background() {
         "slider_drag",
         Targeting::Px,
         DriverRoute::MacosCgEventPid,
-    )
-    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    );
     run_case(case, |pid, wid, driver| {
         let pre = snapshot_elements(driver, pid, wid);
         assert!(pre.tree_text().contains("slider_value=0"));
         let (x, y, width, height) = element_pixel_frame(&pre, "sld-value");
+        // The background oracles fail the case if the drag moves the user's
+        // pointer, raises or activates the fixture, or takes key focus from
+        // the foreground sentinel.
         let (response, mut passed) = run_with_background_oracles(
             driver,
             TargetWindow {
@@ -2104,30 +2206,26 @@ fn harness_appkit_slider_drag_px_background() {
         )
         .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
         assert!(
-            response.is_error(),
-            "AppKit background drag unexpectedly reported delivery: {}",
+            !response.is_error(),
+            "AppKit background drag failed: {}",
             response.text()
         );
-        assert_eq!(
-            response.structured()["code"].as_str(),
-            Some("background_unavailable"),
-            "AppKit background drag returned the wrong refusal: {}",
-            response.text()
-        );
-        std::thread::sleep(Duration::from_millis(200));
         assert!(
-            snapshot_elements(driver, pid, wid)
+            response
+                .text()
+                .contains("background: routed to the window's pid"),
+            "AppKit background drag was not routed to the window's pid: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            !snapshot_elements(driver, pid, wid)
                 .tree_text()
                 .contains("slider_value=0"),
-            "refused AppKit background drag changed the slider"
+            "AppKit background drag did not move the slider"
         );
         passed.push(OracleKind::FixtureState);
-        Observation::refused(
-            RefusalCode::BackgroundUnavailable,
-            passed,
-            response.text(),
-            Evidence::default(),
-        )
+        Observation::delivered_with_fixture_state(passed)
     });
 }
 
@@ -2273,6 +2371,131 @@ fn harness_appkit_context_menu_keeps_front_key_focus_background() {
                     .contains("menu_action=Copy"),
                 "context menu item did not fire"
             );
+        },
+    );
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WarpPoint {
+    x: f64,
+    y: f64,
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGWarpMouseCursorPosition(point: WarpPoint) -> i32;
+}
+
+/// Regression for trycua/cua#5476. With the real pointer parked outside the
+/// target window, a window screenshot came back the size of the window but
+/// with the window drawn smaller (about 96.5%) and pushed down by ~31 px, so
+/// pixel targets read off it missed by ~37 px. The window must fill its own
+/// screenshot edge to edge, whatever the pointer is doing.
+#[test]
+#[ignore]
+fn harness_appkit_window_capture_ignores_pointer_outside_window() {
+    run_case(
+        native_readonly_case(
+            "appkit",
+            "window_capture_ignores_pointer_outside_window",
+            Targeting::NotApplicable,
+            DriverRoute::WindowState,
+            vec![OracleKind::Pixels],
+        ),
+        |pid, wid, driver| {
+            use base64::Engine as _;
+
+            // Offset the window from the screen origin and leave room above
+            // it. Keep its current size: the harness window is not resizable
+            // (no settable AXSize), and set_window_frame only writes AXSize
+            // when the size changes.
+            let listed = driver.call("list_windows", serde_json::json!({ "pid": pid as i64 }));
+            assert!(!listed.is_error(), "list_windows: {}", listed.text());
+            let current = listed.structured()["windows"]
+                .as_array()
+                .and_then(|windows| {
+                    windows
+                        .iter()
+                        .find(|w| w["window_id"].as_u64() == Some(wid))
+                })
+                .map(|w| w["bounds"].clone())
+                .expect("AppKit harness window bounds");
+            let width = current["width"].as_f64().expect("window width");
+            let height = current["height"].as_f64().expect("window height");
+            let (x, y) = (180.0, 260.0);
+            let moved = driver.call(
+                "set_window_frame",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "x": x, "y": y, "width": width, "height": height
+                }),
+            );
+            assert!(!moved.is_error(), "set_window_frame: {}", moved.text());
+
+            // Park the real pointer just above the window, outside its frame
+            // but close enough for ScreenCaptureKit to fold it into the
+            // capture (a benchmark parked it 27 pt above a window's top edge).
+            // SAFETY: plain CoreGraphics call with a by-value point.
+            unsafe {
+                CGWarpMouseCursorPosition(WarpPoint {
+                    x: x + width / 2.0,
+                    y: y - 24.0,
+                })
+            };
+            std::thread::sleep(Duration::from_millis(300));
+
+            let snapshot = snapshot_elements(driver, pid, wid);
+            assert!(!snapshot.is_error(), "capture: {}", snapshot.text());
+            let structured = snapshot.structured();
+            assert_eq!(structured["screenshot_frame_valid"], true, "{structured}");
+            let scale = structured["screenshot_scale"]
+                .as_f64()
+                .expect("screenshot scale");
+            let bounds = &structured["window_bounds"];
+            let data = snapshot.raw["result"]["content"]
+                .as_array()
+                .and_then(|parts| parts.iter().find(|part| part["type"] == "image"))
+                .and_then(|part| part["data"].as_str())
+                .expect("window screenshot image part");
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .expect("decode screenshot");
+            let image = image::load_from_memory(&png)
+                .expect("load screenshot")
+                .to_rgba8();
+            let (w, h) = image.dimensions();
+            assert_eq!(
+                (f64::from(w), f64::from(h)),
+                (
+                    (bounds["width"].as_f64().unwrap() * scale).round(),
+                    (bounds["height"].as_f64().unwrap() * scale).round()
+                ),
+                "screenshot size must match the window bounds at the reported scale"
+            );
+
+            // The bug left a transparent band across the top and down the
+            // right side of the image. Sample just inside each edge, away
+            // from the rounded corners: every sample must be the window's own
+            // opaque pixels.
+            let inset = (4.0 * scale) as u32;
+            let samples = [
+                (w / 2, inset),         // top centre (title bar)
+                (w / 4, inset),         // top, left of centre
+                (3 * w / 4, inset),     // top, right of centre
+                (w - 1 - inset, h / 2), // right edge
+                (w - 1 - inset, h / 4), // right edge, upper
+                (w / 2, h - 1 - inset), // bottom centre
+            ];
+            for (sx, sy) in samples {
+                let alpha = image.get_pixel(sx, sy).0[3];
+                assert_eq!(
+                    alpha, 255,
+                    "pixel ({sx},{sy}) of a {w}x{h} window screenshot is transparent: \
+                     the window does not fill its own capture"
+                );
+            }
+            Observation::delivered(vec![OracleKind::Pixels], Evidence::default())
         },
     );
 }

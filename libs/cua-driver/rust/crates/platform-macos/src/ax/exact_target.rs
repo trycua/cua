@@ -77,6 +77,63 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
     resolved
 }
 
+/// Decide an addressed element's ancestry from what was read about it.
+fn element_ancestry(window: Option<u32>, in_app_menu_bar: bool, requested: u32) -> ElementAncestry {
+    match window {
+        Some(id) if id == requested => ElementAncestry::ProvenDescendant,
+        Some(_) => ElementAncestry::OutsideTargetWindow,
+        None if in_app_menu_bar => ElementAncestry::ProvenDescendant,
+        None => ElementAncestry::Unproven,
+    }
+}
+
+/// Whether `element` sits under the application's own `AXMenuBar`: a bounded
+/// `AXParent` ascent that must end at the same menu bar element the
+/// application reports.
+///
+/// # Safety
+///
+/// `app` and `element` must be valid `AXUIElementRef`s.
+unsafe fn element_in_app_menu_bar(app: AXUIElementRef, element: AXUIElementRef) -> bool {
+    let Some(menu_bar) = copy_element_attr(app, "AXMenuBar") else {
+        return false;
+    };
+    let mut current = element;
+    let mut owned = false;
+    let mut found = false;
+    for _ in 0..MAX_ANCESTRY_DEPTH {
+        if core_foundation::base::CFEqual(current as CFTypeRef, menu_bar as CFTypeRef) != 0 {
+            found = true;
+            break;
+        }
+        if matches!(
+            copy_string_attr(current, "AXRole").as_deref(),
+            Some("AXWindow") | Some("AXSheet") | Some("AXApplication") | None
+        ) {
+            break;
+        }
+        let parent = copy_element_attr(current, "AXParent");
+        if owned {
+            CFRelease(current as CFTypeRef);
+        }
+        match parent {
+            Some(parent) => {
+                current = parent;
+                owned = true;
+            }
+            None => {
+                owned = false;
+                break;
+            }
+        }
+    }
+    if owned {
+        CFRelease(current as CFTypeRef);
+    }
+    CFRelease(menu_bar as CFTypeRef);
+    found
+}
+
 /// Map a window-role AX element to the CGWindowID of the top-level window it
 /// belongs to: an `AXWindow` maps to itself, an `AXSheet` to the window it is
 /// attached to (see [`element_window_id`]).
@@ -258,10 +315,13 @@ pub fn gather_background_facts(
             super::enablement::ensure_chromium_ax_enabled(pid, app);
             let records = ax_window_records(app, pid, window_id);
             let app_hidden = copy_bool_attr(app, "AXHidden");
-            let element = element_ptr.map(|ptr| match element_window_id(ptr as AXUIElementRef) {
-                Some(id) if id == window_id => ElementAncestry::ProvenDescendant,
-                Some(_) => ElementAncestry::OutsideTargetWindow,
-                None => ElementAncestry::Unproven,
+            let element = element_ptr.map(|ptr| {
+                let element = ptr as AXUIElementRef;
+                let window = element_window_id(element);
+                // A menu-bar item has no window ancestor: the menu bar hangs
+                // off the application. It still belongs to this app.
+                let in_menu_bar = window.is_none() && element_in_app_menu_bar(app, element);
+                element_ancestry(window, in_menu_bar, window_id)
             });
             let focused_window_id = copy_element_attr(app, "AXFocusedWindow").and_then(|window| {
                 let window_id = ax_get_window_id(window);
@@ -295,6 +355,7 @@ pub fn gather_background_facts(
         app_hidden,
         competing_keyboard_destinations,
         element: element.unwrap_or(ElementAncestry::NotAddressed),
+        screen_locked: crate::session::screen_locked(),
     }
 }
 
@@ -316,6 +377,16 @@ mod tests {
             |&index| tree[index].1,
             |&index| tree[index].2,
         )
+    }
+
+    #[test]
+    fn menu_bar_item_is_proven_only_through_the_app_menu_bar() {
+        use super::element_ancestry;
+        use cua_driver_core::background_input::ElementAncestry::*;
+        assert_eq!(element_ancestry(None, true, 7), ProvenDescendant);
+        assert_eq!(element_ancestry(None, false, 7), Unproven);
+        assert_eq!(element_ancestry(Some(7), false, 7), ProvenDescendant);
+        assert_eq!(element_ancestry(Some(8), true, 7), OutsideTargetWindow);
     }
 
     #[test]

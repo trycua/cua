@@ -66,8 +66,9 @@ const POPUP_MENU_LAYER: i32 = 101;
 /// normal-level window of `front` in the on-screen order.
 fn target_above_front(target: i32, front: i32) -> bool {
     // Every layer, without the Space queries of `visible_windows`: this runs
-    // while the raise is on screen, so it has to be quick.
-    let windows = crate::windows::all_windows_any_layer();
+    // while the raise is on screen, so it has to be quick. On-screen windows
+    // only: the all-windows list did not show a Chromium raise.
+    let windows = crate::windows::on_screen_windows_any_layer();
     target_above_front_in(&windows, target, front)
 }
 
@@ -86,18 +87,27 @@ fn target_above_front_in(windows: &[crate::windows::WindowInfo], target: i32, fr
     }
 }
 
-/// Put the user's front app back above a background target that raised its
+/// Put the user's window back above a background target that raised its
 /// window (AppKit orders a popup menu's window group to the front, which
-/// lifts its parent window). Re-activating the already-active front app with
-/// all its windows restores the order without moving key status; the
-/// target's menu stays open.
-/// Put `front`'s windows back above `target` if the target's window was
-/// lifted over them (see [`restore_front_if_raised`]).
+/// lifts its parent window). The user's app raises its own focused window,
+/// which restores the order without an activation or a key change; the
+/// target's menu stays open. See [`put_front_window_back`].
 pub fn restore_order_now(target: i32, front: i32) -> bool {
     // NSWorkspace's frontmost reading can lag inside the daemon; the caller
     // has already checked WindowServer's front process.
     if !target_above_front(target, front) {
         return false;
+    }
+    put_front_window_back(front)
+}
+
+/// Order the user's window back above a raised target without activating
+/// anything: the user's app raises its own focused window (`AXRaise`). Only
+/// if that fails, re-activate the user's app with all its windows, which is a
+/// request the system may ignore and, when honoured, re-activates the app.
+fn put_front_window_back(front: i32) -> bool {
+    if crate::ax::bindings::raise_focused_window_of_pid(front) {
+        return true;
     }
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     unsafe {
@@ -117,12 +127,7 @@ fn restore_front_if_raised(target: i32, front: i32) -> bool {
     if crate::apps::frontmost_pid() != Some(front) || !target_above_front(target, front) {
         return false;
     }
-    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
-    let restored = unsafe {
-        NSRunningApplication::runningApplicationWithProcessIdentifier(front).is_some_and(|app| {
-            app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
-        })
-    };
+    let restored = put_front_window_back(front);
     RESTORED.fetch_add(1, Ordering::Relaxed);
     tracing::debug!(
         target,

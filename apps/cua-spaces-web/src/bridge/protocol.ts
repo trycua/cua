@@ -45,9 +45,12 @@ import type { HostSetupOps } from "./ops/host-setup";
 import type { SpaceDetailOps } from "./ops/space-detail";
 import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
+import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
+import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
-import type { TelemetryOps } from "./ops/telemetry";
+import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
+import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
 
 /* ---- Settings the web UI reads and writes -------------------------------- */
@@ -62,7 +65,7 @@ export interface SettingsValues {
   menuBar: boolean;
   /** The global hotkey, as glyphs (`⌘⇧Space`). */
   hotkey: string;
-  /** Anonymous usage telemetry (`$CUA_HOME/config.toml`, same as `cua telemetry`). */
+  /** Usage telemetry (`$CUA_HOME/config.toml`, same as `cua telemetry`). */
   telemetry: boolean;
   /** Where New Space starts: `local`, `cloud`, `host:<id>`, or a cloud word. */
   defaultLocation: string;
@@ -102,6 +105,9 @@ export interface SettingsSnapshot {
   /** The global shortcut that brings the app to the front, as the host
    * registered it with the system. Absent or null: this host has none. */
   globalShortcut?: GlobalShortcut | null;
+  /** The host's account app (`https://app.cua.ai`, or staging's), which the
+   * page's core cannot resolve itself. Absent or null: the production one. */
+  accountUrl?: string | null;
 }
 
 /** A system-wide shortcut the host registered (macOS: ⌘⇧Space). */
@@ -182,11 +188,14 @@ export interface HostOperations
     StartupOps,
     StreamOps,
     RelayUsageOps,
+    NudgesOps,
+    ResourcesOps,
     ChecklistOps,
-    PresenceOps {
+    PresenceOps,
+    RuntimeFixOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
-  "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs }; result: SpaceRow };
+  "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs; notifyWhenReady?: boolean }; result: SpaceRow };
   "spaces.cancelCreate": { args: { pendingId: string }; result: CancelOutcome };
   "spaces.setPower": { args: { spaceId: string; on: boolean }; result: SpacePowerReport };
   /** Deletes the Space, or with `removeOnly` only forgets it here (a Space
@@ -285,11 +294,14 @@ export const OPERATIONS = [
   ...VOLUME_OPERATIONS,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...NUDGES_OPERATIONS,
+  ...RESOURCES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
+  ...RUNTIME_FIX_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
-  "telemetry.track",
+  ...TELEMETRY_OPERATIONS,
   "spaces.usage",
   "spaces.windows",
   "stream.pip",
@@ -298,6 +310,7 @@ export const OPERATIONS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   ...STARTUP_OPERATIONS,
@@ -312,6 +325,8 @@ export type HostEvent =
   | { type: "spaces.createProgress"; progress: CreateProgress }
   | { type: "machines.changed" }
   | { type: "settings.changed" }
+  /** The host's updater moved on (found, downloading, ready): ask `update.get` again. */
+  | { type: "update.changed" }
   | { type: "keyvault.changed" }
   /** Tauri `auth:signed-in`. */
   | { type: "session.signedIn"; identity?: string }
@@ -336,6 +351,7 @@ export const HOST_EVENTS = [
   "spaces.createProgress",
   "machines.changed",
   "settings.changed",
+  "update.changed",
   "keyvault.changed",
   "session.signedIn",
   "session.signInFailed",

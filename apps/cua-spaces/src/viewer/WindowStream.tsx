@@ -8,8 +8,7 @@
  *
  * Session setup is gRPC in the shell: `open_space_stream` returns a scoped
  * media ticket (`wsUrl` carries it, so no token ever reaches the webview and
- * no loopback bridge is needed for direct/local Spaces; Cua Cloud Spaces get a
- * `cua daemon` media-bridge ticket). `MediaSession` attaches and plays.
+ * no loopback bridge is needed). `MediaSession` attaches and plays.
  *
  * - SINGLE mode (`targetWindow` set): one remote window fills the OS window,
  *   which is sized to the remote and resize-synced when geometry control is

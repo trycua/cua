@@ -271,7 +271,7 @@ mod tests {
             ("http://127.0.0.1:3211", true),
             ("http://localhost:3211", true),
             ("http://[::1]:3211", true),
-            ("https://space-1.fleet.cua.ai", false),
+            ("https://space-1.example.com", false),
             ("http://10.0.0.5:3211", false),
         ] {
             assert_eq!(wanted(&url::Url::parse(u).unwrap()), want, "{u}");

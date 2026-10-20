@@ -37,18 +37,22 @@ import { AgentsModel, type AgentSetupRunning, type ToolRunner } from "./agents";
 import { ChecklistModel } from "./checklist";
 import type { CloudModel } from "./cloud";
 import type { DevicesModel } from "./devices";
+import { TeamsModel } from "./teams";
 import { NotchActivity } from "./activity";
-import { daemonAnswered, isCancelled, words } from "./errors";
+import { createErrorVariant, daemonAnswered, isCancelled, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
 import type { AccountRunning, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
+import { SignInRuns } from "./sign-in";
 import { SpaceThumbnails } from "./thumbnails";
 import { noLocalRuntimeReason } from "./local-runtime";
+import type { LinuxRuntime } from "./linux-runtime";
+import type { RuntimeFix, RuntimeFixAction, WindowsRuntime, WindowsRuntimeAdvice } from "./windows-runtime";
 import { TimeoutError, sleep, withTimeout } from "./time";
 
 /** What changed, for the page's events. */
-export type ModelChange = "spaces" | "session" | "settings" | "machines" | "agents" | "keyvault" | "checklist";
+export type ModelChange = "spaces" | "session" | "settings" | "machines" | "agents" | "keyvault" | "checklist" | "update";
 
 export interface AppModelDeps {
   native: Native;
@@ -76,6 +80,10 @@ export interface AppModelDeps {
   checklistSeedPath?: string | null;
   /** The system this app runs on (names This machine on the Machines page). */
   hostOs?: AppSpaceOs;
+  /** What New Space offers when Windows has no local runtime (null elsewhere). */
+  windowsRuntime?: WindowsRuntime | null;
+  /** Linux: restarts the app under the docker group when a new install needs it (null elsewhere). */
+  linuxRuntime?: LinuxRuntime | null;
 }
 
 /** The create the daemon never took. */
@@ -96,6 +104,8 @@ export class AppModel {
   readonly startup: StartupModel;
   readonly host: HostModel;
   readonly devices: DevicesModel;
+  /** Settings, Teams: the account's organizations from the Spaces API. */
+  readonly teams: TeamsModel;
   readonly cloud: CloudModel;
   readonly account: AccountRunning | null;
   readonly telemetry: TelemetryRunning | null;
@@ -132,8 +142,8 @@ export class AppModel {
   signIn: AppSignInPhase;
   /** The page a waiting sign-in finishes on. */
   signInUrl: string | null = null;
-  /** A sign-in still waiting after this fails (a device code lives about this long). */
-  signInTimeoutMs = 600_000;
+  /** Sign-in attempts, a retry's included; the first one to store a session signs the app in. */
+  readonly signIns: SignInRuns;
   /** The registry's Spaces (before This machine is added). */
   registrySpaces: AppSpace[] = [];
   /** Memory and storage use of the Spaces whose detail is showing. */
@@ -149,6 +159,10 @@ export class AppModel {
   linuxSource: string | null = null;
   /** Your machines that provide Spaces, as New Space last read them. */
   hosts: AppSpaceHost[] = [];
+  /** Windows or Linux without a usable local runtime: why, and the fix New Space offers (null when one is ready). */
+  runtimeAdvice: WindowsRuntimeAdvice | null = null;
+  readonly windowsRuntime: WindowsRuntime | null;
+  readonly linuxRuntime: LinuxRuntime | null;
   /** How long one read of the registry may take before a refresh gives up on it (s). */
   listTimeout = 20;
   /** How long the host's own reads in a refresh may take (s). */
@@ -168,7 +182,6 @@ export class AppModel {
   readonly maxCpus: number;
   readonly servicesInNow: () => boolean;
 
-  private signInAttempt = 0;
   private listWatchedSince = Date.now();
   private rowsInFlight: Promise<import("../native/generated/index").AppSpaceRow[]> | null = null;
   private hostInFlight: Promise<void> | null = null;
@@ -183,6 +196,13 @@ export class AppModel {
     this.startup = d.startup;
     this.host = d.host;
     this.devices = d.devices;
+    this.teams = new TeamsModel({
+      native: d.native as unknown as ConstructorParameters<typeof TeamsModel>[0]["native"],
+      account: () => this.account,
+      identity: () => this.identity,
+      currentTeamId: () => this.settings.currentTeamId,
+    });
+    this.teams.onChange = () => this.changed("settings");
     this.cloud = d.cloud;
     this.account = d.account;
     this.telemetry = d.telemetry;
@@ -203,6 +223,8 @@ export class AppModel {
     this.checklist.telemetry = d.telemetry;
     this.checklist.onChange = () => this.changed("checklist");
     this.settingsPath = d.settingsPath;
+    this.windowsRuntime = d.windowsRuntime ?? null;
+    this.linuxRuntime = d.linuxRuntime ?? null;
     this.servicesInNow = d.servicesIn;
     this.maxCpus = Math.max(2, Math.min(16, d.cpus));
     this.settings = d.native.appSettingsLoad(d.settingsPath);
@@ -221,6 +243,15 @@ export class AppModel {
     this.keyvault.subscribe(() => this.changed("keyvault"));
     this.roster = d.native.appRosterInitial([]);
     this.signIn = new d.native.AppSignInPhase.Idle();
+    this.signIns = new SignInRuns(() => this.account, {
+      starting: () => this.setSignIn(new this.native.AppSignInPhase.Starting()),
+      waiting: (attempt) => {
+        this.signInUrl = attempt.url;
+        this.setSignIn(new this.native.AppSignInPhase.Waiting({ userCode: attempt.userCode ?? undefined }));
+      },
+      signedIn: (who) => this.signedIn(who),
+      failed: (message) => this.signInFailed(message),
+    });
     this.identity = d.account?.identity() ?? null;
     this.host.identity = this.identity;
     this.devices.signedIn = this.identity !== null;
@@ -528,7 +559,37 @@ export class AppModel {
     this.hosts = hosts;
     // Lume did not answer this time: keep what it said last.
     this.runningMacosVms = vms ?? this.runningMacosVms;
+    await this.readRuntimeAdvice(runtimes);
     return this.wizardEnv(cloud, runtimes, storage, pricing, gpus);
+  }
+
+  /** Windows: what is missing for local Spaces and what the app can do about it. */
+  private async readRuntimeAdvice(runtimes: LocalRuntimes | null): Promise<void> {
+    if (!runtimes) return;
+    const w = this.windowsRuntime;
+    if (runtimes.ready.length > 0) {
+      w?.settled();
+      this.runtimeAdvice = null;
+      return;
+    }
+    if (w) this.runtimeAdvice = await w.advice().catch(() => null);
+    else if (this.linuxRuntime) this.runtimeAdvice = await this.linuxRuntime.advice(runtimes.details.get("container")).catch(() => null);
+  }
+
+  /** The fix New Space shows beside the reason (Windows only). */
+  get runtimeFix(): RuntimeFix | null {
+    return this.runtimeAdvice?.fix ?? null;
+  }
+
+  /** Runs a New Space fix ("Install Docker Desktop"); the page reads the options again to follow it. */
+  fixRuntime(action: RuntimeFixAction): void {
+    if (action === "restart-app") {
+      if (!this.linuxRuntime) throw new Error("no runtime fix on this system");
+      this.linuxRuntime.run(action);
+      return;
+    }
+    if (!this.windowsRuntime) throw new Error("no runtime fix on this system");
+    this.windowsRuntime.run(action);
   }
 
   /** What New Space knows without asking anything: the env while the live services are still starting. */
@@ -548,7 +609,10 @@ export class AppModel {
       defaultLocation: this.settings.defaultLocation,
       cloudAvailable: available,
       localAvailable: backends ? backends.length > 0 : true,
-      localReason: backends && backends.length === 0 ? noLocalRuntimeReason(process.platform, runtimes?.details.get("container")) : undefined,
+      localReason:
+        backends && backends.length === 0
+          ? (this.runtimeAdvice?.reason ?? noLocalRuntimeReason(process.platform, runtimes?.details.get("container")))
+          : undefined,
       localBackends: backends,
       localDetails: runtimes?.details,
       maxCpus: this.maxCpus,
@@ -638,7 +702,7 @@ export class AppModel {
       return id;
     } catch (error) {
       if (isCancelled(error)) this.sendCreate(new this.native.AppCreateAction.CancelDone({ id: pendingId }));
-      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: "" }));
+      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error) }));
       throw error;
     }
   }
@@ -773,41 +837,27 @@ export class AppModel {
 
   // MARK: Account
 
-  /** "Sign in": the browser flow (opened by the account), the code while it waits. */
+  /** "Sign in": the browser flow (opened by the account), the code while it
+   * waits. Starting again while it waits is a retry: a new attempt, and
+   * whichever attempt the browser finishes signs the app in. */
   async beginSignIn(): Promise<void> {
     if (!this.account || this.signInPhase() === "Starting") return;
-    this.setSignIn(new this.native.AppSignInPhase.Starting());
-    const current = ++this.signInAttempt;
-    try {
-      const attempt = await this.account.beginSignIn();
-      // Cancelled while it started.
-      if (this.signInAttempt !== current || this.signInPhase() !== "Starting") return;
-      this.signInUrl = attempt.url;
-      this.setSignIn(new this.native.AppSignInPhase.Waiting({ userCode: attempt.userCode ?? undefined }));
-      const timeout = setTimeout(() => {
-        if (this.signInAttempt === current && this.signInPhase() === "Waiting") this.signInFailed("The sign-in timed out. Try again.");
-      }, this.signInTimeoutMs);
-      timeout.unref?.();
-      let who: string | null;
-      try {
-        who = await attempt.wait();
-      } finally {
-        clearTimeout(timeout);
-      }
-      if (this.signInAttempt !== current || this.signInPhase() !== "Waiting") return;
-      this.identity = who ?? this.account.identity();
-      this.host.identity = this.identity;
-      this.devices.signedIn = this.identity !== null;
-      this.signInUrl = null;
-      this.setSignIn(new this.native.AppSignInPhase.Idle());
-      // Relay sharing paused while signed out comes back for its owner.
-      await this.host.reconcileAccount();
-      await this.devices.refresh();
-      this.changed("machines");
-    } catch (error) {
-      if (this.signInAttempt !== current || this.signInPhase() === "Idle") return;
-      this.signInFailed(words(error));
-    }
+    await this.signIns.begin();
+  }
+
+  /** A session is stored (by a sign-in here or `cua auth login`). */
+  private async signedIn(who: string | null): Promise<void> {
+    if (!this.account) return;
+    this.identity = who ?? this.account.identity();
+    this.host.identity = this.identity;
+    this.devices.signedIn = this.identity !== null;
+    this.teams.reset();
+    this.signInUrl = null;
+    this.setSignIn(new this.native.AppSignInPhase.Idle());
+    // Relay sharing paused while signed out comes back for its owner.
+    await this.host.reconcileAccount();
+    await this.devices.refresh();
+    this.changed("machines");
   }
 
   /** The sign-in's phase (`Idle`, `Starting`, `Waiting`, `Failed`). */
@@ -830,7 +880,7 @@ export class AppModel {
   /** Stops waiting for the browser (the page can start again). */
   cancelSignIn(): void {
     if (this.signInPhase() === "Starting" || this.signInPhase() === "Waiting") {
-      this.signInAttempt += 1;
+      this.signIns.cancel();
       this.telemetry?.record(this.native.appTelemetrySignInFailed(undefined));
     }
     this.signInUrl = null;
@@ -846,6 +896,7 @@ export class AppModel {
     this.identity = null;
     this.host.identity = null;
     this.devices.signedIn = false;
+    this.teams.reset();
     // Signed out: relay sharing stops (the setup stays to resume).
     await this.host.reconcileAccount();
     await this.devices.refresh();

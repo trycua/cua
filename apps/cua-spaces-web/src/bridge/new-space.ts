@@ -45,7 +45,15 @@ import type { BridgeStore } from "./store";
 
 type Args = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-export const wizardInitial = (core: CoreClient, env: WizardEnv) => core.call<WizardState>("wizard.initial", { env });
+/** A seed for the name an unnamed Space gets (40 random bits): the wasm core
+ * has no randomness of its own. The core picks the name from it when the
+ * wizard opens, shows it, and creates the Space with it. */
+export function nameSeed(): number {
+  const [high = 0, low = 0] = globalThis.crypto.getRandomValues(new Uint32Array(2));
+  return (high & 0xff) * 2 ** 32 + low;
+}
+export const wizardInitial = (core: CoreClient, env: WizardEnv) =>
+  core.call<WizardState>("wizard.initial", { env: env.nameSeed == null ? { ...env, nameSeed: nameSeed() } : env });
 export const wizardReduce = (core: CoreClient, state: WizardState, action: WizardAction, env: WizardEnv) =>
   core.call<WizardState>("wizard.reduce", { state, action, env });
 /** The wizard as drawn, in the words of the system the app runs on (`hostOs`). */
@@ -100,7 +108,7 @@ export interface EnvInput {
 
 function location(core: CoreClient, on: string | undefined): WizardLocation {
   if (!on || on === "local") return "local";
-  if (on === "cloud") return "cloud";
+  if (on === "cloud") return "local"; // Cua Cloud has ended
   if (on.startsWith("host:")) return "host";
   return isCloudWord(core, on) ? "yours" : "local";
 }

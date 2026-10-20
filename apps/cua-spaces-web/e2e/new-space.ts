@@ -136,16 +136,28 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     }
     if (v.placementHint) await expect(root.locator("[data-placement-hint]")).toHaveText(v.placementHint);
   } else if (v.step === 1) {
-    const value = (id: string) => root.locator(`[data-value-text="${id}"]`);
-    if (field("cpus")) await expect(value("cpus")).toHaveText(v.cpusText);
-    else await expect(value("cpus")).toHaveCount(0);
-    if (field("memory")) await expect(value("memory")).toHaveText(v.memoryText);
-    else await expect(value("memory")).toHaveCount(0);
+    // A slider's number, or the field it is typed in (with why it can't be used).
+    const edit = v.resourceEdit ?? null;
+    const value = async (id: "cpus" | "memory" | "disk", text: string) => {
+      if (edit?.field === id) {
+        await expect(root.locator(`[data-value-input="${id}"]`)).toHaveValue(edit.text);
+        await expect(root.locator(`[data-value-text="${id}"]`)).toHaveCount(0);
+        if (edit.error) await expect(root.locator(`[data-field-error="${id}"]`)).toHaveText(edit.error);
+        else await expect(root.locator(`[data-field-error="${id}"]`)).toHaveCount(0);
+      } else await expect(root.locator(`[data-value-text="${id}"]`)).toHaveText(text);
+    };
+    const none = (id: string) => expect(root.locator(`[data-value-text="${id}"]`)).toHaveCount(0);
+    if (field("cpus")) await value("cpus", v.cpusText);
+    else await none("cpus");
+    if (field("memory")) await value("memory", v.memoryText);
+    else await none("memory");
     if (v.diskEditable) {
-      await expect(value("disk")).toHaveText(v.diskText);
-      if (v.diskNote) await expect(root.locator("[data-disk-note]")).toHaveText(v.diskNote);
-      await expect(root.locator("[data-disk-reset]")).toHaveCount(v.diskResetLabel ? 1 : 0);
-    } else await expect(value("disk")).toHaveCount(0);
+      await value("disk", v.diskText);
+      // A typed disk value's error takes the note's place.
+      const typingDisk = edit?.field === "disk" && Boolean(edit.error);
+      if (v.diskNote && !typingDisk) await expect(root.locator("[data-disk-note]")).toHaveText(v.diskNote);
+      await expect(root.locator("[data-disk-reset]")).toHaveCount(v.diskResetLabel && !typingDisk ? 1 : 0);
+    } else await none("disk");
     if (v.gpu) {
       await expect(root.locator("[data-gpu-label]")).toHaveText(v.gpu.label);
       await expectCheckbox(root.locator("[data-gpu]"), v.gpu.on, v.gpu.enabled);
@@ -165,6 +177,9 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     else await expect(root.locator("[data-resources-error]")).toHaveCount(0);
   } else if (v.step === 2) {
     await expect(root.locator("[data-name-input]")).toHaveValue(v.name);
+    // Left empty, the name it gets is the placeholder.
+    const placeholder = v.fields.find((f) => f.id === "name")?.placeholder;
+    if (placeholder) await expect(root.locator("[data-name-input]")).toHaveAttribute("placeholder", placeholder);
     await expect(root.locator("[data-name-input]")).toHaveAttribute("aria-invalid", String(v.nameInvalid));
     if (v.nameError) await expect(root.locator('[data-field-error="name"]')).toHaveText(v.nameError);
     else await expect(root.locator('[data-field-error="name"]')).toHaveCount(0);

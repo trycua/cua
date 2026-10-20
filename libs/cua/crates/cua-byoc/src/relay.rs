@@ -117,7 +117,7 @@ impl AccountTokens for SessionTokens {
 fn relay_err(e: cua_host::Error) -> Error {
     match e {
         cua_host::Error::Unauthenticated(m) => Error::Cloud(format!(
-            "cua.ai sign-in: {m} (cloud sandboxes join the cua.ai relay as machines of your \
+            "cua.ai sign-in: {m} (cloud sandboxes join the cua.ai relay as computers of your \
              account; run `cua auth login`)"
         )),
         other => Error::Cloud(format!("cua.ai relay: {other}")),
@@ -280,7 +280,6 @@ impl RelayAccess {
             .map_err(|e| Error::InvalidArgument(e.to_string()))?;
         o.gateway = Some(cua_spacesd_client::GatewayAuth {
             bearer: Arc::new(Bearer(self.clone())),
-            claim: None,
         });
         Ok(o)
     }

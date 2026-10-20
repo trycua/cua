@@ -8,8 +8,8 @@ import type { LocalStatus } from "./local";
 
 /**
  * Typed wrapper over the shell's Spaces commands. The shell is a thin layer over the cua
- * SDK (`cua-spaces` + `cua daemon`): every location (Cua Cloud, this Mac,
- * Spaces added by address) comes back through one registry.
+ * SDK (`cua-spaces` + `cua daemon`): every location (this Mac, your machines
+ * and clouds, Spaces added by address) comes back through one registry.
  *
  * Outside Tauri (browser dev, Vitest) the fallback reports "not native" so the
  * portal keeps its synthetic fixtures and no network is ever touched.
@@ -25,18 +25,13 @@ export interface SignInStart {
   verificationUri: string;
 }
 
-/** Cua Cloud account status. */
-export interface FleetStatus {
+/** Who is signed in to Cua (the shell reads its local session). */
+export interface AccountStatus {
+  /** A user is signed in. */
   configured: boolean;
-  authMode: "user" | "client-credentials" | "static-token" | "none";
-  baseUrl: string;
-  tokenUrl: string;
-  /** OAuth client id, when configured; shown muted in Settings. */
-  clientId?: string;
+  authMode: "user" | "none";
   /** Signed-in user identity (email/subject), when a user session is active. */
   identity?: string;
-  namespaces?: string[];
-  probeError?: string;
 }
 
 /** The local `cua daemon` the app shares Spaces with (CLI / MCP clients). */
@@ -238,10 +233,10 @@ export interface BillingStatus {
 
 export interface FleetBridge {
   readonly isNative: boolean;
-  status(probe?: boolean): Promise<FleetStatus>;
-  /** This account's Cua Cloud rates; null when unknown (no estimate; always null in the native app). */
+  status(): Promise<AccountStatus>;
+  /** Always null in the native app: Cua Cloud has ended, so there are no rates. */
   cloudPricing?(): Promise<CloudPricing | null>;
-  /** Always null in the native app: the Fleets billing API is retired. */
+  /** Always null in the native app: Cua Cloud has ended, so there is no billing. */
   billingStatus?(): Promise<BillingStatus | null>;
   daemonStatus(): Promise<DaemonStatus>;
   ensureDaemon(): Promise<DaemonStatus>;
@@ -282,8 +277,6 @@ export interface FleetBridge {
   defaultLocation(): Promise<DefaultLocation>;
   /** Stores the default location in `$CUA_HOME/config.toml`. */
   setDefaultLocation(on: Location): Promise<DefaultLocation>;
-  /** Extend a cloud Space's lease. */
-  keepAliveSpace(spaceId: string, seconds: number): Promise<void>;
   /** Fires after add/create/delete/remove anywhere in the app. */
   onSpacesChanged(handler: () => void): Promise<() => void>;
   /** Returns a `data:image/…;base64,…` URL. */
@@ -328,7 +321,7 @@ export interface FleetBridge {
    * redirect), else a device code. The session is shared with the cua CLI.
    */
   beginSignIn(): Promise<SignInStart>;
-  /** Clear the signed-in user session; env credentials resume as fallback. */
+  /** Clear the signed-in user session. */
   signOut(): Promise<void>;
   onSignedIn(handler: (identity?: string) => void): Promise<() => void>;
   onSignInFailed(handler: (reason: string) => void): Promise<() => void>;
@@ -342,12 +335,7 @@ export function createFallbackFleetBridge(): FleetBridge {
   const noopUnsub = async () => () => {};
   return {
     isNative: false,
-    status: async () => ({
-      configured: false,
-      authMode: "none",
-      baseUrl: "",
-      tokenUrl: "",
-    }),
+    status: async () => ({ configured: false, authMode: "none" }),
     daemonStatus: async () => ({ connected: false, error: "not running in the app" }),
     ensureDaemon: unavailable,
     localStatus: async () => ({
@@ -364,7 +352,6 @@ export function createFallbackFleetBridge(): FleetBridge {
     removeSpace: unavailable,
     defaultLocation: async () => BUILTIN_DEFAULT_LOCATION,
     setDefaultLocation: unavailable,
-    keepAliveSpace: unavailable,
     onSpacesChanged: noopUnsub,
     screenshot: unavailable,
     openStream: unavailable,
@@ -404,7 +391,7 @@ export function createTauriFleetBridge(): FleetBridge {
   };
   return {
     isNative: true,
-    status: (probe) => invoke<FleetStatus>("fleet_status", { probe: probe ?? false }),
+    status: () => invoke<AccountStatus>("fleet_status"),
     daemonStatus: () => invoke<DaemonStatus>("daemon_status"),
     ensureDaemon: () => invoke<DaemonStatus>("ensure_daemon"),
     localStatus: () => invoke<LocalStatus>("local_status"),
@@ -426,7 +413,6 @@ export function createTauriFleetBridge(): FleetBridge {
     removeSpace: (spaceId) => invoke<void>("remove_space", { spaceId }),
     defaultLocation: () => invoke<DefaultLocation>("get_default_location"),
     setDefaultLocation: (on) => invoke<DefaultLocation>("set_default_location", { on }),
-    keepAliveSpace: (spaceId, seconds) => invoke<void>("keep_alive_space", { spaceId, seconds }),
     onSpacesChanged: (handler) => on<unknown>("spaces:changed", () => handler()),
     screenshot: (spaceId, maxDimension) =>
       invoke<string>("space_screenshot", { spaceId, maxDimension: maxDimension ?? null }),

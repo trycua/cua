@@ -196,7 +196,7 @@ try {
   await page.evaluate(() => window.__demoRewind());
 
   // Machines: This machine.
-  await nav("Machines");
+  await nav("Computers");
   await pause(2200);
   await scrollTo(page.locator("[data-host-action]").first());
   await pause(2600);

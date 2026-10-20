@@ -10,6 +10,7 @@ import {
   useLoginItem,
   useMachines,
   useRelayUsageView,
+  useTrackPlanClick,
   useSession,
   useSettings,
   useStorageSettings,
@@ -20,6 +21,7 @@ import {
 } from "@/bridge";
 import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AdvancedSection } from "@/components/settings/advanced-section";
 import { AgentsSettingsSection } from "@/components/settings/agents-section";
 import { CoreSettingsRow, CoreSettingsSection } from "@/components/settings/core-section";
 import { Button } from "@/components/ui/button";
@@ -43,7 +45,7 @@ const COMMAND_LABEL: Record<KeybindingCommand, string> = {
   "commandPalette.toggle": "Open command palette",
   "sidebar.toggle": "Show or hide sidebar",
   "nav.spaces": "Go to Spaces",
-  "nav.machines": "Go to Machines",
+  "nav.machines": "Go to Computers",
   "nav.agents": "Go to Agents",
   "nav.keyvault": "Go to Keyvault",
   "nav.settings": "Open Settings",
@@ -59,7 +61,7 @@ const APPEARANCE: { value: ThemePreference; label: React.ReactNode }[] = [
 const fail = toastError;
 
 /** Settings, General: the core's page as the SwiftUI app draws it when the
- * core is loaded (Account with Teams, General, Runtimes, Privacy, the
+ * core is loaded (Account, Teams, General, Runtimes, Privacy, the
  * Keyvault, AI agents), with this UI's own rows (appearance, keyboard shortcuts);
  * without the core, the same settings drawn by hand. */
 function SettingsPage() {
@@ -75,6 +77,7 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
   const { preference, setPreference } = useTheme();
   const section = (id: string): CoreSection | undefined => page.sections.find((x) => x.id === id);
   const account = section("account");
+  const teams = section("teams");
   const general = section("general");
   const runtimes = section("runtimes");
   const privacy = section("privacy");
@@ -107,7 +110,9 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         return void signIn().catch(fail("Couldn't start sign-in"));
       case "sign-in-code":
         return cancelSignIn();
-      case "teams":
+      // The account app (app.cua.ai): invites, roles and plans, billing.
+      case "teams-manage":
+      case "teams-billing":
       case "billing":
         return row.linkUrl ? void openExternal(row.linkUrl) : undefined;
       case "welcome":
@@ -127,6 +132,12 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         <SettingsGroup title={account.title}>
           {rows(account)}
           <RelayUsageRow />
+        </SettingsGroup>
+      ) : null}
+
+      {teams ? (
+        <SettingsGroup title={teams.title}>
+          {rows(teams)}
         </SettingsGroup>
       ) : null}
 
@@ -158,6 +169,8 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
           <SettingsRow key={b.command} label={COMMAND_LABEL[b.command]} control={<Shortcut spec={b.key} />} />
         ))}
       </SettingsGroup>
+
+      <AdvancedSection />
     </>
   );
 }
@@ -176,14 +189,39 @@ function GlobalShortcutRow({ shortcut }: { shortcut: GlobalShortcut | null | und
   );
 }
 
-/** The relay allowance this month (the core's words), where the host reads it. */
+/** The plan and remote use this month (the core's words), where the host reads it. */
 function RelayUsageRow() {
   const view = useRelayUsageView();
+  const { openExternal } = useSession();
+  const trackClick = useTrackPlanClick();
   if (!view) return null;
+  const { planCard: card } = view;
+  const open = (url: string) => {
+    trackClick("plan_card");
+    void openExternal(url).catch(() => {});
+  };
   return (
-    <div data-relay-usage="">
-      <SettingsRow label={view.label} description={view.line} control={<span className="text-[13px] text-muted-foreground">{view.plan}</span>} />
-    </div>
+    <>
+      <div data-relay-usage="">
+        <SettingsRow label={view.label} description={view.line} control={<span className="text-[13px] text-muted-foreground">{view.plan}</span>} />
+      </div>
+      <div data-plan-card={card.plan} className="flex items-center gap-3 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium">{card.label}</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">{card.detail}</div>
+        </div>
+        {card.secondary ? (
+          <Button size="sm" variant="ghost" data-plan-secondary="" onClick={() => open(card.secondary!.url)}>
+            {card.secondary.label}
+          </Button>
+        ) : null}
+        {card.primary ? (
+          <Button size="sm" variant={card.plan === "free" ? "default" : "outline"} data-plan-primary="" onClick={() => open(card.primary!.url)}>
+            {card.primary.label}
+          </Button>
+        ) : null}
+      </div>
+    </>
   );
 }
 
@@ -197,7 +235,6 @@ function FallbackSettingsPage() {
   const values = settings?.values;
   const locationOptions = [
     { value: "local", label: thisComputerLabel() },
-    { value: "cloud", label: "Cua Cloud" },
     ...machines.filter((m) => !m.current).map((m) => ({ value: `host:${m.id}`, label: m.name })),
   ];
   const location = values?.defaultLocation ?? "local";
@@ -271,8 +308,8 @@ function FallbackSettingsPage() {
 
       <SettingsGroup title="Privacy">
         <SettingsRow
-          label="Share anonymous usage data"
-          description="Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items."
+          label="Share usage data to help improve Cua"
+          description="Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen."
           htmlFor="telemetry"
           control={
             <Switch

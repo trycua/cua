@@ -24,7 +24,7 @@ on:
       - "libs/cua/crates/cua-cli/**"
       - "libs/python/cua-sandbox/**"
       - "libs/cua-bench/cua_bench/**"
-      - "docs/content/docs/cua-sdk/guides/contrib-providers.mdx"
+      - "docs/content/docs/cua-sdk/guides/local-runtimes.mdx"
       - ".github/actions/cua-sandbox/**"
       - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
       - ".github/workflows/ci-cua-contrib.yml"

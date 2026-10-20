@@ -127,9 +127,8 @@ class _Recorder:
 
 
 class FakeSandbox:
-    def __init__(self, name: str = "fake", pool: Optional[str] = None, image_info: Any = None):
+    def __init__(self, name: str = "fake", image_info: Any = None):
         self.name = name
-        self.pool_name = pool
         self.files = FakeFiles()
         self.shell = FakeShell(self.files)
         self.screen = FakeScreen()
@@ -158,7 +157,7 @@ class FakeSandbox:
 
     @property
     def id(self) -> str:
-        return f"{'cloud' if self.pool_name else 'local'}:{self.name}"
+        return f"local:{self.name}"
 
 
 class FakeImage:
@@ -209,7 +208,6 @@ class FakeSDK:
                 cls,
                 image=None,
                 *,
-                pool=None,
                 on=None,
                 local=None,
                 runtime=None,
@@ -218,16 +216,11 @@ class FakeSDK:
                 time_to_start=None,
                 server_port=None,
                 telemetry_enabled=True,
-                warm=None,
-                max_pool_size=None,
-                claim_ttl=None,
-                progress=None,
                 services=None,
             ):
                 kwargs = {
                     k: v
                     for k, v in dict(
-                        pool=pool,
                         on=on,
                         local=local,
                         runtime=runtime,
@@ -236,27 +229,17 @@ class FakeSDK:
                         time_to_start=time_to_start,
                         server_port=server_port,
                         telemetry_enabled=telemetry_enabled,
-                        warm=warm,
-                        max_pool_size=max_pool_size,
-                        claim_ttl=claim_ttl,
-                        progress=progress,
                         services=services,
                     ).items()
                     if v is not None
                 }
                 sdk.calls.append({"image": image, **kwargs})
-                ref = getattr(image, "ref", None) or getattr(image, "builtin", None) or "img"
-                cloud = kwargs.get("on") == "cloud" or kwargs.get("local") is False
-                pool = f"cua-auto-{abs(hash(ref)) % 10000}" if cloud else None
-                progress = kwargs.get("progress")
                 sdk.live += 1
                 sdk.peak = max(sdk.peak, sdk.live)
                 try:
                     if delay:
                         await asyncio.sleep(delay)
-                    if progress is not None:
-                        progress(SimpleNamespace(stage="ready", pool=pool, message="ready"))
-                    sb = FakeSandbox(f"sb-{len(sdk.calls)}", pool, sdk.image_info)
+                    sb = FakeSandbox(f"sb-{len(sdk.calls)}", sdk.image_info)
                     sb.display = sdk.display
                     sdk.sandboxes.append(sb)
                     yield sb

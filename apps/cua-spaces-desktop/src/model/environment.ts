@@ -29,6 +29,8 @@ import { LiveGate, PendingAccount, PendingSpacesBackend, type LiveServices } fro
 import { LiveAccount, LiveTelemetry, hostAccount } from "./services";
 import { BundledCuaKeychain, StartupModel } from "./startup";
 import { withTimeout } from "./time";
+import { LinuxRuntime, nodeLinuxSystem, type RelaunchSpec } from "./linux-runtime";
+import { WindowsRuntime, nodeWindowsSystem } from "./windows-runtime";
 
 /** Whether the first run finished (`onboarding.json`'s `completed`); null when unknown. */
 export function readOnboardingCompleted(file: string): boolean | null {
@@ -51,6 +53,8 @@ export interface EnvironmentOptions {
   openUrl: (url: string) => Promise<boolean>;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  /** Linux: starts this app again as given and quits (Electron's `app.relaunch` and `app.exit`); without it no restart fix is offered. */
+  relaunch?: (spec: RelaunchSpec) => void;
 }
 
 export interface Environment {
@@ -99,6 +103,9 @@ export function makeModel(o: EnvironmentOptions): Environment {
   const backend = new PendingSpacesBackend(gate);
   const account = new PendingAccount(gate);
   const telemetry = new LiveTelemetry(native);
+  // A first run that finished here had the notice on its Welcome page;
+  // earlier builds never recorded that, so their machines sent nothing.
+  if (!firstRunDue) telemetry.acknowledgeNotice();
   const host = new HostModel(native, null);
   const devices = new DevicesModel(native, () => gate.current?.devices ?? null);
   const cloud = new CloudModel(native, () => backend.current);
@@ -124,6 +131,8 @@ export function makeModel(o: EnvironmentOptions): Environment {
     checklistPath: path.join(path.dirname(settingsPath), "checklist.json"),
     checklistSeedPath: platform === "darwin" ? path.join(swiftSupportDir(env.HOME || os.homedir()), "checklist.json") : null,
     hostOs: platform === "win32" ? native.AppSpaceOs.Windows : platform === "linux" ? native.AppSpaceOs.Linux : native.AppSpaceOs.Macos,
+    windowsRuntime: platform === "win32" ? new WindowsRuntime(nodeWindowsSystem(), path.join(os.tmpdir(), "cua-spaces")) : null,
+    linuxRuntime: platform === "linux" && o.relaunch ? new LinuxRuntime(nodeLinuxSystem(o.relaunch, env), env) : null,
   });
 
   // Signed out is null (setup signs in first); anything else is the error itself.
@@ -175,10 +184,10 @@ export async function makeLiveServices(native: Native, supervisor: DaemonSupervi
  * The SDK on this app's own daemon (`Cua.auto`: the daemon when it accepts
  * connections, else embedded). When another build's daemon came up in
  * between, the SDK refuses it with `DaemonNotRunning`, and one more start
- * replaces it. Cua Cloud uses the signed-in session.
+ * replaces it. The signed-in session drives the relay account.
  */
 async function makeCua(native: Native, supervisor: DaemonSupervisor | null): Promise<CuaLike> {
-  const config = native.CuaConfig.create({ fleetFromEnv: true, fleetFromSession: true });
+  const config = native.CuaConfig.create({ accountFromSession: true });
   try {
     return native.Cua.auto(config);
   } catch (error) {

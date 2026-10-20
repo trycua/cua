@@ -64,13 +64,13 @@ impl ChecklistStep {
     fn copy(self) -> (&'static str, &'static str, &'static str) {
         match self {
             ChecklistStep::AddMachine => (
-                "Add a machine",
+                "Add a computer",
                 "Connect a Mac, Linux or Windows computer you own.",
-                "Add machine",
+                "Add computer",
             ),
             ChecklistStep::CreateSpace => (
                 "Create a Space",
-                "A computer for one task, on one of your machines.",
+                "A computer for one task, on one of your computers.",
                 "Create",
             ),
             ChecklistStep::Teleport => (
@@ -354,7 +354,7 @@ pub fn view(state: &ChecklistState) -> ChecklistView {
         detail: if complete {
             "Your team and its agents can now share computers you own."
         } else {
-            "Shared computers for your team and its agents, on machines you own."
+            "Shared computers for your team and its agents, on computers you own."
         }
         .into(),
         progress: format!("{count} of {}", STEPS.len()),
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(
             rows,
             [
-                ("Add a machine", "Add machine", false),
+                ("Add a computer", "Add computer", false),
                 ("Create a Space", "Create", false),
                 ("Teleport an app", "Teleport", true),
                 ("Share a Space", "Share", false),
@@ -562,6 +562,9 @@ mod tests {
             space_id: None,
             stopped_sharing: false,
             last_seen: None,
+            status: "Online".into(),
+            spaces: 0,
+            spaces_label: "No Spaces".into(),
         }
     }
 

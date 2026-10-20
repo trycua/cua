@@ -66,7 +66,7 @@ impl OnboardingStep {
             OnboardingStep::Signin => "Sign in",
             OnboardingStep::Agents => "AI agents",
             OnboardingStep::Drive => "Cua Volume",
-            OnboardingStep::Mode => "This machine",
+            OnboardingStep::Mode => "This computer",
             OnboardingStep::Done => "Done",
         }
     }
@@ -206,7 +206,7 @@ pub struct OnboardingState {
     #[serde(default = "ticked")]
     pub launch_at_login: bool,
     /// The usage-data switch on Welcome: the machine's telemetry setting
-    /// (Settings' "Share anonymous usage data", `cua telemetry off`), none
+    /// (Settings' "Share usage data to help improve Cua", `cua telemetry off`), none
     /// until the shell read it (then it shows on).
     #[serde(default)]
     pub telemetry: Option<TelemetryInput>,
@@ -220,6 +220,10 @@ pub struct OnboardingState {
     /// Welcome shows again (Back).
     #[serde(default)]
     pub run_counted: bool,
+    /// A page opened from Done's to-do list: leaving it (Continue, Skip or
+    /// Back) comes back to Done.
+    #[serde(default)]
+    pub revisit: bool,
 }
 
 fn ticked() -> bool {
@@ -351,7 +355,7 @@ pub enum OnboardingAction {
     /// On a machine that already showed the usage notice, with usage data
     /// on, the run's start counts now rather than when Welcome is left.
     WelcomeShown,
-    /// Welcome's "Share anonymous usage data" switch (not while the
+    /// Welcome's "Share usage data to help improve Cua" switch (not while the
     /// environment decides). The shell writes the setting.
     UsageDataToggled {
         /// On.
@@ -363,6 +367,19 @@ pub enum OnboardingAction {
     ExperimentsLoaded {
         /// The switches.
         experiments: Experiments,
+    },
+    /// A to-do on Done was clicked: its page opens, and leaving it comes
+    /// back to Done. Cua Volume needs its experiment on first (the shell
+    /// turns it on and sends `experiments-loaded`).
+    TodoChosen {
+        /// Which.
+        id: OnboardingTodoId,
+    },
+    /// The coding agents that already use cua (set up earlier, from the
+    /// CLI or Settings), as the shell read them. Any page.
+    AgentsDetected {
+        /// Their names.
+        configured: Vec<String>,
     },
 }
 
@@ -397,6 +414,7 @@ pub fn initial(
         telemetry: None,
         experiments: Experiments::default(),
         run_counted: false,
+        revisit: false,
     }
 }
 
@@ -456,6 +474,18 @@ fn drive_usable(s: &OnboardingState) -> bool {
 
 /// Advances the flow. Out-of-order actions are ignored.
 pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
+    let mut n = reduce_page(s, a);
+    // A page opened from Done: whatever leaves it (Back too, even from a
+    // page this run otherwise skips) lands on Done again.
+    let back = matches!(a, OnboardingAction::Back) && !s.cli_installing;
+    if s.revisit && s.step != OnboardingStep::Done && (n.step != s.step || back) {
+        n.step = OnboardingStep::Done;
+        n.revisit = false;
+    }
+    n
+}
+
+fn reduce_page(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
     use OnboardingStep::*;
     let mut n = s.clone();
     match (s.step, a) {
@@ -471,14 +501,18 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
         (_, OnboardingAction::CliInstalled { target }) => n.cli_target = target.clone(),
         (_, OnboardingAction::CliPlanned { plan }) => {
             n.cli_plan = Some(plan.clone());
-            if plan.up_to_date {
+            // A working `cua` anywhere it is usually installed (install.sh's
+            // copy included), not only the app's own.
+            if let Some(found) = plan.found.clone() {
+                n.cli_target = Some(found);
+            } else if plan.up_to_date {
                 n.cli_target = Some(plan.target.clone());
             }
             if s.step == Cli && !cli_shown(&n) {
                 n.cli_installing = false;
                 n.step = next(s, Cli);
             }
-            if s.step != Welcome && !cli_shown(s) && cli_shown(&n) {
+            if !matches!(s.step, Welcome | Done) && !cli_shown(s) && cli_shown(&n) {
                 n.step = Cli;
             }
         }
@@ -499,12 +533,16 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
         (_, OnboardingAction::SignedIn { identity }) => n.identity = Some(identity.clone()),
         (Signin, OnboardingAction::SigninDone) => n.step = Agents,
         (Agents, OnboardingAction::AgentsDone { configured }) => {
-            n.agents = configured.clone();
+            // Added to the agents already found (a Skip keeps them).
+            for name in configured {
+                if !n.agents.contains(name) {
+                    n.agents.push(name.clone());
+                }
+            }
             n.step = Presentation;
         }
         (Mode, OnboardingAction::ModeChosen { mode }) => {
             n.mode = Some(*mode);
-            n.launch_at_login = *mode == OnboardingMode::Host;
             n.step = Done;
         }
         (_, OnboardingAction::DriveChecked { os, status }) => {
@@ -615,6 +653,26 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
             n.drive_error = Some(error.clone());
         }
         (Done, OnboardingAction::LaunchAtLoginToggled { on }) => n.launch_at_login = *on,
+        (Done, OnboardingAction::TodoChosen { id }) => {
+            let page = match id {
+                OnboardingTodoId::Cli => Some(Cli),
+                OnboardingTodoId::Signin => Some(Signin),
+                OnboardingTodoId::Agents => Some(Agents),
+                OnboardingTodoId::Volume => drive_shown(s).then_some(Drive),
+            };
+            if let Some(page) = page {
+                n.step = page;
+                n.revisit = true;
+                n.cli_error = None;
+            }
+        }
+        (_, OnboardingAction::AgentsDetected { configured }) => {
+            for name in configured {
+                if !n.agents.contains(name) {
+                    n.agents.push(name.clone());
+                }
+            }
+        }
         (_, OnboardingAction::TelemetryLoaded { telemetry }) => {
             n.telemetry = Some(telemetry.clone())
         }
@@ -688,8 +746,8 @@ pub struct OnboardingView {
     /// The presentation page's two cards, side by side.
     pub presentations: Vec<PresentationCard>,
     /// Done's example prompts ([`PROMPTS`]), one line each: shown under
-    /// both columns, scrolling slowly, to suggest what to ask a coding
-    /// agent. Not interactive.
+    /// both columns under "Try asking your agent:", to suggest what to ask a
+    /// coding agent. Each copies to the clipboard on click.
     pub prompts: Vec<String>,
     /// The first-run telemetry notice (the Welcome page, so the first run
     /// itself can be measured): nothing is sent before it has been shown
@@ -707,6 +765,11 @@ pub struct OnboardingView {
     pub drive: Option<DriveCard>,
     /// Done's "Launch at login" checkbox.
     pub launch_at_login: Option<OnboardingCheckbox>,
+    /// Done's to-do list: the Cua CLI, the account, an AI agent and Cua
+    /// Volume, each set up or with its fix. The title says "Almost done"
+    /// until every one that is not optional is.
+    #[serde(default)]
+    pub todos: Vec<OnboardingTodo>,
 }
 
 /// A checkbox with one muted line under it.
@@ -719,6 +782,39 @@ pub struct OnboardingCheckbox {
     pub checked: bool,
     /// The line under it.
     pub note: String,
+}
+
+/// A line of Done's to-do list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnboardingTodoId {
+    /// The Cua CLI.
+    Cli,
+    /// The Cua account.
+    Signin,
+    /// A coding agent that uses cua.
+    Agents,
+    /// Cua Volume (optional).
+    Volume,
+}
+
+/// One line of Done's to-do list: what is set up, and a one-click fix for
+/// what is not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingTodo {
+    /// Which.
+    pub id: OnboardingTodoId,
+    /// "Cua CLI".
+    pub title: String,
+    /// One plain line under it.
+    pub note: String,
+    /// Set up.
+    pub done: bool,
+    /// Nice to have: "You're all set" does not wait for it.
+    pub optional: bool,
+    /// The fix's button ("Install the Cua CLI"), while not done.
+    pub action: Option<String>,
 }
 
 /// The Cua Volume page's card: an animated miniature
@@ -911,11 +1007,11 @@ fn drive_fact(s: &OnboardingState) -> String {
 }
 
 /// One answer on the This machine page.
-/// Welcome's "Share anonymous usage data" switch.
+/// Welcome's "Share usage data to help improve Cua" switch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageToggle {
-    /// "Share anonymous usage data".
+    /// "Share usage data to help improve Cua".
     pub label: String,
     /// On.
     pub on: bool,
@@ -953,30 +1049,16 @@ pub struct PresentationCard {
     pub selected: bool,
 }
 
-/// Done's example prompts, in order. Each is something a coding agent
-/// with the cua MCP server and skills (set up on the AI agents page), the
-/// cua SDK and the Cua docs does today:
-///
-/// - QA on three OSes: `create_space` (the `windows`, `macos` and `linux`
-///   images), `upload`, `space_bash`, `open_space_viewer`;
-/// - an agent app on the SDK: `Space.agent_start` / `sandbox.agents()`
-///   (docs: Run a coding agent in a sandbox);
-/// - open an app and PiP it: `create_space`, `send_file`, `space_bash`,
-///   `show_space_pip`;
-/// - stream a window into an app: the SDK's `stream_space_window` and
-///   `stream_endpoint` (docs: Stream a desktop);
-/// - teleport a browser: `teleport_manifest`, `teleport_app`, then
+/// Done's example prompts: what to ask a coding agent once it has the cua
+/// skills and MCP server. Each works with the shipped tools:
+/// - a Linux test run: `create_space`, `upload`, `space_bash`;
+/// - finish a web task in a Space's browser: `teleport_browser_session`, then
 ///   `call_tool` on the Space's cua-driver;
-/// - a Cua Bench taskset: the Cua Bench quickstart and Write a task docs;
-/// - a Linux test run: `create_space`, `upload`, `space_bash`.
-pub const PROMPTS: [&str; 7] = [
-    "qa my app on windows, macos and linux",
-    "use the cua sdk to build an agent app that runs codex in a space",
-    "open my app in a space and pip it",
-    "use the cua sdk to stream a space's window into my app",
-    "teleport my browser into a space and finish the checkout test",
-    "use the cua docs to set up a cua bench taskset",
-    "spin up a linux space and run the test suite there",
+/// - sharing: `share_space` (role viewer).
+pub const PROMPTS: [&str; 3] = [
+    "Open a Linux Space and run my test suite in it",
+    "Use my Space's browser to finish the checkout test and show me",
+    "Share this Space with a teammate as a viewer",
 ];
 
 /// The presentation cards for a choice (notch first, the default).
@@ -1058,12 +1140,11 @@ pub struct OnboardingCopy {
     pub permissions_title: String,
     /// The permission rows' button.
     pub open_settings: String,
-    /// The Sign in page's Teams line ("Teams · coming soon").
+    /// The Sign in page's Teams line ("Teams · manage them at app.cua.ai").
     pub teams: String,
-    /// Its link ("Join the waitlist").
+    /// Its link ("Open the account app").
     pub teams_link: String,
-    /// The link's URL: the website's Teams waitlist (the app collects
-    /// nothing).
+    /// The link's URL: the account app, which administers teams.
     pub teams_url: String,
 }
 
@@ -1101,7 +1182,7 @@ pub fn copy() -> OnboardingCopy {
             crate::settings::TEAMS_VALUE.to_lowercase()
         ),
         teams_link: crate::settings::TEAMS_BUTTON.into(),
-        teams_url: crate::settings::TEAMS_WAITLIST_URL.into(),
+        teams_url: crate::settings::TEAMS_URL.into(),
     }
 }
 
@@ -1151,6 +1232,15 @@ fn cli_lede(plan: &CliInstallPlan) -> String {
     }
 }
 
+/// How the copy names the computer the app runs on.
+fn this_computer(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Macos => "this Mac",
+        SpaceOs::Windows => "this PC",
+        _ => "this computer",
+    }
+}
+
 /// The flow as drawn, in a Mac's words.
 pub fn view(s: &OnboardingState) -> OnboardingView {
     view_on(s, SpaceOs::Macos)
@@ -1167,9 +1257,17 @@ pub fn done_lede(os: SpaceOs) -> &'static str {
 
 /// [`view`] in the words of the system the app runs on (`os`).
 pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
+    view_for(s, os, true)
+}
+
+/// [`view_on`] for a shell with (`cli_page`) or without a Command line
+/// page: without one, Done neither lists the Cua CLI nor waits for it.
+pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingView {
     use crate::spaces::sidebar::Fact;
     use OnboardingStep::*;
     let cli = s.cli_plan.as_ref().map(cli_lede).unwrap_or_default();
+    let here = this_computer(os);
+    let mode_title = format!("How do you want to use {here}?");
     let (title, lede, primary) = match s.step {
         Welcome => (
             "Welcome to Cua Spaces",
@@ -1178,9 +1276,9 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         ),
         Cli => (
             if s.cli_plan.as_ref().is_some_and(|p| p.on_path) {
-                "Install the cua command"
+                "Install the Cua CLI"
             } else {
-                "Install the cua command and add it to your PATH"
+                "Install the Cua CLI and add it to your PATH"
             },
             cli.as_str(),
             if s.cli_installing {
@@ -1196,7 +1294,7 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         ),
         Signin => (
             "Sign in",
-            "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
+            "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
             "Continue",
         ),
         Agents => (
@@ -1216,42 +1314,28 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
             },
         ),
         Mode => (
-            "How will you use this machine?",
-            "You can change this later.",
+            mode_title.as_str(),
+            "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
             "Continue",
         ),
-        Done => ("You're all set", done_lede(os), "Start using Cua Spaces"),
+        Done => ("", "", "Start using Cua Spaces"),
+    };
+    let todos = if s.step == Done {
+        done_todos(s)
+            .into_iter()
+            .filter(|t| cli_page || t.id != OnboardingTodoId::Cli)
+            .collect()
+    } else {
+        vec![]
+    };
+    let left = todos.iter().filter(|t| !t.done && !t.optional).count();
+    let done_words = (s.step == Done).then(|| done_heading(left, os));
+    let (title, lede) = match &done_words {
+        Some((t, l)) => (t.as_str(), l.as_str()),
+        None => (title, lede),
     };
     let summary = if s.step == Done {
-        let mut facts = vec![
-            Fact {
-                label: "cua command".into(),
-                value: s
-                    .cli_target
-                    .clone()
-                    .unwrap_or_else(|| "not installed".into()),
-                copy: None,
-                help: None,
-                warning: None,
-            },
-            Fact {
-                label: "Account".into(),
-                value: s.identity.clone().unwrap_or_else(|| "not signed in".into()),
-                copy: None,
-                help: None,
-                warning: None,
-            },
-            Fact {
-                label: "AI agents".into(),
-                value: if s.agents.is_empty() {
-                    "none".into()
-                } else {
-                    s.agents.join(", ")
-                },
-                copy: None,
-                help: None,
-                warning: None,
-            },
+        vec![
             Fact {
                 label: "Shows in".into(),
                 value: if s.menu_bar {
@@ -1265,31 +1349,18 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
                 warning: None,
             },
             Fact {
-                label: "This machine".into(),
+                label: "This computer".into(),
                 value: if s.mode == Some(OnboardingMode::Host) {
-                    "Set up for unattended access"
+                    "Your other devices can reach it"
                 } else {
-                    "Access other machines"
+                    "Opens your other computers"
                 }
                 .into(),
                 copy: None,
                 help: None,
                 warning: None,
             },
-        ];
-        if drive_shown(s) {
-            facts.insert(
-                4,
-                Fact {
-                    label: "Cua Volume".into(),
-                    value: drive_fact(s),
-                    copy: None,
-                    help: None,
-                    warning: None,
-                },
-            );
-        }
-        facts
+        ]
     } else {
         vec![]
     };
@@ -1316,16 +1387,19 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         choices: if s.step == Mode {
             let pre = s.installer_mode.unwrap_or(OnboardingMode::Client);
             [
-                (OnboardingMode::Client, "Access other machines"),
+                (
+                    OnboardingMode::Client,
+                    format!("Just use {here} to open my other computers"),
+                ),
                 (
                     OnboardingMode::Host,
-                    "Set up this machine for unattended access",
+                    format!("Let my other devices reach {here}"),
                 ),
             ]
             .into_iter()
             .map(|(mode, label)| ModeChoice {
                 mode,
-                label: label.into(),
+                label,
                 preselected: mode == pre,
             })
             .collect()
@@ -1343,7 +1417,7 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
             vec![]
         },
         notice: (s.step == Welcome).then(|| {
-            "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy."
+            "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy."
                 .into()
         }),
         notice_link_label: (s.step == Welcome).then(|| "What is collected".into()),
@@ -1355,7 +1429,7 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
                 .and_then(|t| t.locked_by.clone())
                 .filter(|b| !b.is_empty());
             UsageToggle {
-                label: "Share anonymous usage data".into(),
+                label: "Share usage data to help improve Cua".into(),
                 on: s.shares_usage(),
                 enabled: locked.is_none(),
                 help: locked.map(|by| format!("Set by {by}")),
@@ -1367,7 +1441,103 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
             checked: s.launch_at_login,
             note: crate::login_item::note(s.experiments.cua_volume).into(),
         }),
+        todos,
     }
+}
+
+/// Done's heading and the line under it: "You're all set" only when it is
+/// true, else "Almost done" and how many things are left.
+pub fn done_heading(left: usize, os: SpaceOs) -> (String, String) {
+    let place = match os {
+        SpaceOs::Macos => "the menu bar",
+        _ => "the system tray",
+    };
+    match left {
+        0 => ("You're all set".into(), done_lede(os).into()),
+        1 => (
+            "Almost done".into(),
+            format!("One thing is left. You can finish it now, or later from {place}."),
+        ),
+        n => (
+            "Almost done".into(),
+            format!("{n} things are left. You can finish them now, or later from {place}."),
+        ),
+    }
+}
+
+/// The Cua CLI's one plain line (next to its name everywhere it shows).
+pub const CLI_HINT: &str = "Command-line tools for you and your agents.";
+/// Cua Volume's one plain line.
+pub const VOLUME_HINT: &str = "Shared folder: files your agents can share across your computers.";
+
+/// Done's to-do list, in page order. Cua Volume shows wherever it can
+/// mount (its experiment need not be on: "Turn on" turns it on).
+fn done_todos(s: &OnboardingState) -> Vec<OnboardingTodo> {
+    let todo = |id, title: &str, note: String, done: bool, optional, action: &str| OnboardingTodo {
+        id,
+        title: title.into(),
+        note,
+        done,
+        optional,
+        action: (!done).then(|| action.to_string()),
+    };
+    let signed_in = s.identity.as_deref().filter(|i| !i.is_empty());
+    let mut out = vec![
+        todo(
+            OnboardingTodoId::Cli,
+            "Cua CLI",
+            CLI_HINT.into(),
+            s.cli_target.is_some(),
+            false,
+            "Install the Cua CLI",
+        ),
+        todo(
+            OnboardingTodoId::Signin,
+            "Account",
+            match signed_in {
+                Some(id) => format!("Signed in as {id}."),
+                None => "Reach your computers from any device.".into(),
+            },
+            signed_in.is_some(),
+            false,
+            "Sign in",
+        ),
+        todo(
+            OnboardingTodoId::Agents,
+            "AI agents",
+            if s.agents.is_empty() {
+                "Let Claude Code, Codex and others use Cua.".into()
+            } else {
+                format!("{} can use Cua.", s.agents.join(", "))
+            },
+            !s.agents.is_empty(),
+            false,
+            "Connect an AI agent",
+        ),
+    ];
+    let can_mount = s.drive_os != Some(SpaceOs::Windows)
+        || s.drive_status.as_ref().is_some_and(|m| m.supported());
+    if can_mount {
+        let on = drive_fact(s);
+        let mounted = s.experiments.cua_volume
+            && s.drive_mount
+            && s.drive_status
+                .as_ref()
+                .is_some_and(|m| m.enabled && m.state == "mounted");
+        out.push(todo(
+            OnboardingTodoId::Volume,
+            "Cua Volume",
+            if s.experiments.cua_volume && on != "Off" {
+                format!("{VOLUME_HINT} {on}.")
+            } else {
+                VOLUME_HINT.into()
+            },
+            mounted,
+            true,
+            "Turn on",
+        ));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1387,14 +1557,111 @@ mod tests {
         )
     }
 
+    /// Done is honest: "Almost done" while the CLI, the account or an
+    /// agent is missing, with a fix for each; a fix opens its page and
+    /// leaving it comes back to Done.
+    #[test]
+    fn done_lists_what_is_missing_and_each_fix_comes_back() {
+        let done = OnboardingState {
+            step: OnboardingStep::Done,
+            mode: Some(OnboardingMode::Client),
+            ..initial(None, None)
+        };
+        let v = view(&done);
+        assert_eq!(v.title, "Almost done");
+        assert_eq!(
+            v.lede,
+            "3 things are left. You can finish them now, or later from the menu bar."
+        );
+        let fixes: Vec<_> = v.todos.iter().filter_map(|t| t.action.clone()).collect();
+        assert_eq!(
+            fixes,
+            [
+                "Install the Cua CLI",
+                "Sign in",
+                "Connect an AI agent",
+                "Turn on"
+            ]
+        );
+        assert!(
+            v.summary
+                .iter()
+                .any(|f| f.label == "This computer" && f.value == "Opens your other computers")
+        );
+        // Sign in from Done, then back to Done.
+        let at = reduce(
+            &done,
+            &OnboardingAction::TodoChosen {
+                id: OnboardingTodoId::Signin,
+            },
+        );
+        assert_eq!(at.step, OnboardingStep::Signin);
+        let signed = reduce(
+            &at,
+            &OnboardingAction::SignedIn {
+                identity: "ada@example.com".into(),
+            },
+        );
+        let back = reduce(&signed, &OnboardingAction::SigninDone);
+        assert_eq!(back.step, OnboardingStep::Done);
+        assert!(!back.revisit);
+        assert_eq!(
+            view(&back).lede.split('.').next(),
+            Some("2 things are left")
+        );
+        // Back from a page this run skipped (no Command line page) too.
+        let cli = reduce(
+            &back,
+            &OnboardingAction::TodoChosen {
+                id: OnboardingTodoId::Cli,
+            },
+        );
+        assert_eq!(cli.step, OnboardingStep::Cli);
+        assert_eq!(
+            reduce(&cli, &OnboardingAction::Back).step,
+            OnboardingStep::Done
+        );
+        // Cua Volume needs its experiment first: nothing until it is on.
+        let vol = OnboardingTodoId::Volume;
+        assert_eq!(
+            reduce(&back, &OnboardingAction::TodoChosen { id: vol }).step,
+            OnboardingStep::Done
+        );
+        // The CLI from install.sh and agents set up earlier count.
+        let found = reduce(
+            &back,
+            &OnboardingAction::CliPlanned {
+                plan: CliInstallPlan {
+                    found: Some("/h/.local/bin/cua".into()),
+                    ..plan(false, false)
+                },
+            },
+        );
+        assert_eq!(
+            found.step,
+            OnboardingStep::Done,
+            "a late plan never leaves Done"
+        );
+        let all = reduce(
+            &found,
+            &OnboardingAction::AgentsDetected {
+                configured: vec!["Codex".into()],
+            },
+        );
+        assert_eq!(view(&all).title, "You're all set");
+    }
+
     /// The last page says where the app stays: the menu bar on a Mac, the
     /// tray on Windows and Linux.
     #[test]
     fn done_names_the_menu_bar_only_on_a_mac() {
         let done = OnboardingState {
             step: OnboardingStep::Done,
-            ..initial(None, None)
+            cli_target: Some("/h/.local/bin/cua".into()),
+            agents: vec!["Claude Code".into()],
+            ..initial(None, Some("ada@example.com".into()))
         };
+        assert_eq!(view(&done).title, "You're all set");
         assert_eq!(view(&done).lede, "Cua Spaces is in your menu bar.");
         assert_eq!(view_on(&done, SpaceOs::Macos), view(&done));
         for os in [SpaceOs::Windows, SpaceOs::Linux] {
@@ -1403,6 +1670,38 @@ mod tests {
                 "Cua Spaces is in your system tray."
             );
         }
+        let one_left = OnboardingState {
+            agents: vec![],
+            ..done.clone()
+        };
+        assert_eq!(
+            view_on(&one_left, SpaceOs::Linux).lede,
+            "One thing is left. You can finish it now, or later from the system tray."
+        );
+    }
+
+    #[test]
+    fn the_mode_step_names_the_computer_in_everyday_words() {
+        let mut s = reduce(&initial(None, None), &OnboardingAction::Start);
+        s.step = OnboardingStep::Mode;
+        let mac = view_on(&s, SpaceOs::Macos);
+        assert_eq!(mac.title, "How do you want to use this Mac?");
+        let labels: Vec<_> = mac.choices.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Just use this Mac to open my other computers",
+                "Let my other devices reach this Mac"
+            ]
+        );
+        assert_eq!(
+            view_on(&s, SpaceOs::Windows).title,
+            "How do you want to use this PC?"
+        );
+        assert_eq!(
+            view_on(&s, SpaceOs::Linux).title,
+            "How do you want to use this computer?"
+        );
     }
 
     #[test]
@@ -1413,7 +1712,7 @@ mod tests {
             assert_eq!(v.title, "Sign in");
             assert_eq!(
                 v.lede,
-                "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it."
+                "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later."
             );
             assert!(v.can_skip);
         }
@@ -1455,7 +1754,14 @@ mod tests {
             },
         );
         let done = view(&s);
-        assert!(done.summary.iter().all(|f| f.label != "Cua Volume"));
+        let volume = done
+            .todos
+            .iter()
+            .find(|t| t.id == OnboardingTodoId::Volume)
+            .unwrap();
+        assert!(volume.optional && !volume.done, "offered, off");
+        assert_eq!(volume.action.as_deref(), Some("Turn on"));
+        assert_eq!(volume.note, VOLUME_HINT);
         assert_eq!(
             done.launch_at_login.unwrap().note,
             crate::login_item::NOTE_WITHOUT_VOLUME
@@ -1472,7 +1778,7 @@ mod tests {
         );
         let v = view(&on);
         assert!(v.dots.iter().any(|d| d.label == "Cua Volume"));
-        assert!(v.summary.iter().any(|f| f.label == "Cua Volume"));
+        assert!(v.todos.iter().any(|t| t.title == "Cua Volume"));
         assert_eq!(v.launch_at_login.unwrap().note, crate::login_item::NOTE);
         // Turned off while its page shows: on to the next page.
         let at = OnboardingState {
@@ -1514,6 +1820,7 @@ mod tests {
 
     fn plan(up_to_date: bool, on_path: bool) -> CliInstallPlan {
         CliInstallPlan {
+            found: up_to_date.then(|| "/h/.local/bin/cua".into()),
             source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
             target: "/h/.local/bin/cua".into(),
             bin_dir: "/h/.local/bin".into(),
@@ -1536,7 +1843,7 @@ mod tests {
         let s = reduce(&planned, &OnboardingAction::Start);
         assert_eq!(s.step, OnboardingStep::Cli);
         let v = view(&s);
-        assert_eq!(v.title, "Install the cua command and add it to your PATH");
+        assert_eq!(v.title, "Install the Cua CLI and add it to your PATH");
         assert_eq!(
             v.lede,
             "Copies cua to /h/.local/bin/cua and adds /h/.local/bin to PATH in /h/.zshrc."
@@ -1575,10 +1882,11 @@ mod tests {
                 plan: plan(false, true),
             },
         );
-        assert_eq!(view(&on_path).title, "Install the cua command");
+        assert_eq!(view(&on_path).title, "Install the Cua CLI");
         for p in [
             plan(true, true),
             CliInstallPlan {
+                found: None,
                 source: None,
                 ..plan(false, false)
             },
@@ -1603,6 +1911,7 @@ mod tests {
             &s,
             &OnboardingAction::CliPlanned {
                 plan: CliInstallPlan {
+                    found: None,
                     method: Some(InstallMethod::Symlink),
                     ..plan(false, true)
                 },
@@ -1744,10 +2053,12 @@ mod tests {
         let done = view(&s);
         assert_eq!(done.prompts, PROMPTS, "Done shows the example prompts");
         assert!(
-            done.prompts
-                .iter()
-                .all(|p| !p.contains('\n') && p.chars().count() <= 72 && p.to_lowercase() == *p),
-            "short lowercase lines"
+            done.prompts.len() == 3
+                && done
+                    .prompts
+                    .iter()
+                    .all(|p| !p.contains('\n') && p.chars().count() <= 72),
+            "short single lines"
         );
         s.step = OnboardingStep::Mode;
         assert!(view(&s).prompts.is_empty(), "only on Done");
@@ -1759,11 +2070,14 @@ mod tests {
                 .iter()
                 .any(|f| f.label == "Shows in" && f.value == "Menu bar only")
         );
-        assert!(
-            facts
-                .iter()
-                .any(|f| f.label == "cua command" && f.value == "/h/.local/bin/cua")
-        );
+        let cli = view(&s)
+            .todos
+            .into_iter()
+            .find(|t| t.id == OnboardingTodoId::Cli)
+            .unwrap();
+        assert!(cli.done && cli.action.is_none(), "{cli:?}");
+        assert_eq!(cli.title, "Cua CLI");
+        assert_eq!(cli.note, CLI_HINT);
     }
 
     fn mount(state: &str, enabled: bool) -> DriveMountInput {
@@ -1781,7 +2095,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_at_login_defaults_to_the_chosen_mode() {
+    fn launch_at_login_is_ticked_whatever_mode_is_chosen() {
         for installer_mode in [
             None,
             Some(OnboardingMode::Client),
@@ -1799,7 +2113,9 @@ mod tests {
                     s = reduce(&s, &action);
                 }
                 assert_eq!(s.step, OnboardingStep::Done);
-                let expected = mode == OnboardingMode::Host;
+                // Ticked for both modes: an unattended host needs it, and a
+                // client keeps its Spaces and agents after a restart.
+                let expected = true;
                 assert_eq!(s.launch_at_login, expected);
                 let checkbox = view(&s).launch_at_login.unwrap();
                 assert_eq!(checkbox.checked, expected);
@@ -1811,7 +2127,8 @@ mod tests {
                 assert_eq!(view(&s).launch_at_login.unwrap().checked, !expected);
                 s = reduce(&s, &OnboardingAction::Back);
                 s = reduce(&s, &OnboardingAction::ModeChosen { mode });
-                assert_eq!(s.launch_at_login, expected);
+                // Choosing the mode again keeps the user's untick.
+                assert_eq!(s.launch_at_login, !expected);
             }
         }
     }
@@ -1888,12 +2205,13 @@ mod tests {
                 mode: OnboardingMode::Client,
             },
         );
-        let fact = view(&s)
-            .summary
+        let volume = view(&s)
+            .todos
             .into_iter()
-            .find(|f| f.label == "Cua Volume")
+            .find(|t| t.id == OnboardingTodoId::Volume)
             .unwrap();
-        assert_eq!(fact.value, "Waiting for approval");
+        assert!(!volume.done);
+        assert!(volume.note.ends_with("Waiting for approval."), "{volume:?}");
     }
 
     #[test]

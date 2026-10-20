@@ -412,6 +412,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_account_app_url": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_agent_key_form": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -539,11 +544,6 @@ const DEFINITIONS = {
     },
     "uniffi_cua_spaces_ffi_fn_func_app_approve_view": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_spaces_ffi_fn_func_app_billing_status": {
-      args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -1142,6 +1142,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_picker_event_from_json": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_picker_grid_primary": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -1253,6 +1258,31 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_fn_func_app_relay_usage_view": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_resources_computer": {
+      args: [FfiType.RustBuffer, FfiType.UInt64],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_resources_space": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_resources_this_mac": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_resources_view": {
+      args: [FfiType.RustBuffer, FfiType.UInt64],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_resources_warning": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
@@ -1501,6 +1531,11 @@ const DEFINITIONS = {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_teams": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_fn_func_app_telemetry_creates": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int64],
@@ -2092,6 +2127,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_account_app_url": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form": {
       args: [],
       ret: FfiType.UInt16,
@@ -2218,11 +2258,6 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_approve_view": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_spaces_ffi_checksum_func_app_billing_status": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -2822,6 +2857,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_picker_event_from_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_primary": {
       args: [],
       ret: FfiType.UInt16,
@@ -2933,6 +2973,31 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_relay_usage_view": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_resources_computer": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_resources_space": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_resources_this_mac": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_resources_view": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_resources_warning": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -3178,6 +3243,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_stream_section": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_teams": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -3948,6 +4018,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_about_refresh_notice(report: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_about_restart_daemon(check: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_spaces_ffi_fn_func_app_about_view(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_account_app_url(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_form(input: Uint8Array, form: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_form_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_name_problem(name: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -3974,7 +4045,6 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_approve_reduce(state: Uint8Array, action: Uint8Array, devices: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_approve_sheet_action_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_approve_view(state: Uint8Array, devices: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_spaces_ffi_fn_func_app_billing_status(status: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_catalog_entries_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_catalog_entry(entry: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_checklist_observe_from(seen: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4094,6 +4164,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_picker_app_grid(state: Uint8Array, windows: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_can_plan(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_spaces_ffi_fn_func_app_picker_consent(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_picker_event_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_grid_primary(tab: Uint8Array, spaceName: Uint8Array, grid: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_grid_step(grid: Uint8Array, selected: Uint8Array, delta: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_grid_tabs(spaceName: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4117,6 +4188,11 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_refresh_report_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_relay_usage(devices: bigint, accountToken: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_func_app_relay_usage_view(usage: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_resources_computer(computer: Uint8Array, nowMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_resources_space(space: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_resources_this_mac(computer: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_resources_view(snapshot: Uint8Array, nowMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_resources_warning(warning: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_review_remember(choices: Uint8Array, key: Uint8Array, domains: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_review_remember_key(app: Uint8Array, space: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_review_remembered(choices: Uint8Array, key: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4166,6 +4242,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_stream_pip_click(open: Uint8Array, row: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_stream_pip_reduce(open: Uint8Array, event: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_stream_section(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_teams(accountToken: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_creates(state: Uint8Array, action: Uint8Array, nowMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_enroll(state: Uint8Array, action: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_experiments_changed(before: Uint8Array, after: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4284,6 +4361,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_about_refresh_notice(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_about_restart_daemon(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_about_view(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_account_app_url(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_name_problem(): number;
@@ -4310,7 +4388,6 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_approve_reduce(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_approve_sheet_action_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_approve_view(): number;
-    uniffi_cua_spaces_ffi_checksum_func_app_billing_status(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_catalog_entry(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_checklist_observe_from(): number;
@@ -4430,6 +4507,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_picker_app_grid(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_can_plan(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_consent(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_picker_event_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_primary(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_step(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_tabs(): number;
@@ -4453,6 +4531,11 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_refresh_report_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_relay_usage(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_relay_usage_view(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_resources_computer(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_resources_space(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_resources_this_mac(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_resources_view(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_resources_warning(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_review_remember(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_review_remember_key(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_review_remembered(): number;
@@ -4502,6 +4585,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_stream_pip_click(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_stream_pip_reduce(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_stream_section(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_teams(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_creates(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_enroll(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_experiments_changed(): number;

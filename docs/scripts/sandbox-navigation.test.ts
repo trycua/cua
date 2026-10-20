@@ -1,4 +1,4 @@
-// The Cua SDK and Cua Fleets trees: short task guides, local and cloud on the
+// The Cua SDK tree: short task guides, local and cloud on the
 // same pages, and every removed slug redirected to the page that replaced it.
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
@@ -29,21 +29,23 @@ test('the Cua SDK has its task guides and one concept page', async () => {
   assert.deepEqual(guides.pages, [
     'images',
     'services',
-    'secrets',
-    'sidecars',
     'lifecycle',
     'desktop',
+    'spacesd',
     'local-runtimes',
-    'disk-usage',
-    'cloud',
-    'contrib-providers',
     'test-in-ci',
     'run-a-coding-agent',
-    'browse-the-web',
     'agent-frameworks',
     'omarchy',
+    'cua-cloud-ended',
   ]);
-  assert.deepEqual((await metadata('cua-sdk/concepts')).pages, ['how-sandboxes-work']);
+  assert.deepEqual((await metadata('cua-sdk/concepts')).pages, [
+    'how-sandboxes-work',
+    'telemetry',
+    'telemetry-events',
+    'telemetry-counting',
+    'telemetry-error-kinds',
+  ]);
   for (const slug of guides.pages) {
     assert.equal(await routeExists(`/cua-sdk/guides/${slug}`), true, slug);
   }
@@ -72,10 +74,8 @@ test('entry pages link only to existing routes', async () => {
   for (const page of [
     'cua-sdk/index.mdx',
     'cua-sdk/quickstart.mdx',
-    'cua-sdk/guides/cloud.mdx',
     'cua-sdk/guides/local-runtimes.mdx',
-    'fleets/index.mdx',
-    'fleets/quickstart.mdx',
+    'cua-sdk/guides/cua-cloud-ended.mdx',
   ]) {
     const body = await readFile(path.join(content, page), 'utf8');
     const urls = [...body.matchAll(/\[[^\]]+\]\((\/[^)]+)\)/g)].map((match) => match[1]);
@@ -92,12 +92,16 @@ test('removed Sandbox and Fleet pages redirect to the page that replaced them', 
     'cua-sdk/guides/choose-an-image': 'cua-sdk/guides/images',
     'cua-sdk/guides/mcp': 'cua-sdk/guides/services',
     'cua-sdk/guides/control-the-desktop-with-cua-driver': 'cua-sdk/guides/desktop',
-    'cua-sdk/guides/set-up-fleet-credentials': 'cua-sdk/guides/cloud',
+    'cua-sdk/guides/set-up-fleet-credentials': 'cua-sdk/guides/cua-cloud-ended',
+    'cua-sdk/guides/cloud': 'cua-sdk/guides/cua-cloud-ended',
     'cua-sdk/guides/examples/minecraft': 'cua-sdk/guides/agent-frameworks',
     'cua-sdk/concepts/architecture': 'cua-sdk/concepts/how-sandboxes-work',
-    'fleets/concepts/pools-claims-and-guest-services': 'fleets',
-    'fleets/guides/claim-a-sandbox': 'fleets/guides/capacity-and-claims',
-    'fleets/guides/recover-first-cloud-fleet': 'fleets/guides/troubleshoot',
+    'fleets': 'cua-sdk/guides/cua-cloud-ended',
+    'fleets/concepts/pools-claims-and-guest-services': 'cua-sdk/guides/cua-cloud-ended',
+    'fleets/guides/claim-a-sandbox': 'cua-sdk/guides/cua-cloud-ended',
+    'fleets/guides/images': 'cua-sdk/guides/images',
+    'fleets/guides/sidecars': 'cua-sdk/guides/services',
+    'fleets/guides/claim-secrets': 'cua-sdk/guides/services',
   };
   for (const [from, to] of Object.entries(expected)) {
     assert.equal(redirects[from], to, from);

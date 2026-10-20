@@ -89,7 +89,7 @@ pub struct LocalStartSpec {
     /// How long the backend may take to report running.
     pub ready_timeout: Duration,
     /// Boot firmware for VM backends (`bios` / `efi`); `None` lets the
-    /// backend decide. Set from a Fleet template's `firmware`.
+    /// backend decide. Set from an image's `firmware`.
     #[serde(default)]
     pub firmware: Option<String>,
     /// Extra containers sharing the instance's network namespace
@@ -336,6 +336,19 @@ pub trait LocalRuntime: Send + Sync {
         None
     }
 
+    /// Why the instance `name` (that `runtime_type` runs) stopped, once it
+    /// has: its engine's exit record. `None` while it runs, when the engine
+    /// keeps no such record, or when the engine is not up now (this never
+    /// boots one). Default: none.
+    async fn stop_reason(
+        &self,
+        name: &str,
+        runtime_type: &str,
+    ) -> RuntimeResult<Option<crate::StopReason>> {
+        let _ = (name, runtime_type);
+        Ok(None)
+    }
+
     /// Copy-on-write clone of a stopped instance or checkpoint.
     async fn fork(&self, source: &str, new_name: &str) -> RuntimeResult<()> {
         Err(RuntimeError::Unsupported {
@@ -432,8 +445,8 @@ pub trait LocalRuntime: Send + Sync {
     /// ([`RuntimeError::UnsupportedImage`]).
     async fn build_image(
         &self,
-        spec: &cua_fleet::BuildSpec,
-        creds: Option<&cua_fleet::RegistryCredentials>,
+        spec: &cua_image::build::BuildSpec,
+        creds: Option<&cua_image::RegistryCredentials>,
     ) -> RuntimeResult<String> {
         let _ = (spec, creds);
         Err(RuntimeError::Unsupported {

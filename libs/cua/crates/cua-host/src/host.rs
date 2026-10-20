@@ -689,7 +689,7 @@ pub(crate) fn hostname() -> String {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "this machine".into())
+        .unwrap_or_else(|| "this computer".into())
 }
 
 /// The name a person knows this machine by, for display and as the default
@@ -1316,7 +1316,7 @@ impl Host {
         }
         status.paused_signed_out = config.paused_signed_out;
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
-            match self.relay_machine(url, id).await {
+            match recall_relay_view(url, id, self.relay_machine(url, id).await) {
                 Ok(m) => {
                     status.online = Some(m.online);
                     // Paused: nobody can reach it, whatever the relay's
@@ -1407,7 +1407,7 @@ impl Host {
 
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
-            Error::NotFound("this machine is not set up for access (run `cua host setup`)".into())
+            Error::NotFound("this computer is not set up for access (run `cua host setup`)".into())
         })
     }
 
@@ -1525,7 +1525,7 @@ impl Host {
             && !owned_by(p, account)
         {
             return Err(Error::InvalidArgument(
-                "this machine is shared with another Cua account; remove the host setup \
+                "this computer is shared with another Cua account; remove the host setup \
                  and set it up again to share it with this one"
                     .into(),
             ));
@@ -1560,7 +1560,7 @@ impl Host {
         let mut config = self.require_config()?;
         let (Some(url), Some(id)) = (config.relay_url.clone(), config.machine_id.clone()) else {
             return Err(Error::InvalidArgument(
-                "name and allowlist live on the relay; this machine is in direct mode".into(),
+                "name and allowlist live on the relay; this computer is in direct mode".into(),
             ));
         };
         let token = tokens.access_token().await?;
@@ -1573,6 +1573,7 @@ impl Host {
                     allow: allow.clone(),
                     viewers: None,
                     sharing: None,
+                    meta: None,
                 },
             )
             .await?;
@@ -1639,7 +1640,7 @@ impl Host {
         let provided = crate::provided::load_provided(&self.paths.dir)?;
         if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
-                "this machine still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
+                "this computer still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
                 provided.len(),
                 if provided.len() == 1 { "" } else { "s" },
                 provided
@@ -1679,13 +1680,48 @@ impl Host {
             note(e);
         }
         self.manager_for_config(&config).uninstall()?;
-        std::fs::remove_dir_all(&self.paths.dir)?;
+        remove_dir_retrying(&self.paths.dir).await?;
         match relay_error {
             Some(e) => Err(Error::Relay(format!(
                 "removed locally, but the relay could not be told: {e}"
             ))),
             None => Ok(()),
         }
+    }
+}
+
+/// How long [`Host::status`] keeps the relay's last answer about this
+/// machine while the relay is briefly unreachable, before it shows the
+/// failure ("Needs attention"). A relay deploy replaces its one pod, and
+/// the proxy in front of it answers 503 for about 20 s meanwhile; the
+/// host service reconnects on its own.
+pub const RELAY_HICCUP_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The relay's last answer about each machine (relay URL, machine id),
+/// and when it came.
+type RelayViews = std::collections::HashMap<(String, String), (std::time::Instant, crate::Machine)>;
+static RELAY_VIEWS: std::sync::Mutex<Option<RelayViews>> = std::sync::Mutex::new(None);
+
+/// `read` (the relay's answer about machine `id`), remembered when it
+/// worked; a transient failure ([`Error::is_transient`]) within
+/// [`RELAY_HICCUP_GRACE`] of the last answer gets that answer instead.
+fn recall_relay_view(url: &str, id: &str, read: Result<crate::Machine>) -> Result<crate::Machine> {
+    let key = (url.to_string(), id.to_string());
+    let mut views = RELAY_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let views = views.get_or_insert_with(Default::default);
+    match read {
+        Ok(m) => {
+            views.insert(key, (std::time::Instant::now(), m.clone()));
+            Ok(m)
+        }
+        Err(e) if e.is_transient() => match views.get(&key) {
+            Some((at, m)) if at.elapsed() < RELAY_HICCUP_GRACE => {
+                tracing::debug!("relay status read failed; showing its last answer: {e}");
+                Ok(m.clone())
+            }
+            _ => Err(e),
+        },
+        Err(e) => Err(e),
     }
 }
 
@@ -1714,6 +1750,23 @@ async fn install_driver(explicit: Option<&Path>, dest: &Path) -> Result<()> {
         DriverSource::Local(_) => {}
     }
     driver::install_to(&source, dest).await
+}
+
+/// `remove_dir_all`, retried for up to 5 s: Windows releases a stopped
+/// driver's files (its exe, driver.log) a moment after it exits (CUA-1749).
+async fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if tries >= 20 => return Err(e),
+            Err(_) => {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1856,5 +1909,17 @@ mod tests {
             std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[tokio::test]
+    async fn remove_dir_retrying_removes_and_tolerates_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host");
+        std::fs::create_dir_all(host.join("bin")).unwrap();
+        std::fs::write(host.join("driver.log"), "x").unwrap();
+        super::remove_dir_retrying(&host).await.unwrap();
+        assert!(!host.exists());
+        // Already gone (removed by another step): not an error.
+        super::remove_dir_retrying(&host).await.unwrap();
     }
 }

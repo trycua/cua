@@ -245,7 +245,6 @@ pub fn run_session(script_json: &str) -> Result<String> {
                 Node::Array(
                     [
                         SpaceProvider::Local,
-                        SpaceProvider::Fleet,
                         SpaceProvider::Demo,
                         SpaceProvider::Unknown,
                     ]
@@ -305,7 +304,7 @@ pub fn run_session(script_json: &str) -> Result<String> {
     // -- attaching to what is not there -----------------------------------
     sections.push((
         "attach_to_absent_space",
-        error_node(connection.attach("fleet:not-here", true).err()),
+        error_node(connection.attach("local:not-here", true).err()),
     ));
 
     // -- windows ----------------------------------------------------------
@@ -727,7 +726,7 @@ pub fn run_session(script_json: &str) -> Result<String> {
                 error_node({
                     let elsewhere = manifest
                         .approving(
-                            "fleet:elsewhere",
+                            "local:elsewhere",
                             &["claude/.credentials.json".to_string()],
                             true,
                         )

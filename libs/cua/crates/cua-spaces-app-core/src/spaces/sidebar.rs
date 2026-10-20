@@ -12,14 +12,14 @@ use crate::model::{
 use serde::{Deserialize, Serialize};
 
 /// Section titles, in order.
-pub const SECTION_ORDER: [&str; 4] = ["Cua Cloud", "This Mac", "Connected", "My machines"];
+pub const SECTION_ORDER: [&str; 4] = ["Cua Cloud", "This Mac", "Connected", "My computers"];
 
 fn section_of(p: Option<SpaceProvider>) -> &'static str {
     match p.unwrap_or(SpaceProvider::Cloud) {
         SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "Connected",
-        SpaceProvider::Relay => "My machines",
+        SpaceProvider::Relay => "My computers",
     }
 }
 
@@ -43,7 +43,7 @@ pub fn status_text(space: &Space) -> String {
             return power_verb(power.control, on).into();
         }
         if power.off && space.status == SpaceStatus::Suspended {
-            return super::off_label(power.control).into();
+            return super::off_text(power);
         }
     }
     match space.status {
@@ -733,12 +733,22 @@ pub fn delete_failed_text(name: &str, error: &str) -> String {
     )
 }
 
-/// Memory and storage use of a Space (the SDK's `Space.usage`), for its
-/// Memory and Storage facts. A size shows only when it is the guest's own
+/// Processor, memory and storage use of a Space (the SDK's `Space.usage`),
+/// for its Memory and Storage facts and its resource panel
+/// ([`crate::resources`]). A size shows only when it is the guest's own
 /// limit (`*_limited`: a VM, a container's cgroup memory limit).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpaceUsage {
+    /// Cores the guest sees (0 from a guest that does not report it).
+    #[serde(default)]
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    #[serde(default)]
+    pub cpu_percent: f64,
+    /// 1-minute load average.
+    #[serde(default)]
+    pub load_average_1m: f64,
     /// Memory in use, bytes.
     pub memory_used: u64,
     /// Memory size, bytes.
@@ -1198,8 +1208,8 @@ mod tests {
         );
     }
 
-    /// Sharing off (the default): no Share button; on: Share, between
-    /// Picture in picture and Delete as before.
+    /// Sharing on (the default): Share, between
+    /// Picture in picture and Delete as before; off: no Share button.
     #[test]
     fn the_sharing_experiment_decides_the_share_button() {
         use crate::experiments::Experiments;
@@ -1211,11 +1221,14 @@ mod tests {
                 .map(|a| a.id)
                 .collect()
         };
-        assert!(!ids(&Experiments::default()).contains(&DetailActionId::Share));
-        let on = ids(&Experiments {
-            sharing: true,
-            ..Default::default()
-        });
+        assert!(
+            !ids(&Experiments {
+                sharing: false,
+                ..Default::default()
+            })
+            .contains(&DetailActionId::Share)
+        );
+        let on = ids(&Experiments::default());
         assert_eq!(
             on.iter().position(|a| *a == DetailActionId::Share),
             Some(2),
@@ -1481,8 +1494,8 @@ mod tests {
             let mine = view
                 .sections
                 .iter()
-                .find(|s| s.title == "My machines")
-                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
+                .find(|s| s.title == "My computers")
+                .unwrap_or_else(|| panic!("no My computers for {features:?} {error:?}: {view:?}"));
             assert_eq!(
                 mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                 [other.as_str()],
@@ -1682,6 +1695,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         };
         let d = detail(&super::super::row_to_space(&row, 0));
         // Added by address: no image row, so only the identifier copies.
@@ -1730,6 +1744,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         };
         let space = super::super::creating::deleting_space(&super::super::row_to_space(&row, 0));
         let d = detail(&space);
@@ -1770,7 +1785,7 @@ mod tests {
         let mine = v
             .sections
             .iter()
-            .find(|s| s.title == "My machines")
+            .find(|s| s.title == "My computers")
             .unwrap();
         let rows: Vec<(&str, bool)> = mine
             .rows
@@ -1800,6 +1815,32 @@ mod tests {
         }))
         .unwrap();
         super::super::row_to_space(&row, 0)
+    }
+
+    #[test]
+    fn a_space_that_stopped_on_its_own_says_why() {
+        let row: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": "local:a", "name": "box", "provider": "local", "os": "linux",
+            "reachable": false, "power": "stop", "powerState": "stopped",
+            "stopReason": "out of memory",
+        }))
+        .unwrap();
+        let s = super::super::row_to_space(&row, 0);
+        assert_eq!(status_text(&s), "Stopped: out of memory");
+        assert_eq!(s.detail, "Stopped: out of memory");
+        // Turned off on purpose: one word, as before.
+        let asked = powered("local:a", "stop", Some("stopped"), false);
+        assert_eq!(status_text(&asked), "Stopped");
+        // A reason never shows on a Space that runs again.
+        let running: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": "local:a", "name": "box", "provider": "local", "os": "linux",
+            "reachable": true, "power": "stop", "powerState": "running",
+            "stopReason": "out of memory",
+        }))
+        .unwrap();
+        let s = super::super::row_to_space(&running, 0);
+        assert_eq!(status_text(&s), "Running");
+        assert_eq!(s.power.and_then(|p| p.stop_reason), None);
     }
 
     fn help(s: &Space) -> Option<(String, bool, bool)> {

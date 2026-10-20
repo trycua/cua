@@ -549,6 +549,7 @@ impl BrowserPointerTool {
             "status": "ok",
             "action": request.action.as_str(),
             "route": request.route.as_str(),
+            "delivery_mode": if request.foreground && request.route == InputRoute::Trusted { "foreground" } else { "background" },
             "target_id": validated.record.target_id,
             "tab_id": validated.tab.tab_id,
             "ref": external_ref,

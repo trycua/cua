@@ -16,6 +16,7 @@ import { useCreateFromWizard } from "@/hooks/use-new-space";
 import { ConnectCloudDialog } from "./connect-cloud-dialog";
 import { ImageField } from "./image-field";
 import { MenuSelect } from "./menu-select";
+import { RuntimeFixRow } from "./runtime-fix";
 
 /**
  * New Space: System, Resources, Options, Summary, as the native app's sheet.
@@ -43,8 +44,9 @@ export function NewSpaceDialog() {
         open={wizard.open && view !== null}
         onOpenChange={(open) => {
           if (open) return;
-          // Escape closes the image suggestions first.
+          // Escape closes the image suggestions, or a typed value, first.
           if (view?.imageField.open) return send({ type: "dismiss-image-suggestions" });
+          if (view?.resourceEdit) return send({ type: "cancel-resource" });
           wizard.close();
         }}
       >
@@ -357,6 +359,7 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
               ) : (
                 error
               )}
+              {error && !v.runtimeSwitch && v.plan.placement === "local" ? <RuntimeFixRow /> : null}
               {v.placementHint ? <Note data-placement-hint="">{v.placementHint}</Note> : null}
             </>
           }
@@ -396,7 +399,77 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
 
 /* ---- Resources ------------------------------------------------------------- */
 
-function Slider({ id, label, value, min, max, text, title, onChange }: { id: string; label: string; value: number; min: number; max: number; text: string; title?: string; onChange: (n: number) => void }) {
+/** The slider's number: click it to type a value. The core checks it against
+ * the slider's own limits (`edit-resource` / `set-resource-text` /
+ * `commit-resource`); Return or leaving the field uses it, Escape keeps the
+ * slider's value. */
+function SliderValue({ id, label, text, edit }: { id: "cpus" | "memory" | "disk"; label: string; text: string; edit: WizardView["resourceEdit"] }) {
+  const { send } = useNewSpaceWizard();
+  if (edit?.field === id) {
+    return (
+      <input
+        id={`ns-${id}-value`}
+        data-value-input={id}
+        autoFocus
+        inputMode="numeric"
+        spellCheck={false}
+        autoComplete="off"
+        aria-label={label}
+        aria-invalid={Boolean(edit.error)}
+        aria-describedby={edit.error ? `ns-${id}-error` : undefined}
+        value={edit.text}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => send({ type: "set-resource-text", text: e.target.value })}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            send({ type: "commit-resource" });
+          } else if (e.key === "Escape") {
+            // Keeps the sheet open: only the typed value is dropped.
+            e.preventDefault();
+            e.stopPropagation();
+            send({ type: "cancel-resource" });
+          }
+        }}
+        onBlur={() => send({ type: "commit-resource" })}
+        className="h-6 w-16 rounded-md border border-input bg-transparent px-1.5 text-right text-[13px] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/60 aria-invalid:border-destructive"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-value-text={id}
+      title={`Type a value for ${label.toLowerCase()}`}
+      onClick={() => send({ type: "edit-resource", field: id })}
+      className="w-16 cursor-text rounded-md px-1.5 text-right text-[13px] tabular-nums hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
+    >
+      {text}
+    </button>
+  );
+}
+
+function Slider({
+  id,
+  label,
+  value,
+  min,
+  max,
+  text,
+  title,
+  edit,
+  onChange,
+}: {
+  id: "cpus" | "memory" | "disk";
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  text: string;
+  title?: string;
+  edit: WizardView["resourceEdit"];
+  onChange: (n: number) => void;
+}) {
   return (
     <div className="flex w-72 items-center gap-3" title={title}>
       <input
@@ -411,11 +484,19 @@ function Slider({ id, label, value, min, max, text, title, onChange }: { id: str
         onChange={(e) => onChange(Number(e.target.value))}
         className="h-1 flex-1 accent-brand"
       />
-      <output htmlFor={`ns-${id}`} data-value-text={id} className="w-16 text-right text-[13px] tabular-nums">
-        {text}
-      </output>
+      <SliderValue id={id} label={label} text={text} edit={edit} />
     </div>
   );
+}
+
+/** Why a typed value cannot be used, under its slider (the field's error). */
+function typedError(v: WizardView, id: string): ReactNode {
+  const error = v.resourceEdit?.field === id ? v.resourceEdit.error : null;
+  return error ? (
+    <p role="alert" id={`ns-${id}-error`} data-field-error={id} className="mt-1.5 text-right text-xs text-destructive">
+      {error}
+    </p>
+  ) : null;
 }
 
 function ResourcesStep({ v }: { v: WizardView }) {
@@ -429,12 +510,21 @@ function ResourcesStep({ v }: { v: WizardView }) {
       {sized ? (
         <Group>
           {fieldOf(v, "cpus") ? (
-            <Row id="cpus" label={labelOf(v, "cpus")} htmlFor="ns-cpus">
-              <Slider id="cpus" label={labelOf(v, "cpus")} value={v.cpus} min={v.minCpus} max={v.maxCpus} text={v.cpusText} onChange={(cpus) => send({ type: "set-cpus", cpus })} />
+            <Row id="cpus" label={labelOf(v, "cpus")} htmlFor="ns-cpus" below={typedError(v, "cpus")}>
+              <Slider
+                id="cpus"
+                label={labelOf(v, "cpus")}
+                value={v.cpus}
+                min={v.minCpus}
+                max={v.maxCpus}
+                text={v.cpusText}
+                edit={v.resourceEdit}
+                onChange={(cpus) => send({ type: "set-cpus", cpus })}
+              />
             </Row>
           ) : null}
           {fieldOf(v, "memory") ? (
-            <Row id="memory" label={labelOf(v, "memory")} htmlFor="ns-memory">
+            <Row id="memory" label={labelOf(v, "memory")} htmlFor="ns-memory" below={typedError(v, "memory")}>
               <Slider
                 id="memory"
                 label={labelOf(v, "memory")}
@@ -442,6 +532,7 @@ function ResourcesStep({ v }: { v: WizardView }) {
                 min={v.minMemoryGb}
                 max={v.maxMemoryGb}
                 text={v.memoryText}
+                edit={v.resourceEdit}
                 onChange={(memoryGb) => send({ type: "set-memory", memoryGb })}
               />
             </Row>
@@ -452,7 +543,9 @@ function ResourcesStep({ v }: { v: WizardView }) {
               label={labelOf(v, "disk")}
               htmlFor="ns-disk"
               below={
-                v.diskNote || v.diskResetLabel ? (
+                v.resourceEdit?.field === "disk" && v.resourceEdit.error ? (
+                  typedError(v, "disk")
+                ) : v.diskNote || v.diskResetLabel ? (
                   <div className="mt-1.5 flex items-baseline justify-between gap-4">
                     {v.diskNote ? (
                       <p data-disk-note="" className="text-xs text-muted-foreground">
@@ -478,6 +571,7 @@ function ResourcesStep({ v }: { v: WizardView }) {
                 max={v.maxDiskGb}
                 text={v.diskText}
                 title={v.diskHelp ?? undefined}
+                edit={v.resourceEdit}
                 onChange={(diskGb) => send({ type: "set-disk", diskGb })}
               />
             </Row>

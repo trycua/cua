@@ -80,6 +80,10 @@ pub struct AppSettings {
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
     pub auto_connect: bool,
+    /// Settings, Teams: the team (organization id) the account works in
+    /// when it is in several ([`crate::teams::current`]); `None` or an id
+    /// the account left: its first owned team.
+    pub current_team_id: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -100,6 +104,7 @@ impl Default for AppSettings {
             keyvault_site_icons: true,
             teleport_choices: vec![],
             auto_connect: true,
+            current_team_id: None,
         }
     }
 }
@@ -116,11 +121,43 @@ pub fn load(path: &Path) -> AppSettings {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
+    migrate_sharing(path, &mut s);
     if s.new_ui.is_none() && s.experiments.web_ui {
         s.new_ui = Some(true);
     }
     s.experiments.web_ui = s.new_ui == Some(true);
     s
+}
+
+/// The migration marker next to the settings file. The shells round-trip
+/// [`AppSettings`] through their own mirrors, so the marker lives in a file of
+/// its own that no shell rewrites.
+fn migrations_path(path: &Path) -> std::path::PathBuf {
+    path.with_file_name("settings-migrations.json")
+}
+
+/// Sharing became on by default in 0.9.1 (CUA-1668). 0.9.0 saved
+/// `sharing: false` for anyone who toggled any experiment, without them
+/// choosing it, and left no record of an explicit choice. The first load
+/// without the marker turns a stored `false` on once and writes the marker
+/// (also on a fresh install, so a later "off" is never overridden); from then
+/// on the stored value is the user's. Best effort: a failed write only
+/// repeats the migration on the next load.
+fn migrate_sharing(path: &Path, s: &mut AppSettings) {
+    let marker = migrations_path(path);
+    if marker.exists() {
+        return;
+    }
+    if !s.experiments.sharing {
+        s.experiments.sharing = true;
+        if path.exists() && save(path, s).is_err() {
+            return;
+        }
+    }
+    if let Some(dir) = marker.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&marker, r#"{"sharingDefaultOn":true}"#);
 }
 
 /// `settings` with the New UI as this launch shows it: the user's choice,
@@ -230,18 +267,18 @@ pub fn format_hotkey(c: &KeyCombo) -> Option<String> {
 }
 
 /// What telemetry's docs say is collected.
-/// The Teams waitlist on the website (Settings' Teams row, the Sign in
-/// page's line). The app collects nothing itself.
-pub const TEAMS_WAITLIST_URL: &str = "https://cua.ai/teams";
+/// Where the Sign in page's Teams line links: the account app, which
+/// administers teams (Settings shows the real Teams section, [`crate::teams`]).
+pub const TEAMS_URL: &str = "https://app.cua.ai/welcome";
 
-/// The Teams row's label.
+/// The Sign in page's Teams line's label.
 pub const TEAMS_LABEL: &str = "Teams";
 
 /// Its value.
-pub const TEAMS_VALUE: &str = "Coming soon";
+pub const TEAMS_VALUE: &str = "manage them at app.cua.ai";
 
-/// Its button.
-pub const TEAMS_BUTTON: &str = "Join the waitlist";
+/// Its link.
+pub const TEAMS_BUTTON: &str = "Open the account app";
 
 pub const TELEMETRY_DOCS_URL: &str = "https://cua.ai/docs/cua-sdk/concepts/telemetry";
 
@@ -312,6 +349,11 @@ pub struct SettingsInput {
     pub agents_busy: bool,
     /// Agents with an action running.
     pub agents_pending: Vec<String>,
+    /// Teams from the Spaces API (the host reads them), with the account
+    /// app's URL. None: the Teams section shows the production account
+    /// app's links only.
+    #[serde(default)]
+    pub teams: Option<crate::teams::TeamsInput>,
     /// The account's Cua Cloud billing, once read (signed in).
     pub billing: Option<crate::billing::BillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
@@ -359,6 +401,7 @@ impl Default for SettingsInput {
             agents: None,
             agents_busy: false,
             agents_pending: vec![],
+            teams: None,
             billing: None,
             login_item: None,
             experiments: Experiments::default(),
@@ -666,14 +709,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             account.push(row("sign-in-error", Error, message));
         }
     }
-    // Teams: a waitlist on the website (the app collects nothing). Row id
-    // `teams`; the button opens `link_url`.
-    let mut teams = row("teams", Text, TEAMS_LABEL);
-    teams.value = Some(TEAMS_VALUE.into());
-    teams.button = Some(TEAMS_BUTTON.into());
-    teams.link_url = Some(TEAMS_WAITLIST_URL.into());
-    account.push(teams);
-
     let mut notch = row("notch", Choice, "Spaces tab in the notch");
     notch.options = vec![
         opt("show", "Show", !input.menu_bar),
@@ -724,6 +759,26 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             rows: account,
         },
         SettingsSection {
+            id: "teams".into(),
+            title: crate::teams::TEAMS_TITLE.into(),
+            button: None,
+            button_enabled: false,
+            button_help: None,
+            // Each team with its members and pending invites, then the
+            // account app's links (invites, roles, billing).
+            rows: crate::teams::rows(&input.teams.clone().unwrap_or_else(|| {
+                crate::teams::TeamsInput {
+                    account_app_url: crate::teams::ACCOUNT_APP_URL.into(),
+                    state: if input.identity.is_some() {
+                        crate::teams::TeamsState::Unread
+                    } else {
+                        crate::teams::TeamsState::SignedOut
+                    },
+                    current_team_id: None,
+                }
+            })),
+        },
+        SettingsSection {
             id: "general".into(),
             title: "General".into(),
             button: None,
@@ -741,7 +796,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
 
     if let Some(t) = &input.telemetry {
-        let mut share = row("telemetry", Choice, "Share anonymous usage data");
+        let mut share = row("telemetry", Choice, "Share usage data to help improve Cua");
         share.options = vec![opt("on", "On", t.enabled), opt("off", "Off", !t.enabled)];
         if let Some(by) = t.locked_by.clone().filter(|b| !b.is_empty()) {
             share.enabled = false;
@@ -750,7 +805,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         let mut note = row(
             "telemetry-note",
             Note,
-            "Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items.",
+            "Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen.",
         );
         note.link_label = Some("What is collected".into());
         note.link_url = Some(TELEMETRY_DOCS_URL.into());
@@ -1009,7 +1064,7 @@ mod tests {
     fn the_page_lists_account_general_privacy_agents() {
         let p = page(&SettingsInput::default());
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "general", "agents"]);
+        assert_eq!(ids, ["account", "teams", "general", "agents"]);
         let p = page(&SettingsInput {
             identity: Some("ada@example.com".into()),
             can_sign_out: true,
@@ -1017,7 +1072,7 @@ mod tests {
             ..Default::default()
         });
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "general", "privacy", "agents"]);
+        assert_eq!(ids, ["account", "teams", "general", "privacy", "agents"]);
         assert_eq!(p.sections[0].rows[0].button.as_deref(), Some("Sign out"));
         let sign_in: SignInPhase =
             serde_json::from_str(r#"{"kind":"waiting","userCode":"AB-CD"}"#).unwrap();
@@ -1042,9 +1097,11 @@ mod tests {
         });
         assert_eq!(
             ids(&p),
-            ["account", "general", "privacy", "keyvault", "agents"]
+            [
+                "account", "teams", "general", "privacy", "keyvault", "agents"
+            ]
         );
-        let kv = &p.sections[3];
+        let kv = &p.sections[4];
         assert_eq!(kv.title, "Keyvault");
         let toggle = &kv.rows[0];
         assert_eq!(
@@ -1200,14 +1257,14 @@ mod tests {
         let ids =
             |p: &SettingsPage| -> Vec<String> { p.sections.iter().map(|s| s.id.clone()).collect() };
         let note = |p: &SettingsPage| {
-            p.sections[1]
+            p.sections[2]
                 .rows
                 .iter()
                 .find(|r| r.id == "launch-at-login-note")
                 .map(|r| r.label.clone())
         };
         let off = with_storage(&page(&input), &storage, &input.experiments);
-        assert_eq!(ids(&off), ["account", "general", "agents"]);
+        assert_eq!(ids(&off), ["account", "teams", "general", "agents"]);
         assert_eq!(note(&off).as_deref(), Some(NOTE_WITHOUT_VOLUME));
         let on = SettingsInput {
             experiments: Experiments {
@@ -1217,7 +1274,10 @@ mod tests {
             ..input
         };
         let p = with_storage(&page(&on), &storage, &on.experiments);
-        assert_eq!(ids(&p), ["account", "general", "storage", "agents"]);
+        assert_eq!(
+            ids(&p),
+            ["account", "teams", "general", "storage", "agents"]
+        );
         assert_eq!(note(&p).as_deref(), Some(NOTE));
         // A settings file from before experiments: all off.
         let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
@@ -1365,5 +1425,43 @@ mod tests {
             ..Default::default()
         };
         assert!(resolve_new_ui(&fresh, "0.8.1-beta.1").experiments.web_ui);
+    }
+
+    #[test]
+    fn sharing_on_by_default_migrates_a_0_9_0_false_once() {
+        // Fresh install: on, and an "off" afterwards survives restarts.
+        let (dir, path) = temp_settings("sharing-fresh");
+        let s = load(&path);
+        assert!(s.experiments.sharing);
+        let off = choose_experiment(&s, "experiment:sharing", "off");
+        save(&path, &off).unwrap();
+        assert!(!load(&path).experiments.sharing);
+        assert!(!load(&path).experiments.sharing, "and again");
+        let _ = std::fs::remove_dir_all(dir);
+
+        // 0.9.0: toggling any experiment saved sharing false, no marker.
+        let (dir, path) = temp_settings("sharing-090");
+        std::fs::write(
+            &path,
+            r#"{"experiments":{"cuaVolume":true,"sharing":false}}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert!(s.experiments.sharing && s.experiments.cua_volume);
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["experiments"]["sharing"], true, "persisted");
+        // The user turns it off in 0.9.1: stays off across restarts.
+        save(&path, &choose_experiment(&s, "experiment:sharing", "off")).unwrap();
+        assert!(!load(&path).experiments.sharing);
+        assert!(!load(&path).experiments.sharing);
+        assert!(load(&path).experiments.cua_volume);
+        let _ = std::fs::remove_dir_all(dir);
+
+        // 0.9.0 settings with sharing already true stay true.
+        let (dir, path) = temp_settings("sharing-true");
+        std::fs::write(&path, r#"{"experiments":{"sharing":true}}"#).unwrap();
+        assert!(load(&path).experiments.sharing);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

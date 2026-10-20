@@ -8,6 +8,7 @@ use cua_driver_contract::{
 };
 use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
 use cua_driver_core::key_pacing::KEY_GAP_ENV;
+use cua_driver_core::step_pacing::BATCH_PACING_ENV;
 use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
 use std::collections::BTreeMap;
 use std::process::Stdio;
@@ -842,6 +843,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
         || upper == WINDOW_CHANGE_TIMEOUT_ENV
         || upper == WINDOW_CHANGE_POLL_ENV
         || upper == KEY_GAP_ENV
+        || upper == BATCH_PACING_ENV
         || matches!(
             upper.as_str(),
             "PATH"
@@ -866,8 +868,15 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "XDG_RUNTIME_DIR"
                 | "XDG_SESSION_TYPE"
                 | "DBUS_SESSION_BUS_ADDRESS"
+                | "XDG_CURRENT_DESKTOP"
+                | "XDG_SESSION_DESKTOP"
+                | "DESKTOP_SESSION"
+                | "NO_AT_BRIDGE"
+                | "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE"
+                | "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE"
                 | "XAUTHORITY"
                 | "CUA_LOG"
+                | "CUA_DRIVER_RS_HOME"
                 | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
                 | "CUA_TELEMETRY_ENABLED"
                 | "CUA_DRIVER_RS_UPDATE_CHECK"
@@ -1249,6 +1258,29 @@ mod tests {
     }
 
     #[test]
+    fn driver_state_root_is_inherited_and_overridable() {
+        let inherited = [("CUA_DRIVER_RS_HOME".into(), "host-state".into())];
+        for (overrides, expected) in [
+            (Vec::new(), "host-state"),
+            (
+                vec![EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_HOME".into(),
+                    value: "isolated-state".into(),
+                }],
+                "isolated-state",
+            ),
+        ] {
+            let mut host_options = options(EmbeddedPermissionMode::Standard);
+            host_options.environment = overrides;
+            let validated = validate_options(host_options).expect("state root is supported");
+            let values = merge_safe_environment(inherited.clone(), &validated.environment);
+            assert_eq!(values.len(), 1);
+            assert_eq!(values[0].name, "CUA_DRIVER_RS_HOME");
+            assert_eq!(values[0].value, expected);
+        }
+    }
+
+    #[test]
     fn telemetry_preferences_are_inherited_and_overridable() {
         assert!(allowed_environment_name("CUA_DRIVER_RS_TELEMETRY_ENABLED"));
         assert!(allowed_environment_name("cua_telemetry_enabled"));
@@ -1412,6 +1444,39 @@ mod tests {
     }
 
     #[test]
+    fn desktop_identity_and_accessibility_controls_reach_the_child() {
+        for name in [
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+            "DESKTOP_SESSION",
+            "NO_AT_BRIDGE",
+            "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE",
+            "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE",
+        ] {
+            let inherited = [(name.to_owned(), "inherited".to_owned())];
+            let host = EmbeddedEnvironmentVariable {
+                name: name.into(),
+                value: "host".into(),
+            };
+            for (values, expected) in [
+                (merge_safe_environment(inherited.clone(), &[]), "inherited"),
+                (
+                    merge_safe_environment(std::iter::empty(), &[host.clone()]),
+                    "host",
+                ),
+                (merge_safe_environment(inherited, &[host]), "host"),
+            ] {
+                let reached: Vec<_> = values
+                    .iter()
+                    .filter(|variable| variable.name == name)
+                    .map(|variable| variable.value.as_str())
+                    .collect();
+                assert_eq!(reached, [expected], "{name}");
+            }
+        }
+    }
+
+    #[test]
     fn metadata_validation_requires_same_process_and_contract() {
         let metadata = DaemonMetadata {
             driver_version: env!("CARGO_PKG_VERSION").into(),
@@ -1528,6 +1593,20 @@ mod tests {
         assert!(merged
             .iter()
             .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "3"));
+    }
+
+    /// `CUA_DRIVER_BATCH_PACING` must reach an embedded child, or a host that
+    /// sets it to record full-speed cursor motion is silently overridden.
+    #[test]
+    fn batch_pacing_env_propagates() {
+        assert!(allowed_environment_name("CUA_DRIVER_BATCH_PACING"));
+        let merged = merge_safe_environment(
+            [("CUA_DRIVER_BATCH_PACING".to_owned(), "full".to_owned())],
+            &[],
+        );
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_BATCH_PACING") && v.value == "full"));
     }
 
     #[cfg(target_os = "windows")]

@@ -27,22 +27,20 @@ contrib-modal = ["dep:cua-contrib", "cua-contrib/modal"]
 # Your own cloud account as a location (`--on aws|gcp|modal`): the cua-byoc
 # providers and `cua cloud`.
 byoc = ["dep:cua-byoc", "cua-byoc/all"]
-# `fixtures`: a MockServer spacesd plus a fake Fleet API on loopback,
-# for tests and the `cua-test-fixtures` binary behind the language-binding
-# smoke tests (libs/cua-spacesd/tests/spaces-e2e). Never shipped.
-test-fixtures = ["server", "spaces", "cua-spacesd-client/testing", "cua-fleet/testing", "tokio-tungstenite/handshake", "dep:tempfile"]
+# `fixtures`: a MockServer spacesd on loopback, for tests
+# and the `cua-test-fixtures` binary behind the language-binding smoke tests
+# (libs/cua-spacesd/tests/spaces-e2e). Never shipped.
+test-fixtures = ["server", "spaces", "cua-spacesd-client/testing", "tokio-tungstenite/handshake", "dep:tempfile"]
 
 [dependencies]
 cua-home.workspace = true
 cua-byoc = { workspace = true, optional = true }
 cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 cua-spacesd-client.workspace = true
-cua-fleet.workspace = true
-# Fleet through the signed-in user's shared session.
-cua-auth.workspace = true
 cua-sandbox-core.workspace = true
 cua-contrib = { workspace = true, optional = true }
 cua-vmm = { path = "../cua-vmm" }
+cua-create-failure.workspace = true
 cua-image = { path = "../cua-image" }
 # Disk accounting, cache GC and orphan reaping.
 cua-disk.workspace = true
@@ -79,11 +77,13 @@ tempfile = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 cua-host = { workspace = true, features = ["testing"] }
 cua-spaces = { path = "../cua-spaces", features = ["mcp-client"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-fleet = { workspace = true, features = ["testing"] }
 # Keyvault delivery test: a deterministic in-memory export provider and the
 # broker types, exercised against the mock spacesd.
 tempfile.workspace = true

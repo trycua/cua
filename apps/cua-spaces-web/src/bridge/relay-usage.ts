@@ -13,9 +13,10 @@ import { useContext, useMemo, useSyncExternalStore } from "react";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import { relayUsageView } from "./derive";
+import { useSettings } from "./hooks";
 import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
-export type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
+export type { PlanCard, PlanLink, RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
 export const RELAY_USAGE_POLL_MS = 5 * 60_000;
 /** A focus reads again only when the last read is older than this. */
@@ -131,5 +132,6 @@ export function useRelayUsage(): RelayUsage | null {
 export function useRelayUsageView(): RelayUsageView | null {
   const usage = useRelayUsage();
   const core = useContext(BridgeContext)?.core;
-  return useMemo(() => (usage && core ? relayUsageView(core, usage) : null), [usage, core]);
+  const accountApp = useSettings().data?.accountUrl ?? null;
+  return useMemo(() => (usage && core ? relayUsageView(core, usage, accountApp) : null), [usage, core, accountApp]);
 }

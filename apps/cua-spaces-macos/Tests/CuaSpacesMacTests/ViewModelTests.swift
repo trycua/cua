@@ -280,7 +280,7 @@ struct ViewModelTests {
         let model = makeModel(host: host)
         await model.refresh()
         #expect(model.spaces.contains { $0.id == "this-mac" })
-        #expect(model.sidebar.thisMachine?.name == "This machine")
+        #expect(model.sidebar.thisMachine?.name == "This computer")
         #expect(model.sidebar.thisMachine?.detail == "Set up for access")
         #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.id == "this-mac" })
         model.select("this-mac")
@@ -298,8 +298,11 @@ struct ViewModelTests {
         await model.refresh()
         let h = model.host
         #expect(h.panel.actions.map(\.id) == [.setUp])
+        h.computerName = { "Ada’s MacBook Pro" }
         await h.run(.setUp)
-        #expect(h.formView?.title == "Set up this machine")
+        #expect(h.formView?.title == "Set up this computer")
+        // Name starts as what the system calls this computer.
+        #expect(h.formView?.fields.first?.value == "Ada’s MacBook Pro")
         h.send(.setName(name: "Studio"))
         await h.submit()
         #expect(h.form == nil)
@@ -335,7 +338,8 @@ struct ViewModelTests {
         var panel = h.panel
         #expect(panel.toggles.map(\.on) == [false, true])
         #expect(panel.toggles.map(\.enabled) == [true, true], "both may be off")
-        #expect(panel.limits?.contains("Apple\u{2019}s license allows two per Mac") == true)
+        #expect(panel.limits?.hasSuffix("2 macOS VMs") == true)
+        #expect(panel.limits?.contains("license") == false)
         #expect(panel.providedEmpty == "None yet")
         #expect(panel.permissions.isEmpty, "no desktop, no screen permissions")
         await h.run(panel.toggles[0].action)
@@ -395,8 +399,9 @@ struct ViewModelTests {
         #expect(model.host.formView?.canSubmit == true)
     }
 
-    /// Settings, Experiments: every switch off; Cua Volume on shows Storage
-    /// after General, is saved, recorded, and reaches the first run.
+    /// Settings, Experiments: every switch off except Sharing (on by
+    /// default); Cua Volume on shows Storage after General, is saved,
+    /// recorded, and reaches the first run.
     @Test func experimentsAreOffAndCuaVolumeShowsStorage() async {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
@@ -404,14 +409,15 @@ struct ViewModelTests {
         #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
                                     "experiment:classic_ui"])
         // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
+        // Sharing is on unless turned off.
+        let onByDefault: Set<String> = ["experiment:classic_ui", "experiment:sharing"]
         #expect(toggles.allSatisfy { r in
-            r.options.first { $0.id == (r.id == "experiment:classic_ui" ? "on" : "off") }?.active == true
+            r.options.first { $0.id == (onByDefault.contains(r.id) ? "on" : "off") }?.active == true
         })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
-        #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(3) == ["account", "general", "storage"])
+        #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(4) == ["account", "teams", "general", "storage"])
         #expect(appSettingsLoad(path: model.settingsPath).experiments.cuaVolume, "saved")
-        #expect(model.onboarding.state.experiments.cuaVolume)
         let toggled = telemetry.recorded.compactMap { s -> String? in
             if case let .experiment(action, experiment) = s { return "\(action) \(experiment)" }
             return nil
@@ -419,19 +425,28 @@ struct ViewModelTests {
         #expect(toggled == ["experiment_on cua_volume"])
     }
 
-    /// A sign-in from the main window (the first run done or not showing)
-    /// still counts in the activation funnel, once.
-    @Test func mainWindowSignInRecordsSignedIn() async {
+    /// A sign-in after the first run (from Settings, say) still counts in
+    /// the activation funnel, once; during the first run the page's own
+    /// flow counts it.
+    @Test func signInAfterTheFirstRunRecordsSignedIn() async {
+        func steps(_ telemetry: FixtureTelemetry) -> [String] {
+            telemetry.recorded.compactMap { s -> String? in
+                if case let .step(step, ok) = s, ok { return step }
+                return nil
+            }
+        }
+        let first = FixtureTelemetry()
+        let during = makeModel(account: FixtureAccount(), telemetry: first)
+        await during.beginSignIn()
+        #expect(during.identity == "you@example.com")
+        #expect(steps(first).isEmpty, "the first run's page records it")
+
         let telemetry = FixtureTelemetry()
         let model = makeModel(account: FixtureAccount(), telemetry: telemetry)
-        #expect(model.onboarding.state.step == .welcome)
+        model.onboarding.finish()
         await model.beginSignIn()
         #expect(model.identity == "you@example.com")
-        let steps = telemetry.recorded.compactMap { s -> String? in
-            if case let .step(step, ok) = s, ok { return step }
-            return nil
-        }
-        #expect(steps == ["signed_in"])
+        #expect(steps(telemetry) == ["signed_in"])
     }
 
     /// A sign-in that never finishes: Cancel stops it, a timeout fails it,
@@ -472,7 +487,7 @@ struct ViewModelTests {
         let model = makeModel(account: account, agents: agents)
         await model.loadSettings()
         let page = model.settingsPage
-        #expect(page.sections.map(\.id) == ["account", "general", "runtimes", "privacy", "agents"])
+        #expect(page.sections.map(\.id) == ["account", "teams", "general", "runtimes", "privacy", "agents"])
         // Settings, Runtimes: macOS VMs picks runtime.lume.
         let runtime = page.sections.first { $0.id == "runtimes" }!.rows[0]
         #expect(runtime.options.map(\.id) == ["auto", "builtin", "system"])
@@ -613,7 +628,7 @@ struct ViewModelTests {
                                  features: [], addedAt: nil, os: nil, osName: nil, osPrettyName: nil, image: nil,
                                  imageDigest: nil, kind: nil, arch: nil, reachable: false, error: nil,
                                  host: "96fe", hostName: "gamma-4 Mac Studio", power: nil, powerState: nil,
-                                 cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
         let backend = FixtureSpacesBackend(rows: [record])
         backend.holdCreates = true
         let model = makeModel(backend)
@@ -1002,7 +1017,7 @@ struct ViewModelTests {
             AppSpaceRow(id: id, name: name, provider: "relay", spacesdVersion: "0.4.0", features: [], addedAt: nil,
                         os: .linux, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil, kind: nil, arch: nil,
                         reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
-                        cloud: cloud, cloudPlace: place, cloudDelete: delete)
+                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             cloudRow("relay:cloud-0000000000000a01", "research-box", "aws", "AWS \u{b7} us-west-2", "here"),
@@ -1062,10 +1077,11 @@ struct ViewModelTests {
         #expect(row("cloud:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
         #expect(row(aurora.id)?.power?.help == "Suspend")
-        // No Share without the Sharing experiment; with it, before power.
+        // Share before power (Sharing is on by default); none with Sharing turned off.
+        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
+        model.chooseExperiment(row: "experiment:sharing", option: "off")
         #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .power, .delete, .open])
         model.chooseExperiment(row: "experiment:sharing", option: "on")
-        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
 
         model.setPower(aurora, on: false)
         // Synchronously, before the SDK has done anything.
@@ -1263,24 +1279,34 @@ struct ViewModelTests {
         #expect(model.keyvault.list.pending.count == 2)
     }
 
-    @Test func onboardingFollowsTheCoreAndPersists() throws {
+    /// The first run's pages are the web UI's; the model only keeps whether
+    /// it is done (and as what) in the state file both shells write.
+    @Test func onboardingIsDueUntilItFinishesAndPersists() throws {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("cua-mac-onb-\(UUID().uuidString).json").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
         let o = OnboardingModel(statePath: path)
-        #expect(!o.completed)
-        #expect(o.view.showMark)
-        o.send(.start)
-        o.send(.signinDone)
-        o.send(.agentsDone(configured: []))
-        o.send(.presentationDone)
-        o.send(.driveContinue)
-        o.send(.modeChosen(mode: .client))
-        #expect(o.view.step == .done)
-        #expect(o.view.prompts.count == 7, "Done suggests what to ask a coding agent")
-        #expect(o.view.prompts.first == "qa my app on windows, macos and linux")
-        o.finish()
-        #expect(OnboardingModel(statePath: path).completed)
-        try? FileManager.default.removeItem(atPath: path)
+        #expect(!o.completed && o.mode == .client)
+        var launchAtLogin: [Bool] = []
+        o.onLaunchAtLogin = { launchAtLogin.append($0) }
+        o.finish(mode: .host, launchAtLogin: false)
+        #expect(o.completed && o.mode == .host)
+        #expect(launchAtLogin == [false])
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == #"{"completed":true,"mode":"host"}"#)
+        let again = OnboardingModel(statePath: path)
+        #expect(again.completed && again.mode == .host, "the next launch reads it")
+        #expect(OnboardingModel.readCompleted(path) == true)
+        // Settings, Welcome: due again until it finishes; the file stays.
+        again.restart()
+        #expect(!again.completed)
+        #expect(OnboardingModel.readCompleted(path) == true)
+        again.finish()
+        #expect(again.completed && again.mode == .client)
+        // No answer for the checkbox: the app's own rule applies at launch.
+        #expect(launchAtLogin == [false])
+        // A missing or damaged file: the first run is due.
+        #expect(OnboardingModel.readCompleted(path + ".nope") == nil)
+        #expect(!OnboardingModel(statePath: path + ".nope").completed)
     }
 
     @Test func notchOpensAfterTheCoresDwell() async {
@@ -1308,29 +1334,41 @@ struct ViewModelTests {
         #expect(notch.view.phase == .closed)
     }
 
-    /// Settings hides Cua Cloud billing and offers the Teams waitlist (the
-    /// website); a cloud create refused for want of credit shows one line
-    /// and no Add credit.
-    @Test func billingIsHiddenAndTeamsOpensTheWaitlist() async throws {
+    /// Settings hides Cua Cloud billing and shows the real Teams section
+    /// (the Spaces API: name with alias fallback, members, pending invites
+    /// marked "(Invited)", the account app for invites and billing); a cloud
+    /// create refused for want of credit shows one line and no Add credit.
+    @Test func billingIsHiddenAndTeamsComeFromTheSpacesAPI() async throws {
         var opened: [URL] = []
         BillingBrowser.open = { opened.append($0) }
         let model = makeModel(account: FixtureAccount(identity: "you@example.com"),
                               billing: FixtureBilling(balanceCents: 742))
+        model.teamsReader = FixtureTeams([
+            AppTeamInput(id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3,
+                         members: [AppTeamPersonInput(email: "you@example.com", role: "owner"),
+                                   AppTeamPersonInput(email: "grace@example.com", role: "member")],
+                         invites: ["linus@example.com"]),
+        ])
         await model.loadSettings()
         let rows = model.settingsPage.sections.flatMap(\.rows)
         #expect(!rows.contains { $0.id == "billing" })
         #expect(!rows.contains { $0.id == "default-location" })
-        let teams = rows.first { $0.id == "teams" }
-        #expect(teams?.value == "Coming soon" && teams?.button == "Join the waitlist")
-        await model.press(row: "teams")
-        #expect(opened.map(\.absoluteString) == ["https://cua.ai/teams"])
+        #expect(!rows.contains { $0.value == "Coming soon" || $0.button == "Join the waitlist" })
+        let team = model.settingsPage.sections.first { $0.id == "teams" }!.rows
+        #expect(team[0].label == "acme", "the alias stands in for a missing name")
+        #expect(team[0].value == "Owner \u{b7} Teams plan \u{b7} 3 seats")
+        #expect(team.first { $0.label == "linus@example.com" }?.value == "(Invited)")
+        #expect(team.first { $0.label == "grace@example.com" }?.value == "Member")
+        await model.press(row: "teams-manage")
+        await model.press(row: "teams-billing")
+        #expect(opened.map(\.absoluteString) == ["https://app.cua.ai/team", "https://app.cua.ai/billing"])
 
         var creates = appCreatesReduce(state: AppCreatesState(pending: [], deleting: [], powering: []),
                                        action: .start(id: "pending:1", name: "cloud", os: .linux, provider: .cloud,
                                                       now: 0, image: nil, kind: nil, hostArch: nil, gpu: false,
                                                       host: nil, hostName: nil))
         creates = appCreatesReduce(state: creates, action: .fail(
-            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing",
+            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing",
             errorVariant: ""))
         let space = appCreatesCompose(spaces: [], state: creates)[0]
         #expect(space.detail == "You're out of Cua Cloud credit.")

@@ -1,0 +1,216 @@
+---
+title: Use Spaces from code
+description: Create a Linux Space on your own computer from Python or TypeScript, run a command in it, take a screenshot, ask Cua Driver for its windows, watch it, and delete it. Then start from a full agent app in TypeScript, Rust or Swift.
+keywords:
+  - Cua Spaces example
+  - TypeScript agent app
+  - Tauri agent app
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+This walkthrough is for developers. A Space is a desktop your agents can use and
+you can watch. You create one on your own computer from code, run a command in it,
+take a screenshot, ask Cua Driver which windows it sees, watch the desktop,
+and delete the Space. Nothing leaves your computer.
+
+Requirements: Docker (or Podman or Colima) and about 4 GB of free memory.
+
+## 1. Install
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/install.sh | sh   # the cua CLI
+cua runtime doctor                          # checks the container engine
+```
+
+<Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash skip="host-install"
+pip install cua
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash skip="host-install"
+npm install @trycua/cua
+```
+
+  </Tab>
+</Tabs>
+
+## 2. Create a Space and use it
+
+The program passes no location, so the Space runs on this computer: the
+canonical Linux desktop (`ghcr.io/trycua/linux:24.04`) in a container.
+
+<Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python title="first_space.py" test="container" id="first-space"
+import asyncio
+
+import cua
+
+
+async def main():
+    spaces = cua.embedded().spaces()
+    created = await spaces.create(cua.SpaceCreateOptions())
+    space = await spaces.space(created.space.id)
+    print("space:", created.space.id)
+
+    # Run a command.
+    out = await space.bash("uname -sm", None)
+    print(out.stdout.strip())
+
+    # Take a screenshot.
+    shot = await space.screenshot(None)
+    with open("space.png", "wb") as f:
+        f.write(shot.image)
+    print("screenshot: space.png")
+
+    # Ask Cua Driver in the Space which windows are open.
+    windows = await space.call_tool("list_windows", None, None, None)
+    print("driver:", "error" if windows.is_error else "ok")
+
+    # Delete the Space. Comment this out to keep it and watch it (step 3).
+    await spaces.delete(created.space.id)
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts title="first-space.ts" test="container" id="first-space-ts"
+import { writeFile } from 'node:fs/promises';
+import { embedded, SpaceCreateOptions } from '@trycua/cua';
+
+const spaces = embedded().spaces();
+const created = await spaces.create(SpaceCreateOptions.create({}));
+const id = created.space!.id;
+const space = await spaces.space(id);
+console.log('space:', id);
+
+// Run a command.
+console.log((await space.bash('uname -sm', undefined)).stdout.trim());
+
+// Take a screenshot.
+const shot = await space.screenshot(undefined);
+await writeFile('space.png', Buffer.from(shot.image));
+console.log('screenshot: space.png');
+
+// Ask Cua Driver in the Space which windows are open.
+const windows = await space.callTool('list_windows', undefined, undefined, undefined);
+console.log('driver:', windows.isError ? 'error' : 'ok');
+
+// Delete the Space. Comment this out to keep it and watch it (step 3).
+await spaces.delete_(id);
+```
+
+  </Tab>
+</Tabs>
+
+Run it with `python first_space.py` or `npx tsx first-space.ts`. The first
+run pulls the image, which can take a few minutes.
+
+```text output
+space: local:space-1a2b3c
+Linux x86_64
+screenshot: space.png
+driver: ok
+```
+
+`space.png` holds the desktop. On Apple silicon `uname` prints `aarch64`.
+
+## 3. Watch it
+
+Keep the Space (comment out the delete line), run the program again, then open
+its desktop in your browser with the id it printed:
+
+```bash test="cli-shape" id="first-space-view"
+cua sb view local:space-1a2b3c
+```
+
+The [Cua Spaces app](/spaces) lists the same Space, since the app, the CLI and
+the SDK share one registry.
+
+## 4. Clean up
+
+The program deletes its Space. One you kept goes with:
+
+```bash test="cli-shape" id="first-space-delete"
+cua spaces delete local:space-1a2b3c
+```
+
+`cua spaces ls` shows what is left.
+
+## Examples in other languages
+
+[Cua Bots](/spaces/examples/cua-bots) is the featured example, in SwiftUI. The OpenKoalaBots samples build a smaller agent app three times, in TypeScript, Rust (Tauri) and Swift, so you can start from the language you ship in. Each one runs named bots as long-lived agent threads on a shared Space, streams the Space's desktop next to the thread, sends files into it and runs routines.
+
+![The Tauri sample: a bot's thread next to the live Space](/img/openkoalabots/openkoalabots-tauri-thread.png)
+
+### Source
+
+| Language | Sample | Built on |
+|---|---|---|
+| TypeScript | [`examples/openkoalabot-example-ts`](https://github.com/trycua/cua/tree/main/examples/openkoalabot-example-ts) | A Node server and web UI on `@trycua/cua` |
+| Rust (Tauri) | [`examples/openkoalabot-example-tauri`](https://github.com/trycua/cua/tree/main/examples/openkoalabot-example-tauri) | A Tauri 2 app on the `cua-spaces` crate |
+| Swift | [`examples/openkoalabot-example-swift`](https://github.com/trycua/cua/tree/main/examples/openkoalabot-example-swift) | A SwiftUI app on `Cua` and `CuaSpaces` |
+
+All three pass one headless test, [`examples/openkoalabot-example-scenario`](https://github.com/trycua/cua/tree/main/examples/openkoalabot-example-scenario).
+
+### Run one
+
+From a clone of [trycua/cua](https://github.com/trycua/cua). The samples build the cua SDK from source, so you need Rust.
+
+<Tabs items={['TypeScript', 'Rust + Tauri', 'Swift']}>
+  <Tab value="TypeScript">
+    ```bash skip="no-runner"
+    (cd libs/cua && cargo build --release -p cua-sdk)
+    (cd libs/cua/typescript && npm ci && npm run stage:uniffi && npm run build && npm run build:browser)
+    cd examples/openkoalabot-example-ts
+    npm ci && npm run build && npm run build:web
+    npm run serve    # open the URL it prints
+    ```
+  </Tab>
+  <Tab value="Rust + Tauri">
+    ```bash skip="no-runner"
+    cd examples/openkoalabot-example-tauri
+    pnpm install --frozen-lockfile
+    pnpm tauri build --debug --no-bundle
+    src-tauri/target/debug/openkoalabot-example-tauri
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```bash skip="no-runner"
+    (cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+    cd examples/openkoalabot-example-swift
+    swift build && .build/debug/OpenKoalaBotExample
+    ```
+  </Tab>
+</Tabs>
+
+Each app needs a Space: create one with **New Space**, or add one by address.
+
+### Where each part is explained
+
+| Part | Guide |
+|------|-------|
+| Create, add and delete a Space | [Create a Space](/spaces/guides/add-a-space) |
+| Live desktop and presence | [Stream a desktop](/spaces/guides/stream-a-desktop) |
+| File attachments | [Send a file into a Space](/spaces/guides/cua-volume#send-a-file-into-a-space) |
+| Session teleport | [Teleport an app](/spaces/guides/teleport-an-app) |
+| Bots as agent threads | [Run an agent inside a Space](/spaces/guides/connect-your-agent#run-an-agent-inside-a-space) |
+
+## Next
+
+- [Reach another computer](/cua-sdk#reach-another-machine): connect the SDK to
+  any computer that runs cua-spacesd, by address and token.
+- [Add a computer](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces):
+  let your laptop create Spaces on another computer, over the relay, ssh or
+  Tailscale.
+- [Create a Space](/spaces/guides/add-a-space): any image, progress, GPUs.

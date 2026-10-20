@@ -5,9 +5,12 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
-import { emptyHome, spaceResources, useBridge, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space, type SpaceResources } from "@/bridge";
+import { emptyHome, spaceResources, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space, type SpaceResources } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
+import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
+import { RunAgentDialog } from "@/components/agents/run-agent-dialog";
 import { GettingStarted } from "@/components/getting-started";
+import { SpaceReadyCard } from "@/components/space-ready-card";
 import { FirstRunTodosCard, useFirstRunTodosShown } from "@/components/first-run-todos";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
@@ -63,6 +66,14 @@ function SpacesPage() {
   const running = spaces.filter((s) => spaceState(s) === "running").length;
   // After the first run's Finish later, its to-do list stands in for the checklist.
   const firstRunTodos = useFirstRunTodosShown();
+  // The first Space is ready and no agent has worked in it yet: one action, "Run an agent here".
+  const { state: checklist } = useChecklist();
+  const { data: agents } = useAgents();
+  const readySpace = spaces.find((s) => spaceState(s) === "running");
+  const agentRan = checklist.done.run_agent || (agents?.runs.length ?? 0) > 0 || (agents?.agents.length ?? 0) > 0;
+  const runHere = readySpace && !agentRan ? readySpace : undefined;
+  const [runOpen, setRunOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
 
   return (
     <Page>
@@ -76,7 +87,14 @@ function SpacesPage() {
         }
       />
       <FirstRunTodosCard />
-      {firstRunTodos ? null : <GettingStarted />}
+      {runHere ? <SpaceReadyCard space={runHere} onRun={() => setRunOpen(true)} /> : null}
+      {firstRunTodos ? null : <GettingStarted onRunAgent={runHere ? () => setRunOpen(true) : undefined} />}
+      {readySpace ? (
+        <>
+          <RunAgentDialog open={runOpen} space={readySpace} onOpenChange={setRunOpen} onManual={() => setConnectOpen(true)} />
+          <ConnectAgentDialog open={connectOpen} onOpenChange={setConnectOpen} />
+        </>
+      ) : null}
       <ComputersResources snapshot={resources} machines={machines} />
       {sort === "size" ? (
         <p data-sorted-by-size="" className="mb-3 flex items-center gap-2 px-1 text-xs text-muted-foreground">

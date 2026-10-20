@@ -17,9 +17,7 @@ use windows::Win32::UI::Accessibility::{
     TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, UIA_DocumentControlTypeId,
     UIA_TextPatternId, UIA_ValuePatternId,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetForegroundWindow, IsWindow, GA_ROOT,
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetForegroundWindow, IsWindow, GA_ROOT};
 
 use super::windows_enum::{run_focused_document_uia, UiaDeadlineError};
 
@@ -90,11 +88,7 @@ fn try_type_focused_document_append_unbounded(
     // Declared before UIA interfaces so they drop before CoUninitialize.
     let _com = ComApartment;
     if cancelled.load(Ordering::Acquire) {
-        return focused_document_not_applicable(
-            thread_id,
-            Some(coinit.0),
-            "cancelled_before_probe",
-        );
+        return focused_document_not_applicable(thread_id, Some(coinit.0), "cancelled_before_probe");
     }
 
     let not_applicable = |stage| focused_document_not_applicable(thread_id, Some(coinit.0), stage);

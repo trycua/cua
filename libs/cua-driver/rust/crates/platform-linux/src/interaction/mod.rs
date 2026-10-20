@@ -6,6 +6,40 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+/// Whether a foreground transaction gives focus back once its body ran.
+#[derive(Clone, Copy)]
+pub enum RestoreMode {
+    RestorePrevious,
+    /// The body activates the target itself and leaves it focused.
+    LeaveFocused,
+}
+
+/// How a window-addressed pointer gesture (double click, scroll, drag)
+/// treats focus: niri restores the prior focus, as its clicks do; other
+/// compositors leave the target focused.
+pub fn pointer_gesture_restore() -> RestoreMode {
+    if crate::wayland::niri::is_session() {
+        RestoreMode::RestorePrevious
+    } else {
+        RestoreMode::LeaveFocused
+    }
+}
+
+/// Run `body` with the exact `pid`/`window_id` pair focused: through the
+/// Wayland compositor adapter, which restores the prior focus, or the X11
+/// foreground rung, which leaves the target active.
+pub fn with_target_foreground<T>(
+    pid: u32,
+    window_id: u64,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        crate::wayland::with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, body)
+    } else {
+        crate::input::with_x11_foreground(window_id, 80, body)
+    }
+}
+
 const POLL: Duration = Duration::from_millis(10);
 const SETTLE_READS: usize = 5;
 const SETTLE_INTERVAL: Duration = Duration::from_millis(30);
@@ -73,6 +107,13 @@ mod tests {
         let action = Action::new(Duration::from_millis(20));
         let _bound = bind(action.clone());
         assert!(operation_deadline(Duration::from_secs(5)) <= action.deadline());
+    }
+
+    #[test]
+    fn leave_focused_runs_the_body_without_a_compositor_transaction() {
+        let ran =
+            crate::wayland::with_target_foreground(1, 2, RestoreMode::LeaveFocused, || Ok("sent"));
+        assert_eq!(ran.unwrap(), "sent");
     }
 
     #[test]

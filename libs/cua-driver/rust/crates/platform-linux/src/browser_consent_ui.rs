@@ -8,6 +8,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::atspi::AtspiNode;
+use crate::interaction::with_target_foreground;
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -173,18 +174,6 @@ fn prove_window_owner(pid: u32, window_id: u64) -> Result<(), BrowserRefusal> {
         ));
     }
     Ok(())
-}
-
-fn with_target_foreground<T>(
-    pid: u32,
-    window_id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        crate::wayland::with_target_foreground(pid, window_id, body)
-    } else {
-        crate::input::with_x11_foreground(window_id, 80, body)
-    }
 }
 
 fn exact_button_center(

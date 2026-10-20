@@ -72,6 +72,7 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 /// Linux evdev BTN_LEFT — the button code the virtual-pointer protocol expects.
 const BTN_LEFT: u32 = 0x110;
 
+use crate::interaction::RestoreMode;
 use crate::x11::WindowInfo;
 
 thread_local! {
@@ -2042,15 +2043,21 @@ pub fn activate_window_for_input_target(
     )
 }
 
-/// Run a focus-bound keyboard transaction only after a compositor adapter has
+/// Run a focus-bound transaction only after a compositor adapter has
 /// confirmed the exact PID/window pair, and restore the previously focused
 /// toplevel afterward. Global virtual-keyboard/libei input is refused when the
 /// compositor cannot provide this read-back contract.
+/// [`RestoreMode::LeaveFocused`] runs `body` as it is: it activates the
+/// target itself and leaves it focused.
 pub fn with_target_foreground<T>(
     pid: u32,
     window_id: u64,
+    mode: RestoreMode,
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
+    if let RestoreMode::LeaveFocused = mode {
+        return body();
+    }
     let _target_guard = bind_foreground_target(pid, window_id);
     if niri::is_session() {
         return niri::with_focused_window(pid, window_id, body);
@@ -2131,21 +2138,6 @@ fn event_time_ms() -> u32 {
         .clamp(1, u32::MAX as u128) as u32
 }
 
-/// On niri, run window-addressed pointer input inside the exact foreground
-/// transaction [`with_target_foreground`] gives `click`, so the prior focus is
-/// restored. Other compositors run `body` as before: their double clicks,
-/// scrolls and drags activate the target and leave it focused.
-pub fn restoring_niri_focus<T>(
-    pid: u32,
-    window_id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if niri::is_session() {
-        return with_target_foreground(pid, window_id, body);
-    }
-    body()
-}
-
 /// Click a native Wayland toplevel identified by its `window_id` (the
 /// foreign-toplevel protocol id from `list_windows`) at output-relative
 /// `(x, y)`, with `button` (1/2/3 = left/middle/right) emitted `count` times.
@@ -2177,7 +2169,12 @@ pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<(
         || {
             libei_wait_pointer_ready()?;
             if let Some((pid, window_id)) = current_foreground_target() {
-                return with_target_foreground(pid, window_id, || libei_click(x, y, count, button));
+                return with_target_foreground(
+                    pid,
+                    window_id,
+                    RestoreMode::RestorePrevious,
+                    || libei_click(x, y, count, button),
+                );
             }
             libei_click(x, y, count, button)
         },

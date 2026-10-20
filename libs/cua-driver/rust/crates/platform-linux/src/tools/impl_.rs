@@ -7527,7 +7527,7 @@ impl Tool for ClickTool {
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
-                crate::wayland::with_target_foreground(pid, xid, || {
+                crate::wayland::with_target_foreground(pid, xid, crate::interaction::RestoreMode::RestorePrevious, || {
                     crate::wayland::click_focused(output_x, output_y, count as u32, button)
                 })?;
                 return Ok(("wayland_activate", None, None, None));
@@ -8197,14 +8197,19 @@ impl Tool for TypeTextTool {
                     "type_text",
                     typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
                     move || {
-                        crate::wayland::with_target_foreground(pid, xid, || {
-                            if !crate::atspi::focus_element(pid, idx)? {
-                                anyhow::bail!(
+                        crate::wayland::with_target_foreground(
+                            pid,
+                            xid,
+                            crate::interaction::RestoreMode::RestorePrevious,
+                            || {
+                                if !crate::atspi::focus_element(pid, idx)? {
+                                    anyhow::bail!(
                                     "AT-SPI Component.GrabFocus returned false for element {idx}"
                                 );
-                            }
-                            crate::wayland::type_text_focused(&text_w)
-                        })
+                                }
+                                crate::wayland::type_text_focused(&text_w)
+                            },
+                        )
                     },
                 )
                 .await;
@@ -8269,16 +8274,21 @@ impl Tool for TypeTextTool {
                 "type_text",
                 typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
                 move || {
-                    crate::wayland::with_target_foreground(pid, xid, || {
-                        if let Some(idx) = idx {
-                            if !crate::atspi::focus_element(pid, idx)? {
-                                anyhow::bail!(
+                    crate::wayland::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::RestoreMode::RestorePrevious,
+                        || {
+                            if let Some(idx) = idx {
+                                if !crate::atspi::focus_element(pid, idx)? {
+                                    anyhow::bail!(
                                     "AT-SPI Component.GrabFocus returned false for element {idx}"
                                 );
+                                }
                             }
-                        }
-                        crate::wayland::type_text_focused(&text_w)
-                    })
+                            crate::wayland::type_text_focused(&text_w)
+                        },
+                    )
                 },
             )
             .await;
@@ -9065,19 +9075,24 @@ impl Tool for PressKeyTool {
             let chord = press_key_chord(&mods, &key);
             let idx = resolved_element_index;
             let result = spawn_blocking_bounded("press_key", foreground_budget(1), move || {
-                crate::wayland::with_target_foreground(pid, xid, || {
-                    if let Some(idx) = idx {
-                        if !crate::atspi::focus_element(pid, idx)? {
-                            anyhow::bail!(
-                                "AT-SPI Component.GrabFocus returned false for element {idx}"
-                            );
+                crate::wayland::with_target_foreground(
+                    pid,
+                    xid,
+                    crate::interaction::RestoreMode::RestorePrevious,
+                    || {
+                        if let Some(idx) = idx {
+                            if !crate::atspi::focus_element(pid, idx)? {
+                                anyhow::bail!(
+                                    "AT-SPI Component.GrabFocus returned false for element {idx}"
+                                );
+                            }
                         }
-                    }
-                    match chord {
-                        Some(keys) => crate::wayland::hotkey_focused(&keys),
-                        None => crate::wayland::press_key_focused(&key_w),
-                    }
-                })
+                        match chord {
+                            Some(keys) => crate::wayland::hotkey_focused(&keys),
+                            None => crate::wayland::press_key_focused(&key_w),
+                        }
+                    },
+                )
             })
             .await;
             return match result {
@@ -10490,9 +10505,19 @@ impl Tool for ScrollTool {
             let ticks = wheel_ticks(amount, by, crate::wayland::niri::is_session());
             let result =
                 spawn_blocking_bounded("scroll", foreground_budget(ticks as usize), move || {
-                    crate::wayland::restoring_niri_focus(pid, xid, || {
-                        crate::wayland::scroll_at(xid, output_point, &direction_for_wayland, ticks)
-                    })
+                    crate::wayland::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::pointer_gesture_restore(),
+                        || {
+                            crate::wayland::scroll_at(
+                                xid,
+                                output_point,
+                                &direction_for_wayland,
+                                ticks,
+                            )
+                        },
+                    )
                 })
                 .await;
             return match result {
@@ -10562,9 +10587,12 @@ impl Tool for ScrollTool {
             foreground_budget(amount_u32 as usize),
             move || -> anyhow::Result<()> {
                 if crate::wayland::wayland_input_enabled() {
-                    return crate::wayland::restoring_niri_focus(pid, xid, || {
-                        crate::wayland::scroll(xid, &direction_for_wayland, amount_u32)
-                    });
+                    return crate::wayland::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::pointer_gesture_restore(),
+                        || crate::wayland::scroll(xid, &direction_for_wayland, amount_u32),
+                    );
                 }
                 // foreground: activate the window, then scroll, then restore — for
                 // surfaces that only route wheel events to the active window.
@@ -10782,9 +10810,12 @@ impl Tool for DoubleClickTool {
                             }
                             if crate::wayland::wayland_input_enabled() {
                                 let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
-                                return crate::wayland::restoring_niri_focus(pid, xid, || {
-                                    crate::wayland::click(xid, output_x, output_y, 2, 1)
-                                })
+                                return crate::wayland::with_target_foreground(
+                                    pid,
+                                    xid,
+                                    crate::interaction::pointer_gesture_restore(),
+                                    || crate::wayland::click(xid, output_x, output_y, 2, 1),
+                                )
                                 .map(|()| PointerRoute::Wayland);
                             }
                             if delivery.is_foreground() {
@@ -10898,9 +10929,12 @@ impl Tool for DoubleClickTool {
                 }
                 if crate::wayland::wayland_input_enabled() {
                     let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-                    return crate::wayland::restoring_niri_focus(pid, xid, || {
-                        crate::wayland::click(xid, output_x, output_y, 2, 1)
-                    })
+                    return crate::wayland::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::pointer_gesture_restore(),
+                        || crate::wayland::click(xid, output_x, output_y, 2, 1),
+                    )
                     .map(|()| PointerRoute::Wayland);
                 }
                 if delivery.is_foreground() {
@@ -11722,16 +11756,21 @@ impl Tool for DragTool {
                             button as u32,
                         );
                     }
-                    crate::wayland::restoring_niri_focus(pid, xid, || {
-                        crate::wayland::drag(
-                            xid,
-                            (fxi, fyi),
-                            (txi, tyi),
-                            steps_u32,
-                            duration_ms,
-                            button,
-                        )
-                    })
+                    crate::wayland::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::pointer_gesture_restore(),
+                        || {
+                            crate::wayland::drag(
+                                xid,
+                                (fxi, fyi),
+                                (txi, tyi),
+                                steps_u32,
+                                duration_ms,
+                                button,
+                            )
+                        },
+                    )
                 },
             );
             let ((from_output_x, from_output_y), (to_output_x, to_output_y)) = wayland_points

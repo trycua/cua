@@ -12,6 +12,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::atspi::AtspiNode;
+use crate::interaction::with_target_foreground;
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -102,24 +103,6 @@ fn setup_not_ready_message(descriptor: &BrowserSetupDescriptor) -> String {
         "the exact {} remote-debugging setup page did not become ready; on Linux, existing-profile setup requires the browser's complete AT-SPI tree (launch Chromium-family browsers with --force-renderer-accessibility, or use a screen reader that enables full renderer accessibility)",
         descriptor.product_name
     )
-}
-
-fn with_target_foreground<T>(
-    pid: u32,
-    window_id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        if let Some(window) =
-            crate::wayland::sway_ipc::window_for_id(window_id).filter(|window| window.pid == pid)
-        {
-            crate::wayland::sway_ipc::with_focused_container(window.id, body)
-        } else {
-            crate::wayland::shell_helper::with_focused_window(pid, window_id, body)
-        }
-    } else {
-        crate::input::with_x11_foreground(window_id, 80, body)
-    }
 }
 
 fn close_tab(pid: u32, window_id: u64) -> anyhow::Result<()> {

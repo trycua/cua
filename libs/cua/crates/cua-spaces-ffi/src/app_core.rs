@@ -2959,7 +2959,8 @@ mod relay_usage_tests {
             notice.upgrade_url.as_deref(),
             Some("https://app.cua.ai/buy/pro?from=app_meter")
         );
-        assert_eq!(notice.dismiss_key, "2026-10:hours");
+        // Free at 2 of 2 live sessions is at the sessions limit too (CUA-1745).
+        assert_eq!(notice.dismiss_key, "2026-10:hours,sessions");
 
         let plain = relay_usage(cua_host::RelayUsage {
             upgrade_url: Some("http://cua.ai/pricing".into()),

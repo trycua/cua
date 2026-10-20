@@ -1,4 +1,4 @@
-"""unified-sandbox-api: the same sandbox calls local and in the cloud.
+"""unified-sandbox-api: command, services, wait_for, URLs and forwards.
 
 A plain image running its own server as ``command``, reached as a named
 service (``services``) after a readiness probe on it (``wait_for``):
@@ -6,15 +6,13 @@ service (``services``) after a readiness probe on it (``wait_for``):
 * ``service(name).request`` with caller headers (the MCP-style server
   answers 400 when ``accept`` / ``mcp-session-id`` are dropped),
 * ``service(name).url()`` and ``public_url(name, ttl)`` used by a plain HTTP
-  client with no credentials (local: a token URL served by the cua daemon;
-  cloud: a signed URL),
-* ``forward(port)`` as a loopback URL (cloud images without cua-spacesd:
-  a proxy through the gateway),
+  client with no credentials (a token URL served by the cua daemon),
+* ``forward(port)`` as a loopback URL,
 * portable info: ``id``, phase, location, ``provider_details``.
 
 Lanes: hermetic (a cloud create fails: Cua Cloud has ended; MockServer
 through a private daemon), container (``python:3.12-slim`` on gVisor through
-a private daemon), fleet (live; skipped, Cua Cloud has ended).
+a private daemon).
 """
 
 from __future__ import annotations
@@ -127,16 +125,12 @@ def _plain_opts(image: str, what: str, *, env: bool) -> "cua.SandboxCreateOption
 
 
 @pytest.mark.e2e("unified-sandbox-api", "hermetic")
-def test_unified_api_cloud_ended_and_daemon_public_url(fixtures, fake_fleet, local_cua):
+def test_unified_api_cloud_ended_and_daemon_public_url(fixtures, local_cua):
     async def body():
-        # Cua Cloud has ended: a cloud create (command and services on a
-        # managed gVisor pool) fails before anything is created.
+        # Cua Cloud has ended: a cloud create (command and services) fails
+        # before anything is created.
         await e2e.assert_cloud_ended(
-            fake_fleet,
-            command=["python", "/srv.py"],
-            services={"mcp": 8765},
-            runtime="gvisor",
-            cloud=cua.CloudOptions(max_pool_size=2),
+            local_cua, command=["python", "/srv.py"], services={"mcp": 8765}
         )
 
         # Local public URL (a direct spacesd): served by the daemon; any
@@ -181,25 +175,3 @@ def test_unified_api_plain_image_gvisor():
                 await sb.delete()
 
     e2e.run_async(body(), 600)
-
-
-@pytest.mark.e2e("unified-sandbox-api", "fleet")
-def test_unified_api_plain_image_fleet(live_fleet):
-    async def body():
-        o = _plain_opts("docker.io/library/python:3.12-slim", "unified", env=False)
-        o.on = "cloud"
-        o.ready_timeout_ms = 1_200_000
-        sb = await live_fleet.sandboxes().create(o)
-        pool = sb.info().provider_details.get("pool", "")
-        try:
-            info = sb.info()
-            assert (info.location, info.phase) == ("cloud", cua.SandboxPhase.READY), info
-            assert info.expires_at_unix, info
-            await _mcp_through_service(sb, env_expected=False)
-            await _urls_and_forward(sb, 8765)
-        finally:
-            await sb.delete()
-            if pool:
-                await live_fleet.fleet().pools().gc_pools([pool], 0)
-
-    e2e.run_async(body(), 1500)

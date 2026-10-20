@@ -34,8 +34,8 @@ on:
         description: "Lanes (comma list: hermetic,container,qemu,cua-sandbox,conformance)"
         default: "hermetic,container"
       langs:
-        description: "Languages (py,ts,rust,go)"
-        default: "py,ts,rust,go"
+        description: "Languages (py,ts,rust)"
+        default: "py,ts,rust"
 
 permissions:
   contents: read
@@ -92,9 +92,6 @@ jobs:
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
-        with:
-          go-version: "1.24"
       - name: Log in to Docker Hub (docs blocks read image manifests)
         if: env.DOCKERHUB_USERNAME != ''
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
@@ -114,7 +111,7 @@ jobs:
       - name: Run the suite
         env:
           LANES: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }}
-          LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust,go' }}
+          LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust' }}
           CUA_E2E_PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
           # cua keeps 5 GiB free by default. On this disposable runner, after
           # the setup and the Rust half's own debug build, that refused the
@@ -163,9 +160,6 @@ jobs:
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
-        with:
-          go-version: "1.24"
       - name: Build the SDK, fixtures, bindings, images, disks and runtimes
         run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
       # Cua Cloud has ended (CUA-1854): Fleet refuses the old live lane, so
@@ -173,7 +167,7 @@ jobs:
       - name: Run the suite
         run: >
           python3 tests/e2e/cua-sdk/run.py --lanes cua-sandbox,qemu
-          --langs py,ts,rust,go --strict --out "$RUNNER_TEMP/cua-e2e"
+          --langs py,ts,rust --strict --out "$RUNNER_TEMP/cua-e2e"
       - name: Matrix summary
         if: always()
         run: |

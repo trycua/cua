@@ -242,7 +242,7 @@ Cua no longer maintains these. They will not receive updates or fixes, and exist
 - [Blog](https://cua.ai/blog): tutorials, updates, and research
 - [Discord](https://discord.com/invite/mVnXXpdE85): community support and discussions
 - [GitHub Issues](https://github.com/trycua/cua/issues): bug reports and feature requests
-- [Security](SECURITY.md): private vulnerability reporting
+- [Security](.github/SECURITY.md): private vulnerability reporting
 
 ## Citation
 
@@ -262,15 +262,15 @@ For reproducibility, include the Cua release or commit used in your experiments.
 
 ## Contributing
 
-We welcome contributions. See our [Contributing Guidelines](CONTRIBUTING.md) for details.
+We welcome contributions. See our [Contributing Guidelines](.github/CONTRIBUTING.md) for details.
 
 ## Licensing
 
 Everything outside Cua Spaces and Cua Driver Bench is MIT-licensed ([LICENSE](LICENSE.md)): the cua SDK and its Python, TypeScript, Swift and Kotlin packages, the `cua` command and `cua daemon`, Cua Driver, Lume and the rest of this repository unless a directory says otherwise.
 Cua Spaces is source-available under [FSL-1.1-MIT](https://fsl.software): the Spaces apps, cua-spacesd, the Cua Keyvault, teleport, Cua Volume (`cua-volume`) and the streaming client, codecs and viewers. The streaming wire protocol stays MIT. It is free to use, self-host and build on, with no competing hosted service, and each release becomes MIT two years after it ships.
-Cua Driver Bench (`benchmarks/cua-driver-bench`) is under the same [FSL-1.1-MIT](benchmarks/cua-driver-bench/LICENSE); versions published before 11 Oct 2026 (#4973, #4978) were MIT.
-The MIT parts never depend on the FSL parts. Some subdirectories carry their own licence; [LICENSING.md](LICENSING.md) lists each one and how the two fit together.
-Offering Spaces, or Cua Driver Bench, as a hosted or managed service? See [COMMERCIAL.md](COMMERCIAL.md). For use of our names and logo, see [TRADEMARKS.md](TRADEMARKS.md).
+Cua Driver Bench (`libs/cua-driver-bench`) is under the same [FSL-1.1-MIT](libs/cua-driver-bench/LICENSE); versions published before 11 Oct 2026 (#4973, #4978) were MIT.
+The MIT parts never depend on the FSL parts. Some subdirectories carry their own licence; [LICENSING.md](legal/LICENSING.md) lists each one and how the two fit together.
+Offering Spaces, or Cua Driver Bench, as a hosted or managed service? See [COMMERCIAL.md](legal/COMMERCIAL.md). For use of our names and logo, see [TRADEMARKS.md](legal/TRADEMARKS.md).
 
 Third-party components have their own licenses:
 

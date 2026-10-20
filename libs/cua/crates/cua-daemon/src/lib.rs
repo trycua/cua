@@ -2,7 +2,7 @@
 //!
 //! - [`Runtime`] is *the* SDK runtime: one [`cua_sandbox_core::Sandboxes`]
 //!   (local, direct, your own cloud), cached sandbox handles and spacesd
-//!   connections. It never builds a Fleet client: Cua Cloud has ended. `cua-sdk` embeds it in-process
+//!   connections. `cua-sdk` embeds it in-process
 //!   (`Cua::embedded`); the daemon hosts the same value.
 //! - [`server`] serves `cua.daemon.v1` on a Unix socket (`~/.cua/cua.sock`,
 //!   mode 0600, no token) and/or loopback TCP (bearer token). The loopback
@@ -109,18 +109,6 @@ pub enum Error {
     /// A deadline elapsed.
     #[error("timed out: {0}")]
     Timeout(String),
-    /// Fleet API failure.
-    #[error("fleet: {0}")]
-    Fleet(String),
-    /// Fleet's admission refused a write (a size over the account's
-    /// limits); the message is Fleet's.
-    #[error("fleet admission denied: {0}")]
-    FleetAdmissionDenied(String),
-    /// The account is out of Cua Cloud credit (no credit, card or plan);
-    /// the message names the billing page. New cloud sandboxes are
-    /// refused; running ones keep running.
-    #[error("{0}")]
-    CloudCreditExhausted(String),
     /// Your own cloud account refused or failed a call (the message names
     /// the cloud's error).
     #[error("your cloud: {0}")]
@@ -154,12 +142,6 @@ pub enum Error {
     /// The teleport consent gate refused.
     #[error("teleport refused: {0}")]
     TeleportRefused(String),
-    /// A named cloud pool's template differs from the requested fields.
-    #[error("pool spec mismatch: {0}")]
-    PoolSpecMismatch(String),
-    /// A claim's secrets never reached the sandbox (the claim was released).
-    #[error("claim secrets not delivered: {0}")]
-    ClaimSecretsNotDelivered(String),
     /// Not enough free disk space for a pull, build or VM create.
     #[error("insufficient disk: {0}")]
     InsufficientDisk(String),
@@ -187,9 +169,6 @@ impl Error {
             Error::Unsupported(_) => R::Unsupported,
             Error::SpacesdNotAvailable(_) => R::SpacesdNotAvailable,
             Error::Timeout(_) => R::Timeout,
-            Error::Fleet(_) => R::Fleet,
-            Error::FleetAdmissionDenied(_) => R::FleetAdmissionDenied,
-            Error::CloudCreditExhausted(_) => R::CloudCreditExhausted,
             Error::Cloud(_) => R::Cloud,
             Error::Runtime(_) => R::Runtime,
             Error::Env(_) => R::Env,
@@ -198,8 +177,6 @@ impl Error {
             Error::CapabilityMissing(_) => R::CapabilityMissing,
             Error::HostCapabilityMissing(_) => R::HostCapabilityMissing,
             Error::TeleportRefused(_) => R::TeleportRefused,
-            Error::PoolSpecMismatch(_) => R::PoolSpecMismatch,
-            Error::ClaimSecretsNotDelivered(_) => R::ClaimSecretsNotDelivered,
             Error::InsufficientDisk(_) => R::InsufficientDisk,
             Error::Cancelled(_) => R::Cancelled,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => R::Internal,
@@ -215,9 +192,6 @@ impl Error {
             | Error::Unsupported(m)
             | Error::SpacesdNotAvailable(m)
             | Error::Timeout(m)
-            | Error::Fleet(m)
-            | Error::FleetAdmissionDenied(m)
-            | Error::CloudCreditExhausted(m)
             | Error::Cloud(m)
             | Error::Runtime(m)
             | Error::Env(m)
@@ -228,8 +202,6 @@ impl Error {
             | Error::CapabilityMissing(m)
             | Error::HostCapabilityMissing(m)
             | Error::TeleportRefused(m)
-            | Error::PoolSpecMismatch(m)
-            | Error::ClaimSecretsNotDelivered(m)
             | Error::InsufficientDisk(m)
             | Error::Cancelled(m)
             | Error::Internal(m)
@@ -287,9 +259,6 @@ impl Error {
             R::Unsupported => Error::Unsupported(m),
             R::SpacesdNotAvailable => Error::SpacesdNotAvailable(m),
             R::Timeout => Error::Timeout(m),
-            R::Fleet => Error::Fleet(m),
-            R::FleetAdmissionDenied => Error::FleetAdmissionDenied(m),
-            R::CloudCreditExhausted => Error::CloudCreditExhausted(m),
             R::Cloud => Error::Cloud(m),
             R::Runtime => Error::Runtime(m),
             R::Env => Error::Env(m),
@@ -298,8 +267,6 @@ impl Error {
             R::CapabilityMissing => Error::CapabilityMissing(m),
             R::HostCapabilityMissing => Error::HostCapabilityMissing(m),
             R::TeleportRefused => Error::TeleportRefused(m),
-            R::PoolSpecMismatch => Error::PoolSpecMismatch(m),
-            R::ClaimSecretsNotDelivered => Error::ClaimSecretsNotDelivered(m),
             R::InsufficientDisk => Error::InsufficientDisk(m),
             R::Cancelled => Error::Cancelled(m),
             R::Internal | R::Unspecified => Error::Internal(m),
@@ -321,16 +288,10 @@ impl Error {
             Error::CapabilityMissing(_) | Error::HostCapabilityMissing(_) => {
                 Code::FailedPrecondition
             }
-            Error::TeleportRefused(_) | Error::FleetAdmissionDenied(_) => Code::PermissionDenied,
-            Error::PoolSpecMismatch(_) => Code::FailedPrecondition,
-            Error::ClaimSecretsNotDelivered(_) => Code::DeadlineExceeded,
-            Error::InsufficientDisk(_) | Error::CloudCreditExhausted(_) => Code::ResourceExhausted,
+            Error::TeleportRefused(_) => Code::PermissionDenied,
+            Error::InsufficientDisk(_) => Code::ResourceExhausted,
             Error::Cancelled(_) => Code::Cancelled,
-            Error::Fleet(_)
-            | Error::Cloud(_)
-            | Error::Runtime(_)
-            | Error::Env(_)
-            | Error::Http(_) => Code::Aborted,
+            Error::Cloud(_) | Error::Runtime(_) | Error::Env(_) | Error::Http(_) => Code::Aborted,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => Code::Internal,
         };
         let mut metadata = std::collections::HashMap::new();
@@ -411,7 +372,6 @@ impl From<cua_sandbox_core::Error> for Error {
                 cua_sandbox_core::ProviderKind::Local => {
                     "local runtimes are not available in this build yet (cua-vmm)".into()
                 }
-                cua_sandbox_core::ProviderKind::Fleet => cua_sandbox_core::CLOUD_ENDED.into(),
                 cua_sandbox_core::ProviderKind::Direct
                 | cua_sandbox_core::ProviderKind::Contrib => m,
             }),
@@ -420,7 +380,6 @@ impl From<cua_sandbox_core::Error> for Error {
             E::SpacesdNotAvailable { .. } => Error::SpacesdNotAvailable(m),
             E::Timeout(t) => Error::Timeout(t),
             E::Http(h) => Error::Http(h),
-            E::Fleet(f) => Error::from(f),
             E::UnsupportedImage(u) => Error::Unsupported(u),
             E::Runtime(cua_sandbox_core::RuntimeError::UnsupportedImage(u)) => {
                 Error::Unsupported(u)
@@ -448,32 +407,6 @@ impl From<cua_sandbox_core::placement::PlacementError> for Error {
             message: p.message,
             axis: p.axis.as_str().to_string(),
             valid: p.valid,
-        }
-    }
-}
-
-impl From<cua_fleet::Error> for Error {
-    fn from(e: cua_fleet::Error) -> Self {
-        match e {
-            ref e if e.is_not_found() => Error::NotFound(e.to_string()),
-            cua_fleet::Error::MissingCredentials => Error::ProviderNotConfigured(e.to_string()),
-            cua_fleet::Error::InvalidArgument(a) => Error::InvalidArgument(a),
-            cua_fleet::Error::Timeout(t) => Error::Timeout(t),
-            cua_fleet::Error::Env(env) => Error::from(env),
-            cua_fleet::Error::Unsupported(u) => Error::Unsupported(u),
-            ref e @ cua_fleet::Error::PoolSpecMismatch { .. } => {
-                Error::PoolSpecMismatch(e.to_string())
-            }
-            ref e @ cua_fleet::Error::ClaimSecretsNotDelivered { .. } => {
-                Error::ClaimSecretsNotDelivered(e.to_string())
-            }
-            ref e @ cua_fleet::Error::AdmissionDenied { .. } => {
-                Error::FleetAdmissionDenied(e.to_string())
-            }
-            ref e @ cua_fleet::Error::CreditExhausted { .. } => {
-                Error::CloudCreditExhausted(e.to_string())
-            }
-            other => Error::Fleet(other.to_string()),
         }
     }
 }
@@ -513,7 +446,6 @@ impl From<cua_spaces::Error> for Error {
             E::Timeout(_) => Error::Timeout(m),
             E::Cancelled(c) => Error::Cancelled(c),
             E::Env(env) => Error::from(env),
-            E::Fleet(f) => Error::from(f),
             E::Sandbox(s) => Error::from(s),
             E::Transfer(_) | E::Agent(_) | E::Stream(_) => Error::Env(m),
             E::Io(_) | E::Json(_) => Error::Internal(m),
@@ -978,10 +910,8 @@ mod tests {
             Error::NotFound("sandbox x".into()),
             Error::SpacesdNotAvailable("no driver".into()),
             Error::Unsupported("local".into()),
-            Error::ProviderNotConfigured("fleet".into()),
+            Error::ProviderNotConfigured("local".into()),
             Error::Timeout("t".into()),
-            Error::Fleet("f".into()),
-            Error::FleetAdmissionDenied("sandbox size is over the Fleet limits".into()),
             Error::InsufficientDisk("needs 3 GiB".into()),
             Error::AmbiguousSandbox {
                 message: "\"box\" names 2 sandboxes; use one of: local:box, cloud:box".into(),
@@ -998,36 +928,6 @@ mod tests {
             Error::from_status(&tonic::Status::unauthenticated("no")),
             Error::Unauthenticated(_)
         ));
-    }
-
-    #[test]
-    fn fleet_404_and_read_403_are_not_found() {
-        let status = |op: &str, code: u16| {
-            Error::from(cua_fleet::Error::Sdk(cua_fleet::SdkError::status(
-                op, code, b"x",
-            )))
-        };
-        assert!(matches!(status("get pool", 404), Error::NotFound(_)));
-        assert!(matches!(status("delete claim", 404), Error::NotFound(_)));
-        assert!(matches!(status("get pool", 403), Error::NotFound(_)));
-        assert!(matches!(status("list claims", 403), Error::NotFound(_)));
-        assert!(matches!(status("create claim", 403), Error::Fleet(_)));
-        assert!(matches!(status("get pool", 500), Error::Fleet(_)));
-    }
-
-    #[test]
-    fn fleet_admission_denial_keeps_fleets_message() {
-        let e = Error::from(cua_fleet::Error::from(cua_fleet::SdkError::status(
-            "create template",
-            403,
-            br#"{"error":"sandbox size is over the Fleet limits"}"#,
-        )));
-        assert!(
-            matches!(&e, Error::FleetAdmissionDenied(m) if m.contains("sandbox size is over the Fleet limits")),
-            "{e:?}"
-        );
-        assert_eq!(e.to_status().code(), tonic::Code::PermissionDenied);
-        assert_eq!(Error::from_status(&e.to_status()), e);
     }
 
     #[test]

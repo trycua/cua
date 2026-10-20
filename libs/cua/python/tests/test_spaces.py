@@ -110,7 +110,6 @@ async def exercise(c, fx, tmp_path: Path, teleport: bool = False):
 def test_spaces_embedded(fixtures, tmp_path):
     c = cua.embedded(
         state_dir=str(tmp_path / "sbx"),
-        fleet_from_env=False,
         spaces_home=str(tmp_path / "cua"),
         teleport_home=fixtures["teleport_host_home"],
     )

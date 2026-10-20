@@ -185,6 +185,12 @@ pub const ERROR_KINDS: &[&str] = &[
     "agent",
     "agent_failed",
     "agent_crashed",
+    // Why an agent run failed or stopped, a fixed word chosen on device
+    // from the run's recorded error (never the text itself).
+    "no_api_key",
+    "provider_error",
+    "timeout",
+    "user_cancelled",
     "other",
 ];
 pub const DURATIONS: &[&str] = &[

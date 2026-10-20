@@ -1001,7 +1001,7 @@ pub struct NotchActivity {
     pub estimate_ms: u32,
 }
 
-/// Time to about 80% on a ring without real progress (the measured Fleet
+/// Time to about 80% on a ring without real progress (the measured cloud
 /// bind time).
 pub const ACTIVITY_ESTIMATE_MS: u32 = 80_000;
 

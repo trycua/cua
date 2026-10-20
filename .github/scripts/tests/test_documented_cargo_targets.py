@@ -9,7 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize("document", ["TESTING.md", "libs/cua-driver/rust/README.md"])
+@pytest.mark.parametrize("document", ["docs/contributing/TESTING.md", "libs/cua-driver/rust/README.md"])
 def test_documented_integration_targets_exist(document):
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"],

@@ -22,6 +22,14 @@ RUN apt-get update \
  && printf 'PasswordAuthentication no\nPermitRootLogin no\n' >/etc/ssh/sshd_config.d/10-cua.conf \
  && mkdir -p /etc/cua-image && echo ssh.socket >/etc/cua-image/vm-units \
  && echo container >/etc/cua-image/variant
+
+# CUA-1948: the compromised eMudhra intermediates. Ubuntu's ca-certificates >= 20260816ubuntu0.<release>.1 drops the
+# roots they chain to; Debian has not shipped that yet, so disable both roots explicitly (a no-op once they are gone).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY plain/ubuntu-server/files/entrypoint.sh /usr/local/sbin/entrypoint.sh
 EXPOSE 22
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=12 \

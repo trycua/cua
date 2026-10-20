@@ -153,6 +153,22 @@ extension WebUIBridge {
         // daemon's per-Space numbers join them once it serves `resources`.
         case "resources.get":
             return HostResourceSampler.shared.sample().snapshot()
+        // The Machines page: rename a machine, Remove from account (what
+        // each does to which machine is the core's `machines_view`).
+        case "machines.rename":
+            try await model.renameMachine(id: try string(args, "id"), name: try string(args, "name"))
+            return NSNull()
+        case "machines.remove":
+            let machine = (args["machine"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let device = (args["device"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            guard machine != nil || device != nil else { throw Failure.badArgs("machine or device") }
+            try await model.removeMachine(machine: machine, device: device)
+            return NSNull()
+        // Each machine's own daemon checks its health; the next
+        // `machines.list` view carries the issues.
+        case "machines.checkHealth":
+            await model.checkMachineHealth()
+            return NSNull()
 
         // Settings, Storage
         case "storage.get":

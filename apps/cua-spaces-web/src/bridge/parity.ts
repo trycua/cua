@@ -17,7 +17,7 @@
 
 import type { CoreClient } from "./core";
 import type { PersistentAgent } from "./contracts/agents";
-import type { HostPanelView, MachineRow } from "./contracts/host";
+import type { HostPanelView, MachineRow, MachinesView, MachinesViewMachine } from "./contracts/host";
 import type { KeyvaultOverview, KvPage, VaultState, VaultView } from "./contracts/keyvault";
 import type { CreatesState, Space, SpaceRow } from "./contracts/spaces";
 import {
@@ -81,7 +81,7 @@ export type ParityCheckpoint =
   /** A Stream section for this input. */
   | { kind: "stream"; input: StreamSectionInput; section: StreamSection }
   /** This machine for the core's host state (null: not reported yet). */
-  | { kind: "host-panel"; state: object | null; panel: HostPanelView }
+  | { kind: "host-panel"; state: object | null; panel: HostPanelView; machine: MachinesViewMachine | null }
   /** The host setup form for this state and signed-in identity. */
   | { kind: "host-form"; state: HostFormState; identity: string | null; view: HostFormView }
   /** The Agents page's rows for these agents. */
@@ -156,7 +156,16 @@ function bridgeMethods(core: CoreClient, record: (c: ParityCheckpoint) => void):
     // This machine and its setup form (derive.ts, this-machine.ts).
     "host.panel": (a) => {
       const panel = hostPanelFromState(core, a.state);
-      record({ kind: "host-panel", state: a.state, panel });
+      // What the Machines page draws for This machine with this state
+      // (`machines.view`): its switches, notice and Remove.
+      const view = core.tryCall<MachinesView>("machines.view", {
+        input: {
+          page: { hostOs: "macos", spaces: [], now: 0 },
+          rows: [{ id: "this-mac", name: "This Mac", online: true, os: "macos", via: "local", current: true, device: null, deviceOnly: false, spaceId: null, stoppedSharing: false, lastSeen: null }],
+          host: a.state,
+        },
+      });
+      record({ kind: "host-panel", state: a.state, panel, machine: view?.machines[0] ?? null });
       return panel;
     },
     "host.formInitial": () => hostFormInitial(core),
@@ -288,6 +297,8 @@ export interface ParityHandle extends NewSpaceParityHandle, TeleportParityHandle
   showHostForm(state: HostFormState, identity: string | null): void;
   /** These machine and device rows on the Machines page, at `now` (Unix seconds). */
   showMachines(rows: MachineRow[], now: number): void;
+  /** The Machines page the core draws for this `MachinesViewInput` (its machines' health included). */
+  showMachinesView(input: object): void;
   /** These persistent agents on the Agents page. */
   showAgents(agents: PersistentAgent[], nowMs: number): void;
   /** Sends usage events through the bridge; resolves once sent or dropped. */
@@ -351,6 +362,7 @@ export function installParityHandle(store: BridgeStore): () => void {
     showHost: (state) => store.showHost(state),
     showHostForm: (state, identity) => store.thisMachine.show(state, identity),
     showMachines: (rows, now) => store.showMachines(rows, now),
+    showMachinesView: (input) => store.showMachinesView(input),
     showAgents: (agents, nowMs) => store.showAgents(agents, nowMs),
     track: async (signals) => {
       await store.telemetry.track(signals);

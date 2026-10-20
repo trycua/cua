@@ -9433,6 +9433,313 @@ pub struct AppMachinePageRow {
     pub spaces_label: String,
 }
 
+/// One check as the machine's daemon reported it (the SDK's
+/// `MachineHealthCheck`).
+pub type AppMachinesViewCheck = core::machines_health::MachinesViewCheck;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewCheck {
+    /// `machine.local_network`, `machine.disk`, ...
+    pub id: String,
+    /// `pass`, `warn`, `fail`, `skip`.
+    pub status: String,
+    /// What it found.
+    pub message: String,
+    /// What to do.
+    pub remediation: String,
+    /// `app`, `settings_url`, `free_gb`, ...
+    pub facts: std::collections::HashMap<String, String>,
+}
+
+/// What the shell got for one machine's health.
+pub type AppMachinesViewHealth = core::machines_health::MachinesViewHealth;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewHealth {
+    /// The machine's row id (`this-mac`, a relay machine id).
+    pub id: String,
+    /// Its checks.
+    pub checks: Vec<AppMachinesViewCheck>,
+    /// The Cua version of the daemon that checked.
+    pub cua_version: String,
+    /// Why it could not be checked, when it could not.
+    pub error: Option<String>,
+}
+
+/// What fixes an issue.
+pub type AppMachinesViewIssueAction = core::machines_health::MachinesViewIssueAction;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewIssueAction {
+    /// "Open Local Network settings", "Free disk space", "Restart service".
+    pub label: String,
+    /// A System Settings pane to open (`host.openSettings`).
+    pub url: Option<String>,
+    /// A host action to run (`host.action`).
+    pub host_action: Option<AppHostActionId>,
+}
+
+/// One issue on a machine's page.
+pub type AppMachinesViewIssue = core::machines_health::MachinesViewIssue;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewIssue {
+    /// The check it comes from (`machine.disk`, `service`, `version`).
+    pub id: String,
+    /// `warn` or `fail`.
+    pub level: String,
+    /// One plain sentence.
+    pub text: String,
+    /// Its fix, when there is one here.
+    pub action: Option<AppMachinesViewIssueAction>,
+}
+
+/// What the relay says of one of the account's machines (the SDK's
+/// `RelayMachine`, the fields the page reads).
+pub type AppMachinesViewRelay = core::machines_view::MachinesViewRelay;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewRelay {
+    /// Machine id.
+    pub id: String,
+    /// `owner`, or `shared` for a machine someone shares with you.
+    pub role: String,
+    /// The team you reach it through, for a team machine.
+    pub team: Option<String>,
+    /// Its owner's email, when the relay says.
+    pub owner_email: Option<String>,
+    /// It creates Spaces for your devices (`None`: it did not say).
+    pub provides_spaces: Option<bool>,
+}
+
+/// What the shell knows about the computer it runs on.
+pub type AppMachinesViewAbout = core::machines_view::MachinesViewAbout;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewAbout {
+    /// Its name ("Ada's MacBook Pro").
+    pub computer_name: String,
+    /// The app's version ("0.9.1").
+    pub app_version: String,
+    /// Its system and version ("macOS 26.5.2").
+    pub os_version: String,
+}
+
+/// What [`view`] reads.
+pub type AppMachinesViewInput = core::machines_view::MachinesViewInput;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewInput {
+    /// What the rows are listed from ([`machines::page_rows`]).
+    pub page: AppMachinesPageInput,
+    /// The account's relay machines (none while signed out).
+    pub relay: Vec<AppMachinesViewRelay>,
+    /// This machine's host state (`None` while it loads).
+    pub host: Option<AppHostState>,
+    /// This computer.
+    pub about: AppMachinesViewAbout,
+    /// The rows when the shell already listed them (an older host's rows,
+    /// merged by the web UI); `None`: [`machines::page_rows`] of `page`.
+    pub rows: Option<Vec<AppMachinePageRow>>,
+    /// What each machine's daemon reported of its health, by row id, for
+    /// the machines whose `health_target` the shell checked
+    /// ([`crate::machines_health`]).
+    pub health: Vec<AppMachinesViewHealth>,
+}
+
+/// One of the two switches on a machine's page.
+pub type AppMachinesViewToggle = core::machines_view::MachinesViewToggle;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewToggle {
+    /// `spaces` or `desktop`.
+    pub id: String,
+    /// "Provide Spaces", "Share this desktop".
+    pub label: String,
+    /// One line under it.
+    pub help: String,
+    /// On now.
+    pub on: bool,
+    /// Changed here (This machine); another machine's are read-only.
+    pub editable: bool,
+    /// Can be flipped now.
+    pub enabled: bool,
+    /// What flipping it runs, in order (the host's actions).
+    pub actions: Vec<AppHostActionId>,
+    /// Before This machine is set up: flipping it opens the setup form
+    /// with this profile (`desktop` or `spare`).
+    pub setup: Option<String>,
+}
+
+/// A Space on a machine: a link to the Space's own page.
+pub type AppMachinesViewSpace = core::machines_view::MachinesViewSpace;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewSpace {
+    /// The Space's id (its page).
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// Its system ("Ubuntu 24.04.5 LTS", "macOS").
+    pub os: String,
+    /// Its status word ("Running", "Stopped").
+    pub status: String,
+    /// Running (the green dot).
+    pub running: bool,
+}
+
+/// New Space here: the wizard with this machine chosen.
+pub type AppMachinesViewNewSpace = core::machines_view::MachinesViewNewSpace;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewNewSpace {
+    /// "New Space here".
+    pub label: String,
+    /// The wizard's placement (`local`, `host:<id>`).
+    pub on: String,
+    /// Can be pressed now.
+    pub enabled: bool,
+    /// Why not, when it cannot.
+    pub help: Option<String>,
+}
+
+/// Rename: what the new name is saved on.
+pub type AppMachinesViewRename = core::machines_view::MachinesViewRename;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewRename {
+    /// `host` (This machine's host setup), `machine` (another machine of
+    /// yours on the relay) or `device` (one of your devices).
+    pub target: String,
+    /// The id it is saved under (the relay machine's or the device's).
+    pub id: String,
+    /// The dialog's title.
+    pub title: String,
+    /// Its confirming button.
+    pub confirm_label: String,
+}
+
+/// Remove from account.
+pub type AppMachinesViewRemove = core::machines_view::MachinesViewRemove;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewRemove {
+    /// "Remove from account".
+    pub label: String,
+    /// Can be pressed now.
+    pub enabled: bool,
+    /// Why not, when it cannot.
+    pub help: Option<String>,
+    /// This machine: its host setup is removed (the host's `remove`).
+    pub host: bool,
+    /// Another machine: it leaves the relay directory (`relay:<id>`).
+    pub machine: Option<String>,
+    /// The device on it, revoked too.
+    pub device: Option<String>,
+    /// Asked first.
+    pub confirm: AppHostConfirm,
+}
+
+/// A label and its value under Details.
+pub type AppMachinesViewFact = core::machines_view::MachinesViewFact;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewFact {
+    /// "OS", "App", "Connection", "Service".
+    pub label: String,
+    /// Its value.
+    pub value: String,
+}
+
+/// One machine: its list row and its page.
+pub type AppMachinesViewMachine = core::machines_view::MachinesViewMachine;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewMachine {
+    /// The row's id ([`MachinePageRow::id`]).
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// "This Mac" on the machine this app runs on.
+    pub badge: Option<String>,
+    /// The row's one muted line ("2 Spaces running", "Ready for Spaces",
+    /// "Offline · last seen 9 days ago").
+    pub line: String,
+    /// Usable now (the green dot): online and sharing.
+    pub online: bool,
+    /// The dot's tint for its issues: `warn`, `fail`, or empty.
+    pub health: String,
+    /// What the shell passes to `Spaces.machine_health` to check it: empty
+    /// for This Mac, its id for another of your machines; `None` when it
+    /// can't be checked from here (offline, not yours).
+    pub health_target: Option<String>,
+    /// `macos`, `linux`, `windows`, or empty.
+    pub os: String,
+    /// The machine this app runs on.
+    pub current: bool,
+    /// Someone shares it with you (a team machine).
+    pub team: bool,
+    /// The page's status line ("Online", "Offline · last seen 9 days ago").
+    pub status: String,
+    /// After the status: who shares it ("Shared by your team").
+    pub shared_by: Option<String>,
+    /// Rename, when it can be renamed from here.
+    pub rename: Option<AppMachinesViewRename>,
+    /// "Issues".
+    pub issues_title: String,
+    /// What is wrong, one sentence each with its fix; empty when healthy
+    /// (the section is hidden then) or offline.
+    pub issues: Vec<AppMachinesViewIssue>,
+    /// One line over the switches (offline, signed out).
+    pub notice: Option<String>,
+    /// The notice's button (Sign In).
+    pub notice_action: Option<AppHostAction>,
+    /// Provide Spaces, then Share this desktop.
+    pub toggles: Vec<AppMachinesViewToggle>,
+    /// Under read-only switches: where they change.
+    pub toggles_note: Option<String>,
+    /// "Spaces on this machine".
+    pub spaces_title: String,
+    /// The Spaces on it.
+    pub spaces: Vec<AppMachinesViewSpace>,
+    /// When it has none.
+    pub spaces_empty: Option<String>,
+    /// New Space here.
+    pub new_space: AppMachinesViewNewSpace,
+    /// "Details" (collapsed).
+    pub details_title: String,
+    /// OS, App, Connection, Service.
+    pub details: Vec<AppMachinesViewFact>,
+    /// Remove from account (none for a team machine).
+    pub remove: Option<AppMachinesViewRemove>,
+}
+
+/// "Remove old machines": every machine of the group that can go.
+pub type AppMachinesViewRemoveAll = core::machines_view::MachinesViewRemoveAll;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewRemoveAll {
+    /// "Remove old machines".
+    pub label: String,
+    /// Asked first.
+    pub confirm: AppHostConfirm,
+    /// What each removal does.
+    pub removes: Vec<AppMachinesViewRemove>,
+}
+
+/// A group of the list.
+pub type AppMachinesViewGroup = core::machines_view::MachinesViewGroup;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewGroup {
+    /// `yours`, `old` or `team`.
+    pub id: String,
+    /// "Your machines", "Offline for 30+ days (2)", "Team machines".
+    pub title: String,
+    /// Collapsed until opened (the old machines).
+    pub collapsed: bool,
+    /// Its machines' ids, in order.
+    pub ids: Vec<String>,
+    /// Remove old machines.
+    pub remove_all: Option<AppMachinesViewRemoveAll>,
+}
+
+/// The Machines page.
+pub type AppMachinesView = core::machines_view::MachinesView;
+#[uniffi::remote(Record)]
+pub struct AppMachinesView {
+    /// "3 machines, 2 online".
+    pub summary: String,
+    /// The list's groups (only those with machines).
+    pub groups: Vec<AppMachinesViewGroup>,
+    /// Every machine, in list order.
+    pub machines: Vec<AppMachinesViewMachine>,
+}
+
 /// One step, in the order the checklist lists them
 /// ([`telemetry::CHECKLIST_STEPS`]).
 pub type AppChecklistStep = core::checklist::ChecklistStep;

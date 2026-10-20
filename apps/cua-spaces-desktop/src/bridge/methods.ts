@@ -47,6 +47,7 @@ export const METHODS = [
   "relay.usage",
   "nudges.pending", "nudges.answer",
   "resources.get",
+  "machines.rename", "machines.remove", "machines.checkHealth",
   "checklist.get", "checklist.send",
 ] as const;
 

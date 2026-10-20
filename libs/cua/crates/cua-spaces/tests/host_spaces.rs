@@ -1085,6 +1085,17 @@ impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
         r.map(|message| tonic::Response::new(pb::DeleteCloudSpaceResponse { message }))
             .map_err(|e| to_status(&e))
     }
+
+    async fn diagnose_host(
+        &self,
+        _req: tonic::Request<pb::DiagnoseHostRequest>,
+    ) -> Result<tonic::Response<pb::DiagnoseHostResponse>, tonic::Status> {
+        Ok(tonic::Response::new(pb::DiagnoseHostResponse {
+            report: None,
+            cua_version: "0.0.0-test".into(),
+            os: "macos".into(),
+        }))
+    }
 }
 
 /// The client half: the spare host is online on the fake relay (its driver

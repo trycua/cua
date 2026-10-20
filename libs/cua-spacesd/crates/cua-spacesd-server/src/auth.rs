@@ -227,6 +227,7 @@ pub const HOST_ONLY_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.HostSpacesService/CancelHostSpace",
     "/cua.env.v1.HostSpacesService/SetHostSpacePower",
     "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+    "/cua.env.v1.HostSpacesService/DiagnoseHost",
 ];
 
 impl ExternalGrant {

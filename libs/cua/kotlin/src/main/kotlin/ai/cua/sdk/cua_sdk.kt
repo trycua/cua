@@ -987,6 +987,8 @@ external fun uniffi_cua_sdk_checksum_method_devices_relay_url(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_rename(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_devices_rename_machine(
+): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(
@@ -1399,6 +1401,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_list(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_list_tools_json(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_machine_health(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_relay_register(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_relay_unregister(
@@ -1773,6 +1777,8 @@ external fun uniffi_cua_sdk_fn_method_devices_pairing_codes(`ptr`: Long,
 external fun uniffi_cua_sdk_fn_method_devices_relay_url(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_devices_rename(`ptr`: Long,`id`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_devices_rename_machine(`ptr`: Long,`machineId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_revoke(`ptr`: Long,`id`: RustBuffer.ByValue,
 ): Long
@@ -2279,6 +2285,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_hosts(`ptr`: Long,
 external fun uniffi_cua_sdk_fn_method_spaces_list(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_list_tools_json(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_machine_health(`ptr`: Long,`machine`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_relay_register(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
@@ -3037,6 +3045,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_devices_rename() != 59535.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -3653,6 +3664,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_relay_register() != 31691.toShort()) {
@@ -7647,6 +7661,13 @@ public interface DevicesInterface {
     suspend fun `rename`(`id`: kotlin.String, `name`: kotlin.String): RelayDevice
 
     /**
+     * Renames `machine_id`, a machine the account owns, on the relay (from
+     * this enrolled device). When it is this machine's own registration,
+     * its host setup takes the new name too.
+     */
+    suspend fun `renameMachine`(`machineId`: kotlin.String, `name`: kotlin.String): RelayMachine
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -7974,6 +7995,32 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeRelayDevice.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Renames `machine_id`, a machine the account owns, on the relay (from
+     * this enrolled device). When it is this machine's own registration,
+     * its host setup takes the new name too.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `renameMachine`(`machineId`: kotlin.String, `name`: kotlin.String) : RelayMachine {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine(
+                uniffiHandle,
+                FfiConverterString.lower(`machineId`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRelayMachine.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -18132,6 +18179,17 @@ public interface SpacesInterface {
     suspend fun `listToolsJson`(): kotlin.String
 
     /**
+     * A machine's health as its own cua daemon checks it: Local Network
+     * access (and which app macOS holds responsible), free disk,
+     * virtualization, memory left by running Spaces, the permissions
+     * sharing its desktop needs. `machine`: another of your machines, by
+     * id or name (asked over the relay, the mesh or its direct address);
+     * `None` for this one. Read-only; fails plainly when that machine is
+     * offline, not yours, or runs a Cua that predates the check.
+     */
+    suspend fun `machineHealth`(`machine`: kotlin.String?): MachineHealth
+
+    /**
      * Publishes `space` on the cua.ai relay as a machine of the signed-in
      * account, the way `cua host setup` publishes this computer: the
      * Space's own driver dials out, so the account's other devices (a
@@ -19281,6 +19339,36 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * A machine's health as its own cua daemon checks it: Local Network
+     * access (and which app macOS holds responsible), free disk,
+     * virtualization, memory left by running Spaces, the permissions
+     * sharing its desktop needs. `machine`: another of your machines, by
+     * id or name (asked over the relay, the mesh or its direct address);
+     * `None` for this one. Read-only; fails plainly when that machine is
+     * offline, not yours, or runs a Cua that predates the check.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `machineHealth`(`machine`: kotlin.String?) : MachineHealth {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health(
+                uniffiHandle,
+                FfiConverterOptionalString.lower(`machine`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeMachineHealth.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -29249,6 +29337,142 @@ public object FfiConverterTypeLocationInfo: FfiConverterRustBuffer<LocationInfo>
 
 
 /**
+ * A machine's health as its own cua daemon checks it.
+ */
+data class MachineHealth (
+    /**
+     * The Cua version of the daemon that checked.
+     */
+    var `cuaVersion`: kotlin.String
+    ,
+    /**
+     * `macos`, `linux`, `windows`.
+     */
+    var `os`: kotlin.String
+    ,
+    /**
+     * Every check, in order.
+     */
+    var `checks`: List<MachineHealthCheck>
+    ,
+    /**
+     * The whole report as JSON (the schema `cua doctor --json` writes).
+     */
+    var `reportJson`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMachineHealth: FfiConverterRustBuffer<MachineHealth> {
+    override fun read(buf: ByteBuffer): MachineHealth {
+        return MachineHealth(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeMachineHealthCheck.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: MachineHealth) = (
+            FfiConverterString.allocationSize(value.`cuaVersion`) +
+            FfiConverterString.allocationSize(value.`os`) +
+            FfiConverterSequenceTypeMachineHealthCheck.allocationSize(value.`checks`) +
+            FfiConverterString.allocationSize(value.`reportJson`)
+    )
+
+    override fun write(value: MachineHealth, buf: ByteBuffer) {
+            FfiConverterString.write(value.`cuaVersion`, buf)
+            FfiConverterString.write(value.`os`, buf)
+            FfiConverterSequenceTypeMachineHealthCheck.write(value.`checks`, buf)
+            FfiConverterString.write(value.`reportJson`, buf)
+    }
+}
+
+
+
+/**
+ * One check of a machine's health ([`Spaces::machine_health`]).
+ */
+data class MachineHealthCheck (
+    /**
+     * `machine.local_network`, `machine.disk`, `machine.virtualization`,
+     * `machine.memory`, `machine.permissions.<id>`.
+     */
+    var `id`: kotlin.String
+    ,
+    /**
+     * `pass`, `warn`, `fail` or `skip`.
+     */
+    var `status`: kotlin.String
+    ,
+    /**
+     * What it found, in one line.
+     */
+    var `message`: kotlin.String
+    ,
+    /**
+     * What to do about a warning or failure.
+     */
+    var `remediation`: kotlin.String
+    ,
+    /**
+     * What a UI needs to word it and offer its fix (`app`, `settings_url`,
+     * `free_gb`, ...).
+     */
+    var `facts`: Map<kotlin.String, kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMachineHealthCheck: FfiConverterRustBuffer<MachineHealthCheck> {
+    override fun read(buf: ByteBuffer): MachineHealthCheck {
+        return MachineHealthCheck(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterMapStringString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: MachineHealthCheck) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`status`) +
+            FfiConverterString.allocationSize(value.`message`) +
+            FfiConverterString.allocationSize(value.`remediation`) +
+            FfiConverterMapStringString.allocationSize(value.`facts`)
+    )
+
+    override fun write(value: MachineHealthCheck, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`status`, buf)
+            FfiConverterString.write(value.`message`, buf)
+            FfiConverterString.write(value.`remediation`, buf)
+            FfiConverterMapStringString.write(value.`facts`, buf)
+    }
+}
+
+
+
+/**
  * Where an MCP endpoint is and what every request needs. Hand it to any
  * MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). A
  * provider's headers may be short-lived: fetch a fresh config per
@@ -31319,6 +31543,18 @@ data class RelayMachine (
      * device confirms it ([`Devices::confirm_machine`]) (S5).
      */
     var `confirmed`: kotlin.Boolean
+    ,
+    /**
+     * The team you reach it through, for a team machine not shared with
+     * you directly.
+     */
+    var `team`: kotlin.String?
+    ,
+    /**
+     * It creates Spaces for its owner's devices, when it said so at
+     * registration (`None` from a host or relay that predates it).
+     */
+    var `providesSpaces`: kotlin.Boolean?
 
 ){
 
@@ -31348,6 +31584,8 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterSequenceString.read(buf),
             FfiConverterSequenceTypeRelayClientInfo.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
         )
     }
 
@@ -31364,7 +31602,9 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterString.allocationSize(value.`url`) +
             FfiConverterSequenceString.allocationSize(value.`allow`) +
             FfiConverterSequenceTypeRelayClientInfo.allocationSize(value.`clients`) +
-            FfiConverterBoolean.allocationSize(value.`confirmed`)
+            FfiConverterBoolean.allocationSize(value.`confirmed`) +
+            FfiConverterOptionalString.allocationSize(value.`team`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`providesSpaces`)
     )
 
     override fun write(value: RelayMachine, buf: ByteBuffer) {
@@ -31381,6 +31621,8 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterSequenceString.write(value.`allow`, buf)
             FfiConverterSequenceTypeRelayClientInfo.write(value.`clients`, buf)
             FfiConverterBoolean.write(value.`confirmed`, buf)
+            FfiConverterOptionalString.write(value.`team`, buf)
+            FfiConverterOptionalBoolean.write(value.`providesSpaces`, buf)
     }
 }
 
@@ -41097,6 +41339,34 @@ public object FfiConverterSequenceTypeLocationInfo: FfiConverterRustBuffer<List<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeLocationInfo.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeMachineHealthCheck: FfiConverterRustBuffer<List<MachineHealthCheck>> {
+    override fun read(buf: ByteBuffer): List<MachineHealthCheck> {
+        val len = buf.getInt()
+        return List<MachineHealthCheck>(len) {
+            FfiConverterTypeMachineHealthCheck.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<MachineHealthCheck>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeMachineHealthCheck.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<MachineHealthCheck>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeMachineHealthCheck.write(it, buf)
         }
     }
 }

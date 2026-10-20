@@ -330,6 +330,7 @@ attached to the relay: the host forwards a TCP port on its own address
 | [`CancelHostSpace`](#hostspacesservicecancelhostspace) | [`CancelHostSpaceRequest`](#cancelhostspacerequest) | [`CancelHostSpaceResponse`](#cancelhostspaceresponse) | unary |
 | [`SetHostSpacePower`](#hostspacesservicesethostspacepower) | [`SetHostSpacePowerRequest`](#sethostspacepowerrequest) | [`SetHostSpacePowerResponse`](#sethostspacepowerresponse) | unary |
 | [`DeleteCloudSpace`](#hostspacesservicedeletecloudspace) | [`DeleteCloudSpaceRequest`](#deletecloudspacerequest) | [`DeleteCloudSpaceResponse`](#deletecloudspaceresponse) | unary |
+| [`DiagnoseHost`](#hostspacesservicediagnosehost) | [`DiagnoseHostRequest`](#diagnosehostrequest) | [`DiagnoseHostResponse`](#diagnosehostresponse) | unary |
 
 ### HostSpacesService.GetHostSpaces
 
@@ -383,6 +384,18 @@ its cloud resources, through this machine's ownership records, and its
 relay machine. Only the owner. Lets another of the owner's devices
 delete it permanently without the cloud's credentials. Works whether or
 not this machine provides Spaces.
+
+### HostSpacesService.DiagnoseHost
+
+`/cua.env.v1.HostSpacesService/DiagnoseHost`, unary: [`DiagnoseHostRequest`](#diagnosehostrequest) to [`DiagnoseHostResponse`](#diagnosehostresponse).
+
+This machine's health as a place to run Spaces, checked by its cua
+daemon (the process that runs them): Local Network access and the app
+macOS holds responsible for it, free disk, virtualization, memory, and
+the permissions sharing its desktop needs. Read-only and bounded (a
+few seconds). Only the owner. Works whether or not this machine
+provides Spaces. The Machines page shows the warnings and failures as
+the machine's issues; `cua doctor --machine` prints them.
 
 ## Types in `cua/env/v1/stream.proto`
 
@@ -1345,6 +1358,24 @@ State of the guest mount.
 | `VOLUME_STATE_ERROR` | 5 | The mount failed; see `detail`. |
 
 ## Types in `cua/env/v1/host.proto`
+
+### DiagnoseHostRequest
+
+Request for `HostSpacesService.DiagnoseHost`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `machine` | 1 | `string` | Another of the owner's machines to check instead, by id or name: the cua daemon asks that machine's own `DiagnoseHost` over the relay (or the mesh, or its direct address). Only for a call made on this machine itself; a host's cua-spacesd clears it on calls it forwards. Empty: this machine. |
+
+### DiagnoseHostResponse
+
+Response for `HostSpacesService.DiagnoseHost`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `report` | 1 | [`DiagnoseReport`](/cua-sdk/reference/protocol/env-system#diagnosereport) | The checks (ids `machine.*`), in the report schema `cua doctor` uses. |
+| `cua_version` | 2 | `string` | The Cua version of the daemon that ran them. |
+| `os` | 3 | `string` | The machine's operating system (`macos`, `linux`, `windows`). |
 
 ### HostSpacesSettings
 

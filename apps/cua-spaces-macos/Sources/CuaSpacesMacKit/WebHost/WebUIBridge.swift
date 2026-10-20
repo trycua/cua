@@ -116,6 +116,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "nudges.pending", "nudges.answer",
         // Processor, memory and disk (WebUIBridge+Pages.swift).
         "resources.get",
+        // The Machines page's rename, Remove from account and each machine's
+        // health checks (WebUIBridge+Pages.swift).
+        "machines.rename", "machines.remove", "machines.checkHealth",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
     ]
@@ -483,6 +486,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The page's rows as the core lists them (`machines::page_rows`,
             // what the native Machines page shows).
             "rows": BridgeValue.encode(model.machinePageRows),
+            // The page as the core draws it (`machines_view::view`, what the
+            // native Machines page shows).
+            "view": BridgeValue.encode(model.machinesView),
         ]
     }
 

@@ -222,6 +222,12 @@ export class FixtureDevices {
     return this.current.devices.find((d) => d.id === id)!;
   }
 
+  async renameMachine(id: string, name: string) {
+    this.calls.push(`rename-machine:${id}:${name}`);
+    this.current = { ...this.current, machines: this.current.machines.map((m) => (m.id === id ? { ...m, name } : m)) };
+    return this.current.machines.find((m) => m.id === id)!;
+  }
+
   async revoke(id: string) {
     this.calls.push(`revoke:${id}`);
     this.current = { ...this.current, devices: this.current.devices.map((d) => (d.id === id ? { ...d, state: "revoked" } : d)) };

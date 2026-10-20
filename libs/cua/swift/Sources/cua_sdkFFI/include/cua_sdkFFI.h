@@ -737,6 +737,11 @@ RustBuffer uniffi_cua_sdk_fn_method_devices_relay_url(uint64_t ptr, RustCallStat
 uint64_t uniffi_cua_sdk_fn_method_devices_rename(uint64_t ptr, RustBuffer id, RustBuffer name
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RENAME_MACHINE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RENAME_MACHINE
+uint64_t uniffi_cua_sdk_fn_method_devices_rename_machine(uint64_t ptr, RustBuffer machine_id, RustBuffer name
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 uint64_t uniffi_cua_sdk_fn_method_devices_revoke(uint64_t ptr, RustBuffer id
@@ -2000,6 +2005,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_list(uint64_t ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_TOOLS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_TOOLS_JSON
 uint64_t uniffi_cua_sdk_fn_method_spaces_list_tools_json(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
+uint64_t uniffi_cua_sdk_fn_method_spaces_machine_health(uint64_t ptr, RustBuffer machine
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_REGISTER
@@ -3709,6 +3719,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_rename(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME_MACHINE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME_MACHINE
+uint16_t uniffi_cua_sdk_checksum_method_devices_rename_machine(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 uint16_t uniffi_cua_sdk_checksum_method_devices_revoke(void
@@ -4942,6 +4958,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_list(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_TOOLS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_TOOLS_JSON
 uint16_t uniffi_cua_sdk_checksum_method_spaces_list_tools_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
+uint16_t uniffi_cua_sdk_checksum_method_spaces_machine_health(void
 
 );
 #endif

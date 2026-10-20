@@ -1168,6 +1168,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_devices_rename_machine": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_devices_revoke": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2170,6 +2175,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_spaces_list_tools_json": {
       args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_machine_health": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -3248,6 +3258,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_devices_rename_machine": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_devices_revoke": {
       args: [],
       ret: FfiType.UInt16,
@@ -4253,6 +4268,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_machine_health": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_notifications": {
       args: [],
       ret: FfiType.UInt16,
@@ -5116,6 +5136,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_devices_pairing_codes(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_devices_relay_url(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_devices_rename(uniffiSelf: bigint, id: Uint8Array, name: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_devices_rename_machine(uniffiSelf: bigint, machineId: Uint8Array, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_devices_revoke(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_devices_snapshot(uniffiSelf: bigint, auditLimit: number): bigint;
@@ -5317,6 +5338,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_hosts(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list_tools_json(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_spaces_machine_health(uniffiSelf: bigint, machine: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications(uniffiSelf: bigint, unreadOnly: number, sinceMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications_ack(uniffiSelf: bigint, ids: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notify_user(uniffiSelf: bigint, title: Uint8Array, body: Uint8Array, agent: Uint8Array): bigint;
@@ -5532,6 +5554,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_devices_pairing_codes(): number;
     uniffi_cua_sdk_checksum_method_devices_relay_url(): number;
     uniffi_cua_sdk_checksum_method_devices_rename(): number;
+    uniffi_cua_sdk_checksum_method_devices_rename_machine(): number;
     uniffi_cua_sdk_checksum_method_devices_revoke(): number;
     uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(): number;
     uniffi_cua_sdk_checksum_method_devices_snapshot(): number;
@@ -5733,6 +5756,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_hosts(): number;
     uniffi_cua_sdk_checksum_method_spaces_list(): number;
     uniffi_cua_sdk_checksum_method_spaces_list_tools_json(): number;
+    uniffi_cua_sdk_checksum_method_spaces_machine_health(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications_ack(): number;
     uniffi_cua_sdk_checksum_method_spaces_notify_user(): number;

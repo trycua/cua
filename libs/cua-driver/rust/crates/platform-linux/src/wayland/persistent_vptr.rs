@@ -109,15 +109,65 @@ impl Owner for Pointers {
         y: i32,
         button: u8,
     ) -> anyhow::Result<()> {
-        handle_press(&mut self.0, cursor_id, window_id, x, y, button)
+        // A press that went down but was never recorded (its release failed)
+        // stays here until released; replacing it would leave it down for good.
+        if self.0.contains_key(cursor_id) {
+            anyhow::bail!(
+            "cursor '{cursor_id}' still holds a button from an earlier call whose release niri did not confirm; call mouse_button_up first"
+        );
+        }
+        // Open a fresh session for this press — this binds the seat, the foreign-
+        // toplevel manager, activates the target window, and creates a new vptr.
+        // Keep the (out_w, out_h) but drop the queue + state at end of scope; the
+        // vptr itself remains alive (Wayland objects survive their original queue
+        // as long as the Connection is alive).
+        let mut sess = open_vptr_session(Some(window_id))?;
+        let (w, h) = (sess.output_w, sess.output_h);
+        let (px, py) = sess.abs(x, y);
+        super::niri_pointer_gate(Some(window_id), None, &sess, &[(x, y)])?;
+        let btn = evdev_pointer_button(button);
+        sess.motion(px, py)?;
+        // A press whose round trip fails is released when `sess` drops.
+        sess.press(btn)?;
+
+        // The vptr proxy stays valid while its connection lives: keep both for
+        // the cursor's later commands.
+        let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
+        let (conn, vptr) = sess.keep();
+        persist_conn(cursor_id, conn);
+
+        self.0.insert(
+            cursor_id.to_string(),
+            ActivePointer {
+                vptr,
+                held: HashSet::from([btn]),
+                out_w: w,
+                out_h: h,
+                origin_x,
+                origin_y,
+            },
+        );
+        Ok(())
     }
 
     fn move_to(&mut self, cursor_id: &str, x: i32, y: i32) -> anyhow::Result<()> {
-        handle_move(&mut self.0, cursor_id, x, y)
+        move_held(
+            &mut self.0,
+            cursor_id,
+            (x, y),
+            super::niri_pointer_space_now,
+            roundtrip_on_persistent,
+        )
     }
 
     fn release(&mut self, cursor_id: &str, button: u8) -> anyhow::Result<()> {
-        handle_release(&mut self.0, cursor_id, button)
+        release_held(
+            &mut self.0,
+            cursor_id,
+            evdev_pointer_button(button),
+            roundtrip_on_persistent,
+            forget_conn,
+        )
     }
 
     fn release_unrecorded(&mut self, cursor_id: &str) -> anyhow::Result<bool> {
@@ -332,72 +382,6 @@ impl HeldCursors {
     }
 }
 
-fn handle_press(
-    active: &mut HashMap<String, ActivePointer>,
-    cursor_id: &str,
-    window_id: u64,
-    x: i32,
-    y: i32,
-    button: u8,
-) -> anyhow::Result<()> {
-    // A press that went down but was never recorded (its release failed)
-    // stays here until released; replacing it would leave it down for good.
-    if active.contains_key(cursor_id) {
-        anyhow::bail!(
-            "cursor '{cursor_id}' still holds a button from an earlier call whose release niri did not confirm; call mouse_button_up first"
-        );
-    }
-    // Open a fresh session for this press — this binds the seat, the foreign-
-    // toplevel manager, activates the target window, and creates a new vptr.
-    // Keep the (out_w, out_h) but drop the queue + state at end of scope; the
-    // vptr itself remains alive (Wayland objects survive their original queue
-    // as long as the Connection is alive).
-    let mut sess = open_vptr_session(Some(window_id))?;
-    let (w, h) = (sess.output_w, sess.output_h);
-    let (px, py) = sess.abs(x, y);
-    super::niri_pointer_gate(Some(window_id), None, &sess, &[(x, y)])?;
-    let btn = evdev_pointer_button(button);
-    sess.motion(px, py)?;
-    // A press whose round trip fails is released when `sess` drops.
-    sess.press(btn)?;
-
-    // The vptr proxy stays valid while its connection lives: keep both for
-    // the cursor's later commands.
-    let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
-    let (conn, vptr) = sess.keep();
-    persist_conn(cursor_id, conn);
-
-    let mut held = HashSet::new();
-    held.insert(btn);
-    active.insert(
-        cursor_id.to_string(),
-        ActivePointer {
-            vptr,
-            held,
-            out_w: w,
-            out_h: h,
-            origin_x,
-            origin_y,
-        },
-    );
-    Ok(())
-}
-
-fn handle_move(
-    active: &mut HashMap<String, ActivePointer>,
-    cursor_id: &str,
-    x: i32,
-    y: i32,
-) -> anyhow::Result<()> {
-    move_held(
-        active,
-        cursor_id,
-        (x, y),
-        super::niri_pointer_space_now,
-        roundtrip_on_persistent,
-    )
-}
-
 /// Move a held cursor. On niri the pointer space is read again first: the
 /// motion is scaled by the extent saved at the press, and niri sends no
 /// event when an output is added or rescaled. If it changed, no motion goes
@@ -456,20 +440,6 @@ fn move_held<D: HeldDevice>(
     );
     crate::input::action::admit(|| entry.vptr.motion(px, py, (entry.out_w, entry.out_h)))?;
     roundtrip(cursor_id)
-}
-
-fn handle_release(
-    active: &mut HashMap<String, ActivePointer>,
-    cursor_id: &str,
-    button: u8,
-) -> anyhow::Result<()> {
-    release_held(
-        active,
-        cursor_id,
-        evdev_pointer_button(button),
-        roundtrip_on_persistent,
-        forget_conn,
-    )
 }
 
 /// Release `btn` on a held cursor, dropping the cursor once it holds nothing.
@@ -582,14 +552,8 @@ fn answers_later(error: &anyhow::Error) -> bool {
         .is_some_and(|failed| failed.timed_out)
 }
 
-// Process-static slots for Connection + EventQueue keyed by cursor_id. The
-// EventQueue is !Send but we only touch these on the owner thread, so wrap
-// in a thread-local-by-construction pattern: store inside the same map so
-// the owner thread is the sole accessor.
-//
-// We use a per-thread static rather than a Mutex<HashMap> because the owner
-// thread is the only accessor (no contention possible).
-/// A held cursor's connection and its queue.
+/// A held cursor's connection and its queue, kept thread-local because the
+/// queue is `!Send` and only the owner thread touches it.
 type Persisted = (Connection, wayland_client::EventQueue<super::State>);
 
 thread_local! {
@@ -821,9 +785,9 @@ fn release_unrecorded_on(tx: &Sender<Cmd>, cursor_id: &str) -> anyhow::Result<bo
 }
 
 /// How long session cleanup waits for the owner thread to take and answer
-/// its release: two bounded niri round trips (the release and the device's
-/// destroy). Another cursor's command can keep the thread longer, on Sway
-/// without any bound; the hook then fails and is retried.
+/// its release: two bounded round trips (the release and the device's
+/// destroy). Another cursor's command can keep the thread longer; the hook
+/// then fails and is retried.
 const SESSION_END_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// [`release_unrecorded`] for session cleanup. A cursor the owner holds

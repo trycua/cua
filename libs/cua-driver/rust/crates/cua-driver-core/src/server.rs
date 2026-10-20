@@ -18,10 +18,8 @@ use crate::tool::ToolRegistry;
 #[async_trait::async_trait]
 pub trait ToolProvider: Send + Sync {
     fn tools_list(&self) -> serde_json::Value;
-    fn is_known_tool(&self, name: &str) -> bool {
-        self.tools_list()["tools"]
-            .as_array()
-            .is_some_and(|tools| tools.iter().any(|tool| tool["name"].as_str() == Some(name)))
+    fn is_known_tool(&self, _name: &str) -> bool {
+        true
     }
 
     async fn invoke_tool(

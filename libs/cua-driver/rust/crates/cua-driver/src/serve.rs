@@ -496,15 +496,14 @@ async fn invoke_daemon_tool(
         }
     }
 
-    // Policy enforcement — defense-in-depth for direct daemon socket connections.
-    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
-        observe_daemon_error(observation, 1);
-        return DaemonResponse::err(error.to_string(), 1);
-    }
-
     if !known_tool {
         observe_daemon_error(observation, 64);
         return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
+    }
+
+    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
+        observe_daemon_error(observation, 1);
+        return DaemonResponse::err(error.to_string(), 1);
     }
 
     inject_browser_approvals(&tool_name, &mut args, req.session_id.as_deref());

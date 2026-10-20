@@ -1733,7 +1733,19 @@ pub async fn run(
                 Ok(i) => {
                     // The sandbox's own spacesd: URL and bearer token.
                     let spacesd = if connection {
-                        let env = env_of(cua, &name).await?;
+                        // Through `cua daemon` the client gets the daemon's
+                        // proxy route (a path under the daemon's URL) and the
+                        // daemon's token, which only cua clients can use. A
+                        // gRPC client of your own needs spacesd itself: open
+                        // the sandbox from this process instead.
+                        let env = if cua.mode() == cua_sdk::CuaMode::Daemon
+                            && relay_space_id(&name).is_none()
+                        {
+                            let direct = Cua::embedded(cua_sdk::CuaConfig::default())?;
+                            env_of(&direct, &name).await?
+                        } else {
+                            env_of(cua, &name).await?
+                        };
                         Some((env.endpoint(), env.inner().token().map(str::to_owned)))
                     } else {
                         None

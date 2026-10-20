@@ -8,6 +8,7 @@ import { initialOnboarding, onboardingView, type OnboardingView } from "../model
 import type { HostBridge, HostStatus, OnboardingMode } from "../native/host";
 import { HostSetupForm } from "./HostSetupForm";
 import { Page } from "./desktop/OnboardingPage";
+import { useT } from "../i18n";
 
 /**
  * First run: what is this machine for?
@@ -39,6 +40,7 @@ export function Onboarding({
   identity?: string;
   onDone: (mode: OnboardingMode, status?: HostStatus) => void;
 }) {
+  const t = useT("onboarding");
   const view = viewProp ?? onboardingView({ ...initialOnboarding(installerMode ?? null, identity ?? null), step: "mode" });
   const [form, setForm] = useState(view.preselectedMode === "host");
   // Choosing only selects; Continue (or Enter) moves on. "Access other
@@ -111,7 +113,7 @@ export function Onboarding({
         ))}
       </div>
       <p className="host-setup-lede" data-testid="mode-later">
-        Change it later from This computer in your Spaces list.
+        {t("onboarding.mode.change_later")}
       </p>
       {view.notice && (
         <p className="onboarding-telemetry-notice" data-testid="telemetry-notice">

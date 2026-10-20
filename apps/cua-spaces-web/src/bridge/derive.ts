@@ -33,7 +33,7 @@ import type {
   VaultView,
 } from "./contracts/keyvault";
 import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
-import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
+import type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
 import { hostOs, type HostOs } from "./host-os";
@@ -763,4 +763,11 @@ export function orderRuns<T extends SpaceAgentRun>(core: CoreClient, runs: T[]):
  * neither, rather than words of its own. */
 export function relayUsageView(core: CoreClient, usage: RelayUsage, accountApp: string | null = null): RelayUsageView | null {
   return core.tryCall<RelayUsageView | null>("relayUsage.view", accountApp ? { usage, accountApp } : { usage }) ?? null;
+}
+
+/** A refused new session (the relay's plan limit) as the sentence with
+ * Upgrade, from an error's text (the core's `relayUsage.planLimit`); null
+ * for any other error, or without the core. */
+export function planLimitNotice(core: CoreClient, error: string, accountApp: string | null = null): RelayAllowanceNotice | null {
+  return core.tryCall<RelayAllowanceNotice | null>("relayUsage.planLimit", accountApp ? { error, accountApp } : { error }) ?? null;
 }

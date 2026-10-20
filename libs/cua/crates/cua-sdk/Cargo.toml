@@ -66,6 +66,7 @@ cua-sandbox-core.workspace = true
 async-trait.workspace = true
 cua-host = { workspace = true, optional = true }
 cua-daemon = { workspace = true, features = ["client"] }
+cua-home.workspace = true
 cua-spaces = { path = "../cua-spaces", optional = true }
 pbjson-types = { workspace = true, optional = true }
 tokio = { workspace = true }

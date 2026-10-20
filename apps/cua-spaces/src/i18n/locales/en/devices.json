@@ -1,1 +1,8 @@
-{}
+{
+  "devices.banner.label": "Device enrollment",
+  "devices.section.label": "Devices",
+  "devices.section.title": "Devices",
+  "devices.recent.not_yours_label": "Not one of your devices",
+  "devices.enroll.code_label": "One-time code",
+  "devices.approve.passphrase_label": "Keyvault passphrase"
+}

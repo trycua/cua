@@ -30,6 +30,10 @@ export const MIGRATED: string[] = [
   "components/desktop/MainWindow.tsx",
   "components/desktop/NewSpaceWizard.tsx",
   "components/ShareSheet.tsx",
+  "components/Devices.tsx",
+  "components/ThisMachinePanel.tsx",
+  "components/ConnectCloudSheet.tsx",
+  "components/SettingsPanel.tsx",
 ];
 
 /** JSX attributes whose string values the user sees or hears. */

@@ -1,1 +1,7 @@
-{}
+{
+  "settings.this_machine.sharing_label": "Sharing",
+  "settings.cloud.clouds_label": "Clouds",
+  "settings.cloud.sign_in_found": "Sign-in found",
+  "settings.cloud.touches_label": "What Cua will touch",
+  "settings.cloud.checks_label": "Checks"
+}

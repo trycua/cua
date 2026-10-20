@@ -1,5 +1,6 @@
 {
   "common": {
     "app_name": "Cua Spaces"
-  }
+  },
+  "common.action.dismiss": "Dismiss"
 }

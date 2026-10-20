@@ -386,13 +386,15 @@ that names the remedy.
   niri does not report where tiled windows are or every scroll of its view,
   so the driver does not prove a screenshot is still current: take a new one
   after anything that may have moved the layout.
-- Window-coordinate pointer input and window capture check the window's
-  place as niri reports it now, before the action and again before every
-  press, wheel tick or motion. A move away and back between two reads, or an
+- Window-coordinate pointer input and window capture first wait, at most
+  five reads 30 ms apart, for two consecutive reads that agree on the
+  window's place, and refuse a window that keeps moving. They then check it
+  again before every press, wheel tick or motion, along with exact keyboard
+  focus for pointer input. A move away and back between two reads, or an
   animation still drawing the window elsewhere, is not detected.
 - The driver does not check whether the session is locked. At a lock screen
-  niri reports no focused window, so keyboard input refuses; desktop-scope
-  pointer input and capture are not refused.
+  niri reports no focused window, so keyboard and window-coordinate pointer
+  input refuse; desktop-scope pointer input and capture are not refused.
 - `coordinate_frame:"desktop"` with a window target refuses.
 - Foreground actions activate the target, act, and give focus back to the
   window that had it. `right_click` and `hotkey` leave the target focused, as
@@ -427,10 +429,15 @@ If a tool call surprises you on Linux:
    (c) GTK4 / Qt6 / Chromium populate lazily: re-snapshot after an
    interaction or an AX-enable settle.
 4. **`input_busy` saying a previous call's input is still finishing**: an
-   earlier call timed out or was cancelled, and its input worker still holds
-   the desktop (wtype and XTest input runs to completion). The next desktop
-   action waits for that worker for up to 12 s, then refuses before sending
-   anything. Retry once it has stopped. A worker that never stops, such as
+   earlier call timed out or was cancelled, and its worker still holds the
+   desktop. Once a call is over, its worker sends no further XTest or
+   virtual-device input; what can still run is cleanup (releasing a held
+   button or key, giving focus back) and a `wtype` child already started,
+   which keeps typing until it exits. The 12 s bound counts from when that
+   call ended, not from when the next action arrives: a desktop action that
+   finds the worker stale for 12 s or more refuses at once, before sending
+   anything, and one that arrives sooner waits only for the rest of it.
+   Retry once the worker has stopped. A worker that never stops, such as
    one blocked on a compositor or X server that stopped answering, keeps
    every later desktop action refusing until the driver restarts. An
    `input_busy` that names a pid is different: text input to that process is

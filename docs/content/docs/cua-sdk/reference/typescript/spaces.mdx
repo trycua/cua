@@ -271,31 +271,6 @@ A membership rule was broken. The message says which number.
 
 - `Error`
 
-#### Constructors
-
-##### Constructor
-
-```ts
-new GroupChatError(code, message): GroupChatError;
-```
-
-###### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `code` | [`GroupChatErrorCode`](#groupchaterrorcode) |
-| `message` | `string` |
-
-###### Returns
-
-[`GroupChatError`](#groupchaterror)
-
-###### Overrides
-
-```ts
-Error.constructor
-```
-
 #### Properties
 
 | Property | Modifier | Type |
@@ -673,39 +648,6 @@ on Pro. Close one or upgrade to Teams."
 
 - [`SpacesError`](#spaceserror)
 
-#### Constructors
-
-##### Constructor
-
-```ts
-new PlanLimitError(
-   fields,
-   message,
-   options?
-): PlanLimitError;
-```
-
-###### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `fields` | \{ `kind`: [`PlanLimitKind`](#planlimitkind); `limit`: `number`; `plan`: `string`; `upgradeUrl?`: `string`; `used`: `number`; \} |
-| `fields.kind` | [`PlanLimitKind`](#planlimitkind) |
-| `fields.limit` | `number` |
-| `fields.plan` | `string` |
-| `fields.upgradeUrl?` | `string` |
-| `fields.used` | `number` |
-| `message` | `string` |
-| `options` | [`SpacesErrorOptions`](#spaceserroroptions) |
-
-###### Returns
-
-[`PlanLimitError`](#planlimiterror)
-
-###### Overrides
-
-[`SpacesError`](#spaceserror).[`constructor`](#constructor-8)
-
 #### Properties
 
 | Property | Modifier | Type | Description | Inherited from |
@@ -721,92 +663,6 @@ new PlanLimitError(
 | <a id="property-used"></a> `used` | `readonly` | `number` | - | - |
 
 #### Methods
-
-##### auth()
-
-```ts
-static auth(message, options?): SpacesError;
-```
-
-###### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `message` | `string` |
-| `options?` | [`SpacesErrorOptions`](#spaceserroroptions) |
-
-###### Returns
-
-[`SpacesError`](#spaceserror)
-
-###### Inherited from
-
-[`SpacesError`](#spaceserror).[`auth`](#auth-1)
-
-##### protocol()
-
-```ts
-static protocol(message, options?): SpacesError;
-```
-
-###### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `message` | `string` |
-| `options?` | [`SpacesErrorOptions`](#spaceserroroptions) |
-
-###### Returns
-
-[`SpacesError`](#spaceserror)
-
-###### Inherited from
-
-[`SpacesError`](#spaceserror).[`protocol`](#protocol-1)
-
-##### timeout()
-
-```ts
-static timeout(message, options?): SpacesError;
-```
-
-###### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `message` | `string` |
-| `options?` | [`SpacesErrorOptions`](#spaceserroroptions) |
-
-###### Returns
-
-[`SpacesError`](#spaceserror)
-
-###### Inherited from
-
-[`SpacesError`](#spaceserror).[`timeout`](#timeout-1)
-
-##### usage()
-
-```ts
-static usage(message, options?): SpacesError;
-```
-
-###### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `message` | `string` |
-| `options?` | [`SpacesErrorOptions`](#spaceserroroptions) |
-
-###### Returns
-
-[`SpacesError`](#spaceserror)
-
-###### Inherited from
-
-[`SpacesError`](#spaceserror).[`usage`](#usage-1)
-
-***
 
 ### PresenceRoster
 
@@ -1443,36 +1299,6 @@ update(routine): void;
 #### Extended by
 
 - [`PlanLimitError`](#planlimiterror)
-
-#### Constructors
-
-##### Constructor
-
-```ts
-new SpacesError(
-   code,
-   message,
-   options?
-): SpacesError;
-```
-
-###### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `code` | [`SpacesErrorCode`](#spaceserrorcode) |
-| `message` | `string` |
-| `options` | [`SpacesErrorOptions`](#spaceserroroptions) |
-
-###### Returns
-
-[`SpacesError`](#spaceserror)
-
-###### Overrides
-
-```ts
-Error.constructor
-```
 
 #### Properties
 

@@ -73,6 +73,7 @@ export class SpacesError extends Error {
   readonly target: string | undefined;
   readonly detail: string | undefined;
 
+  /** @internal */
   constructor(code: SpacesErrorCode, message: string, options: SpacesErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'SpacesError';
@@ -117,6 +118,7 @@ export class PlanLimitError extends SpacesError {
   /** Where to add room, or undefined when the error carried no link. */
   readonly upgradeUrl: string | undefined;
 
+  /** @internal */
   constructor(
     fields: { kind: PlanLimitKind; plan: string; used: number; limit: number; upgradeUrl?: string | undefined },
     message: string,

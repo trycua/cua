@@ -54,6 +54,18 @@ pub fn available() -> bool {
     shell_owner(false).is_some()
 }
 
+/// Whether GNOME Shell is this session's compositor: the desktop name says
+/// so, or `org.gnome.Shell` has an owner on the session bus. The bus check
+/// keeps a daemon started without `XDG_CURRENT_DESKTOP` from treating GNOME
+/// as a compositor with no Shell at all.
+pub fn gnome_shell_session() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktops| {
+        desktops
+            .split(':')
+            .any(|desktop| desktop.eq_ignore_ascii_case("gnome"))
+    }) || SessionShellProbe.name_owner(COMPOSITOR_DEST).is_some()
+}
+
 pub fn semantic_cursor_available() -> bool {
     shell_owner_with_min_version(Some(SEMANTIC_CURSOR_API_VERSION)).is_some()
 }
@@ -423,7 +435,9 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
     B64.decode(&raw[start..end]).ok()
 }
 
-/// Screen origin of the compositor frame backing `pid`.
+/// Screen origin of the exact compositor frame `window_id` owned by `pid`.
+/// A zero `window_id` is a PID-only query and needs the PID to own exactly
+/// one window: another window's origin would place every element wrongly.
 ///
 /// `screenshot_window_dispatch` crops the Shell stage to this same frame
 /// rectangle, and GTK's AT-SPI `CoordType::Window` coordinates are relative to
@@ -431,21 +445,27 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
 /// elements up and left by the client-side shadow extents whenever the window
 /// is floating, so pixel actions derived from the returned screenshot miss
 /// their target.
-pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
+pub fn window_origin(pid: u32, window_id: u64) -> Option<(i32, i32)> {
     let raw = gdbus_call("GetRects", &[])?;
-    parse_window_origin(&raw, pid)
+    parse_window_origin(&raw, pid, window_id)
 }
 
-fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
-    let arr: Vec<serde_json::Value> = serde_json::from_str(raw).ok()?;
-    for w in &arr {
-        if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
-            let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
-            let y = w.get("y").and_then(serde_json::Value::as_i64)? as i32;
-            return Some((x, y));
-        }
-    }
-    None
+fn parse_window_origin(raw: &str, pid: u32, window_id: u64) -> Option<(i32, i32)> {
+    let window = select_window(
+        parse_windows(raw, Some(pid))?,
+        (window_id != 0).then_some(window_id),
+    )?;
+    Some((window.x, window.y))
+}
+
+/// The one window matching `window_id`, or the only window when no ID is
+/// given. A duplicated ID is not authoritative.
+fn select_window(windows: Vec<WindowInfo>, window_id: Option<u64>) -> Option<WindowInfo> {
+    let mut matches = windows
+        .into_iter()
+        .filter(|window| window_id.is_none_or(|wanted| window.xid == wanted));
+    let window = matches.next()?;
+    matches.next().is_none().then_some(window)
 }
 
 /// Enumerate GNOME Shell toplevels when the compositor helper is available.
@@ -463,10 +483,50 @@ pub fn list_windows(filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
 /// Return one compositor-attested GNOME window only when the current helper
 /// API is hosted by the verified Shell owner.
 pub fn trusted_window_for_id(pid: u32, window_id: u64) -> Option<WindowInfo> {
-    trusted_shell_windows(Some(pid))?
-        .into_iter()
-        .find(|window| window.info.xid == window_id)
-        .map(|window| window.info)
+    exact_shell_window(&trusted_shell_windows(Some(pid))?, pid, window_id)
+        .map(|window| window.info.clone())
+}
+
+/// The one Shell window with this PID and stable sequence ID. A same-PID
+/// sibling never substitutes, and a duplicated ID is not authoritative.
+fn exact_shell_window(windows: &[ShellWindow], pid: u32, window_id: u64) -> Option<&ShellWindow> {
+    let mut matches = windows
+        .iter()
+        .filter(|window| window.info.pid == Some(pid) && window.info.xid == window_id);
+    let window = matches.next()?;
+    matches.next().is_none().then_some(window)
+}
+
+/// Decide how [`with_focused_window`] reaches the exact target: `None` when it
+/// already has focus, otherwise the focused window to restore afterwards.
+fn plan_focus(before: &[ShellWindow], pid: u32, window_id: u64) -> anyhow::Result<Option<u64>> {
+    let target = exact_shell_window(before, pid, window_id)
+        .ok_or_else(|| anyhow::anyhow!("no exact GNOME Shell window owns the approved target"))?;
+    if shell_sequence_id(window_id).is_none() {
+        anyhow::bail!("the approved target is not a GNOME Shell window sequence");
+    }
+    if target.focused {
+        return Ok(None);
+    }
+    before
+        .iter()
+        .find(|window| window.focused)
+        .map(|window| Some(window.info.xid))
+        .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not expose a restorable focused window"))
+}
+
+/// Shell stable sequences are u32. Wider values, such as the AT-SPI fallback
+/// handles (`pid << 16`), are never passed to `Activate`.
+fn shell_sequence_id(window_id: u64) -> Option<u32> {
+    u32::try_from(window_id).ok()
+}
+
+/// Fresh focus readback for one exact window ID.
+fn exact_window_focused(windows: &[ShellWindow], window_id: u32) -> bool {
+    let mut matches = windows
+        .iter()
+        .filter(|window| window.info.xid == u64::from(window_id));
+    matches.next().is_some_and(|window| window.focused) && matches.next().is_none()
 }
 
 /// Enumerate exact browser-window ids for one process through the verified
@@ -490,19 +550,9 @@ pub fn with_focused_window<T>(
 ) -> anyhow::Result<T> {
     let before = trusted_shell_windows(None)
         .ok_or_else(|| anyhow::anyhow!("the verified GNOME Shell helper API is unavailable"))?;
-    let target = before
-        .iter()
-        .find(|window| window.info.pid == Some(pid) && window.info.xid == window_id)
-        .ok_or_else(|| anyhow::anyhow!("no exact GNOME Shell window owns the approved target"))?;
-    let previous = before
-        .iter()
-        .find(|window| window.focused)
-        .map(|window| window.info.xid)
-        .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not expose a restorable focused window"))?;
-
-    if target.focused {
+    let Some(previous) = plan_focus(&before, pid, window_id)? else {
         return body();
-    }
+    };
     trusted_activate_window(window_id)
         .then_some(())
         .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not confirm exact target activation"))?;
@@ -532,7 +582,7 @@ fn trusted_shell_windows(filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
 /// returns true: portal input is focus-bound and otherwise targets whichever
 /// application the user happened to be using.
 pub fn activate_window(window_id: u64) -> bool {
-    let Ok(window_id) = u32::try_from(window_id) else {
+    let Some(window_id) = shell_sequence_id(window_id) else {
         return false;
     };
     let accepted = gdbus_call("Activate", &[window_id.to_string()])
@@ -553,7 +603,7 @@ pub fn activate_window(window_id: u64) -> bool {
 }
 
 fn trusted_activate_window(window_id: u64) -> bool {
-    let Ok(window_id) = u32::try_from(window_id) else {
+    let Some(window_id) = shell_sequence_id(window_id) else {
         return false;
     };
     let accepted = trusted_gdbus_call("Activate", &[window_id.to_string()])
@@ -563,11 +613,9 @@ fn trusted_activate_window(window_id: u64) -> bool {
     }
     let deadline = std::time::Instant::now() + Duration::from_millis(500);
     loop {
-        if trusted_shell_windows(None).is_some_and(|windows| {
-            windows
-                .into_iter()
-                .any(|window| window.info.xid == u64::from(window_id) && window.focused)
-        }) {
+        if trusted_shell_windows(None)
+            .is_some_and(|windows| exact_window_focused(&windows, window_id))
+        {
             return true;
         }
         if std::time::Instant::now() >= deadline {
@@ -581,11 +629,7 @@ fn window_is_focused(window_id: u32) -> bool {
     let Some(raw) = gdbus_call("GetRects", &[]) else {
         return false;
     };
-    parse_shell_windows(&raw, None).is_some_and(|windows| {
-        windows
-            .into_iter()
-            .any(|window| window.info.xid == u64::from(window_id) && window.focused)
-    })
+    parse_shell_windows(&raw, None).is_some_and(|windows| exact_window_focused(&windows, window_id))
 }
 
 fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
@@ -743,7 +787,7 @@ mod tests {
     fn rejects_malformed_or_display_formatted_snapshots() {
         for raw in ["not JSON", "{}", "('[{\"pid\":6079,\"x\":14,\"y\":12}]',)"] {
             assert!(parse_shell_windows(raw, None).is_none());
-            assert!(parse_window_origin(raw, 6079).is_none());
+            assert!(parse_window_origin(raw, 6079, 0).is_none());
         }
     }
 
@@ -765,7 +809,8 @@ mod tests {
     fn accessibility_origin_matches_the_frame_cropped_screenshot() {
         let raw = r#"[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]"#;
 
-        assert_eq!(parse_window_origin(raw, 6079), Some((14, 12)));
+        assert_eq!(parse_window_origin(raw, 6079, 46), Some((14, 12)));
+        assert_eq!(parse_window_origin(raw, 6079, 0), Some((14, 12)));
     }
 
     #[test]
@@ -959,6 +1004,120 @@ mod tests {
             None
         );
         assert_eq!(attest_shell_owner(&silent_api, true), None);
+    }
+
+    // Two windows of one PID: 363 at x=0 and 438 at x=600, plus another
+    // application's focused window 47.
+    const SIBLINGS: &str = r#"[{"id":363,"pid":6079,"title":"Main","x":0,"y":0,"w":560,"h":400},{"id":438,"pid":6079,"title":"Dialog","x":600,"y":0,"w":400,"h":300},{"id":47,"pid":6080,"title":"Other","x":1200,"y":0,"w":100,"h":100,"focused":true}]"#;
+    const SIBLINGS_REORDERED: &str = r#"[{"id":438,"pid":6079,"title":"Dialog","x":600,"y":0,"w":400,"h":300},{"id":363,"pid":6079,"title":"Main","x":0,"y":0,"w":560,"h":400},{"id":47,"pid":6080,"title":"Other","x":1200,"y":0,"w":100,"h":100,"focused":true}]"#;
+
+    #[test]
+    fn exact_window_origin_survives_sibling_stacking_reorder() {
+        for raw in [SIBLINGS, SIBLINGS_REORDERED] {
+            assert_eq!(parse_window_origin(raw, 6079, 438), Some((600, 0)));
+            assert_eq!(parse_window_origin(raw, 6079, 363), Some((0, 0)));
+            // A window of another PID, or an unknown ID, has no origin here.
+            assert_eq!(parse_window_origin(raw, 6079, 47), None);
+            assert_eq!(parse_window_origin(raw, 6079, 999), None);
+        }
+    }
+
+    #[test]
+    fn pid_only_origin_requires_one_owned_window() {
+        assert_eq!(parse_window_origin(SIBLINGS, 6079, 0), None);
+        assert_eq!(parse_window_origin(SIBLINGS, 6080, 0), Some((1200, 0)));
+    }
+
+    #[test]
+    fn duplicate_window_identity_is_not_authoritative() {
+        let raw = r#"[{"id":438,"pid":6079,"x":0,"y":0,"w":10,"h":10},{"id":438,"pid":6079,"x":600,"y":0,"w":10,"h":10}]"#;
+        assert_eq!(parse_window_origin(raw, 6079, 438), None);
+        let windows = parse_shell_windows(raw, None).unwrap();
+        assert!(exact_shell_window(&windows, 6079, 438).is_none());
+    }
+
+    fn shell_window(id: u64, pid: u32, x: i32, focused: bool) -> ShellWindow {
+        ShellWindow {
+            info: WindowInfo {
+                xid: id,
+                pid: Some(pid),
+                title: format!("window {id}"),
+                app_name: String::new(),
+                is_on_screen: true,
+                z_index: None,
+                x,
+                y: 0,
+                width: 640,
+                height: 480,
+            },
+            focused,
+        }
+    }
+
+    #[test]
+    fn activation_targets_the_exact_window_never_a_same_pid_sibling() {
+        let siblings = [
+            shell_window(363, 6079, 0, false),
+            shell_window(438, 6079, 600, false),
+            shell_window(47, 6080, 1200, true),
+        ];
+        let mut reversed = siblings.clone();
+        reversed.reverse();
+        for windows in [&siblings[..], &reversed[..]] {
+            assert_eq!(exact_shell_window(windows, 6079, 438).unwrap().info.x, 600);
+            assert_eq!(exact_shell_window(windows, 6079, 363).unwrap().info.x, 0);
+            assert_eq!(plan_focus(windows, 6079, 438).unwrap(), Some(47));
+            assert_eq!(plan_focus(windows, 6079, 363).unwrap(), Some(47));
+            assert_eq!(plan_focus(windows, 6080, 47).unwrap(), None);
+            for (pid, id) in [(6079, 999), (6080, 438), (6079, 6079 << 16), (6079, 0)] {
+                assert!(exact_shell_window(windows, pid, id).is_none());
+                assert!(plan_focus(windows, pid, id).is_err());
+            }
+        }
+        let duplicate = [
+            shell_window(438, 6079, 0, false),
+            shell_window(438, 6079, 600, false),
+            shell_window(47, 6080, 1200, true),
+        ];
+        assert!(plan_focus(&duplicate, 6079, 438).is_err());
+        let nothing_focused = [shell_window(438, 6079, 600, false)];
+        assert!(plan_focus(&nothing_focused, 6079, 438).is_err());
+        // An ID wider than a Shell sequence never plans activation, even if a
+        // malformed snapshot lists it as already focused.
+        let wide = [shell_window(1 << 33, 6079, 0, true)];
+        assert!(plan_focus(&wide, 6079, 1 << 33).is_err());
+    }
+
+    #[test]
+    fn focus_readback_requires_the_exact_window() {
+        let sibling_focused = [
+            shell_window(363, 6079, 0, true),
+            shell_window(438, 6079, 600, false),
+        ];
+        assert!(!exact_window_focused(&sibling_focused, 438));
+        assert!(exact_window_focused(&sibling_focused, 363));
+        let target_focused = [
+            shell_window(363, 6079, 0, false),
+            shell_window(438, 6079, 600, true),
+        ];
+        assert!(exact_window_focused(&target_focused, 438));
+        assert!(!exact_window_focused(&target_focused, 999));
+        let duplicate = [
+            shell_window(438, 6079, 0, true),
+            shell_window(438, 6079, 600, true),
+        ];
+        assert!(!exact_window_focused(&duplicate, 438));
+    }
+
+    #[test]
+    fn accessibility_fallback_handles_are_not_shell_sequences() {
+        // The AT-SPI window list hands out `pid << 16 | ordinal`.
+        let handle = 3_592_163u64 << 16;
+        assert_eq!(shell_sequence_id(handle), None);
+        assert!(!activate_window(handle));
+        assert!(!trusted_activate_window(handle));
+        assert_eq!(shell_sequence_id(u64::from(u32::MAX)), Some(u32::MAX));
+        assert_eq!(shell_sequence_id(33), Some(33));
     }
 
     #[test]

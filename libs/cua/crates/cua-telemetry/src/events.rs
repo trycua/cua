@@ -853,13 +853,27 @@ pub fn create_time_bucket(d: Duration) -> &'static str {
 /// `cua_app_active` (send it with `Telemetry::capture_active_day`, which
 /// keeps it to one per install per UTC day), with no experiment on.
 pub fn app_active() -> Event {
-    app_active_with(&[])
+    app_active_with(&[], "en")
 }
 
 /// `cua_app_active` with the Spaces app's experiments that are on
-/// (`experiments_on`, [`experiments_set`]).
-pub fn app_active_with(experiments: &[&str]) -> Event {
-    Event::new(event::APP_ACTIVE).owned("experiments_on", experiments_set(experiments))
+/// (`experiments_on`, [`experiments_set`]) and its interface language
+/// (`ui_locale`, [`ui_locale`]).
+pub fn app_active_with(experiments: &[&str], locale: &str) -> Event {
+    Event::new(event::APP_ACTIVE)
+        .owned("experiments_on", experiments_set(experiments))
+        .s("ui_locale", ui_locale(locale))
+}
+
+/// The interface language in [`schema::UI_LOCALES`] (matched exactly after
+/// trimming); anything else, including an empty value, is `other`.
+pub fn ui_locale(locale: &str) -> &'static str {
+    let l = locale.trim();
+    schema::UI_LOCALES
+        .iter()
+        .copied()
+        .find(|k| *k == l && *k != "other")
+        .unwrap_or("other")
 }
 
 /// The experiments in `ids` that are in [`schema::EXPERIMENTS`], in its

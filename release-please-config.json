@@ -289,6 +289,14 @@
           "type": "json",
           "path": "typescript/package-lock.json",
           "jsonpath": "$.packages[''].version"
+        },
+        {
+          "type": "generic",
+          "path": "Cargo.toml"
+        },
+        {
+          "type": "generic",
+          "path": "crates/cua-sdk/Cargo.toml"
         }
       ]
     },

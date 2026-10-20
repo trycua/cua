@@ -4,6 +4,7 @@
 import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { core } from "../core";
+import { useT } from "../i18n";
 import { hostOs, permissionRows } from "../model/host";
 import {
   initialOnboarding,
@@ -118,6 +119,7 @@ export function InstallerFlow({
   telemetry?: TelemetryBridge;
   onDone: (mode: OnboardingMode) => void;
 }) {
+  const t = useT("installer");
   // Settings, Experiments decide the pages (Cua Volume's only with it on).
   const [state, setState] = useState<OnboardingState>(() =>
     reduceOnboarding(
@@ -500,7 +502,7 @@ export function InstallerFlow({
   return (
     <section
       className="shelf create-cloud onboarding installer"
-      aria-label="Set up Cua"
+      aria-label={t("installer.flow.label")}
       data-step={view.step}
       data-layout={view.step === "welcome" ? "center" : "split"}
     >
@@ -510,7 +512,7 @@ export function InstallerFlow({
         </span>
       )}
       {body}
-      <ol className="installer-steps installer-dots" aria-label="Setup steps">
+      <ol className="installer-steps installer-dots" aria-label={t("installer.flow.steps_label")}>
         {view.dots.map((d) => (
           <li key={d.step} aria-current={d.current ? "step" : undefined} aria-label={d.label} title={d.label} />
         ))}
@@ -525,6 +527,7 @@ export function InstallerFlow({
  * clipboard on click and says "Copied".
  */
 function PromptList({ prompts }: { prompts: string[] }) {
+  const t = useT("installer");
   const [copied, setCopied] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -541,7 +544,7 @@ function PromptList({ prompts }: { prompts: string[] }) {
   return (
     <div className="ob-prompts">
       <p className="ob-prompts-label" id="ob-prompts-label">
-        Try asking your agent:
+        {t("installer.prompts.label")}
       </p>
       <ul className="ob-prompts-list" aria-labelledby="ob-prompts-label">
         {prompts.map((p) => (
@@ -549,7 +552,7 @@ function PromptList({ prompts }: { prompts: string[] }) {
             <button type="button" className="ob-prompt" data-owns-enter onClick={() => copy(p)}>
               <span>{`\u201C${p}\u201D`}</span>
               <span className="ob-prompt-copied" aria-live="polite">
-                {copied === p ? "Copied" : ""}
+                {copied === p ? t("installer.prompts.copied") : ""}
               </span>
             </button>
           </li>
@@ -861,6 +864,7 @@ function AgentsStep({
   installer: InstallerBridge;
   onNext: (configured: string[]) => void;
 }) {
+  const t = useT("installer");
   const copy = onboardingCopy();
   const [report, setReport] = useState<AgentDetectReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -933,7 +937,7 @@ function AgentsStep({
           </button>
         }
       >
-        <ul className="installer-agents" aria-label="Setup results">
+        <ul className="installer-agents" aria-label={t("installer.agents.results_label")}>
           {summaries.map(({ agent, s }) => (
             <li key={agent.id} className={s.failed.length ? "installer-agent failed" : "installer-agent"}>
               <span className="installer-agent-name" title={s.text}>
@@ -978,7 +982,7 @@ function AgentsStep({
       {!report && !error && <p className="host-setup-lede">{copy.agentsLooking}</p>}
       {report && installed.length === 0 && <p className="host-setup-lede">{copy.agentsNone}</p>}
       {installed.length > 0 && (
-        <fieldset className="installer-agents" aria-label="Detected agents">
+        <fieldset className="installer-agents" aria-label={t("installer.agents.detected_label")}>
           {installed.map((a) => (
             <label key={a.id} className="create-cloud-toggle installer-agent">
               <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggle(a.id)} />

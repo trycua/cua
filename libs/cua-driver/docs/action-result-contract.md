@@ -123,6 +123,13 @@ in the same string. It is advice only: it has no `next_call`, it never rides on
 an error, and it is never sent for a step that already runs inside `run_steps`
 or `run_script`. The logic is in `rust/crates/cua-driver-core/src/batch_nudge.rs`.
 
+`suspected_noop` is advisory. It means a bounded readable state remained
+unchanged, not that the action failed. For a ref-targeted browser DOM click,
+the readback covers bounded semantic and form state on the target plus the
+document URL. An unchanged DOM click readback remains `unverifiable`, with
+readback evidence: effects elsewhere on the page can be invisible to that
+readback, so verify the expected postcondition before retrying.
+
 ## Window target resolution
 
 Window-scoped actions accept a PID without `window_id` only when that process

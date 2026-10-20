@@ -1,0 +1,105 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "teleport.move.app_only": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Just the app"
+          }
+        }
+      }
+    },
+    "teleport.move.app_with_files": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The app with files or folders"
+          }
+        }
+      }
+    },
+    "teleport.move.app_with_state": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The app with its signed-in state"
+          }
+        }
+      }
+    },
+    "teleport.sensitive.sign_ins.label": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep me signed in"
+          }
+        }
+      }
+    },
+    "teleport.sensitive.sign_ins.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends the session cookies."
+          }
+        }
+      }
+    },
+    "teleport.sensitive.passwords.label": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved passwords"
+          }
+        }
+      }
+    },
+    "teleport.sensitive.passwords.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends the passwords saved in the app."
+          }
+        }
+      }
+    },
+    "teleport.sensitive.history.label": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Browsing history"
+          }
+        }
+      }
+    },
+    "teleport.sensitive.history.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends the history of pages visited, and the bookmarks where the browser keeps them together."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

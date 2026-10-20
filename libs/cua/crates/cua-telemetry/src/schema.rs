@@ -515,6 +515,9 @@ pub const ENROLL_METHODS: &[&str] = &["sign_in", "approval", "rekey"];
 /// The Spaces app's experiments (Settings, Experiments;
 /// `cua-spaces-app-core` `experiments::Experiment::id`).
 pub const EXPERIMENTS: &[&str] = &["cua_volume", "your_cloud", "sharing"];
+/// The Spaces app's interface language, as a fixed set: the languages it
+/// ships or plans to; any other language reads `other`. No region, no text.
+pub const UI_LOCALES: &[&str] = &["en", "zh-Hans", "ko", "pt-BR", "ja", "es", "other"];
 /// An experiment's switch turned on or off.
 pub const EXPERIMENT_ACTIONS: &[&str] = &["experiment_on", "experiment_off"];
 pub const STREAM_TRANSPORTS: &[&str] = &["quic", "webrtc", "websocket", "grpc", "other"];
@@ -1160,16 +1163,23 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::APP_ACTIVE,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: CLIENTS,
-        props: &[p(
-            "experiments_on",
-            Kind::Set(EXPERIMENTS),
-            "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, joined with +), or none.",
-        )],
-        purpose: "Retention (day 1, day 7, day 30) and daily and weekly active installs: at most one per install per UTC day, on a day the product is used. Also how many installs use each experiment.",
+        props: &[
+            p(
+                "experiments_on",
+                Kind::Set(EXPERIMENTS),
+                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, joined with +), or none.",
+            ),
+            p(
+                "ui_locale",
+                Kind::Enum(UI_LOCALES),
+                "The Spaces app's interface language (en, zh-Hans, ko, pt-BR, ja, es), or other. en until the app says otherwise.",
+            ),
+        ],
+        purpose: "Retention (day 1, day 7, day 30) and daily and weekly active installs: at most one per install per UTC day, on a day the product is used. Also how many installs use each experiment, and which interface languages to ship.",
     },
     EventSpec {
         name: event::ONBOARDING_PAGE,
@@ -1496,8 +1506,9 @@ pub fn spec(name: &str) -> Option<&'static EventSpec> {
 // Catalogs
 // ---------------------------------------------------------------------------
 
-const IMAGE_CATALOG_JSON: &str = include_str!("../../../../images/sandbox-images.json");
-const TELEPORT_TARGETS_JSON: &str = include_str!("../../cua-teleport/src/ux/targets.json");
+const IMAGE_CATALOG_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/sandbox-images.json"));
+const TELEPORT_TARGETS_JSON: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/teleport-targets.json"));
 /// Teleport provider ids (`cua_teleport` providers); a cua-teleport test
 /// checks the list against the registry.
 pub const TELEPORT_PROVIDERS: &[&str] = &[

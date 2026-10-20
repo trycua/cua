@@ -1,8 +1,8 @@
 [package]
 name = "cua-vmm"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
-license = "MIT"
+license.workspace = true
 repository = "https://github.com/trycua/cua"
 description = "Local sandbox runtimes for the cua SDK: Lume, QEMU and OCI containers (gVisor)."
 
@@ -44,6 +44,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 
 [dev-dependencies]
 # Opt-in QEMU test: the SDK client checks the guest accepts the delivered token.
-cua-spacesd-client = { path = "../cua-spacesd-client" }
+cua-spacesd-client.workspace = true
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }

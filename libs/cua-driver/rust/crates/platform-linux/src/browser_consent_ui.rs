@@ -221,6 +221,21 @@ fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
     })
 }
 
+/// The node at element `index` of a walk of the consent window, which an
+/// exact action addresses through its own object.
+fn walked_node(nodes: &[AtspiNode], index: usize) -> Result<AtspiNode, BrowserRefusal> {
+    nodes
+        .iter()
+        .find(|node| node.element_index == Some(index))
+        .cloned()
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the exact browser consent control left its walk",
+            )
+        })
+}
+
 pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
     prove_window_owner(pid, window_id)?;
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -238,7 +253,8 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
                 "the exact remote-debugging consent prompt exposed no semantic cancel action",
             )
         })?;
-        crate::atspi::perform_action(pid, index).map_err(|error| {
+        let node = walked_node(&tree.nodes, index)?;
+        crate::atspi::perform_action_walked(pid, window_id, &node).map_err(|error| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("the exact browser consent cancel action failed: {error}"),
@@ -326,8 +342,9 @@ pub async fn handle(
         saw_prompt |= prompt_present;
         match exact_allow_button(&tree.nodes, &tree.bounds)? {
             Some(index) if accessibility_action_at.is_none() => {
+                let node = walked_node(&tree.nodes, index)?;
                 consent_action(&request.action, deadline, move || {
-                    crate::atspi::perform_action(pid, index)
+                    crate::atspi::perform_action_walked(pid, window_id, &node)
                 })
                 .await?;
                 accessibility_action_at = Some(Instant::now());

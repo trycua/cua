@@ -501,7 +501,7 @@ struct ParityTests {
             "error": opt(s.error),
             "report": opt(s.report?.appId),
             "sensitive": appPickerSensitiveOptions(state: s).map {
-                "\(word($0.group)):\($0.label):\($0.detail):\($0.checked ? "on" : "off")"
+                "\(word($0.group)):\($0.label.code):\($0.detail.code):\($0.checked ? "on" : "off")"
             },
             "planSensitive": appPickerPlanSensitive(state: s).map(word),
         ]

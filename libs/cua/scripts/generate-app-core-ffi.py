@@ -19,6 +19,7 @@ OUT = ROOT / "crates/cua-spaces-ffi/src/app_core_types.rs"
 
 # (source file, module path, [types]) in FFI order.
 TYPES = [
+    ("message.rs", "message", ["Msg"]),
     ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "PowerControl", "SpacePower", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
     ("spaces/mod.rs", "spaces", ["AmbientDots"]),
     ("spaces/roster.rs", "spaces::roster", ["NoticeKind", "Notice", "RosterState", "RosterAction"]),
@@ -60,7 +61,7 @@ TYPES = [
     ("agents.rs", "agents", ["AgentStatus", "SpaceAgentRun", "AgentSetupStatus", "AgentSettingsRow", "AgentSetupOutcomeInput", "AgentSetupSummary"]),
     ("devices.rs", "devices", ["DeviceInput", "MachineInput", "AuditInput", "DevicesInput", "BannerTone", "DeviceAction", "DeviceBanner", "DeviceConfirm", "UnconfirmedMachine", "DeviceRow", "ApprovalPrompt", "ActivityRow", "EnrollmentKind", "MachineAccessNotice", "ThisDevice", "DevicesLabels", "DevicesView", "EnrollMethod", "EnrollPhase", "EnrollState", "EnrollAction", "EnrollOption", "EnrollView", "ApproveSheetState", "ApproveSheetAction", "ApproveRequest", "ApproveSheetView"]),
     ("cloud_connect.rs", "cloud_connect", ["CloudProviderInput", "CloudConnectInput", "CloudCheckInput", "CloudConnectPhase", "CloudConnectState", "CloudConnectAction", "CloudTargetArgs", "CloudConnectRequest", "CloudProviderRow", "CloudField", "CloudCheckRow", "CloudConnectView"]),
-    ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareSheetView"]),
+    ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareActionView", "ShareSheetView", "ShareGate", "ShareRemovalInput", "ShareRemovalNote"]),
     ("persistent.rs", "persistent", ["PersistentAgentInput", "DriveEntryInput", "FileVersionInput", "OpenFileInput", "RoutineInput", "ComputerGrantInput", "AccessAuditInput", "AgentsInput", "AgentTab", "RoutineScheduleKind", "RoutineForm", "AgentsRequest", "AgentsState", "AgentsAction", "AgentRowView", "LineView", "TabView", "FileView", "AgentDetailView", "AgentsView"]),
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),

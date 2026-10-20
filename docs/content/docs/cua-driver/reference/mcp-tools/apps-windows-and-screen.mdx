@@ -54,7 +54,7 @@ List macOS apps, both currently running and installed-but-not-running, with per-
 
 - running: is a process for this app live? (pid is 0 when false)
 - active: is it the system-frontmost app? (implies running)
-- launch_path: filesystem path to the `.app` bundle, when known. Pass this to `launch_app` to start the app cold.
+- launch_path: filesystem path to the `.app` bundle, when known. Pass this as `name` to `launch_app` to start the app cold.
 - kind: `"desktop"` for `.app` bundles on macOS.
 - last_used: RFC3339 timestamp from the bundle's filesystem mtime, when readable.
 
@@ -146,7 +146,7 @@ Use this, not list_apps, for any window-level reasoning: "does this app have a v
 
 Per-record fields: window_id (HWND), pid + app_name, title, bounds &#123;x, y, width, height&#125;, layer (always 0), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, minimized. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order. The macOS-specific on_current_space / space_ids fields are omitted on Windows; current_space_id is null.
 
-Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, default false). Filter with app or pid: an unfiltered call lists every window.
+Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, default false). Filter with app or pid: an unfiltered call lists every window. The driver's own overlay is omitted.
 
 **Windows parameters**
 
@@ -174,7 +174,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 Launch a macOS app in the background: the target does NOT come to the foreground.
 
-Provide either `bundle_id` (preferred: unambiguous, e.g. `com.apple.calculator`) or `name` (e.g. "Calculator"). If both are given, bundle_id wins.
+Provide either `bundle_id` (preferred: unambiguous, e.g. `com.apple.calculator`) or `name` (e.g. "Calculator", or the absolute `.app` path from `list_apps` `launch_path`). If both are given, bundle_id wins.
 
 Optional `urls` are handed to the app as open targets: for Finder, pass a folder path to open a backgrounded Finder window there.
 
@@ -195,7 +195,7 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 | <span id="launch_app--macos--additional_arguments"></span>`additional_arguments` | `string[]` |  | Extra arguments appended after --args when launching. |
 | <span id="launch_app--macos--bundle_id"></span>`bundle_id` | `string` |  | App bundle identifier, e.g. com.apple.calculator. Preferred over name. |
 | <span id="launch_app--macos--creates_new_application_instance"></span>`creates_new_application_instance` | `boolean` |  | When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one: on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other. |
-| <span id="launch_app--macos--name"></span>`name` | `string` |  | App display name. Used only when bundle_id is absent. |
+| <span id="launch_app--macos--name"></span>`name` | `string` |  | App display name, or absolute path to a .app bundle (e.g. launch_path from list_apps). Used only when bundle_id is absent. |
 | <span id="launch_app--macos--urls"></span>`urls` | `string[]` |  | Optional file paths or URLs to open with the app (e.g. a folder path for Finder). |
 | <span id="launch_app--macos--webkit_inspector_port"></span>`webkit_inspector_port` | `integer` |  | Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var). |
 
@@ -492,7 +492,7 @@ The UIA tree walked is the window's tree (HWND-scoped); the screenshot and windo
 
 `window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. The driver does not auto-fall-back to a different window.
 
-Set `query` to a case-insensitive substring to project the tree to matching rows plus their ancestor chain. Original element indices are preserved. `total_element_count` reports the complete snapshot; `returned_element_count` reports the projection.
+Set `query` to a case-insensitive substring to project the tree to matching rows plus their ancestor chain. Original element indices are preserved. `total_element_count` reports the unprojected walked snapshot; `returned_element_count` reports the projection. `elements_complete` describes the underlying walk and is unaffected by query projection.
 
 Always returns BOTH the element tree AND a screenshot: ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.
 
@@ -500,7 +500,7 @@ The mirror image: pass `include_accessibility_tree:false` to SKIP the UIA walk e
 
 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of timing out at 4s with per-property RPCs).
 
-Optional `max_elements` / `max_depth` bound the UIA walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. Default: `max_elements` 250, depth ≤25.
+Optional `max_elements` / `max_depth` bound the UIA walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. `elements_complete` is false when a bound skips a node or subtree; ending exactly at a bound remains complete. Default: `max_elements` 250, depth ≤25.
 
 CHROMIUM COVERAGE: a browser-owned permission bubble can be composited outside the requested native window. Chromium-family snapshots therefore describe this limit in structuredContent.capture_coverage. After a verified ineffective window action, call escalate_session, take a fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, then verify with another fresh desktop snapshot. This is separate from page JavaScript dialogs, which remain on browser_dialog.
 
@@ -517,7 +517,7 @@ Windows requires no special permissions.
 | <span id="get_window_state--windows--max_elements"></span>`max_elements` | `integer` |  | Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window. Minimum: 1. |
 | <span id="get_window_state--windows--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default. Minimum: 0. |
 | <span id="get_window_state--windows--pid"></span>`pid` | `integer` | required | Process ID from `list_apps`. |
-| <span id="get_window_state--windows--query"></span>`query` | `string` |  | Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count. |
+| <span id="get_window_state--windows--query"></span>`query` | `string` |  | Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk. |
 | <span id="get_window_state--windows--screenshot_out_file"></span>`screenshot_out_file` | `string` |  | When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead. |
 | <span id="get_window_state--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="get_window_state--windows--window_id"></span>`window_id` | `integer` | required | HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array. |
@@ -557,7 +557,7 @@ For the full AX subtree of a single window (with interactive element indices you
 </Tab>
 <Tab value="Linux">
 
-Return a lightweight snapshot of the desktop: running processes and on-screen visible X11 windows with their bounds and owner pid.
+Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.
 
 For the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead: this is a fast discovery read.
 

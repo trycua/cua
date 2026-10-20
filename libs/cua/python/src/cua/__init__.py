@@ -94,6 +94,53 @@ _CuaError.doc_url = property(  # type: ignore[attr-defined]
     lambda self: _error_doc_url(type(self).__name__)
 )
 
+# ── Plan limits ────────────────────────────────────────────────────────────
+# The relay refuses a new live session over the plan's cap (HTTP 429). The
+# SDK raises `CuaError.Http` with the plain sentence; `error.plan_limit`
+# reads it as a `PlanLimitError` (None for any other error).
+from ._plan_limit import parse_plan_limit as _parse_plan_limit  # noqa: E402
+
+
+class PlanLimitError(_CuaError.Http):  # type: ignore[name-defined,misc]
+    """The relay refused a new live session because the plan is at its cap.
+
+    ``str(error)`` is the plain sentence. Live sessions are never cut, and
+    retrying gets the same answer: close one, or send the person to
+    ``upgrade_url``.
+    """
+
+    code = "plan_limit"
+    status = 429
+
+    def __init__(self, message, *, kind, plan, used, limit, upgrade_url=None):
+        super().__init__(message)
+        self.kind = kind  # "sessions" or "hours"
+        self.plan = plan  # "free", "pro", "teams", or the relay's own name
+        self.used = used
+        self.limit = limit
+        self.upgrade_url = upgrade_url
+
+    def __repr__(self):
+        return "PlanLimitError({})".format(repr(str(self)))
+
+    @classmethod
+    def from_error(cls, error):
+        """The refusal an error carries, else None."""
+        found = _parse_plan_limit(str(error))
+        if found is None:
+            return None
+        return cls(
+            found.message,
+            kind=found.kind,
+            plan=found.plan,
+            used=found.used,
+            limit=found.limit,
+            upgrade_url=found.upgrade_url,
+        )
+
+
+_CuaError.Http.plan_limit = property(PlanLimitError.from_error)  # type: ignore[attr-defined]
+
 # `Sandbox` is resolved lazily (see __getattr__): the cua-sandbox facade when
 # it is installed, else the native handle type.
 del Sandbox  # type: ignore[name-defined]  # noqa: F821

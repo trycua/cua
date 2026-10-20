@@ -20396,6 +20396,72 @@ public func FfiConverterTypeAppModeChoice_lower(_ value: AppModeChoice) -> RustB
 }
 
 
+public struct AppMsg: Equatable, Hashable {
+    /**
+     * The catalog key, `<area>.<screen_or_component>.<element>`.
+     */
+    public var code: String
+    /**
+     * Values for the text's variables.
+     */
+    public var vars: [String: String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The catalog key, `<area>.<screen_or_component>.<element>`.
+         */code: String,
+        /**
+         * Values for the text's variables.
+         */vars: [String: String]) {
+        self.code = code
+        self.vars = vars
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMsg: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMsg: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMsg {
+        return
+            try AppMsg(
+                code: FfiConverterString.read(from: &buf),
+                vars: FfiConverterDictionaryStringString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMsg, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterDictionaryStringString.write(value.vars, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMsg_lift(_ buf: RustBuffer) throws -> AppMsg {
+    return try FfiConverterTypeAppMsg.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMsg_lower(_ value: AppMsg) -> RustBuffer {
+    return FfiConverterTypeAppMsg.lower(value)
+}
+
+
 public struct AppNewSpaceOn: Equatable, Hashable {
     /**
      * The button's label.
@@ -26494,7 +26560,7 @@ public func FfiConverterTypeAppRefreshReport_lower(_ value: AppRefreshReport) ->
 
 public struct AppRelayAllowanceNotice: Equatable, Hashable {
     /**
-     * "You've used your free relay allowance for this month. ..."
+     * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
      */
     public var text: String
     /**
@@ -26526,7 +26592,7 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "You've used your free relay allowance for this month. ..."
+         * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
          */text: String,
         /**
          * [`UPGRADE`].
@@ -29246,11 +29312,11 @@ public struct AppSensitiveOption: Equatable, Hashable {
     /**
      * Label.
      */
-    public var label: String
+    public var label: AppMsg
     /**
      * The line under the label.
      */
-    public var detail: String
+    public var detail: AppMsg
     /**
      * Checked.
      */
@@ -29264,10 +29330,10 @@ public struct AppSensitiveOption: Equatable, Hashable {
          */group: AppSensitiveGroup,
         /**
          * Label.
-         */label: String,
+         */label: AppMsg,
         /**
          * The line under the label.
-         */detail: String,
+         */detail: AppMsg,
         /**
          * Checked.
          */checked: Bool) {
@@ -29294,16 +29360,16 @@ public struct FfiConverterTypeAppSensitiveOption: FfiConverterRustBuffer {
         return
             try AppSensitiveOption(
                 group: FfiConverterTypeAppSensitiveGroup.read(from: &buf),
-                label: FfiConverterString.read(from: &buf),
-                detail: FfiConverterString.read(from: &buf),
+                label: FfiConverterTypeAppMsg.read(from: &buf),
+                detail: FfiConverterTypeAppMsg.read(from: &buf),
                 checked: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSensitiveOption, into buf: inout [UInt8]) {
         FfiConverterTypeAppSensitiveGroup.write(value.group, into: &buf)
-        FfiConverterString.write(value.label, into: &buf)
-        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterTypeAppMsg.write(value.label, into: &buf)
+        FfiConverterTypeAppMsg.write(value.detail, into: &buf)
         FfiConverterBool.write(value.checked, into: &buf)
     }
 }
@@ -30334,6 +30400,72 @@ public func FfiConverterTypeAppSettingsSection_lower(_ value: AppSettingsSection
 }
 
 
+public struct AppShareActionView: Equatable, Hashable {
+    /**
+     * The button's words.
+     */
+    public var label: String
+    /**
+     * Where it opens.
+     */
+    public var url: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The button's words.
+         */label: String,
+        /**
+         * Where it opens.
+         */url: String) {
+        self.label = label
+        self.url = url
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppShareActionView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppShareActionView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppShareActionView {
+        return
+            try AppShareActionView(
+                label: FfiConverterString.read(from: &buf),
+                url: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppShareActionView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.url, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareActionView_lift(_ buf: RustBuffer) throws -> AppShareActionView {
+    return try FfiConverterTypeAppShareActionView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareActionView_lower(_ value: AppShareActionView) -> RustBuffer {
+    return FfiConverterTypeAppShareActionView.lower(value)
+}
+
+
 public struct AppShareEntryInput: Equatable, Hashable {
     /**
      * Email or account id.
@@ -30407,6 +30539,72 @@ public func FfiConverterTypeAppShareEntryInput_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeAppShareEntryInput_lower(_ value: AppShareEntryInput) -> RustBuffer {
     return FfiConverterTypeAppShareEntryInput.lower(value)
+}
+
+
+public struct AppShareGate: Equatable, Hashable {
+    /**
+     * "Sharing is for teams. Start a team to share this Space."
+     */
+    public var reason: String
+    /**
+     * "See Teams": where Teams starts, at one seat.
+     */
+    public var action: AppShareActionView
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Sharing is for teams. Start a team to share this Space."
+         */reason: String,
+        /**
+         * "See Teams": where Teams starts, at one seat.
+         */action: AppShareActionView) {
+        self.reason = reason
+        self.action = action
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppShareGate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppShareGate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppShareGate {
+        return
+            try AppShareGate(
+                reason: FfiConverterString.read(from: &buf),
+                action: FfiConverterTypeAppShareActionView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppShareGate, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterTypeAppShareActionView.write(value.action, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareGate_lift(_ buf: RustBuffer) throws -> AppShareGate {
+    return try FfiConverterTypeAppShareGate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareGate_lower(_ value: AppShareGate) -> RustBuffer {
+    return FfiConverterTypeAppShareGate.lower(value)
 }
 
 
@@ -30503,6 +30701,148 @@ public func FfiConverterTypeAppShareInput_lift(_ buf: RustBuffer) throws -> AppS
 #endif
 public func FfiConverterTypeAppShareInput_lower(_ value: AppShareInput) -> RustBuffer {
     return FfiConverterTypeAppShareInput.lower(value)
+}
+
+
+public struct AppShareRemovalInput: Equatable, Hashable {
+    /**
+     * The person (an email or account id).
+     */
+    public var who: String
+    /**
+     * The computer's name.
+     */
+    public var machineName: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The person (an email or account id).
+         */who: String,
+        /**
+         * The computer's name.
+         */machineName: String) {
+        self.who = who
+        self.machineName = machineName
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppShareRemovalInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppShareRemovalInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppShareRemovalInput {
+        return
+            try AppShareRemovalInput(
+                who: FfiConverterString.read(from: &buf),
+                machineName: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppShareRemovalInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.who, into: &buf)
+        FfiConverterString.write(value.machineName, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareRemovalInput_lift(_ buf: RustBuffer) throws -> AppShareRemovalInput {
+    return try FfiConverterTypeAppShareRemovalInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareRemovalInput_lower(_ value: AppShareRemovalInput) -> RustBuffer {
+    return FfiConverterTypeAppShareRemovalInput.lower(value)
+}
+
+
+public struct AppShareRemovalNote: Equatable, Hashable {
+    /**
+     * One line: who can no longer open what, and why.
+     */
+    public var text: String
+    /**
+     * "Invite to your team".
+     */
+    public var action: AppShareActionView
+    /**
+     * Dismiss.
+     */
+    public var dismiss: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * One line: who can no longer open what, and why.
+         */text: String,
+        /**
+         * "Invite to your team".
+         */action: AppShareActionView,
+        /**
+         * Dismiss.
+         */dismiss: String) {
+        self.text = text
+        self.action = action
+        self.dismiss = dismiss
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppShareRemovalNote: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppShareRemovalNote: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppShareRemovalNote {
+        return
+            try AppShareRemovalNote(
+                text: FfiConverterString.read(from: &buf),
+                action: FfiConverterTypeAppShareActionView.read(from: &buf),
+                dismiss: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppShareRemovalNote, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterTypeAppShareActionView.write(value.action, into: &buf)
+        FfiConverterString.write(value.dismiss, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareRemovalNote_lift(_ buf: RustBuffer) throws -> AppShareRemovalNote {
+    return try FfiConverterTypeAppShareRemovalNote.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppShareRemovalNote_lower(_ value: AppShareRemovalNote) -> RustBuffer {
+    return FfiConverterTypeAppShareRemovalNote.lower(value)
 }
 
 
@@ -61119,6 +61459,54 @@ fileprivate struct FfiConverterOptionTypeAppRuntimeSwitch: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppShareGate: FfiConverterRustBuffer {
+    typealias SwiftType = AppShareGate?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppShareGate.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppShareGate.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppShareRemovalNote: FfiConverterRustBuffer {
+    typealias SwiftType = AppShareRemovalNote?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppShareRemovalNote.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppShareRemovalNote.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppSidebarRow: FfiConverterRustBuffer {
     typealias SwiftType = AppSidebarRow?
 
@@ -64968,6 +65356,31 @@ fileprivate struct FfiConverterSequenceTypeAppShareEntryInput: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppShareRemovalInput: FfiConverterRustBuffer {
+    typealias SwiftType = [AppShareRemovalInput]
+
+    public static func write(_ value: [AppShareRemovalInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppShareRemovalInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppShareRemovalInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppShareRemovalInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppShareRemovalInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppShareRowView: FfiConverterRustBuffer {
     typealias SwiftType = [AppShareRowView]
 
@@ -66621,6 +67034,23 @@ public func appAccountAppUrl() -> String  {
     uniffi_cua_spaces_ffi_fn_func_app_account_app_url($0
     )
 })
+}
+/**
+ * The owner has seen the note: it is not shown again.
+ */
+public func appAckShareRemovals(accountToken: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_func_app_ack_share_removals(FfiConverterString.lower(accountToken)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_void,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_void,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
 }
 /**
  * The add or replace sheet.
@@ -68308,6 +68738,18 @@ public func appPickerWindowGrid(windows: [AppOpenWindow], query: String, selecte
 })
 }
 /**
+ * The relay refusing a new session over the plan's cap, from the error's
+ * text: the sentence and Upgrade. None for any other error.
+ */
+public func appPlanLimitNotice(error: String, accountApp: String) -> AppRelayAllowanceNotice?  {
+    return try!  FfiConverterOptionTypeAppRelayAllowanceNotice.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice(
+        FfiConverterString.lower(error),
+        FfiConverterString.lower(accountApp),$0
+    )
+})
+}
+/**
  * The power button next to Delete, for a Space that turns off and on.
  */
 public func appPowerButton(space: AppSpace) -> AppPowerButton?  {
@@ -68676,6 +69118,30 @@ public func appShareActionFromJson(json: String)throws  -> AppShareSheetAction  
 })
 }
 /**
+ * A refused share in plain words (`share_outside_team`,
+ * `sharing_needs_team`); `None` for any other error.
+ */
+public func appShareErrorWords(error: String, who: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_share_error_words(
+        FfiConverterString.lower(error),
+        FfiConverterString.lower(who),$0
+    )
+})
+}
+/**
+ * Why the Share sheet is closed, from whether the account is in a team
+ * that can share (`None`: the host could not say, so the sheet stays open
+ * and the server decides). Sharing is for teams (CUA-1883).
+ */
+public func appShareGate(hasTeam: Bool?) -> AppShareGate?  {
+    return try!  FfiConverterOptionTypeAppShareGate.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_share_gate(
+        FfiConverterOptionBool.lower(hasTeam),$0
+    )
+})
+}
+/**
  * A new Share sheet.
  */
 public func appShareInitial() -> AppShareSheetState  {
@@ -68705,6 +69171,35 @@ public func appShareReduce(input: AppShareInput, state: AppShareSheetState, acti
         FfiConverterTypeAppShareSheetAction_lower(action),$0
     )
 })
+}
+/**
+ * The owner's one-line note about people removed from shared computers.
+ */
+public func appShareRemovalNote(removals: [AppShareRemovalInput]) -> AppShareRemovalNote?  {
+    return try!  FfiConverterOptionTypeAppShareRemovalNote.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_share_removal_note(
+        FfiConverterSequenceTypeAppShareRemovalInput.lower(removals),$0
+    )
+})
+}
+/**
+ * People removed from the account's shared computers because sharing is
+ * for teams now, until [`app_ack_share_removals`]. Empty on a server that
+ * predates it.
+ */
+public func appShareRemovals(accountToken: String)async throws  -> [AppShareRemovalInput]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_func_app_share_removals(FfiConverterString.lower(accountToken)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeAppShareRemovalInput.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
 }
 /**
  * The Share sheet's state from JSON (fixtures, parity).
@@ -69878,6 +70373,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_account_app_url() != 9943) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals() != 16071) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() != 42778) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -70355,6 +70853,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid() != 8477) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice() != 24944) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_power_button() != 25513) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -70451,6 +70952,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_share_action_from_json() != 61097) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_share_error_words() != 56839) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_share_gate() != 9867) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_share_initial() != 65098) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -70458,6 +70965,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_share_reduce() != 46853) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_share_removal_note() != 63359) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_share_removals() != 49780) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_share_state_from_json() != 38498) {

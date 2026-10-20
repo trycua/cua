@@ -146,6 +146,29 @@ jobs:
             exit 1
           fi
 
+  # What a release publishes to crates.io (cd-cua-sdk.yml): cua-sdk,
+  # cua-spacesd-client and every workspace crate they need, packaged and
+  # built from their .crate files the way crates.io users get them, with no
+  # protoc installed. Fails when a change makes any of them unpublishable
+  # (a path dependency without a version, a file embedded from outside the
+  # crate, a dependency on an unpublished crate).
+  crates-dry-run:
+    name: crates.io dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+      - name: cargo publish --dry-run
+        run: |
+          if command -v protoc; then echo "protoc must not be installed here" >&2; exit 1; fi
+          libs/cua/scripts/publish-crates.sh
+
   # The Spaces suites (cua-spaces, cua-daemon, cua-sdk) against a real
   # cua-spacesd server core in process. A standalone workspace so libs/cua
   # never depends on the driver workspace (see the boundary check above).

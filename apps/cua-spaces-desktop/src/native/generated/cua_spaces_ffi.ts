@@ -165,6 +165,35 @@ export function appAccountAppUrl(): string {
     }
 
 /**
+ * The owner has seen the note: it is not shown again.
+ */
+export async function appAckShareRemovals(accountToken: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_ack_share_removals(FfiConverterString.lower(accountToken, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * The add or replace sheet.
  */
 export function appAgentKeyForm(input: AppAgentKeysInput, form: AppAgentKeyFormInput): AppAgentKeyFormView {
@@ -3460,6 +3489,28 @@ export function appPickerWindowGrid(windows: Array<AppOpenWindow>, query: string
     }
 
 /**
+ * The relay refusing a new session over the plan's cap, from the error's
+ * text: the sentence and Upgrade. None for any other error.
+ */
+export function appPlanLimitNotice(error: string, accountApp: string): AppRelayAllowanceNotice | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeAppRelayAllowanceNotice.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice(
+        FfiConverterString.lower(error, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(accountApp, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The power button next to Delete, for a Space that turns off and on.
  */
 export function appPowerButton(space: AppSpace): AppPowerButton | undefined {
@@ -4153,6 +4204,50 @@ export function appShareActionFromJson(json: string): AppShareSheetAction /*thro
     }
 
 /**
+ * A refused share in plain words (`share_outside_team`,
+ * `sharing_needs_team`); `None` for any other error.
+ */
+export function appShareErrorWords(error: string, who: string): string | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_share_error_words(
+        FfiConverterString.lower(error, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(who, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Why the Share sheet is closed, from whether the account is in a team
+ * that can share (`None`: the host could not say, so the sheet stays open
+ * and the server decides). Sharing is for teams (CUA-1883).
+ */
+export function appShareGate(hasTeam: boolean | undefined): AppShareGate | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeAppShareGate.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_share_gate(
+        FfiConverterOptionalBoolean.lower(hasTeam, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * A new Share sheet.
  */
 export function appShareInitial(): AppShareSheetState {
@@ -4212,6 +4307,62 @@ export function appShareReduce(input: AppShareInput, state: AppShareSheetState, 
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
+    }
+
+/**
+ * The owner's one-line note about people removed from shared computers.
+ */
+export function appShareRemovalNote(removals: Array<AppShareRemovalInput>): AppShareRemovalNote | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeAppShareRemovalNote.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_share_removal_note(
+        FfiConverterSequenceTypeAppShareRemovalInput.lower(removals, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * People removed from the account's shared computers because sharing is
+ * for teams now, until [`app_ack_share_removals`]. Empty on a server that
+ * predates it.
+ */
+export async function appShareRemovals(accountToken: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<AppShareRemovalInput>> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_share_removals(FfiConverterString.lower(accountToken, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypeAppShareRemovalInput.lift.bind(FfiConverterSequenceTypeAppShareRemovalInput),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
     }
 
 /**
@@ -25778,6 +25929,55 @@ const FfiConverterTypeAppModeChoice = (() => {
     return new FFIConverter();
 })();
 
+export type AppMsg = {
+    /**
+     * The catalog key, `<area>.<screen_or_component>.<element>`.
+     */
+    code: string,
+    /**
+     * Values for the text's variables.
+     */
+    vars: Map<string, string>
+}
+
+/**
+ * Generated factory for {@link AppMsg} record objects.
+ */
+export const AppMsg = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMsg, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMsg>,
+    });
+})();
+
+const FfiConverterTypeAppMsg = (() => {
+    type TypeName = AppMsg;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                code: FfiConverterString.read(from),
+                vars: FfiConverterMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.code, into);
+            FfiConverterMapStringString.write(value.vars, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.code) +
+             FfiConverterMapStringString.allocationSize(value.vars);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppNewSpaceOn = {
     /**
      * The button's label.
@@ -32094,7 +32294,7 @@ const FfiConverterTypeAppRefreshReport = (() => {
 
 export type AppRelayAllowanceNotice = {
     /**
-     * "You've used your free relay allowance for this month. ..."
+     * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
      */
     text: string,
     /**
@@ -33939,11 +34139,11 @@ export type AppSensitiveOption = {
     /**
      * Label.
      */
-    label: string,
+    label: AppMsg,
     /**
      * The line under the label.
      */
-    detail: string,
+    detail: AppMsg,
     /**
      * Checked.
      */
@@ -33972,21 +34172,21 @@ const FfiConverterTypeAppSensitiveOption = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 group: FfiConverterTypeAppSensitiveGroup.read(from),
-                label: FfiConverterString.read(from),
-                detail: FfiConverterString.read(from),
+                label: FfiConverterTypeAppMsg.read(from),
+                detail: FfiConverterTypeAppMsg.read(from),
                 checked: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterTypeAppSensitiveGroup.write(value.group, into);
-            FfiConverterString.write(value.label, into);
-            FfiConverterString.write(value.detail, into);
+            FfiConverterTypeAppMsg.write(value.label, into);
+            FfiConverterTypeAppMsg.write(value.detail, into);
             FfiConverterBool.write(value.checked, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppSensitiveGroup.allocationSize(value.group) +
-             FfiConverterString.allocationSize(value.label) +
-             FfiConverterString.allocationSize(value.detail) +
+             FfiConverterTypeAppMsg.allocationSize(value.label) +
+             FfiConverterTypeAppMsg.allocationSize(value.detail) +
              FfiConverterBool.allocationSize(value.checked);
 
         }
@@ -35232,6 +35432,55 @@ const FfiConverterTypeAppSettingsPage = (() => {
     return new FFIConverter();
 })();
 
+export type AppShareActionView = {
+    /**
+     * The button's words.
+     */
+    label: string,
+    /**
+     * Where it opens.
+     */
+    url: string
+}
+
+/**
+ * Generated factory for {@link AppShareActionView} record objects.
+ */
+export const AppShareActionView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppShareActionView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppShareActionView>,
+    });
+})();
+
+const FfiConverterTypeAppShareActionView = (() => {
+    type TypeName = AppShareActionView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                label: FfiConverterString.read(from),
+                url: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.label, into);
+            FfiConverterString.write(value.url, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.label) +
+             FfiConverterString.allocationSize(value.url);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppShareEntryInput = {
     /**
      * Email or account id.
@@ -35282,6 +35531,55 @@ const FfiConverterTypeAppShareEntryInput = (() => {
             return FfiConverterString.allocationSize(value.who) +
              FfiConverterString.allocationSize(value.role) +
              FfiConverterBool.allocationSize(value.connected);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppShareGate = {
+    /**
+     * "Sharing is for teams. Start a team to share this Space."
+     */
+    reason: string,
+    /**
+     * "See Teams": where Teams starts, at one seat.
+     */
+    action: AppShareActionView
+}
+
+/**
+ * Generated factory for {@link AppShareGate} record objects.
+ */
+export const AppShareGate = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppShareGate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppShareGate>,
+    });
+})();
+
+const FfiConverterTypeAppShareGate = (() => {
+    type TypeName = AppShareGate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                reason: FfiConverterString.read(from),
+                action: FfiConverterTypeAppShareActionView.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.reason, into);
+            FfiConverterTypeAppShareActionView.write(value.action, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.reason) +
+             FfiConverterTypeAppShareActionView.allocationSize(value.action);
 
         }
     };
@@ -35352,6 +35650,111 @@ const FfiConverterTypeAppShareInput = (() => {
              FfiConverterSequenceTypeAppShareEntryInput.allocationSize(value.shares) +
              FfiConverterBool.allocationSize(value.signedIn) +
              FfiConverterBool.allocationSize(value.shareable);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppShareRemovalInput = {
+    /**
+     * The person (an email or account id).
+     */
+    who: string,
+    /**
+     * The computer's name.
+     */
+    machineName: string
+}
+
+/**
+ * Generated factory for {@link AppShareRemovalInput} record objects.
+ */
+export const AppShareRemovalInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppShareRemovalInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppShareRemovalInput>,
+    });
+})();
+
+const FfiConverterTypeAppShareRemovalInput = (() => {
+    type TypeName = AppShareRemovalInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                who: FfiConverterString.read(from),
+                machineName: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.who, into);
+            FfiConverterString.write(value.machineName, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.who) +
+             FfiConverterString.allocationSize(value.machineName);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppShareRemovalNote = {
+    /**
+     * One line: who can no longer open what, and why.
+     */
+    text: string,
+    /**
+     * "Invite to your team".
+     */
+    action: AppShareActionView,
+    /**
+     * Dismiss.
+     */
+    dismiss: string
+}
+
+/**
+ * Generated factory for {@link AppShareRemovalNote} record objects.
+ */
+export const AppShareRemovalNote = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppShareRemovalNote, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppShareRemovalNote>,
+    });
+})();
+
+const FfiConverterTypeAppShareRemovalNote = (() => {
+    type TypeName = AppShareRemovalNote;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                text: FfiConverterString.read(from),
+                action: FfiConverterTypeAppShareActionView.read(from),
+                dismiss: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.text, into);
+            FfiConverterTypeAppShareActionView.write(value.action, into);
+            FfiConverterString.write(value.dismiss, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.text) +
+             FfiConverterTypeAppShareActionView.allocationSize(value.action) +
+             FfiConverterString.allocationSize(value.dismiss);
 
         }
     };
@@ -61865,6 +62268,15 @@ const FfiConverterOptionalTypeAppRelayUsageView = new FfiConverterOptional(FfiCo
 // FfiConverter for Array<AppSpaceRow>
 const FfiConverterSequenceTypeAppSpaceRow = new FfiConverterArray(FfiConverterTypeAppSpaceRow);
 
+// FfiConverter for AppShareGate | undefined
+const FfiConverterOptionalTypeAppShareGate = new FfiConverterOptional(FfiConverterTypeAppShareGate);
+
+// FfiConverter for Array<AppShareRemovalInput>
+const FfiConverterSequenceTypeAppShareRemovalInput = new FfiConverterArray(FfiConverterTypeAppShareRemovalInput);
+
+// FfiConverter for AppShareRemovalNote | undefined
+const FfiConverterOptionalTypeAppShareRemovalNote = new FfiConverterOptional(FfiConverterTypeAppShareRemovalNote);
+
 // FfiConverter for AppSpaceUsage | undefined
 const FfiConverterOptionalTypeAppSpaceUsage = new FfiConverterOptional(FfiConverterTypeAppSpaceUsage);
 
@@ -61928,6 +62340,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_account_app_url() !== 9943) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_account_app_url");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals() !== 16071) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() !== 42778) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form");
@@ -62409,6 +62824,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid() !== 8477) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice() !== 24944) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_power_button() !== 25513) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_power_button");
     }
@@ -62505,6 +62923,12 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_share_action_from_json() !== 61097) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_share_action_from_json");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_share_error_words() !== 56839) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_share_error_words");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_share_gate() !== 9867) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_share_gate");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_share_initial() !== 65098) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_share_initial");
     }
@@ -62513,6 +62937,12 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_share_reduce() !== 46853) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_share_reduce");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_share_removal_note() !== 63359) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_share_removal_note");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_share_removals() !== 49780) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_share_removals");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_share_state_from_json() !== 38498) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_share_state_from_json");
@@ -63152,6 +63582,7 @@ export default Object.freeze({
     FfiConverterTypeAppMenuPreview,
     FfiConverterTypeAppMenuPreviewRow,
     FfiConverterTypeAppModeChoice,
+    FfiConverterTypeAppMsg,
     FfiConverterTypeAppNewSpaceOn,
     FfiConverterTypeAppNotchAccess,
     FfiConverterTypeAppNotchActivity,
@@ -63266,8 +63697,12 @@ export default Object.freeze({
     FfiConverterTypeAppSettingsRow,
     FfiConverterTypeAppSettingsRowKind,
     FfiConverterTypeAppSettingsSection,
+    FfiConverterTypeAppShareActionView,
     FfiConverterTypeAppShareEntryInput,
+    FfiConverterTypeAppShareGate,
     FfiConverterTypeAppShareInput,
+    FfiConverterTypeAppShareRemovalInput,
+    FfiConverterTypeAppShareRemovalNote,
     FfiConverterTypeAppShareRequest,
     FfiConverterTypeAppShareRowView,
     FfiConverterTypeAppShareSheetAction,

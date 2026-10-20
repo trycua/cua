@@ -121,7 +121,7 @@ impl Owner for Pointers {
     }
 
     fn release_unrecorded(&mut self, cursor_id: &str) -> anyhow::Result<bool> {
-        handle_release_unrecorded(&mut self.0, cursor_id)
+        release_all_held(&mut self.0, cursor_id, roundtrip_on_persistent, forget_conn)
     }
 
     fn forget(&mut self, cursor_id: &str) {
@@ -507,13 +507,6 @@ fn release_held<D: HeldDevice>(
     Ok(())
 }
 
-fn handle_release_unrecorded(
-    active: &mut HashMap<String, ActivePointer>,
-    cursor_id: &str,
-) -> anyhow::Result<bool> {
-    release_all_held(active, cursor_id, roundtrip_on_persistent, forget_conn)
-}
-
 /// Release every button `cursor_id` holds and drop the cursor. If niri only
 /// did not answer in time, the cursor stays for another try; a connection
 /// that failed otherwise took the virtual pointer and its buttons with it.
@@ -664,12 +657,6 @@ fn request_by<T>(
         .map_err(|e| anyhow::Error::new(e).context("cua-persistent-vptr owner did not answer"))
 }
 
-fn never_handled(error: &anyhow::Error) -> bool {
-    !error
-        .downcast_ref::<crossbeam_channel::RecvTimeoutError>()
-        .is_some_and(crossbeam_channel::RecvTimeoutError::is_timeout)
-}
-
 /// Press and HOLD `button` (evdev code) at output coordinates `(x, y)` on the
 /// toplevel identified by `window_id`. Subsequent `move_to` / `release` calls
 /// targeting the same `cursor_id` reuse the same virtual-pointer device, so
@@ -726,7 +713,10 @@ fn press_on(
         reply,
     })
     .inspect_err(|error| {
-        if never_handled(error) {
+        if !error
+            .downcast_ref::<crossbeam_channel::RecvTimeoutError>()
+            .is_some_and(crossbeam_channel::RecvTimeoutError::is_timeout)
+        {
             held.press_dropped(cursor_id);
         }
     })?;

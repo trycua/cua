@@ -88,16 +88,6 @@ pub(super) fn aim_at(window: &Window, x: i32, y: i32) -> Result<((i32, i32), Rec
     Ok(((rect.x.saturating_add(x), rect.y.saturating_add(y)), rect))
 }
 
-fn aimed_rect(window: u64, point: (i32, i32)) -> Option<Rect> {
-    aims()
-        .lock()
-        .ok()?
-        .iter()
-        .rev()
-        .find(|aim| (aim.window, aim.point) == (window, point))
-        .map(|aim| aim.rect)
-}
-
 /// A window-addressed pointer action admitted on a settled layout. Each
 /// confirmation reads the layout history again, so a change after admission
 /// refuses the next event.
@@ -214,7 +204,13 @@ fn gate_pointer(
         .and_then(|scene| scene.window(window_id))
         .map_err(input_unavailable)?;
     pointer_admission(&window, before, points, |point| {
-        aimed_rect(window_id, point)
+        aims()
+            .lock()
+            .ok()?
+            .iter()
+            .rev()
+            .find(|aim| (aim.window, aim.point) == (window_id, point))
+            .map(|aim| aim.rect)
     })?;
     // Changes queued while the admission scene was read refuse here, before
     // focus moves.

@@ -42,9 +42,10 @@ mod settle;
 #[cfg(test)]
 mod test_support;
 
+pub use self::ipc::is_session;
 #[cfg(test)]
 use self::test_support::*;
-pub use self::{capture::*, focus::*, gate::*, ipc::*, lock::*, scene::*, settle::*};
+pub(crate) use self::{capture::*, focus::*, gate::*, ipc::*, lock::*, scene::*, settle::*};
 
 // ── Observation ──────────────────────────────────────────────────────────────
 

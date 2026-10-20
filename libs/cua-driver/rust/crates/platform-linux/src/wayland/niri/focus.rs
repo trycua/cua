@@ -185,10 +185,7 @@ pub fn keyboard_focus() -> Result<Option<u64>> {
 
 /// The index of niri's active keyboard layout: the xkb group keys go out in.
 pub fn keyboard_layout() -> Result<u32> {
-    active_layout(&ipc().query(Request::KeyboardLayouts)?)
-}
-
-fn active_layout(layouts: &KeyboardLayouts) -> Result<u32> {
+    let layouts: KeyboardLayouts = ipc().query(Request::KeyboardLayouts)?;
     if usize::try_from(layouts.current_idx).map_or(true, |idx| idx >= layouts.names.len()) {
         bail!(
             "niri's active keyboard layout {} is not one of its {} layouts",

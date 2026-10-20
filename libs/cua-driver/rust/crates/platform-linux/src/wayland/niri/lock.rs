@@ -22,7 +22,7 @@ const LOGIND_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 pub fn refuse_if_locked() -> Result<()> {
     let pid = recognised()?;
     lock_refusal(logind_session(pid).and_then(|session| match session {
-        Some(session) => locked_hint(&session),
+        Some(session) => locked_hint_with(move || logind_locked_hint(&session)),
         None => Ok(false),
     }))
 }
@@ -145,15 +145,10 @@ impl<T: Send + 'static> Flight<T> {
 const LOCK_QUERY_TIMEOUT: Duration =
     LOGIND_CONNECT_TIMEOUT.saturating_add(LOGIND_TIMEOUT.saturating_mul(LOGIND_CALLS));
 
-/// logind's `LockedHint` for `session`. zbus's blocking calls run on its own
+/// logind's `LockedHint`, read by `query`. zbus's blocking calls run on its own
 /// Tokio runtime and panic on a Tokio worker thread, where capture-bound
 /// clicks and recording reach this check, so the whole query runs on a
 /// thread of its own.
-fn locked_hint(session: &str) -> Result<bool> {
-    let session = session.to_owned();
-    locked_hint_with(move || logind_locked_hint(&session))
-}
-
 fn locked_hint_with(query: impl FnOnce() -> Result<bool> + Send + 'static) -> Result<bool> {
     static QUERY: Flight<Result<bool>> = Flight::new();
     QUERY.run(LOCK_QUERY_TIMEOUT, "read logind's LockedHint", query)?

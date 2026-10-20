@@ -32,6 +32,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::compositor_peer::{peer_pid, wayland_connection_with_timeout};
+use crate::interaction::{self, settled};
 
 mod capture;
 mod focus;

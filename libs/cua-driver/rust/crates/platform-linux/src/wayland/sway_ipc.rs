@@ -181,16 +181,10 @@ fn focus_container(id: u64) -> bool {
 }
 
 fn wait_for_container_focus(id: u64, timeout: std::time::Duration) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if window_for_id(id).is_some_and(|window| window.focused) {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    crate::interaction::confirm(std::time::Instant::now() + timeout, || {
+        Ok::<_, ()>(window_for_id(id).is_some_and(|window| window.focused))
+    })
+    .unwrap_or(false)
 }
 
 /// Briefly focus one compositor-attested container, run `body`, then restore

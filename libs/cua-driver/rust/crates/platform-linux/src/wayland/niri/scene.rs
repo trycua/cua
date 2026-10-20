@@ -346,30 +346,6 @@ impl Scene {
     }
 }
 
-const SETTLE_READS: usize = 5;
-const SETTLE_INTERVAL: Duration = Duration::from_millis(30);
-
-/// Read `observe` until two consecutive reads agree on `key`, a few reads a
-/// fixed interval apart, else refuse with `unsettled`. Input admission still
-/// enforces the action's deadline after this wait. niri reports where an
-/// animation ends, so agreeing reads do not prove the animation finished.
-pub(super) fn settled<T, K: PartialEq, E>(
-    mut observe: impl FnMut() -> Result<T, E>,
-    key: impl Fn(&T) -> K,
-    unsettled: impl FnOnce() -> E,
-) -> Result<T, E> {
-    let mut last = observe()?;
-    for _ in 1..SETTLE_READS {
-        std::thread::sleep(SETTLE_INTERVAL);
-        let next = observe()?;
-        if key(&next) == key(&last) {
-            return Ok(next);
-        }
-        last = next;
-    }
-    Err(unsettled())
-}
-
 pub(super) fn pointer_space_of(
     outputs: &BTreeMap<String, IpcOutput>,
 ) -> Result<(i32, i32, u32, u32)> {

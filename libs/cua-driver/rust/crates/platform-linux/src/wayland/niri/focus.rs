@@ -100,32 +100,30 @@ fn focus_window<C: FnMut(Instant) -> Result<UnixStream>>(
     confirm: Duration,
 ) -> Result<()> {
     ipc.action(focus_window_action(id))?;
-    confirm_focus(ipc, id, pid, confirm)
+    confirm_focus(ipc, id, pid, interaction::operation_deadline(confirm))
 }
 
 pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     ipc: &mut Ipc<C>,
     id: u64,
     pid: Option<i32>,
-    confirm: Duration,
+    deadline: Instant,
 ) -> Result<()> {
-    let deadline = Instant::now() + confirm;
-    loop {
-        let focused = ipc.focused_window()?;
-        if focused
-            .as_ref()
-            .is_some_and(|focused| focused.id == id && focused.pid == pid)
-        {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(foreground_unavailable(format!(
-                "niri did not confirm focus on window {id} (focused: {})",
-                focused.map_or_else(|| "none".to_owned(), |focused| focused.id.to_string())
-            )));
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    let mut focused = None;
+    if interaction::confirm(deadline, || {
+        focused = ipc.focused_window()?;
+        anyhow::Ok(
+            focused
+                .as_ref()
+                .is_some_and(|focused| focused.id == id && focused.pid == pid),
+        )
+    })? {
+        return Ok(());
     }
+    Err(foreground_unavailable(format!(
+        "niri did not confirm focus on window {id} (focused: {})",
+        focused.map_or_else(|| "none".to_owned(), |focused| focused.id.to_string())
+    )))
 }
 
 /// Focus an exact niri window for input, confirmed by read-back.
@@ -290,7 +288,7 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     match (prior, before.iter().find(|workspace| workspace.is_focused)) {
         (Some(prior), _) => ipc
             .restore_action(focus_window_action(prior.id))
-            .and_then(|()| confirm_focus(ipc, prior.id, prior.pid, confirm))
+            .and_then(|()| confirm_focus(ipc, prior.id, prior.pid, Instant::now() + confirm))
             .with_context(|| format!("niri could not restore prior window {}", prior.id))?,
         (None, Some(workspace)) => restore_workspace(ipc, workspace.id, confirm)
             .with_context(|| format!("niri could not restore prior workspace {}", workspace.id))?,
@@ -329,20 +327,18 @@ fn restore_workspace<C: FnMut(Instant) -> Result<UnixStream>>(
     confirm: Duration,
 ) -> Result<()> {
     ipc.restore_action(focus_workspace_action(workspace))?;
-    let deadline = Instant::now() + confirm;
-    loop {
+    let focused = interaction::confirm(Instant::now() + confirm, || {
         let workspaces: Vec<IpcWorkspace> = ipc.query(Request::Workspaces)?;
-        if workspaces
-            .iter()
-            .any(|candidate| candidate.id == workspace && candidate.is_focused)
-        {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!("niri did not confirm focus on workspace {workspace}");
-        }
-        std::thread::sleep(Duration::from_millis(10));
+        anyhow::Ok(
+            workspaces
+                .iter()
+                .any(|candidate| candidate.id == workspace && candidate.is_focused),
+        )
+    })?;
+    if !focused {
+        bail!("niri did not confirm focus on workspace {workspace}");
     }
+    Ok(())
 }
 
 #[cfg(test)]

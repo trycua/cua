@@ -107,7 +107,7 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> PointerGate<C> {
                 .iter()
                 .find(|w| w.id == id)
                 .and_then(|w| w.pid);
-            confirm_focus(&mut self.ipc, id, pid, Duration::ZERO)?;
+            confirm_focus(&mut self.ipc, id, pid, Instant::now())?;
         }
         let current =
             pointer_space_of(&self.ipc.query(Request::Outputs)?).map_err(input_unavailable)?;

@@ -30,6 +30,8 @@ use std::time::Duration;
 
 use crate::x11::WindowInfo;
 
+const FOCUS_CONFIRM: Duration = Duration::from_millis(500);
+
 const DEST: &str = "org.cua.WinRects";
 const PATH: &str = "/org/cua/WinRects";
 const IFACE: &str = "org.cua.WinRects";
@@ -450,16 +452,14 @@ pub fn activate_window(window_id: u64) -> bool {
     if !accepted {
         return false;
     }
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    loop {
-        if window_is_focused(window_id) {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    focus_confirmed(|| window_is_focused(window_id))
+}
+
+fn focus_confirmed(mut focused: impl FnMut() -> bool) -> bool {
+    crate::interaction::confirm(std::time::Instant::now() + FOCUS_CONFIRM, || {
+        Ok::<_, ()>(focused())
+    })
+    .unwrap_or(false)
 }
 
 fn trusted_activate_window(window_id: u64) -> bool {
@@ -471,20 +471,13 @@ fn trusted_activate_window(window_id: u64) -> bool {
     if !accepted {
         return false;
     }
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    loop {
-        if trusted_shell_windows(None).is_some_and(|windows| {
+    focus_confirmed(|| {
+        trusted_shell_windows(None).is_some_and(|windows| {
             windows
                 .into_iter()
                 .any(|window| window.info.xid == u64::from(window_id) && window.focused)
-        }) {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+        })
+    })
 }
 
 fn window_is_focused(window_id: u32) -> bool {

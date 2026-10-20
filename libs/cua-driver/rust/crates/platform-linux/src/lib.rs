@@ -61,6 +61,8 @@ pub mod capture;
 mod capture_action_frame;
 #[cfg(target_os = "linux")]
 mod clipboard;
+#[cfg(target_os = "linux")]
+mod interaction;
 
 #[cfg(target_os = "linux")]
 pub mod atspi;

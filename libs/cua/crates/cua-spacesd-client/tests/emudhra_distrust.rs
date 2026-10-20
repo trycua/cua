@@ -17,7 +17,7 @@
 use rustls_pki_types::{CertificateDer, TrustAnchor, UnixTime};
 use serde_json::Value;
 use std::time::Duration;
-use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage, ALL_VERIFICATION_ALGS};
+use webpki::{ALL_VERIFICATION_ALGS, EndEntityCert, KeyUsage, anchor_from_trusted_cert};
 
 const INTERMEDIATES: &str = include_str!("fixtures/emudhra/impacted-intermediates.json");
 const ROOTS: &str = include_str!("fixtures/emudhra/roots.json");
@@ -34,7 +34,11 @@ fn certs(json: &str) -> Vec<(String, CertificateDer<'static>)> {
         .iter()
         .map(|c| {
             (
-                format!("{} <- {}", c["name"].as_str().unwrap(), c["issued_by"].as_str().unwrap_or("")),
+                format!(
+                    "{} <- {}",
+                    c["name"].as_str().unwrap(),
+                    c["issued_by"].as_str().unwrap_or("")
+                ),
                 pem_to_der(c["pem"].as_str().unwrap()),
             )
         })
@@ -48,9 +52,17 @@ fn now() -> UnixTime {
 
 fn verify(cert: &CertificateDer<'_>, anchors: &[TrustAnchor<'_>]) -> Result<(), String> {
     let ee = EndEntityCert::try_from(cert).map_err(|e| format!("{e:?}"))?;
-    ee.verify_for_usage(ALL_VERIFICATION_ALGS, anchors, &[], now(), KeyUsage::server_auth(), None, None)
-        .map(|_| ())
-        .map_err(|e| format!("{e:?}"))
+    ee.verify_for_usage(
+        ALL_VERIFICATION_ALGS,
+        anchors,
+        &[],
+        now(),
+        KeyUsage::server_auth(),
+        None,
+        None,
+    )
+    .map(|_| ())
+    .map_err(|e| format!("{e:?}"))
 }
 
 #[test]
@@ -59,7 +71,12 @@ fn fixtures_cover_all_eight_intermediates() {
     // 8 distinct keys, each as the emSign-issued cert and the AAA cross-sign.
     assert_eq!(list.len(), 16);
     let v: Value = serde_json::from_str(INTERMEDIATES).unwrap();
-    let mut spkis: Vec<_> = v.as_array().unwrap().iter().map(|c| c["spki_sha256"].as_str().unwrap()).collect();
+    let mut spkis: Vec<_> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["spki_sha256"].as_str().unwrap())
+        .collect();
     spkis.sort();
     spkis.dedup();
     assert_eq!(spkis.len(), 8);
@@ -70,7 +87,10 @@ fn webpki_rejects_every_compromised_intermediate_with_webpki_roots_1x() {
     let anchors: Vec<TrustAnchor<'static>> = webpki_roots::TLS_SERVER_ROOTS.to_vec();
     for (name, der) in certs(INTERMEDIATES) {
         let err = verify(&der, &anchors).expect_err(&name);
-        assert_eq!(err, "CertDistrusted", "{name}: expected the SPKI distrust error, got {err} (rustls-webpki < 0.103.16?)");
+        assert_eq!(
+            err, "CertDistrusted",
+            "{name}: expected the SPKI distrust error, got {err} (rustls-webpki < 0.103.16?)"
+        );
     }
 }
 
@@ -81,7 +101,10 @@ fn webpki_rejects_every_compromised_intermediate_with_webpki_roots_026() {
     let anchors: Vec<TrustAnchor<'static>> = webpki_roots_026::TLS_SERVER_ROOTS.to_vec();
     for (name, der) in certs(INTERMEDIATES) {
         let err = verify(&der, &anchors).expect_err(&name);
-        assert_eq!(err, "CertDistrusted", "{name}: expected the SPKI distrust error, got {err}");
+        assert_eq!(
+            err, "CertDistrusted",
+            "{name}: expected the SPKI distrust error, got {err}"
+        );
     }
 }
 

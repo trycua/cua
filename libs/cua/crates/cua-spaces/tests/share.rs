@@ -922,3 +922,60 @@ fn refusals_read_in_plain_words() {
     );
     assert!(cua_spaces::share::NO_TEAM.starts_with("Sharing is for teams."));
 }
+
+/// The sheet's check is an explanation, not the gate: with no Spaces API to
+/// ask first (or one that lacks the check), a direct SDK call still reaches
+/// the relay, and its refusal reads in plain words.
+#[tokio::test]
+async fn the_relays_refusal_of_an_outsider_reads_in_plain_words() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("ada-token", "ada", Some("ada@example.com"));
+    let env = MockServer::start(MockAuth::default()).await;
+    env.state.advertise(&["relay_attach"]);
+    let home = tempfile::tempdir().unwrap();
+    // No `with_spaces_api`: nothing to check with before the relay.
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(
+            &relay.url,
+            Arc::new(StaticToken("ada-token".into())),
+        ))
+        .share_consent(yes())
+        .build();
+    let info = spaces
+        .add(&env.url(), None, Some("studio".into()))
+        .await
+        .unwrap();
+    let attached = tokio::spawn({
+        let relay = relay.clone();
+        let state = env.state.clone();
+        async move {
+            for _ in 0..200 {
+                if let Some(a) = state.relay_attached.lock().unwrap().clone() {
+                    relay.set_online(&a.machine_id, true, "0.1.0");
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+    });
+    // A teammate first, so the computer is registered with the relay.
+    spaces
+        .share_space(&info.id, "dan@example.com", ShareRole::Viewer)
+        .await
+        .unwrap();
+    attached.abort();
+    relay.refuse_shares(Some("share_outside_team"));
+    let e = spaces
+        .share_space(&info.id, "eve@outside.test", ShareRole::Viewer)
+        .await
+        .unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("eve@outside.test isn't in your team. Invite them to your team first."),
+        "{e}"
+    );
+    // And nothing was shared with her.
+    let shares = spaces.space_shares(&info.id).await.unwrap();
+    assert!(shares.shares.iter().all(|s| s.who != "eve@outside.test"));
+}

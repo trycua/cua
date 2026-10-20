@@ -80,6 +80,9 @@ struct State_ {
     reads_down: bool,
     /// A relay that predates meta patches: the key is ignored.
     ignore_meta_patches: bool,
+    /// A relay (or its control plane) that refuses to change who a computer
+    /// is shared with, with this code (`share_outside_team`).
+    refuse_shares: Option<String>,
     /// Machine registrations received (including refused ones).
     register_calls: usize,
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
@@ -560,6 +563,11 @@ async fn patch(
     }
     if matches!(caller(&st, &headers), Some(Caller::Machine(_))) {
         return err(StatusCode::FORBIDDEN, "owner only");
+    }
+    if let Some(code) = st.refuse_shares.clone()
+        && (body["allow"].is_array() || body["viewers"].is_array())
+    {
+        return err(StatusCode::FORBIDDEN, &code);
     }
     let rec = st.machines.get_mut(&id).unwrap();
     if let Some(n) = body["name"].as_str() {
@@ -1224,6 +1232,13 @@ impl FakeRelay {
     /// (a relay deploy, as its proxy answers).
     pub fn set_reads_down(&self, down: bool) {
         self.state.lock().unwrap().reads_down = down;
+    }
+
+    /// While set, a PATCH that changes who a computer is shared with is
+    /// refused with `code` (`share_outside_team`), as the relay does for
+    /// someone outside the owner's team.
+    pub fn refuse_shares(&self, code: Option<&str>) {
+        self.state.lock().unwrap().refuse_shares = code.map(str::to_string);
     }
 
     /// While `on`, a PATCH with `meta` is accepted but its keys are

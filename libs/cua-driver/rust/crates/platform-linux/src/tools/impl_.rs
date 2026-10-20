@@ -6791,7 +6791,7 @@ impl Tool for ClickTool {
                     &cursor_id,
                     f64::from(overlay_x),
                     f64::from(overlay_y),
-                    true,
+                    false,
                 ),
             )
             .await;

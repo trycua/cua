@@ -7,7 +7,8 @@ use super::*;
 /// Recent window-local to layout translations kept for the pointer gate,
 /// oldest evicted first. Tool bodies translate coordinates with [`aim`] and
 /// call the pointer route separately, so this cache is what carries the
-/// translated rectangle to [`gate_pointer`] until those bodies can pass it.
+/// translated rectangle to [`gate_pointer`] until those bodies can pass it
+/// (the tool split that follows this adapter).
 const MAX_AIMS: usize = 64;
 /// How long a `get_desktop_state` screenshot stays usable for desktop-scope
 /// pointer input. niri scrolls a view without reporting it (see [`Shown`]),

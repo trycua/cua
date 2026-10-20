@@ -180,9 +180,9 @@ impl Drop for HeldLane {
 
 /// One physical desktop action's hold on the process-wide input lane, freed
 /// once every clone is dropped. A platform worker that outlives its call (it
-/// timed out, or its caller went away) keeps a clone, so the next desktop
-/// action waits until that worker has stopped instead of overlapping its
-/// late input or cleanup, for at most [`STALE_LANE_WAIT`].
+/// timed out, or its caller went away) keeps a clone, as does any cleanup it
+/// hands off, so the next desktop action waits until both have stopped
+/// instead of overlapping their late input, for at most [`STALE_LANE_WAIT`].
 #[derive(Clone)]
 pub struct DesktopLease(Arc<HeldLane>);
 

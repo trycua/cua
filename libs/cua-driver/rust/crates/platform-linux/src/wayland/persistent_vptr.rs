@@ -632,19 +632,37 @@ fn roundtrip_on_persistent(cursor_id: &str) -> anyhow::Result<()> {
 
 // ── public API ────────────────────────────────────────────────────────────
 
-/// Send one command to the owner thread on `tx` and wait for its reply.
+/// Send one command to the owner thread on `tx` and wait for its reply, until
+/// the deadline of the action bound to this thread, or for
+/// [`SESSION_END_WAIT`] without one, queueing included.
 fn request<T>(
     tx: &Sender<Cmd>,
     cmd: impl FnOnce(Sender<anyhow::Result<T>>) -> Cmd,
 ) -> anyhow::Result<T> {
+    let deadline = crate::input::action::current().map_or_else(
+        || std::time::Instant::now() + SESSION_END_WAIT,
+        |action| action.deadline(),
+    );
+    request_by(tx, deadline, cmd)?
+}
+
+fn request_by<T>(
+    tx: &Sender<Cmd>,
+    deadline: std::time::Instant,
+    cmd: impl FnOnce(Sender<anyhow::Result<T>>) -> Cmd,
+) -> anyhow::Result<anyhow::Result<T>> {
     let (tx_r, rx_r) = bounded(1);
-    tx.send(cmd(tx_r))
-        .map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
-    let reply = match crate::input::action::current() {
-        Some(action) => rx_r.recv_deadline(action.deadline()),
-        None => rx_r.recv().map_err(Into::into),
-    };
-    reply.map_err(|e| anyhow::Error::new(e).context("cua-persistent-vptr owner did not answer"))?
+    tx.send_deadline(cmd(tx_r), deadline)
+        .map_err(|error| match error {
+            crossbeam_channel::SendTimeoutError::Timeout(_) => {
+                anyhow::anyhow!("cua-persistent-vptr owner is busy: its queue stayed full")
+            }
+            crossbeam_channel::SendTimeoutError::Disconnected(_) => {
+                anyhow::anyhow!("cua-persistent-vptr thread is dead")
+            }
+        })?;
+    rx_r.recv_deadline(deadline)
+        .map_err(|e| anyhow::Error::new(e).context("cua-persistent-vptr owner did not answer"))
 }
 
 fn never_handled(error: &anyhow::Error) -> bool {
@@ -875,21 +893,11 @@ fn request_within<T>(
     wait: std::time::Duration,
     cmd: impl FnOnce(Sender<anyhow::Result<T>>) -> Cmd,
 ) -> anyhow::Result<T> {
-    let deadline = std::time::Instant::now() + wait;
-    let busy = || {
-        anyhow::anyhow!(
+    request_by(tx, std::time::Instant::now() + wait, cmd).map_err(|error| {
+        error.context(format!(
             "the persistent pointer did not release cursor '{cursor_id}' within {wait:?}: another pointer command or the compositor is holding it up; retry"
-        )
-    };
-    let (tx_r, rx_r) = bounded(1);
-    tx.send_deadline(cmd(tx_r), deadline)
-        .map_err(|error| match error {
-            crossbeam_channel::SendTimeoutError::Timeout(_) => busy(),
-            crossbeam_channel::SendTimeoutError::Disconnected(_) => {
-                anyhow::anyhow!("cua-persistent-vptr thread is dead")
-            }
-        })?;
-    rx_r.recv_deadline(deadline).map_err(|_| busy())?
+        ))
+    })?
 }
 
 /// Drop the entry for `cursor_id` without emitting any Wayland events.
@@ -1221,6 +1229,28 @@ mod tests {
         drop(rx);
         press_on(&tx, &held, "dead", 1, 10, 10, 1, || ()).unwrap_err();
         assert!(!held.contains("dead"));
+    }
+
+    #[test]
+    fn a_request_to_a_full_queue_gives_up_with_or_without_an_action() {
+        let (tx, rx) = bounded::<Cmd>(1);
+        let forget = |reply| Cmd::Forget {
+            cursor_id: "stuck".into(),
+            reply,
+        };
+        tx.send(forget(bounded(1).0)).unwrap();
+        let (done, finished) = bounded(2);
+        thread::spawn(move || {
+            let _ = done.send(request::<()>(&tx, forget).is_err());
+            let action = crate::input::action::Action::new(std::time::Duration::from_millis(100));
+            let _bound = crate::input::action::bind(action);
+            let _ = done.send(request::<()>(&tx, forget).is_err());
+        });
+        for _ in 0..2 {
+            let refused = finished.recv_timeout(SESSION_END_WAIT * 3);
+            assert_eq!(refused, Ok(true));
+        }
+        drop(rx);
     }
 
     #[test]

@@ -364,6 +364,9 @@ public final class DevicesModel {
     let defaults: UserDefaults
     static let relayNoticeDismissedKey = "cua.relayAllowance.dismissed"
     public private(set) var relayNoticeDismissed: String?
+    /// The relay just refused a new session over the plan's cap: the sentence
+    /// with Upgrade, shown until dismissed or a session starts.
+    public private(set) var refusal: AppRelayAllowanceNotice?
 
     public init(devices: DevicesRunning?, presence: PresenceChecking = LivePresence(),
                 defaults: UserDefaults = .standard) {
@@ -494,6 +497,7 @@ public final class DevicesModel {
     /// At 80% of the relay hours (`warn`) it is a prompt, so it waits while a
     /// live session is going; past the allowance (`limit`) it always shows.
     public var relayNotice: AppRelayAllowanceNotice? {
+        if let refusal { return refusal }
         guard let notice = relayUsageView?.notice, notice.dismissKey != relayNoticeDismissed else { return nil }
         if notice.level == "warn", (relayUsage?.liveSessions ?? 0) > 0 { return nil }
         return notice
@@ -505,7 +509,19 @@ public final class DevicesModel {
         telemetry?.record(appTelemetryFeature(feature: feature))
     }
 
+    /// Keeps an error's text when it is the relay refusing a session over
+    /// the plan's cap (the core's `appPlanLimitNotice`); any other error is
+    /// not a refusal and leaves the notice alone.
+    public func noteRefusal(_ error: String) {
+        guard let notice = appPlanLimitNotice(error: error, accountApp: appAccountAppUrl()) else { return }
+        refusal = notice
+    }
+
     public func dismissRelayNotice() {
+        if refusal != nil {
+            refusal = nil
+            return
+        }
         guard let key = relayUsageView?.notice?.dismissKey else { return }
         recordUpsell("upsell_meter_dismiss")
         relayNoticeDismissed = key

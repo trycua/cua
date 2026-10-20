@@ -1968,6 +1968,16 @@ pub fn app_relay_usage_view(usage: AppRelayUsage) -> Option<AppRelayUsageView> {
     core::relay_usage::view(&usage)
 }
 
+/// The relay refusing a new session over the plan's cap, from the error's
+/// text: the sentence and Upgrade. None for any other error.
+#[uniffi::export]
+pub fn app_plan_limit_notice(
+    error: String,
+    account_app: String,
+) -> Option<AppRelayAllowanceNotice> {
+    core::relay_usage::plan_limit_notice(&error, &account_app)
+}
+
 /// An SDK record as the app core's (the same JSON, the same names).
 fn core_of<T: serde::Serialize, U: serde::de::DeserializeOwned + Default>(v: &T) -> U {
     serde_json::to_value(v)

@@ -996,6 +996,7 @@ public final class AppModel {
             sendCreate(.cancelDone(id: pendingId))
             throw error
         } catch {
+            devices.noteRefusal(LiveSpacesBackend.words(error))
             sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
                              errorVariant: (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""))
             throw error
@@ -1104,6 +1105,7 @@ public final class AppModel {
                 sendCreate(.powerDone(id: space.id))
                 await refresh()
             } catch {
+                devices.noteRefusal(LiveSpacesBackend.words(error))
                 sendCreate(.powerFail(id: space.id, error: LiveSpacesBackend.words(error)))
             }
         }
@@ -1116,6 +1118,7 @@ public final class AppModel {
     }
 
     public func show(error: String) {
+        devices.noteRefusal(error)
         banner = error
         bannerIsError = true
     }

@@ -47,7 +47,9 @@ export type SpacesErrorCode =
   /** The Space has no cua-spacesd. */
   | 'spacesd_not_available'
   /** The teleport consent gate refused (or the approver declined). */
-  | 'teleport_refused';
+  | 'teleport_refused'
+  /** The relay refused a new live session because the plan's cap is reached. */
+  | 'plan_limit';
 
 export interface SpacesErrorOptions {
   cause?: unknown;
@@ -94,6 +96,81 @@ export class SpacesError extends Error {
   }
 }
 
+/** Which plan cap the relay refused. */
+export type PlanLimitKind = 'sessions' | 'hours';
+
+/**
+ * The relay refused a new live session because the account's plan is at its
+ * cap (HTTP 429, `x-cua-relay-error: plan_limit_sessions|plan_limit_hours`).
+ * Live sessions are never cut and retrying gets the same answer: close one,
+ * or send the person to {@link PlanLimitError.upgradeUrl}.
+ *
+ * `message` is the plain sentence, such as "You're using 5 of 5 live sessions
+ * on Pro. Close one or upgrade to Teams."
+ */
+export class PlanLimitError extends SpacesError {
+  readonly kind: PlanLimitKind;
+  /** `free`, `pro` or `teams`; any other plan keeps its own name. */
+  readonly plan: string;
+  readonly used: number;
+  readonly limit: number;
+  /** Where to add room, or undefined when the error carried no link. */
+  readonly upgradeUrl: string | undefined;
+
+  constructor(
+    fields: { kind: PlanLimitKind; plan: string; used: number; limit: number; upgradeUrl?: string | undefined },
+    message: string,
+    options: SpacesErrorOptions = {},
+  ) {
+    super('plan_limit', message, { ...options, status: 429 });
+    this.name = 'PlanLimitError';
+    this.kind = fields.kind;
+    this.plan = fields.plan;
+    this.used = fields.used;
+    this.limit = fields.limit;
+    this.upgradeUrl = fields.upgradeUrl;
+  }
+}
+
+const PLAN_LIMIT_FORMS: ReadonlyArray<readonly [string, PlanLimitKind, string]> = [
+  ["You're using ", 'sessions', ' live sessions on '],
+  ["You've used ", 'hours', ' remote hours this month on '],
+];
+
+/**
+ * Reads the relay's plan-limit sentence (and the `Upgrade: <url>` the CLI and
+ * SDK append) back out of an error's text. Undefined for any other text.
+ */
+export function parsePlanLimit(
+  text: string,
+): { kind: PlanLimitKind; plan: string; used: number; limit: number; upgradeUrl?: string | undefined; message: string } | undefined {
+  for (const [marker, kind, tail] of PLAN_LIMIT_FORMS) {
+    const start = text.indexOf(marker);
+    if (start < 0) continue;
+    const rest = text.slice(start + marker.length);
+    const mid = rest.indexOf(tail);
+    if (mid < 0) continue;
+    const counts = /^(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)$/.exec(rest.slice(0, mid));
+    const after = rest.slice(mid + tail.length);
+    const dot = after.indexOf('. ');
+    if (!counts || dot < 0) continue;
+    const name = after.slice(0, dot).trim().toLowerCase();
+    const plan = name === 'the free plan' ? 'free' : name === 'your plan' ? '' : name;
+    // The sentence ends at its last full stop before any " Upgrade: <url>".
+    const upgrade = /\sUpgrade: (https?:\/\/\S+)\s*$/.exec(text);
+    const body = (upgrade ? text.slice(0, upgrade.index) : text).slice(start).trim();
+    return {
+      kind,
+      plan,
+      used: Number(counts[1]),
+      limit: Number(counts[2]),
+      upgradeUrl: upgrade?.[1],
+      message: body,
+    };
+  }
+  return undefined;
+}
+
 /** Narrowing helper for consumers: `if (isSpacesError(e, 'verification')) …` */
 export function isSpacesError(value: unknown, code?: SpacesErrorCode): value is SpacesError {
   return value instanceof SpacesError && (code === undefined || value.code === code);
@@ -137,6 +214,11 @@ export function toSpacesError(error: unknown): SpacesError {
   const tag = (error as { tag?: unknown } | null)?.tag;
   const code = typeof tag === 'string' ? CUA_TAGS[tag] : undefined;
   const message = error instanceof Error ? error.message : String(error);
+  const refusal = tag === 'Http' ? parsePlanLimit(message) : undefined;
+  if (refusal) {
+    const { message: sentence, ...fields } = refusal;
+    return new PlanLimitError(fields, sentence, { cause: error });
+  }
   return new SpacesError(code ?? 'protocol', message, { cause: error });
 }
 

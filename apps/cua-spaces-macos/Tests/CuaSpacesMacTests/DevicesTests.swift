@@ -264,21 +264,35 @@ struct RelayUsageTests {
         let (m, defaults) = model(fixture)
         await m.readRelayUsage()
         let notice = try #require(m.relayNotice)
-        #expect(notice.text == "You're using 20.4 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours.")
+        #expect(notice.text == "You're using 2 of 2 live sessions and 20.4 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours.")
         #expect(notice.upgrade == "Upgrade")
         #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
         #expect(notice.level == "limit")
         m.dismissRelayNotice()
         #expect(m.relayNotice == nil)
-        #expect(defaults.string(forKey: DevicesModel.relayNoticeDismissedKey) == "2026-10:hours")
+        #expect(defaults.string(forKey: DevicesModel.relayNoticeDismissedKey) == "2026-10:hours,sessions")
         // Kept across launches; another reason shows it again.
         let again = DevicesModel(devices: fixture, presence: FixturePresence(), defaults: defaults)
         again.signedIn = true
         await again.readRelayUsage()
         #expect(again.relayNotice == nil)
-        fixture.usage?.reasons = ["sessions", "hours"]
+        fixture.usage?.liveSessions = 1
+        fixture.usage?.reasons = ["hours"]
         await again.readRelayUsage()
-        #expect(again.relayNotice?.dismissKey == "2026-10:hours,sessions")
+        #expect(again.relayNotice?.dismissKey == "2026-10:hours")
+    }
+
+    @Test func aRefusedSessionShowsTheSentenceWithUpgradeUntilDismissed() async throws {
+        let (m, _) = model(FixtureDevices())
+        m.noteRefusal("timed out")
+        #expect(m.relayNotice == nil)
+        m.noteRefusal("relay: You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.")
+        let notice = try #require(m.relayNotice)
+        #expect(notice.text == "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.")
+        #expect(notice.upgrade == "Upgrade")
+        #expect(notice.upgradeUrl?.hasSuffix("/buy/teams?from=plan_limit") == true)
+        m.dismissRelayNotice()
+        #expect(m.relayNotice == nil)
     }
 
     @Test func atEightyPercentOfHoursAFreePlanGetsAHeadsUpThatWaitsForLiveSessions() async throws {

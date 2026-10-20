@@ -3460,6 +3460,28 @@ export function appPickerWindowGrid(windows: Array<AppOpenWindow>, query: string
     }
 
 /**
+ * The relay refusing a new session over the plan's cap, from the error's
+ * text: the sentence and Upgrade. None for any other error.
+ */
+export function appPlanLimitNotice(error: string, accountApp: string): AppRelayAllowanceNotice | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeAppRelayAllowanceNotice.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice(
+        FfiConverterString.lower(error, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(accountApp, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The power button next to Delete, for a Space that turns off and on.
  */
 export function appPowerButton(space: AppSpace): AppPowerButton | undefined {
@@ -62408,6 +62430,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid() !== 8477) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice() !== 24944) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_power_button() !== 25513) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_power_button");

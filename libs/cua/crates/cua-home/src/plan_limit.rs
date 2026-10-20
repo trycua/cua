@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: FSL-1.1-MIT
-// Copyright (c) 2026 Cua AI, Inc.
-
 //! The relay's plan-limit refusal, in plain words, for every client.
 //!
 //! The relay answers a NEW live session over the plan's cap with HTTP 429

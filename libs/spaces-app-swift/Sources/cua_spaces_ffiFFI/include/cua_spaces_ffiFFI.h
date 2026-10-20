@@ -1507,6 +1507,11 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_picker_status(RustBuffer state, Rus
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_picker_window_grid(RustBuffer windows, RustBuffer query, RustBuffer selected, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_PLAN_LIMIT_NOTICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_PLAN_LIMIT_NOTICE
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice(RustBuffer error, RustBuffer account_app, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_POWER_BUTTON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_POWER_BUTTON
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_power_button(RustBuffer space, RustCallStatus *_Nonnull out_status
@@ -3443,6 +3448,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_picker_status(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_PICKER_WINDOW_GRID
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_PICKER_WINDOW_GRID
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_PLAN_LIMIT_NOTICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_PLAN_LIMIT_NOTICE
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice(void
 
 );
 #endif

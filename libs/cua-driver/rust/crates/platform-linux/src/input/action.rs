@@ -149,6 +149,46 @@ pub fn fence(socket: impl AsFd) -> std::io::Result<()> {
     current().map_or(Ok(()), |action| action.fence(socket))
 }
 
+/// `spawn_blocking` with a hard deadline. A wedged X server (or a client
+/// holding a server grab) must surface as a structured `foreground_timeout`
+/// error instead of a tool call that never returns. The blocking task is not
+/// cancellable; it is left to finish (or leak) on the blocking pool, with its
+/// [`Action`] abandoned so its input routes send nothing more. The worker
+/// keeps the call's desktop lease, so the next desktop action waits until it
+/// has stopped. Started from a thread already bound to an action, the worker
+/// runs under that action, within what is left of its deadline, and its
+/// timeout abandons that action too.
+pub async fn spawn_blocking_bounded<T: Send + 'static>(
+    label: &'static str,
+    budget: Duration,
+    f: impl FnOnce() -> Result<T> + Send + 'static,
+) -> std::result::Result<Result<T>, tokio::task::JoinError> {
+    let outer = current();
+    let action = outer.clone().unwrap_or_else(|| Action::new(budget));
+    let budget = budget.min(action.deadline.saturating_duration_since(Instant::now()));
+    let _abandon = outer.is_none().then(|| action.abandon_on_drop());
+    let lease = cua_driver_core::tool::DesktopLease::current();
+    let worker = {
+        let action = action.clone();
+        move || {
+            let _lease = lease;
+            let _bound = bind(action);
+            f()
+        }
+    };
+    match tokio::time::timeout(budget, tokio::task::spawn_blocking(worker)).await {
+        Ok(joined) => joined,
+        Err(_elapsed) => {
+            action.abandon();
+            Ok(Err(anyhow::anyhow!(
+                "{}: {label} did not complete within {budget:?}; the X server or the target \
+                 application may be wedged. Take a screenshot before retrying",
+                super::foreground::CODE_TIMEOUT
+            )))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +269,93 @@ mod tests {
         action.fence(&socket).unwrap();
         assert!(socket.write_all(b"late").is_err());
         assert_eq!(peer.read(&mut [0; 4]).unwrap(), 0);
+    }
+
+    fn sending_worker(sent: Arc<std::sync::atomic::AtomicUsize>) -> impl FnOnce() -> Result<()> {
+        move || {
+            for _ in 0..50 {
+                admit(|| sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst))?;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_input_worker_sends_nothing_more() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let sent = Arc::new(AtomicUsize::new(0));
+        let result = spawn_blocking_bounded(
+            "test input",
+            Duration::from_millis(100),
+            sending_worker(sent.clone()),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_err());
+        let at_timeout = sent.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(sent.load(Ordering::SeqCst), at_timeout);
+    }
+
+    #[tokio::test]
+    async fn an_input_worker_whose_caller_was_dropped_sends_nothing_more() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let sent = Arc::new(AtomicUsize::new(0));
+        let call = spawn_blocking_bounded(
+            "test input",
+            Duration::from_secs(60),
+            sending_worker(sent.clone()),
+        );
+        assert!(tokio::time::timeout(Duration::from_millis(100), call)
+            .await
+            .is_err());
+        let at_drop = sent.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(sent.load(Ordering::SeqCst) <= at_drop + 1);
+    }
+
+    #[test]
+    fn a_nested_worker_keeps_the_outer_deadline_and_its_timeout_ends_the_outer_call() {
+        let outer = Action::new(Duration::from_millis(100));
+        let _bound = bind(outer.clone());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let started = Instant::now();
+        let inner = runtime
+            .block_on(spawn_blocking_bounded(
+                "inner",
+                Duration::from_secs(60),
+                || {
+                    std::thread::sleep(Duration::from_millis(400));
+                    Ok(())
+                },
+            ))
+            .unwrap();
+        assert!(inner.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        admit(|| panic!("the outer call sent after its inner worker timed out")).unwrap_err();
+    }
+
+    #[test]
+    fn a_nested_worker_shares_the_outer_action() {
+        let outer = Action::new(Duration::from_secs(60));
+        let _bound = bind(outer.clone());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let inner = runtime
+            .block_on(spawn_blocking_bounded(
+                "inner",
+                Duration::from_secs(60),
+                || Ok(current().unwrap()),
+            ))
+            .unwrap()
+            .unwrap();
+        assert!(Arc::ptr_eq(&inner, &outer));
+        assert_eq!(admit(|| 1).unwrap(), 1);
     }
 }

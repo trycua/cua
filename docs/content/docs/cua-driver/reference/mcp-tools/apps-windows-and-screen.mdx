@@ -24,7 +24,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`debug_window_info`](#debug_window_info) | Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. | Windows |
 | [`get_window_state`](#get_window_state) | Snapshot a window: the accessibility tree plus a screenshot. | macOS, Linux, Windows |
 | [`get_accessibility_tree`](#get_accessibility_tree) | Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid. | macOS, Linux, Windows |
-| [`get_accessibility_surfaces`](#get_accessibility_surfaces) | Observe the bounded semantic trees of top-level accessibility windows for one process that have no native window id. | macOS, Linux, Windows |
+| [`get_accessibility_surfaces`](#get_accessibility_surfaces) | Observe the bounded semantic trees of top-level accessibility windows for one process that have no native window id. | macOS |
 | [`verify_state`](#verify_state) | Deterministically verify bounded predicates against one exact window. | macOS, Linux, Windows |
 | [`parse_visual_regions`](#parse_visual_regions) | Parse one immutable registered capture into model-neutral text and icon regions. | macOS, Linux, Windows |
 | [`get_desktop_state`](#get_desktop_state) | Capture the full display. | macOS, Linux, Windows |
@@ -582,7 +582,7 @@ For the full UIA subtree of a single window (with interactive element indices yo
 
 Observe the bounded semantic trees of top-level accessibility windows for one process that have no native window id. Results preserve each AXWindow boundary and expose no screenshot, element_index, element_token, or action-cache side effect. Native windows with an exact window_id remain observable through get_window_state. Supported on macOS; unsupported on Windows and Linux.
 
-Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+Effect: read-only, idempotent. Platforms: macOS.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |

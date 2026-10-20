@@ -151,45 +151,6 @@
    "read_only": true
   },
   {
-   "description": "Observe the bounded semantic trees of top-level accessibility windows for one process that have no native window id. Results preserve each AXWindow boundary and expose no screenshot, element_index, element_token, or action-cache side effect. Native windows with an exact window_id remain observable through get_window_state. Supported on macOS; unsupported on Windows and Linux.",
-   "destructive": false,
-   "idempotent": true,
-   "input_schema": {
-    "additionalProperties": false,
-    "properties": {
-     "max_depth": {
-      "default": 25,
-      "description": "Maximum accessibility tree depth to traverse.",
-      "maximum": 25,
-      "minimum": 1,
-      "type": "integer"
-     },
-     "max_elements": {
-      "default": 2000,
-      "description": "Maximum number of accessibility elements to return.",
-      "maximum": 2000,
-      "minimum": 1,
-      "type": "integer"
-     },
-     "pid": {
-      "description": "Process ID to observe.",
-      "minimum": 1,
-      "type": "integer"
-     },
-     "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
-      "type": "string"
-     }
-    },
-    "required": [
-     "pid"
-    ],
-    "type": "object"
-   },
-   "name": "get_accessibility_surfaces",
-   "read_only": true
-  },
-  {
    "description": "Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.",
    "destructive": false,
    "idempotent": false,

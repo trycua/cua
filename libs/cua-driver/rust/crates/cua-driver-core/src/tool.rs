@@ -684,7 +684,7 @@ fn deprecated_name_note(old: &str, new: &str) -> String {
 ///   `screen.capture.region`, `screen.dimensions`,
 ///   `screen.cursor.position`
 /// - `accessibility.tree`, `accessibility.tree.structured`,
-///   `accessibility.tree.bounded`, `accessibility.window_state`,
+///   `accessibility.tree.bounded`, `accessibility.observation.ax_window`, `accessibility.window_state`,
 ///   `accessibility.element_tokens` (Surface 6 — tool accepts the
 ///   opaque `element_token` arg)
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
@@ -6424,6 +6424,7 @@ mod capability_tests {
         "get_desktop_state",
         "get_cursor_position",
         // accessibility
+        "get_accessibility_surfaces",
         "get_accessibility_tree",
         "get_window_state",
         // app / window
@@ -6511,6 +6512,7 @@ mod capability_tests {
         "accessibility.tree",
         "accessibility.tree.structured",
         "accessibility.tree.bounded",
+        "accessibility.observation.ax_window",
         "accessibility.window_state",
         // Surface 6 — claimed by tools that accept the opaque
         // `element_token` arg + get_window_state which emits them.

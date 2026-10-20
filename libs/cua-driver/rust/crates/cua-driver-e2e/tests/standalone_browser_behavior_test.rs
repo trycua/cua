@@ -1861,8 +1861,7 @@ fn run_roundtrip(spec: &BrowserSpec) {
         spec.name
     );
     execute_case(case(&spec.name, "browser_tool_roundtrip"), |evidence| {
-        let mut fixture =
-            launch_browser_with_html(spec, &scenario, standalone_fixture_html());
+        let mut fixture = launch_browser_with_html(spec, &scenario, standalone_fixture_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-roundtrip-{}", fixture.pid);
         prepare_same_space_attachment(&mut fixture, &session);
@@ -1879,7 +1878,12 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_ne!(click.action_effect(), Some("suspected_noop"), "{}", click.raw);
+            assert_ne!(
+                click.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                click.raw
+            );
             assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
             assert_eq!(
                 click.structured()["evidence"][0]["kind"],
@@ -1942,12 +1946,7 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 }),
             );
 
-            assert_eq!(
-                click.action_effect(),
-                Some("unverifiable"),
-                "{}",
-                click.raw
-            );
+            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
             assert_eq!(click.action_route(), Some("dom"), "{}", click.raw);
             assert_eq!(
                 click.action_delivery_mode(),
@@ -1968,9 +1967,9 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 click.raw
             );
             assert!(
-                click
-                    .text()
-                    .contains("target state remained unchanged; application effect is unverifiable"),
+                click.text().contains(
+                    "target state remained unchanged; application effect is unverifiable"
+                ),
                 "{}",
                 click.raw
             );

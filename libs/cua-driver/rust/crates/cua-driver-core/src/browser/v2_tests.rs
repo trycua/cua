@@ -3013,7 +3013,10 @@ async fn dom_event_click_remains_unverifiable_when_only_focus_changes() {
     assert_eq!(public["effect"], "unverifiable", "{public}");
     assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
     assert_eq!(public["escalation"]["target"], "page", "{public}");
-    assert_eq!(public["escalation"]["reason"], "effect_unconfirmed", "{public}");
+    assert_eq!(
+        public["escalation"]["reason"], "effect_unconfirmed",
+        "{public}"
+    );
 }
 
 #[tokio::test]

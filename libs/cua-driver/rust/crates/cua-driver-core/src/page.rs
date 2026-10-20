@@ -64,50 +64,7 @@ pub struct ClickElementResult {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PageReadSource {
-    Javascript,
-    Cdp,
-    AxFallback,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct PageReadResult {
-    #[serde(skip)]
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<PageReadSource>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback_error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncated: Option<bool>,
-}
-
-impl PageReadResult {
-    pub fn text(content: String) -> Self {
-        Self {
-            content,
-            source: None,
-            fallback_error: None,
-            truncated: None,
-        }
-    }
-
-    pub fn sourced(
-        content: String,
-        source: PageReadSource,
-        fallback_error: Option<String>,
-        truncated: Option<bool>,
-    ) -> Self {
-        Self {
-            content,
-            source: Some(source),
-            fallback_error,
-            truncated,
-        }
-    }
-}
+pub type PageReadResult = ToolResult;
 
 /// Platform-specific backend for the `page` tool.
 ///
@@ -507,7 +464,7 @@ impl Tool for PageTool {
             }
 
             "get_text" => match self.backend.get_text(pid, window_id).await {
-                Ok(result) => page_read_tool_result(result),
+                Ok(result) => result,
                 Err(e) => ToolResult::error(format!("Page text extraction failed: {e}")),
             },
 
@@ -598,24 +555,13 @@ impl Tool for PageTool {
                     .query_dom(pid, window_id, &selector, &attributes)
                     .await
                 {
-                    Ok(result) => page_read_tool_result(result),
+                    Ok(result) => result,
                     Err(e) => ToolResult::error(format!("DOM query failed: {e}")),
                 }
             }
 
             other => ToolResult::error(format!("Unknown action: {other}")),
         }
-    }
-}
-
-fn page_read_tool_result(result: PageReadResult) -> ToolResult {
-    let structured = result
-        .source
-        .map(|_| serde_json::to_value(&result).expect("page read metadata must serialize"));
-    let tool_result = ToolResult::text(result.content);
-    match structured {
-        Some(metadata) => tool_result.with_structured(metadata),
-        None => tool_result,
     }
 }
 
@@ -694,12 +640,13 @@ mod tests {
     #[async_trait]
     impl PageBackend for ProvenanceBackend {
         async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<PageReadResult> {
-            Ok(PageReadResult::sourced(
-                "legacy payload".to_owned(),
-                PageReadSource::AxFallback,
-                Some("JavaScript from Apple Events is disabled".to_owned()),
-                Some(true),
-            ))
+            Ok(
+                ToolResult::text("legacy payload".to_owned()).with_structured(serde_json::json!({
+                    "source": "ax_fallback",
+                    "fallback_error": "JavaScript from Apple Events is disabled",
+                    "truncated": true
+                })),
+            )
         }
 
         async fn query_dom(

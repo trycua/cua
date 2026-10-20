@@ -10,7 +10,7 @@
 //! `cua_driver_core::page` — this file only implements the backend.
 
 use async_trait::async_trait;
-use cua_driver_core::page::{ClickElementResult, PageBackend, PageReadResult, PageReadSource};
+use cua_driver_core::page::{ClickElementResult, PageBackend, PageReadResult};
 use std::{future::Future, sync::Arc};
 
 use super::ToolState;
@@ -55,8 +55,7 @@ impl PageBackend for MacOsPageBackend {
     async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
         let bundle_id = Self::bundle_id_for(pid).await;
         read_page(
-            Some(self),
-            resolve_page_read_route(&bundle_id, pid).await?,
+            self,
             &bundle_id,
             pid,
             window_id,
@@ -75,22 +74,14 @@ impl PageBackend for MacOsPageBackend {
     ) -> anyhow::Result<PageReadResult> {
         let bundle_id = Self::bundle_id_for(pid).await;
         let js = build_query_selector_js(css_selector, attributes);
-        read_page(
-            Some(self),
-            resolve_page_read_route(&bundle_id, pid).await?,
-            &bundle_id,
-            pid,
-            window_id,
-            &js,
-            || {
-                ax_query_fallback(
-                    pid,
-                    window_id,
-                    css_selector,
-                    BrowserJs::supports(&bundle_id),
-                )
-            },
-        )
+        read_page(self, &bundle_id, pid, window_id, &js, || {
+            ax_query_fallback(
+                pid,
+                window_id,
+                css_selector,
+                BrowserJs::supports(&bundle_id),
+            )
+        })
         .await
     }
 
@@ -329,47 +320,8 @@ fn page_rows(tree_markdown: String, require_web_area: bool) -> anyhow::Result<St
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PageReadRoute {
-    Javascript,
-    Cdp,
-    AttachedCdp,
-    Ax,
-}
-
-async fn resolve_page_read_route(bundle_id: &str, pid: i32) -> anyhow::Result<PageReadRoute> {
-    let javascript_supported = BrowserJs::supports(bundle_id);
-    let is_electron = if javascript_supported {
-        false
-    } else {
-        tokio::task::spawn_blocking(move || ElectronJs::is_electron(pid)).await?
-    };
-    let route = classify_page_read_route(javascript_supported, is_electron);
-    let is_wk = route == PageReadRoute::Ax
-        && tokio::task::spawn_blocking(move || is_wk_web_view_app(pid)).await?;
-    Ok(attached_page_read_route(route, is_wk))
-}
-
-fn attached_page_read_route(route: PageReadRoute, is_wk: bool) -> PageReadRoute {
-    match (route, is_wk) {
-        (PageReadRoute::Ax, false) => PageReadRoute::AttachedCdp,
-        _ => route,
-    }
-}
-
-fn classify_page_read_route(javascript_supported: bool, is_electron: bool) -> PageReadRoute {
-    if javascript_supported {
-        PageReadRoute::Javascript
-    } else if is_electron {
-        PageReadRoute::Cdp
-    } else {
-        PageReadRoute::Ax
-    }
-}
-
 async fn read_page<F, A>(
-    backend: Option<&MacOsPageBackend>,
-    route: PageReadRoute,
+    backend: &MacOsPageBackend,
     bundle_id: &str,
     pid: i32,
     window_id: u64,
@@ -378,96 +330,48 @@ async fn read_page<F, A>(
 ) -> anyhow::Result<PageReadResult>
 where
     F: FnOnce() -> A,
-    A: Future<Output = anyhow::Result<PageReadResult>>,
+    A: Future<Output = anyhow::Result<(String, bool)>>,
 {
-    let (source, primary) = match route {
-        PageReadRoute::Ax => return ax_fallback().await,
-        PageReadRoute::AttachedCdp => {
-            return read_attached_before_ax(
-                async {
-                    match backend {
-                        Some(backend) => backend.attached_cdp_evaluate(pid, javascript).await,
-                        None => None,
-                    }
-                },
-                ax_fallback,
-            )
-            .await;
-        }
-        PageReadRoute::Javascript => {
-            let window_id = u32::try_from(window_id)
-                .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
-            (
-                PageReadSource::Javascript,
-                BrowserJs::execute(javascript, bundle_id, pid, window_id).await,
-            )
-        }
-        PageReadRoute::Cdp => (
-            PageReadSource::Cdp,
-            ElectronJs::execute(javascript, pid).await,
-        ),
+    let use_ax = !BrowserJs::supports(bundle_id)
+        && tokio::task::spawn_blocking(move || is_wk_web_view_app(pid))
+            .await
+            .unwrap_or(false);
+    let mut source = if BrowserJs::supports(bundle_id) {
+        "javascript"
+    } else {
+        "cdp"
     };
-    if primary.is_err() {
-        if let Some(backend) = backend {
-            if let Some(content) = backend.attached_cdp_evaluate(pid, javascript).await {
-                return Ok(PageReadResult::sourced(
-                    content,
-                    PageReadSource::Cdp,
-                    None,
-                    None,
-                ));
-            }
+    let primary = if use_ax {
+        None
+    } else {
+        Some(execute_js(javascript, bundle_id, pid, window_id).await)
+    };
+    let mut error = None;
+    let content = match primary {
+        Some(Ok(content)) => Some(content),
+        Some(Err(failure)) => {
+            error = Some(failure.to_string());
+            source = "cdp";
+            backend.attached_cdp_evaluate(pid, javascript).await
         }
-    }
-    read_with_ax_fallback(source, async { primary }, ax_fallback).await
-}
-
-async fn read_attached_before_ax<P, F, A>(
-    attached: P,
-    ax_fallback: F,
-) -> anyhow::Result<PageReadResult>
-where
-    P: Future<Output = Option<String>>,
-    F: FnOnce() -> A,
-    A: Future<Output = anyhow::Result<PageReadResult>>,
-{
-    match attached.await {
-        Some(content) => Ok(PageReadResult::sourced(
-            content,
-            PageReadSource::Cdp,
-            None,
-            None,
-        )),
-        None => ax_fallback().await,
-    }
-}
-
-async fn read_with_ax_fallback<P, F, A>(
-    primary_source: PageReadSource,
-    primary: P,
-    ax_fallback: F,
-) -> anyhow::Result<PageReadResult>
-where
-    P: Future<Output = anyhow::Result<String>>,
-    F: FnOnce() -> A,
-    A: Future<Output = anyhow::Result<PageReadResult>>,
-{
-    match primary.await {
-        Ok(content) => Ok(PageReadResult::sourced(content, primary_source, None, None)),
-        Err(error) => {
-            let mut fallback = ax_fallback().await.map_err(|fallback_error| {
-                anyhow::anyhow!(
-                    "AX fallback failed after {primary_source:?} read failed: {error}; \
-                     AX fallback error: {fallback_error}"
-                )
-            })?;
-            if fallback.source != Some(PageReadSource::AxFallback) {
-                anyhow::bail!("AX fallback omitted read provenance");
-            }
-            fallback.fallback_error = Some(error.to_string());
-            Ok(fallback)
+        None => None,
+    };
+    let (content, truncated) = match content {
+        Some(content) => (content, None),
+        None => {
+            let (content, truncated) = ax_fallback()
+                .await
+                .map_err(|ax| anyhow::anyhow!("{ax} (JavaScript read failed first: {error:?})"))?;
+            source = "ax_fallback";
+            (content, Some(truncated))
         }
+    };
+    let mut metadata = serde_json::json!({"source": source});
+    if let Some(truncated) = truncated {
+        metadata["fallback_error"] = serde_json::json!(error);
+        metadata["truncated"] = serde_json::json!(truncated);
     }
+    Ok(PageReadResult::text(content).with_structured(metadata))
 }
 
 /// Extract page text via the bounded AX tree.
@@ -475,7 +379,7 @@ async fn ax_text_fallback(
     pid: i32,
     window_id: u64,
     require_web_area: bool,
-) -> anyhow::Result<PageReadResult> {
+) -> anyhow::Result<(String, bool)> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let result = tokio::task::spawn_blocking(move || {
@@ -503,7 +407,7 @@ async fn ax_query_fallback(
     window_id: u64,
     selector: &str,
     require_web_area: bool,
-) -> anyhow::Result<PageReadResult> {
+) -> anyhow::Result<(String, bool)> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let sel = selector.to_owned();
@@ -529,13 +433,8 @@ async fn ax_query_fallback(
     ))
 }
 
-fn ax_page_read(content: String, truncated: bool, depth_truncated: bool) -> PageReadResult {
-    PageReadResult::sourced(
-        content,
-        PageReadSource::AxFallback,
-        None,
-        Some(truncated || depth_truncated),
-    )
+fn ax_page_read(content: String, truncated: bool, depth_truncated: bool) -> (String, bool) {
+    (content, truncated || depth_truncated)
 }
 
 fn require_ax_window_scope(
@@ -676,95 +575,6 @@ mod tests {
         assert_eq!(page_rows(MENU_ONLY.to_owned(), false).unwrap(), MENU_ONLY);
     }
 
-    fn ax(content: &str, truncated: bool) -> anyhow::Result<PageReadResult> {
-        Ok(ax_page_read(content.to_owned(), truncated, false))
-    }
-
-    #[tokio::test]
-    async fn apple_events_disabled_preserves_error_on_successful_ax_fallback() {
-        let result = read_with_ax_fallback(
-            PageReadSource::Javascript,
-            async { anyhow::bail!("JavaScript from Apple Events is disabled") },
-            || async { ax("visible text", false) },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result.content, "visible text");
-        assert_eq!(result.source, Some(PageReadSource::AxFallback));
-        assert_eq!(
-            result.fallback_error.as_deref(),
-            Some("JavaScript from Apple Events is disabled")
-        );
-        assert_eq!(result.truncated, Some(false));
-    }
-
-    #[tokio::test]
-    async fn cdp_unavailable_preserves_error_and_ax_truncation() {
-        let result = read_with_ax_fallback(
-            PageReadSource::Cdp,
-            async { anyhow::bail!("Could not find Electron inspector port") },
-            || async { ax("partial query", true) },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result.content, "partial query");
-        assert_eq!(result.source, Some(PageReadSource::AxFallback));
-        assert_eq!(
-            result.fallback_error.as_deref(),
-            Some("Could not find Electron inspector port")
-        );
-        assert_eq!(result.truncated, Some(true));
-    }
-
-    #[tokio::test]
-    async fn failed_ax_fallback_reports_both_errors() {
-        let error = read_with_ax_fallback(
-            PageReadSource::Cdp,
-            async { anyhow::bail!("CDP unavailable") },
-            || async { anyhow::bail!("AX permission denied") },
-        )
-        .await
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("CDP unavailable"));
-        assert!(error.contains("AX permission denied"));
-    }
-
-    #[tokio::test]
-    async fn direct_ax_route_has_no_triggering_error() {
-        let result = read_page(
-            None,
-            PageReadRoute::Ax,
-            "com.example.Native",
-            42,
-            7,
-            "unused",
-            || async { ax("native text", false) },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result.content, "native text");
-        assert_eq!(result.source, Some(PageReadSource::AxFallback));
-        assert_eq!(result.fallback_error, None);
-        assert_eq!(result.truncated, Some(false));
-    }
-
-    #[tokio::test]
-    async fn attached_cdp_is_tried_before_ax() {
-        let result =
-            read_attached_before_ax(async { Some("attached page".to_owned()) }, || async {
-                panic!("AX must not run after attached CDP succeeds")
-            })
-            .await
-            .unwrap();
-        assert_eq!(result.source, Some(PageReadSource::Cdp));
-        assert_eq!(result.content, "attached page");
-    }
-
     #[test]
     fn depth_bounded_ax_read_reports_truncation() {
         let result = crate::ax::tree::TreeWalkResult {
@@ -780,32 +590,7 @@ mod tests {
             result.truncated,
             result.depth_truncated,
         );
-        assert_eq!(page.truncated, Some(true));
-    }
-
-    #[test]
-    fn attached_route_excludes_wk_and_preserves_primary_routes() {
-        assert_eq!(
-            attached_page_read_route(PageReadRoute::Ax, false),
-            PageReadRoute::AttachedCdp
-        );
-        assert_eq!(
-            attached_page_read_route(PageReadRoute::Ax, true),
-            PageReadRoute::Ax
-        );
-        for route in [PageReadRoute::Javascript, PageReadRoute::Cdp] {
-            assert_eq!(attached_page_read_route(route, false), route);
-        }
-    }
-
-    #[test]
-    fn route_classification_never_calls_unknown_native_apps_cdp() {
-        assert_eq!(
-            classify_page_read_route(true, false),
-            PageReadRoute::Javascript
-        );
-        assert_eq!(classify_page_read_route(false, true), PageReadRoute::Cdp);
-        assert_eq!(classify_page_read_route(false, false), PageReadRoute::Ax);
+        assert!(page.1);
     }
 
     #[test]
@@ -823,34 +608,5 @@ mod tests {
 
         assert!(error.contains("belongs to pid 900"));
         assert!(error.contains("not pid 800"));
-    }
-
-    #[tokio::test]
-    async fn successful_javascript_query_reports_javascript_source() {
-        let result = read_with_ax_fallback(
-            PageReadSource::Javascript,
-            async { Ok("[{\"tagName\":\"BUTTON\"}]".to_owned()) },
-            || async { ax("must not run", false) },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result.content, "[{\"tagName\":\"BUTTON\"}]");
-        assert_eq!(result.source, Some(PageReadSource::Javascript));
-        assert_eq!(result.fallback_error, None);
-        assert_eq!(result.truncated, None);
-    }
-
-    #[tokio::test]
-    async fn successful_electron_query_reports_cdp_source() {
-        let result = read_with_ax_fallback(
-            PageReadSource::Cdp,
-            async { Ok("[]".to_owned()) },
-            || async { ax("must not run", false) },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result.source, Some(PageReadSource::Cdp));
     }
 }

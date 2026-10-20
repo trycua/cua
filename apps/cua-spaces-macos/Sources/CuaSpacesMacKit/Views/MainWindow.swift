@@ -27,6 +27,7 @@ public struct MainWindow: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     VStack(spacing: 0) {
                         DevicesBanner(devices: model.devices)
+                        ShareRemovalBanner(model: model)
                         RelayAllowanceBanner(devices: model.devices)
                         if let error = model.rosterError {
                             SpacesDiscoveryNotice(error: error)
@@ -74,6 +75,7 @@ public struct MainWindow: View {
         .task {
             await model.refresh()
             await model.keyvault.refresh()
+            await model.reloadShareRemovals()
         }
         // The relay allowance: at once (and on every sign-in or out), every
         // 5 minutes, and when the app comes to the front.

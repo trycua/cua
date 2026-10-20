@@ -43,6 +43,11 @@ pub const PRO_SESSIONS: u32 = 5;
 /// See [`PRO_SESSIONS`].
 pub const PRO_HOURS: u32 = 200;
 
+/// One plain line on Pro's plan card for people who pay monthly. The Billing
+/// page checks the plan and shows the switch only to monthly payers, with the
+/// exact charge from Stripe; the card says nothing it cannot back up.
+pub const PRO_YEARLY_NOTE: &str = "Paying monthly? Switching to yearly saves $36 a year.";
+
 /// Where Pro is bought, on the account app.
 pub const BUY_PRO_PATH: &str = "/buy/pro";
 /// Where Teams is bought, on the account app.
@@ -300,10 +305,16 @@ pub fn plan_card(u: &RelayUsage, account_app: &str) -> PlanCard {
         ),
         "pro" => (
             format!(
-                "{}, for you. Teams adds team-owned computers, roles and device approval.",
+                "{}, for you. Teams adds team-owned computers, roles and device approval. {PRO_YEARLY_NOTE}",
                 allowance(u.live_sessions_limit, u.hours_limit)
             ),
-            Some(link("Manage plan", "/billing")),
+            Some(PlanLink {
+                label: "Manage plan".into(),
+                url: format!(
+                    "{}/billing?from=app_plan_card",
+                    account_app.trim_end_matches('/')
+                ),
+            }),
             Some(link("See Teams", BUY_TEAMS_PATH)),
         ),
         "teams" => (
@@ -474,6 +485,53 @@ mod tests {
     }
 
     #[test]
+    fn pro_plan_card_mentions_yearly_once_and_links_to_billing() {
+        let pro = RelayUsage {
+            plan: "pro".into(),
+            live_sessions_limit: Some(5),
+            hours_limit: Some(200.0),
+            ..free()
+        };
+        let card = plan_card(&pro, "https://app.cua.ai/");
+        assert!(
+            card.detail
+                .ends_with("Paying monthly? Switching to yearly saves $36 a year."),
+            "{}",
+            card.detail
+        );
+        // The mention is plain: no urgency, no pressure.
+        let d = card.detail.to_lowercase();
+        for w in [
+            "hurry",
+            "limited",
+            "last chance",
+            "expires",
+            "act now",
+            "don't miss",
+        ] {
+            assert!(!d.contains(w), "{w}");
+        }
+        let primary = card.primary.unwrap();
+        assert_eq!(primary.label, "Manage plan");
+        assert_eq!(primary.url, "https://app.cua.ai/billing?from=app_plan_card");
+        // Free and Teams cards do not carry it.
+        assert!(
+            !plan_card(&free(), "https://app.cua.ai")
+                .detail
+                .contains("yearly")
+        );
+        let team = RelayUsage {
+            plan: "team".into(),
+            ..free()
+        };
+        assert!(
+            !plan_card(&team, "https://app.cua.ai")
+                .detail
+                .contains("yearly")
+        );
+    }
+
+    #[test]
     fn at_eighty_percent_of_hours_a_free_plan_gets_the_early_notice() {
         let mut u = free();
         u.hours_used = 15.9;
@@ -553,7 +611,10 @@ mod tests {
             ..free()
         });
         assert_eq!(pro.label, "Pro plan");
-        assert_eq!(pro.primary.unwrap().url, "https://app.cua.ai/billing");
+        assert_eq!(
+            pro.primary.unwrap().url,
+            "https://app.cua.ai/billing?from=app_plan_card"
+        );
         assert_eq!(
             pro.secondary.unwrap().url,
             "https://app.cua.ai/buy/teams?from=app_plan_card"

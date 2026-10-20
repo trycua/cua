@@ -2479,6 +2479,21 @@
         "role"
       ]
     },
+    "ShareRemoval": {
+      "type": "object",
+      "properties": {
+        "who": {
+          "type": "string"
+        },
+        "machineName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "who",
+        "machineName"
+      ]
+    },
     "SpaceProgress": {
       "type": "object",
       "properties": {
@@ -5130,10 +5145,19 @@
     "settings.set": {
       "$ref": "#/$defs/SettingsSnapshot"
     },
+    "sharing.ackRemovals": {
+      "type": "null"
+    },
     "sharing.list": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "sharing.removals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareRemoval"
       }
     },
     "sharing.share": {
@@ -6684,10 +6708,19 @@
     "settings.get": {
       "$ref": "#/$defs/WkSettings"
     },
+    "sharing.ackRemovals": {
+      "type": "null"
+    },
     "sharing.list": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "sharing.removals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareRemoval"
       }
     },
     "sharing.share": {

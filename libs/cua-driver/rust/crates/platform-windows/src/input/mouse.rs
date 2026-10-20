@@ -1339,7 +1339,7 @@ mod wheel_tests {
             assert!(super::SuspendedThread::suspend(hwnd).unwrap().is_none());
             post_click_on(hwnd, 5, 5, 1, "left").expect("post without pause");
             let mut msg = MSG::default();
-            while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
+            while PeekMessageW(&mut msg, hwnd, 0, 0, PM_REMOVE).as_bool() {
                 DispatchMessageW(&msg);
             }
             assert_eq!(

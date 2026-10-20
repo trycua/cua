@@ -345,12 +345,16 @@ async fn resolve_page_read_route(bundle_id: &str, pid: i32) -> anyhow::Result<Pa
         tokio::task::spawn_blocking(move || ElectronJs::is_electron(pid)).await?
     };
     let route = classify_page_read_route(javascript_supported, is_electron);
-    if route == PageReadRoute::Ax
-        && !tokio::task::spawn_blocking(move || is_wk_web_view_app(pid)).await?
-    {
-        return Ok(PageReadRoute::AttachedCdp);
+    let is_wk = route == PageReadRoute::Ax
+        && tokio::task::spawn_blocking(move || is_wk_web_view_app(pid)).await?;
+    Ok(attached_page_read_route(route, is_wk))
+}
+
+fn attached_page_read_route(route: PageReadRoute, is_wk: bool) -> PageReadRoute {
+    match (route, is_wk) {
+        (PageReadRoute::Ax, false) => PageReadRoute::AttachedCdp,
+        _ => route,
     }
-    Ok(route)
 }
 
 fn classify_page_read_route(javascript_supported: bool, is_electron: bool) -> PageReadRoute {
@@ -488,7 +492,8 @@ async fn ax_text_fallback(
     require_ax_window_scope(result.window_scope.as_ref(), pid, window_id)?;
     Ok(ax_page_read(
         AXPageReader::extract_text(&page_rows(result.tree_markdown, require_web_area)?),
-        result.truncated || result.depth_truncated,
+        result.truncated,
+        result.depth_truncated,
     ))
 }
 
@@ -519,12 +524,18 @@ async fn ax_query_fallback(
             &sel,
             &page_rows(result.tree_markdown, require_web_area)?,
         )),
-        result.truncated || result.depth_truncated,
+        result.truncated,
+        result.depth_truncated,
     ))
 }
 
-fn ax_page_read(content: String, truncated: bool) -> PageReadResult {
-    PageReadResult::sourced(content, PageReadSource::AxFallback, None, Some(truncated))
+fn ax_page_read(content: String, truncated: bool, depth_truncated: bool) -> PageReadResult {
+    PageReadResult::sourced(
+        content,
+        PageReadSource::AxFallback,
+        None,
+        Some(truncated || depth_truncated),
+    )
 }
 
 fn require_ax_window_scope(
@@ -666,7 +677,7 @@ mod tests {
     }
 
     fn ax(content: &str, truncated: bool) -> anyhow::Result<PageReadResult> {
-        Ok(ax_page_read(content.to_owned(), truncated))
+        Ok(ax_page_read(content.to_owned(), truncated, false))
     }
 
     #[tokio::test]
@@ -766,9 +777,25 @@ mod tests {
         };
         let page = ax_page_read(
             result.tree_markdown,
-            result.truncated || result.depth_truncated,
+            result.truncated,
+            result.depth_truncated,
         );
         assert_eq!(page.truncated, Some(true));
+    }
+
+    #[test]
+    fn attached_route_excludes_wk_and_preserves_primary_routes() {
+        assert_eq!(
+            attached_page_read_route(PageReadRoute::Ax, false),
+            PageReadRoute::AttachedCdp
+        );
+        assert_eq!(
+            attached_page_read_route(PageReadRoute::Ax, true),
+            PageReadRoute::Ax
+        );
+        for route in [PageReadRoute::Javascript, PageReadRoute::Cdp] {
+            assert_eq!(attached_page_read_route(route, false), route);
+        }
     }
 
     #[test]

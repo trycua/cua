@@ -64,7 +64,6 @@ pub struct ClickElementResult {
     pub message: String,
 }
 
-/// Backend provenance for a successful legacy page read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PageReadSource {
@@ -73,7 +72,6 @@ pub enum PageReadSource {
     AxFallback,
 }
 
-/// Legacy text payload plus optional MCP structured provenance; use [`Self::text`] without provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PageReadResult {
     #[serde(skip)]

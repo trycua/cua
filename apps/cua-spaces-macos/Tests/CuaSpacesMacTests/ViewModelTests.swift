@@ -1334,6 +1334,40 @@ struct ViewModelTests {
         #expect(notch.view.phase == .closed)
     }
 
+    /// Sharing is for teams (CUA-1883): the owner sees one line, once, naming
+    /// who can no longer open a shared computer, and closing it acknowledges it.
+    @Test func ownerSeesTheRemovalNoteOnceAndItIsAcknowledged() async throws {
+        let model = makeModel(account: FixtureAccount(identity: "you@example.com"))
+        let teams = FixtureTeams(removals: [
+            AppShareRemovalInput(who: "alex@x.test", machineName: "Design"),
+            AppShareRemovalInput(who: "sam@x.test", machineName: "Design"),
+        ])
+        model.teamsReader = teams
+        await model.reloadShareRemovals()
+        let note = try #require(model.shareRemovalNote)
+        #expect(note.text == "alex@x.test and sam@x.test can no longer open \u{201c}Design\u{201d}, because they're not in your team.")
+        #expect(note.action.label == "Invite to your team")
+        model.dismissShareRemovalNote()
+        #expect(model.shareRemovalNote == nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(teams.removals.isEmpty, "acknowledged, so it does not come back")
+        await model.reloadShareRemovals()
+        #expect(model.shareRemovalNote == nil)
+    }
+
+    /// The Share sheet explains and links to Teams for an account in no team;
+    /// it stays open in a team, and when it cannot tell (the server decides).
+    @Test func shareSheetIsClosedOnlyWhenKnownToBeInNoTeam() {
+        let model = ShareModel(backend: FixtureSpacesBackend(), spaceId: "local:studio", spaceName: "studio",
+                               signedIn: true, shareable: true)
+        #expect(model.gate == nil, "unknown: the server decides")
+        model.hasTeam = true
+        #expect(model.gate == nil)
+        model.hasTeam = false
+        #expect(model.gate?.reason == "Sharing is for teams. Start a team to share this Space.")
+        #expect(model.gate?.action.label == "See Teams")
+    }
+
     /// Settings hides Cua Cloud billing and shows the real Teams section
     /// (the Spaces API: name with alias fallback, members, pending invites
     /// marked "(Invited)", the account app for invites and billing); a cloud

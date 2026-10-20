@@ -80,7 +80,10 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+# The cua SDK version (libs/cua/VERSION): every crate of this workspace is
+# released at it, and the ones the SDK needs are published to crates.io
+# (scripts/publish-crates.sh). Release Please bumps it.
+version = "0.5.0" # x-release-please-version
 edition = "2024"
 rust-version = "1.97"
 authors = ["trycua"]
@@ -151,32 +154,35 @@ rmcp = { version = "=3.4.1", default-features = false }
 uniffi = "=0.31.0"
 
 # In-workspace crates.
-cua-proto = { path = "crates/cua-proto", version = "0.1.0" }
-cua-home = { path = "crates/cua-home", version = "0.1.0" }
-cua-icon-cache = { path = "crates/cua-icon-cache", version = "0.1.0" }
-cua-spacesd-client = { path = "crates/cua-spacesd-client", version = "0.1.0" }
-cua-image = { path = "crates/cua-image", version = "0.1.0" }
-cua-vmm = { path = "crates/cua-vmm", version = "0.1.0", default-features = false }
-cua-disk = { path = "crates/cua-disk", version = "0.1.0" }
-cua-sandbox-core = { path = "crates/cua-sandbox-core", version = "0.1.0" }
-cua-contrib = { path = "crates/cua-contrib", version = "0.1.0", default-features = false }
-cua-host = { path = "crates/cua-host", version = "0.1.0" }
-cua-mesh = { path = "crates/cua-mesh", version = "0.1.0" }
-cua-daemon = { path = "crates/cua-daemon", version = "0.1.0", default-features = false }
-cua-auth = { path = "crates/cua-auth", version = "0.1.0" }
-cua-agent-setup = { path = "crates/cua-agent-setup", version = "0.1.0" }
-cua-agents = { path = "crates/cua-agents", version = "0.1.0" }
-cua-volume = { path = "crates/cua-volume", version = "0.1.0" }
-cua-sdk = { path = "crates/cua-sdk", version = "0.1.0", default-features = false }
-cua-teleport-bundle = { path = "crates/cua-teleport-bundle", version = "0.1.0" }
-cua-chromium-storage = { path = "crates/cua-chromium-storage", version = "0.1.0" }
-cua-teleport = { path = "crates/cua-teleport", version = "0.1.0" }
-cua-keyvault = { path = "crates/cua-keyvault", version = "0.1.0" }
-cua-spaces-app-core = { path = "crates/cua-spaces-app-core", version = "0.1.0" }
-cua-spaces-ext = { path = "crates/cua-spaces-ext", version = "0.1.0" }
-cua-byoc = { path = "crates/cua-byoc", version = "0.1.0", default-features = false }
-cua-telemetry = { path = "crates/cua-telemetry", version = "0.1.0" }
-cua-create-failure = { path = "crates/cua-create-failure", version = "0.1.0" }
+cua-proto = { path = "crates/cua-proto", version = "0.5.0" } # x-release-please-version
+cua-home = { path = "crates/cua-home", version = "0.5.0" } # x-release-please-version
+cua-icon-cache = { path = "crates/cua-icon-cache", version = "0.5.0" } # x-release-please-version
+cua-spacesd-client = { path = "crates/cua-spacesd-client", version = "0.5.0" } # x-release-please-version
+cua-image = { path = "crates/cua-image", version = "0.5.0" } # x-release-please-version
+cua-vmm = { path = "crates/cua-vmm", version = "0.5.0", default-features = false } # x-release-please-version
+cua-disk = { path = "crates/cua-disk", version = "0.5.0" } # x-release-please-version
+cua-sandbox-core = { path = "crates/cua-sandbox-core", version = "0.5.0" } # x-release-please-version
+cua-contrib = { path = "crates/cua-contrib", version = "0.5.0", default-features = false } # x-release-please-version
+cua-host = { path = "crates/cua-host", version = "0.5.0" } # x-release-please-version
+cua-mesh = { path = "crates/cua-mesh", version = "0.5.0" } # x-release-please-version
+cua-daemon = { path = "crates/cua-daemon", version = "0.5.0", default-features = false } # x-release-please-version
+cua-auth = { path = "crates/cua-auth", version = "0.5.0" } # x-release-please-version
+cua-agent-setup = { path = "crates/cua-agent-setup", version = "0.5.0" } # x-release-please-version
+cua-agents = { path = "crates/cua-agents", version = "0.5.0" } # x-release-please-version
+cua-volume = { path = "crates/cua-volume", version = "0.5.0" } # x-release-please-version
+cua-sdk = { path = "crates/cua-sdk", version = "0.5.0", default-features = false } # x-release-please-version
+cua-teleport-bundle = { path = "crates/cua-teleport-bundle", version = "0.5.0" } # x-release-please-version
+cua-chromium-storage = { path = "crates/cua-chromium-storage", version = "0.5.0" } # x-release-please-version
+cua-teleport = { path = "crates/cua-teleport", version = "0.5.0" } # x-release-please-version
+cua-keyvault = { path = "crates/cua-keyvault", version = "0.5.0" } # x-release-please-version
+cua-spaces-app-core = { path = "crates/cua-spaces-app-core", version = "0.5.0" } # x-release-please-version
+cua-spaces-ext = { path = "crates/cua-spaces-ext", version = "0.5.0" } # x-release-please-version
+cua-byoc = { path = "crates/cua-byoc", version = "0.5.0", default-features = false } # x-release-please-version
+cua-telemetry = { path = "crates/cua-telemetry", version = "0.5.0" } # x-release-please-version
+cua-create-failure = { path = "crates/cua-create-failure", version = "0.5.0" } # x-release-please-version
+cua-spaces = { path = "crates/cua-spaces", version = "0.5.0" } # x-release-please-version
+cua-spaces-contract = { path = "crates/cua-spaces-contract", version = "0.5.0" } # x-release-please-version
+cua-hotspot = { path = "crates/cua-hotspot", version = "0.5.0" } # x-release-please-version
 cua-media-protocol = { path = "crates/cua-media-protocol" }
 cua-media-transport = { path = "crates/cua-media-transport" }
 cua-media-codec = { path = "crates/cua-media-codec", default-features = false }

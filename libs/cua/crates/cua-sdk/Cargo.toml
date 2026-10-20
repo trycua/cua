@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [lib]
 name = "cua_sdk"
@@ -42,7 +41,7 @@ web = ["dep:tonic-web-wasm-client"]
 
 [dependencies]
 # Contract types (both targets). The server half never builds for wasm32.
-cua-proto = { path = "../cua-proto", default-features = false, features = ["client", "serde"] }
+cua-proto = { path = "../cua-proto", version = "0.5.0", default-features = false, features = ["client", "serde"] } # x-release-please-version
 uniffi.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -66,7 +65,8 @@ cua-sandbox-core.workspace = true
 async-trait.workspace = true
 cua-host = { workspace = true, optional = true }
 cua-daemon = { workspace = true, features = ["client"] }
-cua-spaces = { path = "../cua-spaces", optional = true }
+cua-home.workspace = true
+cua-spaces = { workspace = true, optional = true }
 pbjson-types = { workspace = true, optional = true }
 tokio = { workspace = true }
 tonic = { workspace = true, default-features = false, features = ["codegen"] }
@@ -85,7 +85,7 @@ hex.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 http-body-util.workspace = true
 cua-sandbox-core = { workspace = true, features = ["testing"] }
-cua-spaces = { path = "../cua-spaces" }
+cua-spaces.workspace = true
 cua-host = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 cua-spacesd-client = { workspace = true, features = ["testing"] }

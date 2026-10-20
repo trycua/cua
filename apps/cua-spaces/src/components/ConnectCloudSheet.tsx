@@ -13,6 +13,7 @@ import {
 } from '../model/cloudConnect';
 import { connectInput, type CloudBridge } from '../native/cloud';
 import { SmallSheet } from './Devices';
+import { useT } from "../i18n";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -34,6 +35,7 @@ export function ConnectCloudSheet({
   onConnected: () => void;
   onClose: () => void;
 }) {
+  const t = useT("settings");
   const [input, setInput] = useState<CloudConnectInput>({ providers: [] });
   const [state, setState] = useState<CloudConnectState>(cloudConnectInitial);
   const v = cloudConnectView(input, state);
@@ -107,7 +109,7 @@ export function ConnectCloudSheet({
         }}
       >
         <h2 className="dv-sheet-title">{v.title}</h2>
-        <ul className="sh-rows" role="radiogroup" aria-label="Clouds">
+        <ul className="sh-rows" role="radiogroup" aria-label={t("settings.cloud.clouds_label")}>
           {v.rows.map((r) => (
             <li key={r.id} className="sh-row">
               <label className="dw-check">
@@ -119,7 +121,7 @@ export function ConnectCloudSheet({
                 />
                 <span className="sh-who">{r.title}</span>
                 <span className="dv-sheet-text">{r.detail}</span>
-                {r.found && <span aria-label="Sign-in found" title="Sign-in found">{'✓'}</span>}
+                {r.found && <span aria-label={t("settings.cloud.sign_in_found")} title={t("settings.cloud.sign_in_found")}>{'✓'}</span>}
               </label>
             </li>
           ))}
@@ -137,7 +139,7 @@ export function ConnectCloudSheet({
           </label>
         )}
         {v.touches.length > 0 && (
-          <div aria-label="What Cua will touch">
+          <div aria-label={t("settings.cloud.touches_label")}>
             {v.touches.map((line) => (
               <p key={line} className="dv-sheet-text">
                 {line}
@@ -146,7 +148,7 @@ export function ConnectCloudSheet({
           </div>
         )}
         {v.checks.length > 0 && (
-          <ul className="sh-rows" aria-label="Checks">
+          <ul className="sh-rows" aria-label={t("settings.cloud.checks_label")}>
             {v.checks.map((c) => (
               <li key={c.text} className="sh-row">
                 <span className={`status-dot ${c.ok ? 'status-running' : 'status-error'}`} aria-hidden="true" />

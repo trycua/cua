@@ -48,6 +48,50 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
+async fn x11_native_window(pid: i64, window_id: u64) -> Option<(NativeWindowInfo, bool)> {
+    let pid_u32 = u32::try_from(pid).ok()?;
+    tokio::task::spawn_blocking(move || {
+        select_x11_window(pid, window_id, crate::x11::list_windows(Some(pid_u32)))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn select_x11_window(
+    pid: i64,
+    window_id: u64,
+    windows: Vec<crate::x11::WindowInfo>,
+) -> Option<(NativeWindowInfo, bool)> {
+    let only = windows.len() == 1;
+    let window = windows
+        .into_iter()
+        .find(|w| w.xid == window_id && w.pid.map(i64::from) == Some(pid))?;
+    Some((
+        NativeWindowInfo {
+            pid,
+            window_id,
+            title: window.title,
+            bounds: Rect::new(
+                f64::from(window.x),
+                f64::from(window.y),
+                f64::from(window.width),
+                f64::from(window.height),
+            ),
+            geometry_exact: true,
+            ownership: NativeOwnershipProof {
+                method: NativeOwnershipMethod::PlatformAttested,
+                owner_pid: pid,
+                detail: Some(
+                    "X11 _NET_WM_PID corroborated independently by the owned endpoint pid"
+                        .to_owned(),
+                ),
+            },
+        },
+        only,
+    ))
+}
+
 fn hyprland_identity_matches(pid: u32, window_id: u64, owner_pid: u32, address: u64) -> bool {
     pid != 0 && window_id != 0 && owner_pid == pid && address == window_id
 }
@@ -607,6 +651,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         pid: i64,
         window_id: u64,
     ) -> Result<NativeWindowInfo, BrowserRefusal> {
+        if let Some((window, _)) = x11_native_window(pid, window_id).await {
+            return Ok(window);
+        }
         let pid_u32 = u32::try_from(pid).map_err(|_| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -739,39 +786,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             });
         }
 
-        let window = tokio::task::spawn_blocking(move || {
-            crate::x11::list_windows(Some(pid_u32))
-                .into_iter()
-                .find(|window| window.xid == window_id)
-        })
-        .await
-        .ok()
-        .flatten()
-        .ok_or_else(|| {
+        Err({
             refusal(
                 BrowserRefusalCode::BrowserBindingStale,
                 format!("X11 window {window_id} is not owned by pid {pid}"),
             )
-        })?;
-        Ok(NativeWindowInfo {
-            pid,
-            window_id,
-            title: window.title,
-            bounds: Rect::new(
-                f64::from(window.x),
-                f64::from(window.y),
-                f64::from(window.width),
-                f64::from(window.height),
-            ),
-            geometry_exact: true,
-            ownership: NativeOwnershipProof {
-                method: NativeOwnershipMethod::PlatformAttested,
-                owner_pid: pid,
-                detail: Some(
-                    "X11 _NET_WM_PID corroborated independently by the owned endpoint pid"
-                        .to_owned(),
-                ),
-            },
         })
     }
 
@@ -780,6 +799,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         pid: i64,
         window_id: u64,
     ) -> Result<Option<bool>, BrowserRefusal> {
+        if let Some((_, only)) = x11_native_window(pid, window_id).await {
+            return Ok(Some(only));
+        }
         let pid_u32 = u32::try_from(pid).map_err(|_| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -845,20 +867,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 .collect::<Vec<_>>();
             return Ok(Some(owned.len() == 1 && owned[0] == window_id));
         }
-        let owned = tokio::task::spawn_blocking(move || {
-            crate::x11::list_windows(Some(pid_u32))
-                .into_iter()
-                .map(|window| window.xid)
-                .collect::<Vec<_>>()
-        })
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not enumerate X11 browser windows: {error}"),
-            )
-        })?;
-        Ok(Some(owned.len() == 1 && owned[0] == window_id))
+        Ok(Some(false))
     }
 
     async fn discover_owned_endpoint(
@@ -1323,6 +1332,40 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x11_identity_and_cardinality_precede_compositor_selection() {
+        let window = |xid| crate::x11::WindowInfo {
+            xid,
+            pid: Some(42),
+            app_name: String::new(),
+            title: "browser".into(),
+            is_on_screen: true,
+            z_index: None,
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
+        };
+        let (native, only) = select_x11_window(42, 7, vec![window(7)]).unwrap();
+        assert!(native.geometry_exact && only);
+        assert_eq!(native.window_id, 7);
+        assert!(
+            !select_x11_window(42, 7, vec![window(7), window(8)])
+                .unwrap()
+                .1
+        );
+        for id in [8, u64::from(u32::MAX) + 1] {
+            let mut compositor_id = None;
+            let result = select_x11_window(42, id, vec![window(7)]).or_else(|| {
+                compositor_id = Some(id);
+                None
+            });
+            assert!(result.is_none());
+            assert_eq!(compositor_id, Some(id));
+        }
+        assert!(select_x11_window(43, 7, vec![window(7)]).is_none());
+    }
 
     #[test]
     fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {

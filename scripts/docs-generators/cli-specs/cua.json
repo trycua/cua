@@ -8301,7 +8301,7 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Inspect local runtimes (read-only)",
+     "abstract": "Inspect local runtimes (read-only). Exit 1 if any check is Error; warnings exit 0",
      "after_help": "Examples:\n  cua runtime doctor",
      "aliases": [],
      "arguments": [],
@@ -8315,7 +8315,7 @@
      "usage": "cua runtime doctor [OPTIONS]"
     },
     {
-     "abstract": "Provision local runtimes",
+     "abstract": "Provision local runtimes. Exit 1 if any step is Error; warnings exit 0",
      "after_help": "Examples:\n  # See what would be installed\n  cua runtime setup --dry-run\n  cua runtime setup qemu",
      "aliases": [],
      "arguments": [
@@ -9466,7 +9466,7 @@
      "usage": "cua host start [OPTIONS]"
     },
     {
-     "abstract": "Share a relay computer (this one, or `--machine`) with other cua.ai accounts (id or verified email). Run from an enrolled device; every change is in the owner's audit log (`cua devices audit`)",
+     "abstract": "Share a relay computer (this one, or `--machine`) with people in your team (id or verified email). Run from an enrolled device; every change is in the owner's audit log (`cua devices audit`)",
      "after_help": "Examples:\n  cua host share friend@example.com\n  cua host share friend@example.com --machine 0123abcd4567ef89 --yes",
      "aliases": [],
      "arguments": [
@@ -10120,8 +10120,8 @@
      "usage": "cua spaces rm [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Let another cua.ai account watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`",
-     "after_help": "Examples:\n  cua spaces share local:studio bob@example.com\n  cua spaces share local:studio bob@example.com --role editor\n  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer\n  # From a script or agent: confirm with Touch ID or your password here\n  cua spaces share local:studio bob@example.com --yes",
+     "abstract": "Let someone in your team watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`. Sharing is for teams: you need a team, and they must be in it (or share with the whole team as `team:<id>`)",
+     "after_help": "Examples:\n  cua spaces share local:studio bob@example.com\n  cua spaces share local:studio bob@example.com --role editor\n  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer\n  # The whole team, to watch\n  cua spaces share local:studio team:acme --role viewer\n  # From a script or agent: confirm with Touch ID or your password here\n  cua spaces share local:studio bob@example.com --yes",
      "aliases": [],
      "arguments": [
       {
@@ -10136,7 +10136,7 @@
       },
       {
        "default_value": null,
-       "help": "Their email (verified by cua.ai) or account id",
+       "help": "Their email (verified by cua.ai) or account id, in your team; or `team:<id>` for the whole team",
        "hidden": false,
        "is_optional": false,
        "name": "WHO",

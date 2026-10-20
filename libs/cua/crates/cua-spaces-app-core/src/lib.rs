@@ -77,6 +77,7 @@ pub mod login_item;
 pub mod machines;
 pub mod machines_health;
 pub mod machines_view;
+pub mod message;
 pub mod model;
 pub mod notch;
 pub mod notifications;

@@ -17,6 +17,16 @@ impl From<cua_host::Error> for CuaError {
             E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::NotFound(_) => CuaError::NotFound(m),
             E::Relay(_) | E::Download(_) => CuaError::Http(m),
+            // The plain sentence, then where to upgrade, as the CLI says it;
+            // the Python and TypeScript SDKs read both back as `PlanLimitError`.
+            E::PlanLimit(_) => {
+                let url = cua_home::plan_limit::PlanLimit::parse(&m)
+                    .map(|l| l.upgrade_url(&cua_home::env::account_app_url()));
+                CuaError::Http(match url {
+                    Some(url) => format!("{m} Upgrade: {url}"),
+                    None => m,
+                })
+            }
             E::Service(_) => CuaError::Runtime(m),
             E::Io(_) | E::Internal(_) => CuaError::Internal(m),
         }

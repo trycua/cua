@@ -225,6 +225,7 @@ struct BridgeContractTests {
             ("clouds.connect", ["target": ["provider": "aws", "region": "us-west-2"], "makeDefault": false]),
             ("sharing.list", ["spaceId": space]), ("sharing.share", ["spaceId": space, "who": "bob@example.com", "role": "viewer"]),
             ("sharing.unshare", ["spaceId": space, "who": "bob@example.com"]),
+            ("sharing.removals", [:]), ("sharing.ackRemovals", [:]),
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
             ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),

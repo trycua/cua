@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 # In-process servers for tests (`cua_sandbox_core::testing`): an rmcp MCP

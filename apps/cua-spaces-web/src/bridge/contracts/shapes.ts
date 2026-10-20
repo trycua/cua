@@ -53,7 +53,7 @@ import type {
 } from "./new-space";
 import type { NotificationInput } from "./notifications";
 import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
-import type { ShareEntry } from "./share";
+import type { ShareEntry, ShareRemoval } from "./share";
 import type { SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
@@ -670,6 +670,8 @@ const AgentOpenFileShape = ref(
   }),
 );
 const shares = list(ShareShape);
+const ShareRemovalShape = ref("ShareRemoval", obj<ShareRemoval>()({ who: str, machineName: str }));
+const shareRemovals = list(ShareRemovalShape);
 const PresenceParticipantShape = ref(
   "PresenceParticipant",
   obj<PresenceParticipantWire>()({ participantId: str, principalId: str, displayName: str, color: str, kind: str }),
@@ -934,6 +936,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "sharing.list": shares,
   "sharing.share": shares,
   "sharing.unshare": shares,
+  "sharing.removals": shareRemovals,
+  "sharing.ackRemovals": nul,
 
   "agentKeys.list": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
@@ -1332,6 +1336,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "sharing.list": shares,
   "sharing.share": shares,
   "sharing.unshare": shares,
+  "sharing.removals": shareRemovals,
+  "sharing.ackRemovals": nul,
   "volume.overview": VolumeShape,
   "volume.storage": nullable(DriveStorageShape),
   "volume.storageSet": DriveCheckShape,

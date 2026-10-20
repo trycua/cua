@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import type { ShareEntryInput } from '../model/share';
+import type { ShareEntryInput, ShareRemoval } from '../model/share';
 import { hasTauri } from './bridge';
 
 /** The `space_shares` / `share_space` / `unshare_space` result. */
@@ -23,7 +23,17 @@ export interface ShareBridge {
   shares(spaceId: string): Promise<SpaceSharesResult>;
   share(spaceId: string, who: string, role: string): Promise<SpaceSharesResult>;
   unshare(spaceId: string, who: string): Promise<SpaceSharesResult>;
+  /** In a team that can share (null: not known, so the server decides). */
+  hasTeam(): Promise<boolean | null>;
+  /** People removed from the account's shared computers, until acknowledged. */
+  removals(): Promise<ShareRemoval[]>;
+  /** The owner has seen the removal note. */
+  ackRemovals(): Promise<void>;
 }
+
+/** The account is in a team on the Teams plan (`teams_list`'s `plan`). */
+const inSharingTeam = (list: { teams: { plan: string }[] }) =>
+  list.teams.some((t) => t.plan === 'teams');
 
 export function createTauriShareBridge(): ShareBridge {
   const core = import('@tauri-apps/api/core');
@@ -33,20 +43,44 @@ export function createTauriShareBridge(): ShareBridge {
     shares: (spaceId) => invoke('space_shares', { spaceId }),
     share: (spaceId, who, role) => invoke('share_space', { spaceId, who, role }),
     unshare: (spaceId, who) => invoke('unshare_space', { spaceId, who }),
+    hasTeam: async () => {
+      try {
+        return inSharingTeam(await invoke<{ teams: { plan: string }[] }>('teams_list'));
+      } catch {
+        return null;
+      }
+    },
+    removals: () => invoke<ShareRemoval[]>('share_removals'),
+    ackRemovals: () => invoke<void>('ack_share_removals'),
   };
 }
 
 export function createShareBridge(): ShareBridge {
   if (hasTauri()) return createTauriShareBridge();
   const unavailable = () => Promise.reject(new Error('Sharing needs the Cua Spaces app'));
-  return { shares: unavailable, share: unavailable, unshare: unavailable };
+  return {
+    shares: unavailable,
+    share: unavailable,
+    unshare: unavailable,
+    hasTeam: async () => null,
+    removals: async () => [],
+    ackRemovals: async () => {},
+  };
 }
 
 /** In-memory relay for tests: `presenceFails` refuses as a cancelled Touch ID would. */
 export function createFakeShareBridge(
-  options: { shares?: ShareEntryInput[]; presenceFails?: string } = {}
+  options: {
+    shares?: ShareEntryInput[];
+    presenceFails?: string;
+    /** The server refuses a share with this (e.g. `share_outside_team`). */
+    refuses?: string;
+    hasTeam?: boolean | null;
+    removals?: ShareRemoval[];
+  } = {}
 ): ShareBridge & { calls: string[] } {
   let shares = [...(options.shares ?? [])];
+  let removals = [...(options.removals ?? [])];
   const calls: string[] = [];
   const result = (space: string): SpaceSharesResult => ({
     space,
@@ -65,6 +99,7 @@ export function createFakeShareBridge(
     share: async (space, who, role) => {
       calls.push(`share:${space}:${who}:${role}`);
       if (options.presenceFails) throw new Error(options.presenceFails);
+      if (options.refuses) throw new Error(options.refuses);
       shares = [...shares.filter((s) => s.who !== who), { who, role, connected: false }];
       return result(space);
     },
@@ -72,6 +107,15 @@ export function createFakeShareBridge(
       calls.push(`unshare:${space}:${who}`);
       shares = shares.filter((s) => s.who !== who);
       return result(space);
+    },
+    hasTeam: async () => options.hasTeam ?? null,
+    removals: async () => {
+      calls.push('removals');
+      return removals;
+    },
+    ackRemovals: async () => {
+      calls.push('ackRemovals');
+      removals = [];
     },
   };
 }

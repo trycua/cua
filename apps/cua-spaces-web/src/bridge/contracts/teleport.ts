@@ -9,6 +9,12 @@
  * decides every step; these only carry its state and views.
  */
 
+/** A message from the core (`message::Msg`): a code plus variables. */
+export interface Msg {
+  code: string;
+  vars: Record<string, string>;
+}
+
 export type Capability = "full" | "install_only" | "unsupported";
 export type TeleportMove = "app_only" | "app_with_files" | "app_with_state";
 export type SensitiveGroup = "sign_ins" | "passwords" | "history";
@@ -190,8 +196,8 @@ export interface EntrySection {
 /** An opt-in of the signed-in state move (`flow::SensitiveOption`). */
 export interface SensitiveOption {
   group: SensitiveGroup;
-  label: string;
-  detail: string;
+  label: Msg;
+  detail: Msg;
   checked: boolean;
 }
 

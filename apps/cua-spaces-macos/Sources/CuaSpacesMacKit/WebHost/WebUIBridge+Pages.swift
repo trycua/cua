@@ -45,6 +45,15 @@ extension WebUIBridge {
         case "sharing.unshare":
             return BridgeValue.encode(try await model.backend.unshare(id: try spaceId(args), who: try string(args, "who")))
 
+        // Sharing is for teams: who lost access, and "seen" (empty when signed
+        // out or from a server that predates it).
+        case "sharing.removals":
+            guard model.identity != nil, let reader = model.teamsReader else { return [] as [Any] }
+            return BridgeValue.encode(try await reader.shareRemovals())
+        case "sharing.ackRemovals":
+            if model.identity != nil { try await model.teamsReader?.ackShareRemovals() }
+            return NSNull()
+
         // Settings, Agents: the daemon's agent_keys methods (the key travels
         // once, in agentKeys.set's arguments; answers never carry one).
         case "agentKeys.list": return try await model.agentKeys.call("agent_keys.list")

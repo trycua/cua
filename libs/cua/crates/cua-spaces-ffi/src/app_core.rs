@@ -749,6 +749,61 @@ pub fn app_share_view(input: AppShareInput, state: AppShareSheetState) -> AppSha
     core::share::share_view(&input, &state)
 }
 
+/// Why the Share sheet is closed, from whether the account is in a team
+/// that can share (`None`: the host could not say, so the sheet stays open
+/// and the server decides). Sharing is for teams (CUA-1883).
+#[uniffi::export]
+pub fn app_share_gate(has_team: Option<bool>) -> Option<AppShareGate> {
+    core::share::share_gate(has_team)
+}
+
+/// A refused share in plain words (`share_outside_team`,
+/// `sharing_needs_team`); `None` for any other error.
+#[uniffi::export]
+pub fn app_share_error_words(error: String, who: String) -> Option<String> {
+    core::share::share_error_words(&error, &who)
+}
+
+/// The owner's one-line note about people removed from shared computers.
+#[uniffi::export]
+pub fn app_share_removal_note(removals: Vec<AppShareRemovalInput>) -> Option<AppShareRemovalNote> {
+    core::share::share_removal_note(&removals)
+}
+
+/// People removed from the account's shared computers because sharing is
+/// for teams now, until [`app_ack_share_removals`]. Empty on a server that
+/// predates it.
+#[uniffi::export]
+pub async fn app_share_removals(account_token: String) -> Result<Vec<AppShareRemovalInput>> {
+    cua_sdk::support::run(async move {
+        let api = cua_host::spaces_api::SpacesApiClient::current()?;
+        match api.share_removals(&account_token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(vec![]),
+            other => Ok(other?
+                .into_iter()
+                .map(|r| core::share::ShareRemovalInput {
+                    who: r.who,
+                    machine_name: r.machine_name,
+                })
+                .collect()),
+        }
+    })
+    .await
+}
+
+/// The owner has seen the note: it is not shown again.
+#[uniffi::export]
+pub async fn app_ack_share_removals(account_token: String) -> Result<()> {
+    cua_sdk::support::run(async move {
+        let api = cua_host::spaces_api::SpacesApiClient::current()?;
+        match api.ack_share_removals(&account_token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(()),
+            other => Ok(other?),
+        }
+    })
+    .await
+}
+
 /// Share sheet input from JSON (fixtures, parity flows).
 #[uniffi::export]
 pub fn app_share_input_from_json(json: String) -> Result<AppShareInput> {
@@ -1884,6 +1939,8 @@ pub async fn app_relay_usage(
 }
 
 fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
+    let (soft_limit_reached, reasons) =
+        core::relay_usage::with_warnings(u.soft_limit_reached, u.reasons, &u.warnings);
     core::relay_usage::checked(core::relay_usage::RelayUsage {
         metered: u.metered,
         period: u.period,
@@ -1897,8 +1954,8 @@ fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
         hours_used: u.hours_used,
         hours_limit: u.hours_limit,
         my_hours_used: u.my_hours_used,
-        soft_limit_reached: u.soft_limit_reached,
-        reasons: u.reasons,
+        soft_limit_reached,
+        reasons,
         upgrade_url: u.upgrade_url,
     })
 }
@@ -1964,6 +2021,16 @@ pub fn app_account_app_url() -> String {
 #[uniffi::export]
 pub fn app_relay_usage_view(usage: AppRelayUsage) -> Option<AppRelayUsageView> {
     core::relay_usage::view(&usage)
+}
+
+/// The relay refusing a new session over the plan's cap, from the error's
+/// text: the sentence and Upgrade. None for any other error.
+#[uniffi::export]
+pub fn app_plan_limit_notice(
+    error: String,
+    account_app: String,
+) -> Option<AppRelayAllowanceNotice> {
+    core::relay_usage::plan_limit_notice(&error, &account_app)
 }
 
 /// An SDK record as the app core's (the same JSON, the same names).
@@ -2960,7 +3027,8 @@ mod relay_usage_tests {
             notice.upgrade_url.as_deref(),
             Some("https://app.cua.ai/buy/pro?from=app_meter")
         );
-        assert_eq!(notice.dismiss_key, "2026-10:hours");
+        // Free at 2 of 2 live sessions is at the sessions limit too (CUA-1745).
+        assert_eq!(notice.dismiss_key, "2026-10:hours,sessions");
 
         let plain = relay_usage(cua_host::RelayUsage {
             upgrade_url: Some("http://cua.ai/pricing".into()),

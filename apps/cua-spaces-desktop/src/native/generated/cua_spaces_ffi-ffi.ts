@@ -417,6 +417,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_ack_share_removals": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_agent_key_form": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -1227,6 +1232,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_power_button": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -1387,6 +1397,16 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_share_error_words": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_share_gate": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_share_initial": {
       args: [],
       ret: FfiType.RustBuffer,
@@ -1401,6 +1421,16 @@ const DEFINITIONS = {
       args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_share_removal_note": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_share_removals": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_fn_func_app_share_state_from_json": {
       args: [FfiType.RustBuffer],
@@ -2138,6 +2168,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_account_app_url": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -2952,6 +2987,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_power_button": {
       args: [],
       ret: FfiType.UInt16,
@@ -3112,6 +3152,16 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_share_error_words": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_share_gate": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_share_initial": {
       args: [],
       ret: FfiType.UInt16,
@@ -3123,6 +3173,16 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_share_reduce": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_share_removal_note": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_share_removals": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4039,6 +4099,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_about_restart_daemon(check: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_spaces_ffi_fn_func_app_about_view(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_account_app_url(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_ack_share_removals(accountToken: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_form(input: Uint8Array, form: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_form_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_name_problem(name: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4201,6 +4262,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_picker_sensitive_options(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_status(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_window_grid(windows: Uint8Array, query: Uint8Array, selected: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_plan_limit_notice(error: Uint8Array, accountApp: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_power_button(space: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_presence_name(name: Uint8Array, email: Uint8Array, username: Uint8Array, osFullName: Uint8Array, osUser: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_presence_principal_id(email: Uint8Array, subject: Uint8Array, username: Uint8Array, osUser: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4233,9 +4295,13 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_settings_save(path: Uint8Array, settings: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_spaces_ffi_fn_func_app_settings_with_storage(page: Uint8Array, storage: Uint8Array, experiments: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_share_action_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_share_error_words(error: Uint8Array, who: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_share_gate(hasTeam: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_share_initial(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_share_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_share_reduce(input: Uint8Array, state: Uint8Array, action: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_share_removal_note(removals: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_share_removals(accountToken: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_func_app_share_state_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_share_view(input: Uint8Array, state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_sidebar(spaces: Uint8Array, query: Uint8Array, selectedId: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4384,6 +4450,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_about_restart_daemon(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_about_view(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_account_app_url(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_name_problem(): number;
@@ -4546,6 +4613,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_picker_sensitive_options(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_status(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_plan_limit_notice(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_power_button(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_presence_name(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_presence_principal_id(): number;
@@ -4578,9 +4646,13 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_settings_save(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_share_action_from_json(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_share_error_words(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_share_gate(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_share_initial(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_share_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_share_reduce(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_share_removal_note(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_share_removals(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_share_state_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_share_view(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_sidebar(): number;

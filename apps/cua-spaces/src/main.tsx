@@ -7,6 +7,8 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { TeleportPicker } from "./components/TeleportPicker";
 import { MainWindow } from "./components/desktop/MainWindow";
+import "./i18n";
+import { reportUiLocale } from "./i18n/reportLocale";
 import { initCore } from "./core";
 import { createBridge, hasTauri } from "./native/bridge";
 import { createFleetBridge } from "./native/fleet";
@@ -74,6 +76,7 @@ async function pickSurface(): Promise<React.ReactElement> {
 
 // The app core (wasm) loads before anything renders: every surface's models
 // call it synchronously.
+reportUiLocale();
 void initCore()
   .then(pickSurface)
   .then((surface) => {

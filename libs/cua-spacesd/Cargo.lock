@@ -1397,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1490,7 +1490,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1498,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1506,7 +1506,7 @@ dependencies = [
 
 [[package]]
 name = "cua-logging"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "audiopus_sys",
  "libloading",
@@ -1545,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -1566,7 +1566,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -1596,12 +1596,13 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "pbjson-build",
  "pbjson-types",
  "prost",
  "prost-build",
+ "protox",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -1687,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1806,7 +1807,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "axum 0.8.9",
  "http",
@@ -1941,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1954,7 +1955,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -1973,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "cua-home",
@@ -3521,6 +3522,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "logos"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb2c55a318a87600ea870ff8c2012148b44bf18b74fad48d0f835c38c7d07c5f"
+dependencies = [
+ "logos-derive",
+]
+
+[[package]]
+name = "logos-codegen"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58b3ffaa284e1350d017a57d04ada118c4583cf260c8fb01e0fe28a2e9cf8970"
+dependencies = [
+ "fnv",
+ "proc-macro2",
+ "quote",
+ "regex-automata",
+ "regex-syntax",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "logos-derive"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52d3a9855747c17eaf4383823f135220716ab49bea5fbea7dd42cc9a92f8aa31"
+dependencies = [
+ "logos-codegen",
+]
+
+[[package]]
 name = "lru"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3601,6 +3634,28 @@ name = "micromap"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a86d3146ed3995b5913c414f6664344b9617457320782e64f0bb44afd49d74"
+
+[[package]]
+name = "miette"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f98efec8807c63c752b5bd61f862c165c115b0a35685bdcfd9238c7aeb592b7"
+dependencies = [
+ "cfg-if",
+ "miette-derive",
+ "unicode-width",
+]
+
+[[package]]
+name = "miette-derive"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "mime"
@@ -4887,12 +4942,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost-reflect"
+version = "0.16.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01b80ea363c31af2de2b92e3c07ed1156628f7838c4afb4df75ee78a37fedbd1"
+dependencies = [
+ "logos",
+ "miette",
+ "prost",
+ "prost-types",
+]
+
+[[package]]
 name = "prost-types"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
  "prost",
+]
+
+[[package]]
+name = "protox"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f43240d7f22cf77d1625885e547acf874dd63cd2790f29f4a38e86256f41996f"
+dependencies = [
+ "bytes",
+ "miette",
+ "prost",
+ "prost-reflect",
+ "prost-types",
+ "protox-parse",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "protox-parse"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34efee6fad0cf6d71642d20a66bfe0c281919c9577e7c66d20360dfcb7549272"
+dependencies = [
+ "logos",
+ "miette",
+ "prost-types",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -6688,6 +6782,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-width"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
 name = "uniffi"

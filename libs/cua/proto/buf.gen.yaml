@@ -1,0 +1,39 @@
+# Generates clients for the Cua contract with `buf generate` (no Buf account
+# needed; remote plugins run on buf.build). Works from this directory, from the
+# cua-proto-<version>.tar.gz release asset, or straight from a git ref:
+#
+#   buf generate --template buf.gen.yaml \
+#     https://github.com/trycua/cua.git#ref=main,subdir=libs/cua/proto
+#
+# Managed mode sets each language's package options, so the .proto files carry
+# none. Set go_package_prefix to your Go module path + "/gen/go". Uncomment the
+# plugins for the other languages you need.
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: example.com/yourapp/gen/go
+plugins:
+  # Go: messages + gRPC clients (package envv1 in gen/go/cua/env/v1).
+  - remote: buf.build/protocolbuffers/go
+    out: gen/go
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: gen/go
+    opt: paths=source_relative
+  # Java: messages + gRPC stubs.
+  # - remote: buf.build/protocolbuffers/java
+  #   out: gen/java
+  # - remote: buf.build/grpc/java
+  #   out: gen/java
+  # C#: messages + gRPC clients.
+  # - remote: buf.build/protocolbuffers/csharp
+  #   out: gen/csharp
+  # - remote: buf.build/grpc/csharp
+  #   out: gen/csharp
+  # Python: messages + gRPC stubs.
+  # - remote: buf.build/protocolbuffers/python
+  #   out: gen/python
+  # - remote: buf.build/grpc/python
+  #   out: gen/python

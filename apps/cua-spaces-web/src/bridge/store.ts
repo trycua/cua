@@ -269,6 +269,8 @@ export class BridgeStore {
   private hostOverride: { state: object | null } | undefined;
   /** A Machines page the core drew from a parity input (`showMachinesView`). */
   private viewOverride: MachinesView | null = null;
+  /** Parity: the rows were drawn by `showMachines*`; a later listing (the page's health check) must not replace them. */
+  private machinesPinned = false;
   /** The clock `showMachines` lists its rows at (parity); else now. */
   private machinesNow: number | undefined;
   /** The Machines page as drawn (`machinesView`). */
@@ -435,7 +437,7 @@ export class BridgeStore {
           break;
         }
         case "machines": {
-          this.machineRows = await this.adapter.call("machines.list", {});
+          if (!this.machinesPinned) this.machineRows = await this.adapter.call("machines.list", {});
           this.publishMachines();
           break;
         }
@@ -1014,6 +1016,7 @@ export class BridgeStore {
     this.machinesNow = nowSecs;
     this.hostOverride = undefined;
     this.viewOverride = null;
+    this.machinesPinned = true;
     this.publishMachines();
   }
 
@@ -1027,6 +1030,7 @@ export class BridgeStore {
     this.machineRows = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [] }));
     this.hostOverride = undefined;
     this.viewOverride = view;
+    this.machinesPinned = true;
     this.publishMachines();
   }
 

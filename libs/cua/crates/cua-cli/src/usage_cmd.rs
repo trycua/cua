@@ -95,16 +95,61 @@ fn print(u: &RelayUsage, out: &mut dyn Write) {
             ),
         );
     }
-    if u.soft_limit_reached {
-        let upgrade = u
-            .upgrade_url
-            .as_deref()
-            .map(|url| format!(" Upgrade: {url}"))
-            .unwrap_or_default();
+    let plan = cua_home::plan_limit::PlanLimit {
+        kind: cua_home::plan_limit::Kind::Sessions,
+        plan: match u.plan.as_str() {
+            "team" => "teams".into(),
+            p => p.to_owned(),
+        },
+        used: 0.0,
+        limit: 0.0,
+    };
+    let caps = [
+        u.live_sessions_limit
+            .filter(|l| u.live_sessions >= *l)
+            .map(|l| {
+                (
+                    cua_home::plan_limit::Kind::Sessions,
+                    f64::from(u.live_sessions),
+                    f64::from(l),
+                )
+            }),
+        u.hours_limit
+            .filter(|l| u.hours_used >= *l)
+            .map(|l| (cua_home::plan_limit::Kind::Hours, u.hours_used, l)),
+    ];
+    let upgrade = |fallback: String| {
+        let url = u.upgrade_url.clone().unwrap_or(fallback);
+        format!(" Upgrade: {url}")
+    };
+    let mut said = false;
+    for (kind, used, limit) in caps.into_iter().flatten() {
+        let p = cua_home::plan_limit::PlanLimit {
+            kind,
+            used,
+            limit,
+            ..plan.clone()
+        };
+        let account_app = cua_home::env::account_app_url();
+        line(
+            out,
+            format!("{}{}", p.sentence(), upgrade(p.upgrade_url(&account_app))),
+        );
+        said = true;
+    }
+    if u.soft_limit_reached || said {
+        let upgrade = if said {
+            String::new()
+        } else {
+            u.upgrade_url
+                .as_deref()
+                .map(|url| format!(" Upgrade: {url}"))
+                .unwrap_or_default()
+        };
         line(
             out,
             format!(
-                "You've reached your plan's remote limit for this month. Your Spaces keep working.{upgrade}"
+                "Your Spaces keep working. New live sessions wait until there is room.{upgrade}"
             ),
         );
     }
@@ -174,11 +219,43 @@ mod tests {
             "{t}"
         );
         assert!(
-            t.contains("You've reached your plan's remote limit for this month. Your Spaces keep working. Upgrade: https://cua.ai/pricing"),
+            t.contains("You've used 21 of 20 remote hours this month on the free plan. Upgrade to Pro for more. Upgrade: https://cua.ai/pricing"),
             "{t}"
         );
+        assert!(t.contains("Your Spaces keep working."), "{t}");
         let v: serde_json::Value = serde_json::from_str(&text(&relay, true).await).unwrap();
         assert_eq!(v["soft_limit_reached"], true);
         assert_eq!(v["team"]["seats"], 3);
+    }
+
+    #[tokio::test]
+    async fn pro_at_five_of_five_says_so_with_the_teams_upgrade() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", None);
+        relay.set_usage(Some(serde_json::json!({
+            "metered": true, "period": "2026-10", "plan": "pro",
+            "live_sessions": 5, "live_sessions_limit": 5, "hours_used": 12, "hours_limit": 200,
+            "my_hours_used": 12, "soft_limit_reached": false, "reasons": [],
+            "upgrade_url": "https://app.cua.ai/buy/teams"
+        })));
+        let t = text(&relay, false).await;
+        assert!(
+            t.contains("You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams. Upgrade: https://app.cua.ai/buy/teams"),
+            "{t}"
+        );
+        assert!(!t.contains("remote hours this month on"), "{t}");
+    }
+
+    #[test]
+    fn a_refused_session_error_carries_the_sentence_and_the_upgrade_link() {
+        let e = crate::host::host_err(cua_host::Error::PlanLimit(
+            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.".into(),
+        ));
+        let m = e.to_string();
+        assert!(
+            m.contains("You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams. Upgrade: https://"),
+            "{m}"
+        );
+        assert!(m.contains("/buy/teams?from=plan_limit"), "{m}");
     }
 }

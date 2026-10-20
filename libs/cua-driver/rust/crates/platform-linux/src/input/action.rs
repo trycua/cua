@@ -8,6 +8,7 @@
 //! cleanup and still goes out.
 
 use std::cell::RefCell;
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,7 @@ use anyhow::{bail, Result};
 pub struct Action {
     deadline: Instant,
     abandoned: Mutex<bool>,
+    fenced: Mutex<(bool, Vec<OwnedFd>)>,
 }
 
 impl Action {
@@ -24,6 +26,7 @@ impl Action {
         Arc::new(Self {
             deadline: Instant::now() + budget,
             abandoned: Mutex::new(false),
+            fenced: Mutex::new((false, Vec::new())),
         })
     }
 
@@ -52,10 +55,32 @@ impl Action {
 
     /// The caller stopped waiting: refuse every later [`Action::admit`].
     pub fn abandon(&self) {
+        let mut fenced = self
+            .fenced
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        fenced.0 = true;
+        fenced.1.iter().for_each(shut_down);
+        drop(fenced);
         *self
             .abandoned
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+    }
+
+    /// Shut `socket` down once this action is abandoned, before waiting for a
+    /// send under way, so nothing queued on it is written later.
+    pub fn fence(&self, socket: impl AsFd) -> std::io::Result<()> {
+        let socket = socket.as_fd().try_clone_to_owned()?;
+        let mut fenced = self
+            .fenced
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if fenced.0 {
+            shut_down(&socket);
+        }
+        fenced.1.push(socket);
+        Ok(())
     }
 
     /// Abandon this action when the returned guard drops. Hold it where the
@@ -64,6 +89,10 @@ impl Action {
     pub fn abandon_on_drop(self: &Arc<Self>) -> AbandonOnDrop {
         AbandonOnDrop(self.clone())
     }
+}
+
+fn shut_down(socket: &OwnedFd) {
+    unsafe { libc::shutdown(socket.as_raw_fd(), libc::SHUT_RDWR) };
 }
 
 /// Abandons its [`Action`] when dropped; see [`Action::abandon_on_drop`].
@@ -107,6 +136,11 @@ pub fn admit<T>(send: impl FnOnce() -> T) -> Result<T> {
     }
 }
 
+/// Fence `socket` under the action bound to this thread; with none, do nothing.
+pub fn fence(socket: impl AsFd) -> std::io::Result<()> {
+    current().map_or(Ok(()), |action| action.fence(socket))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,5 +182,44 @@ mod tests {
         action.abandon();
         let abandoned_at = Instant::now();
         assert!(worker.join().unwrap() <= abandoned_at);
+    }
+
+    #[test]
+    fn abandon_shuts_a_fenced_socket_without_waiting_for_a_wedged_send() {
+        use std::io::Write;
+        let (mut socket, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let action = Action::new(Duration::from_secs(60));
+        action.fence(&socket).unwrap();
+        let (started, sending) = std::sync::mpsc::channel();
+        let worker = {
+            let action = action.clone();
+            std::thread::spawn(move || {
+                action.admit(|| {
+                    started.send(()).unwrap();
+                    loop {
+                        if let Err(error) = socket.write_all(&[0; 65536]) {
+                            return error;
+                        }
+                    }
+                })
+            })
+        };
+        sending.recv().unwrap();
+        let abandoning = Instant::now();
+        action.abandon();
+        assert!(abandoning.elapsed() < Duration::from_secs(5));
+        assert!(worker.join().unwrap().is_ok());
+        drop(peer);
+    }
+
+    #[test]
+    fn a_socket_fenced_after_abandon_is_shut_at_once() {
+        use std::io::{Read, Write};
+        let (mut socket, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let action = Action::new(Duration::from_secs(60));
+        action.abandon();
+        action.fence(&socket).unwrap();
+        assert!(socket.write_all(b"late").is_err());
+        assert_eq!(peer.read(&mut [0; 4]).unwrap(), 0);
     }
 }

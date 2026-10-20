@@ -66,18 +66,33 @@ fn data(len: usize, seed: u64) -> Bytes {
     out.into()
 }
 
+/// Per-test watchdog. A hung test (`grpc_web::stdin_roundtrip` once sat until
+/// the CI job's 60 minute timeout) fails here with its name and transport
+/// instead. The budget is generous for a loopback test; the large transfers
+/// and the keepalive test get more.
+async fn watchdog<F: std::future::Future<Output = ()>>(name: &str, transport: &str, fut: F) {
+    let budget = if name.contains("256_mib") || name.contains("keepalive") {
+        Duration::from_secs(300)
+    } else {
+        Duration::from_secs(90)
+    };
+    if tokio::time::timeout(budget, fut).await.is_err() {
+        panic!("{transport}::{name} hung: no result within {budget:?}");
+    }
+}
+
 macro_rules! both_transports {
     ($($name:ident),* $(,)?) => {
         mod native {
             $(
                 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-                async fn $name() { super::$name(cua_spacesd_client::Transport::Native).await }
+                async fn $name() { super::watchdog(stringify!($name), "native", super::$name(cua_spacesd_client::Transport::Native)).await }
             )*
         }
         mod grpc_web {
             $(
                 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-                async fn $name() { super::$name(cua_spacesd_client::Transport::GrpcWeb).await }
+                async fn $name() { super::watchdog(stringify!($name), "grpc_web", super::$name(cua_spacesd_client::Transport::GrpcWeb)).await }
             )*
         }
     };

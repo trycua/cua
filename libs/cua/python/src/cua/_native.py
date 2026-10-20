@@ -19971,7 +19971,7 @@ class SpacesdCommand:
     """
     A command to run in the guest.
 """
-    def __init__(self, *, program:str, args:typing.List[str] = _DEFAULT, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, user:typing.Optional[str] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, tag:typing.Optional[str] = _DEFAULT, stdin:bool = False, pty:typing.Optional[PtySize] = _DEFAULT):
+    def __init__(self, *, program:str, args:typing.List[str] = _DEFAULT, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, user:typing.Optional[str] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, tag:typing.Optional[str] = _DEFAULT, stdin:bool = False, pty:typing.Optional[PtySize] = _DEFAULT, kill_on_disconnect:bool = False):
         self.program = program
         if args is _DEFAULT:
             self.args = []
@@ -20002,12 +20002,13 @@ class SpacesdCommand:
             self.pty = None
         else:
             self.pty = pty
+        self.kill_on_disconnect = kill_on_disconnect
 
 
 
 
     def __str__(self):
-        return "SpacesdCommand(program={}, args={}, env={}, cwd={}, user={}, timeout_ms={}, tag={}, stdin={}, pty={})".format(self.program, self.args, self.env, self.cwd, self.user, self.timeout_ms, self.tag, self.stdin, self.pty)
+        return "SpacesdCommand(program={}, args={}, env={}, cwd={}, user={}, timeout_ms={}, tag={}, stdin={}, pty={}, kill_on_disconnect={})".format(self.program, self.args, self.env, self.cwd, self.user, self.timeout_ms, self.tag, self.stdin, self.pty, self.kill_on_disconnect)
     def __eq__(self, other):
         if self.program != other.program:
             return False
@@ -20027,6 +20028,8 @@ class SpacesdCommand:
             return False
         if self.pty != other.pty:
             return False
+        if self.kill_on_disconnect != other.kill_on_disconnect:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
@@ -20042,6 +20045,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
             tag=_UniffiFfiConverterOptionalString.read(buf),
             stdin=_UniffiFfiConverterBoolean.read(buf),
             pty=_UniffiFfiConverterOptionalTypePtySize.read(buf),
+            kill_on_disconnect=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -20055,6 +20059,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.tag)
         _UniffiFfiConverterBoolean.check_lower(value.stdin)
         _UniffiFfiConverterOptionalTypePtySize.check_lower(value.pty)
+        _UniffiFfiConverterBoolean.check_lower(value.kill_on_disconnect)
 
     @staticmethod
     def write(value, buf):
@@ -20067,6 +20072,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.tag, buf)
         _UniffiFfiConverterBoolean.write(value.stdin, buf)
         _UniffiFfiConverterOptionalTypePtySize.write(value.pty, buf)
+        _UniffiFfiConverterBoolean.write(value.kill_on_disconnect, buf)
 
 @dataclass
 class SpacesdHttpHeader:

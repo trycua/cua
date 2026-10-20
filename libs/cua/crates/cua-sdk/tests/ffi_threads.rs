@@ -89,6 +89,7 @@ fn cmd(program: &str, args: &[&str]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        kill_on_disconnect: false,
     }
 }
 

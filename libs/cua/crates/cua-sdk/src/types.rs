@@ -120,6 +120,12 @@ pub struct SpacesdCommand {
     /// Run in a PTY of this size.
     #[uniffi(default = None)]
     pub pty: Option<PtySize>,
+    /// Kill the process (`term`, then `kill`) when this client's connection
+    /// to cua-spacesd ends before the process does, including when the
+    /// client process dies. Off by default: processes are detached and can be
+    /// reattached by tag.
+    #[uniffi(default = false)]
+    pub kill_on_disconnect: bool,
 }
 
 /// How a process ended.

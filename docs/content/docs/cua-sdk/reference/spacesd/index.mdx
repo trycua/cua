@@ -1591,6 +1591,7 @@ A command to run in the guest.
 | `tag` | `Option<String>` | `None` | Tag for reattaching (`attach(tag=…)`). |
 | `stdin` | `bool` | `false` | Keep stdin open for `write_stdin`. |
 | `pty` | [`Option<PtySize>`](#ptysize-record) | `None` | Run in a PTY of this size. |
+| `kill_on_disconnect` / `killOnDisconnect` | `bool` | `false` | Kill the process (`term`, then `kill`) when this client's connection to cua-spacesd ends before the process does, including when the client process dies. Off by default: processes are detached and can be reattached by tag. |
 
 ## `ProcessOutput` record
 

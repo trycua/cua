@@ -35,6 +35,7 @@ impl SpacesdCommand {
         if let Some(p) = self.pty {
             c = c.pty(p.cols, p.rows);
         }
+        c.kill_on_disconnect = self.kill_on_disconnect;
         c
     }
 }

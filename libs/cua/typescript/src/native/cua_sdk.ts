@@ -15812,7 +15812,14 @@ export type SpacesdCommand = {
     /**
      * Run in a PTY of this size.
      */
-    pty?: PtySize
+    pty?: PtySize,
+    /**
+     * Kill the process (`term`, then `kill`) when this client's connection
+     * to cua-spacesd ends before the process does, including when the
+     * client process dies. Off by default: processes are detached and can be
+     * reattached by tag.
+     */
+    killOnDisconnect: boolean
 }
 
 /**
@@ -15827,7 +15834,8 @@ export const SpacesdCommand = (() => {
         timeoutMs: undefined,
         tag: undefined,
         stdin: false,
-        pty: undefined
+        pty: undefined,
+        killOnDisconnect: false
     });
     const create = (() => {
         return uniffiCreateRecord<SpacesdCommand, ReturnType<typeof defaults>>(defaults);
@@ -15852,7 +15860,8 @@ const FfiConverterTypeSpacesdCommand = (() => {
                 timeoutMs: FfiConverterOptionalUInt32.read(from),
                 tag: FfiConverterOptionalString.read(from),
                 stdin: FfiConverterBool.read(from),
-                pty: FfiConverterOptionalTypePtySize.read(from)
+                pty: FfiConverterOptionalTypePtySize.read(from),
+                killOnDisconnect: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -15865,6 +15874,7 @@ const FfiConverterTypeSpacesdCommand = (() => {
             FfiConverterOptionalString.write(value.tag, into);
             FfiConverterBool.write(value.stdin, into);
             FfiConverterOptionalTypePtySize.write(value.pty, into);
+            FfiConverterBool.write(value.killOnDisconnect, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.program) +
@@ -15875,7 +15885,8 @@ const FfiConverterTypeSpacesdCommand = (() => {
              FfiConverterOptionalUInt32.allocationSize(value.timeoutMs) +
              FfiConverterOptionalString.allocationSize(value.tag) +
              FfiConverterBool.allocationSize(value.stdin) +
-             FfiConverterOptionalTypePtySize.allocationSize(value.pty);
+             FfiConverterOptionalTypePtySize.allocationSize(value.pty) +
+             FfiConverterBool.allocationSize(value.killOnDisconnect);
 
         }
     };

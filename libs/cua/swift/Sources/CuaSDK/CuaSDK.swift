@@ -31293,6 +31293,13 @@ public struct SpacesdCommand: Equatable, Hashable {
      * Run in a PTY of this size.
      */
     public var pty: PtySize?
+    /**
+     * Kill the process (`term`, then `kill`) when this client's connection
+     * to cua-spacesd ends before the process does, including when the
+     * client process dies. Off by default: processes are detached and can be
+     * reattached by tag.
+     */
+    public var killOnDisconnect: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31323,7 +31330,13 @@ public struct SpacesdCommand: Equatable, Hashable {
          */stdin: Bool = false,
         /**
          * Run in a PTY of this size.
-         */pty: PtySize? = nil) {
+         */pty: PtySize? = nil,
+        /**
+         * Kill the process (`term`, then `kill`) when this client's connection
+         * to cua-spacesd ends before the process does, including when the
+         * client process dies. Off by default: processes are detached and can be
+         * reattached by tag.
+         */killOnDisconnect: Bool = false) {
         self.program = program
         self.args = args
         self.env = env
@@ -31333,6 +31346,7 @@ public struct SpacesdCommand: Equatable, Hashable {
         self.tag = tag
         self.stdin = stdin
         self.pty = pty
+        self.killOnDisconnect = killOnDisconnect
     }
 
 
@@ -31359,7 +31373,8 @@ public struct FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer {
                 timeoutMs: FfiConverterOptionUInt32.read(from: &buf),
                 tag: FfiConverterOptionString.read(from: &buf),
                 stdin: FfiConverterBool.read(from: &buf),
-                pty: FfiConverterOptionTypePtySize.read(from: &buf)
+                pty: FfiConverterOptionTypePtySize.read(from: &buf),
+                killOnDisconnect: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -31373,6 +31388,7 @@ public struct FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.tag, into: &buf)
         FfiConverterBool.write(value.stdin, into: &buf)
         FfiConverterOptionTypePtySize.write(value.pty, into: &buf)
+        FfiConverterBool.write(value.killOnDisconnect, into: &buf)
     }
 }
 

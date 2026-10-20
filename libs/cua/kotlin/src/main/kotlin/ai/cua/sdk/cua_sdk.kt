@@ -35927,6 +35927,14 @@ data class SpacesdCommand (
      * Run in a PTY of this size.
      */
     var `pty`: PtySize? = null
+    ,
+    /**
+     * Kill the process (`term`, then `kill`) when this client's connection
+     * to cua-spacesd ends before the process does, including when the
+     * client process dies. Off by default: processes are detached and can be
+     * reattached by tag.
+     */
+    var `killOnDisconnect`: kotlin.Boolean = false
 
 ){
 
@@ -35952,6 +35960,7 @@ public object FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer<SpacesdComm
             FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterOptionalTypePtySize.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -35964,7 +35973,8 @@ public object FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer<SpacesdComm
             FfiConverterOptionalUInt.allocationSize(value.`timeoutMs`) +
             FfiConverterOptionalString.allocationSize(value.`tag`) +
             FfiConverterBoolean.allocationSize(value.`stdin`) +
-            FfiConverterOptionalTypePtySize.allocationSize(value.`pty`)
+            FfiConverterOptionalTypePtySize.allocationSize(value.`pty`) +
+            FfiConverterBoolean.allocationSize(value.`killOnDisconnect`)
     )
 
     override fun write(value: SpacesdCommand, buf: ByteBuffer) {
@@ -35977,6 +35987,7 @@ public object FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer<SpacesdComm
             FfiConverterOptionalString.write(value.`tag`, buf)
             FfiConverterBoolean.write(value.`stdin`, buf)
             FfiConverterOptionalTypePtySize.write(value.`pty`, buf)
+            FfiConverterBoolean.write(value.`killOnDisconnect`, buf)
     }
 }
 

@@ -27,6 +27,22 @@ fn nonuniform_capture_mapping_fails_instead_of_distorting_coordinates() {
 }
 
 #[test]
+fn fractional_150pc_capture_normalizes_to_the_logical_frame() {
+    let (normalized, width, height, scale) =
+        normalize_desktop_capture_for_action_frame(png(300, 225), 200, 150)
+            .expect("normalize 1.5x capture");
+    assert_eq!((width, height), (200, 150));
+    assert_eq!(
+        cua_driver_core::image_utils::png_dimensions(&normalized).unwrap(),
+        (200, 150)
+    );
+    assert!(
+        (scale - 1.5).abs() < 0.0001,
+        "scale is truthful, got {scale}"
+    );
+}
+
+#[test]
 fn capture_refusal_exposes_specific_code_and_refused_effect() {
     let refusal = capture_admission_error(anyhow::Error::new(
         cua_driver_core::capture_runtime::CaptureActionError::NativeActionFrameMismatch,

@@ -516,6 +516,13 @@ def test_main_sync_merge_authorship(status, branch_files, main_files, failure, c
     )
     if clean:
         validate(**values)
+        unlinked = commit(
+            sha="sync-merge",
+            email="unlinked@institution.example",
+            parent_shas=("feature-tip", "main-tip"),
+        )
+        with pytest.raises(ReleaseError, match="unlinked commit author"):
+            validate(**{**values, "commits": [values["commits"][0], unlinked]})
         values["commits"][1]["commit"][
             "message"
         ] += "\n\nCo-authored-by: Pair <pair@institution.example>"

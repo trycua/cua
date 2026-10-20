@@ -646,11 +646,11 @@ def validate_pr_attribution(
         #
         # A base synchronization merge imports a parent outside the PR commit set,
         # so it is not salvaged contributor work. Its distinct author must still
-        # have explicit coauthor credit elsewhere in the PR.
-        if is_base_sync_merge and is_clean_main_sync(github, repository, sha, parents, main_sha):
-            pass
-        elif is_base_sync_merge and distinct_external_author:
-            if author_login.lower() not in credited_coauthors:
+        # have explicit coauthor credit elsewhere in the PR unless it is a clean main sync.
+        if is_base_sync_merge and distinct_external_author:
+            if author_login.lower() not in credited_coauthors and not is_clean_main_sync(
+                github, repository, sha, parents, main_sha
+            ):
                 trailer = f"Co-authored-by: {author_name} <{author_email}>"
                 early_errors.append(
                     f"base synchronization merge {sha} is authored by @{author_login}, "

@@ -120,8 +120,8 @@ pub enum Target {
     Unaddressed,
 }
 
-/// The one entry point for niri pointer input: refuse a locked session and
-/// points the virtual pointer in `space` cannot reach (`motion_absolute`
+/// The one entry point for niri pointer input: refuse points the virtual
+/// pointer in `space` cannot reach (`motion_absolute`
 /// clamps into it, so a moved point lands elsewhere), admit `target` on the
 /// current layout, and recheck it right before the first event. Call
 /// [`PointerGate::holds`] before every later one.
@@ -130,7 +130,6 @@ pub fn prepare_target(
     space: (i32, i32, u32, u32),
     points: &[(i32, i32)],
 ) -> Result<Option<PointerGate>> {
-    refuse_if_locked().map_err(input_unavailable)?;
     let (origin_x, origin_y, width, height) = space;
     if let Some((x, y)) = points
         .iter()

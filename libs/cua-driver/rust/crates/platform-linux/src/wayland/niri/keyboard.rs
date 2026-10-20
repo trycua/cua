@@ -491,7 +491,6 @@ fn run_session(
     );
     let focused = super::keyboard_focus().map_err(super::input_unavailable)?;
     let target = admitted_target(expected, focused)?;
-    super::refuse_if_locked().map_err(super::input_unavailable)?;
     let group = super::keyboard_layout().map_err(super::input_unavailable)?;
     let mut keyboard = Keyboard::bind(deadline).map_err(|error| refused(format!("{error:#}")))?;
     let parts = plan(&keyboard.base.text, group)?;

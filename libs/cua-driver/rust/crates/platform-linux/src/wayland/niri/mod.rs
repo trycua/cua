@@ -38,7 +38,6 @@ mod focus;
 mod gate;
 mod ipc;
 pub(super) mod keyboard;
-mod lock;
 mod scene;
 #[cfg(test)]
 mod test_support;
@@ -46,7 +45,7 @@ mod test_support;
 pub use self::ipc::is_session;
 #[cfg(test)]
 use self::test_support::*;
-pub(crate) use self::{capture::*, focus::*, gate::*, ipc::*, lock::*, scene::*};
+pub(crate) use self::{capture::*, focus::*, gate::*, ipc::*, scene::*};
 
 // ── Observation ──────────────────────────────────────────────────────────────
 

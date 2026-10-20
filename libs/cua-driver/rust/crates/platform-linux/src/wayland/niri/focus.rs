@@ -160,30 +160,7 @@ pub fn keyboard_layout() -> Result<u32> {
 /// Focusing a window on another workspace switches to it; the restore
 /// switches back, also after a focus niri did not confirm.
 pub fn with_focused_window<T>(pid: u32, id: u64, body: impl FnOnce() -> Result<T>) -> Result<T> {
-    with_focused_window_in(&mut ipc(), pid, id, FOCUS_CONFIRM_TIMEOUT, body)
-}
-
-fn with_focused_window_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
-    ipc: &mut Ipc<C>,
-    pid: u32,
-    id: u64,
-    confirm: Duration,
-    body: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    let _transaction = focus_transaction()?;
-    let prior = ipc.focused_window().map_err(input_unavailable)?;
-    let workspaces: Vec<IpcWorkspace> =
-        ipc.query(Request::Workspaces).map_err(input_unavailable)?;
-    let Some(target) = focus_target(ipc, id, Some(pid)).map_err(input_unavailable)? else {
-        return body();
-    };
-    // Once FocusWindow is sent, focus may have moved even when niri does not
-    // confirm it, so the restore runs either way.
-    let result = focus_window(ipc, id, target.pid, confirm)
-        .map_err(input_unavailable)
-        .and_then(|()| body());
-    let restore = restore_focus(ipc, prior.as_ref(), &workspaces, &target, confirm);
-    finish(result, restore)
+    focus_transaction_in(&mut ipc(), pid, id, FOCUS_CONFIRM_TIMEOUT, true, body)
 }
 
 /// Run `body`, which focuses niri window `id` of `pid` itself once its input
@@ -192,14 +169,15 @@ fn with_focused_window_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
 /// focused the window leaves focus, the view and the floating stacking order
 /// as they were.
 pub fn with_focus_restored<T>(pid: u32, id: u64, body: impl FnOnce() -> Result<T>) -> Result<T> {
-    with_focus_restored_in(&mut ipc(), pid, id, FOCUS_CONFIRM_TIMEOUT, body)
+    focus_transaction_in(&mut ipc(), pid, id, FOCUS_CONFIRM_TIMEOUT, false, body)
 }
 
-fn with_focus_restored_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
+fn focus_transaction_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
     ipc: &mut Ipc<C>,
     pid: u32,
     id: u64,
     confirm: Duration,
+    focus_first: bool,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
     let _transaction = focus_transaction()?;
@@ -209,16 +187,26 @@ fn with_focus_restored_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
     let Some(target) = focus_target(ipc, id, Some(pid)).map_err(input_unavailable)? else {
         return body();
     };
-    let result = body();
-    let restore = match ipc.focused_window() {
-        Ok(now)
-            if now.as_ref().map(|window| window.id) == prior.as_ref().map(|window| window.id) =>
-        {
-            Ok(())
-        }
-        Ok(_) => restore_focus(ipc, prior.as_ref(), &workspaces, &target, confirm),
-        Err(error) => Err(error),
-    };
+    if !focus_first {
+        let result = body();
+        let restore = match ipc.focused_window() {
+            Ok(now)
+                if now.as_ref().map(|window| window.id)
+                    == prior.as_ref().map(|window| window.id) =>
+            {
+                Ok(())
+            }
+            Ok(_) => restore_focus(ipc, prior.as_ref(), &workspaces, &target, confirm),
+            Err(error) => Err(error),
+        };
+        return finish(result, restore);
+    }
+    // Once FocusWindow is sent, focus may have moved even when niri does not
+    // confirm it, so the restore runs either way.
+    let result = focus_window(ipc, id, target.pid, confirm)
+        .map_err(input_unavailable)
+        .and_then(|()| body());
+    let restore = restore_focus(ipc, prior.as_ref(), &workspaces, &target, confirm);
     finish(result, restore)
 }
 
@@ -386,6 +374,26 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
     use std::sync::{Arc, Mutex};
+
+    fn with_focused_window_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
+        ipc: &mut Ipc<C>,
+        pid: u32,
+        id: u64,
+        confirm: Duration,
+        body: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        focus_transaction_in(ipc, pid, id, confirm, true, body)
+    }
+
+    fn with_focus_restored_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
+        ipc: &mut Ipc<C>,
+        pid: u32,
+        id: u64,
+        confirm: Duration,
+        body: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        focus_transaction_in(ipc, pid, id, confirm, false, body)
+    }
 
     #[test]
     fn a_niri_refusal_suggests_the_remedy_its_detail_names() {

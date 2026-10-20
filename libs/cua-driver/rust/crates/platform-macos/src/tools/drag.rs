@@ -66,9 +66,13 @@ fn def() -> &'static ToolDef {
              main process, so pointer-capture widgets and HTML5 drag and drop also drop \
              there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list \
              by drag and drop, moving a file, HTML5 draggable content) cannot drop in the \
-             background, because macOS tracks those with the real pointer; the driver \
-             detects it, releases at once and returns background_unavailable with reason \
-             drag_and_drop_session. For a page in a browser \
+             background by default, because macOS tracks those with the real pointer; the \
+             driver detects it, releases at once and returns background_unavailable with \
+             reason drag_and_drop_session. When the operator started the daemon with \
+             CUA_DRIVER_EXPERIMENTAL_BACKGROUND_DND=1, the driver instead carries such a \
+             session through to the drop without moving the pointer (it needs the user to \
+             leave the pointer alone for about two seconds), and falls back to the refusal \
+             when it cannot. For a page in a browser \
              tab already bound with get_browser_state, browser_pointer action:\"drag\" \
              drives the same gesture through CDP with page refs. The result is not \
              driver-verified: confirm with a screenshot or the accessibility tree, and only \
@@ -419,7 +423,7 @@ impl Tool for DragTool {
             prior_front,
             "drag.CGEvent",
             || async move {
-                tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+                tokio::task::spawn_blocking(move || -> anyhow::Result<DragEnd> {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                     let observe = move |x: f64, y: f64| {
                         crate::cursor::overlay::send_command(
@@ -458,7 +462,7 @@ impl Tool for DragTool {
                                 Ok(())
                             },
                         )
-                        .map(|()| false);
+                        .map(|()| DragEnd::Posted);
                     }
                     // A drag that starts a system drag-and-drop session
                     // (list reordering, file drags, HTML5 draggable) is
@@ -470,7 +474,9 @@ impl Tool for DragTool {
                     // moving, and report it.
                     let before = drag_image_windows(pid);
                     let mut session_seen = false;
-                    let outcome = crate::input::mouse::drag_at_xy_background(
+                    let mut hold = cua_driver_core::delivery::background_dnd_enabled()
+                        .then(crate::input::pointer_hold::PointerHold::new);
+                    let outcome = crate::input::mouse::drag_at_xy_background_held(
                         pid,
                         (from_sx, from_sy),
                         (to_sx, to_sy),
@@ -484,14 +490,29 @@ impl Tool for DragTool {
                             session_seen = !drag_image_windows(pid).is_subset(&before);
                             !session_seen
                         },
+                        hold.as_mut()
+                            .map(|hold| hold as &mut dyn crate::input::pointer_hold::DragHold),
                     )?;
+                    if matches!(
+                        outcome,
+                        crate::input::mouse::BackgroundDragOutcome::DroppedHeld
+                    ) {
+                        use crate::input::pointer_hold::DragHold;
+                        await_drag_session_end(pid);
+                        let report = hold.as_ref().map(|hold| hold.report()).unwrap_or_default();
+                        return Ok(DragEnd::HeldDrop(report));
+                    }
                     let session = session_seen
                         || !drag_image_windows(pid).is_subset(&before)
                         || matches!(
                             outcome,
                             crate::input::mouse::BackgroundDragOutcome::StoppedEarly { .. }
                         );
-                    Ok(session)
+                    Ok(if session {
+                        DragEnd::Session
+                    } else {
+                        DragEnd::Posted
+                    })
                 })
                 .await
             },
@@ -501,7 +522,7 @@ impl Tool for DragTool {
             cursor_key.clone(),
             cursor_overlay::OverlayCommand::SetPressed(false),
         );
-        if matches!(&result, Ok(Ok(false))) {
+        if matches!(&result, Ok(Ok(DragEnd::Posted | DragEnd::HeldDrop(_)))) {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, to_sx, to_sy);
@@ -547,15 +568,25 @@ impl Tool for DragTool {
             )
         };
         match result {
-            Ok(Ok(true))
+            Ok(Ok(DragEnd::HeldDrop(report))) => held_drop_result(
+                pid,
+                wid,
+                (from_x, from_y, to_x, to_y),
+                (from_sx, from_sy, to_sx, to_sy),
+                report,
+                changes.result_suffix(),
+            ),
+            Ok(Ok(DragEnd::Session))
                 if cua_driver_core::delivery::brief_foreground_allowed()
                     && !cua_driver_core::delivery::background_requested_explicitly(&args) =>
             {
                 self.brief_foreground_drag(&args, pid, wid, prior_front)
                     .await
             }
-            Ok(Ok(true)) => drag_and_drop_session_result(pid, wid, changes.result_suffix()),
-            Ok(Ok(false)) => ToolResult::text(format!(
+            Ok(Ok(DragEnd::Session)) => {
+                drag_and_drop_session_result(pid, wid, changes.result_suffix())
+            }
+            Ok(Ok(DragEnd::Posted)) => ToolResult::text(format!(
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} window {wid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
@@ -840,6 +871,63 @@ fn drag_image_windows(pid: i32) -> std::collections::HashSet<u32> {
         .collect()
 }
 
+/// How a blocking drag ended.
+enum DragEnd {
+    /// The gesture was posted (no drag-and-drop session involved).
+    Posted,
+    /// A drag-and-drop session started and the gesture was cut short.
+    Session,
+    /// A drag-and-drop session started and the pointer hold carried it to the
+    /// drop point.
+    HeldDrop(crate::input::pointer_hold::HoldReport),
+}
+
+fn held_drop_result(
+    pid: i32,
+    wid: u32,
+    window: (f64, f64, f64, f64),
+    screen: (f64, f64, f64, f64),
+    report: crate::input::pointer_hold::HoldReport,
+    suffix: String,
+) -> ToolResult {
+    if report.pointer_moved {
+        // The user's own pointer movement while the button is held drags the
+        // session with it and ends it away from the drop point.
+        return ToolResult::error(format!(
+            "The drag-and-drop in pid {pid} window {wid} did not land: the pointer moved during \
+             the gesture (the held-pointer route needs the user to leave the pointer alone for \
+             about two seconds), so the session ended where the pointer went. Read the window; \
+             if nothing changed, retry when the user is not using the pointer.{suffix}"
+        ));
+    }
+    ToolResult::text(format!(
+        "✅ Posted drag-and-drop to pid {pid} window {wid} from window-pixel ({}, {}) → ({}, {}), \
+         screen ({}, {}) → ({}, {}) (experimental held-pointer route: the pointer did not move \
+         and the window was not raised; one hardware button press and release were posted \
+         at the pointer and absorbed by a transparent shield window; not driver-verified: \
+         confirm via screenshot).{suffix}",
+        window.0 as i64,
+        window.1 as i64,
+        window.2 as i64,
+        window.3 as i64,
+        screen.0 as i64,
+        screen.1 as i64,
+        screen.2 as i64,
+        screen.3 as i64,
+    ))
+    .with_structured(serde_json::json!({
+        "path": "cgevent",
+        "delivery_mode": "background",
+        "verified": false,
+        "effect": "unverifiable",
+        "drag_and_drop": {
+            "route": "held_pointer",
+            "allowed_by": cua_driver_core::delivery::BACKGROUND_DND_ENV,
+            "hardware_events": ["leftMouseDown", "leftMouseUp"],
+        },
+    }))
+}
+
 fn drag_and_drop_session_result(pid: i32, wid: u32, suffix: String) -> ToolResult {
     cua_driver_core::delivery::background_unavailable_result(
         format!(
@@ -899,6 +987,44 @@ mod tests {
             assert_eq!(structured["code"], "window_id_required");
             assert_eq!(structured["effect"], "refused");
         }
+    }
+
+    #[test]
+    fn held_pointer_drop_reports_the_route_and_that_the_pointer_stayed() {
+        let result = held_drop_result(
+            9,
+            3,
+            (1.0, 2.0, 3.0, 4.0),
+            (101.0, 32.0, 103.0, 34.0),
+            crate::input::pointer_hold::HoldReport {
+                engaged: true,
+                pointer: Some((900.0, 700.0)),
+                pointer_moved: false,
+            },
+            String::new(),
+        );
+        assert_ne!(result.is_error, Some(true));
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["path"], "cgevent");
+        assert_eq!(structured["effect"], "unverifiable");
+        assert_eq!(structured["drag_and_drop"]["route"], "held_pointer");
+    }
+
+    #[test]
+    fn held_pointer_drop_is_an_error_when_the_user_moved_the_pointer() {
+        let result = held_drop_result(
+            9,
+            3,
+            (1.0, 2.0, 3.0, 4.0),
+            (101.0, 32.0, 103.0, 34.0),
+            crate::input::pointer_hold::HoldReport {
+                engaged: true,
+                pointer: Some((900.0, 700.0)),
+                pointer_moved: true,
+            },
+            String::new(),
+        );
+        assert_eq!(result.is_error, Some(true));
     }
 
     #[test]

@@ -856,6 +856,9 @@ pub enum BackgroundDragOutcome {
     /// The caller's `keep_going` check failed during the path; the release
     /// was posted at once at this screen point instead of the drop point.
     StoppedEarly { at: (f64, f64) },
+    /// A drag-and-drop session started and the pointer hold carried it through
+    /// to the drop point ([`crate::input::pointer_hold`]).
+    DroppedHeld,
 }
 
 /// Event kinds in the background drag plan.
@@ -956,8 +959,54 @@ pub fn drag_at_xy_background<F, G>(
     steps: usize,
     modifiers: &[&str],
     button: DragButton,
+    observe: F,
+    keep_going: G,
+) -> anyhow::Result<BackgroundDragOutcome>
+where
+    F: FnMut(f64, f64),
+    G: FnMut() -> bool,
+{
+    drag_at_xy_background_held(
+        pid,
+        from,
+        to,
+        wid,
+        duration_ms,
+        steps,
+        modifiers,
+        button,
+        observe,
+        keep_going,
+        None,
+    )
+}
+
+/// How long the held route keeps posting drags at the drop point before the
+/// release, so the session's destination settles on it (the window server
+/// re-reads the pointer position on a timer while the session runs).
+const HOLD_SETTLE_POSTS: usize = 10;
+const HOLD_SETTLE_GAP_MS: u64 = 40;
+
+/// [`drag_at_xy_background`] with an optional pointer hold. When `hold` is
+/// given and `keep_going` reports that a drag-and-drop session started, the
+/// hold presses the hardware button at the stationary pointer instead of the
+/// gesture being cut short; the rest of the path, a short settle at the drop
+/// point, the hardware release and the window-routed release follow, so the
+/// drop lands at `to` with the real pointer where the user left it. When the
+/// hold cannot be made the gesture stops early exactly as without it.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_at_xy_background_held<F, G>(
+    pid: i32,
+    from: (f64, f64),
+    to: (f64, f64),
+    wid: u32,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
     mut observe: F,
     mut keep_going: G,
+    mut hold: Option<&mut dyn crate::input::pointer_hold::DragHold>,
 ) -> anyhow::Result<BackgroundDragOutcome>
 where
     F: FnMut(f64, f64),
@@ -999,9 +1048,51 @@ where
     let route = post_route(MousePostMode::SkyLightPreferred, skylight_available());
     let window_id = wid as i64;
 
+    // One stamped event of the gesture, posted once.
+    let post_one = |event_type: CGEventType,
+                    event_button: CGMouseButton,
+                    event_button_number: i64,
+                    point: (f64, f64),
+                    phase: i64,
+                    click_state: i64,
+                    subtype: i64|
+     -> anyhow::Result<()> {
+        let cg_point = CGPoint::new(point.0, point.1);
+        let event = CGEvent::new_mouse_event(source.clone(), event_type, cg_point, event_button)
+            .map_err(|_| anyhow::anyhow!("background drag {event_type:?} event creation failed"))?;
+        let ptr = event.as_ptr() as *mut std::ffi::c_void;
+        let set =
+            |field: u32, value: i64| crate::input::skylight::set_integer_field(ptr, field, value);
+        set(0, phase);
+        set(1, click_state);
+        set(3, event_button_number);
+        set(7, subtype);
+        set(40, pid as i64);
+        set(51, window_id);
+        set(91, window_id);
+        set(92, window_id);
+        set(58, gesture_id);
+        crate::input::skylight::set_window_location(ptr, point.0, point.1);
+        set_explicit_flags(&event, flags);
+        dispatch_mouse_event(route, pid, &event);
+        Ok(())
+    };
     let mut stopped_at: Option<(f64, f64)> = None;
+    let mut held = false;
     let mut last_point = from;
     for mut step in background_drag_plan(from, to, steps, duration_ms) {
+        if step.kind == Up && held {
+            // Settle on the drop point, then release the hardware button
+            // first and the window-routed button second: the other order
+            // never ends the session.
+            for _ in 0..HOLD_SETTLE_POSTS {
+                post_one(dragged_type, cg_button, button_number, to, 3, 1, 0)?;
+                std::thread::sleep(std::time::Duration::from_millis(HOLD_SETTLE_GAP_MS));
+            }
+            if let Some(hold) = hold.as_deref_mut() {
+                hold.release();
+            }
+        }
         if let Some(at) = stopped_at {
             match step.kind {
                 Dragged => continue,
@@ -1020,26 +1111,15 @@ where
             Dragged => (dragged_type, cg_button, button_number, 0),
             Up => (up_type, cg_button, button_number, 0),
         };
-        let point = CGPoint::new(step.point.0, step.point.1);
-        let event = CGEvent::new_mouse_event(source.clone(), event_type, point, event_button)
-            .map_err(|_| {
-                anyhow::anyhow!("background drag {:?} event creation failed", step.kind)
-            })?;
-        let ptr = event.as_ptr() as *mut std::ffi::c_void;
-        let set =
-            |field: u32, value: i64| crate::input::skylight::set_integer_field(ptr, field, value);
-        set(0, step.phase);
-        set(1, step.click_state);
-        set(3, event_button_number);
-        set(7, subtype);
-        set(40, pid as i64);
-        set(51, window_id);
-        set(91, window_id);
-        set(92, window_id);
-        set(58, gesture_id);
-        crate::input::skylight::set_window_location(ptr, step.point.0, step.point.1);
-        set_explicit_flags(&event, flags);
-        dispatch_mouse_event(route, pid, &event);
+        post_one(
+            event_type,
+            event_button,
+            event_button_number,
+            step.point,
+            step.phase,
+            step.click_state,
+            subtype,
+        )?;
         if matches!(step.kind, Down | Dragged) {
             observe(step.point.0, step.point.1);
             last_point = step.point;
@@ -1047,12 +1127,18 @@ where
         if step.delay_after_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step.delay_after_ms));
         }
-        if step.kind == Dragged && stopped_at.is_none() && !keep_going() {
-            stopped_at = Some(last_point);
+        if step.kind == Dragged && stopped_at.is_none() && !held && !keep_going() {
+            let engaged = hold.as_deref_mut().is_some_and(|hold| hold.engage());
+            if engaged {
+                held = true;
+            } else {
+                stopped_at = Some(last_point);
+            }
         }
     }
     Ok(match stopped_at {
         Some(at) => BackgroundDragOutcome::StoppedEarly { at },
+        None if held => BackgroundDragOutcome::DroppedHeld,
         None => BackgroundDragOutcome::Completed,
     })
 }
@@ -2464,6 +2550,134 @@ mod tests {
                 ("RightMouseUp", 1)
             ]
         );
+    }
+
+    /// Records the calls the drag makes on its hold, with how many events had
+    /// been posted when each happened.
+    struct FakeHold<'a> {
+        engage_ok: bool,
+        posted_len: &'a dyn Fn() -> usize,
+        calls: Vec<(&'static str, usize)>,
+    }
+
+    impl crate::input::pointer_hold::DragHold for FakeHold<'_> {
+        fn engage(&mut self) -> bool {
+            self.calls.push(("engage", (self.posted_len)()));
+            self.engage_ok
+        }
+        fn release(&mut self) {
+            self.calls.push(("release", (self.posted_len)()));
+        }
+        fn report(&self) -> crate::input::pointer_hold::HoldReport {
+            crate::input::pointer_hold::HoldReport::default()
+        }
+    }
+
+    #[test]
+    fn held_drag_engages_once_settles_and_releases_before_the_window_up() {
+        let capture = Capture::start(true);
+        let posted_len = || capture.posted().len();
+        let mut hold = FakeHold {
+            engage_ok: true,
+            posted_len: &posted_len,
+            calls: Vec::new(),
+        };
+        let mut checks = 0;
+        let outcome = drag_at_xy_background_held(
+            42,
+            (0.0, 0.0),
+            (100.0, 0.0),
+            7,
+            0,
+            4,
+            &[],
+            DragButton::Left,
+            |_, _| {},
+            || {
+                // A drag-and-drop session is reported from the second drag on.
+                checks += 1;
+                checks < 2
+            },
+            Some(&mut hold),
+        )
+        .unwrap();
+        assert_eq!(outcome, BackgroundDragOutcome::DroppedHeld);
+        let posted = capture.posted();
+        let events: Vec<_> = posted.iter().map(|posted| posted.event.as_str()).collect();
+        // primers (3), down, 4 drags, 10 settle drags at the drop point, up
+        assert_eq!(events.len(), 3 + 1 + 4 + HOLD_SETTLE_POSTS + 1);
+        assert_eq!(events.last(), Some(&"LeftMouseUp"));
+        assert_eq!(
+            events.iter().filter(|e| **e == "LeftMouseUp").count(),
+            2,
+            "the primer up and the release"
+        );
+        // The path is not cut short: the hold engaged after the second drag
+        // (3 primers + down + 2 drags posted) and released just before the up.
+        assert_eq!(
+            hold.calls,
+            [("engage", 3 + 1 + 2), ("release", events.len() - 1)]
+        );
+        assert!(posted
+            .iter()
+            .all(|posted| posted.route == PostRoute::SkyLight));
+    }
+
+    #[test]
+    fn held_drag_without_a_session_never_touches_the_hold() {
+        let _capture = Capture::start(true);
+        let posted_len = || 0;
+        let mut hold = FakeHold {
+            engage_ok: true,
+            posted_len: &posted_len,
+            calls: Vec::new(),
+        };
+        let outcome = drag_at_xy_background_held(
+            42,
+            (0.0, 0.0),
+            (100.0, 0.0),
+            7,
+            0,
+            4,
+            &[],
+            DragButton::Left,
+            |_, _| {},
+            || true,
+            Some(&mut hold),
+        )
+        .unwrap();
+        assert_eq!(outcome, BackgroundDragOutcome::Completed);
+        assert!(hold.calls.is_empty());
+    }
+
+    #[test]
+    fn held_drag_whose_hold_cannot_engage_stops_early_like_the_plain_drag() {
+        let _capture = Capture::start(true);
+        let posted_len = || 0;
+        let mut hold = FakeHold {
+            engage_ok: false,
+            posted_len: &posted_len,
+            calls: Vec::new(),
+        };
+        let outcome = drag_at_xy_background_held(
+            42,
+            (0.0, 0.0),
+            (100.0, 0.0),
+            7,
+            0,
+            4,
+            &[],
+            DragButton::Left,
+            |_, _| {},
+            || false,
+            Some(&mut hold),
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            BackgroundDragOutcome::StoppedEarly { .. }
+        ));
+        assert_eq!(hold.calls.len(), 1, "one failed engage, no release");
     }
 
     #[test]

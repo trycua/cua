@@ -5,3 +5,7 @@ target/
 
 # Core dumps from crash tests (for example `kill -SEGV` in cua-media-codec).
 /crates/*/core
+
+# The .proto files vendored into the published cua-proto crate
+# (scripts/vendor-crate-protos.sh); libs/cua/proto is the source of truth.
+/crates/cua-proto/proto/

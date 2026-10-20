@@ -37,6 +37,7 @@ import type { MediaStatus, MediaTicket } from "@cua/spacesd-html5/core/mediaSess
 import { MediaCanvas, toMediaTicket } from "./WindowStream";
 import { useAppDropTeleport } from "./useAppDrop";
 import { PresenceOverlay } from "./presence/PresenceOverlay";
+import { useT } from "../i18n";
 
 interface SpaceViewerProps {
   fleet: FleetBridge;
@@ -104,6 +105,7 @@ const CODING_AGENTS: readonly CodingAgent[] = [
 ];
 
 export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
+  const t = useT(["spaces", "common", "errors"]);
   const [boot, setBoot] = useState<Boot>({ kind: "loading" });
   const transferBridge = useMemo(() => transfer ?? createTransferBridge(), [transfer]);
   // An app dropped on the Space window opens "Teleport an app…" for it.
@@ -130,7 +132,7 @@ export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
   }, [fleet]);
 
   if (boot.kind === "loading") {
-    return <div className="viewer viewer-message">Connecting…</div>;
+    return <div className="viewer viewer-message">{t("common.status.connecting")}</div>;
   }
   if (boot.kind === "error") {
     return <div className="viewer viewer-message viewer-error">{boot.message}</div>;
@@ -172,6 +174,7 @@ function ViewerSession({
   config: ViewerConfig;
   desktopStream: boolean;
 }) {
+  const t = useT(["spaces", "common", "errors"]);
   const [phase, setPhase] = useState<Phase>(desktopStream ? "connecting" : "unsupported");
   // Bumped by Retry/Reconnect to force a fresh session.
   const [attempt, setAttempt] = useState(0);
@@ -296,16 +299,16 @@ function ViewerSession({
       return;
     }
     if (agentInstalling) {
-      setTopbarNotice(`Still installing ${agentInstalling}`);
+      setTopbarNotice(t("spaces.viewer.agent_installing", { agent: agentInstalling }));
       return;
     }
     setAgentInstalling(agent.name);
     fleet
       .launchAgentTerminal(space, agent.id)
-      .then(() => setTopbarNotice(`${agent.name} is open in a terminal in this Space; sign in there`))
+      .then(() => setTopbarNotice(t("spaces.viewer.agent_opened", { agent: agent.name })))
       .catch((error: unknown) =>
         setTopbarNotice(
-          `Couldn't open ${agent.name}: ${error instanceof Error ? error.message : String(error)}`,
+          t("errors.viewer.agent_open_failed", { agent: agent.name, reason: error instanceof Error ? error.message : String(error) }),
         ),
       )
       .finally(() => setAgentInstalling(null));
@@ -336,7 +339,7 @@ function ViewerSession({
     };
   }, [fleet, space.id]);
   const stopHotspot = () => {
-    void fleet.stopHotspot().catch(() => setTopbarNotice("Couldn't stop sharing"));
+    void fleet.stopHotspot().catch(() => setTopbarNotice(t("errors.viewer.stop_hotspot_failed")));
   };
 
   // Keep the Space window at the remote desktop's aspect ratio while windowed.
@@ -411,7 +414,7 @@ function ViewerSession({
         // the whole window UNDER it (goes under the notch); this bar overlays
         // the top strip so the notch sits invisibly within it. Buttons flank
         // the centered notch via space-between.
-        <div className="viewer-topbar" role="toolbar" aria-label="Space controls">
+        <div className="viewer-topbar" role="toolbar" aria-label={t("spaces.viewer.controls_label")}>
           <div className="viewer-agent-menu" ref={agentMenuRef}>
             <button
               type="button"
@@ -419,15 +422,15 @@ function ViewerSession({
               aria-haspopup="menu"
               aria-expanded={agentMenuOpen}
               onClick={() => setAgentMenuOpen((open) => !open)}
-              title="Launch a coding agent for this Space"
+              title={t("spaces.viewer.launch_agent_hint")}
             >
-              Launch Agent
+              {t("spaces.viewer.launch_agent")}
             </button>
             {agentMenuOpen && (
               <div
                 className="viewer-agent-menu-list"
                 role="menu"
-                aria-label="Coding agents"
+                aria-label={t("spaces.viewer.agents_menu_label")}
                 onKeyDown={onAgentMenuKeyDown}
               >
                 {CODING_AGENTS.map((agent) => (
@@ -449,10 +452,10 @@ function ViewerSession({
               type="button"
               className="viewer-hotspot-stop"
               onClick={stopHotspot}
-              title="Stop sharing your network with this Space"
+              title={t("spaces.viewer.stop_hotspot_hint")}
             >
               <HotspotGlyph className="viewer-hotspot-stop-glyph" />
-              Stop sharing network
+              {t("spaces.viewer.stop_hotspot")}
             </button>
           )}
           <div className="viewer-topbar-right">
@@ -469,9 +472,9 @@ function ViewerSession({
               type="button"
               className="viewer-topbar-btn"
               onClick={openTeleport}
-              title={`Teleport an app into ${space.name}`}
+              title={t("spaces.viewer.teleport_hint", { name: space.name })}
             >
-              Teleport an app…
+              {t("spaces.viewer.teleport")}
             </button>
           </div>
           {(agentInstalling || topbarNotice) && (
@@ -523,20 +526,20 @@ function ViewerSession({
       </div>
       {phase !== "connected" && (
         <div className="viewer-status">
-          {phase === "connecting" && <span>Connecting to {space.name}…</span>}
+          {phase === "connecting" && <span>{t("spaces.viewer.connecting_to", { name: space.name })}</span>}
           {phase === "disconnected" && (
             <>
-              <span>Stream ended.</span>
+              <span>{t("spaces.viewer.stream_ended")}</span>
               <button type="button" className="ghost-button" onClick={retry}>
-                Reconnect
+                {t("common.action.reconnect")}
               </button>
             </>
           )}
           {phase === "failed" && (
             <>
-              <span>Could not reach the desktop stream.</span>
+              <span>{t("errors.viewer.stream_unreachable")}</span>
               <button type="button" className="ghost-button" onClick={retry}>
-                Retry
+                {t("common.action.retry")}
               </button>
             </>
           )}
@@ -568,6 +571,7 @@ export function TransferOverlayView({
   onRetry: () => void;
   onCancel: () => void;
 }) {
+  const t = useT(["spaces", "common", "errors"]);
   const isError = state.phase === "error";
   const progress = transferProgress(state);
   const sizeLabel = transferSizeLabel(state);
@@ -582,14 +586,14 @@ export function TransferOverlayView({
             </p>
             <div className="viewer-transfer-actions">
               <button type="button" className="ghost-button" onClick={onRetry}>
-                Retry
+                {t("common.action.retry")}
               </button>
               <button
                 type="button"
                 className="ghost-button viewer-transfer-cancel"
                 onClick={onCancel}
               >
-                Cancel
+                {t("common.action.cancel")}
               </button>
             </div>
           </>
@@ -619,7 +623,7 @@ export function TransferOverlayView({
             <div className="viewer-transfer-bar" data-testid="transfer-bar" aria-hidden="true">
               <span className="viewer-transfer-sweep" />
             </div>
-            <p className="viewer-transfer-hint">Transferring the session…</p>
+            <p className="viewer-transfer-hint">{t("spaces.viewer.transferring")}</p>
           </>
         )}
       </div>

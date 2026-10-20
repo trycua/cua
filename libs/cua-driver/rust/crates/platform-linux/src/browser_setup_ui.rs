@@ -377,9 +377,10 @@ impl SetupUiHandle {
             exact_setup_checkbox(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
                 .ok()
                 .flatten()
-                .filter(|node| node.checked == Some(true))
-                .and_then(|node| node.element_index)
-                .is_some_and(|index| crate::atspi::perform_action(self.pid, index).is_ok());
+                .filter(|node| node.checked == Some(true) && node.element_index.is_some())
+                .is_some_and(|node| {
+                    crate::atspi::perform_action_walked(self.pid, self.window_id, node).is_ok()
+                });
         if restored {
             self.enabled_remote_debugging = false;
         }
@@ -557,8 +558,7 @@ fn set_remote_debugging(
                     return Ok(handle);
                 }
                 Some(_) if !handle.enable_attempted => {
-                    let index = node.element_index.expect("actionable checkbox index");
-                    if let Err(error) = crate::atspi::perform_action(pid, index) {
+                    if let Err(error) = crate::atspi::perform_action_walked(pid, window_id, node) {
                         return Err(handle.abort(refusal(
                             BrowserRefusalCode::BrowserWrongTargetRefused,
                             format!("the exact checkbox action failed: {error}"),
@@ -596,7 +596,18 @@ fn set_remote_debugging(
                             );
                         }
                         let index = checkbox.element_index.expect("actionable checkbox index");
-                        let (x, y, width, height) = crate::atspi::get_element_bounds(pid, index)?;
+                        // The frame this walk recorded for the checkbox, not a
+                        // lookup of its index in another snapshot.
+                        let (x, y, width, height) = tree
+                            .bounds
+                            .iter()
+                            .find(|(bounded, ..)| *bounded == index)
+                            .map(|&(_, x, y, width, height)| (x, y, width, height))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "the exact Microsoft Edge remote-debugging checkbox had no screen bounds"
+                                )
+                            })?;
                         if width <= 1 || height <= 1 {
                             anyhow::bail!(
                                 "the exact Microsoft Edge remote-debugging checkbox had empty screen bounds"

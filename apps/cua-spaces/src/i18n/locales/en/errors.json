@@ -1,1 +1,9 @@
-{}
+{
+  "errors.viewer.stream_unreachable": "Could not reach the desktop stream.",
+  "errors.viewer.agent_open_failed": "Couldn't open {agent}: {reason}",
+  "errors.viewer.stop_hotspot_failed": "Couldn't stop sharing",
+  "errors.spaces.create_failed": "Couldn’t create a Space",
+  "errors.spaces.refresh_failed": "Could not refresh Spaces. Previously loaded rows may be out of date.",
+  "errors.spaces.load_failed": "Could not load Spaces. Try refreshing again.",
+  "errors.settings.sign_in_start_failed": "Could not start sign-in"
+}

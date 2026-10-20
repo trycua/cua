@@ -19,6 +19,7 @@ OUT = ROOT / "crates/cua-spaces-ffi/src/app_core_types.rs"
 
 # (source file, module path, [types]) in FFI order.
 TYPES = [
+    ("message.rs", "message", ["Msg"]),
     ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "PowerControl", "SpacePower", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
     ("spaces/mod.rs", "spaces", ["AmbientDots"]),
     ("spaces/roster.rs", "spaces::roster", ["NoticeKind", "Notice", "RosterState", "RosterAction"]),

@@ -7,9 +7,14 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-# The .proto sources live outside the crate (libs/cua/proto); packaging for
-# crates.io would need them vendored. Not published until then.
-publish = false
+documentation = "https://docs.rs/cua-proto"
+homepage = "https://cua.ai/docs/cua-sdk"
+readme = "README.md"
+keywords = ["cua", "grpc", "protobuf", "computer-use", "sandbox"]
+categories = ["api-bindings", "network-programming"]
+# The .proto files ship in the crate under proto/ (copied from libs/cua/proto
+# by scripts/vendor-crate-protos.sh before packaging; git-ignored here).
+include = ["/src", "/build.rs", "/proto/**/*.proto", "/proto/buf.yaml", "/README.md"]
 
 [features]
 default = ["client", "server"]
@@ -38,6 +43,9 @@ pbjson = { workspace = true, optional = true }
 tonic-prost-build.workspace = true
 prost-build.workspace = true
 pbjson-build.workspace = true
+# Builds without a system protoc (the published crate); protoc is used when present.
+protox = "0.10"
+prost.workspace = true
 
 [dev-dependencies]
 prost-types.workspace = true

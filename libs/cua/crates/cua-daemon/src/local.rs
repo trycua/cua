@@ -1998,6 +1998,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn doctor_preserves_backend_contract() {
+        use cua_proto::daemon::v1::CheckStatus;
+        let mut report = qemu_report(false);
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Installable as i32
+        );
+        report.backends[0].provisionable = false;
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Error as i32
+        );
+    }
+
     fn kvm_step() -> Option<cua_proto::daemon::v1::SetupStep> {
         Some(cua_proto::daemon::v1::SetupStep {
             name: "kvm".into(),

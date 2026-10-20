@@ -7,7 +7,11 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+documentation = "https://docs.rs/cua-spacesd-client"
+homepage = "https://cua.ai/docs/cua-sdk"
+readme = "README.md"
+keywords = ["cua", "computer-use", "sandbox", "grpc", "automation"]
+categories = ["api-bindings", "network-programming", "asynchronous"]
 
 [features]
 # In-process mock spacesd (`cua_spacesd_client::testing`) for this crate's tests and

@@ -9,6 +9,16 @@
 
 use cua_spaces_app_core as core;
 
+/// A message code and the variables its text uses (`{name}`).
+pub type AppMsg = core::message::Msg;
+#[uniffi::remote(Record)]
+pub struct AppMsg {
+    /// The catalog key, `<area>.<screen_or_component>.<element>`.
+    pub code: String,
+    /// Values for the text's variables.
+    pub vars: std::collections::HashMap<String, String>,
+}
+
 /// Operating system a Space runs.
 pub type AppSpaceOs = core::model::SpaceOs;
 #[uniffi::remote(Enum)]
@@ -2397,9 +2407,9 @@ pub struct AppSensitiveOption {
     /// The group.
     pub group: AppSensitiveGroup,
     /// Label.
-    pub label: String,
+    pub label: AppMsg,
     /// The line under the label.
-    pub detail: String,
+    pub detail: AppMsg,
     /// Checked.
     pub checked: bool,
 }

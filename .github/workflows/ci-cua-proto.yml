@@ -6,6 +6,8 @@ on:
       - "libs/cua/proto/**"
       - "libs/cua/crates/cua-proto/**"
       - "libs/cua/scripts/check-proto.sh"
+      - "libs/cua/scripts/package-proto.sh"
+      - "libs/cua/scripts/check-proto-tarball.sh"
       - "libs/cua/Cargo.toml"
       - "libs/cua/Cargo.lock"
       - "libs/cua/rust-toolchain.toml"
@@ -16,6 +18,8 @@ on:
       - "libs/cua/proto/**"
       - "libs/cua/crates/cua-proto/**"
       - "libs/cua/scripts/check-proto.sh"
+      - "libs/cua/scripts/package-proto.sh"
+      - "libs/cua/scripts/check-proto-tarball.sh"
       - "libs/cua/Cargo.toml"
       - "libs/cua/Cargo.lock"
       - "libs/cua/rust-toolchain.toml"
@@ -86,3 +90,25 @@ jobs:
         run: cargo test -p cua-proto --all-features --locked
       - name: Build for wasm32 (gRPC-Web client subset)
         run: cargo build -p cua-proto --locked --target wasm32-unknown-unknown --no-default-features --features client,serde
+
+  # The cua-proto-<version>.tar.gz release asset, checked the way a user of
+  # another language uses it: a self-contained buf module whose buf.gen.yaml
+  # generates a Go client that compiles. (The crates.io dry run of the Rust
+  # crates is `crates.io dry run` in ci-cua-sdk.yml.)
+  tarball:
+    name: proto tarball + generated Go client
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install buf
+        uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: "1.73.0"
+          setup_only: true
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Build, buf generate and compile
+        run: libs/cua/scripts/check-proto-tarball.sh "$RUNNER_TEMP/proto-tarball"

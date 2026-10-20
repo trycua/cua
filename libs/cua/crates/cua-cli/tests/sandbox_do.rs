@@ -965,3 +965,41 @@ async fn do_drives_a_relay_space() {
     let state = read_json(&h.cua_home().join("do_target.json"));
     assert_eq!(state["name"], id);
 }
+
+/// `sb info --connection` prints the spacesd URL and token a harness of
+/// your own needs (and plain `sb info` never prints the token).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sandbox_info_connection_prints_the_spacesd_url_and_token() {
+    let env = fixtures::start_env(Some("s3cret-token"), None).await;
+    let h = Home::new();
+    direct_with(&h, &env.url, "dev", "s3cret-token").await;
+
+    let o = h
+        .run(&["--embedded", "--json", "sb", "info", "dev", "--connection"])
+        .await;
+    o.ok();
+    let spacesd = &o.json()["spacesd"];
+    assert_eq!(spacesd["token"], "s3cret-token", "{o:?}");
+    let url = spacesd["url"].as_str().unwrap_or_default();
+    assert_eq!(
+        url.trim_end_matches('/'),
+        env.url.trim_end_matches('/'),
+        "{o:?}"
+    );
+
+    let o = h
+        .run(&["--embedded", "sb", "info", "dev", "--connection"])
+        .await;
+    o.ok();
+    assert!(o.stdout.contains("Token:    s3cret-token"), "{o:?}");
+    assert!(o.stdout.contains("Spacesd:  http://"), "{o:?}");
+
+    for args in [
+        &["--embedded", "--json", "sb", "info", "dev"][..],
+        &["--embedded", "sb", "info", "dev"][..],
+    ] {
+        let o = h.run(args).await;
+        o.ok();
+        assert!(!o.stdout.contains("s3cret-token"), "{o:?}");
+    }
+}

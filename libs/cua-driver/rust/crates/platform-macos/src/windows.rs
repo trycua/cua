@@ -78,6 +78,18 @@ pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
     )
 }
 
+/// [`all_windows`] without the Space snapshot, for callers that read only
+/// window ids, owners, titles, and bounds.
+pub(crate) fn all_windows_without_spaces() -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroOnly,
+        None,
+        false,
+    )
+    .windows
+}
+
 /// Enumerate only on-screen windows.
 pub fn visible_windows() -> Vec<WindowInfo> {
     visible_windows_with_space_snapshot().windows
@@ -90,6 +102,18 @@ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
         None,
         true,
     )
+}
+
+/// [`visible_windows`] without the Space snapshot, for callers that read only
+/// window ids, owners, titles, and bounds.
+pub(crate) fn visible_windows_without_spaces() -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroOnly,
+        None,
+        false,
+    )
+    .windows
 }
 
 pub(crate) fn pid_windows_with_space_snapshot(pid: i32, on_screen_only: bool) -> WindowEnumeration {

@@ -29,6 +29,7 @@ export const MIGRATED: string[] = [
   "components/Switcher.tsx",
   "components/desktop/MainWindow.tsx",
   "components/desktop/NewSpaceWizard.tsx",
+  "components/ShareSheet.tsx",
 ];
 
 /** JSX attributes whose string values the user sees or hears. */

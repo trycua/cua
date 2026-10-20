@@ -9,15 +9,14 @@ on:
       - "docs/content/docs/**"
       - "docs/public/scripts/**"
       - "docs/scripts/tests/test_unified_sandbox_docs.py"
-      - "docs/scripts/tests/test_fleet_driver_guide.py"
+      - "docs/scripts/tests/test_desktop_driver_guide.py"
       - "docs/scripts/tests/test_sandbox_secret_example.py"
-      - "docs/scripts/tests/test_fleet_docs_version_facts.py"
+      - "docs/scripts/tests/test_docs_version_facts.py"
       - "docs/scripts/tests/test_openai_agents_example.py"
       - "libs/python/cua-sandbox/**"
       - "libs/cua/VERSION"
       - "libs/cua/python/pyproject.toml"
       - "libs/cua/typescript/package.json"
-      - "libs/typescript/fleet/package.json"
       - ".github/workflows/docs-page-tests.yml"
   workflow_dispatch:
 
@@ -28,6 +27,10 @@ env:
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   page-tests:
@@ -47,7 +50,7 @@ jobs:
           --with-editable libs/cua/python --with-editable libs/python/cua-sandbox
           pytest -q
           docs/scripts/tests/test_unified_sandbox_docs.py
-          docs/scripts/tests/test_fleet_driver_guide.py
+          docs/scripts/tests/test_desktop_driver_guide.py
           docs/scripts/tests/test_sandbox_secret_example.py
-          docs/scripts/tests/test_fleet_docs_version_facts.py
+          docs/scripts/tests/test_docs_version_facts.py
           docs/scripts/tests/test_openai_agents_example.py

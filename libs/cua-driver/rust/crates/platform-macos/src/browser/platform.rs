@@ -886,7 +886,15 @@ impl BrowserPlatform for MacOsBrowserPlatform {
     }
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
-        Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
+        // Measured on Chrome 155 with another app frontmost: CDP
+        // Input.dispatchMouseEvent (with and without focus emulation) into a
+        // hidden background tab, and into the active tab of a window behind
+        // another app, delivered trusted events (isTrusted=true) without
+        // changing the frontmost app or raising the browser window, including
+        // clicks that focus inputs, buttons, links and selects. The
+        // background click route never calls Page.bringToFront or
+        // Target.activateTarget.
+        None
     }
 
     fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
@@ -897,8 +905,8 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         // only navigates on real keystrokes.
         Some(
             "Chrome brings itself to the front to show its \"Allow remote debugging?\" prompt \
-             for every new DevTools connection, and turning remote debugging on needs Chrome in \
-             front",
+             whenever a new DevTools connection opens (sessions then share that one connection), \
+             and turning remote debugging on needs Chrome in front",
         )
     }
 

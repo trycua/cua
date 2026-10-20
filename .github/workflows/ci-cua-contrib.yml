@@ -24,7 +24,7 @@ on:
       - "libs/cua/crates/cua-cli/**"
       - "libs/python/cua-sandbox/**"
       - "libs/cua-bench/cua_bench/**"
-      - "docs/content/docs/cua-sdk/guides/contrib-providers.mdx"
+      - "docs/content/docs/cua-sdk/guides/local-runtimes.mdx"
       - ".github/actions/cua-sandbox/**"
       - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
       - ".github/workflows/ci-cua-contrib.yml"
@@ -38,6 +38,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -56,10 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
@@ -122,10 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:

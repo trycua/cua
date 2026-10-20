@@ -186,6 +186,19 @@ pub fn keyed_config(template: &CursorConfig, key: &str) -> CursorConfig {
     config
 }
 
+/// Tell each cursor whether another agent cursor is on screen with it, so the
+/// minimal badge can name them apart. Call once per tick, before advancing.
+pub fn update_peer_presence<'a>(cores: impl Iterator<Item = &'a mut RenderStateCore>) {
+    let mut cores: Vec<&mut RenderStateCore> = cores.collect();
+    let shown = cores
+        .iter()
+        .filter(|core| core.is_revealed() && !core.pinned_target_off_workspace)
+        .count();
+    for core in cores.iter_mut() {
+        core.peer_cursors_visible = shown >= 2;
+    }
+}
+
 /// The keyed render collection plus per-platform state `P` (screen geometry,
 /// timing stamps) that the adapter owns.
 pub struct RenderMap<S, P = ()> {
@@ -316,6 +329,7 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
 
     /// Advance every cursor; returns the keys whose planned path just ended.
     pub fn tick_all(&mut self, dt: f64) -> Vec<CursorKey> {
+        update_peer_presence(self.cursors.values_mut().map(S::core_mut));
         let mut arrived = Vec::new();
         for (key, cursor) in self.cursors.iter_mut() {
             if cursor.tick(dt) {
@@ -343,6 +357,30 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
 mod tests {
     use super::*;
     use crate::ReducedMotion;
+
+    #[test]
+    fn cursors_know_when_another_agent_cursor_is_on_screen() {
+        let mut map = Map::new(CursorConfig::default(), ());
+        placed(&mut map, "a");
+        map.apply_msg(move_msg("a", 100.0, 100.0));
+        map.tick_all(0.016);
+        assert!(!map.cursors["a"].peer_cursors_visible, "one cursor alone");
+
+        placed(&mut map, "b");
+        map.apply_msg(move_msg("b", 400.0, 300.0));
+        map.tick_all(0.016);
+        map.tick_all(0.016);
+        assert!(map.cursors["a"].peer_cursors_visible);
+        assert!(map.cursors["b"].peer_cursors_visible);
+        assert!(
+            !map.cursors[DEFAULT_CURSOR_KEY].is_revealed(),
+            "the unplaced default cursor does not count"
+        );
+
+        map.remove("b".to_owned());
+        map.tick_all(0.016);
+        assert!(!map.cursors["a"].peer_cursors_visible);
+    }
 
     type Map = RenderMap<RenderStateCore>;
 

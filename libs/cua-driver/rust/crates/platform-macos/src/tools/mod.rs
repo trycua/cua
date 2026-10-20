@@ -13,6 +13,7 @@ mod kill_app;
 mod launch_app;
 mod list_apps;
 mod list_windows;
+mod menu_equivalent;
 mod press_key;
 mod right_click;
 mod scroll;
@@ -26,6 +27,7 @@ mod type_text;
 // through GetWindowStateTool.
 mod check_permissions;
 mod cursor_tools;
+mod desktop_pointer_guard;
 mod get_accessibility_tree;
 mod get_config;
 mod get_cursor_position;
@@ -262,6 +264,8 @@ pub use check_permissions::{
 };
 
 pub use cua_driver_core::snapshot_store::ZoomContext;
+pub(crate) use health_report::current_bundle_identifier as main_bundle_identifier;
+pub(crate) use health_report::sw_vers_product_version as macos_product_version;
 
 /// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
 ///
@@ -298,6 +302,35 @@ pub(crate) fn background_refusal_result(
         refusal.code, refusal.reason
     ))
     .with_structured(structured)
+}
+
+/// Hint shown with every `windowserver_connection_invalid` refusal.
+pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `cua-driver permissions grant`.";
+
+/// Structured refusal for a background action whose no-raise focus step got
+/// `SLPSPostEventRecordTo` status 1002 (invalid connection). Nothing was sent
+/// to the target.
+pub(crate) fn windowserver_connection_refusal(
+    pid: i32,
+    window_id: Option<u32>,
+) -> cua_driver_core::protocol::ToolResult {
+    cua_driver_core::delivery::background_unavailable_result(
+        format!(
+            "Background input is not available for pid {pid}: the WindowServer connection is \
+             invalid (SLPSPostEventRecordTo returned 1002). {WINDOWSERVER_INVALID_HINT}"
+        ),
+        "background_unavailable",
+        "the daemon has no valid WindowServer connection, so no-raise focus cannot work; \
+         run the app-bundle daemon, or retry with delivery_mode:\"foreground\".",
+        serde_json::json!({
+            "reason": "windowserver_connection_invalid",
+            "status": crate::input::skylight::WINDOWSERVER_INVALID_CONNECTION,
+            "effect": "refused",
+            "pid": pid,
+            "window_id": window_id,
+            "hint": WINDOWSERVER_INVALID_HINT,
+        }),
+    )
 }
 
 /// Exclusive per-process ownership of one background mutation. Callers must
@@ -386,6 +419,72 @@ async fn decide_background_window_action(
         }
     }
 }
+
+/// The keyboard action class for a window-addressed background key or text
+/// request. When the focus-record transport exists the exact window is made
+/// the app's key window for the duration of the post (see
+/// [`post_keys_to_window`]), so a second same-pid window is not ambiguous.
+/// Without it the caller's fail-closed `generic` class applies.
+pub(crate) fn window_keyboard_action(
+    generic: cua_driver_core::background_input::BackgroundAction,
+) -> cua_driver_core::background_input::BackgroundAction {
+    if crate::input::skylight::is_focus_without_raise_available() {
+        cua_driver_core::background_input::BackgroundAction::ExactWindowKeys
+    } else {
+        generic
+    }
+}
+
+/// Make `window_id` the app's key window, confirmed, for pid-routed keys.
+/// `Ok(None)` when no window is addressed or the SPIs are missing (keys go
+/// where they always did). `Err` carries the refusal text: no key may be
+/// posted, it could reach a sibling window.
+pub(crate) fn key_scope(
+    pid: i32,
+    window_id: Option<u32>,
+) -> Result<Option<crate::input::skylight::WindowKeyScope>, String> {
+    match window_id {
+        Some(wid) if crate::input::skylight::is_focus_without_raise_available() => {
+            crate::input::skylight::enter_exact_window_key(pid as libc::pid_t, wid).map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+
+/// [`key_scope`] for an async tool: runs the blocking prime off the runtime and
+/// turns an unconfirmed key window into the structured `window_not_key`
+/// refusal. Foreground requests and pid-only calls hold no scope.
+pub(crate) async fn acquire_key_scope(
+    pid: i32,
+    window_id: Option<u32>,
+    foreground: bool,
+) -> Result<Option<crate::input::skylight::WindowKeyScope>, cua_driver_core::protocol::ToolResult> {
+    let Some(wid) = window_id.filter(|_| !foreground) else {
+        return Ok(None);
+    };
+    match tokio::task::spawn_blocking(move || key_scope(pid, Some(wid))).await {
+        Ok(Ok(scope)) => Ok(scope),
+        Ok(Err(_)) if crate::input::skylight::windowserver_connection_invalid() => {
+            Err(windowserver_connection_refusal(pid, Some(wid)))
+        }
+        Ok(Err(reason)) => Err(background_refusal_result(
+            pid,
+            wid,
+            &cua_driver_core::background_input::BackgroundRefusal {
+                code: WINDOW_NOT_KEY,
+                reason,
+                advice: Some("foreground"),
+            },
+        )),
+        Err(error) => Err(cua_driver_core::protocol::ToolResult::error(format!(
+            "Could not prepare the key window for pid {pid}: {error}"
+        ))),
+    }
+}
+
+/// Refusal code when the addressed window cannot be confirmed as the app's
+/// key window: no key is sent, none could be proven to reach it.
+pub(crate) const WINDOW_NOT_KEY: &str = "window_not_key";
 
 /// Acquire the per-PID mutation coordinator, gather fresh exact-target facts,
 /// and ask the pure core for one background decision. `element_ptr` must stay
@@ -653,23 +752,9 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-/// Convert native pixels from `get_desktop_state` into the logical point space
-/// used by CoreGraphics input APIs. Retina scaled modes cannot rely on the
-/// nominal backing factor alone, so derive the ratio from the actual PNG.
-pub async fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
-    let ratio = tokio::task::spawn_blocking(|| {
-        let logical_w = get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
-        let shot_w = crate::capture::screenshot_display_bytes()
-            .ok()
-            .and_then(|png| crate::capture::png_dimensions(&png).ok())
-            .map(|(w, _)| w as f64);
-        match (shot_w, logical_w) {
-            (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
-            _ => 1.0,
-        }
-    })
-    .await
-    .unwrap_or(1.0);
+/// Convert native pixels from `get_desktop_state` into logical points.
+pub fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
+    let ratio = get_screen_size::main_screen_size().map_or(1.0, |(_, _, s)| s);
     (x / ratio, y / ratio)
 }
 
@@ -1303,5 +1388,25 @@ mod recording_start_guard_tests {
         assert!(ok.is_ok(), "anonymous start must never be gated");
         assert!(rec.current_state().enabled);
         let _ = rec.stop_owner(None);
+    }
+}
+
+#[cfg(test)]
+mod windowserver_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn refusal_names_the_reason_and_the_app_bundle_daemon() {
+        let result = windowserver_connection_refusal(42, Some(7));
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["reason"], "windowserver_connection_invalid");
+        assert_eq!(structured["status"], 1002);
+        assert_eq!(structured["window_id"], 7);
+        assert!(structured["hint"]
+            .as_str()
+            .unwrap()
+            .contains("cua-driver permissions grant"));
     }
 }

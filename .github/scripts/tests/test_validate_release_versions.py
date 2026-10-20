@@ -22,6 +22,23 @@ def copy_release_sources(destination: Path) -> None:
     (destination / config).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO_ROOT / config, destination / config)
     shutil.copy(REPO_ROOT / ".release-please-manifest.json", destination)
+    shutil.copy(REPO_ROOT / "release-please-config.json", destination)
+    for relative in (
+        "uv.lock",
+        "libs/cua-bench/uv.lock",
+        "libs/cua-bench/pyproject.toml",
+        "libs/python/agent/pyproject.toml",
+        "libs/python/core/pyproject.toml",
+        "libs/python/bench-ui/pyproject.toml",
+        "libs/python/som/pyproject.toml",
+        "libs/python/cua-sandbox-apps/pyproject.toml",
+        "libs/python/cua-sandbox-apps/uv.lock",
+        "libs/typescript/core/package.json",
+        "libs/typescript/playground/package.json",
+        "libs/cuabot/package.json",
+    ):
+        (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / relative, destination / relative)
     for filename in ("VERSION", "pyproject.toml", "uv.lock", "cua_sandbox/__init__.py"):
         relative = Path("libs/python/cua-sandbox") / filename
         (destination / relative).parent.mkdir(parents=True, exist_ok=True)

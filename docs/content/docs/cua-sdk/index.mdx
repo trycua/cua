@@ -55,14 +55,14 @@ await sb.delete_();
 </Tabs>
 
 Setup: `cua runtime doctor` shows what this host has and `cua runtime setup`
-installs what is missing ([Local runtimes](/cua-sdk/guides/local-runtimes)).
+installs what is missing ([Choose where sandboxes run](/cua-sdk/guides/local-runtimes)).
 Containers run the host's architecture (others run emulated); macOS runs in
 Lume VMs on Apple silicon.
 
 ## Reach another machine
 
 Any machine that runs [cua-spacesd](/cua-sdk/guides/spacesd), such as a spare
-Mac, a server on your LAN or [Tailscale](/start-here/host-spaces-on-your-spare-mac),
+Mac, a server on your LAN or [Tailscale](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces),
 or a container you started, connects directly by address and env token.
 Nothing is created or deleted:
 
@@ -91,8 +91,8 @@ console.log(new TextDecoder().decode((await guest.sh('uname -a', undefined)).std
 </Tabs>
 
 The CLI does the same with `cua sb create --on direct:10.0.0.5:3211 --token
-"$CUA_ENV_TOKEN"`. To share machines across a team, join the
-[Teams waitlist](https://cua.ai/teams).
+"$CUA_ENV_TOKEN"`. To share machines across a team, use Teams: $30 per seat a month, from 1 seat.
+See [pricing](https://cua.ai/pricing#plans).
 
 ## Packages
 

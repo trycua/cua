@@ -1,7 +1,7 @@
 //! Channel construction: native gRPC (HTTP/2, h2c or TLS) through tonic, or
 //! gRPC-Web over HTTP/1.1 through `tonic-web`'s client layer and a hyper
 //! HTTP/1 connector. Both are wrapped in one boxed service that adds the
-//! endpoint's path prefix and the auth / principal / Fleet headers.
+//! endpoint's path prefix and the auth / principal headers.
 
 use crate::{
     endpoint::{Endpoint, EndpointKind},
@@ -50,19 +50,15 @@ impl std::error::Error for ChannelError {
     }
 }
 
-/// Header carrying the Fleet claim for gateway correlation (same as
-/// `cyclops-sdk`'s `service_request`).
-pub const FLEET_CLAIM_HEADER: &str = "x-cua-fleet-claim";
-
 /// Header carrying the spacesd token when `authorization` is taken by
-/// the Fleet gateway bearer.
+/// a gateway bearer (the relay's account session).
 pub const ENV_TOKEN_HEADER: &str = "x-cua-env-authorization";
 
 /// Wire protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TransportPreference {
     /// Probe native gRPC first and fall back to gRPC-Web (direct endpoints),
-    /// or use gRPC-Web directly (Fleet gateway, relay).
+    /// or use gRPC-Web directly (relay).
     #[default]
     Auto,
     /// Native gRPC over HTTP/2 only.
@@ -83,7 +79,7 @@ pub enum Transport {
 /// Extra request headers a [`BearerProvider`] adds (name, value).
 pub type ExtraHeaders = Vec<(String, String)>;
 
-/// Supplies the Fleet gateway bearer (for example `CyclopsClient::access_token`).
+/// Supplies the gateway bearer (the relay's account session).
 pub trait BearerProvider: Send + Sync {
     /// Returns the raw bearer token (without the `Bearer ` prefix).
     fn bearer(
@@ -128,20 +124,18 @@ where
     }
 }
 
-/// Fleet gateway credentials: the gateway bearer and the claim name.
+/// Gateway credentials: the bearer a relay-style gateway authenticates the
+/// account with. The spacesd token then travels in [`ENV_TOKEN_HEADER`].
 #[derive(Clone)]
 pub struct GatewayAuth {
     /// Bearer source (refreshing).
     pub bearer: Arc<dyn BearerProvider>,
-    /// Exact claim name returned by Fleet, sent as `X-Cua-Fleet-Claim`.
-    pub claim: Option<String>,
 }
 
 impl fmt::Debug for GatewayAuth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GatewayAuth")
             .field("bearer", &"<provider>")
-            .field("claim", &self.claim)
             .finish()
     }
 }
@@ -164,6 +158,30 @@ impl Default for Keepalive {
     }
 }
 
+static PROCESS_PRINCIPAL: std::sync::RwLock<Option<HeaderValue>> = std::sync::RwLock::new(None);
+
+/// Sets the principal every client in this process sends when its own
+/// [`crate::ConnectOptions::principal`] is unset. An agent host (`cua mcp`)
+/// sets an agent principal once it knows the agent's name, so the Spaces it
+/// acts in draw a labelled agent cursor. Read on each request: clients made
+/// before the call pick it up. `None` clears it.
+pub fn set_process_principal(principal: Option<Principal>) {
+    let value = principal.and_then(|p| {
+        HeaderValue::from_str(
+            &base64::engine::general_purpose::STANDARD_NO_PAD.encode(p.encode_to_vec()),
+        )
+        .ok()
+    });
+    *PROCESS_PRINCIPAL.write().unwrap_or_else(|e| e.into_inner()) = value;
+}
+
+fn process_principal() -> Option<HeaderValue> {
+    PROCESS_PRINCIPAL
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// Everything needed to build a channel.
 #[derive(Clone)]
 pub(crate) struct ChannelConfig {
@@ -173,6 +191,7 @@ pub(crate) struct ChannelConfig {
     pub gateway: Option<GatewayAuth>,
     pub connect_timeout: Duration,
     pub keepalive: Keepalive,
+    pub headers: Vec<(String, String)>,
 }
 
 /// Decides the transport order for `pref` and `endpoint`.
@@ -181,8 +200,6 @@ pub(crate) fn transport_order(pref: TransportPreference, endpoint: &Endpoint) ->
         TransportPreference::Native => vec![Transport::Native],
         TransportPreference::GrpcWeb => vec![Transport::GrpcWeb],
         TransportPreference::Auto => match endpoint.kind() {
-            // The gateway's `/api/svc` proxy is HTTP/1.1 upstream.
-            EndpointKind::FleetGateway { .. } => vec![Transport::GrpcWeb],
             EndpointKind::Relay { .. } | EndpointKind::Direct => {
                 vec![Transport::Native, Transport::GrpcWeb]
             }
@@ -306,8 +323,8 @@ fn grpc_web_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
 /// the trailers frame arrive in the same body chunk: it returns the data,
 /// parks the trailers, and at end of stream reports "missing grpc-status
 /// trailer". Direct connections to cua-spacesd never hit it (hyper writes
-/// each frame as its own chunk), but a buffering proxy does: the Fleet
-/// gateway (nginx) coalesces a unary response into one chunk.
+/// each frame as its own chunk), but a buffering proxy does: nginx
+/// coalesces a unary response into one chunk.
 ///
 /// Frames larger than [`GrpcWebFrames::MAX_FRAME`] (never produced by the
 /// driver: messages are capped at 8 MiB) are passed through unbuffered.
@@ -404,7 +421,7 @@ pub(crate) struct HeaderInjector {
     env_token_header: Option<HeaderValue>,
     principal: Option<HeaderValue>,
     gateway: Option<GatewayAuth>,
-    claim: Option<HeaderValue>,
+    extra: Vec<(http::header::HeaderName, HeaderValue)>,
 }
 
 impl HeaderInjector {
@@ -433,20 +450,24 @@ impl HeaderInjector {
             })
             .transpose()
             .map_err(|_| Error::InvalidEndpoint("principal".into()))?;
-        let claim = cfg
-            .gateway
-            .as_ref()
-            .and_then(|g| g.claim.as_deref())
-            .filter(|c| valid_claim(c))
-            .map(HeaderValue::from_str)
-            .transpose()
-            .map_err(|_| Error::InvalidEndpoint("claim".into()))?;
+        let extra = cfg
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                let name = http::header::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| Error::InvalidEndpoint(format!("header name {name:?}")))?;
+                let mut value = HeaderValue::from_str(value)
+                    .map_err(|_| Error::InvalidEndpoint("header value".into()))?;
+                value.set_sensitive(true);
+                Ok((name, value))
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             authorization,
             env_token_header,
             principal,
             gateway: cfg.gateway.clone(),
-            claim,
+            extra,
         })
     }
 
@@ -457,9 +478,6 @@ impl HeaderInjector {
             let mut value = HeaderValue::from_str(&format!("Bearer {token}"))?;
             value.set_sensitive(true);
             headers.insert(AUTHORIZATION, value);
-            if let Some(claim) = &self.claim {
-                headers.insert(FLEET_CLAIM_HEADER, claim.clone());
-            }
             if let Some(env) = &self.env_token_header {
                 headers.insert(ENV_TOKEN_HEADER, env.clone());
             }
@@ -472,20 +490,14 @@ impl HeaderInjector {
         } else if let Some(auth) = &self.authorization {
             headers.insert(AUTHORIZATION, auth.clone());
         }
-        if let Some(p) = &self.principal {
-            headers.insert(metadata::PRINCIPAL_BIN, p.clone());
+        if let Some(p) = self.principal.clone().or_else(process_principal) {
+            headers.insert(metadata::PRINCIPAL_BIN, p);
+        }
+        for (name, value) in &self.extra {
+            headers.insert(name.clone(), value.clone());
         }
         Ok(())
     }
-}
-
-/// Same validation `cyclops-sdk` applies before sending `X-Cua-Fleet-Claim`.
-fn valid_claim(claim: &str) -> bool {
-    !claim.is_empty()
-        && claim.len() <= 128
-        && claim
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._~-".contains(&b))
 }
 
 #[derive(Clone)]
@@ -563,12 +575,10 @@ mod extra_header_tests {
             endpoint: Endpoint::parse("https://relay.example/m/abcd1234").unwrap(),
             token: Some("env".into()),
             principal: None,
-            gateway: Some(GatewayAuth {
-                bearer,
-                claim: None,
-            }),
+            gateway: Some(GatewayAuth { bearer }),
             connect_timeout: Duration::from_secs(1),
             keepalive: Keepalive::default(),
+            headers: Vec::new(),
         }
     }
 
@@ -587,5 +597,44 @@ mod extra_header_tests {
         let mut req = Request::new(());
         plain.apply(&mut req).await.unwrap();
         assert!(!req.headers().contains_key("x-cua-device-session"));
+    }
+
+    /// The process principal fills in for clients without their own, is
+    /// read per request, and never overrides an explicit one.
+    #[tokio::test]
+    async fn process_principal_is_the_fallback() {
+        let decode = |req: &Request<()>| {
+            let raw = req.headers().get(metadata::PRINCIPAL_BIN)?.to_str().ok()?;
+            let bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(raw)
+                .ok()?;
+            Principal::decode(&bytes[..]).ok()
+        };
+        let agent = Principal {
+            id: "agent:claude-code".into(),
+            display_name: "Claude Code".into(),
+            kind: cua_proto::env::v1::PrincipalKind::Agent as i32,
+            ..Principal::default()
+        };
+        let plain = HeaderInjector::new(&config(Arc::new(StaticBearer("a".into())))).unwrap();
+        let mut explicit_cfg = config(Arc::new(StaticBearer("a".into())));
+        explicit_cfg.principal = Some(Principal {
+            id: "ada".into(),
+            ..Principal::default()
+        });
+        let explicit = HeaderInjector::new(&explicit_cfg).unwrap();
+
+        set_process_principal(Some(agent.clone()));
+        let mut req = Request::new(());
+        plain.apply(&mut req).await.unwrap();
+        assert_eq!(decode(&req), Some(agent));
+        let mut req = Request::new(());
+        explicit.apply(&mut req).await.unwrap();
+        assert_eq!(decode(&req).unwrap().id, "ada");
+
+        set_process_principal(None);
+        let mut req = Request::new(());
+        plain.apply(&mut req).await.unwrap();
+        assert!(decode(&req).is_none());
     }
 }

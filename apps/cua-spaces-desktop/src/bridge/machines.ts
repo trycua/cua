@@ -8,24 +8,23 @@
 import type { AppModel } from "../model/app-model";
 import type { BridgeContext } from "./context";
 import type { Handlers } from "./host";
+import { computerName } from "../model/devices";
 import { encode } from "./value";
 
 /** This machine as a host (the core's flattened `HostStatus`), plus its relay machine id and setup progress; null until it answered. */
 export function hostStatus(model: AppModel): unknown {
   const state = model.host.state;
   if (!state) return null;
-  return { ...(encode(state) as Record<string, unknown>), machineId: model.host.machineId, progress: model.host.progress };
+  const out: Record<string, unknown> = { ...(encode(state) as Record<string, unknown>), machineId: model.host.machineId, progress: model.host.progress };
+  // Before setup the host has no name yet: the web UI's setup form starts
+  // with what the system calls this computer.
+  if (!state.configured && !out.name) out.name = computerName();
+  return out;
 }
 
 /** `relay:<machine>` rows' reported hostnames, by machine id. */
 export function relayHostnames(model: AppModel): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const space of model.spaces) {
-    if (!space.id.startsWith("relay:") || space.host) continue;
-    const name = model.backend.reportedHostname(space.id);
-    if (name) out[space.id.slice(6)] = name;
-  }
-  return out;
+  return model.relayHostnames;
 }
 
 export function machinesState(model: AppModel) {
@@ -44,6 +43,9 @@ export function machinesState(model: AppModel) {
     // Who the relay sees connected now.
     presence: devices.relayOnline,
     deviceStates: devices.deviceStates,
+    // The page's rows as the core lists them (`machines::page_rows`), the
+    // same the SwiftUI Machines page shows.
+    rows: encode(model.machinePageRows),
   };
 }
 

@@ -337,6 +337,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-create-failure"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cua-image"
 version = "0.1.0"
 dependencies = [
@@ -378,6 +385,7 @@ dependencies = [
  "base64 0.22.1",
  "bollard",
  "bytes",
+ "cua-create-failure",
  "filetime",
  "futures",
  "libc",

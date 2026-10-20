@@ -16,7 +16,7 @@ pub struct ToolCoverage {
     pub tool: String,
     /// The typed Rust path that reaches it.
     pub sdk_symbol: String,
-    /// `fleet`, `local`, `direct` — from the contract.
+    /// `local`, `direct`, ... — from the contract.
     pub providers: Vec<String>,
     /// `free`, `metered` or `cloud`, from the contract.
     pub metering: String,

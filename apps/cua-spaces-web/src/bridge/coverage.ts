@@ -40,7 +40,11 @@ import { HOST_SETUP_COVERAGE } from "./ops/host-setup";
 import { SPACE_DETAIL_COVERAGE } from "./ops/space-detail";
 import { STREAM_COVERAGE } from "./ops/stream";
 import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
+import { NUDGES_COVERAGE } from "./ops/nudges";
+import { RESOURCES_COVERAGE } from "./ops/resources";
+import { CHECKLIST_COVERAGE } from "./ops/checklist";
 import { PRESENCE_COVERAGE } from "./ops/presence";
+import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
 import { STARTUP_COVERAGE } from "./ops/startup";
 
@@ -93,15 +97,13 @@ export const HOST_COVERAGE = {
   "keyvault.deny": { webkit: { methods: ["keyvault.deny"] }, tauri: ["keyvault_deny"] },
   "keyvault.revokeGrant": { webkit: { methods: ["keyvault.revokeGrant"] }, tauri: ["keyvault_revoke_grant"] },
   "session.get": {
-    webkit: { methods: ["session.get"] },
-    electron: { methods: ["session.get", "onboarding.get"] },
+    webkit: { methods: ["session.get", "onboarding.get"] },
     tauri: ["fleet_status", "onboarding_state", "daemon_status"],
   },
   "session.signIn": { webkit: { methods: ["session.signIn"] }, tauri: ["begin_sign_in"] },
   "session.signOut": { webkit: { methods: ["session.signOut"] }, tauri: ["sign_out"] },
   "session.completeOnboarding": {
-    webkit: { methods: [], byDesign: "the SwiftUI app's first run is its own window; resolves without a call" },
-    electron: { methods: ["onboarding.complete"] },
+    webkit: { methods: ["onboarding.complete"] },
     tauri: ["complete_onboarding"],
   },
   "session.openExternal": {
@@ -134,6 +136,8 @@ export const HOST_COVERAGE = {
   "about.get": { webkit: { methods: ["about.get"] }, tauri: ST["about.get"] },
   "about.set": { webkit: { methods: ["about.set"] }, tauri: ST["about.set"], unsupported: { tauri: "the Tauri updater has one feed and no controls" } },
   "about.checkNow": { webkit: { methods: ["about.checkNow"] }, tauri: ST["about.checkNow"], unsupported: { tauri: "the Tauri updater has one feed and no controls" } },
+  "update.get": { webkit: { methods: ["update.get"] }, tauri: ST["update.get"], unsupported: { tauri: "the Tauri updater has no in-app indicator" } },
+  "update.install": { webkit: { methods: ["update.install"] }, tauri: ST["update.install"], unsupported: { tauri: "the Tauri updater has no in-app indicator" } },
   "experiments.get": { webkit: { methods: ["app.info"] }, tauri: ST["experiments.get"] },
   "experiments.set": { webkit: { methods: ["app.info", "settings.choose"] }, tauri: ST["experiments.set"] },
   "loginItem.get": { webkit: { methods: ["loginItem.get"] }, tauri: ST["loginItem.get"] },
@@ -149,18 +153,24 @@ export const HOST_COVERAGE = {
   "devices.createPairingCode": { webkit: { methods: ["devices.createPairingCode"] }, tauri: ST["devices.createPairingCode"] },
   "devices.pairingCodes": { webkit: { methods: ["devices.pairingCodes"] }, tauri: ST["devices.pairingCodes"] },
   "devices.revokePairingCode": { webkit: { methods: ["devices.revokePairingCode"] }, tauri: ST["devices.revokePairingCode"] },
+  "teams.list": { webkit: { methods: ["teams.list"] }, tauri: ST["teams.list"] },
   "storage.get": { webkit: { methods: ["storage.get"] }, tauri: ST["storage.get"] },
   "storage.run": { webkit: { methods: ["storage.run"] }, tauri: ST["storage.run"] },
   // Notifications (ops/notifications.ts).
   "notifications.list": { webkit: { methods: ["notifications.list"] }, tauri: NT["notifications.list"] },
   "notifications.markAllRead": { webkit: { methods: ["notifications.markAllRead"] }, tauri: NT["notifications.markAllRead"] },
+  "notifications.markRead": { webkit: { methods: ["notifications.markRead"] }, tauri: NT["notifications.markRead"] },
   ...TELEMETRY_COVERAGE,
   ...SPACE_DETAIL_COVERAGE,
   ...HOST_SETUP_COVERAGE,
   ...STARTUP_COVERAGE,
   ...STREAM_COVERAGE,
   ...RELAY_USAGE_COVERAGE,
+  ...NUDGES_COVERAGE,
+  ...RESOURCES_COVERAGE,
+  ...CHECKLIST_COVERAGE,
   ...PRESENCE_COVERAGE,
+  ...RUNTIME_FIX_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;
 
 /**
@@ -169,4 +179,5 @@ export const HOST_COVERAGE = {
  */
 export const WEBKIT_HOST_ONLY: Partial<Record<WebkitMethod, string>> = {
   "window.setDragRegions": "the webkit adapter sends the page's drag regions itself whenever the layout changes (drag-regions.ts)",
+  "window.setDropTargets": "the webkit adapter sends the Space tiles' boxes itself whenever the layout changes, for a real window dragged onto one (window-drop.ts)",
 };

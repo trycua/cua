@@ -8,7 +8,7 @@ description = "Real local-runtime e2e tests for cua-vmm / cua-image (gated by CU
 [dependencies]
 cua-vmm = { path = "../../../libs/cua/crates/cua-vmm" }
 cua-image = { path = "../../../libs/cua/crates/cua-image" }
-# fleet_catalog.rs drives the SDK's local provider end to end.
+# builtin_linux.rs drives the SDK's local provider end to end.
 cua-daemon = { path = "../../../libs/cua/crates/cua-daemon", default-features = false }
 cua-sandbox-core = { path = "../../../libs/cua/crates/cua-sandbox-core" }
 # builtin_linux.rs creates a Space through the Spaces SDK the apps use.

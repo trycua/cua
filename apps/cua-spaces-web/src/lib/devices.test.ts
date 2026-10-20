@@ -17,7 +17,7 @@ describe("devicesPageState", () => {
 });
 
 describe("shellDevicesBanner", () => {
-  const banner = { tone: "warning" as const, text: "Enroll this device within 3 days to keep reaching your machines.", action: "enroll" as const, actionLabel: "Enroll…" };
+  const banner = { tone: "warning" as const, text: "Enroll this device within 3 days to keep reaching your computers.", action: "enroll" as const, actionLabel: "Enroll…" };
   const read = (input: { devices?: { id: string; state: string }[]; readError?: string | null }) => ({ input, view: { banner } });
 
   it("shows the core's bar once signed in and read", () => {

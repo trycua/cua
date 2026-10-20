@@ -52,18 +52,24 @@ pub enum SessionDelivery {
 /// consent or an audited unattended rule.
 #[async_trait::async_trait]
 pub trait SessionBroker: Send + Sync {
-    /// Files an access request for the whole app session into `target`.
+    /// Files an access request into `target` for exactly the manifest
+    /// `paths` of `app` the caller selected (already validated against the
+    /// manifest, and acknowledged when sensitive). The Keyvault captures and
+    /// grants those parts and nothing else, never the whole stored session.
     /// Returns the request id. Moves nothing.
     async fn request_access(
         &self,
         app: &str,
         target: &str,
+        paths: &[String],
         duration_secs: u64,
         reason: &str,
     ) -> Result<String, SessionBrokerError>;
 
     /// Waits up to `timeout` for the decision on `request_id` and, when it is
-    /// granted, performs the delivery through the broker.
+    /// granted, performs the delivery through the broker. What is delivered
+    /// is what the grant covers (the selection the request was filed with),
+    /// whatever the caller passes here.
     async fn await_and_deliver(
         &self,
         app: &str,

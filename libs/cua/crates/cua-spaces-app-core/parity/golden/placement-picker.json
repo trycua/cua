@@ -41,10 +41,12 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -87,10 +89,12 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -133,10 +137,12 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -176,10 +182,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -221,10 +229,12 @@
           "Kind: Virtual machine",
           "Runtime: Virtual machine on Mac mini",
           "Resources: 4 cores, 8 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -264,10 +274,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -307,10 +319,12 @@
           "Kind: Container",
           "Runtime: Container on lab",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -353,10 +367,12 @@
           "Kind: Container",
           "Runtime: Container on lab",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -391,7 +407,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 0,
@@ -403,11 +419,11 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows | AWS does not run this image. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
         ]
       }
@@ -452,10 +468,12 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -495,10 +513,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -534,10 +554,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -573,10 +595,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -609,10 +633,12 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -644,10 +670,12 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     },
     {
@@ -679,10 +707,12 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
-        "systemsOff": []
+        "systemsOff": [
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+        ]
       }
     }
   ]

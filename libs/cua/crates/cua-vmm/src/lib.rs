@@ -30,9 +30,11 @@ pub mod error;
 pub mod exec;
 pub mod gpu;
 pub mod host;
+pub mod local_network;
 #[cfg(feature = "lume")]
 pub mod lume;
 pub mod managed;
+pub mod preflight;
 pub mod probe;
 pub mod progress;
 #[cfg(feature = "qemu")]

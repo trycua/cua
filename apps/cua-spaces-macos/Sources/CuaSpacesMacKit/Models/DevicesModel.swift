@@ -194,7 +194,7 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
         let now = UInt64(Date().timeIntervalSince1970)
         let code = "K7QM-4XPB-\(String(format: "%04d", pairing.count + 1))"
         let made = PairingCode(
-            id: "pc_fixture\(pairing.count + 1)", code: code, url: "https://spaces.cua.ai/add/\(code)",
+            id: "pc_fixture\(pairing.count + 1)", code: code, url: "https://cua.ai/add/\(code)",
             installSh: "curl -fsSL https://cua.ai/install.sh | sh -s -- --pair \(code)",
             installPowershell: "& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair \(code)",
             state: "active", team: team, createdAt: now, expiresAt: now + 1800, usedAt: nil, machine: nil)
@@ -235,6 +235,9 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
         var u = free
         switch name {
         case "none": return nil
+        case "warn":
+            u.hoursUsed = 16.5
+            u.myHoursUsed = 16.5
         case "reached":
             u.liveSessions = 2
             u.hoursUsed = 20.4
@@ -487,13 +490,24 @@ public final class DevicesModel {
 
     /// The notice above the main window, until dismissed for this month and
     /// these reasons.
+    ///
+    /// At 80% of the relay hours (`warn`) it is a prompt, so it waits while a
+    /// live session is going; past the allowance (`limit`) it always shows.
     public var relayNotice: AppRelayAllowanceNotice? {
         guard let notice = relayUsageView?.notice, notice.dismissKey != relayNoticeDismissed else { return nil }
+        if notice.level == "warn", (relayUsage?.liveSessions ?? 0) > 0 { return nil }
         return notice
+    }
+
+    /// One usage event for a Pro or Teams surface (`upsell_<surface>_<action>`,
+    /// fixed names in the app core's telemetry schema).
+    public func recordUpsell(_ feature: String) {
+        telemetry?.record(appTelemetryFeature(feature: feature))
     }
 
     public func dismissRelayNotice() {
         guard let key = relayUsageView?.notice?.dismissKey else { return }
+        recordUpsell("upsell_meter_dismiss")
         relayNoticeDismissed = key
         defaults.set(key, forKey: Self.relayNoticeDismissedKey)
     }

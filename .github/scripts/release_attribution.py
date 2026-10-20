@@ -62,7 +62,7 @@ TRAILING_PR_RE = re.compile(r"\s+\(#(?P<number>\d+)\)\s*$")
 LEGACY_RELEASE_BUMP_RE = re.compile(r"^Bump (?:cua-driver-rs|lume) to v\S+$", re.IGNORECASE)
 PUBLISHED_INSTALLER_BUMP_RE = re.compile(
     r"^chore\(cua-driver\): advance published installer version to "
-    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*) \[skip ci\]$",
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?: \[skip ci\])?(?: \(#\d+\))?$",
     re.IGNORECASE,
 )
 NOREPLY_RE = re.compile(

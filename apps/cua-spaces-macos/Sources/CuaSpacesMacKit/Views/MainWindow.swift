@@ -75,8 +75,6 @@ public struct MainWindow: View {
             await model.refresh()
             await model.keyvault.refresh()
         }
-        // The checklist ticks off what the app already shows.
-        .onChange(of: model.checklistSeen, initial: true) { _, seen in model.checklist.send(seen) }
         // The relay allowance: at once (and on every sign-in or out), every
         // 5 minutes, and when the app comes to the front.
         .task(id: model.devices.signedIn) {
@@ -197,7 +195,7 @@ struct Sidebar: View {
                 KeyvaultHeader(keyvault: kv, title: model.chrome.keyvaultTitle)
             }
             Section {
-                Label("Machines", systemImage: "server.rack").tag(MainSelection.machines)
+                Label("Computers", systemImage: "server.rack").tag(MainSelection.machines)
                 Label("Agents", systemImage: "person.2").tag(MainSelection.agents)
                 // Only with the Cua Volume experiment on (the core's chrome).
                 if let volume = model.chrome.volumeLabel {

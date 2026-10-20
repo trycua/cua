@@ -3,12 +3,12 @@ name: "CI: Cua Driver Bench"
 on:
   pull_request:
     paths:
-      - "benchmarks/cua-driver-bench/**"
+      - "libs/cua-driver-bench/**"
       - ".github/workflows/ci-cua-driver-bench.yml"
   push:
     branches: [main]
     paths:
-      - "benchmarks/cua-driver-bench/**"
+      - "libs/cua-driver-bench/**"
       - ".github/workflows/ci-cua-driver-bench.yml"
   workflow_dispatch:
 
@@ -33,11 +33,11 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
       - name: Build BenchLab and BenchSentinel
-        working-directory: benchmarks/cua-driver-bench/automated-eval/macos_bench
+        working-directory: libs/cua-driver-bench/automated-eval/macos_bench
         run: swift/build.sh "$RUNNER_TEMP/bench-build"
 
       - name: Run harness, checker and sentinel tests
-        working-directory: benchmarks/cua-driver-bench/automated-eval/macos_bench
+        working-directory: libs/cua-driver-bench/automated-eval/macos_bench
         env:
           CDB_BENCH_WORK: ${{ runner.temp }}/cdb-bench-work
         run: >-
@@ -61,7 +61,7 @@ jobs:
           node-version: "22"
 
       - name: Evaluator, reset and manifest tests
-        working-directory: benchmarks/cua-driver-bench/taskpack/tasks/shared
+        working-directory: libs/cua-driver-bench/taskpack/tasks/shared
         run: |
           set -euo pipefail
           for task in */; do
@@ -72,7 +72,7 @@ jobs:
           done
 
       - name: App store tests
-        working-directory: benchmarks/cua-driver-bench/taskpack/tasks/shared
+        working-directory: libs/cua-driver-bench/taskpack/tasks/shared
         run: |
           set -euo pipefail
           for dir in */apps/* */fixture/archive-site; do
@@ -83,7 +83,7 @@ jobs:
           done
 
       - name: Pinned tree digests match the task pack
-        working-directory: benchmarks/cua-driver-bench/automated-eval/macos_bench
+        working-directory: libs/cua-driver-bench/automated-eval/macos_bench
         env:
           CDB_BENCH_WORK: ${{ runner.temp }}/cdb-bench-work
         run: >-
@@ -103,5 +103,5 @@ jobs:
 
       - name: Check Python files
         run: |
-          uvx ruff==0.14.10 check --no-fix benchmarks/cua-driver-bench
-          uvx ruff==0.14.10 format --check benchmarks/cua-driver-bench
+          uvx ruff==0.14.10 check --no-fix libs/cua-driver-bench
+          uvx ruff==0.14.10 format --check libs/cua-driver-bench

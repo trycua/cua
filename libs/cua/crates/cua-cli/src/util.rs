@@ -7,6 +7,21 @@ use std::{
     time::Duration,
 };
 
+/// The "Cua Cloud has ended" error every removed Cua Cloud command and option
+/// fails with (exit code 4, like the SDK).
+pub fn cloud_ended() -> CuaError {
+    CuaError::Unsupported(cua_sandbox_core::CLOUD_ENDED.into())
+}
+
+/// The arguments of a removed Cua Cloud command, accepted and ignored so
+/// that a script still calling it fails with the one ended message instead
+/// of a parse error. Such commands are hidden: not in `--help` or the docs.
+#[derive(clap::Args, Clone, Debug, Default)]
+pub struct EndedArgs {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    _args: Vec<String>,
+}
+
 /// `~/.cua` (or `$CUA_HOME`).
 pub fn cua_home() -> PathBuf {
     cua_daemon::cua_home()
@@ -142,24 +157,56 @@ pub fn open_browser(url: &str) -> bool {
     if std::env::var_os("CUA_NO_BROWSER").is_some() || !interactive() {
         return false;
     }
-    let mut cmd = if cfg!(target_os = "macos") {
-        let mut c = std::process::Command::new("open");
-        c.arg(url);
-        c
-    } else if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", "", url]);
-        c
-    } else {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(url);
-        c
+    launch_url(url)
+}
+
+/// Hands `url` to the OS's default handler.
+///
+/// Windows uses `ShellExecuteW`, never `cmd /C start`: cmd.exe reads an
+/// unquoted `&` as a command separator, so a sign-in URL arrived as
+/// `...?response_type=code` with every other query parameter lost (CUA-1701).
+#[cfg(windows)]
+fn launch_url(url: &str) -> bool {
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (verb, target) = (wide("open"), wide(url));
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    let r = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
     };
-    cmd.stdin(std::process::Stdio::null())
+    // Values above 32 mean success.
+    r as isize > 32
+}
+
+#[cfg(not(windows))]
+fn launch_url(url: &str) -> bool {
+    let (program, args) = launch_command(url);
+    std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .is_ok()
+}
+
+/// The command that opens `url` on macOS and Linux. The URL is one argv
+/// entry, passed through exactly; no shell sees it.
+#[cfg(not(windows))]
+fn launch_command(url: &str) -> (&'static str, Vec<String>) {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    (program, vec![url.to_string()])
 }
 
 /// A reqwest client with sane timeouts.
@@ -206,6 +253,121 @@ pub fn write_private(p: &std::path::Path, data: &[u8]) -> Result<(), CuaError> {
     std::fs::rename(&tmp, p).map_err(internal)
 }
 
+/// What is being created, for the words of its steps.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CreateWords {
+    /// A macOS VM (Lume downloads its base image once).
+    pub macos: bool,
+    /// A VM (it has a disk to prepare and boots).
+    pub vm: bool,
+    /// A Space (Cua starts inside it), not a bare sandbox.
+    pub space: bool,
+}
+
+impl CreateWords {
+    /// The words for an image reference or alias (`macos`, `ghcr.io/trycua/macos:26`).
+    pub fn for_image(image: &str, kind: &str, space: bool) -> Self {
+        let image = image.to_ascii_lowercase();
+        let macos = image.contains("macos");
+        Self {
+            macos,
+            vm: macos || image.contains("windows") || kind == "vm",
+            space,
+        }
+    }
+
+    /// The step `phase` in words; `None` for `ready` and phases this build
+    /// does not know.
+    pub fn step(&self, phase: cua_sandbox_core::progress::Phase) -> Option<&'static str> {
+        use cua_sandbox_core::progress::Phase;
+        Some(match phase {
+            Phase::Preparing => "Preparing",
+            Phase::Pulling if self.macos => "Downloading macOS (first time only)",
+            Phase::Pulling => "Downloading image",
+            Phase::Creating if self.vm => "Preparing the disk",
+            Phase::Creating => "Creating",
+            Phase::Booting if self.macos => "Booting macOS",
+            Phase::Booting if self.vm => "Booting",
+            Phase::Booting => "Starting",
+            Phase::WaitingForServices if self.space => "Starting Cua inside the Space",
+            Phase::WaitingForServices => "Waiting for its services",
+            Phase::Connecting => "Connecting",
+            Phase::Ready => return None,
+        })
+    }
+
+    /// One report as a line: the step, then the download's bytes, rate and
+    /// time left ("4.2 of 22.1 GB · 85 MB/s · about 4 min"), else its
+    /// percent.
+    pub fn line(&self, p: &cua_sandbox_core::progress::Progress) -> Option<String> {
+        let step = self.step(p.phase)?;
+        let measure = match (p.bytes, p.fraction) {
+            (Some(b), _) => b.describe(),
+            (None, Some(f)) => format!("{:.0}%", f * 100.0),
+            (None, None) => String::new(),
+        };
+        Some(format!("{step} {measure}").trim_end().to_string())
+    }
+}
+
+/// A create's steps on a terminal (stderr): each step keeps a line of its
+/// own, and the step running now updates in place with its bytes. Never
+/// used for `--json` or when stderr is not a terminal.
+#[derive(Default)]
+pub struct StepLines {
+    words: CreateWords,
+    /// The step on the current line, and that line's text.
+    shown: std::sync::Mutex<Option<(cua_sandbox_core::progress::Phase, String)>>,
+}
+
+impl StepLines {
+    /// Lines for a create of this kind.
+    pub fn new(words: CreateWords) -> Self {
+        Self {
+            words,
+            shown: Default::default(),
+        }
+    }
+
+    /// What to write for `p`: `None` when the line would not change.
+    pub fn render(&self, p: &cua_sandbox_core::progress::Progress) -> Option<String> {
+        let text = self.words.line(p)?;
+        let mut shown = self.shown.lock().unwrap_or_else(|e| e.into_inner());
+        let out = match shown.as_ref() {
+            Some((_, last)) if *last == text => return None,
+            // Still the same step: rewrite its line.
+            Some((phase, _)) if *phase == p.phase => format!("\r\x1b[2K{text}"),
+            // A new step: the last one stays on its line.
+            Some(_) => format!("\n{text}"),
+            None => text.clone(),
+        };
+        *shown = Some((p.phase, text));
+        Some(out)
+    }
+
+    /// Writes `p`'s line to stderr.
+    pub fn show(&self, p: &cua_sandbox_core::progress::Progress) {
+        if let Some(out) = self.render(p) {
+            let mut err = std::io::stderr();
+            let _ = write!(err, "{out}");
+            let _ = err.flush();
+        }
+    }
+
+    /// Ends the output: the steps done stay, the running step's line goes.
+    pub fn finish(&self) {
+        if self
+            .shown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .is_some()
+        {
+            eprint!("\r\x1b[2K");
+        }
+    }
+}
+
 #[cfg(test)]
 mod secret_tests {
     use super::*;
@@ -224,12 +386,7 @@ mod secret_tests {
         ] {
             assert!(is_secret_header(h), "{h}");
         }
-        for h in [
-            "x-cua-fleet-claim",
-            "accept",
-            "content-type",
-            "mcp-session-id",
-        ] {
+        for h in ["x-request-id", "accept", "content-type", "mcp-session-id"] {
             assert!(!is_secret_header(h), "{h}");
         }
         assert_eq!(
@@ -242,7 +399,7 @@ mod secret_tests {
         );
         assert_eq!(header_for_display("x-api-key", "sk-123", false), "****");
         assert_eq!(header_for_display("x-api-key", "", false), "");
-        assert_eq!(header_for_display("x-cua-fleet-claim", "box", false), "box");
+        assert_eq!(header_for_display("x-request-id", "box", false), "box");
         // A scheme-less value with spaces is masked whole.
         assert_eq!(mask_secret("a/b c"), "****");
     }
@@ -310,4 +467,75 @@ pub fn exit_on_ctrl_c() {
             std::process::exit(130);
         }
     });
+}
+
+#[cfg(test)]
+mod create_step_tests {
+    #[test]
+    fn create_steps_read_in_words_and_keep_a_line_each() {
+        use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+        let mac = super::CreateWords::for_image("macos", "", true);
+        let lines = super::StepLines::new(mac);
+        let gb = 1u64 << 30;
+        let pull = |done: u64| {
+            Progress::phase(Phase::Pulling).bytes(Transfer {
+                done,
+                total: 30 * gb,
+                per_second: Some((85u64 << 20) as f64),
+            })
+        };
+        let out: Vec<Option<String>> = vec![
+            lines.render(&Progress::phase(Phase::Preparing)),
+            lines.render(&pull(gb * 124 / 10)),
+            lines.render(&pull(gb * 124 / 10)),
+            lines.render(&pull(30 * gb)),
+            lines.render(&Progress::phase(Phase::Creating)),
+            lines.render(&Progress::phase(Phase::Booting)),
+            lines.render(&Progress::phase(Phase::WaitingForServices)),
+            lines.render(&Progress::phase(Phase::Ready)),
+        ];
+        assert_eq!(
+            out,
+            [
+                Some("Preparing".to_string()),
+                Some(
+                    "\nDownloading macOS (first time only) 12.4 of 30.0 GB \u{b7} 85 MB/s \u{b7} about 4 min"
+                        .into()
+                ),
+                None,
+                Some(
+                    "\r\x1b[2KDownloading macOS (first time only) 30.0 of 30.0 GB \u{b7} 85 MB/s \u{b7} less than a minute"
+                        .into()
+                ),
+                Some("\nPreparing the disk".into()),
+                Some("\nBooting macOS".into()),
+                Some("\nStarting Cua inside the Space".into()),
+                None,
+            ]
+        );
+        // A Linux container sandbox.
+        let c = super::CreateWords::for_image("ghcr.io/trycua/linux:24.04", "container", false);
+        assert_eq!(c.step(Phase::Creating), Some("Creating"));
+        assert_eq!(c.step(Phase::Booting), Some("Starting"));
+        assert_eq!(
+            c.step(Phase::WaitingForServices),
+            Some("Waiting for its services")
+        );
+        let vm = super::CreateWords::for_image("linux", "vm", false);
+        assert_eq!(vm.step(Phase::Creating), Some("Preparing the disk"));
+        assert_eq!(vm.step(Phase::Booting), Some("Booting"));
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod browser_tests {
+    /// A real sign-in URL: several `&`-joined parameters (CUA-1701).
+    const SIGN_IN: &str = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/auth?response_type=code&client_id=cua-cli&redirect_uri=http%3A%2F%2F127.0.0.1%3A54968%2Fcallback&scope=openid&state=s&code_challenge=c&code_challenge_method=S256";
+
+    #[test]
+    fn the_url_reaches_the_opener_whole() {
+        let (program, args) = super::launch_command(SIGN_IN);
+        assert_ne!(program, "cmd");
+        assert_eq!(args, vec![SIGN_IN.to_string()]);
+    }
 }

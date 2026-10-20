@@ -8,7 +8,7 @@ import type { TelemetryView } from "../contracts/host";
 import { sanitizeSignals } from "../ops/telemetry";
 import { TelemetryForwarder, telemetryAllowed } from "../telemetry";
 import { toMachineRows } from "../adapters/webkit";
-import { rowsToSpaces, toMachines } from "../derive";
+import { machineIdOf, rowsToSpaces, toMachines } from "../derive";
 import { agentRunLines, desktopCover, SpaceDetailStore, spaceDetail } from "../space-detail";
 import type { CoreClient } from "../core";
 import { parseDropped, sendFiles, splitDrop } from "../space-files";
@@ -135,6 +135,36 @@ describe("this device's access to its machines", () => {
   });
 });
 
+describe("this computer on the relay (CUA-1527)", () => {
+  const HOST = "09c8b17b5a55f89bc1e376eaeabf111f";
+  const wkSpace = (id: string, name: string, host?: string) => ({ space: { id, name, provider: "relay", status: "running", os: "linux", host, hostName: host ? "lg-x11" : undefined } });
+  const status = { configured: true, mode: "relay", machineId: HOST, name: "lg-x11", sharing: true, serviceInstalled: true, serviceRunning: true, serviceKind: "systemd", clients: [], permissions: [] };
+
+  it("lists the machine that is set up for access once, as This computer, with its Spaces", () => {
+    const spaces = { spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST), wkSpace(`relay:${HOST}`, "lg-x11")] };
+    const rows = toMachineRows(spaces as never, { devices: null, signedIn: true, host: status } as never, "linux");
+    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+    const machines = toMachines(rows, []);
+    expect(machines).toHaveLength(1);
+  });
+
+  it("puts the Spaces this machine provides on This computer", () => {
+    const rows = toMachineRows({ spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST)] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
+    const here = rows.find((r) => r.current)!;
+    expect(machineIdOf({ id: "relay:space-16dec1e7810d08b6", provider: "relay", host: HOST }, rows)).toBe(here.id);
+  });
+
+  it("does not list a Space registered on the relay as a machine", () => {
+    const rows = toMachineRows({ spaces: [wkSpace("relay:space-32179dffc4bd8902", "lin-local")] } as never, { devices: null, signedIn: true } as never, "linux");
+    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+  });
+
+  it("still lists another machine's Spaces under that machine", () => {
+    const rows = toMachineRows({ spaces: [wkSpace("relay:space-aaaa", "job", "feedfacefeedfacefeedfacefeedface")] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
+    expect(rows.map((r) => r.name)).toEqual(["This computer", "lg-x11"]);
+  });
+});
+
 describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (wasm core)", () => {
   const row = (over: Partial<SpaceRow>): SpaceRow => ({ id: "relay:studio", name: "Studio", provider: "relay", os: "macos", spacesdVersion: "0.6.0", features: ["desktop_stream", "host_spaces"], reachable: true, ...over });
 
@@ -150,10 +180,10 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (wasm core)
     expect(spaceDetail(core, local!, null, null, { sharing: true }, NOTICE).access).toBeUndefined();
   });
 
-  it("hides Share while Settings, Experiments, Sharing is off", async () => {
+  it("hides Share only while Settings, Experiments, Sharing is turned off", async () => {
     const core = await testCore();
     const [studio] = rowsToSpaces(core, [row({})], 0);
-    expect(spaceDetail(core, studio!, null, null, {}).actions.some((a) => a.id === "share")).toBe(false);
+    expect(spaceDetail(core, studio!, null, null, { sharing: false }).actions.some((a) => a.id === "share")).toBe(false);
     expect(spaceDetail(core, studio!, null, null, { sharing: true }).actions.some((a) => a.id === "share")).toBe(true);
   });
 
@@ -207,5 +237,41 @@ describe.skipIf(!wasmBuilt)("a Space's Agents rows (wasm core)", () => {
     const [row] = agentRunLines(core, [{ runId: "r1", agent: "claude-code", status: "idle", reason: "waiting", summary: "Fix the tests", createdAt: null, phase: "", turn: 1 }]);
     expect(row).toMatchObject({ runId: "r1", status: "Idle", reason: "waiting" });
     expect(row!.line).toMatch(/^Claude Code · /);
+  });
+});
+
+describe("the Machines page's rows from the host (machines.pageRows)", () => {
+  it("lists the host's core rows as they are: devices of their own, a machine that stopped sharing", () => {
+    const rows = toMachineRows(
+      { spaces: [{ space: { id: "relay:b695", detail: "Not reachable" } }] } as never,
+      {
+        devices: { rows: [{ id: "dev_l1", name: "Laptop", platform: "macOS", current: false, detail: "macOS · Enrolled" }] },
+        signedIn: true,
+        thisMachine: { status: "local", statusText: "Sharing", detail: "Sharing · Relay" },
+        deviceStates: { dev_l1: "enrolled" },
+        rows: [
+          { id: "this-mac", name: "This Mac", online: true, os: "macos", via: "local", current: true, device: "dev_me", deviceOnly: false, spaceId: "this-mac", stoppedSharing: false, lastSeen: 1799999990, status: "Online", spaces: 1, spacesLabel: "1 Space" },
+          { id: "b695", name: "studio-2.local", online: true, os: "macos", via: "relay", current: false, device: "dev_s", deviceOnly: false, spaceId: "relay:b695", stoppedSharing: true, lastSeen: null, status: "Not sharing", spaces: 0, spacesLabel: "No Spaces" },
+          { id: "dev_l1", name: "Laptop", online: false, os: "macos", via: "relay", current: false, device: "dev_l1", deviceOnly: true, spaceId: null, stoppedSharing: false, lastSeen: 1797000000, status: "Offline", spaces: 0, spacesLabel: "" },
+        ],
+      },
+    );
+    expect(rows.map((r) => [r.id, r.name, r.online, Boolean(r.device), r.detail])).toEqual([
+      ["this-mac", "This Mac", true, false, "Sharing · Relay"],
+      ["b695", "studio-2.local", true, false, "Not reachable"],
+      ["dev_l1", "Laptop", false, true, "macOS · Enrolled"],
+    ]);
+    expect(rows[1]!.limits).not.toEqual([]);
+    expect(rows[2]!.deviceState).toBe("enrolled");
+    // Already each computer once: the store lists them as they are.
+    const machines = toMachines(rows, []);
+    expect(machines.map((m) => m.id)).toEqual(["this-mac", "b695", "dev_l1"]);
+    expect(machines[2]!.device).toBe(true);
+    // The core's words for each row, as the SwiftUI list shows them.
+    expect(machines.map((m) => [m.status, m.spacesLabel])).toEqual([
+      ["Online", "1 Space"],
+      ["Not sharing", "No Spaces"],
+      ["Offline", ""],
+    ]);
   });
 });

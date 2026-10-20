@@ -15,7 +15,9 @@ import type {
   OnboardingView,
   PermissionRow,
   SandboxImage,
+  OnboardingTodoId,
 } from "./contracts/onboarding";
+import { NO_EXPERIMENTS, type Experiments } from "./contracts/volume";
 import type { KvGrant, KvListView, KvSelection, VaultAction } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
 import type { Space } from "./contracts/spaces";
@@ -48,6 +50,7 @@ import type {
   SessionData,
   SettingsData,
 } from "./store";
+import type { CreateReport, ReportSend } from "./diagnostic-report";
 
 function useBridgeContext(): BridgeContextValue {
   const ctx = useContext(BridgeContext);
@@ -78,6 +81,21 @@ function useAction(): <R>(f: (s: BridgeStore) => Promise<R> | R) => Promise<R> {
   return (f) => ready.then(f);
 }
 
+/**
+ * Records a Spaces app feature (a fixed name such as `agents_page_open`) once
+ * each time `when` turns true, as the SwiftUI and Tauri apps do when the page
+ * or sheet opens. The host and the machine's telemetry switch decide whether
+ * anything is sent.
+ */
+export function useFeatureRecorded(feature: string, when = true): void {
+  // Not an error without a provider: a screen drawn on its own records nothing.
+  const ready = useContext(BridgeContext)?.ready;
+  useEffect(() => {
+    if (!when || !ready) return;
+    void ready.then((s) => s.telemetry.track([{ type: "feature", feature }]));
+  }, [ready, feature, when]);
+}
+
 /** The host, the app core and the raw adapter. */
 export function useBridge(): { mode: BridgeMode; core: CoreClient; data: DataAdapter | null } {
   const { mode, core, adapter } = useBridgeContext();
@@ -100,6 +118,11 @@ export interface SpacesHook extends Resource<Space[]> {
   retryCreate(pendingId: string): string | undefined;
   /** Whether Try again can run the failed create again. */
   canRetryCreate(pendingId: string): boolean;
+  /** A failed create's diagnostic report, redacted, for the review sheet
+   * (null when there is none). Nothing is sent. */
+  createReport(pendingId: string): Promise<CreateReport | null>;
+  /** Send on the review sheet: opens an email to Cua support with the kept parts. */
+  sendCreateReport(send: ReportSend): Promise<void>;
   startSpace(id: string): Promise<void>;
   stopSpace(id: string): Promise<void>;
   /** Deletes the Space, or with `removeOnly` only removes it from the list. */
@@ -126,6 +149,8 @@ export function useSpaces(): SpacesHook {
     dismissCreate: (id) => run((s) => s.dismissCreate(id)),
     retryCreate: (id) => (ctx.store?.canRetryCreate(id) ? ctx.store.retryCreate(id) : undefined),
     canRetryCreate: (id) => ctx.store?.canRetryCreate(id) ?? false,
+    createReport: async (id) => (ctx.store ? ctx.store.createReport(id) : null),
+    sendCreateReport: (send) => run((s) => s.sendCreateReport(send)),
     startSpace: (id) => run((s) => s.setPower(id, true)),
     stopSpace: (id) => run((s) => s.setPower(id, false)),
     deleteSpace: (id, removeOnly) => run((s) => s.deleteSpace(id, removeOnly)),
@@ -341,6 +366,17 @@ export function useSavedOnboarding(): SavedOnboarding {
   return useSyncExternalStore(subscribeSavedOnboarding, readSavedOnboarding, readSavedOnboarding);
 }
 
+/** How often the permission rows are read again while one is still to grant (ms). */
+export const PERMISSION_POLL_MS = 2_000;
+
+/** The panes in `shown` that `hints` no longer lists as missing. */
+export function grantedPermissionRows(shown: Record<string, string>, hints: PermissionHint[]): { id: string; title: string }[] {
+  const missing = new Set(hints.filter((p) => !p.granted).map((p) => p.id));
+  return Object.entries(shown)
+    .filter(([id]) => !missing.has(id))
+    .map(([id, title]) => ({ id, title }));
+}
+
 export interface OnboardingHook {
   /** The core's flow state; null until the session has loaded. */
   state: OnboardingFlowState | null;
@@ -352,6 +388,8 @@ export interface OnboardingHook {
   /** macOS panes still to grant for this machine (explainers only: the
    * grant itself happens in System Settings). */
   permissions: PermissionRow[];
+  /** Panes this page showed that are granted now (ticked, not dropped). */
+  grantedPermissions: { id: string; title: string }[];
   /** This machine is already set up for access (the host choice is real). */
   hostConfigured: boolean;
   /** One image per OS for the first Space. */
@@ -362,6 +400,9 @@ export interface OnboardingHook {
   /** Sends an action through the core. The usage-data switch and the Menu
    * bar choice also write the machine's setting (telemetry, `menuBar`). */
   send(action: OnboardingAction): void;
+  /** A fix on Done's to-do list: opens its page (Cua Volume turns its
+   * experiment on first); leaving the page comes back to Done. */
+  fixTodo(id: OnboardingTodoId): Promise<void>;
   /** Leaves the flow for now; it resumes on the same page. */
   skip(): void;
   /** Done: records the choice with the host and forgets the saved progress. */
@@ -410,18 +451,65 @@ export function useOnboarding(): OnboardingHook {
     }
   });
 
-  // This machine's permissions, once (hosts without `host.status` show none).
+  // This machine's permissions (hosts without `host.status` show none). Read
+  // again every few seconds, and when the window is back in front, while any is
+  // still to grant: macOS's Settings is another window, and a grant there
+  // must tick here without a restart (CUA-1765).
+  const pending = hints ? hints.permissions.some((p) => !p.granted) : false;
+  const readHints = useRef<() => void>(() => undefined);
   useEffect(() => {
-    if (!adapter || hints) return;
+    if (!adapter) return;
     let live = true;
-    adapter
-      .call("host.status", {})
-      .then((h) => live && setHints({ permissions: h.permissions ?? [], configured: h.configured }))
-      .catch(() => live && setHints({ permissions: [], configured: false }));
+    readHints.current = () => {
+      adapter
+        .call("host.status", {})
+        .then((h) => live && setHints({ permissions: h.permissions ?? [], configured: h.configured }))
+        .catch(() => live && setHints((cur) => cur ?? { permissions: [], configured: false }));
+    };
+    readHints.current();
     return () => {
       live = false;
     };
-  }, [adapter, hints]);
+  }, [adapter]);
+  useEffect(() => {
+    if (!pending) return;
+    const again = () => readHints.current();
+    const timer = setInterval(again, PERMISSION_POLL_MS);
+    window.addEventListener("focus", again);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", again);
+    };
+  }, [pending]);
+  // The panes this page has shown, so one that is granted now shows ticked instead of vanishing.
+  const [shown, setShown] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!hints) return;
+    const missing = hints.permissions.filter((p) => !p.granted);
+    if (missing.some((p) => !(p.id in shown))) setShown((cur) => ({ ...cur, ...Object.fromEntries(missing.map((p) => [p.id, p.label])) }));
+  }, [hints, shown]);
+
+  // Done counts the coding agents set up before (from the CLI or
+  // Settings), not only the ones this run set up.
+  const onDone = state?.step === "done";
+  useEffect(() => {
+    if (!onDone || !adapter) return;
+    let live = true;
+    adapter.call("agents.setup", {}).then(
+      (rows) => {
+        const names = rows.filter((r) => r.installed && r.configured).map((r) => r.name);
+        const cur = readSavedOnboarding().state;
+        const known = Array.isArray(cur?.agents) ? (cur.agents as string[]) : [];
+        if (!live || !cur || names.every((n) => known.includes(n))) return;
+        writeSavedOnboarding({ ...readSavedOnboarding(), state: onboardingReduce(core, cur, { type: "agents-detected", configured: names }, ctx) });
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onDone, adapter, core]);
 
   const drawn = state ? onboardingView(core, state) : null;
   // No switch until the host has said what the setting is: an "on" it
@@ -441,6 +529,8 @@ export function useOnboarding(): OnboardingHook {
   const send = (action: OnboardingAction) => {
     const current = readSavedOnboarding().state;
     if (!current) return;
+    // Skipping Sign in leaves the browser login behind: stop waiting for it.
+    if (action.type === "signin-done") store?.cancelSignIn();
     const next = onboardingReduce(core, current, action, ctx);
     // The switch writes the setting at once, so what it shows is what the
     // machine does even if the flow is skipped from Welcome. (The SwiftUI
@@ -462,13 +552,26 @@ export function useOnboarding(): OnboardingHook {
     copy: onboardingCopy(core),
     signInText,
     permissions: hints ? permissionRows(core, hints.permissions) : [],
+    grantedPermissions: hints ? grantedPermissionRows(shown, hints.permissions) : [],
     hostConfigured: hints?.configured ?? false,
     images: firstSpaceImages(core),
     launchAtLogin: mode === "electron" ? (view?.launchAtLogin ?? null) : null,
     send,
+    fixTodo: async (id) => {
+      const current = readSavedOnboarding().state;
+      const experiments = (current?.experiments ?? null) as Experiments | null;
+      // Cua Volume is an experiment today: "Turn on" turns it on first.
+      if (id === "volume" && adapter && !experiments?.cuaVolume) {
+        const now = { ...NO_EXPERIMENTS, ...(await adapter.call("experiments.get", {}).catch(() => ({}))), cuaVolume: true };
+        await adapter.call("experiments.set", { experiments: now });
+        send({ type: "experiments-loaded", experiments: now });
+      }
+      send({ type: "todo-chosen", id });
+    },
     skip: () => {
       const current = readSavedOnboarding().state;
       if (current) store?.trackOnboardingSkipped(current);
+      store?.cancelSignIn();
       writeSavedOnboarding({ ...readSavedOnboarding(), skipped: true });
     },
     finish: async () => {

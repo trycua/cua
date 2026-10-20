@@ -171,10 +171,14 @@ async fn stdio_speaks_mcp_and_publishes_the_contract() {
         teleport["structuredContent"]["error"]["kind"],
         "host_capability_missing"
     );
-    let fleet = c.call("create_space", json!({"on": "cloud"})).await;
-    assert_eq!(
-        fleet["structuredContent"]["error"]["kind"],
-        "host_capability_missing"
+    // Cua Cloud has ended: a cloud create fails with the one message.
+    let cloud = c.call("create_space", json!({"on": "cloud"})).await;
+    assert_eq!(cloud["structuredContent"]["error"]["kind"], "sandbox");
+    assert!(
+        cloud["structuredContent"]["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("Cua Cloud has ended")),
+        "{cloud}"
     );
 }
 

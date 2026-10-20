@@ -153,7 +153,7 @@ impl ExportProvider for SteamProvider {
             total_est_bytes: total,
             notes: vec![
                 "Carries the logged-in Steam account tokens. Steam Guard may still \
-                 re-verify a new machine; the macOS client is x86 (needs Rosetta)."
+                 re-verify a new computer; the macOS client is x86 (needs Rosetta)."
                     .to_string(),
                 "Close Steam before transfer for a clean capture.".to_string(),
             ],
@@ -168,7 +168,7 @@ impl ExportProvider for SteamProvider {
         out: &mut dyn Write,
     ) -> Result<()> {
         let root = self.source_root(app.platform).ok_or_else(|| {
-            TeleportError::Provider("no Steam installation found on this machine".to_string())
+            TeleportError::Provider("no Steam installation found on this computer".to_string())
         })?;
         let mut writer = BundleWriter::with_limit(
             out,

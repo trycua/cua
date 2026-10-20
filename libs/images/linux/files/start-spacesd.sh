@@ -6,7 +6,7 @@
 #   1. $CUA_ENV_TOKEN
 #   2. the file named by $CUA_ENV_TOKEN_FILE
 #   3. /run/cua/env-token     (written by the container entrypoint hook, a
-#                              Fleet/K8s secret mount, or cloud-init)
+#                              K8s secret mount, or cloud-init)
 #   4. /etc/cua/env-token     (persistent, e.g. baked by cloud-init write_files)
 # The container entrypoint hook generates /run/cua/env-token when none of the
 # above exist, so the driver never starts unauthenticated.
@@ -14,7 +14,7 @@
 # The token reaches the driver through the CUA_ENV_TOKEN environment variable,
 # never argv (argv is world-readable in /proc).
 #
-# Fleet (await-token-file mode, see env-token-mode.sh): no token is resolved
+# Await-token-file mode (see env-token-mode.sh): no token is resolved
 # here. The driver binds with no token, serves only GetCapabilities/Health,
 # and follows the claim's token file: /run/cua/env-token directly when this
 # user can read it (pod fsGroup + defaultMode 0440), else the copy that the

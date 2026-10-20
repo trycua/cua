@@ -83,20 +83,24 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
 
   it("General is the core's page: Teams, Welcome, the notch's words and the privacy line with its link", async () => {
     const { router, calls } = await mount("/settings");
-    const account = await waitFor(() => {
-      const r = document.querySelector<HTMLElement>('[data-setting-row="teams"]');
-      if (!r) throw new Error("no Teams row");
+    const teams = await waitFor(() => {
+      const r = document.querySelector<HTMLElement>('[data-setting-row="teams-manage"]');
+      if (!r) throw new Error("no Teams rows");
       return r;
     });
-    expect(account.textContent).toContain("Coming soon");
-    expect(within(account).getByText("Join the waitlist")).toBeTruthy();
+    // The real Teams section: no waitlist, and invites and billing are the account app's.
+    expect(document.body.textContent).not.toContain("Coming soon");
+    expect(document.body.textContent).not.toContain("waitlist");
+    expect(within(teams).getByText("Manage team")).toBeTruthy();
     const note = document.querySelector<HTMLElement>('[data-setting-row="telemetry-note"]')!;
-    expect(note.textContent).toMatch(/^Features used, sandbox types, durations and error categories/);
+    expect(note.textContent).toMatch(/^Which features you use and when something goes wrong\./);
     expect(within(note).getByText("What is collected")).toBeTruthy();
     expect(document.body.textContent).not.toContain("Crash reports and feature counts");
-    // The Teams waitlist opens the website.
-    fireEvent.click(within(account).getByText("Join the waitlist"));
-    await waitFor(() => expect(calls.some(([op, a]) => op === "session.openExternal" && String((a as { url: string }).url).includes("cua.ai"))).toBe(true));
+    // Manage team opens the account app in the browser.
+    fireEvent.click(within(teams).getByText("Manage team"));
+    await waitFor(() =>
+      expect(calls.some(([op, a]) => op === "session.openExternal" && (a as { url: string }).url === "https://app.cua.ai/team")).toBe(true),
+    );
     // Welcome's Show again starts the first run over (this UI's, off the Mac).
     const welcome = document.querySelector<HTMLElement>('[data-setting-row="welcome"]')!;
     fireEvent.click(within(welcome).getByText("Show again"));

@@ -262,12 +262,30 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_MACHINE_WINDOW_BYTES` | `67108864` (64 MiB) | yamux's per-machine connection receive window (S7); must be `>=` `machine-max-streams * 256 KiB`. |
 | `CUA_RELAY_MAX_GLOBAL_STREAMS` | `4096` | Concurrent client streams across every machine at once: the relay-wide memory budget (S7). Tune to the pod's memory limit. |
 | `CUA_RELAY_IDLE_SECS` | `90` | Seconds without a heartbeat before a machine is dropped (min 5). |
-| `CUA_RELAY_SHUTDOWN_GRACE_SECS` | `10` | Seconds open requests get after SIGTERM / SIGINT. |
+| `CUA_RELAY_SHUTDOWN_GRACE_SECS` | `10` | Seconds open requests get after SIGTERM / SIGINT. Machine tunnels are closed at once, so they reconnect to the next relay. |
+| `CUA_RELAY_HEALTH_LISTEN` | unset | Probe address (`0.0.0.0:8081`) answering `GET /healthz` from start, standby included. Point the Kubernetes probes here for rolling deploys. |
+| `CUA_RELAY_RECONNECT_GRACE_SECS` | `15` | For this long after start, a request for a known machine that is not connected yet waits for it to reconnect instead of failing. `0`: fail at once. |
 | `RUST_LOG` | `info` | Log filter. |
 
 Connected machines live in the process, and the directory is a local file:
-run one replica per hostname and replace it (Recreate) rather than rolling
-it.
+run one replica per hostname.
+
+**Deploys without downtime.** One relay at a time owns the state directory:
+it holds an exclusive `flock` on `<state dir>/.relay.lock` (the kernel drops
+it when the process exits, so it is never stale). A second relay on the same
+volume binds its ports and waits in standby: its main port queues
+connections (the listen backlog) instead of refusing them, and
+`CUA_RELAY_HEALTH_LISTEN` answers probes. When the first relay gets SIGTERM
+it closes every machine tunnel, lets open requests finish and exits; the
+second takes the lock, loads the state and serves the queued requests and
+reconnecting machines. On Kubernetes: a rolling update with `maxSurge: 1,
+maxUnavailable: 0`, the new pod on the old pod's node (a ReadWriteOnce
+volume mounts on one node, in any number of its pods), probes on the health
+port and a short `preStop` sleep so the ingress stops sending to the old pod
+before it stops serving. See `deploy/relay.k8s.yaml` and `src/handover.rs`.
+Switch an existing Recreate deployment over in two steps: first deploy this
+version with Recreate (the old version takes no lock), then the rolling
+update.
 
 ## Run and test
 

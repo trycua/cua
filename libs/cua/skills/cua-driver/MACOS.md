@@ -216,10 +216,11 @@ editor state.
 
 1. `cua-driver` is on `$PATH` (`which cua-driver`). If not, point the
    user at `scripts/install-local.sh` and stop.
-2. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
-   recommended form: goes through LaunchServices so TCC attributes
-   the process to CuaDriver.app). `cua-driver serve &` also works;
-   the CLI auto-relaunches through `open -n -g -a CuaDriver` when it
+2. Start the daemon with `cua-driver permissions grant` (the
+   recommended form: it launches the installed CuaDriver.app by its
+   exact path through LaunchServices, so TCC attributes the process to
+   that app). `cua-driver serve &` also works;
+   the CLI auto-relaunches the installed app by path when it
    detects a wrong-TCC context (any IDE-spawned shell: Claude Code,
    Cursor, VS Code, Conductor). Verify with `cua-driver status`.
 3. Run `cua-driver permissions status --json`. This
@@ -479,11 +480,11 @@ window, and PID-routes its bounded checkbox-pixel fallback. The same control's
 state must verify after mutation; unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click.
 
-Standalone Chromium activates its window when CDP's trusted pointer route is
-used on macOS. The driver therefore returns
-`browser_input_trust_unavailable` before dispatch rather than falsely claiming
-background delivery. Use `input_route:"dom_event"` only when synthetic click
-semantics are acceptable. Embedded Electron has a separately bounded route;
+CDP's trusted pointer route (the `browser_click` and `browser_pointer`
+default) stays in the background on macOS Chrome: it delivers trusted events
+to the bound tab, even an inactive one, without activating or raising the
+browser window. Use `input_route:"dom_event"` only when synthetic events are
+acceptable; controls that check `event.isTrusted` ignore it. Embedded Electron has a separately bounded route;
 do not infer that route for arbitrary WKWebView or Tauri hosts.
 
 For a declared session, typed browser click, type, and pointer mutations animate

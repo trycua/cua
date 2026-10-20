@@ -77,7 +77,21 @@ export type OnboardingAction =
   | { type: "drive-storage-saved"; check: DriveCheckInput }
   | { type: "launch-at-login-toggled"; on: boolean }
   | { type: "experiments-loaded"; experiments: import("./experiments").Experiments }
+  | { type: "todo-chosen"; id: OnboardingTodoId }
   | { type: "back" };
+
+/** A line of Done's to-do list. */
+export type OnboardingTodoId = "cli" | "signin" | "agents" | "volume";
+
+/** What is set up on Done, and a one-click fix for what is not. */
+export interface OnboardingTodo {
+  id: OnboardingTodoId;
+  title: string;
+  note: string;
+  done: boolean;
+  optional: boolean;
+  action: string | null;
+}
 
 export interface OnboardingView {
   step: OnboardingStep;
@@ -98,12 +112,14 @@ export interface OnboardingView {
   notice: string | null;
   noticeLinkLabel: string | null;
   noticeLinkUrl: string | null;
-  /** Welcome's "Share anonymous usage data" switch (Welcome only). */
+  /** Welcome's "Share usage data to help improve Cua" switch (Welcome only). */
   usage: { label: string; on: boolean; enabled: boolean; help: string | null } | null;
   /** The Cua Volume page's card. */
   drive: DriveCard | null;
   /** Done's "Launch at login" checkbox. */
   launchAtLogin: { label: string; checked: boolean; note: string } | null;
+  /** Done's to-do list. */
+  todos?: OnboardingTodo[];
 }
 
 /** The Cua Volume page's card: the miniature over one checkbox line. */
@@ -170,11 +186,11 @@ export interface OnboardingCopy {
   agentsDoneLede: string;
   permissionsTitle: string;
   openSettings: string;
-  /** The Sign in page's Teams line ("Teams · coming soon"). */
+  /** The Sign in page's Teams line ("Teams · manage them at app.cua.ai"). */
   teams: string;
-  /** Its link ("Join the waitlist"). */
+  /** Its link ("Open the account app"). */
   teamsLink: string;
-  /** The website's Teams waitlist (the app collects nothing). */
+  /** The website's Teams page (the app collects nothing). */
   teamsUrl: string;
 }
 
@@ -186,8 +202,10 @@ export function reduceOnboarding(state: OnboardingState, action: OnboardingActio
   return core("onboarding.reduce", { state, action });
 }
 
-export function onboardingView(state: OnboardingState): OnboardingView {
-  return core("onboarding.view", { state });
+export function onboardingView(state: OnboardingState, withoutCli = false): OnboardingView {
+  // `withoutCli`: this app installs the bundled cua on first launch (no
+  // Command line page), so its Done neither lists the Cua CLI nor waits for it.
+  return core("onboarding.view", withoutCli ? { state, withoutCli } : { state });
 }
 
 export function onboardingCopy(): OnboardingCopy {

@@ -54,6 +54,9 @@ defaults:
     working-directory: libs/cua-driver/examples/jev-use
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -119,6 +122,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua-driver/rust
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -395,7 +401,7 @@ jobs:
           "$CUA_DRIVER_BIN" stop >/dev/null 2>&1 || true
           bash libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh \
             --app /Applications/CuaDriver.app --expected-client com.trycua.driver
-          open -n -g -a CuaDriver --args serve
+          open -n -g /Applications/CuaDriver.app --args serve
           for _ in $(seq 1 60); do
             if "$CUA_DRIVER_BIN" permissions status --json > "$RUNNER_TEMP/permissions.json" 2>/dev/null \
                 && jq -e '.accessibility == true and .screen_recording == true' "$RUNNER_TEMP/permissions.json" >/dev/null; then
@@ -512,7 +518,7 @@ jobs:
           "$CUA_DRIVER_BIN" stop >/dev/null 2>&1 || true
           bash libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh \
             --app /Applications/CuaDriver.app --expected-client com.trycua.driver
-          open -n -g -a CuaDriver --args serve
+          open -n -g /Applications/CuaDriver.app --args serve
           for _ in $(seq 1 60); do
             if "$CUA_DRIVER_BIN" permissions status --json > "$RUNNER_TEMP/permissions.json" 2>/dev/null \
                 && jq -e '.accessibility == true and .screen_recording == true' "$RUNNER_TEMP/permissions.json" >/dev/null; then

@@ -24,7 +24,7 @@ function setup() {
   const fleet = fakeFleetBridge({
     isNative: true,
     listSpaces: async () => [],
-    status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+    status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
   });
   const host = createFakeHostBridge({ onboarding: { completed: true, mode: "client" } });
   const agents = createAgentsBridgeOver(async (tool) => {
@@ -61,7 +61,7 @@ describe("MainWindow and the menu bar item", () => {
     const fleet = fakeFleetBridge({
       isNative: true,
       listSpaces: async () => [],
-      status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+      status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
     });
     const host = createFakeHostBridge({ onboarding: { completed: true, mode: "client" } });
     const agents = createAgentsBridgeOver(async (tool) => {

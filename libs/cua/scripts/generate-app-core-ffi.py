@@ -33,9 +33,9 @@ TYPES = [
     ("teleport/transfer.rs", "teleport::transfer", ["TransferPhase", "TransferOverlayState", "TransferStatus", "TransferSignal", "SentFileInfo"]),
     ("teleport/windows.rs", "teleport::windows", ["OpenWindow", "OpenApp", "RemoteWindow", "RemoteWindowGroup", "PickerTab", "PickerAction", "PickerPrimary"]),
     ("teleport/grid.rs", "teleport::grid", ["PickerTileIcon", "PickerTileThumbnail", "PickerTile", "PickerTileSection", "PickerGrid", "PickerGridTab", "PickerGridTabItem", "PickerGridPrimary"]),
-    ("teleport/review.rs", "teleport::review", ["SendSource", "RememberedChoice", "ReviewDomain", "ReviewToggle", "VaultSource", "ReviewChoice"]),
+    ("teleport/review.rs", "teleport::review", ["SendSource", "RememberedChoice", "ReviewDomain", "ReviewToggle", "VaultPassword", "ReviewPassword", "VaultSource", "ReviewChoice"]),
     ("teleport/flow.rs", "teleport::flow", ["Capability", "Move", "SensitiveGroup", "SensitiveOption", "CatalogEntry", "ConsentKind", "ConsentItem", "PlanStepView", "Plan", "RunPhase", "RunEvent", "RunReport", "Consent", "InstallCuaPrompt", "Step", "PickerState", "PickerEvent", "EntrySection", "ReviewView"]),
-    ("wizard.rs", "wizard", ["LocalEngine", "CloudEngine", "ImageTier", "ImageDistro", "PlatformSize", "ImageSizes", "SandboxImage", "ImageGroup", "KindOption", "StorageVolume", "LocalStorage", "CloudPricing", "CloudOffer", "ConnectedCloud", "HostLimit", "SpaceHost", "RuntimeSwitch", "PlacementOption", "GpuChoice", "WizardEnv", "WizardMode", "AddressForm", "WizardState", "WizardAction", "StepState", "StepView", "Tile", "MenuOption", "CreatePlan", "CreateSpaceArgs", "AddressView", "AddressSubmit", "ImageSuggestion", "SuggestionGroup", "ImageFieldView", "WizardField", "WizardLabels", "WizardFact", "GpuRow", "WizardView"]),
+    ("wizard.rs", "wizard", ["LocalEngine", "CloudEngine", "ImageTier", "ImageDistro", "PlatformSize", "ImageSizes", "SandboxImage", "ImageGroup", "KindOption", "StorageVolume", "LocalStorage", "CloudPricing", "CloudOffer", "ConnectedCloud", "HostLimit", "SpaceHost", "RuntimeSwitch", "PlacementOption", "GpuChoice", "WizardEnv", "WizardMode", "AddressForm", "ResourceField", "ResourceEdit", "WizardState", "WizardAction", "StepState", "StepView", "Tile", "MenuOption", "CreatePlan", "CreateSpaceArgs", "AddressView", "AddressSubmit", "ImageSuggestion", "SuggestionGroup", "ImageFieldView", "WizardField", "WizardLabels", "WizardFact", "GpuRow", "ResourceEditView", "WizardView"]),
     ("keyvault/wire.rs", "keyvault::wire", ["KvItemPolicy", "KvItem", "KvFavicon", "KvDomainCount", "KvInventory", "KvSigning", "KvCaller", "KvSelector", "KvAccessRequest", "KvPending", "KvGrant", "KvRuleCaller", "KvRule", "KvDelivery", "KvAuditEntry", "KvStatus", "KvVerification", "KeyvaultOverview", "KvCommand"]),
     ("keyvault/view.rs", "keyvault::view", ["Tone", "SigningBadge", "Tri", "DecisionTone", "Decision", "PendingRow", "AccessKind", "AccessRow", "KvLabels", "KeyvaultPage"]),
     ("keyvault/vault.rs", "keyvault::vault", ["KvKind", "KvLock", "VaultState", "VaultAction", "VaultRow", "VaultSite", "VaultFiles", "VaultApp", "VaultSelection", "VaultView", "UnlockPrompt", "KvDeleteConfirm", "KvVaultSource"]),
@@ -45,7 +45,7 @@ TYPES = [
     ("keyvault/client.rs", "keyvault::client", ["KvOutcome"]),
     ("billing.rs", "billing", ["BillingCard", "BillingCredit", "BillingStatus", "CreditNotice"]),
     ("drive_settings.rs", "drive_settings", ["DriveMountInput", "DriveS3Input", "DriveStorageInput", "DriveCheckInput", "DriveCacheInput", "StorageInput", "DriveStorageUpdate", "StorageForm", "StorageField", "StorageRequest", "StorageState", "StorageAction"]),
-    ("onboarding.rs", "onboarding", ["OnboardingStep", "DriveStepRequest", "StorageChoice", "OnboardingMode", "OnboardingState", "OnboardingAction", "StepDot", "UsageToggle", "ModeChoice", "OnboardingView", "DriveCard", "PresentationCard", "OnboardingCopy", "OnboardingCheckbox"]),
+    ("onboarding.rs", "onboarding", ["OnboardingStep", "DriveStepRequest", "StorageChoice", "OnboardingMode", "OnboardingState", "OnboardingAction", "OnboardingTodoId", "OnboardingTodo", "StepDot", "UsageToggle", "ModeChoice", "OnboardingView", "DriveCard", "PresentationCard", "OnboardingCopy", "OnboardingCheckbox"]),
     ("onboarding_preview.rs", "onboarding_preview", ["PreviewPoint", "NotchPreview", "MenuPreviewRow", "MenuPreview", "PresentationPreview", "PreviewFrame"]),
     ("driver_preview.rs", "driver_preview", ["PreviewSegment", "PreviewWindow", "DriverPreview", "DriverFrame"]),
     ("drive_mount_preview.rs", "drive_mount_preview", ["DriveMountPreview", "DriveMountFrame"]),
@@ -65,9 +65,12 @@ TYPES = [
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),
     ("telemetry.rs", "telemetry", ["TelemetrySignal"]),
-    ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
+    ("machines.rs", "machines", ["DeviceIn", "MachinesPageInput", "MachinePageRow"]),
+    ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistSeen", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
-    ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "RelayUsageView"]),
+    ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
+    ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "PlanLink", "PlanCard", "RelayUsageView"]),
+    ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
 ]
 
 # FFI names that read better than the plain prefix.
@@ -156,7 +159,7 @@ def block(src, name):
 
 
 out = [
-    # cua-spaces-ffi is FSL-1.1-MIT (see LICENSING.md and scripts/spdx-headers.py).
+    # cua-spaces-ffi is FSL-1.1-MIT (see legal/LICENSING.md and scripts/spdx-headers.py).
     "// SPDX-License-Identifier: FSL-1.1-MIT",
     "// Copyright (c) 2026 Cua AI, Inc.",
     "",

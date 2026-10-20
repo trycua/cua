@@ -2326,31 +2326,10 @@ fn resolve_launched_windows(
     let started = std::time::Instant::now();
     loop {
         let all = crate::wayland::list_windows_dispatch(None);
-        let own: Vec<_> = all
-            .iter()
-            .filter(|w| w.pid == Some(launcher_pid))
-            .cloned()
-            .collect();
-        if !own.is_empty() {
-            return LaunchedWindows {
-                pid: Some(launcher_pid),
-                windows: own,
-                handed_off: false,
-            };
-        }
-        let fresh: Vec<_> = all
-            .iter()
-            .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
-            .filter(|w| window_matches_launch(w, query))
-            .cloned()
-            .collect();
-        if let Some(pid) = fresh.first().and_then(|w| w.pid) {
-            let windows = fresh.into_iter().filter(|w| w.pid == Some(pid)).collect();
-            return LaunchedWindows {
-                pid: Some(pid),
-                windows,
-                handed_off: true,
-            };
+        if let Some(launched) = settle_launch(&all, launcher_pid, query, before, |w| {
+            crate::x11::window_is_splash(w.xid)
+        }) {
+            return launched;
         }
         let launcher_exited = process_exited(launcher_pid);
         let budget = if launcher_exited {
@@ -2367,6 +2346,39 @@ fn resolve_launched_windows(
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+fn settle_launch(
+    all: &[crate::x11::WindowInfo],
+    launcher_pid: u32,
+    query: &str,
+    before: &std::collections::HashSet<u64>,
+    is_splash: impl Fn(&crate::x11::WindowInfo) -> bool,
+) -> Option<LaunchedWindows> {
+    let own: Vec<_> = all
+        .iter()
+        .filter(|w| w.pid == Some(launcher_pid) && !is_splash(w))
+        .cloned()
+        .collect();
+    if !own.is_empty() {
+        return Some(LaunchedWindows {
+            pid: Some(launcher_pid),
+            windows: own,
+            handed_off: false,
+        });
+    }
+    let fresh: Vec<_> = all
+        .iter()
+        .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
+        .filter(|w| window_matches_launch(w, query) && !is_splash(w))
+        .cloned()
+        .collect();
+    let pid = fresh.first()?.pid?;
+    Some(LaunchedWindows {
+        pid: Some(pid),
+        windows: fresh.into_iter().filter(|w| w.pid == Some(pid)).collect(),
+        handed_off: true,
+    })
 }
 
 #[cfg(test)]
@@ -8291,8 +8303,13 @@ fn type_text_mpx_result(
         structured[key] = value.clone();
     }
     structured["delivery_mode"] = json!("background");
+    let outcome = if report.skipped_characters.is_empty() {
+        format!("Typed {text_len} character(s)")
+    } else {
+        "Partial typing result".to_owned()
+    };
     let mut text = format!(
-        "Typed {text_len} character(s) as real key events {} (delivery_mode=background); \
+        "{outcome} as real key events {} (delivery_mode=background); \
          not verified — confirm with a screenshot.",
         report.route_phrase()
     );
@@ -8311,7 +8328,36 @@ fn type_text_mpx_result(
         );
     }
     text.push_str(&report.delivery_notes());
-    ToolResult::text(text).with_structured(structured)
+    let result = if report.skipped_characters.is_empty() {
+        ToolResult::text(text)
+    } else {
+        ToolResult::error(text)
+    };
+    result.with_structured(structured)
+}
+
+#[cfg(test)]
+#[test]
+fn mpx_type_text_with_skipped_characters_is_an_error() {
+    let report = |skipped_characters: Vec<char>| crate::input::KeyboardDeliveryReport {
+        virtual_focus_held: true,
+        core_focus_unchanged: true,
+        delivery_confirmed: true,
+        key_events: 2,
+        skipped_characters,
+        focus_guard: None,
+        released_stuck: Vec::new(),
+        path: crate::input::MPX_UINPUT_PATH,
+        grab_popup: None,
+    };
+    assert_eq!(type_text_mpx_result(2, report(Vec::new())).is_error, None);
+    let skipped = type_text_mpx_result(2, report(vec!['約']));
+    assert_eq!(skipped.is_error, Some(true));
+    assert!(!format!("{:?}", skipped.content).contains("Typed 2 character(s)"));
+    assert_eq!(
+        skipped.structured_content.unwrap()["skipped_characters"],
+        "約"
+    );
 }
 
 // ── press_key ─────────────────────────────────────────────────────────────────
@@ -13223,7 +13269,7 @@ impl Tool for CheckPermissionsTool {
         PERMS_DEF.get_or_init(|| ToolDef {
             name: "check_permissions".into(),
             description: "Check required permissions for cua-driver-rs on Linux.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{"prompt":{"type":"boolean","description":"Ignored: Linux has no permission prompts."}},"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -13284,6 +13330,16 @@ impl Tool for CheckPermissionsTool {
     }
 }
 
+#[cfg(test)]
+#[tokio::test]
+async fn check_permissions_accepts_the_status_prompt_argument() {
+    let result = build_registry_with_provider(false, None)
+        .invoke("check_permissions", json!({ "prompt": false }))
+        .await;
+    let wire = serde_json::to_value(&result).unwrap();
+    assert!(wire["structuredContent"].get("x11").is_some(), "{wire}");
+}
+
 // ── get_config ────────────────────────────────────────────────────────────────
 
 pub struct GetConfigTool {
@@ -13313,7 +13369,10 @@ impl Tool for GetConfigTool {
             "platform": "linux",
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
-            "cursor": { "motion": cursor_overlay::motion_defaults::read_saved().config_json() },
+            "cursor": {
+                "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
+                "badges": cursor_overlay::badge_mode::read_saved().as_str(),
+            },
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry
         }))
@@ -13325,6 +13384,7 @@ impl Tool for GetConfigTool {
 fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
+        properties.extend(cursor_overlay::badge_mode::config_schema_properties());
     }
     schema
 }
@@ -13347,7 +13407,9 @@ impl Tool for SetConfigTool {
                 Linux ships only the trait stub today — see issue #1729).\n\n\
                 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` \
                 (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. \
-                `cursor.motion: \"default\"` clears every saved cursor motion default.".into(),
+                `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n\
+                `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge \
+                for every cursor at once.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
@@ -13373,11 +13435,16 @@ impl Tool for SetConfigTool {
             Ok(keys) => keys,
             Err(message) => return ToolResult::error(message),
         };
+        let badge_key = match cursor_overlay::badge_mode::apply_config_args(&args) {
+            Ok(key) => key,
+            Err(message) => return ToolResult::error(message),
+        };
         let mut cfg = self.state.config.write().unwrap();
         let mut parts: Vec<String> = motion_keys
             .iter()
             .map(|key| format!("{key} (applies to sessions started from now on)"))
             .collect();
+        parts.extend(badge_key.map(|key| format!("{key} (applies now)")));
         if let Some(mode) = args.opt_str("capture_mode") {
             if let Err(e) =
                 pip_preview::write_config_key("capture_mode", Value::String(mode.clone()))

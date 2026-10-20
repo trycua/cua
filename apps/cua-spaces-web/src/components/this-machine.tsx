@@ -14,12 +14,13 @@ import {
   type HostPanelView,
   type HostSetupFormView,
 } from "@/bridge";
+import { limitsFor } from "@/bridge/friendly-errors";
+import { hostOs } from "@/bridge/host-os";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -102,7 +103,7 @@ export function ThisMachine({ panel, progress }: { panel: HostPanelView; progres
               <Switch checked={t.on} disabled={host.busy || !t.enabled} aria-label={t.label} onCheckedChange={() => void host.run(t.action)} />
             </Row>
           ))}
-          {panel.limits ? <p className="px-4 py-2.5 text-xs text-muted-foreground">{panel.limits}</p> : null}
+          {panel.limits ? <p className="px-4 py-2.5 text-xs text-muted-foreground">{limitsFor(panel.limits, hostOs() === "macos")}</p> : null}
         </Group>
       ) : null}
 
@@ -255,6 +256,9 @@ export function HostSetupForm({
   return (
     <form
       data-host-form
+      // Advanced (Direct connection, your own relay) is open only when
+      // Settings → Advanced opened the form; there is no toggle here.
+      data-host-advanced={view.advancedOpen ? "open" : "closed"}
       onSubmit={(e) => {
         e.preventDefault();
         if (view.canSubmit) void host.submit();
@@ -267,15 +271,6 @@ export function HostSetupForm({
         {basic.map((f) => (
           <Field key={f.id} field={f} host={host} />
         ))}
-        <button
-          type="button"
-          data-host-advanced={view.advancedOpen ? "open" : "closed"}
-          onClick={() => host.send({ type: "toggle-advanced" })}
-          className="flex w-full cursor-default items-center gap-1 px-4 py-2.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
-        >
-          {view.advancedOpen ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
-          {view.advancedLabel}
-        </button>
         {advanced.map((f) => (
           <Field key={f.id} field={f} host={host} />
         ))}
@@ -309,15 +304,26 @@ export function HostSetupForm({
 
 function Field({ field: f, host }: { field: HostFormView["fields"][number]; host: FormHost }) {
   if (f.choices?.length) {
+    // Stacked radios, as the SwiftUI form: the options are whole sentences.
     return (
-      <Row label={f.label} data-host-field={f.id}>
-        <Segmented
-          aria-label={f.label}
-          value={f.value}
-          options={f.choices.map((c) => ({ value: c.id, label: c.label }))}
-          onValueChange={(profile) => host.send({ type: "set-profile", profile })}
-        />
-      </Row>
+      <div data-host-field={f.id} className="px-4 py-2.5">
+        <div className="text-[13px]">{f.label}</div>
+        <div role="radiogroup" aria-label={f.label} className="mt-1.5 flex flex-col gap-1">
+          {f.choices.map((c) => (
+            <label key={c.id} className="flex cursor-default items-center gap-2 text-[13px]">
+              <input
+                type="radio"
+                name={`host-${f.id}`}
+                value={c.id}
+                checked={f.value === c.id}
+                onChange={() => host.send({ type: "set-profile", profile: c.id })}
+                className="accent-foreground"
+              />
+              {c.label}
+            </label>
+          ))}
+        </div>
+      </div>
     );
   }
   if (f.toggle) {

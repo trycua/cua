@@ -56,14 +56,16 @@ fn row(image: &Value, all: &[Value]) -> Value {
         .map(|i| json!({"ref": i["ref"], "variant": i["variant"]}))
         .collect();
     let mut v = image.clone();
+    // The catalog file still records a cloud runtime per image; Cua Cloud
+    // has ended, so it is not shown.
+    if let Some(o) = v.as_object_mut() {
+        o.remove("cloud");
+    }
     v["browser_tools"] = json!(browser_tools(image));
     v["variants"] = Value::Array(variants);
     let mut create = vec![];
     if image["local"].is_string() {
         create.push(format!("cua sb create {r}"));
-    }
-    if image["cloud"].is_string() {
-        create.push(format!("cua sb create {r} --on cloud"));
     }
     if browser_tools(image) {
         create.push(format!("cua sb create {r} --browser"));
@@ -121,19 +123,13 @@ pub fn mcp_result(f: &Filter) -> Value {
     })
 }
 
-fn runtimes(i: &Value) -> (String, String) {
-    let local = match i["local"].as_str() {
+fn local_runtime(i: &Value) -> &'static str {
+    match i["local"].as_str() {
         Some("container") => "container",
         Some("qemu") => "qemu vm",
         Some("lume") => "lume vm",
         _ => "-",
-    };
-    let cloud = match i["cloud"].as_str() {
-        Some("gvisor") => "gvisor",
-        Some("kubevirt") => "kubevirt vm",
-        _ => "-",
-    };
-    (local.into(), cloud.into())
+    }
 }
 
 /// `cua images ls`.
@@ -146,7 +142,7 @@ pub fn print_list(f: &Filter, json: bool, out: &mut dyn Write) -> Result<i32, Cu
     let table: Vec<Vec<String>> = rows
         .iter()
         .map(|i| {
-            let (local, cloud) = runtimes(i);
+            let local = local_runtime(i);
             let browsers: Vec<&str> = i["browsers"]
                 .as_array()
                 .map(|b| b.iter().filter_map(Value::as_str).collect())
@@ -156,8 +152,7 @@ pub fn print_list(f: &Filter, json: bool, out: &mut dyn Write) -> Result<i32, Cu
                 i["os"].as_str().unwrap_or_default().to_string(),
                 i["tier"].as_str().unwrap_or("-").to_string(),
                 i["variant"].as_str().unwrap_or_default().to_string(),
-                local,
-                cloud,
+                local.to_string(),
                 if i["spacesd"].as_bool() == Some(true) {
                     "yes".into()
                 } else {
@@ -175,7 +170,7 @@ pub fn print_list(f: &Filter, json: bool, out: &mut dyn Write) -> Result<i32, Cu
     util::table(
         out,
         &[
-            "REF", "OS", "TIER", "KIND", "LOCAL", "CLOUD", "SPACESD", "BROWSERS", "SUMMARY",
+            "REF", "OS", "TIER", "KIND", "LOCAL", "SPACESD", "BROWSERS", "SUMMARY",
         ],
         &table,
     );

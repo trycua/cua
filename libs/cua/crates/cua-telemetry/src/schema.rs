@@ -142,6 +142,23 @@ pub const ERROR_KINDS: &[&str] = &[
     "runtime_not_running",
     "runtime_permission",
     "image_pull",
+    // A failed create split by cause (cua_space_create, cua_sandbox_created,
+    // cua_host_space_provided; `classify::create_failure_kind`): the image is
+    // not in the registry, the registry refused the credentials, the network
+    // failed during the download, the registry rate-limited it.
+    "image_pull_not_found",
+    "image_pull_auth",
+    "image_pull_network",
+    "image_pull_rate_limited",
+    // The VM did not finish booting in time; it booted but its services
+    // (cua-spacesd, the computer server) never answered.
+    "vm_boot_timeout",
+    "services_unreachable",
+    // The machine cannot run VMs (no Virtualization.framework, no KVM, no
+    // hardware virtualization).
+    "virtualization_unavailable",
+    // The account's sandbox quota, plan limit or credits ran out.
+    "quota_exceeded",
     "env",
     "http",
     "unauthenticated",
@@ -162,12 +179,26 @@ pub const ERROR_KINDS: &[&str] = &[
     "local_network",
     "vm_limit",
     "requires_cua_app",
+    // A failed create's text, read into a cause: the guest asked for more
+    // memory than the machine has, a port the Space needs is taken, a file
+    // or folder could not be written, the machine could not reach the
+    // network.
+    "out_of_memory",
+    "port_in_use",
+    "file_access",
+    "network",
     "cancelled",
     // An agent run: cua_spaces `Error::Agent`, a run that recorded a
     // failure, a run whose process went away mid-turn.
     "agent",
     "agent_failed",
     "agent_crashed",
+    // Why an agent run failed or stopped, a fixed word chosen on device
+    // from the run's recorded error (never the text itself).
+    "no_api_key",
+    "provider_error",
+    "timeout",
+    "user_cancelled",
     "other",
 ];
 pub const DURATIONS: &[&str] = &[
@@ -181,6 +212,7 @@ pub const DURATIONS: &[&str] = &[
 ];
 pub const UPTIMES: &[&str] = &["lt_1h", "1_5h", "6_23h", "1_6d", "gte_7d"];
 pub const COUNTS: &[&str] = &["0", "1", "2_4", "5_9", "10_49", "50_99", "gte_100"];
+// `cloud` (Cua Cloud, ended) is only in events recorded before cua 0.4.2.
 pub const LOCATIONS: &[&str] = &[
     "local", "cloud", "direct", "relay", "e2b", "daytona", "modal", "other",
 ];
@@ -270,10 +302,24 @@ pub const FEATURES: &[&str] = &[
     // Settings, General: Launch Cua Spaces at login turned on or off.
     "launch_at_login_on",
     "launch_at_login_off",
+    // The in-app Pro and Teams prompts (`cua-spaces-app-core` `upsell`):
+    // a value-moment prompt shown, clicked or dismissed; the always-visible
+    // plan card and account-menu plan only clicked.
+    "upsell_meter_shown",
+    "upsell_meter_click",
+    "upsell_meter_dismiss",
+    "upsell_share_shown",
+    "upsell_share_click",
+    "upsell_share_dismiss",
+    "upsell_machine_shown",
+    "upsell_machine_click",
+    "upsell_machine_dismiss",
+    "upsell_plan_card_click",
+    "upsell_account_menu_click",
 ];
+/// Install steps live in [`INSTALLER_STEPS`] (`cua_installer_step`): the
+/// installers send them before any Cua program is on the machine.
 pub const ONBOARDING_STEPS: &[&str] = &[
-    "installer_started",
-    "installer_completed",
     "app_launched",
     "onboarding_shown",
     "onboarding_completed",
@@ -299,6 +345,38 @@ pub const ONBOARDING_STEPS: &[&str] = &[
     "checklist_dismissed",
     "checklist_reopened",
 ];
+/// What `install.sh` and `install.ps1` report about their own run
+/// (`cua_installer_step`): started, finished, or stopped by an error.
+pub const INSTALLER_STEPS: &[&str] = &[
+    "installer_started",
+    "installer_completed",
+    "installer_failed",
+];
+/// The part of the install that was running when it stopped (`none` on
+/// `installer_started` and `installer_completed`).
+pub const INSTALL_STAGES: &[&str] = &[
+    "none", "platform", "manifest", "cli", "runtime", "app", "driver", "sign_in", "host", "other",
+];
+/// Why an install stopped, as a fixed word the installer picks from its
+/// own error; never the message.
+pub const INSTALL_ERROR_KINDS: &[&str] = &[
+    "none",
+    "network",
+    "checksum",
+    "signature",
+    "unsupported_platform",
+    "permission_denied",
+    "missing_tool",
+    "cancelled",
+    "other",
+];
+/// Which installer sent the event.
+pub const INSTALLERS: &[&str] = &["sh", "ps1"];
+/// What the install was asked to put on the machine (joined with `+`).
+pub const INSTALL_ITEMS: &[&str] = &["cli", "spaces", "cua_driver", "host"];
+/// The kind of Spaces tool an agent's call used (`cua_agent_used_space`).
+pub const SPACE_TOOL_GROUPS: &[&str] =
+    &["shell", "files", "computer", "services", "agents", "other"];
 /// Whether an `app_launched` opens the first run (`unknown` elsewhere).
 pub const ONBOARDING_ELIGIBLE: &[&str] = &["yes", "no", "unknown"];
 /// The Spaces app's first-run pages (`cua-spaces-app-core` `onboarding`).
@@ -394,8 +472,40 @@ pub const KEYVAULT_METHODS: &[&str] = &["os_key_store", "passphrase", "recovery_
 pub const SHARE_ACTIONS: &[&str] = &["share", "unshare", "change_role"];
 /// The role a Space is shared with.
 pub const SHARE_ROLES: &[&str] = &["viewer", "editor", "none"];
-/// Updater steps.
-pub const UPDATE_ACTIONS: &[&str] = &["checked", "found", "not_found", "installed", "failed"];
+/// Why a share, unshare or role change did not happen; `none` when it did.
+/// From the error's words, never the words themselves (CUA-1855).
+pub const SHARE_ERROR_KINDS: &[&str] = &[
+    "none",
+    // The user's confirmation (Touch ID, Windows Hello, polkit): refused,
+    // dismissed, or no prompt could be shown.
+    "presence_denied",
+    "presence_cancelled",
+    "presence_unavailable",
+    "not_signed_in",
+    "device_not_enrolled",
+    // The Space cannot be shared (its driver cannot attach to the relay).
+    "driver_unsupported",
+    "relay_refused",
+    "relay_unreachable",
+    // Not an email or account id.
+    "invalid_who",
+    "other",
+];
+/// Where a failed share stopped; `none` when it worked.
+pub const SHARE_STAGES: &[&str] = &[
+    "none", "request", "presence", "account", "device", "driver", "relay", "other",
+];
+/// Updater steps. In the product's words: `found` is update_available,
+/// `downloaded` is update_downloaded (the background download finished),
+/// `installed` is update_installed.
+pub const UPDATE_ACTIONS: &[&str] = &[
+    "checked",
+    "found",
+    "not_found",
+    "downloaded",
+    "installed",
+    "failed",
+];
 /// Update channels (`cua-spaces-app-core` `about::UpdateChannel`).
 pub const UPDATE_CHANNELS: &[&str] = &["stable", "beta"];
 /// Who started an update check.
@@ -525,7 +635,11 @@ pub const COMMON: &[Prop] = &[
         Kind::ConstBool(true),
         "No location lookup from the IP.",
     ),
-    p("$lib", Kind::Enum(&["cua-telemetry"]), "Sender library."),
+    p(
+        "$lib",
+        Kind::Enum(&["cua-telemetry", "cua-installer"]),
+        "Sender library (cua-installer: install.sh or install.ps1).",
+    ),
     p("$lib_version", Kind::Version, "Sender library version."),
 ];
 
@@ -537,7 +651,7 @@ const OUTCOME: Prop = p("outcome", Kind::Enum(OUTCOMES), "ok, error or cancelled
 const ERROR_KIND: Prop = p(
     "error_kind",
     Kind::Enum(ERROR_KINDS),
-    "Typed error category (the error enum variant); never the message.",
+    "Typed error category (the error enum variant, or a fixed cause word for a failed create); never the message.",
 );
 const DURATION: Prop = p(
     "duration_bucket",
@@ -553,7 +667,7 @@ const AGENT_HARNESS: Prop = p(
 const AGENT_LOCATION: Prop = p(
     "location",
     Kind::Enum(LOCATIONS),
-    "Where the Space runs: local, cloud, relay (a machine of the account) or direct (added by address).",
+    "Where the Space runs: local, cloud, relay (a computer of the account) or direct (added by address).",
 );
 const AGENT_ENTRY: Prop = p(
     "entry",
@@ -625,6 +739,8 @@ pub mod event {
     pub const APP_UPDATE: &str = "cua_app_update";
     pub const DEVICE_ENROLL: &str = "cua_device_enroll";
     pub const EXPERIMENT: &str = "cua_experiment";
+    pub const INSTALLER_STEP: &str = "cua_installer_step";
+    pub const AGENT_USED_SPACE: &str = "cua_agent_used_space";
 }
 
 /// Every event.
@@ -668,7 +784,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SANDBOX_CREATED,
-        version: 1,
+        version: 2,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: CLIENTS,
@@ -868,6 +984,56 @@ pub const EVENTS: &[EventSpec] = &[
         purpose: "Install and onboarding funnel: where people drop off.",
     },
     EventSpec {
+        name: event::INSTALLER_STEP,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        // The installers install the CLI, so they report as it.
+        products: &["cli"],
+        props: &[
+            p(
+                "step",
+                Kind::Enum(INSTALLER_STEPS),
+                "installer_started, installer_completed or installer_failed.",
+            ),
+            OUTCOME,
+            p(
+                "install_stage",
+                Kind::Enum(INSTALL_STAGES),
+                "installer_failed only: the part of the install that was running (platform, manifest, cli, runtime, app, driver, sign_in, host, other); none otherwise.",
+            ),
+            p(
+                "error_kind",
+                Kind::Enum(INSTALL_ERROR_KINDS),
+                "installer_failed only: why, as a fixed word (network, checksum, signature, unsupported_platform, permission_denied, missing_tool, cancelled, other); none otherwise. Never the message.",
+            ),
+            p(
+                "installer",
+                Kind::Enum(INSTALLERS),
+                "install.sh (sh) or install.ps1 (ps1).",
+            ),
+            p(
+                "items",
+                Kind::Set(INSTALL_ITEMS),
+                "What the install was asked for: cli, spaces, cua_driver, host, joined with +.",
+            ),
+        ],
+        purpose: "Install funnel: how many installs start, finish, and where and why they fail.",
+    },
+    EventSpec {
+        name: event::AGENT_USED_SPACE,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: ALL,
+        props: &[p(
+            "tool_group",
+            Kind::Enum(SPACE_TOOL_GROUPS),
+            "The kind of tool the call used: shell, files, computer, services, agents or other.",
+        )],
+        purpose: "First success and agent retention: an AI agent's tool call reached a Space and worked. At most one per install per UTC day.",
+    },
+    EventSpec {
         name: event::AGENT_RUN_STARTED,
         version: 1,
         tier: Tier::Usage,
@@ -1055,7 +1221,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SPACE_CREATE,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1099,7 +1265,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "storage",
                 Kind::Enum(VOLUME_STORAGE),
-                "Where the files live: this machine, an S3-compatible bucket, or decide later.",
+                "Where the files live: this computer, an S3-compatible bucket, or decide later.",
             ),
             p(
                 "add_to_finder",
@@ -1155,7 +1321,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "signed_in",
                 Kind::Bool,
-                "A Cua account session is stored on this machine (no network, no keychain read).",
+                "A Cua account session is stored on this computer (no network, no keychain read).",
             ),
             p(
                 "token_state",
@@ -1173,11 +1339,11 @@ pub const EVENTS: &[EventSpec] = &[
                 "The HTTP status the relay or download answered a failure with; 0 when none.",
             ),
         ],
-        purpose: "Host Spaces adoption: machines set up for access, and by which profile.",
+        purpose: "Host Spaces adoption: computers set up for access, and by which profile.",
     },
     EventSpec {
         name: event::HOST_SPACE_PROVIDED,
-        version: 1,
+        version: 2,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["daemon"],
@@ -1187,7 +1353,7 @@ pub const EVENTS: &[EventSpec] = &[
             OUTCOME,
             ERROR_KIND,
         ],
-        purpose: "Host Spaces use: Spaces a host machine created for the account's other devices.",
+        purpose: "Host Spaces use: Spaces a host computer created for the account's other devices.",
     },
     EventSpec {
         name: event::KEYVAULT_ACTION,
@@ -1212,7 +1378,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SHARE,
-        version: 1,
+        version: 2,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1228,8 +1394,18 @@ pub const EVENTS: &[EventSpec] = &[
                 "viewer (view-only) or editor; none for unshare.",
             ),
             OUTCOME,
+            p(
+                "error_kind",
+                Kind::Enum(SHARE_ERROR_KINDS),
+                "Why it did not happen: the confirmation was refused, dismissed or could not be shown, not signed in, device not approved, the Space cannot be shared, the relay refused or could not be reached, not an email; none when it worked. Never who.",
+            ),
+            p(
+                "failed_stage",
+                Kind::Enum(SHARE_STAGES),
+                "Where it stopped (request, presence, account, device, driver, relay); none when it worked.",
+            ),
         ],
-        purpose: "Sharing adoption, and how often Spaces are shared view-only.",
+        purpose: "Sharing adoption, how often Spaces are shared view-only, and why sharing fails.",
     },
     EventSpec {
         name: event::PRESENCE_SESSION,
@@ -1258,7 +1434,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "action",
                 Kind::Enum(UPDATE_ACTIONS),
-                "A check, an update found or not, installed, or failed.",
+                "A check, an update found or not, downloaded in the background, installed, or failed.",
             ),
             p(
                 "channel",
@@ -1283,7 +1459,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "method",
                 Kind::Enum(ENROLL_METHODS),
-                "A fresh sign-in, an approval from an enrolled device, or a same-machine re-key.",
+                "A fresh sign-in, an approval from an enrolled device, or a same-computer re-key.",
             ),
             OUTCOME,
         ],

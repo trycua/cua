@@ -275,18 +275,19 @@ async function checkHostPanel(page: Page, cp: Of<"host-panel">): Promise<void> {
 const readForm = (page: Page) =>
   page.locator("[data-host-field]").evaluateAll((els) =>
     els.map((el) => {
-      const input = el.querySelector("input:not([type=hidden])") as HTMLInputElement | null;
+      const input = el.querySelector("input:not([type=hidden]):not([type=radio])") as HTMLInputElement | null;
       const sw = el.querySelector('[role="switch"]');
+      const radios = el.querySelector('[role="radiogroup"]');
       return {
         id: el.getAttribute("data-host-field"),
-        // A switch's state, a text field's text, or the pressed choice's label.
+        // A switch's state, a text field's text, or the checked choice's label.
         value: sw
           ? sw.getAttribute("aria-checked") === "true"
             ? "on"
             : "off"
-          : input
-            ? input.value
-            : (el.querySelector('[aria-pressed="true"]')?.textContent ?? ""),
+          : radios
+            ? (radios.querySelector("input:checked")?.closest("label")?.textContent ?? "")
+            : (input?.value ?? ""),
         invalid: input?.getAttribute("aria-invalid") === "true",
       };
     }),
@@ -369,11 +370,11 @@ async function checkTelemetry(page: Page, cps: Of<"telemetry">[]): Promise<numbe
   await track(page, [
     { type: "step", step: "signed_in", ok: true, identity: "maya@example.com" },
     { type: "feature", feature: "/Users/maya/secret" },
-    { type: "share", action: "share", role: "viewer", outcome: "ok", email: "grace@example.com" },
+    { type: "share", action: "share", role: "viewer", outcome: "ok", errorKind: "none", failedStage: "none", email: "grace@example.com" },
   ]);
   expect((await tracked(page)).slice(n), "only schema fields and fixed words are sent").toEqual([
     { type: "step", step: "signed_in", ok: true },
-    { type: "share", action: "share", role: "viewer", outcome: "ok" },
+    { type: "share", action: "share", role: "viewer", outcome: "ok", errorKind: "none", failedStage: "none" },
   ]);
   return cps.filter((c) => c.signals.length > 0).length;
 }

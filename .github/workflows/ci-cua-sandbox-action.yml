@@ -10,8 +10,7 @@ on:
     paths:
       - ".github/actions/cua-sandbox/**"
       - "docs/content/docs/cua-sdk/guides/test-in-ci.mdx"
-      - "docs/content/docs/cua-driver/guides/test-in-a-sandbox.mdx"
-      - "docs/content/docs/start-here/run-in-github-actions.mdx"
+      - "docs/content/docs/cua-driver/guides/vms-and-remote.mdx"
       - ".github/workflows/ci-cua-sandbox-action.yml"
   workflow_dispatch:
 

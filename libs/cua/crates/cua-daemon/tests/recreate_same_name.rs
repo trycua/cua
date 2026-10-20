@@ -284,13 +284,12 @@ async fn another_sandboxes_state_file_does_not_drop_a_live_connection() {
         env_port(&f.daemon, "shared").await.unwrap(),
         only.addr.port()
     );
-    // A local and a cloud sandbox of one name share one state file: the
-    // cloud claim's overwrites the local one's, but the local sandbox is
-    // still running and still the same.
+    // A local sandbox and a remembered direct connection of one name share
+    // one state file: the direct one's overwrites the local one's, but the
+    // local sandbox is still running and still the same.
     f.daemon
         .sandboxes()
-        .state()
-        .save_fleet_claim("shared", "some-pool")
+        .remember_direct("shared", "http://127.0.0.1:9")
         .unwrap();
     assert_eq!(
         env_port(&f.daemon, "shared").await.unwrap(),

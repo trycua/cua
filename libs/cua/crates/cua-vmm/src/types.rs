@@ -72,8 +72,8 @@ pub enum GuestOs {
     Windows,
 }
 
-/// Boot firmware preference for VM guests (a Fleet template's
-/// `vmTemplate.firmware`). `None` in a [`StartSpec`] lets the backend decide
+/// Boot firmware preference for VM guests (an image's
+/// `firmware`). `None` in a [`StartSpec`] lets the backend decide
 /// (QEMU: UEFI on aarch64, for Windows and for GPT disks without a BIOS boot
 /// partition; SeaBIOS otherwise, as KubeVirt does).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -398,7 +398,7 @@ pub fn registry_of(reference: &str) -> &str {
 
 /// An extra container that shares a sandbox's network namespace. The
 /// sandbox reaches it at its name (or `localhost`) and it reaches the
-/// sandbox at `main`, as on Fleet.
+/// sandbox at `main`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SidecarSpec {
     /// Name, unique within the sandbox (a DNS label other than `main`);
@@ -619,6 +619,15 @@ pub struct Instance {
     pub isolation: Isolation,
     #[serde(default)]
     pub arch: Option<Arch>,
+}
+
+/// How a stopped instance ended, as its engine recorded it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExitRecord {
+    /// The exit code (137: killed with SIGKILL).
+    pub exit_code: i64,
+    /// The kernel killed it for memory (the engine's `OOMKilled`).
+    pub oom_killed: bool,
 }
 
 /// One row of [`crate::Runtime::list`].

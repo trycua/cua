@@ -1393,6 +1393,38 @@ mod tests {
     }
 
     #[test]
+    fn the_default_socket_follows_cua_env() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().to_str().unwrap();
+        temp_env(
+            &[
+                ("CUA_HOME", None),
+                ("HOME", Some(h)),
+                ("USERPROFILE", Some(h)),
+                ("CUA_ENV", Some("staging")),
+            ],
+            || {
+                let sock = crate::default_socket().unwrap();
+                assert_eq!(sock, d.path().join(".cua/envs/staging/keyvault.sock"));
+            },
+        );
+        temp_env(
+            &[
+                ("CUA_HOME", None),
+                ("HOME", Some(h)),
+                ("USERPROFILE", Some(h)),
+                ("CUA_ENV", None),
+            ],
+            || {
+                assert_eq!(
+                    crate::default_socket().unwrap(),
+                    d.path().join(".cua/keyvault.sock")
+                )
+            },
+        );
+    }
+
+    #[test]
     fn cua_home_override_outside_the_real_home_is_untrusted() {
         // No override -> trusted (~/.cua).
         temp_env(&[("CUA_HOME", None)], || {

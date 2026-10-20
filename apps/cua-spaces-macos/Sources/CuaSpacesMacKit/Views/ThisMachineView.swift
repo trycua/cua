@@ -20,7 +20,7 @@ struct ThisMachineView: View {
         let panel = host.panel
         Group {
             if host.form != nil {
-                HostFormView(host: host, buttons: true)
+                HostFormView(host: host)
             } else {
                 Form {
                     if let intro = panel.intro {
@@ -346,47 +346,35 @@ struct PermissionRows: View {
 /// Advanced): the core's fields in order.
 struct HostFormView: View {
     @Bindable var host: HostModel
-    /// Draws Back and the submit button (onboarding draws its own).
-    var buttons: Bool
-    /// Shows a failed setup (and Retry) inside the form; onboarding draws
-    /// it under the form instead.
-    var showsFailure = true
 
     var body: some View {
         if let v = host.formView {
             Form {
                 Section {
-                    Text(v.lede).foregroundStyle(.secondary).lineLimit(1).help(v.lede)
+                    // Wraps: the lede says what the chosen option does.
+                    Text(v.lede).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     ForEach(v.fields.filter { !$0.advanced }, id: \.id) { field($0) }
-                    Button {
-                        host.send(.toggleAdvanced)
-                    } label: {
-                        Label(v.advancedLabel, systemImage: v.advancedOpen ? "chevron.down" : "chevron.right")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("host-advanced")
+                    // Self-hosting (Direct, your own relay) opens only from
+                    // Settings → Advanced: no toggle here.
                     ForEach(v.fields.filter(\.advanced), id: \.id) { field($0) }
-                    if showsFailure, let failure = host.setupFailure {
+                    if let failure = host.setupFailure {
                         HostSetupFailureView(failure: failure, retrying: v.busy) {
                             Task { await host.submit() }
                         }
                     }
-                    if showsFailure, let progress = host.progress {
+                    if let progress = host.progress {
                         HostSetupProgressView(text: progress)
                     }
                 }
-                if buttons {
-                    Section {
-                        HStack {
-                            Spacer()
-                            Button(v.backLabel) { host.closeForm() }
-                            Button(v.submitLabel) { Task { await host.submit() } }
-                                .buttonStyle(.borderedProminent)
-                                .keyboardShortcut(.defaultAction)
-                                .disabled(!v.canSubmit)
-                                .accessibilityIdentifier("host-setup")
-                        }
+                Section {
+                    HStack {
+                        Spacer()
+                        Button(v.backLabel) { host.closeForm() }
+                        Button(v.submitLabel) { Task { await host.submit() } }
+                            .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(!v.canSubmit)
+                            .accessibilityIdentifier("host-setup")
                     }
                 }
             }

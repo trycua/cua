@@ -7,7 +7,7 @@ import { useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { isUnsupported } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { CloudConnectAction, CloudConnectView, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
+import type { CloudConnectAction, CloudConnectView, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
 import { useMachines, useSession, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
@@ -287,6 +287,58 @@ export function useConnectCloud(): ConnectCloudHook {
         }
       } catch (e) {
         reduce({ type: "failed", error: isUnsupported(e) ? "This app can't connect a cloud yet." : e instanceof Error ? e.message : String(e) });
+      }
+    },
+  };
+}
+
+/* ---- Windows: the runtime fix ("Install Docker Desktop") ------------------ */
+
+/** How often the options are read again while a fix runs, and for how long after one started. */
+export const RUNTIME_FIX_POLL_MS = 3_000;
+export const RUNTIME_FIX_FOLLOW_MS = 15 * 60_000;
+
+export interface RuntimeFixHook {
+  /** What the host offers beside "no local runtime" (null when it offers nothing, or a runtime is ready). */
+  fix: RuntimeFix | null;
+  /** Starts the fix's action; the options are read again until it settles. */
+  run(): Promise<void>;
+  /** Why the host refused to start it. */
+  error: string | null;
+}
+
+/**
+ * The host's fix for a machine with no local runtime (Windows: install or
+ * start Docker Desktop). While it runs, or for a while after it started,
+ * the options are read again so the reason, the button and the wizard's
+ * Continue follow the install and the engine's start.
+ */
+export function useRuntimeFix(): RuntimeFixHook {
+  const ctx = useContext(BridgeContext)!;
+  const s = useSyncExternalStore(subscribe, read, read);
+  const local = s.options?.local;
+  const fix = local && !local.available ? (local.fix ?? null) : null;
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const following = Boolean(fix?.busy) || (startedAt !== null && Date.now() - startedAt < RUNTIME_FIX_FOLLOW_MS && !local?.available);
+  useEffect(() => {
+    if (!following) return;
+    const timer = setInterval(() => void ctx.ready.then(loadHostData), RUNTIME_FIX_POLL_MS);
+    return () => clearInterval(timer);
+  }, [following, ctx.ready]);
+  return {
+    fix,
+    error,
+    async run() {
+      const action = fix?.action;
+      if (!action || !ctx.adapter) return;
+      setError(null);
+      try {
+        await ctx.adapter.call("spaces.fixRuntime", { action });
+        setStartedAt(Date.now());
+        await ctx.ready.then(loadHostData);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       }
     },
   };

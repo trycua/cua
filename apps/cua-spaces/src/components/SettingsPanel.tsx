@@ -89,10 +89,6 @@ interface SettingsPanelProps {
   /** Switch the switcher entry point between the notch tab and a macOS
    * menu-bar status item. */
   onMenuBarMode: (enabled: boolean) => void;
-  /** True when Cua Cloud credentials work (client credentials count). */
-  fleetLive: boolean;
-  /** OAuth client id, shown muted for client credentials; absent when unknown. */
-  clientId?: string;
   /** Signed-in user identity (email/subject) from a device sign-in, if any. */
   signedInIdentity?: string;
   /** Native device-flow sign-in hooks; when absent the button opens the site. */
@@ -133,8 +129,6 @@ interface SettingsPanelProps {
 export function SettingsPanel({
   menuBar,
   onMenuBarMode,
-  fleetLive,
-  clientId,
   signedInIdentity,
   auth,
   onOpenExternal,
@@ -375,16 +369,13 @@ export function SettingsPanel({
     panelRef.current?.focus({ preventScroll: true });
   }, []);
 
-  // The Account section reflects the USER session (a device sign-in). Env
-  // client-credentials keep Cua Cloud working, but they're a machine key, not
-  // a sign-in: they show as "Signed in via API key" beside "Sign in to Cua".
+  // The Account section reflects the USER session (a device sign-in).
   const page = settingsPage({
     identity: identity ?? null,
-    apiKeyClient: !identity && fleetLive ? (clientId ?? null) : null,
     signIn: phase,
     canSignOut: Boolean(auth) && Boolean(identity),
     menuBar,
-    defaultLocation: defaultLocation?.value === "cloud" ? "cloud" : "local",
+    defaultLocation: "local",
     locationLockedBy: defaultLocation?.source === "env" ? (defaultLocation.env ?? "CUA_DEFAULT_ON") : null,
     telemetry: telemetryView
       ? {
@@ -426,6 +417,8 @@ export function SettingsPanel({
         return;
       case "billing":
       case "teams":
+      case "teams-manage":
+      case "teams-billing":
         if (row.linkUrl) onOpenExternal(row.linkUrl);
         return;
     }

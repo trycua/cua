@@ -156,7 +156,7 @@ export function createFakeDevicesBridge(
       const made: PairingCode = {
         id: `pc_fake${pairing.length + 1}`,
         code,
-        url: `https://spaces.cua.ai/add/${code}`,
+        url: `https://cua.ai/add/${code}`,
         installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
         installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
         state: "active",

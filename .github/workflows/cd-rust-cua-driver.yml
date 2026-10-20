@@ -85,6 +85,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -1237,8 +1240,30 @@ jobs:
   # the GitHub release (and therefore the PyPI/npm SDK packages) never becomes
   # public before that evidence exists. Nightly and manual build-only runs skip
   # it.
+  # Staging first (CUA-1907): a release publishes only when the staging smoke
+  # is recorded green for this exact commit as the commit status
+  # "staging-smoke/cua-driver" (description carries the artifact digest).
+  # Break-glass: an admin posts the status by hand with the reason in its
+  # description (see .github/scripts/require_staging_smoke.sh); the Driver
+  # release job runs on a tag push only, so there is no manual-run bypass.
+  staging-gate:
+    name: staging smoke is green
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a green staging smoke for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/require_staging_smoke.sh cua-driver "$GITHUB_SHA"
+
   release:
     needs:
+      - staging-gate
       - build-linux
       - build-windows
       - build-macos-universal
@@ -1585,6 +1610,7 @@ jobs:
     name: advance public installer version
     needs: [release, verify-published-signatures, verify-published-installers]
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     steps:
       # The orchestration helpers and the withdrawn list come from the exact
       # workflow revision; the installer files come from the latest main.
@@ -1604,7 +1630,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
 
-      - name: Advance public installer version on main
+      - name: Advance public installer version through a pull request
         working-directory: release-control
         env:
           GH_TOKEN: ${{ steps.post-publish-app-token.outputs.token }}
@@ -1649,19 +1675,35 @@ jobs:
               libs/cua-driver/scripts/_install-rust.sh \
               libs/cua-driver/scripts/install.ps1
             git -C "$UPDATE_ROOT" commit \
-              -m "chore(cua-driver): advance published installer version to ${VERSION} [skip ci]"
+              -m "chore(cua-driver): advance published installer version to ${VERSION}"
             COMMIT_SHA=$(git -C "$UPDATE_ROOT" rev-parse HEAD)
 
-            git push origin "${COMMIT_SHA}:refs/heads/${TEMP_BRANCH}" --force
-            if gh api -X PATCH \
-              "/repos/${{ github.repository }}/git/refs/heads/main" \
-              -f sha="$COMMIT_SHA" \
-              -F force=false; then
-              git push origin --delete "$TEMP_BRANCH" || true
+            # main only changes through a pull request: no [skip ci], so the
+            # required checks run, and no direct ref update. The release is
+            # already published; a failure here only delays the bookkeeping.
+            ATTEMPT_BRANCH="${TEMP_BRANCH}-${ATTEMPT}"
+            git push origin "${COMMIT_SHA}:refs/heads/${ATTEMPT_BRANCH}" --force
+            PR_URL=$(gh pr create \
+              --repo "${{ github.repository }}" \
+              --base main \
+              --head "$ATTEMPT_BRANCH" \
+              --title "chore(cua-driver): advance published installer version to ${VERSION}" \
+              --body "Post-release bookkeeping for Cua Driver ${VERSION}, opened by the release workflow after the signed release and installers verified. Merges through the normal required checks.") || {
+                echo "Could not open the bookkeeping PR; retrying." >&2
+                git push origin --delete "$ATTEMPT_BRANCH" || true
+                continue
+              }
+            echo "Opened ${PR_URL}"
+
+            # Wait for the required checks, then merge. Repository auto-merge
+            # is off, so merge explicitly once they pass.
+            if timeout 40m gh pr checks "$PR_URL" --required --watch --fail-fast \
+              && gh pr merge "$PR_URL" --squash --delete-branch; then
               echo "Public installers now advertise ${VERSION}."
               exit 0
             fi
-            echo "main advanced concurrently; retrying from its new head."
+            echo "Bookkeeping PR ${PR_URL} did not merge; closing it and retrying from the new main head." >&2
+            gh pr close "$PR_URL" --delete-branch || true
           done
 
           echo "Could not advance the public installers after 5 attempts." >&2

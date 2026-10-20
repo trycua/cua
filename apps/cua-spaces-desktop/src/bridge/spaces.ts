@@ -8,11 +8,13 @@
 import type { Native } from "../native/load";
 import type { AppCreateSpaceArgs, AppRuntime, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
 import { AppModel } from "../model/app-model";
+import type { RuntimeFix } from "../model/windows-runtime";
 import { kindOf, osOf } from "../model/backend";
 import { isCancelled } from "../model/errors";
 import { bool, string } from "./args";
 import type { BridgeContext } from "./context";
 import { Failure, type BridgeArgs, type Handlers } from "./host";
+import { spaceReadyNote } from "./space-ready";
 import { encode } from "./value";
 
 export function spacesState(model: AppModel) {
@@ -34,12 +36,14 @@ export function spacesState(model: AppModel) {
  * `NewSpaceOptions` (plus `macosVmsRunning`; `pending` while the launch is
  * still starting, when every probe would wait).
  */
-export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null, pending: boolean) {
+export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null, pending: boolean, fix: RuntimeFix | null = null) {
   const out: Record<string, unknown> = {
     local: {
       available: env.localAvailable,
       backends: env.localBackends ?? [],
       error: env.localReason ?? null,
+      // Windows without a runtime: what the app can do about it ("Install Docker Desktop").
+      fix: env.localAvailable ? null : fix,
       hostArch: env.hostArch ?? null,
       storage: encode(env.storage),
     },
@@ -94,7 +98,7 @@ export function progress(p: SpaceCreateProgress, pendingId: string) {
 }
 
 export function spacesMethods(ctx: BridgeContext): Handlers {
-  const { model, events, ui } = ctx;
+  const { model, events, ui, system, platform } = ctx;
   const native = model.native;
 
   const space = (args: BridgeArgs): AppSpace => {
@@ -114,14 +118,23 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
     "spaces.createOptions": async () => {
       if (!model.servicesIn) return createOptions(model.knownNewSpaceEnv(), null, true);
       const env = await model.newSpaceEnv();
-      return createOptions(env, model.runningMacosVms, false);
+      return createOptions(env, model.runningMacosVms, false, model.runtimeFix);
     },
+    "spaces.fixRuntime": (args) => {
+      const action = string(args, "action");
+      if (action !== "install-docker" && action !== "start-docker" && action !== "restart-app") throw Failure.badArgs("action: install-docker | start-docker | restart-app");
+      if (!model.windowsRuntime && !model.linuxRuntime) throw Failure.unsupported("no runtime fix on this system");
+      model.fixRuntime(action);
+      return null;
+    },
+    // `{config, pendingId, os?, notifyWhenReady?}`. The create belongs to the app, not to the window:
+    // it runs on when the window is closed, and `notifyWhenReady` posts "<Space> is ready" when it succeeds.
     "spaces.create": async (args) => {
       const pendingId = string(args, "pendingId");
       if (!native.appCreatesIsPending(pendingId)) throw Failure.badArgs("pendingId: pending:<id>");
       const config = args.config;
       if (!config || typeof config !== "object" || Array.isArray(config)) throw Failure.badArgs("config: object");
-      const defaultOn = model.settings.defaultLocation === native.AppLocation.Cloud ? "cloud" : "local";
+      const defaultOn = "local"; // Cua Cloud has ended
       const a = createArgs(native, config as BridgeArgs, defaultOn);
       // The page sends the plan's OS (the pending row's icon).
       const os = (typeof args.os === "string" ? osOf(native, args.os) : undefined) ?? native.AppSpaceOs.Unknown;
@@ -133,6 +146,11 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
         throw error;
       }
       const made = model.spaces.find((s) => s.id === id);
+      // A create the first run started: "<Space> is ready", window or not.
+      if (args.notifyWhenReady === true) {
+        const known = made && made.os !== native.AppSpaceOs.Unknown ? made.os : os;
+        system?.notify(spaceReadyNote({ id, name: made?.name ?? a.name ?? id, os: String(known) }, platform));
+      }
       if (made) return encode(made);
       return { id, name: a.name ?? id, os, status: "running", detail: "", lastUsedAt: Number(AppModel.nowMs()) };
     },

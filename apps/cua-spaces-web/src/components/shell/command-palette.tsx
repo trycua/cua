@@ -19,13 +19,13 @@ import {
 } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 
-import { useBridge, useChecklist, useKeyvault, useSession, useSpaces } from "@/bridge";
+import { useBridge, useChecklist, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, Shortcut } from "@/components/ui/kbd";
 import { toast, toastError } from "@/components/ui/toast";
 import { filterCommands, type PaletteCommand } from "@/lib/commands";
-import { osLabel, realSpaces, spaceState } from "@/lib/spaces";
+import { machineName, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
 import { bindingFor } from "@/lib/keybindings";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -54,6 +54,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const navigate = useNavigate();
   const { data: spaces = [], startSpace, stopSpace } = useSpaces();
+  const { data: machines = [] } = useMachines();
   const newSpace = useNewSpace();
   const { data: keyvault, lockItems } = useKeyvault();
   const { data: session, signIn, signOut } = useSession();
@@ -147,7 +148,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
     },
     ...realSpaces(spaces).flatMap((s): Command[] => {
       const state = spaceState(s);
-      const meta = { group: "Spaces", hint: osLabel(s), keywords: `${s.os} ${state}`, icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
+      const meta = { group: "Spaces", hint: osLabel(s), keywords: paletteKeywords(s, state, machineName(machines, s)), icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
       const out: Command[] = [{ ...meta, id: `space:open:${s.id}`, label: `Open ${s.name}`, run: () => openSpace(s.id) }];
       if (state === "stopped") {
         out.push({ ...meta, id: `space:start:${s.id}`, label: `Start ${s.name}`, run: () => void startSpace(s.id).catch(toastError(`Couldn't start ${s.name}`)) });

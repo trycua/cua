@@ -39,12 +39,16 @@ public struct WebUIActions {
 /// Events (native to web): `window.dispatchEvent(new CustomEvent("cua:event",
 /// { detail: { event, payload } }))`, where `event` is `spaces.changed`,
 /// `machines.changed`, `keyvault.changed`, `session.changed`,
-/// `settings.changed` or `agents.changed`; the UI asks again for what it
+/// `settings.changed`, `agents.changed` or `update.changed` (an update
+/// found, downloading, ready or failed); the UI asks again for what it
 /// shows. `spaces.createProgress` carries a create's progress (the page's
 /// pending id), and `spaces.newRequested` (`{on}`) asks the page to open
 /// its New Space wizard (the app's New Space menu items, the notch).
 /// `settings.openRequested` asks the page to open its Settings (the app
 /// menu's Settings command, ⌘,, while the New UI window is in front).
+/// `window.dropTarget` (`{spaceId}`, null for none) names the Space tile a
+/// real window is being dragged over (`window.setDropTargets` said where the
+/// tiles are; the notch's drag monitor follows the drag).
 ///
 /// Every method routes to the view models the SwiftUI windows use, so a
 /// decision is the app core's either way. `spaces.cancelCreate`,
@@ -62,6 +66,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     static let methods = [
         "app.info",
         "session.get", "session.signIn", "session.signOut",
+        // The first run: the shared web onboarding asks whether it is due and
+        // finishes it here, as the Electron shell's handlers do.
+        "onboarding.get", "onboarding.complete",
         "spaces.list", "spaces.open",
         "spaces.createOptions", "spaces.create",
         "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
@@ -82,27 +89,35 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
         "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
         "agents.setupDriver",
-        "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
+        "about.get", "about.set", "about.checkNow", "update.get", "update.install", "loginItem.get", "loginItem.set", "loginItem.openSettings",
         "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
-        "devices.revokePairingCode", "storage.get", "storage.run",
-        "notifications.list", "notifications.markAllRead",
-        "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
+        "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
+        "notifications.list", "notifications.markAllRead", "notifications.markRead",
+        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.usage", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
         "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
-        "host.setUp", "host.action", "host.openSettings",
+        "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
         "settings.get", "settings.choose",
         "keyvault.get", "keyvault.lock", "keyvault.unlock",
         "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
         "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
         "keyvault.showItems", "keyvault.delete", "keyvault.run", "keyvault.dismiss",
         "window.setBackgroundColor", "window.setDragRegions",
+        // Where the page's Space tiles are, for a real window dragged onto one.
+        "window.setDropTargets",
         // The launch (WebUIBridge+Startup.swift).
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
         "relay.usage",
+        // The risky-action question's request files (WebUIBridge+Nudges.swift).
+        "nudges.pending", "nudges.answer",
+        // Processor, memory and disk (WebUIBridge+Pages.swift).
+        "resources.get",
+        // The getting-started checklist: the app's one copy (`ChecklistModel`).
+        "checklist.get", "checklist.send",
     ]
 
     let model: AppModel
@@ -139,6 +154,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var offeredPaths: Set<String> = []
     /// "Send file…"'s picker (a test sets its own).
     var pickFiles: @MainActor () -> [URL]? = WebUIBridge.openPanel
+    /// The "<Space> is ready" notification of a create the onboarding
+    /// started (a test sets its own).
+    var notifySpaceReady: @MainActor (SpaceReadyNote) -> Void = { SpaceReadyNotifier.shared.post($0) }
     /// The pasteboard of the last drag onto the window (a test sets its own).
     var dragPasteboard: @MainActor () -> NSPasteboard = { NSPasteboard(name: .drag) }
     /// Origins allowed to call (the bundled UI, and the dev server in a
@@ -238,6 +256,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             await model.signOut()
             return session()
 
+        case "onboarding.get": return onboarding()
+        case "onboarding.complete": return try completeOnboarding(args)
+
         case "spaces.list": return spaces()
         case "spaces.open":
             let id = try string(args, "id")
@@ -273,6 +294,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
              "agents.setup", "agents.configure":
             return try await agents(method, args)
+
+        case "checklist.get": return ["state": model.checklist.stored]
+        case "checklist.send":
+            model.checklist.send(try checklistAction(args["action"]))
+            return ["state": model.checklist.stored]
         case "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
              "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer":
             return try await agentDetail(method, args)
@@ -358,12 +384,16 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let rects = args["rects"] as? [[String: Any]] else { throw Failure.badArgs("rects: [{x,y,width,height}]") }
             host?.setDragRegions(rects.compactMap(Self.rect))
             return NSNull()
+        case "window.setDropTargets":
+            host?.setDropTargets(try Self.dropTargets(args))
+            return NSNull()
 
         default:
             if let result = try routeStartup(method, args) { return result }
             if let result = try await routeThumbnail(method, args) { return result }
             if let result = try await routeFiles(method, args) { return result }
             if let result = try await routePage(method, args) { return result }
+            if let result = try routeNudges(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }
@@ -390,7 +420,27 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The page a waiting sign-in finishes on, to show and copy.
             "signInUrl": model.signInURL?.absoluteString ?? NSNull(),
             "chrome": BridgeValue.encode(model.chrome),
+            "onboarding": onboarding(),
         ]
+    }
+
+    /// The first run's state (`onboarding.get`): due until it finishes.
+    func onboarding() -> [String: Any] {
+        ["completed": model.onboarding.completed, "mode": model.onboarding.mode == .host ? "host" : "client"]
+    }
+
+    /// `onboarding.complete {mode, launchAtLogin?}`: "Start using Cua Spaces".
+    /// Saved to `onboarding.json`, Done's "Launch at login" applied, the usage
+    /// notice counted as shown. With New UI off the page was only the first
+    /// run's stand-in: its window gives way to the native main window.
+    func completeOnboarding(_ args: [String: Any]) throws -> [String: Any] {
+        guard let word = args["mode"] as? String, word == "client" || word == "host" else {
+            throw Failure.badArgs("mode: client | host")
+        }
+        model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
+        model.telemetrySink?.acknowledgeNotice()
+        if !model.settings.experiments.webUi { model.closeWebUI?() }
+        return onboarding()
     }
 
     func spaces() -> [String: Any] {
@@ -430,17 +480,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // connect probe can time out on a host the relay reaches.
             "presence": model.devices.relayOnline,
             "deviceStates": model.devices.deviceStates,
+            // The page's rows as the core lists them (`machines::page_rows`,
+            // what the native Machines page shows).
+            "rows": BridgeValue.encode(model.machinePageRows),
         ]
     }
 
     /// `relay:<machine>` rows' reported hostnames, by machine id.
-    func relayHostnames() -> [String: String] {
-        var out: [String: String] = [:]
-        for space in model.spaces where space.id.hasPrefix("relay:") && space.host == nil {
-            if let name = model.backend.reportedHostname(id: space.id) { out[String(space.id.dropFirst(6))] = name }
-        }
-        return out
-    }
+    func relayHostnames() -> [String: String] { model.relayHostnames }
 
     func settings() -> [String: Any] {
         [
@@ -450,6 +497,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "updateChannel": model.updates.updater == nil ? NSNull() : (model.updates.channel == .beta ? "beta" : "stable"),
             // ⌘⇧Space, and whether the system gave it (tried again on each read).
             "globalShortcut": GlobalShortcut.installed?.bridgeValue ?? NSNull(),
+            // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
+            // has no environment, so Upgrade's billing fallback names this one.
+            "accountUrl": appAccountAppUrl(),
         ]
     }
 
@@ -530,17 +580,21 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         return out
     }
 
-    /// `spaces.create {config, pendingId, os?}`: the core's create
-    /// arguments (`wizard.createArgs`), run as the native sheet's Create
-    /// runs them (`AppModel.runCreate`: the pending row in the list and the
-    /// notch, the SDK's progress, Cancel through `spaces.cancelCreate`).
-    /// Progress goes to the page as `spaces.createProgress`; the answer is
-    /// the new Space, or `cancelled`.
+    /// `spaces.create {config, pendingId, os?, notifyWhenReady?}`: the core's
+    /// create arguments (`wizard.createArgs`), run as the native sheet's
+    /// Create runs them (`AppModel.runCreate`: the pending row in the list
+    /// and the notch, the SDK's progress, Cancel through
+    /// `spaces.cancelCreate`). Progress goes to the page as
+    /// `spaces.createProgress`; the answer is the new Space, or `cancelled`.
+    /// The create belongs to the app, not to the window: it runs on when the
+    /// window is closed, and `notifyWhenReady` (a create the onboarding
+    /// started) posts "<Space> is ready" as a system notification when it
+    /// succeeds, window or not.
     func create(_ args: [String: Any]) async throws -> Any {
         let pendingId = try string(args, "pendingId")
         guard appCreatesIsPending(id: pendingId) else { throw Failure.badArgs("pendingId: pending:<id>") }
         guard let config = args["config"] as? [String: Any] else { throw Failure.badArgs("config: object") }
-        let createArgs = try Self.createArgs(config, defaultOn: model.settings.defaultLocation == .cloud ? "cloud" : "local")
+        let createArgs = try Self.createArgs(config, defaultOn: "local")
         // The page sends the plan's OS (the pending row's icon).
         let os = (args["os"] as? String).flatMap(AppSpaceOs.init(word:)) ?? .unknown
         let id: String
@@ -551,7 +605,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         } catch where isCancelled(error) {
             throw Failure(code: "cancelled", message: "cancelled")
         }
-        if let space = model.spaces.first(where: { $0.id == id }) { return BridgeValue.encode(space) }
+        let made = model.spaces.first(where: { $0.id == id })
+        if args["notifyWhenReady"] as? Bool == true {
+            let known = made.map(\.os).flatMap { $0 == .unknown ? nil : $0 } ?? os
+            notifySpaceReady(SpaceReadyNote(spaceId: id, name: made?.name ?? createArgs.name ?? id, os: known))
+        }
+        if let space = made { return BridgeValue.encode(space) }
         return ["id": id, "name": createArgs.name ?? id, "os": BridgeValue.encode(os), "status": "running",
                 "detail": "", "lastUsedAt": Double(AppModel.nowMs())] as [String: Any]
     }
@@ -604,6 +663,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return try await persistent.listAgents()
         case "agents.runs":
             let runs = AgentRunsModel(backend: model.backend, spaceId: try string(args, "spaceId"))
+            runs.onRead = { [weak model] in model?.sawAgentRuns($0) }
             await runs.refresh()
             switch runs.load {
             case .ready(let rows): return BridgeValue.encode(rows)
@@ -738,6 +798,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let state = model.host.state, var out = BridgeValue.encode(state) as? [String: Any] else { return NSNull() }
         out["machineId"] = model.host.machineId ?? NSNull()
         out["progress"] = model.host.progress ?? NSNull()
+        // Before setup the host has no name yet: the web UI's setup form
+        // starts with what the system calls this Mac, as the native one does.
+        if !state.configured, (out["name"] as? String)?.isEmpty ?? true, let name = model.host.computerName() {
+            out["name"] = name
+        }
         return out
     }
 
@@ -873,10 +938,51 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         return s
     }
 
+    /// `{targets: [{spaceId, x, y, width, height}]}` as each tile's box by
+    /// Space id (CSS pixels from the page's top left).
+    static func dropTargets(_ args: [String: Any]) throws -> [String: CGRect] {
+        let bad = Failure.badArgs("targets: [{spaceId,x,y,width,height}]")
+        guard let targets = args["targets"] as? [[String: Any]] else { throw bad }
+        var frames: [String: CGRect] = [:]
+        for t in targets {
+            guard let id = t["spaceId"] as? String, let r = rect(t) else { throw bad }
+            frames[id] = r
+        }
+        return frames
+    }
+
     static func rect(_ r: [String: Any]) -> CGRect? {
         func n(_ k: String) -> CGFloat? { (r[k] as? NSNumber).map { CGFloat(truncating: $0) } }
         guard let x = n("x"), let y = n("y"), let w = n("width"), let h = n("height") else { return nil }
         return CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    // MARK: - The checklist
+
+    /// A page's checklist action: a step done, shown, closed, opened again,
+    /// or progress the page kept itself before (merged once). What the app
+    /// shows ticks steps off here, not in the page (`AppModel.followChecklist`).
+    func checklistAction(_ raw: Any?) throws -> AppChecklistAction {
+        guard let a = raw as? [String: Any], let type = a["type"] as? String else {
+            throw Failure.badArgs("action: {type}")
+        }
+        switch type {
+        case "done":
+            guard let word = a["step"] as? String,
+                  let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
+            else { throw Failure.badArgs("step: one of the checklist's steps") }
+            return .done(step: step)
+        case "shown": return .shown
+        case "dismiss": return .dismiss
+        case "reopen": return .reopen
+        case "merge":
+            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown}") }
+            return .merge(state: ChecklistModel.state(done: s["done"] as? [String] ?? [],
+                                                      dismissed: s["dismissed"] as? Bool ?? false,
+                                                      shown: s["shown"] as? Bool ?? false))
+        default:
+            throw Failure.badArgs("action: done, shown, dismiss, reopen or merge")
+        }
     }
 
     // MARK: - Events
@@ -889,7 +995,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             self?.pruneStreams()
         }
         follow("keyvault.changed") { [model] in _ = (model.keyvault.overview, model.keyvault.busy, model.keyvault.dismissed) }
-        follow("session.changed") { [model] in _ = (model.identity, model.signIn, model.cloudConfigured) }
+        follow("session.changed") { [model] in
+            _ = (model.identity, model.signIn, model.cloudConfigured, model.onboarding.completed)
+        }
         follow("settings.changed") { [model] in _ = model.settings }
         // These views are rewritten on every read, so the event goes out
         // only when what the page shows differs.
@@ -897,6 +1005,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let self else { return "" }
             return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view)])
         }
+        followChanges("update.changed") { [model] in Self.signature(model.updates.updateState.json) }
+        followChanges("checklist.changed") { [model] in Self.signature(model.checklist.stored) }
         followChanges("agents.changed") { [model] in
             Self.signature([model.persistent.agentsInput["agents"] ?? NSNull(),
                             BridgeValue.encode(model.agentRows), model.agentsPending])

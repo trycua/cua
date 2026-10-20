@@ -57,7 +57,7 @@ describe.skipIf(!wasmBuilt)("Settings, About", () => {
     expect(q("[data-about-check]")!.textContent).toBe("Check Now");
     expect(q("[data-about-auto-check]")!.hasAttribute("data-disabled")).toBe(true);
     expect(q("[data-about-auto-install]")!.hasAttribute("data-disabled")).toBe(true);
-    expect(document.body.textContent).toContain("Automatically check for updates");
+    expect(document.body.textContent).toContain("Check for and download updates automatically");
     expect(document.body.textContent).toContain("Update to:");
   });
 

@@ -12,6 +12,8 @@
 #![allow(clippy::result_large_err)]
 
 #[cfg(target_os = "macos")]
+pub mod apple_events;
+#[cfg(target_os = "macos")]
 pub mod apps;
 #[cfg(target_os = "macos")]
 pub mod ax;
@@ -22,7 +24,11 @@ pub mod browser;
 #[cfg(target_os = "macos")]
 pub mod capture;
 #[cfg(target_os = "macos")]
+pub mod capture_consent;
+#[cfg(target_os = "macos")]
 pub mod cursor;
+#[cfg(target_os = "macos")]
+pub mod display_awake;
 #[cfg(target_os = "macos")]
 pub mod document_edit;
 #[cfg(target_os = "macos")]
@@ -49,6 +55,8 @@ pub mod pointer_shape_map;
 pub mod recording_hooks;
 #[cfg(target_os = "macos")]
 pub mod session;
+#[cfg(all(test, target_os = "macos"))]
+mod step_latency_bench;
 #[cfg(target_os = "macos")]
 pub mod terminal;
 #[cfg(target_os = "macos")]
@@ -157,6 +165,9 @@ pub fn register_tools_with_cursor_and_provider(
         // that will never arrive. Unconditional: emission depends on the
         // registry write path, not on the overlay or on graphic access.
         cua_driver_core::cursor_hook::declare_cursor_hook_emitter();
+        // Keep the display awake while tools run, so the screen saver and
+        // display sleep do not lock the session mid-task.
+        display_awake::install();
         let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
         tools::register_all(
             &mut r,

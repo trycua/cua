@@ -242,6 +242,7 @@ export class LiveSpacesBackend implements SpacesBackend {
           cloud: text(info.cloud),
           cloudPlace: text(info.cloudPlace),
           cloudDelete: text(info.cloudDelete),
+          stopReason: text(info.stopReason),
         };
         // Turned off on purpose: no probe (it would only time out).
         if (info.powerState === "suspended" || info.powerState === "stopped") return row;
@@ -367,8 +368,9 @@ export class LiveSpacesBackend implements SpacesBackend {
     this.native.configSet("runtime.lume", value);
   }
 
+  /** The built-in Linux runtime (a VM with Docker and gVisor) runs on a Mac only: elsewhere there is no setting, so Settings has no Linux row. */
   async linuxSource(): Promise<string | null> {
-    return this.config("runtime.linux");
+    return this.platform === "darwin" ? this.config("runtime.linux") : null;
   }
 
   async setLinuxSource(value: string): Promise<void> {
@@ -380,7 +382,6 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   async cloudAvailable(): Promise<boolean> {
-    if (this.env.FLEETS_TOKEN !== undefined || this.env.CUA_CLIENT_ID !== undefined) return true;
     return (await bounded(PROBE_SECONDS, () => this.cua.auth().status().loggedIn)) ?? false;
   }
 
@@ -395,15 +396,17 @@ export class LiveSpacesBackend implements SpacesBackend {
     return runningMacosVms(answer);
   }
 
+  /**
+   * No estimate: the rates came from the Cua Cloud API, which has ended, and
+   * the app does not offer new cloud Spaces. New Space never waits on it.
+   */
   async cloudPricing(): Promise<AppCloudPricing | null> {
-    if (!(await this.cloudAvailable())) return null;
-    const p = await bounded(PROBE_SECONDS, () => this.cua.fleet().usagePricing());
-    return p ? { vcpuHourUsd: p.vcpuHourUsd, memoryGibHourUsd: p.memoryGibHourUsd } : null;
+    return null;
   }
 
   async usage(id: string): Promise<AppSpaceUsage | null> {
     const u = await bounded(5, async () => (await this.cua.spaces().space(id)).usage());
-    return u ? { memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
+    return u ? { cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m, memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
   }
 
   async agentRuns(id: string): Promise<AppSpaceAgentRun[]> {

@@ -253,6 +253,9 @@ pub fn init(cfg: CursorConfig) {
                         reduced_motion: selection.reduced_motion,
                     },
                 ),
+                CursorEvent::KeyCombo { session, keys } => {
+                    (session, OverlayCommand::ShowKeyCombo(keys))
+                }
                 CursorEvent::SelectMotion { session, motion } => {
                     (session, OverlayCommand::ApplyMotion(motion))
                 }
@@ -446,12 +449,32 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
     // thread never entered `run_on_main_thread`): the command stays queued
     // for a loop that starts later, and the action proceeds now. Bounded
     // either way.
-    wait_for_arrival(
-        rx,
-        RENDER_LOOP_RUNNING.load(Ordering::Acquire),
-        ARRIVAL_TIMEOUT,
-    )
-    .await;
+    await_arrival(rx, RENDER_LOOP_RUNNING.load(Ordering::Acquire)).await;
+}
+
+/// Waits for the cursor's arrival signal for as long as the current step's
+/// pacing allows. A step of a batch waits only briefly for the glide (it plays
+/// on), so a chain of actions is not held up by one cursor move per step.
+pub(crate) async fn await_arrival(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+) -> bool {
+    let limit = cua_driver_core::step_pacing::glide_wait_limit(ARRIVAL_TIMEOUT);
+    if limit < ARRIVAL_TIMEOUT {
+        wait_for_arrival_briefly(rx, render_loop_running, limit).await
+    } else {
+        wait_for_arrival(rx, render_loop_running, ARRIVAL_TIMEOUT).await
+    }
+}
+
+/// [`wait_for_arrival`] for a deliberately short wait: the cursor is still
+/// gliding when the limit passes, which is expected and not logged.
+async fn wait_for_arrival_briefly(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+    limit: Duration,
+) -> bool {
+    render_loop_running && tokio::time::timeout(limit, rx).await.is_ok()
 }
 
 /// Waits for `rx` only while a render loop runs, and never longer than
@@ -1440,6 +1463,29 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         tx.send(()).unwrap();
         assert!(rt.block_on(wait_for_arrival(rx, true, Duration::from_secs(60))));
+    }
+
+    #[test]
+    fn a_batched_step_waits_for_the_glide_only_up_to_the_batch_cap() {
+        use cua_driver_core::step_pacing::{glide_wait_limit, scope, StepPacing, BATCH_GLIDE_WAIT};
+        let rt = runtime();
+        // The sender stays alive and never fires: the glide is still playing.
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let started = Instant::now();
+        let arrived = rt.block_on(scope(StepPacing::Batched, async {
+            let limit = glide_wait_limit(ARRIVAL_TIMEOUT);
+            assert_eq!(limit, BATCH_GLIDE_WAIT);
+            wait_for_arrival_briefly(rx, true, limit).await
+        }));
+        assert!(!arrived);
+        assert!(started.elapsed() >= BATCH_GLIDE_WAIT);
+        assert!(started.elapsed() < ARRIVAL_TIMEOUT / 4);
+        // A direct call keeps the full arrival limit.
+        assert_eq!(glide_wait_limit(ARRIVAL_TIMEOUT), ARRIVAL_TIMEOUT);
+        // An arrival inside the cap is still seen.
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tx.send(()).unwrap();
+        assert!(rt.block_on(wait_for_arrival_briefly(rx, true, BATCH_GLIDE_WAIT)));
     }
 
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {

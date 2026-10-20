@@ -3,8 +3,8 @@
 //!
 //! ```text
 //! local:<name>          a sandbox on this machine
-//! cloud:<name>          a Cua cloud (Fleet) sandbox; pool and namespace are
-//!                       resolved internally and never shown
+//! cloud:<name>          a Cua cloud sandbox (Cua Cloud has ended: it only
+//!                       parses, and every use fails with `CLOUD_ENDED`)
 //! direct:<host:port>    a machine reached by address (IPv6 bracketed)
 //! relay:<machine-id>    a machine of the account, reached via the cua.ai relay
 //! <provider>:<name>     a sandbox on a contrib provider (`e2b:<name>`,
@@ -17,8 +17,8 @@
 //! not. Output always uses the qualified form, and ids round-trip through
 //! [`SandboxRef::parse`].
 //!
-//! Legacy spellings still parse: `space://{fleet,local,direct,relay}/…`,
-//! `fleet:<namespace>:<claim>`, and `http(s)://host[:port]` (direct).
+//! Legacy spellings still parse: `space://{cloud,local,direct,relay}/…` and
+//! `http(s)://host[:port]` (direct).
 
 use crate::{Error, Result};
 use std::fmt;
@@ -31,7 +31,7 @@ const DEFAULT_DIRECT_PORT: u16 = 3211;
 pub enum Location {
     /// This machine's local runtime (a container, QEMU or Lume).
     Local,
-    /// Cua cloud (Fleet).
+    /// Cua cloud (ended).
     Cloud,
     /// A machine reached by address.
     Direct,
@@ -61,11 +61,11 @@ impl Location {
         }
     }
 
-    /// Parses a location word; `fleet` is the legacy spelling of `cloud`.
+    /// Parses a location word.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "local" => Some(Location::Local),
-            "cloud" | "fleet" => Some(Location::Cloud),
+            "cloud" => Some(Location::Cloud),
             "direct" => Some(Location::Direct),
             "relay" => Some(Location::Relay),
             _ => None,
@@ -92,9 +92,7 @@ impl std::str::FromStr for Location {
 
 /// A parsed sandbox reference.
 ///
-/// Equality, hashing and [`Display`](fmt::Display) use the canonical form:
-/// the namespace hint a legacy cloud spelling carries is never shown and
-/// never compared.
+/// Equality, hashing and [`Display`](fmt::Display) use the canonical form.
 #[derive(Clone, Debug)]
 pub enum SandboxRef {
     /// `local:<name>`.
@@ -102,14 +100,11 @@ pub enum SandboxRef {
         /// Local sandbox name.
         name: String,
     },
-    /// `cloud:<name>`: the claim name, unique within the account.
+    /// `cloud:<name>`: a Cua Cloud sandbox. Cua Cloud has ended, so using it
+    /// fails with [`Error::CloudEnded`].
     Cloud {
-        /// Claim name.
+        /// Sandbox name.
         name: String,
-        /// Where a legacy id (`fleet:<ns>:<claim>`,
-        /// `space://fleet/<ns>/<claim>`) said the claim lives. A lookup
-        /// hint only.
-        namespace: Option<String>,
     },
     /// `direct:<host:port>`.
     Direct {
@@ -213,19 +208,8 @@ impl SandboxRef {
                 .ok_or_else(|| bad("space://<location>/<id>"))?;
             let tail = tail.trim_end_matches('/');
             return match kind {
-                "fleet" | "cloud" => match tail.split_once('/') {
-                    Some((namespace, claim)) if !namespace.is_empty() && valid_name(claim) => {
-                        Ok(SandboxRef::Cloud {
-                            name: claim.into(),
-                            namespace: Some(namespace.into()),
-                        })
-                    }
-                    None if valid_name(tail) => Ok(SandboxRef::Cloud {
-                        name: tail.into(),
-                        namespace: None,
-                    }),
-                    _ => Err(bad("space://fleet/<namespace>/<claim>")),
-                },
+                "cloud" if valid_name(tail) => Ok(SandboxRef::Cloud { name: tail.into() }),
+                "cloud" => Err(bad("space://cloud/<name>")),
                 "local" if valid_name(tail) => Ok(SandboxRef::Local { name: tail.into() }),
                 "direct" => normalize_authority(tail)
                     .map(|authority| SandboxRef::Direct { authority })
@@ -233,7 +217,7 @@ impl SandboxRef {
                 "relay" if valid_machine_id(tail) => Ok(SandboxRef::Relay {
                     machine_id: tail.into(),
                 }),
-                "relay" => Err(bad("relay machine ids are [a-z0-9-]{8,64}")),
+                "relay" => Err(bad("relay computer ids are [a-z0-9-]{8,64}")),
                 _ => Err(bad("unknown location")),
             };
         }
@@ -255,32 +239,15 @@ impl SandboxRef {
         match kind {
             "local" if valid_name(rest) => Ok(SandboxRef::Local { name: rest.into() }),
             "local" => Err(bad("local:<name>")),
-            "cloud" if valid_name(rest) => Ok(SandboxRef::Cloud {
-                name: rest.into(),
-                namespace: None,
-            }),
+            "cloud" if valid_name(rest) => Ok(SandboxRef::Cloud { name: rest.into() }),
             "cloud" => Err(bad("cloud:<name>")),
-            // Legacy: `fleet:<namespace>:<claim>` (and `fleet:<claim>`).
-            "fleet" => match rest.split_once(':') {
-                Some((namespace, claim)) if !namespace.is_empty() && valid_name(claim) => {
-                    Ok(SandboxRef::Cloud {
-                        name: claim.into(),
-                        namespace: Some(namespace.into()),
-                    })
-                }
-                None if valid_name(rest) => Ok(SandboxRef::Cloud {
-                    name: rest.into(),
-                    namespace: None,
-                }),
-                _ => Err(bad("fleet:<namespace>:<claim>")),
-            },
             "direct" | "url" => normalize_authority(rest)
                 .map(|authority| SandboxRef::Direct { authority })
                 .ok_or_else(|| bad("direct:<host:port>")),
             "relay" if valid_machine_id(rest) => Ok(SandboxRef::Relay {
                 machine_id: rest.into(),
             }),
-            "relay" => Err(bad("relay machine ids are [a-z0-9-]{8,64}")),
+            "relay" => Err(bad("relay computer ids are [a-z0-9-]{8,64}")),
             p if crate::provider::is_provider_location(p) && valid_name(rest) => {
                 Ok(SandboxRef::Contrib {
                     provider: p.into(),
@@ -330,19 +297,11 @@ impl SandboxRef {
     pub fn name(&self) -> &str {
         match self {
             SandboxRef::Local { name }
-            | SandboxRef::Cloud { name, .. }
+            | SandboxRef::Cloud { name }
             | SandboxRef::Contrib { name, .. }
             | SandboxRef::Bare { name } => name,
             SandboxRef::Direct { authority } => authority,
             SandboxRef::Relay { machine_id } => machine_id,
-        }
-    }
-
-    /// The legacy namespace hint of a cloud ref.
-    pub fn namespace_hint(&self) -> Option<&str> {
-        match self {
-            SandboxRef::Cloud { namespace, .. } => namespace.as_deref(),
-            _ => None,
         }
     }
 
@@ -404,8 +363,8 @@ pub fn ambiguous_message(name: &str, candidates: &[SandboxRef]) -> String {
 
 /// Resolves `wanted` among `known` (every sandbox the caller can see, as
 /// qualified refs). A qualified ref resolves to the known entry equal to
-/// it (keeping that entry's hints), or to itself when none is known; a
-/// bare name must match the name of exactly one known ref.
+/// it, or to itself when none is known; a bare name must match the name of
+/// exactly one known ref.
 pub fn resolve(
     wanted: &SandboxRef,
     known: impl IntoIterator<Item = SandboxRef>,
@@ -472,13 +431,11 @@ mod tests {
     #[test]
     fn legacy_spellings_parse_to_the_new_form() {
         for (legacy, new) in [
-            ("space://fleet/cua-spaces-x/claim-1", "cloud:claim-1"),
+            ("space://cloud/claim-1", "cloud:claim-1"),
             ("space://local/space-ab12", "local:space-ab12"),
             ("space://direct/10.0.0.5:3211", "direct:10.0.0.5:3211"),
             ("space://direct/[::1]:3211", "direct:[::1]:3211"),
             ("space://relay/0123abcd4567ef89", "relay:0123abcd4567ef89"),
-            ("fleet:ns:claim-1", "cloud:claim-1"),
-            ("fleet:claim-1", "cloud:claim-1"),
             ("local:cua-space-1", "local:cua-space-1"),
             ("url:127.0.0.1:3211", "direct:127.0.0.1:3211"),
             ("http://127.0.0.1", "direct:127.0.0.1:80"),
@@ -489,12 +446,6 @@ mod tests {
         ] {
             assert_eq!(p(legacy).to_string(), new, "{legacy}");
         }
-        assert_eq!(
-            p("space://fleet/ns/claim-1").namespace_hint(),
-            Some("ns"),
-            "the namespace stays a lookup hint"
-        );
-        assert_eq!(p("fleet:ns:c"), p("cloud:c"), "hints never compare");
     }
 
     #[test]
@@ -502,7 +453,7 @@ mod tests {
         for bad in [
             "",
             "space://",
-            "space://fleet/ns/a/b",
+            "space://cloud/a/b",
             "space://moon/x",
             "space://relay/short",
             "relay:UPPERCASE1",
@@ -521,11 +472,10 @@ mod tests {
     }
 
     #[test]
-    fn locations_parse_with_the_legacy_word() {
+    fn locations_parse() {
         for l in Location::ALL {
             assert_eq!(Location::parse(l.as_str()), Some(l));
         }
-        assert_eq!(Location::parse("fleet"), Some(Location::Cloud));
         assert_eq!(Location::parse("moon"), None);
     }
 
@@ -560,12 +510,6 @@ mod tests {
         assert_eq!(
             resolve_named(&p("dev"), vec![("dev".into(), p("direct:h:1"))]).unwrap(),
             p("direct:h:1")
-        );
-        // The known entry wins, with its hints.
-        let hinted = p("fleet:ns:other");
-        assert_eq!(
-            resolve(&p("other"), vec![hinted]).unwrap().namespace_hint(),
-            Some("ns")
         );
     }
 }

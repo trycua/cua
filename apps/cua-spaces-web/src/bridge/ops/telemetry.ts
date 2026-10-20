@@ -12,6 +12,18 @@
  * - SwiftUI: `telemetry.track`, which checks the switch, then records
  *   through `TelemetryRunning.record` (`appTelemetryRecord`).
  * - Electron: the same method, recorded the same way.
+ *
+ * `telemetry.linkNotice` and `telemetry.acknowledgeLinkNotice`: the one-time
+ * notice for machines that saw the older "anonymous" wording (CUA-1881).
+ * Usage data is linked to the signed-in account through a random ID, and
+ * nothing links before this notice is closed. The host owns whether it is
+ * due and the words (`cua_telemetry::link`), so every shell says the same.
+ *
+ * - Tauri: `telemetry_link_notice`, `telemetry_acknowledge_link_notice`.
+ * - SwiftUI and Electron: the same method names, answered from the SDK's
+ *   `telemetryLinkNotice`, `telemetryLinkNoticeDue` and
+ *   `telemetryAcknowledgeLinkNotice`.
+ * - Demo: no notice (`null`).
  */
 
 import type { OpCoverage } from "../coverage";
@@ -39,16 +51,60 @@ export type TelemetrySignal =
     }
   | { type: "space-create-started"; location: string; guestOs: string; kind: string; gpu: boolean }
   | { type: "volume-setup"; surface: string; storage: string; addToFinder: boolean; mountMethod: string; outcome: string }
-  | { type: "share"; action: string; role: string; outcome: string }
+  | { type: "share"; action: string; role: string; outcome: string; errorKind: string; failedStage: string }
   | { type: "app-update"; action: string; channel: string; trigger: string }
   | { type: "device-enroll"; method: string; outcome: string }
   | { type: "experiment"; action: string; experiment: string }
   | { type: "experiments-on"; experiments: string[] };
 
+/** The one-time linking notice: the host's words, and whether it is due now. */
+export interface TelemetryLinkNotice {
+  /** Show it now: usage data is on, the account offered linking, and this
+   * machine has not shown it. */
+  due: boolean;
+  title: string;
+  body: string;
+  /** "Got it": keeps usage data on. */
+  okLabel: string;
+  /** "Turn off usage data". */
+  turnOffLabel: string;
+  /** The link to what is collected. */
+  detailsLabel: string;
+  docsUrl: string;
+}
+
 export interface TelemetryOps {
   /** Records the signals on the host's telemetry, which drops them while
    * usage data is off or before the first-run notice. */
   "telemetry.track": { args: { signals: TelemetrySignal[] }; result: null };
+  /** The one-time linking notice, or null when the host has none. */
+  "telemetry.linkNotice": { args: Record<string, never>; result: TelemetryLinkNotice | null };
+  /** The notice was closed (either button): linking may start at the next launch. */
+  "telemetry.acknowledgeLinkNotice": { args: Record<string, never>; result: null };
+}
+
+export const TELEMETRY_OPERATIONS = [
+  "telemetry.track",
+  "telemetry.linkNotice",
+  "telemetry.acknowledgeLinkNotice",
+] as const satisfies readonly (keyof TelemetryOps)[];
+
+const text = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+
+/** A host's answer as a notice; anything malformed reads as none. */
+export function linkNoticeFromHost(raw: unknown): TelemetryLinkNotice | null {
+  const n = raw as Partial<TelemetryLinkNotice> | null | undefined;
+  if (!n || typeof n !== "object") return null;
+  if (!text(n.title) || !text(n.body) || !text(n.okLabel) || !text(n.turnOffLabel) || !text(n.detailsLabel) || !text(n.docsUrl)) return null;
+  return {
+    due: n.due === true,
+    title: n.title,
+    body: n.body,
+    okLabel: n.okLabel,
+    turnOffLabel: n.turnOffLabel,
+    detailsLabel: n.detailsLabel,
+    docsUrl: n.docsUrl,
+  };
 }
 
 
@@ -77,7 +133,7 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
   },
   "space-create-started": { location: "word", guestOs: "word", kind: "word", gpu: "flag" },
   "volume-setup": { surface: "word", storage: "word", addToFinder: "flag", mountMethod: "word", outcome: "word" },
-  share: { action: "word", role: "word", outcome: "word" },
+  share: { action: "word", role: "word", outcome: "word", errorKind: "word", failedStage: "word" },
   "app-update": { action: "word", channel: "word", trigger: "word" },
   "device-enroll": { method: "word", outcome: "word" },
   experiment: { action: "word", experiment: "word" },
@@ -143,6 +199,29 @@ export function tauriTelemetryOps(invoke: Invoke) {
       await invoke("telemetry_record_signals", { signals });
       return null;
     },
+    "telemetry.linkNotice": async () => linkNoticeFromHost(await invoke("telemetry_link_notice")),
+    "telemetry.acknowledgeLinkNotice": async () => {
+      await invoke("telemetry_acknowledge_link_notice");
+      return null;
+    },
+  };
+}
+
+type WebkitRequest = <T>(
+  method: "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice",
+  args?: Record<string, unknown>,
+  wait?: number | null,
+) => Promise<T>;
+
+/** SwiftUI and Electron: both methods go to the host. An older build
+ * (`unimplemented`) or any failure reads as no notice, so nothing links. */
+export function webkitTelemetryNoticeOps(request: WebkitRequest) {
+  return {
+    "telemetry.linkNotice": () => request<unknown>("telemetry.linkNotice", {}, 5_000).then(linkNoticeFromHost, () => null),
+    "telemetry.acknowledgeLinkNotice": async () => {
+      await request("telemetry.acknowledgeLinkNotice", {});
+      return null;
+    },
   };
 }
 
@@ -150,5 +229,13 @@ export const TELEMETRY_COVERAGE = {
   "telemetry.track": {
     webkit: { methods: ["telemetry.track"] },
     tauri: ["telemetry_record_signals"],
+  },
+  "telemetry.linkNotice": {
+    webkit: { methods: ["telemetry.linkNotice"] },
+    tauri: ["telemetry_link_notice"],
+  },
+  "telemetry.acknowledgeLinkNotice": {
+    webkit: { methods: ["telemetry.acknowledgeLinkNotice"] },
+    tauri: ["telemetry_acknowledge_link_notice"],
   },
 } as const satisfies Record<keyof TelemetryOps, OpCoverage>;

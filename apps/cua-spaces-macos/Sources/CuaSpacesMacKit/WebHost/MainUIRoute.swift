@@ -22,6 +22,11 @@ public enum MainUIRoute: Equatable, Sendable {
     case machines
     case agents
     case keyvault
+    /// A page path as given (`/machines?join=<CODE>` from a `cua://add` link).
+    case path(String)
+
+    /// The first run: the shared web onboarding.
+    static let onboarding = MainUIRoute.path("/onboarding")
 
     /// The page's path, query included.
     var webPath: String {
@@ -33,6 +38,7 @@ public enum MainUIRoute: Equatable, Sendable {
         case .machines: return "/machines"
         case .agents: return "/agents"
         case .keyvault: return "/keyvault"
+        case let .path(path): return path
         case let .space(id, dropped):
             let path = "/spaces/\(Self.encodeComponent(id))"
             let names = dropped.map(\.lastPathComponent)
@@ -91,6 +97,11 @@ struct MainUIRouter {
 /// closes that; turning it off does the reverse. Whatever opens the native
 /// main window while it is on (the Dock, the Window menu, a path not routed
 /// through `MainUIRouter`) gets the New UI window in its place.
+///
+/// The first run is the web UI's onboarding, with New UI on or off: until it
+/// is done the native window never shows anything of its own, and whatever
+/// opens it gets the New UI window at `/onboarding` in its place. Once done,
+/// New UI off puts the native window back (`WebUIWindowController.closeShared`).
 @MainActor
 enum MainWindowSwitch {
     /// The native main window (`Window(id: "main")`), while it exists.
@@ -107,6 +118,24 @@ enum MainWindowSwitch {
     static func replacesNative(_ model: AppModel) -> Bool {
         replacesNative(webUi: model.settings.experiments.webUi, ready: model.startup.isReady,
                        onboarded: model.onboarding.completed)
+    }
+
+    /// The first run is due and the launch is ready: the web onboarding
+    /// replaces the native window, whether or not New UI is on.
+    static func opensFirstRun(ready: Bool, onboarded: Bool) -> Bool {
+        ready && !onboarded
+    }
+
+    static func opensFirstRun(_ model: AppModel) -> Bool {
+        opensFirstRun(ready: model.startup.isReady, onboarded: model.onboarding.completed)
+    }
+
+    /// The native window is up while the first run is due (and the launch is
+    /// ready): the web onboarding opens in its frame and it closes.
+    static func firstRunAppeared(_ window: NSWindow?, model: AppModel, web: ((NSRect?) -> Void)? = nil) {
+        if let window { nativeWindow = window }
+        guard opensFirstRun(model), let window = window ?? nativeWindow else { return }
+        replace(window, model: model, web: web)
     }
 
     /// The native window is showing the main UI (`MainWindow` appeared in
@@ -153,7 +182,12 @@ enum MainWindowSwitch {
     }
 
     private static func show(_ model: AppModel, frame: NSRect?) {
-        WebUIWindowController.show(model: model, frame: frame)
+        // The first run opens on its page; the rest is the app as it was.
+        if !model.onboarding.completed {
+            WebUIWindowController.show(model: model, at: .onboarding, frame: frame)
+        } else {
+            WebUIWindowController.show(model: model, frame: frame)
+        }
     }
 
     /// New UI was turned off: the native window opens in its frame.

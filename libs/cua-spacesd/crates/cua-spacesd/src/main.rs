@@ -38,7 +38,7 @@ struct Cli {
 enum Command {
     /// Serve on the local port (the default).
     Serve(ServeArgs),
-    /// Serve locally and publish through a cua-relay (for machines behind NAT).
+    /// Serve locally and publish through a cua-relay (for computers behind NAT).
     Join(JoinArgs),
     /// Privileged helper for --await-token-file: mirror a root-only token
     /// file (the Fleet claim Secret) to a file the driver's user can read.
@@ -163,7 +163,7 @@ struct ServeArgs {
     scrollback_bytes: u64,
     /// Serve `HostSpacesService` on this listener from this host policy
     /// (written by `cua host setup --direct ... --provide-spaces`, reloaded
-    /// on every call): the token holder creates Spaces on this machine,
+    /// on every call): the token holder creates Spaces on this computer,
     /// from loopback, Tailscale and private LAN addresses unless the
     /// policy allows any address.
     #[arg(long, env = "CUA_ENV_DIRECT_HOST_POLICY")]
@@ -202,8 +202,8 @@ struct JoinArgs {
     /// Relay URL, e.g. wss://relay.example.
     #[arg(long, env = "CUA_ENV_RELAY_URL")]
     relay: String,
-    /// Machine credential for the relay (not the env token): a static relay
-    /// token, or the machine token from `cua host setup` (account mode).
+    /// Computer credential for the relay (not the env token): a static relay
+    /// token, or the computer token from `cua host setup` (account mode).
     #[arg(
         long,
         env = "CUA_RELAY_TOKEN",
@@ -222,12 +222,12 @@ struct JoinArgs {
     /// keys the relay sends on join.
     #[arg(long, env = "CUA_RELAY_JWKS")]
     relay_jwks: Option<PathBuf>,
-    /// Where the persistent machine id lives.
+    /// Where the persistent computer id lives.
     #[arg(long, env = "CUA_ENV_MACHINE_ID_FILE")]
     machine_id_file: Option<PathBuf>,
-    /// Join as this machine id (a machine another device registered, for
-    /// example a Space in your cloud): written to the machine id file, so
-    /// a restart joins as the same machine.
+    /// Join as this computer id (a computer another device registered, for
+    /// example a Space in your cloud): written to the computer id file, so
+    /// a restart joins as the same computer.
     #[arg(long, env = "CUA_ENV_MACHINE_ID")]
     machine_id: Option<String>,
     /// The relay's assertion keys as JSON (`--relay-jwks` from the
@@ -726,7 +726,7 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
             .filter(|i| !i.is_empty())
         {
             if !cua_relay::valid_machine_id(id) {
-                return Err(format!("CUA_ENV_MACHINE_ID: invalid machine id {id:?}").into());
+                return Err(format!("CUA_ENV_MACHINE_ID: invalid computer id {id:?}").into());
             }
             write_private_file(&id_file, format!("{id}\n").as_bytes())?;
         }
@@ -778,6 +778,19 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
         ));
         ctx.mark_joined_at_start();
         tracing::info!(relay = %join.relay, machine = %machine_id, "joining relay; clients connect to <relay>/m/{machine_id}");
+        // The WireGuard®-based mesh next to the relay connection, when
+        // allowed (`CUA_MESH`, see cua_mesh::policy) and the relay
+        // coordinates one: end-to-end encrypted, direct when possible. The
+        // relay path stays for clients that lack it.
+        let mesh = ctx.mesh_host_config(
+            &join.relay,
+            join.relay_token.as_deref().unwrap_or_default(),
+            join.relay_token_file.clone(),
+            &machine_id,
+            join_config.account.clone(),
+            addr,
+        );
+        tokio::spawn(cua_spacesd_server::mesh_host::run(mesh, shutdown.clone()));
         tokio::spawn(cua_relay::client::run(join_config, shutdown.clone()));
     }
     server.serve(listener).await?;

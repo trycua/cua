@@ -5,7 +5,8 @@ name: "CD: cua SDK"
 #   - platform wheels of PyPI `cua` (linux x86_64/aarch64 with the
 #     glibc 2.31 floor from debian:11, macOS arm64/x86_64, Windows x64/arm64),
 #   - `@trycua/cua` + six optional native npm packages (+ the browser build),
-#   - `CuaSDKFFI.xcframework.zip` for the Swift `.binaryTarget`,
+#   - `CuaSDKFFI.xcframework.zip` for the Swift `.binaryTarget` (attached by
+#     attach-xcframework after the release is out; it never blocks the CLI),
 #   - the `cua` CLI binaries, plus standalone `cua-cli-<version>-<platform>`
 #     archives, checksums.txt and release-artifacts.json for install.sh /
 #     install.ps1 (also mirrored to the rolling `cua-install-latest` release).
@@ -53,6 +54,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -162,10 +166,7 @@ jobs:
           apt-get install -y nodejs
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: ${{ matrix.target }}
@@ -329,7 +330,7 @@ jobs:
         run: |
           python -m pip install --force-reinstall dist/*.whl
           VERSION="${{ needs.version.outputs.version }}"
-          cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(fleet_from_env=False); sys.exit(v != sys.argv[1])" "$VERSION"
+          cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(); sys.exit(v != sys.argv[1])" "$VERSION"
           test "$(cua --version | tr -d '\r')" = "cua $VERSION"
       - uses: actions/upload-artifact@v4
         with:
@@ -349,10 +350,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
@@ -388,13 +386,14 @@ jobs:
   xcframework:
     needs: version
     runs-on: macos-26
+    # A normal build takes 80-100 min (iOS + macOS slices). Nothing waits on
+    # it except attach-xcframework, so the CLI, registries and installer feed
+    # ship without it.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
@@ -418,7 +417,9 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [version, wheels, npm, xcframework, native]
+    # Not xcframework: the Swift build is slow and must never hold back the
+    # CLI or the installer feed. attach-xcframework adds it to the release.
+    needs: [version, wheels, npm, native]
     if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -490,10 +491,6 @@ jobs:
         run: |
           mkdir -p release
           cp dist/wheel-*/*.whl dist/npm/*.tgz release/
-          # upload-artifact keeps the paths below the files' common root.
-          xcframework="$(find dist/xcframework -name CuaSDKFFI.xcframework.zip)"
-          [ "$(printf '%s\n' "$xcframework" | grep -c .)" = 1 ] || { echo "expected one CuaSDKFFI.xcframework.zip, got: $xcframework" >&2; exit 1; }
-          cp "$xcframework" release/
           for d in dist/native-*; do
             label="${d##*/native-}"
             tar -czf "release/cua-${{ needs.version.outputs.version }}-$label.tar.gz" -C "$d" .
@@ -587,4 +584,39 @@ jobs:
           # Sigstore identity they verify).
           python3 scripts/install/stamp_installers.py --repo "$GITHUB_REPOSITORY" --out stamped
           gh release upload cua-install-latest release-artifacts.json \
-            stamped/install.sh stamped/install.ps1 --clobber --repo "$GITHUB_REPOSITORY"
+            stamped/install.sh stamped/install.ps1 stamped/uninstall.sh stamped/uninstall.ps1 \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+  # The Swift package's CuaSDKFFI.xcframework.zip joins the already-published
+  # release when its build finishes; checksums.txt is rewritten to include it.
+  attach-xcframework:
+    needs: [version, xcframework, publish]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: xcframework
+          path: dist/xcframework
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+      - name: Attach CuaSDKFFI.xcframework.zip to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          # upload-artifact keeps the paths below the files' common root.
+          xcframework="$(find dist/xcframework -name CuaSDKFFI.xcframework.zip)"
+          [ "$(printf '%s\n' "$xcframework" | grep -c .)" = 1 ] || { echo "expected one CuaSDKFFI.xcframework.zip, got: $xcframework" >&2; exit 1; }
+          cp "$xcframework" release/
+          cosign sign-blob --yes --bundle release/CuaSDKFFI.xcframework.zip.sigstore.json \
+            release/CuaSDKFFI.xcframework.zip >/dev/null
+          gh release download "$TAG" --pattern checksums.txt --dir previous --repo "$GITHUB_REPOSITORY"
+          (cd release && sha256sum -- CuaSDKFFI.xcframework.zip CuaSDKFFI.xcframework.zip.sigstore.json) > new.txt
+          grep -v ' CuaSDKFFI\.xcframework\.zip' previous/checksums.txt | cat - new.txt | sort > release/checksums.txt
+          gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"

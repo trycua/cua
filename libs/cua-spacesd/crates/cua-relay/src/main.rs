@@ -16,29 +16,29 @@ struct Args {
     /// Listen address (terminate TLS in front of the relay).
     #[arg(long, env = "CUA_RELAY_LISTEN", default_value = "0.0.0.0:8080")]
     listen: SocketAddr,
-    /// Comma-separated machine-registration tokens.
+    /// Comma-separated registration tokens for computers.
     #[arg(long, env = "CUA_RELAY_TOKENS", hide_env_values = true)]
     tokens: Option<String>,
-    /// File with one machine-registration token per line.
+    /// File with one computer registration token per line.
     #[arg(long, env = "CUA_RELAY_TOKEN_FILE")]
     token_file: Option<std::path::PathBuf>,
     /// Token for GET /relay/v1/machines.
     #[arg(long, env = "CUA_RELAY_ADMIN_TOKEN", hide_env_values = true)]
     admin_token: Option<String>,
-    /// Host-mode domain: `<machine-id>.<domain>` routes to that machine.
+    /// Host-mode domain: `<computer-id>.<domain>` routes to that computer.
     #[arg(long, env = "CUA_RELAY_HOST_DOMAIN")]
     host_domain: Option<String>,
-    /// Maximum machines per registration token.
+    /// Maximum computers per registration token.
     #[arg(long, env = "CUA_RELAY_MAX_MACHINES_PER_TOKEN", default_value_t = 16)]
     max_machines_per_token: usize,
-    /// Maximum concurrent client streams per machine.
+    /// Maximum concurrent client streams per computer.
     #[arg(
         long,
         env = "CUA_RELAY_MAX_STREAMS",
         default_value_t = cua_relay::mux::MAX_STREAMS as u32
     )]
     max_streams_per_machine: u32,
-    /// yamux's own per-machine-connection stream cap (S7); must satisfy
+    /// yamux's own per-computer-connection stream cap (S7); must satisfy
     /// machine-window-bytes >= this * 256 KiB.
     #[arg(
         long,
@@ -46,20 +46,20 @@ struct Args {
         default_value_t = cua_relay::mux::MAX_STREAMS
     )]
     machine_max_streams: usize,
-    /// yamux's per-machine connection receive window in bytes: the most
-    /// one machine's connection buffers across all of its streams (S7).
+    /// yamux's per-computer connection receive window in bytes: the most
+    /// one computer's connection buffers across all of its streams (S7).
     #[arg(
         long,
         env = "CUA_RELAY_MACHINE_WINDOW_BYTES",
         default_value_t = cua_relay::mux::DEFAULT_WINDOW_BYTES
     )]
     machine_window_bytes: usize,
-    /// Largest number of concurrent client streams across every machine at
+    /// Largest number of concurrent client streams across every computer at
     /// once (S7): the relay-wide memory budget, enforced with
     /// backpressure. Tune to the deployed pod's memory limit.
     #[arg(long, env = "CUA_RELAY_MAX_GLOBAL_STREAMS", default_value_t = 4096)]
     max_global_streams: u64,
-    /// Seconds without a heartbeat before a machine is dropped.
+    /// Seconds without a heartbeat before a computer is dropped.
     #[arg(long, env = "CUA_RELAY_IDLE_SECS", default_value_t = 90)]
     idle_secs: u64,
     /// Forward requests that carry no spacesd credential.
@@ -78,17 +78,17 @@ struct Args {
     /// Token claim naming the account (default: sub).
     #[arg(long, env = "CUA_RELAY_ACCOUNT_CLAIM", default_value = "sub")]
     account_claim: String,
-    /// Machine directory file (in memory when unset).
+    /// Computer directory file (in memory when unset).
     #[arg(long, env = "CUA_RELAY_STATE_FILE")]
     state_file: Option<std::path::PathBuf>,
     /// Ed25519 PKCS#8 assertion signing key, created on first use (a fresh
     /// key per process when unset).
     #[arg(long, env = "CUA_RELAY_SIGNING_KEY_FILE")]
     signing_key_file: Option<std::path::PathBuf>,
-    /// Public base URL (assertion issuer and machine URLs).
+    /// Public base URL (assertion issuer and computer URLs).
     #[arg(long, env = "CUA_RELAY_PUBLIC_URL")]
     public_url: Option<String>,
-    /// Maximum machines per account.
+    /// Maximum computers per account.
     #[arg(long, env = "CUA_RELAY_MAX_MACHINES_PER_ACCOUNT", default_value_t = 32)]
     max_machines_per_account: usize,
     /// Account mode: require enrolled client devices (`on` / `off`).
@@ -101,7 +101,7 @@ struct Args {
     /// Days after the first start with device enrollment during which
     /// unenrolled devices keep access (flagged and audited). Safe default:
     /// 0 (ended). Set this only for a time-boxed rollout window; a stolen
-    /// account token alone reaches every machine while it is open (S3).
+    /// account token alone reaches every computer while it is open (S3).
     #[arg(long, env = "CUA_RELAY_DEVICE_GRACE_DAYS", default_value_t = 0)]
     device_grace_days: u64,
     /// Maximum age of the sign-in (`auth_time`) that enrolls a device
@@ -113,7 +113,7 @@ struct Args {
     )]
     device_bootstrap_max_auth_age_secs: u64,
     /// Strict enrollment: a fresh sign-in enrolls only an account's first
-    /// device, a re-key of a machine it already has, or (verified email) a
+    /// device, a re-key of a computer it already has, or (verified email) a
     /// sign-in proving MFA; any other new device needs an approval from an
     /// enrolled device. Off by default: a fresh sign-in enrolls any device
     /// of the account.
@@ -122,8 +122,17 @@ struct Args {
     /// Devices and audit log file (default: `<state file>.devices.json`).
     #[arg(long, env = "CUA_RELAY_DEVICES_FILE")]
     devices_file: Option<std::path::PathBuf>,
+    /// Probe address answering `GET /healthz` from the moment the relay
+    /// starts, standby included (e.g. `0.0.0.0:8081`). See
+    /// `cua_relay::handover`.
+    #[arg(long, env = "CUA_RELAY_HEALTH_LISTEN")]
+    health_listen: Option<SocketAddr>,
+    /// Seconds after start during which a request for a known computer that
+    /// is not connected yet waits for it to reconnect instead of failing.
+    #[arg(long, env = "CUA_RELAY_RECONNECT_GRACE_SECS", default_value_t = 15)]
+    reconnect_grace_secs: u64,
     /// Seconds to let open requests finish after SIGTERM / SIGINT before
-    /// exiting (machines and clients reconnect on their own).
+    /// exiting (computers and clients reconnect on their own).
     #[arg(long, env = "CUA_RELAY_SHUTDOWN_GRACE_SECS", default_value_t = 10)]
     shutdown_grace_secs: u64,
 }
@@ -158,6 +167,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .init();
     let args = Args::parse();
+    // Ports first: from here on connections queue (the listen backlog)
+    // instead of being refused, while this relay waits its turn below.
+    let listener = tokio::net::TcpListener::bind(args.listen).await?;
+    if let Some(addr) = args.health_listen {
+        let health = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!(%addr, "health probe listening");
+        tokio::spawn(async move {
+            if let Err(e) = cua_relay::handover::serve_health(health).await {
+                tracing::error!(%e, "health probe stopped");
+            }
+        });
+    }
     let mut tokens: Vec<String> = args
         .tokens
         .iter()
@@ -186,14 +207,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::sync::Arc::new(cua_relay::oidc::OidcValidator::new(config))
     });
     if tokens.is_empty() && oidc.is_none() {
-        return Err("no way to register machines: set CUA_RELAY_TOKENS / --token-file (static) or CUA_RELAY_OIDC_ISSUER (accounts)".into());
+        return Err("no way to register computers: set CUA_RELAY_TOKENS / --token-file (static) or CUA_RELAY_OIDC_ISSUER (accounts)".into());
     }
-    let signing_key = match &args.signing_key_file {
-        Some(path) => Some(std::sync::Arc::new(
-            cua_relay::assertion::RelayKey::load_or_create(path)?,
-        )),
-        None => None,
-    };
     let device_enrollment = match args.device_enrollment.trim().to_ascii_lowercase().as_str() {
         "on" | "true" | "1" | "yes" => true,
         "off" | "false" | "0" | "no" => false,
@@ -204,6 +219,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if !device_enrollment && oidc.is_some() {
         tracing::warn!("device enrollment is off: an account token alone reaches machines");
     }
+    // One relay per state directory (CUA-1774): wait here, in standby, until
+    // the relay before this one exits. Every config error above surfaces
+    // before this point, so a bad deploy never takes over.
+    let state_dir = args
+        .state_file
+        .as_ref()
+        .or(args.devices_file.as_ref())
+        .map(|p| match p.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+            _ => std::path::PathBuf::from("."),
+        });
+    let _state_lock = match &state_dir {
+        Some(dir) => Some(
+            cua_relay::handover::StateLock::acquire(&cua_relay::handover::lock_path(dir)).await?,
+        ),
+        None => None,
+    };
+    let signing_key = match &args.signing_key_file {
+        Some(path) => Some(std::sync::Arc::new(
+            cua_relay::assertion::RelayKey::load_or_create(path)?,
+        )),
+        None => None,
+    };
     let relay = Relay::try_new(RelayConfig {
         tokens,
         max_machines_per_token: args.max_machines_per_token,
@@ -229,8 +267,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             ..cua_relay::devices::DevicePolicy::default()
         },
         devices_file: args.devices_file,
+        reconnect_grace: Duration::from_secs(args.reconnect_grace_secs),
     })?;
-    let listener = tokio::net::TcpListener::bind(args.listen).await?;
     tracing::info!(listen = %args.listen, "cua-relay listening");
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
     let serve = relay.serve(listener, async move {

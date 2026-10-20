@@ -10,6 +10,7 @@ import type { Runtime } from "../../model/types";
 import type { CloudPricing, GpuChoice } from "../../native/fleet";
 import type { LocalStorage } from "../../native/local";
 import { telemetryBridge, type TelemetryBridge } from "../../native/telemetry";
+import { hostOs } from "../../model/host";
 import { ImageField, type ImageFieldView } from "./ImageField";
 import { Sym } from "./Sym";
 
@@ -26,7 +27,7 @@ export interface CreatePlan {
    * can run in `placement`. */
   runtime: Runtime;
   name?: string;
-  /** This Mac only: vCPUs and memory. Cua Cloud sizes its own Spaces. */
+  /** This Mac only: vCPUs and memory. */
   cpus?: number;
   memoryMb?: number;
   /** This Mac's VMs only: a disk larger than the image's, in GB. */
@@ -42,7 +43,7 @@ export interface NewSpaceWizardProps {
   /** Where "Run on" starts: the configured default location (Settings,
    * `cua config set default.on`). */
   defaultLocation?: Placement;
-  /** Cua Cloud needs an account (signed in, or client credentials). */
+  /** Cua Cloud has ended: the app passes `false`. */
   cloudAvailable: boolean;
   /** Local needs a container backend (docker / runsc) or Lume. */
   localAvailable: boolean;
@@ -65,7 +66,7 @@ export interface NewSpaceWizardProps {
   hostArch?: string;
   /** Free space where local Spaces are written, and what is pulled. */
   storage?: LocalStorage | null;
-  /** This account's Cua Cloud rates (no cloud estimate without). */
+  /** Cua Cloud rates (always none: it has ended). */
   cloudPricing?: CloudPricing | null;
   /** The GPU option of each runtime that has one (`gpu_support`); a
    * runtime not listed gets no GPU row. */
@@ -305,7 +306,9 @@ export function NewSpaceWizard({
   const [state, setState] = useState<WizardState>(() =>
     (quick ? [{ type: "choose-os", os: quick }] : (startActions ?? [])).reduce<WizardState>(
       (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env }),
-      core<WizardState>("wizard.initial", { env }),
+      // The wasm core has no randomness: a seed for the name an unnamed
+      // Space gets (the core shows it and creates the Space with it).
+      core<WizardState>("wizard.initial", { env: { ...env, nameSeed: nameSeed() } }),
     ),
   );
   // The panel opened, was cancelled, or created a Space (the SwiftUI app
@@ -322,7 +325,7 @@ export function NewSpaceWizard({
   useEffect(() => {
     setState((s) => core<WizardState>("wizard.reduce", { state: s, action: { type: "sync-default", location: defaultLocation }, env }));
   }, [defaultLocation, env]);
-  const v = core<WizardView>("wizard.view", { state, env });
+  const v = core<WizardView>("wizard.view", { state, env, hostOs: hostOs() });
   // Before paint, so a quick create never shows the sheet; once, because StrictMode runs mount effects twice.
   const started = useRef(false);
   useLayoutEffect(() => {
@@ -848,4 +851,10 @@ function AddByAddress({
       </footer>
     </div>
   );
+}
+
+/** 40 random bits for the generated Space name (`wizard::generated_space_name`). */
+function nameSeed(): number {
+  const [high = 0, low = 0] = globalThis.crypto.getRandomValues(new Uint32Array(2));
+  return (high & 0xff) * 2 ** 32 + low;
 }

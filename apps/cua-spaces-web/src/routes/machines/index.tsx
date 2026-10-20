@@ -7,7 +7,9 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { useBridge, useExperiments, useMachines, useSpaces, type Machine, type Space, type SpaceDetailView } from "@/bridge";
 import { spaceDetail } from "@/bridge/space-detail";
+import { UpsellPrompt } from "@/components/upsell-prompt";
 import { AddMachineDialog } from "@/components/add-machine-dialog";
+import { JoinWithCodeDialog } from "@/components/join-with-code-dialog";
 import { ThisMachine } from "@/components/this-machine";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
@@ -15,14 +17,20 @@ import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
-import { connectionLabel, machineOs, machinesSummary, machineSubtitle, osName, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount } from "@/lib/machines";
+import { connectionLabel, machineOs, machinesSummary, machineSubtitle, osName, presenceLabel, presenceWord, reachable, selectedMachine, spacesLabel } from "@/lib/machines";
 import { osLabel, realSpaces, spaceState } from "@/lib/spaces";
 import { cn, relativeTime } from "@/lib/utils";
 
 export const Route = createFileRoute("/machines/")({
   component: MachinesPage,
   // `?add=1` opens "Add a machine" (the getting-started checklist links here).
-  validateSearch: (s: Record<string, unknown>): { add?: true } => (s.add === 1 || s.add === "1" || s.add === true ? { add: true } : {}),
+  // `?join=<code>` opens "Join with a code" with the code filled in (a `cua://add/<code>` link
+  // opened on this computer); `relay` names a relay other than the production one.
+  validateSearch: (s: Record<string, unknown>): { add?: true; join?: string; relay?: string } => ({
+    ...(s.add === 1 || s.add === "1" || s.add === true ? { add: true as const } : {}),
+    ...(typeof s.join === "string" && s.join ? { join: s.join.slice(0, 200) } : {}),
+    ...(typeof s.relay === "string" && s.relay ? { relay: s.relay.slice(0, 300) } : {}),
+  }),
 });
 
 function MachinesPage() {
@@ -32,7 +40,7 @@ function MachinesPage() {
   const exp = useExperiments();
   const experiments = exp.unsupported ? undefined : (exp.data?.experiments ?? {});
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { add } = Route.useSearch();
+  const { add, join, relay } = Route.useSearch();
   const navigate = Route.useNavigate();
   const [adding, setAddingState] = useState(add === true);
   const setAdding = (open: boolean) => {
@@ -42,37 +50,46 @@ function MachinesPage() {
   useEffect(() => {
     if (add) setAddingState(true);
   }, [add]);
+  const [joining, setJoiningState] = useState(join !== undefined);
+  const setJoining = (open: boolean) => {
+    setJoiningState(open);
+    if (!open && join) void navigate({ search: {}, replace: true });
+  };
+  useEffect(() => {
+    if (join) setJoiningState(true);
+  }, [join]);
   const selected = selectedMachine(machines, selectedId);
   // Reachable from here: a machine whose owner stopped sharing it is not.
   const online = machines.filter(reachable).length;
   // Another machine's own Space (`relay:<id>`), drawn by the core as the
-  // SwiftUI detail draws it: its word when it can't be reached, and Remove.
+  // SwiftUI detail draws it: its Remove action.
   const access = machines.find((m) => m.current)?.accessNotice ?? null;
   const detailOf = (m: Machine): { space: Space; detail: SpaceDetailView } | null => {
     if (m.current) return null;
     const space = spaces.find((s) => s.id === `relay:${m.id}`);
     return space ? { space, detail: spaceDetail(core, space, null, null, experiments, access) } : null;
   };
-  const reachWord = (m: Machine) => {
-    const d = detailOf(m)?.detail;
-    return d && !d.canStream && !d.desktopNote ? d.previewText : null;
-  };
 
   return (
     <Page>
       <PageHeader
-        title="Machines"
+        title="Computers"
         description={
-          isLoading ? "Loading machines…" : machines.length ? machinesSummary(machines.length, online) : "Computers that can run your Spaces."
+          isLoading ? "Loading computers…" : machines.length ? machinesSummary(machines.length, online) : "Computers that can run your Spaces."
         }
         actions={
-          <Button variant="outline" onClick={() => setAdding(true)}>
-            <PlusIcon /> Add a machine
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => setJoining(true)} data-join-with-code-open>
+              Join with a code
+            </Button>
+            <Button variant="outline" onClick={() => setAdding(true)}>
+              <PlusIcon /> Add a computer
+            </Button>
+          </div>
         }
       />
       {error ? (
-        <EmptyState icon={<ServerIcon />} title="Couldn't load machines">
+        <EmptyState icon={<ServerIcon />} title="Couldn't load computers">
           {error.message}
         </EmptyState>
       ) : isLoading ? (
@@ -80,10 +97,10 @@ function MachinesPage() {
       ) : machines.length === 0 ? (
         <EmptyState
           icon={<ServerIcon />}
-          title="No machines yet"
+          title="No computers yet"
           action={
             <Button onClick={() => setAdding(true)}>
-              <PlusIcon /> Add a machine
+              <PlusIcon /> Add a computer
             </Button>
           }
         >
@@ -92,12 +109,11 @@ function MachinesPage() {
       ) : (
         <div className="grid grid-cols-[minmax(0,340px)_minmax(0,1fr)] items-start gap-6">
           <div>
-            <ul aria-label="Machines" className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
+            <ul aria-label="Computers" className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
               {machines.map((m) => (
                 <li key={m.id}>
                   <MachineRow
                     machine={m}
-                    reach={reachWord(m)}
                     spaces={realSpaces(spaces).filter((s) => m.spaceIds.includes(s.id)).length}
                     selected={m.id === selected?.id}
                     onSelect={() => setSelectedId(m.id)}
@@ -107,15 +123,15 @@ function MachinesPage() {
             </ul>
             {machines.length === 1 ? (
               <p className="mt-3 px-1 text-xs text-muted-foreground">
-                Only this machine so far. Add another to run Spaces on it from here.
+                Only this computer so far. Add another to run Spaces on it from here.
               </p>
             ) : null}
+            <UpsellPrompt surface="machine" active={machines.length >= 2 && machines.some((m) => m.via === "relay")} className="mt-3" />
           </div>
           {selected ? (
             <MachineDetail
               key={selected.id}
               machine={selected}
-              reach={reachWord(selected)}
               own={detailOf(selected)}
               spaces={realSpaces(spaces).filter((s) => selected.spaceIds.includes(s.id))}
               onRemoved={() => setSelectedId(null)}
@@ -124,6 +140,7 @@ function MachinesPage() {
         </div>
       )}
       <AddMachineDialog open={adding} onOpenChange={setAdding} guide={setupGuide} />
+      <JoinWithCodeDialog open={joining} onOpenChange={setJoining} initialCode={join ?? ""} initialRelay={relay ?? null} />
     </Page>
   );
 }
@@ -142,7 +159,8 @@ function PresenceDot({ online, notSharing }: { online: boolean; notSharing?: boo
   return <span className={cn("size-1.5 shrink-0 rounded-full", tone)} aria-hidden />;
 }
 
-function MachineRow({ machine: m, reach, spaces, selected, onSelect }: { machine: Machine; reach: string | null; spaces: number; selected: boolean; onSelect: () => void }) {
+function MachineRow({ machine: m, spaces, selected, onSelect }: { machine: Machine; spaces: number; selected: boolean; onSelect: () => void }) {
+  const count = spacesLabel(m, spaces);
   return (
     <button
       type="button"
@@ -162,16 +180,16 @@ function MachineRow({ machine: m, reach, spaces, selected, onSelect }: { machine
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-medium">{m.name}</span>
-          {m.current ? <span className="shrink-0 text-xs text-muted-foreground">(this machine)</span> : null}
+          {m.current ? <span className="shrink-0 text-xs text-muted-foreground">(this computer)</span> : null}
         </div>
         <div className="truncate text-xs text-muted-foreground">{machineSubtitle(m)}</div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <PresenceDot online={m.online} notSharing={Boolean(m.notSharing)} />
-          {presenceWord(m, reach)}
+          {presenceWord(m)}
         </span>
-        <span className="text-xs text-muted-foreground tabular-nums">{spaceCount(spaces)}</span>
+        {count ? <span className="text-xs text-muted-foreground tabular-nums">{count}</span> : null}
       </div>
     </button>
   );
@@ -179,13 +197,11 @@ function MachineRow({ machine: m, reach, spaces, selected, onSelect }: { machine
 
 function MachineDetail({
   machine: m,
-  reach,
   own,
   spaces,
   onRemoved,
 }: {
   machine: Machine;
-  reach: string | null;
   own: { space: Space; detail: SpaceDetailView } | null;
   spaces: Space[];
   onRemoved: () => void;
@@ -214,7 +230,7 @@ function MachineDetail({
           <h2 className="truncate text-[15px] font-semibold">{m.name}</h2>
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <PresenceDot online={m.online} notSharing={Boolean(m.notSharing)} />
-            {presenceLabel(m, now, reach)}
+            {presenceLabel(m, now)}
           </p>
         </div>
         {remove ? (
@@ -262,7 +278,7 @@ function MachineDetail({
       <Group title="Spaces">
         {spaces.length === 0 ? (
           <p className="px-4 py-3 text-[13px] text-muted-foreground">
-            {m.online ? "No Spaces on this machine." : "No Spaces listed. Spaces show again when the machine is back online."}
+            {m.online ? "No Spaces on this computer." : "No Spaces listed. Spaces show again when the computer is back online."}
           </p>
         ) : (
           spaces.map((s) => (
@@ -310,7 +326,7 @@ function Fact({ label, hint, children }: { label: string; hint?: string; childre
 
 function LoadingState() {
   return (
-    <div aria-busy="true" aria-label="Loading machines" className="grid grid-cols-[minmax(0,340px)_minmax(0,1fr)] items-start gap-6">
+    <div aria-busy="true" aria-label="Loading computers" className="grid grid-cols-[minmax(0,340px)_minmax(0,1fr)] items-start gap-6">
       <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex items-center gap-3 px-3.5 py-3">

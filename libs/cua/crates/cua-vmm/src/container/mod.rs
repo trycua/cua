@@ -1,6 +1,6 @@
 //! OCI container backend over the Docker Engine API (`bollard`).
 //!
-//! Runs rootfs images such as the Fleet gVisor `docker-*` tags. Isolation is
+//! Runs rootfs images such as the gVisor `docker-*` tags. Isolation is
 //! chosen per engine:
 //!
 //! 1. `runsc` (gVisor) when the engine has it registered;
@@ -44,9 +44,9 @@ const LABEL_BACKEND: &str = "cua.vmm.backend";
 /// On sidecar containers: the sandbox whose network namespace they share.
 /// Sidecars carry no [`LABEL_BACKEND`], so they are not listed as sandboxes.
 const LABEL_SIDECAR_OF: &str = "cua.sandbox.sidecar-of";
-/// Sidecar defaults, the same as a Fleet pod sidecar's (500m / 512Mi).
+/// Sidecar defaults (500m / 512Mi).
 const SIDECAR_NANO_CPUS: i64 = 500_000_000;
-const SIDECAR_MEMORY_BYTES: i64 = 512 * 1024 * 1024;
+pub(crate) const SIDECAR_MEMORY_BYTES: i64 = 512 * 1024 * 1024;
 /// Engine repository of `ensure_base` images (pulled images re-tagged).
 pub const BASE_REPO: &str = "cua-vmm/base";
 /// Engine repository of checkpoints and of the intermediate images this
@@ -204,7 +204,7 @@ impl ContainerRuntime {
             }
             _ => {}
         }
-        let docker = connect_uri(&endpoint.uri)?;
+        let docker = connect_uri(&endpoint.uri).await?;
         docker.ping().await.map_err(|e| match check {
             // Something accepts on the socket but does not speak the
             // Docker API as expected: an engine error, not a stopped one.
@@ -234,6 +234,43 @@ impl ContainerRuntime {
 
     pub fn docker(&self) -> &Docker {
         &self.docker
+    }
+
+    /// Every container on this engine (sandboxes and their sidecars), its
+    /// status and its memory limit in MiB (a container with no limit counts
+    /// as the default 2 GiB). For sizing the built-in runtime's VM, which
+    /// runs nothing else.
+    pub async fn memory_reservations(&self) -> Result<Vec<(String, Status, u64)>> {
+        let rows = self
+            .docker
+            .list_containers(Some(ListContainersOptions {
+                all: true,
+                ..Default::default()
+            }))
+            .await
+            .map_err(engine_err)?;
+        let mut out = Vec::new();
+        for c in rows {
+            let Some(name) = c
+                .names
+                .as_ref()
+                .and_then(|n| n.first())
+                .map(|n| n.trim_start_matches('/').to_string())
+            else {
+                continue;
+            };
+            let Some(i) = self.inspect(&name).await? else {
+                continue;
+            };
+            let bytes = i
+                .host_config
+                .as_ref()
+                .and_then(|h| h.memory)
+                .filter(|b| *b > 0)
+                .unwrap_or(2048 << 20);
+            out.push((name, Self::status_from(&i), (bytes as u64) >> 20));
+        }
+        Ok(out)
     }
 
     /// NVIDIA GPUs for containers under `runtime` (`container` for runc,
@@ -332,12 +369,17 @@ impl ContainerRuntime {
         // dockerd restarts; wait for it to come back with runsc registered.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
         while tokio::time::Instant::now() < deadline {
-            if let Ok(rts) = connect_uri(&self.endpoint.uri)?.info().await.map(|i| {
-                i.runtimes
-                    .unwrap_or_default()
-                    .into_keys()
-                    .collect::<Vec<_>>()
-            }) && rts.iter().any(|r| r == "runsc")
+            if let Ok(rts) = connect_uri(&self.endpoint.uri)
+                .await?
+                .info()
+                .await
+                .map(|i| {
+                    i.runtimes
+                        .unwrap_or_default()
+                        .into_keys()
+                        .collect::<Vec<_>>()
+                })
+                && rts.iter().any(|r| r == "runsc")
             {
                 return Ok(());
             }
@@ -534,6 +576,33 @@ impl ContainerRuntime {
             Some(S::REMOVING) | Some(S::STOPPING) => Status::Unknown("stopping".into()),
             _ => Status::Unknown("unknown".into()),
         }
+    }
+
+    /// How the container `name` ended, when it has stopped: the engine's
+    /// exit code and whether the kernel killed it for memory
+    /// (`State.OOMKilled`). `None` while it runs, when it never ran, or
+    /// when there is no such container.
+    pub async fn exit_of(&self, name: &str) -> Result<Option<ExitRecord>> {
+        Ok(self.inspect(name).await?.as_ref().and_then(Self::exit_from))
+    }
+
+    fn exit_from(i: &bollard::models::ContainerInspectResponse) -> Option<ExitRecord> {
+        use bollard::models::ContainerStateStatusEnum as S;
+        let s = i.state.as_ref()?;
+        if !matches!(s.status, Some(S::EXITED) | Some(S::DEAD)) {
+            return None;
+        }
+        // Docker's zero time: created, never started.
+        if s.finished_at
+            .as_deref()
+            .is_none_or(|t| t.starts_with("0001-"))
+        {
+            return None;
+        }
+        Some(ExitRecord {
+            exit_code: s.exit_code.unwrap_or(0),
+            oom_killed: s.oom_killed.unwrap_or(false),
+        })
     }
 
     fn endpoints_from(i: &bollard::models::ContainerInspectResponse) -> Endpoints {
@@ -782,18 +851,42 @@ fn registry_credentials(_reference: &str) -> Option<bollard::auth::DockerCredent
     })
 }
 
-fn connect_uri(uri: &str) -> Result<Docker> {
+fn connect_uri_once(uri: &str) -> std::result::Result<Docker, bollard::errors::Error> {
     let v = bollard::API_DEFAULT_VERSION;
-    let r = if uri.starts_with("unix://") || uri.starts_with("npipe://") || uri.starts_with('/') {
+    if uri.starts_with("unix://") || uri.starts_with("npipe://") || uri.starts_with('/') {
         Docker::connect_with_socket(uri, 120, v)
-    } else if uri.starts_with("tcp://") || uri.starts_with("http://") {
-        Docker::connect_with_http(uri, 120, v)
     } else {
+        Docker::connect_with_http(uri, 120, v)
+    }
+}
+
+async fn connect_uri(uri: &str) -> Result<Docker> {
+    if !(uri.starts_with("unix://")
+        || uri.starts_with("npipe://")
+        || uri.starts_with('/')
+        || uri.starts_with("tcp://")
+        || uri.starts_with("http://"))
+    {
         return Err(VmmError::invalid(format!(
             "unsupported engine endpoint '{uri}'"
         )));
-    };
-    r.map_err(engine_err)
+    }
+    // Docker Desktop's pipe has one listening instance at a time: a client
+    // that opens it in the same instant as another gets ERROR_PIPE_BUSY, which
+    // bollard reports as "Socket not found" (CUA-1523). The pipe is there:
+    // ask again a moment later.
+    let mut tries = 0;
+    loop {
+        match connect_uri_once(uri) {
+            Err(bollard::errors::Error::SocketNotFoundError(_))
+                if cfg!(windows) && uri.starts_with("npipe://") && tries < 40 =>
+            {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            r => return r.map_err(engine_err),
+        }
+    }
 }
 
 #[async_trait]
@@ -1644,7 +1737,7 @@ fn create_body(
         env: (!spec.env.is_empty())
             .then(|| spec.env.iter().map(|(k, v)| format!("{k}={v}")).collect()),
         // `command` replaces the image's ENTRYPOINT and CMD, like a
-        // Kubernetes `command` (and so a Fleet pod template's).
+        // Kubernetes `command`.
         entrypoint: spec.command.clone().filter(|c| !c.is_empty()),
         cmd: spec
             .command
@@ -1707,12 +1800,12 @@ pub fn shm_size_bytes(memory_mb: u64) -> i64 {
     half.clamp(64 * MIB, 2048 * MIB)
 }
 
-/// The hostname sidecars reach the sandbox at (as on Fleet).
+/// The hostname sidecars reach the sandbox at.
 pub const MAIN_HOSTNAME: &str = "main";
 
 /// `/etc/hosts` entries naming every container of a sidecar group, so the
 /// sandbox reaches a sidecar at its name and a sidecar reaches the sandbox
-/// at [`MAIN_HOSTNAME`], as on Fleet. They all share the sandbox's network
+/// at [`MAIN_HOSTNAME`]. They all share the sandbox's network
 /// namespace, so every name is loopback. Sidecars joined with
 /// `container:<sandbox>` networking use the sandbox's `/etc/hosts` (Docker
 /// refuses `--add-host` on them), so the entries go on the sandbox only.
@@ -1783,7 +1876,7 @@ pub fn sidecar_container_name(sandbox: &str, sidecar: &str) -> String {
 }
 
 /// The Docker create body for a sidecar: the sandbox's network namespace,
-/// its own image, command and environment, Fleet's default resources.
+/// its own image, command and environment, and the default resources.
 fn sidecar_body(sandbox: &str, sc: &SidecarSpec, runtime: String) -> ContainerCreateBody {
     let mut labels = HashMap::new();
     labels.insert(LABEL_SANDBOX.to_string(), "true".to_string());
@@ -1836,6 +1929,54 @@ fn pull_fraction(download: Option<f64>, extract: Option<f64>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn inspected(
+        status: bollard::models::ContainerStateStatusEnum,
+        finished: &str,
+        code: i64,
+        oom: bool,
+    ) -> bollard::models::ContainerInspectResponse {
+        bollard::models::ContainerInspectResponse {
+            state: Some(bollard::models::ContainerState {
+                status: Some(status),
+                finished_at: Some(finished.into()),
+                exit_code: Some(code),
+                oom_killed: Some(oom),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_stopped_container_says_how_it_ended() {
+        use bollard::models::ContainerStateStatusEnum as S;
+        let at = "2026-10-15T20:40:01.60761462Z";
+        // What the engine recorded for a Space the guest kernel killed.
+        assert_eq!(
+            ContainerRuntime::exit_from(&inspected(S::EXITED, at, 137, true)),
+            Some(ExitRecord {
+                exit_code: 137,
+                oom_killed: true
+            })
+        );
+        assert_eq!(
+            ContainerRuntime::exit_from(&inspected(S::DEAD, at, 1, false)),
+            Some(ExitRecord {
+                exit_code: 1,
+                oom_killed: false
+            })
+        );
+        // Running, or created and never started: nothing ended.
+        assert_eq!(
+            ContainerRuntime::exit_from(&inspected(S::RUNNING, at, 0, false)),
+            None
+        );
+        assert_eq!(
+            ContainerRuntime::exit_from(&inspected(S::EXITED, "0001-01-01T00:00:00Z", 0, false)),
+            None
+        );
+    }
 
     #[test]
     fn manifest_layers_give_a_pull_its_total_and_count_what_exists() {
@@ -1895,7 +2036,7 @@ mod tests {
             hc.extra_hosts.is_none(),
             "a container: network takes no hosts"
         );
-        // Names resolve on every container of the group, as on Fleet.
+        // Names resolve on every container of the group.
         assert_eq!(
             main.host_config.as_ref().unwrap().extra_hosts,
             Some(vec![

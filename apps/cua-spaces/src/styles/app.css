@@ -1477,13 +1477,6 @@ kbd {
   align-items: center;
   gap: 10px;
 }
-/* The "Signed in via API key" row shown above the account sign-in button when
-   only env credentials are present — same row layout as the signed-in state. */
-.settings-account-env {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
 .settings-account[data-state="out"] {
   flex-direction: column;
   align-items: stretch;
@@ -2555,7 +2548,7 @@ select {
 }
 
 /* ---------------------------------------------------------------------------
- * Fleet live data: tile pin affordance, real thumbnails
+ * Live data: tile pin affordance, real thumbnails
  * ------------------------------------------------------------------------- */
 
 .tile-wrap {
@@ -5238,4 +5231,28 @@ li.installer-agent {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Done's to-do list: what is set up, and a one-click fix for what is not. */
+.onboarding-todos {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+.onboarding-todos li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+}
+.onboarding-todos li > div {
+  flex: 1;
+  min-width: 0;
+}
+.onboarding-todos li .st-note {
+  margin: 2px 0 0;
+}
+.onboarding-todos li[data-done] strong {
+  opacity: 0.6;
 }

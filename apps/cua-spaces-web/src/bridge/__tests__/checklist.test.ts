@@ -4,6 +4,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { CHECKLIST_STEPS, checklistDone, checklistView, readChecklist, resetChecklistCache } from "../checklist";
+import type { DataAdapter } from "../adapter";
+import type { HostEvent } from "../protocol";
 import type { BridgeStore } from "../store";
 import { sanitizeSignals, type TelemetrySignal } from "../ops/telemetry";
 import { noCore, testCore, wasmBuilt } from "./testCore";
@@ -63,7 +65,7 @@ describe("the getting-started checklist", () => {
     const view = checklistView(core, { done: { teleport: true }, dismissed: false, shown: true })!;
     expect(view).toMatchObject({ visible: true, complete: false, title: "Get started", progress: "1 of 5" });
     expect(view.rows.map((r) => [r.step, r.action, r.done])).toEqual([
-      ["add_machine", "Add machine", false],
+      ["add_machine", "Add computer", false],
       ["create_space", "Create", false],
       ["teleport", "Teleport", true],
       ["share", "Share", false],
@@ -78,5 +80,72 @@ describe("the getting-started checklist", () => {
     expect(readChecklist().done).toEqual({});
     expect(sent).toEqual([]);
     expect(checklistView(noCore, readChecklist())).toBeNull();
+  });
+});
+
+/** A native host that keeps the checklist: answers `checklist.get` and
+ * `checklist.send` from its own copy and says `checklist.changed`. */
+function hostAdapter(initial: { done: string[]; dismissed: boolean; shown: boolean }) {
+  let state = { ...initial, done: [...initial.done] };
+  const sent: unknown[] = [];
+  const listeners = new Set<(e: HostEvent) => void>();
+  const order = CHECKLIST_STEPS as readonly string[];
+  const adapter = {
+    mode: "webkit",
+    async call(op: string, args: { action?: { type: string; step?: string; state?: typeof state } }) {
+      if (op === "checklist.get") return { state };
+      if (op !== "checklist.send") throw new Error(`unexpected ${op}`);
+      const a = args.action!;
+      sent.push(a);
+      if (a.type === "done") state = { ...state, done: order.filter((s) => s === a.step || state.done.includes(s)) };
+      if (a.type === "merge") {
+        const o = a.state!;
+        state = { done: order.filter((s) => state.done.includes(s) || o.done.includes(s)), dismissed: state.dismissed || o.dismissed, shown: state.shown || o.shown };
+      }
+      return { state };
+    },
+    subscribe(l: (e: HostEvent) => void) {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+  } as unknown as DataAdapter;
+  return {
+    adapter,
+    sent,
+    change(next: typeof state) {
+      state = next;
+      for (const l of listeners) l({ type: "checklist.changed" });
+    },
+  };
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+describe("the host's copy (the Mac app and Electron)", () => {
+  it("merges what this page kept before into the host's copy once, then forgets it", async () => {
+    localStorage.setItem(KEY, JSON.stringify({ done: { teleport: true, add_machine: true }, dismissed: false, shown: true }));
+    const host = hostAdapter({ done: ["add_machine", "create_space"], dismissed: false, shown: false });
+    const { store, sent } = await fakeStore(noCore);
+    (store as { adapter: DataAdapter }).adapter = host.adapter;
+    // A step done goes to the host, which records its events.
+    checklistDone(store, "share");
+    await settle();
+    await settle();
+    expect(host.sent).toHaveLength(2);
+    expect(host.sent).toContainEqual({ type: "merge", state: { done: ["add_machine", "teleport"], dismissed: false, shown: true } });
+    expect(host.sent).toContainEqual({ type: "done", step: "share" });
+    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(sent).toEqual([]);
+  });
+
+  it("reads the host's copy again when it changed", async () => {
+    const host = hostAdapter({ done: [], dismissed: false, shown: false });
+    const { store } = await fakeStore(noCore);
+    (store as { adapter: DataAdapter }).adapter = host.adapter;
+    checklistDone(store, "teleport");
+    await settle();
+    host.change({ done: ["add_machine", "teleport"], dismissed: true, shown: true });
+    await settle();
+    expect(host.sent).toEqual([{ type: "done", step: "teleport" }]);
   });
 });

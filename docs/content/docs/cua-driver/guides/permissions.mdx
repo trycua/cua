@@ -41,7 +41,8 @@ cua-driver serve --dangerously-bypass-approvals
 
 `--permission-mode unrestricted` alone fails closed. Add the two manifest flags
 to `standard` or `unrestricted` to narrow them too. On macOS, pass the flags
-after `serve` in `open -n -g -a CuaDriver --args serve …` and use an absolute
+after `serve` when you start the installed app by its exact path
+(`open -n -g /Applications/CuaDriver.app --args serve …`), and use an absolute
 manifest path.
 
 What `standard` allows:

@@ -16,35 +16,6 @@ def _build_helpers():
     return build_hash, has_build_work
 
 
-class TestCloudTransportGetsItsImage:
-    """`_make_transport` dropped `image`, so every API-key cloud create raised
-    "Cannot create a cloud VM without an image"."""
-
-    def test_make_transport_accepts_an_image(self):
-        from cua_sandbox.sandbox import _make_transport
-
-        assert "image" in inspect.signature(_make_transport).parameters
-
-    def test_cloud_transport_receives_the_image(self):
-        from cua_sandbox.sandbox import _make_transport
-
-        img = Image.linux()
-        transport = _make_transport(api_key="sk-test", name="probe", image=img)
-        assert transport._image is img
-
-    def test_create_passes_the_image_to_every_make_transport_that_creates_a_vm(self):
-        """Guards the exact regression: the Fleet branch passed image=image while
-        the api-key branch right below it silently did not."""
-        from cua_sandbox.sandbox import Sandbox
-
-        src = inspect.getsource(Sandbox._create)
-        creating_call = "_make_transport(\n                    api_key=api_key,\n"
-        assert creating_call in src, "the VM-creating _make_transport call moved"
-        start = src.index(creating_call)
-        call = src[start : src.index(")", start)]
-        assert "image=image" in call
-
-
 class TestEnvAndFilesAreBuildInputs:
     """`.env()` and `.copy()` were dropped on the QEMU VM path: the builder only
     looked at `_layers`, so the variables and files never reached the guest."""

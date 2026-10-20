@@ -30,6 +30,6 @@ text_size = 12
 icon_size = 144
 hide_extensions = [app_name]
 icon_locations = {
-    app_name: (173, 240),
-    os.path.basename(alias): (566, 147),
+    app_name: (150, 300),
+    os.path.basename(alias): (600, 196),
 }

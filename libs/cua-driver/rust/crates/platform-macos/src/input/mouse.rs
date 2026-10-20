@@ -807,13 +807,11 @@ pub fn drag_at_xy_observed<F>(
     modifiers: &[&str],
     button: DragButton,
     foreground_hid: bool,
-    mut observe: F,
+    observe: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut(f64, f64),
 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     if foreground_hid {
         return drag_at_xy_window_foreground_observed(
             pid,
@@ -832,117 +830,231 @@ where
         );
     }
 
+    let wid = wid.ok_or_else(|| {
+        anyhow::anyhow!("a background drag needs the exact target window (window_id)")
+    })?;
+    drag_at_xy_background(
+        pid,
+        (from_x, from_y),
+        (to_x, to_y),
+        wid,
+        duration_ms,
+        steps,
+        modifiers,
+        button,
+        observe,
+        || true,
+    )
+    .map(|_| ())
+}
+
+/// How a background drag gesture ended.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BackgroundDragOutcome {
+    /// Every planned event was posted and the release landed on the drop point.
+    Completed,
+    /// The caller's `keep_going` check failed during the path; the release
+    /// was posted at once at this screen point instead of the drop point.
+    StoppedEarly { at: (f64, f64) },
+}
+
+/// Event kinds in the background drag plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackgroundDragEventKind {
+    /// Stamped `mouseMoved` at the start point (cursor-tracking primer).
+    Move,
+    /// Off-screen left down/up at (-1, -1): the same Chromium user-activation
+    /// primer the background click recipe sends before its target pair.
+    PrimerDown,
+    PrimerUp,
+    Down,
+    Dragged,
+    Up,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BackgroundDragStep {
+    kind: BackgroundDragEventKind,
+    /// Screen point. It is both the event location and the stamped window
+    /// location, as in the background click recipe.
+    point: (f64, f64),
+    /// Field 0 gesture phase: move 2, primer down 1, primer up 2, gesture 3.
+    phase: i64,
+    click_state: i64,
+    delay_after_ms: u64,
+}
+
+/// The complete background drag gesture, as data.
+///
+/// One stamped move primes the target's cursor-tracking state, an off-screen
+/// primer click satisfies Chromium's user-activation gate, and then one
+/// down, `steps` interpolated drags and one up make the gesture. Every event
+/// is posted exactly once.
+fn background_drag_plan(
+    from: (f64, f64),
+    to: (f64, f64),
+    steps: usize,
+    duration_ms: u64,
+) -> Vec<BackgroundDragStep> {
+    use BackgroundDragEventKind::*;
+    let steps = steps.max(1);
+    let step_delay_ms = duration_ms / steps as u64;
+    let off_screen = (-1.0, -1.0);
+    let step = |kind, point, phase, click_state, delay_after_ms| BackgroundDragStep {
+        kind,
+        point,
+        phase,
+        click_state,
+        delay_after_ms,
+    };
+    let mut plan = Vec::with_capacity(steps + 5);
+    plan.push(step(Move, from, 2, 0, 15));
+    plan.push(step(PrimerDown, off_screen, 1, 1, 1));
+    plan.push(step(PrimerUp, off_screen, 2, 1, 100));
+    // A short hold before the first drag lets drag sources (NSTableView,
+    // Chromium pointer capture) arm their tracking.
+    plan.push(step(Down, from, 3, 1, 30));
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let point = (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t);
+        // The last drag lands on the drop point; give the target one
+        // run-loop turn to process it before the release.
+        let delay = if i == steps {
+            step_delay_ms.max(50)
+        } else {
+            step_delay_ms
+        };
+        plan.push(step(Dragged, point, 3, 1, delay));
+    }
+    plan.push(step(Up, to, 3, 1, 100));
+    plan
+}
+
+/// Background press-drag-release addressed to one window of `pid`.
+///
+/// This is the background click route stretched over a gesture: every event
+/// is posted to the process (SkyLight `SLEventPostToPid`, or the public
+/// per-pid API only when the SPI is absent), carries the exact window in the
+/// routing fields (f51/f91/f92), the target pid (f40) and one gesture ID
+/// (f58), and is stamped with its own location. The hardware pointer is never
+/// warped and nothing is posted to the global HID tap, so the user's pointer,
+/// frontmost app and window order stay as they were. The caller makes the
+/// window AppKit-key without raising it first
+/// ([`prepare_background_pixel_click`]).
+///
+/// `keep_going` runs after each drag step; when it returns false the rest of
+/// the path is skipped and the release is posted at once where the gesture
+/// stands. The drag tool uses it to cut short a gesture that started a system
+/// drag-and-drop session, which macOS tracks with the hardware pointer.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_at_xy_background<F, G>(
+    pid: i32,
+    from: (f64, f64),
+    to: (f64, f64),
+    wid: u32,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    mut observe: F,
+    mut keep_going: G,
+) -> anyhow::Result<BackgroundDragOutcome>
+where
+    F: FnMut(f64, f64),
+    G: FnMut() -> bool,
+{
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use BackgroundDragEventKind::*;
+
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let flags = parse_modifier_flags(modifiers);
-
-    let (cg_button, down_type, dragged_type, up_type) = match button {
+    let (cg_button, down_type, dragged_type, up_type, button_number) = match button {
         DragButton::Left => (
             CGMouseButton::Left,
             CGEventType::LeftMouseDown,
             CGEventType::LeftMouseDragged,
             CGEventType::LeftMouseUp,
+            0,
         ),
         DragButton::Right => (
             CGMouseButton::Right,
             CGEventType::RightMouseDown,
             CGEventType::RightMouseDragged,
             CGEventType::RightMouseUp,
+            1,
         ),
         DragButton::Middle => (
             CGMouseButton::Center,
             CGEventType::OtherMouseDown,
             CGEventType::OtherMouseDragged,
             CGEventType::OtherMouseUp,
+            2,
         ),
     };
-    // f3 button number must match the dragged button (0=left, 1=right, 2=middle).
-    let button_number: i64 = match button {
-        DragButton::Left => 0,
-        DragButton::Right => 1,
-        DragButton::Middle => 2,
-    };
+    let gesture_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as i64;
+    let route = post_route(MousePostMode::SkyLightPreferred, skylight_available());
+    let window_id = wid as i64;
 
-    let click_group_id: Option<i64> = wid.map(|_| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos() as i64
-    });
-
-    let steps = steps.max(1);
-    let step_delay_ms = if steps > 1 {
-        duration_ms / steps as u64
-    } else {
-        duration_ms
-    };
-
-    // Prime the routed target's cursor-tracking state immediately before the
-    // press, matching the click path's stamped mouseMoved + settle interval.
-    let from_pt = CGPoint::new(from_x, from_y);
-    post_mouse_moved_primer(
-        pid,
-        &source,
-        from_pt,
-        from_local,
-        wid,
-        click_group_id,
-        MousePostMode::Both,
-    );
-    std::thread::sleep(std::time::Duration::from_millis(12));
-
-    // MouseDown at start.
-    let down = CGEvent::new_mouse_event(source.clone(), down_type, from_pt, cg_button)
-        .map_err(|_| anyhow::anyhow!("drag mouseDown failed"))?;
-    set_explicit_flags(&down, flags);
-    post_mouse_event(
-        pid,
-        &down,
-        from_local,
-        wid,
-        click_group_id,
-        1,
-        button_number,
-        0,
-    );
-    observe(from_x, from_y);
-    std::thread::sleep(std::time::Duration::from_millis(16));
-
-    // Interpolated drag steps.
-    for i in 1..=steps {
-        let t = i as f64 / steps as f64;
-        let ix = from_x + (to_x - from_x) * t;
-        let iy = from_y + (to_y - from_y) * t;
-        let il = from_local
-            .zip(to_local)
-            .map(|((fx, fy), (tx, ty))| (fx + (tx - fx) * t, fy + (ty - fy) * t));
-        let drag_pt = CGPoint::new(ix, iy);
-        let drag = CGEvent::new_mouse_event(source.clone(), dragged_type, drag_pt, cg_button)
-            .map_err(|_| anyhow::anyhow!("drag mouseDragged failed"))?;
-        set_explicit_flags(&drag, flags);
-        post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
-        observe(ix, iy);
-        if step_delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+    let mut stopped_at: Option<(f64, f64)> = None;
+    let mut last_point = from;
+    for mut step in background_drag_plan(from, to, steps, duration_ms) {
+        if let Some(at) = stopped_at {
+            match step.kind {
+                Dragged => continue,
+                Up => step.point = at,
+                _ => {}
+            }
+        }
+        // (type, button, button number, subtype). Primers keep the click
+        // recipe's left button and touch subtype; the gesture itself is a
+        // plain mouse drag (subtype 0), like the foreground drag.
+        let (event_type, event_button, event_button_number, subtype) = match step.kind {
+            Move => (CGEventType::MouseMoved, CGMouseButton::Left, 0, 3),
+            PrimerDown => (CGEventType::LeftMouseDown, CGMouseButton::Left, 0, 3),
+            PrimerUp => (CGEventType::LeftMouseUp, CGMouseButton::Left, 0, 3),
+            Down => (down_type, cg_button, button_number, 0),
+            Dragged => (dragged_type, cg_button, button_number, 0),
+            Up => (up_type, cg_button, button_number, 0),
+        };
+        let point = CGPoint::new(step.point.0, step.point.1);
+        let event = CGEvent::new_mouse_event(source.clone(), event_type, point, event_button)
+            .map_err(|_| {
+                anyhow::anyhow!("background drag {:?} event creation failed", step.kind)
+            })?;
+        let ptr = event.as_ptr() as *mut std::ffi::c_void;
+        let set =
+            |field: u32, value: i64| crate::input::skylight::set_integer_field(ptr, field, value);
+        set(0, step.phase);
+        set(1, step.click_state);
+        set(3, event_button_number);
+        set(7, subtype);
+        set(40, pid as i64);
+        set(51, window_id);
+        set(91, window_id);
+        set(92, window_id);
+        set(58, gesture_id);
+        crate::input::skylight::set_window_location(ptr, step.point.0, step.point.1);
+        set_explicit_flags(&event, flags);
+        dispatch_mouse_event(route, pid, &event);
+        if matches!(step.kind, Down | Dragged) {
+            observe(step.point.0, step.point.1);
+            last_point = step.point;
+        }
+        if step.delay_after_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(step.delay_after_ms));
+        }
+        if step.kind == Dragged && stopped_at.is_none() && !keep_going() {
+            stopped_at = Some(last_point);
         }
     }
-
-    // MouseUp at end.
-    // Give Chromium one run-loop turn to process the final dragged event at
-    // the drop point before releasing pointer capture.
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    let to_pt = CGPoint::new(to_x, to_y);
-    let up = CGEvent::new_mouse_event(source.clone(), up_type, to_pt, cg_button)
-        .map_err(|_| anyhow::anyhow!("drag mouseUp failed"))?;
-    set_explicit_flags(&up, flags);
-    post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
-    // Chromium may process the final pointerup on the next run-loop turn. In
-    // the foreground rung the caller restores the previous app immediately
-    // after this function returns, so let the target consume the release and
-    // complete pointer capture before that restore.
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    Ok(())
+    Ok(match stopped_at {
+        Some(at) => BackgroundDragOutcome::StoppedEarly { at },
+        None => BackgroundDragOutcome::Completed,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1322,64 +1434,36 @@ pub enum DragButton {
 /// Middle-click at `(x, y)` with optional modifier keys.
 ///
 /// Posts an `OtherMouseDown` / `OtherMouseUp` pair with `CGMouseButton::Center`
-/// to the target pid through the same SkyLight + public-API postBoth path the
-/// left- and right-click primitives use. Window-local stamping mirrors
+/// to the target pid once through SkyLight, falling back to the public API
+/// only when the SPI is absent. Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, None, modifiers)
+    right_click_at_xy_inner(pid, x, y, None, None, modifiers, CGMouseButton::Center)
 }
 
-/// Like `middle_click_at_xy` but stamps the window-local `(wx, wy)` point.
 pub fn middle_click_at_xy_with_window_local(
     pid: i32,
     x: f64,
     y: f64,
     wx: f64,
     wy: f64,
+    wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), modifiers)
-}
-
-fn middle_click_at_xy_inner(
-    pid: i32,
-    x: f64,
-    y: f64,
-    window_local: Option<(f64, f64)>,
-    modifiers: &[&str],
-) -> anyhow::Result<()> {
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let point = CGPoint::new(x, y);
-    let flags = parse_modifier_flags(modifiers);
-
-    let down = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::OtherMouseDown,
-        point,
+    right_click_at_xy_inner(
+        pid,
+        x,
+        y,
+        Some((wx, wy)),
+        Some(wid),
+        modifiers,
         CGMouseButton::Center,
     )
-    .map_err(|_| anyhow::anyhow!("middle mouse down failed"))?;
-    set_explicit_flags(&down, flags);
-    post_mouse_event(pid, &down, window_local, None, None, 1, 2, 3);
-    std::thread::sleep(std::time::Duration::from_millis(16));
-
-    let up = CGEvent::new_mouse_event(
-        source,
-        CGEventType::OtherMouseUp,
-        point,
-        CGMouseButton::Center,
-    )
-    .map_err(|_| anyhow::anyhow!("middle mouse up failed"))?;
-    set_explicit_flags(&up, flags);
-    post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
-
-    Ok(())
 }
 
 /// Right-click at `(x, y)` with optional modifier keys (no window routing).
 pub fn right_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    right_click_at_xy_inner(pid, x, y, None, None, modifiers)
+    right_click_at_xy_inner(pid, x, y, None, None, modifiers, CGMouseButton::Right)
 }
 
 /// Like `right_click_at_xy` but stamps `CGEventSetWindowLocation` with the
@@ -1405,7 +1489,15 @@ pub fn right_click_at_xy_with_window_local(
     wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    right_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers)
+    right_click_at_xy_inner(
+        pid,
+        x,
+        y,
+        Some((wx, wy)),
+        Some(wid),
+        modifiers,
+        CGMouseButton::Right,
+    )
 }
 
 fn right_click_at_xy_inner(
@@ -1415,8 +1507,14 @@ fn right_click_at_xy_inner(
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     modifiers: &[&str],
+    button: CGMouseButton,
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    let (down_type, up_type, button_number) = match button {
+        CGMouseButton::Center => (CGEventType::OtherMouseDown, CGEventType::OtherMouseUp, 2),
+        _ => (CGEventType::RightMouseDown, CGEventType::RightMouseUp, 1),
+    };
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -1430,8 +1528,6 @@ fn right_click_at_xy_inner(
             .subsec_nanos() as i64
     });
 
-    // Prime cursor-tracking state at the target so AppKit hit-tests the
-    // right-down at the right NSView (same rationale as the left path).
     post_mouse_moved_primer(
         pid,
         &source,
@@ -1443,16 +1539,9 @@ fn right_click_at_xy_inner(
     );
     std::thread::sleep(std::time::Duration::from_millis(12));
 
-    let down = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::RightMouseDown,
-        point,
-        CGMouseButton::Right,
-    )
-    .map_err(|_| anyhow::anyhow!("right mouse down failed"))?;
+    let down = CGEvent::new_mouse_event(source.clone(), down_type, point, button)
+        .map_err(|_| anyhow::anyhow!("mouse down failed"))?;
     set_explicit_flags(&down, flags);
-    // button_number = 1 (right). Stamping 0 here routes the event as a left
-    // button-number on the receiving side even though the type is rightMouseDown.
     post_mouse_event_with_mode(
         pid,
         &down,
@@ -1460,19 +1549,14 @@ fn right_click_at_xy_inner(
         wid,
         click_group_id,
         1,
-        1,
+        button_number,
         3,
         MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(std::time::Duration::from_millis(28));
 
-    let up = CGEvent::new_mouse_event(
-        source,
-        CGEventType::RightMouseUp,
-        point,
-        CGMouseButton::Right,
-    )
-    .map_err(|_| anyhow::anyhow!("right mouse up failed"))?;
+    let up = CGEvent::new_mouse_event(source, up_type, point, button)
+        .map_err(|_| anyhow::anyhow!("mouse up failed"))?;
     set_explicit_flags(&up, flags);
     post_mouse_event_with_mode(
         pid,
@@ -1481,7 +1565,7 @@ fn right_click_at_xy_inner(
         wid,
         click_group_id,
         1,
-        1,
+        button_number,
         3,
         MousePostMode::SkyLightPreferred,
     );
@@ -1794,6 +1878,7 @@ mod post_sink {
         posted: Vec<Posted>,
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
+        window_routing: Vec<[i64; 4]>,
     }
 
     thread_local! {
@@ -1811,6 +1896,7 @@ mod post_sink {
                     skylight_available,
                     posted: Vec::new(),
                     modifiers: Vec::new(),
+                    window_routing: Vec::new(),
                 });
             });
             Self
@@ -1837,6 +1923,10 @@ mod post_sink {
                     .map(|state| state.posted.clone())
                     .unwrap_or_default()
             })
+        }
+
+        pub(super) fn window_routing(&self) -> Vec<[i64; 4]> {
+            STATE.with(|state| state.borrow().as_ref().unwrap().window_routing.clone())
         }
     }
 
@@ -1870,6 +1960,9 @@ mod post_sink {
             state
                 .modifiers
                 .push(event.get_flags().bits() & MODIFIER_MASK);
+            state
+                .window_routing
+                .push([51, 91, 92, 58].map(|field| event.get_integer_value_field(field)));
             true
         })
     }
@@ -1879,6 +1972,57 @@ mod post_sink {
 mod tests {
     use super::post_sink::{Capture, Posted};
     use super::*;
+
+    #[test]
+    fn background_middle_click_preserves_exact_window_routing() {
+        let capture = Capture::start(true);
+        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        let routing = capture.window_routing();
+        assert_eq!(routing.len(), 3);
+        for fields in &routing {
+            assert_eq!(&fields[..3], &[7, 7, 7]);
+            assert_ne!(fields[3], 0, "window stamps require a click-group ID");
+        }
+        assert_eq!(routing[0][3], routing[1][3]);
+        assert_eq!(routing[1][3], routing[2][3]);
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("OtherMouseDown", PostRoute::SkyLight, 2),
+                Posted::new("OtherMouseUp", PostRoute::SkyLight, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn background_middle_click_uses_public_fallback_once() {
+        let capture = Capture::start(false);
+        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::PublicPid, 0),
+                Posted::new("OtherMouseDown", PostRoute::PublicPid, 2),
+                Posted::new("OtherMouseUp", PostRoute::PublicPid, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn window_less_middle_click_keeps_window_routing_unset() {
+        let capture = Capture::start(true);
+        middle_click_at_xy(1, 100.0, 100.0, &[]).unwrap();
+        assert_eq!(capture.window_routing(), [[0; 4]; 3]);
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("OtherMouseDown", PostRoute::SkyLight, 2),
+                Posted::new("OtherMouseUp", PostRoute::SkyLight, 2),
+            ]
+        );
+    }
 
     #[test]
     fn capture_bound_background_route_preserves_nonzero_origin_hit() {
@@ -2188,6 +2332,203 @@ mod tests {
         let expected =
             CGEventFlags::CGEventFlagCommand.bits() | CGEventFlags::CGEventFlagShift.bits();
         assert_eq!(&modifiers[1..], [expected, expected]);
+    }
+    #[test]
+    fn background_drag_plan_is_one_gesture_from_start_to_drop() {
+        use BackgroundDragEventKind::*;
+        let plan = background_drag_plan((100.0, 200.0), (300.0, 100.0), 4, 400);
+        let kinds: Vec<_> = plan.iter().map(|step| step.kind).collect();
+        assert_eq!(
+            kinds,
+            [Move, PrimerDown, PrimerUp, Down, Dragged, Dragged, Dragged, Dragged, Up]
+        );
+        assert_eq!(plan[0].point, (100.0, 200.0));
+        assert_eq!(
+            plan[1].point,
+            (-1.0, -1.0),
+            "the primer click stays off-screen"
+        );
+        assert_eq!(plan[3].point, (100.0, 200.0));
+        assert_eq!(plan[4].point, (150.0, 175.0));
+        assert_eq!(
+            plan[7].point,
+            (300.0, 100.0),
+            "the last drag lands on the drop point"
+        );
+        assert_eq!(plan[8].point, (300.0, 100.0));
+        for step in &plan[3..] {
+            assert_eq!(step.phase, 3, "down, drags and up share one gesture phase");
+            assert_eq!(step.click_state, 1);
+        }
+        assert_eq!(plan[4].delay_after_ms, 100);
+        assert!(
+            plan[7].delay_after_ms >= 50,
+            "the drop point settles before release"
+        );
+    }
+
+    #[test]
+    fn background_drag_plan_keeps_one_drag_for_zero_steps() {
+        let plan = background_drag_plan((0.0, 0.0), (10.0, 0.0), 0, 0);
+        let drags: Vec<_> = plan
+            .iter()
+            .filter(|step| step.kind == BackgroundDragEventKind::Dragged)
+            .collect();
+        assert_eq!(drags.len(), 1);
+        assert_eq!(drags[0].point, (10.0, 0.0));
+    }
+
+    #[test]
+    fn background_drag_posts_each_event_once_to_the_pid_with_window_routing() {
+        let capture = Capture::start(true);
+        let mut observed = Vec::new();
+        drag_at_xy_background(
+            42,
+            (100.0, 100.0),
+            (200.0, 100.0),
+            7,
+            0,
+            2,
+            &["shift"],
+            DragButton::Left,
+            |x, y| observed.push((x, y)),
+            || true,
+        )
+        .unwrap();
+        let posted = capture.posted();
+        let events: Vec<_> = posted.iter().map(|posted| posted.event.as_str()).collect();
+        assert_eq!(
+            events,
+            [
+                "MouseMoved",
+                "LeftMouseDown",
+                "LeftMouseUp",
+                "LeftMouseDown",
+                "LeftMouseDragged",
+                "LeftMouseDragged",
+                "LeftMouseUp"
+            ]
+        );
+        assert!(
+            posted
+                .iter()
+                .all(|posted| posted.route == PostRoute::SkyLight),
+            "a background drag never reaches the HID tap or a second transport"
+        );
+        let routing = capture.window_routing();
+        let gesture = routing[0][3];
+        for fields in routing {
+            assert_eq!(
+                &fields[..3],
+                &[7, 7, 7],
+                "every event names the exact window"
+            );
+            assert_eq!(fields[3], gesture, "every event carries one gesture ID");
+        }
+        assert!(capture
+            .modifiers()
+            .iter()
+            .all(|flags| *flags == 0x0002_0000));
+        assert_eq!(observed, [(100.0, 100.0), (150.0, 100.0), (200.0, 100.0)]);
+    }
+
+    #[test]
+    fn background_right_drag_uses_right_button_events_and_public_fallback() {
+        let capture = Capture::start(false);
+        drag_at_xy_background(
+            42,
+            (0.0, 0.0),
+            (10.0, 10.0),
+            7,
+            0,
+            1,
+            &[],
+            DragButton::Right,
+            |_, _| {},
+            || true,
+        )
+        .unwrap();
+        let posted = capture.posted();
+        assert!(posted
+            .iter()
+            .all(|posted| posted.route == PostRoute::PublicPid));
+        let gesture: Vec<_> = posted[3..]
+            .iter()
+            .map(|posted| (posted.event.as_str(), posted.button))
+            .collect();
+        assert_eq!(
+            gesture,
+            [
+                ("RightMouseDown", 1),
+                ("RightMouseDragged", 1),
+                ("RightMouseUp", 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn background_drag_stopped_early_releases_where_it_stands() {
+        let capture = Capture::start(true);
+        let mut checks = 0;
+        let outcome = drag_at_xy_background(
+            42,
+            (0.0, 0.0),
+            (100.0, 0.0),
+            7,
+            0,
+            4,
+            &[],
+            DragButton::Left,
+            |_, _| {},
+            || {
+                checks += 1;
+                checks < 2
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            outcome,
+            BackgroundDragOutcome::StoppedEarly { at: (50.0, 0.0) }
+        );
+        let events: Vec<_> = capture
+            .posted()
+            .iter()
+            .map(|posted| posted.event.clone())
+            .collect();
+        assert_eq!(
+            events[3..],
+            [
+                "LeftMouseDown",
+                "LeftMouseDragged",
+                "LeftMouseDragged",
+                "LeftMouseUp"
+            ],
+            "no drag after the stop, and the release still goes out"
+        );
+    }
+
+    #[test]
+    fn window_less_background_drag_is_refused_before_posting() {
+        let capture = Capture::start(true);
+        let error = drag_at_xy_observed(
+            42,
+            0.0,
+            0.0,
+            10.0,
+            10.0,
+            None,
+            None,
+            None,
+            0,
+            1,
+            &[],
+            DragButton::Left,
+            false,
+            |_, _| {},
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("window_id"));
+        assert!(capture.posted().is_empty());
     }
 }
 

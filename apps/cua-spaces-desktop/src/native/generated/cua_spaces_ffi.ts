@@ -36067,7 +36067,15 @@ export type AppTeamInput = {
     /**
      * Pending invites' emails (only owners and admins can read them).
      */
-    invites: Array<string>
+    invites: Array<string>,
+    /**
+     * The team's last payment failed and it is in its grace period.
+     */
+    paymentFailed: boolean,
+    /**
+     * The end of the grace period (RFC 3339), when known.
+     */
+    paymentFailedUntil?: string
 }
 
 /**
@@ -36098,7 +36106,9 @@ const FfiConverterTypeAppTeamInput = (() => {
                 plan: FfiConverterString.read(from),
                 seats: FfiConverterInt64.read(from),
                 members: FfiConverterSequenceTypeAppTeamPersonInput.read(from),
-                invites: FfiConverterSequenceString.read(from)
+                invites: FfiConverterSequenceString.read(from),
+                paymentFailed: FfiConverterBool.read(from),
+                paymentFailedUntil: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -36110,6 +36120,8 @@ const FfiConverterTypeAppTeamInput = (() => {
             FfiConverterInt64.write(value.seats, into);
             FfiConverterSequenceTypeAppTeamPersonInput.write(value.members, into);
             FfiConverterSequenceString.write(value.invites, into);
+            FfiConverterBool.write(value.paymentFailed, into);
+            FfiConverterOptionalString.write(value.paymentFailedUntil, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -36119,7 +36131,9 @@ const FfiConverterTypeAppTeamInput = (() => {
              FfiConverterString.allocationSize(value.plan) +
              FfiConverterInt64.allocationSize(value.seats) +
              FfiConverterSequenceTypeAppTeamPersonInput.allocationSize(value.members) +
-             FfiConverterSequenceString.allocationSize(value.invites);
+             FfiConverterSequenceString.allocationSize(value.invites) +
+             FfiConverterBool.allocationSize(value.paymentFailed) +
+             FfiConverterOptionalString.allocationSize(value.paymentFailedUntil);
 
         }
     };

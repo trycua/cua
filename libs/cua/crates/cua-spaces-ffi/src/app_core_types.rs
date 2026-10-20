@@ -9918,6 +9918,10 @@ pub struct AppTeamInput {
     pub members: Vec<AppTeamPersonInput>,
     /// Pending invites' emails (only owners and admins can read them).
     pub invites: Vec<String>,
+    /// The team's last payment failed and it is in its grace period.
+    pub payment_failed: bool,
+    /// The end of the grace period (RFC 3339), when known.
+    pub payment_failed_until: Option<String>,
 }
 
 /// `teams::TeamsState`.

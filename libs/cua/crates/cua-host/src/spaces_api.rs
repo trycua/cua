@@ -33,8 +33,12 @@ pub struct ApiOrg {
     /// while the plan renews.
     #[serde(default)]
     pub plan_ends_at: Option<String>,
+    /// `active`, `grace` (a payment failed), ...
     #[serde(default)]
     pub status: String,
+    /// While `status` is `grace`: when the plan lapses (RFC 3339).
+    #[serde(default)]
+    pub grace_until: Option<String>,
     #[serde(default)]
     pub seats: i64,
     /// Paid features the org has (`team_machines`, `space_sharing`,
@@ -976,7 +980,7 @@ mod tests {
                         Json(json!({
                             "sub":"u1","email":"ada@example.com",
                             "orgs":[
-                                {"id":"o1","alias":"acme","name":"Acme Inc","role":"owner","plan":"teams","status":"active","seats":3},
+                                {"id":"o1","alias":"acme","name":"Acme Inc","role":"owner","plan":"teams","status":"grace","grace_until":"2026-11-03T10:00:00Z","seats":3},
                                 {"id":"o2","alias":"side","role":"member","plan":"free","status":"none","seats":0}
                             ],
                             "entitlements":{"sub":"u1","plan":"pro","status":"active","warnings":[],"later":1}

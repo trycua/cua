@@ -431,7 +431,7 @@ public final class FixtureTeams: TeamsReading, @unchecked Sendable {
                 id: "o1", alias: "acme", name: "Acme Inc", role: "owner", plan: "teams", seats: 3,
                 members: [AppTeamPersonInput(email: "ada@example.com", role: "owner"),
                           AppTeamPersonInput(email: "grace@example.com", role: "member")],
-                invites: ["linus@example.com"]),
+                invites: ["linus@example.com"], paymentFailed: false, paymentFailedUntil: nil),
         ]), currentTeamId: nil)
     }
 

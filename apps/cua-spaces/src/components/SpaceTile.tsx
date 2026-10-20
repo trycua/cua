@@ -13,7 +13,7 @@ import { OsIcon } from "./OsIcon";
 import { SfIcon } from "./SfIcon";
 import { STATUS_LABEL, StatusDot } from "./StatusDot";
 import { Thumbnail } from "./Thumbnail";
-import { useT } from "../i18n";
+import { tMsg, useT } from "../i18n";
 
 interface SpaceTileProps {
   space: Space;
@@ -212,8 +212,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           data-owns-enter
           data-busy={power.busy ? "true" : undefined}
           tabIndex={-1}
-          aria-label={t("spaces.tile.power_label", { action: power.help, name: space.name })}
-          title={power.help}
+          aria-label={t("spaces.tile.power_label", { action: tMsg(power.help), name: space.name })}
+          title={tMsg(power.help)}
           disabled={!power.enabled}
           onClick={(event) => {
             event.stopPropagation();

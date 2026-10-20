@@ -12,6 +12,7 @@ import { withTimeout } from "../model/time";
 import { optionalString, string } from "./args";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
+import { messageText } from "../../../cua-spaces-web/src/lib/messages";
 import { encode } from "./value";
 
 /** This machine as a host (the core's flattened `HostStatus`), plus its relay machine id and setup progress; null until it answered. */
@@ -34,7 +35,8 @@ export function machinesState(model: AppModel) {
   const sidebar = model.sidebar;
   const devices = model.devices;
   return {
-    thisMachine: encode(sidebar.thisMachine),
+    // The web page reads the status as text.
+    thisMachine: sidebar.thisMachine ? { ...(encode(sidebar.thisMachine) as Record<string, unknown>), statusText: messageText({ code: sidebar.thisMachine.statusText.code, vars: Object.fromEntries(sidebar.thisMachine.statusText.vars) }) } : null,
     sections: encode(sidebar.sections),
     devices: devices.snapshot === null ? null : encode(devices.view),
     accessNotice: encode(devices.accessNotice),

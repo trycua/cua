@@ -27607,9 +27607,10 @@ public struct AppPowerButton: Equatable, Hashable {
     public var symbol: String
     /**
      * Tooltip and accessibility label: "Suspend", "Resume", "Turn off" or
-     * "Turn on"; while it runs, "Suspending…" and the like.
+     * "Turn on" (`spaces.power.*`); while it runs, "Suspending…" and the
+     * like (`spaces.status.*`).
      */
-    public var help: String
+    public var help: AppMsg
     /**
      * A press turns it on (else off): the shell's SDK call.
      */
@@ -27631,8 +27632,9 @@ public struct AppPowerButton: Equatable, Hashable {
          */symbol: String,
         /**
          * Tooltip and accessibility label: "Suspend", "Resume", "Turn off" or
-         * "Turn on"; while it runs, "Suspending…" and the like.
-         */help: String,
+         * "Turn on" (`spaces.power.*`); while it runs, "Suspending…" and the
+         * like (`spaces.status.*`).
+         */help: AppMsg,
         /**
          * A press turns it on (else off): the shell's SDK call.
          */turnOn: Bool,
@@ -27666,7 +27668,7 @@ public struct FfiConverterTypeAppPowerButton: FfiConverterRustBuffer {
         return
             try AppPowerButton(
                 symbol: FfiConverterString.read(from: &buf),
-                help: FfiConverterString.read(from: &buf),
+                help: FfiConverterTypeAppMsg.read(from: &buf),
                 turnOn: FfiConverterBool.read(from: &buf),
                 enabled: FfiConverterBool.read(from: &buf),
                 busy: FfiConverterBool.read(from: &buf)
@@ -27675,7 +27677,7 @@ public struct FfiConverterTypeAppPowerButton: FfiConverterRustBuffer {
 
     public static func write(_ value: AppPowerButton, into buf: inout [UInt8]) {
         FfiConverterString.write(value.symbol, into: &buf)
-        FfiConverterString.write(value.help, into: &buf)
+        FfiConverterTypeAppMsg.write(value.help, into: &buf)
         FfiConverterBool.write(value.turnOn, into: &buf)
         FfiConverterBool.write(value.enabled, into: &buf)
         FfiConverterBool.write(value.busy, into: &buf)
@@ -33015,7 +33017,7 @@ public struct AppSidebarRow: Equatable, Hashable {
     /**
      * Status word (the dot's accessibility label).
      */
-    public var statusText: String
+    public var statusText: AppMsg
     /**
      * Tooltip.
      */
@@ -33071,7 +33073,7 @@ public struct AppSidebarRow: Equatable, Hashable {
          */status: AppSpaceStatus,
         /**
          * Status word (the dot's accessibility label).
-         */statusText: String,
+         */statusText: AppMsg,
         /**
          * Tooltip.
          */detail: String,
@@ -33135,7 +33137,7 @@ public struct FfiConverterTypeAppSidebarRow: FfiConverterRustBuffer {
                 name: FfiConverterString.read(from: &buf),
                 osIcon: FfiConverterString.read(from: &buf),
                 status: FfiConverterTypeAppSpaceStatus.read(from: &buf),
-                statusText: FfiConverterString.read(from: &buf),
+                statusText: FfiConverterTypeAppMsg.read(from: &buf),
                 detail: FfiConverterString.read(from: &buf),
                 dim: FfiConverterBool.read(from: &buf),
                 selected: FfiConverterBool.read(from: &buf),
@@ -33152,7 +33154,7 @@ public struct FfiConverterTypeAppSidebarRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.name, into: &buf)
         FfiConverterString.write(value.osIcon, into: &buf)
         FfiConverterTypeAppSpaceStatus.write(value.status, into: &buf)
-        FfiConverterString.write(value.statusText, into: &buf)
+        FfiConverterTypeAppMsg.write(value.statusText, into: &buf)
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterBool.write(value.dim, into: &buf)
         FfiConverterBool.write(value.selected, into: &buf)
@@ -33182,9 +33184,10 @@ public func FfiConverterTypeAppSidebarRow_lower(_ value: AppSidebarRow) -> RustB
 
 public struct AppSidebarSection: Equatable, Hashable {
     /**
-     * "Cua Cloud", "This Mac", "Connected", "My machines".
+     * "Cua Cloud", "This Mac", "Connected", "My computers"
+     * (`spaces.sidebar.section.*`).
      */
-    public var title: String
+    public var title: AppMsg
     /**
      * Rows.
      */
@@ -33194,8 +33197,9 @@ public struct AppSidebarSection: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Cua Cloud", "This Mac", "Connected", "My machines".
-         */title: String,
+         * "Cua Cloud", "This Mac", "Connected", "My computers"
+         * (`spaces.sidebar.section.*`).
+         */title: AppMsg,
         /**
          * Rows.
          */rows: [AppSidebarRow]) {
@@ -33219,13 +33223,13 @@ public struct FfiConverterTypeAppSidebarSection: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSidebarSection {
         return
             try AppSidebarSection(
-                title: FfiConverterString.read(from: &buf),
+                title: FfiConverterTypeAppMsg.read(from: &buf),
                 rows: FfiConverterSequenceTypeAppSidebarRow.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSidebarSection, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterTypeAppMsg.write(value.title, into: &buf)
         FfiConverterSequenceTypeAppSidebarRow.write(value.rows, into: &buf)
     }
 }
@@ -33260,9 +33264,10 @@ public struct AppSidebarView: Equatable, Hashable {
      */
     public var selectedId: String?
     /**
-     * "No matches" / "No Spaces yet" when nothing is listed.
+     * "No matches" / "No Spaces yet" when nothing is listed
+     * (`spaces.sidebar.*`).
      */
-    public var emptyText: String?
+    public var emptyText: AppMsg?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -33277,8 +33282,9 @@ public struct AppSidebarView: Equatable, Hashable {
          * The effective selection (falls back to the first Space).
          */selectedId: String?,
         /**
-         * "No matches" / "No Spaces yet" when nothing is listed.
-         */emptyText: String?) {
+         * "No matches" / "No Spaces yet" when nothing is listed
+         * (`spaces.sidebar.*`).
+         */emptyText: AppMsg?) {
         self.thisMachine = thisMachine
         self.sections = sections
         self.selectedId = selectedId
@@ -33304,7 +33310,7 @@ public struct FfiConverterTypeAppSidebarView: FfiConverterRustBuffer {
                 thisMachine: FfiConverterOptionTypeAppSidebarRow.read(from: &buf),
                 sections: FfiConverterSequenceTypeAppSidebarSection.read(from: &buf),
                 selectedId: FfiConverterOptionString.read(from: &buf),
-                emptyText: FfiConverterOptionString.read(from: &buf)
+                emptyText: FfiConverterOptionTypeAppMsg.read(from: &buf)
         )
     }
 
@@ -33312,7 +33318,7 @@ public struct FfiConverterTypeAppSidebarView: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppSidebarRow.write(value.thisMachine, into: &buf)
         FfiConverterSequenceTypeAppSidebarSection.write(value.sections, into: &buf)
         FfiConverterOptionString.write(value.selectedId, into: &buf)
-        FfiConverterOptionString.write(value.emptyText, into: &buf)
+        FfiConverterOptionTypeAppMsg.write(value.emptyText, into: &buf)
     }
 }
 
@@ -62813,6 +62819,30 @@ fileprivate struct FfiConverterOptionTypeAppMenuPreview: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppMenuPreview.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppMsg: FfiConverterRustBuffer {
+    typealias SwiftType = AppMsg?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMsg.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMsg.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

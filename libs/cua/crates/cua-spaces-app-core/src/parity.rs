@@ -449,14 +449,14 @@ pub mod frame {
         json!({
             "thisMachine": v["thisMachine"]["name"],
             "sections": v["sections"].as_array().map(|a| a.iter().map(|sec| {
-                Value::String(format!("{}: {}", sec["title"].as_str().unwrap_or(""),
+                Value::String(format!("{}: {}", sec["title"]["code"].as_str().unwrap_or(""),
                     sec["rows"].as_array().map(|r| r.iter().map(|row| format!("{}{}{}",
                         row["name"].as_str().unwrap_or(""),
                         if row["dim"] == true { " (dim)" } else { "" },
                         if row["selected"] == true { " (selected)" } else { "" })).collect::<Vec<_>>().join(", ")).unwrap_or_default()))
             }).collect::<Vec<_>>()).unwrap_or_default(),
             "selectedId": v["selectedId"],
-            "emptyText": v["emptyText"],
+            "emptyText": v["emptyText"]["code"],
         })
     }
 
@@ -485,7 +485,7 @@ pub mod frame {
         format!(
             " <{} {}{}{}>",
             str_of(&b["symbol"]),
-            str_of(&b["help"]),
+            str_of(&b["help"]["code"]),
             if b["turnOn"] == true { " on" } else { "" },
             if b["busy"] == true { " busy" } else { "" },
         )
@@ -512,7 +512,7 @@ pub mod frame {
                 .as_str()
                 .map(|p| format!(" @ {p}"))
                 .unwrap_or_default(),
-            str_of(&r["statusText"]),
+            str_of(&r["statusText"]["code"]),
             str_of(&r["detail"]),
             if r["dim"] == true { " (dim)" } else { "" },
             if r["selected"] == true {
@@ -528,13 +528,13 @@ pub mod frame {
         json!({
             "thisMachine": if v["thisMachine"].is_null() { Value::Null } else { Value::String(sidebar_row(&v["thisMachine"])) },
             "sections": v["sections"].as_array().map(|a| a.iter().flat_map(|sec| {
-                let title = str_of(&sec["title"]).to_string();
+                let title = str_of(&sec["title"]["code"]).to_string();
                 std::iter::once(Value::String(format!("# {title}"))).chain(
                     sec["rows"].as_array().cloned().unwrap_or_default().into_iter()
                         .map(|r| Value::String(sidebar_row(&r))))
             }).collect::<Vec<_>>()).unwrap_or_default(),
             "selectedId": v["selectedId"],
-            "emptyText": v["emptyText"],
+            "emptyText": v["emptyText"]["code"],
         })
     }
 
@@ -2212,7 +2212,7 @@ fn provisioning_frame(
                 "{} {} [{}] {} {}{}",
                 r["osIcon"].as_str().unwrap_or(""),
                 r["name"].as_str().unwrap_or(""),
-                r["statusText"].as_str().unwrap_or(""),
+                r["statusText"]["code"].as_str().unwrap_or(""),
                 r["progress"]
                     .as_u64()
                     .map(|p| p.to_string())

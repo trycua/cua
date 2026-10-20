@@ -4577,24 +4577,27 @@ impl Tool for TypeTextTool {
             // Description ported from Swift `TypeTextTool.swift` with the
             // Windows transport note.  Swift tries AXSetAttribute(kAXSelectedText)
             // first, falls back to character-by-character CGEvent synthesis.
-            // Windows uses character-by-character PostMessage(WM_CHAR) to the
-            // window's focused child — there's no UIA equivalent of
-            // AXSelectedText wired up yet, so it's always the synthesis path.
             description: "Insert text into the target pid via character-by-character \
                 PostMessage(WM_CHAR) to the focused window. No focus steal.\n\n\
                 Special keys (Return, Escape, arrows, Tab) go through `press_key` / \
                 `hotkey` — they are not text.\n\n\
-                **Routing on Windows.** When the target's owning EXE or top-level window \
-                class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, \
-                Calculator, Photos, Settings, etc.), the tool requires `element_token` \
-                and routes through UI Automation's `ValuePattern.SetValue` \
-                — same backend as the `set_value` tool. PostMessage WM_CHAR doesn't \
-                reach those hosts (their CoreInput dispatcher only consumes events from \
-                the system input queue), so the fallback path silently dropped chars. \
-                If you call `type_text(pid, text)` on a XAML host without `element_token`, \
-                the tool returns an actionable error pointing you at `get_window_state` \
-                first. Native ConsoleHost on Windows ARM64 is hard-refused because it can \
-                accept synthesized Unicode events without delivering them; use a process \
+                **Routing on Windows.** `element_token` selects a specific UIA element \
+                and writes its ValuePattern value. For no-element foreground typing, a \
+                separate capability-gated path can use the exact focused UIA Document \
+                when it is writable and empty. \
+                Eligibility depends on control capabilities and live focus, not app names. \
+                Chromium/Electron windows keep their existing boundary because a UIA \
+                value echo does not prove that the renderer accepted the text. The \
+                path reads the value and caret back; after SetValue starts, an \
+                unverifiable result requires a fresh observation before any retry and \
+                is never replayed through native input. This replaces the full \
+                ValuePattern value, so rich-text formatting and native undo behavior \
+                are not guaranteed; single-line Edit controls and middle selections \
+                keep the existing input route. For other XAML / WinUI3 / UWP cases, \
+                use `element_token` from `get_window_state`; background WM_CHAR does \
+                not reach their CoreInput dispatcher. Native ConsoleHost on Windows ARM64 \
+                is hard-refused because it can accept synthesized Unicode events without \
+                delivering them; use a process \
                 or PTY setup channel instead. Legacy Win32 apps still use the PostMessage \
                 path, preserving the no-focus-steal property.\n\n\
                 `delay_ms` (0–200, default 30) spaces successive characters on the \
@@ -4638,6 +4641,12 @@ impl Tool for TypeTextTool {
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let text_len = text.chars().count();
+            if focused_document_route(&args, crate::input::is_chromium_target_window(hwnd)) {
+                if let Some(result) = try_focused_document_route(hwnd, None, &text, text_len).await
+                {
+                    return result;
+                }
+            }
             return match tokio::task::spawn_blocking(move || {
                 crate::input::send_text_synthesized(hwnd, &text)
             })
@@ -4810,6 +4819,15 @@ impl Tool for TypeTextTool {
         // rejected (daemon not at UIAccess integrity), it returns an error
         // rather than a false success.
         if delivery == DeliveryMode::Foreground {
+            if elem_idx.is_none()
+                && focused_document_route(&args, crate::input::is_chromium_target_window(hwnd))
+            {
+                if let Some(result) =
+                    try_focused_document_route(hwnd, Some(pid), &text, text_len).await
+                {
+                    return result;
+                }
+            }
             // Resolve the optional click fallback before entering the atomic
             // activation/focus/input transaction. The focus itself happens
             // only after exact top-level foreground is confirmed.
@@ -5147,6 +5165,158 @@ impl Tool for TypeTextTool {
             }
             Ok((Err(e), _, _, _)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
+        }
+    }
+}
+
+fn focused_document_route(args: &Value, chromium: bool) -> bool {
+    !chromium
+        && ["element_token", "x", "y"]
+            .iter()
+            .all(|key| args.get(*key).is_none())
+}
+
+#[test]
+fn focused_document_route_excludes_explicit_targets_and_chromium() {
+    assert!(focused_document_route(&json!({}), false));
+    assert!(!focused_document_route(&json!({}), true));
+    for args in [
+        json!({"element_token": "s00000000:0"}),
+        json!({"x": 1}),
+        json!({"y": 1}),
+    ] {
+        assert!(!focused_document_route(&args, false));
+    }
+}
+
+async fn try_focused_document_route(
+    hwnd: u64,
+    expected_pid: Option<u32>,
+    text: &str,
+    text_len: usize,
+) -> Option<ToolResult> {
+    let text = text.to_owned();
+    let outcome = tokio::task::spawn_blocking(move || {
+        crate::uia::focused_document::try_type_focused_document_append(hwnd, expected_pid, &text)
+    })
+    .await
+    .unwrap_or(
+        crate::uia::focused_document::FocusedDocumentTypeOutcome::Unknown(
+            "focused UIA task failed",
+        ),
+    );
+    focused_document_tool_result(outcome, text_len)
+}
+
+fn focused_document_tool_result(
+    outcome: crate::uia::focused_document::FocusedDocumentTypeOutcome,
+    text_len: usize,
+) -> Option<ToolResult> {
+    use crate::uia::focused_document::FocusedDocumentTypeOutcome;
+
+    match outcome {
+        FocusedDocumentTypeOutcome::NotApplicable => None,
+        FocusedDocumentTypeOutcome::Confirmed => Some(
+            ToolResult::text(format!(
+                "Wrote and verified {text_len} character(s) in the focused Document; caret is at the document end."
+            ))
+            .with_structured(json!({
+                "path": "ax",
+                "characters": text_len,
+                "verified": true,
+                "verify": "confirmed",
+                "effect": "confirmed",
+            })),
+        ),
+        FocusedDocumentTypeOutcome::Unknown(stage) => Some(
+            ToolResult::text(format!(
+                "Focused Document text may have been written but could not be verified ({stage}). Inspect the current document before retrying."
+            ))
+            .with_structured(json!({
+                "path": "ax",
+                "characters": text_len,
+                "verified": false,
+                "verify": "unverifiable",
+                "effect": "unverifiable",
+                "retryable": false,
+                "escalation": {
+                    "recommended": "verify_state",
+                    "reason": "A focused Document write may have started. Read a fresh observation and do not replay the text blindly."
+                },
+            })),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod focused_document_result_tests {
+    use super::focused_document_tool_result;
+    use crate::uia::focused_document::{focused_document_worker_error, FocusedDocumentTypeOutcome};
+    use crate::uia::windows_enum::UiaDeadlineError;
+    use cua_driver_contract::{ActionEffect, ActionRoute};
+    use cua_driver_core::action_record::{ActionExecutionRecord, ActionTransport};
+    use cua_driver_core::protocol::ToolResult;
+    use serde_json::json;
+
+    fn normalize(result: ToolResult) -> cua_driver_contract::ActionResult {
+        let structured = result
+            .structured_content
+            .expect("focused-document result includes structured evidence");
+        let record = ActionExecutionRecord::from_legacy(
+            "type_text",
+            &json!({"scope": "desktop"}),
+            &structured,
+        )
+        .expect("the action dispatcher recognizes the UIA value transport");
+        assert_eq!(record.transport, ActionTransport::WindowsUiaValue);
+        record
+            .public_result()
+            .expect("focused-document action result normalizes")
+    }
+
+    #[test]
+    fn focused_document_results_normalize_to_accessibility_with_truthful_effects() {
+        let confirmed = focused_document_tool_result(FocusedDocumentTypeOutcome::Confirmed, 12)
+            .expect("confirmed focused-document output");
+        let confirmed = normalize(confirmed);
+        assert_eq!(confirmed.route, ActionRoute::Accessibility);
+        assert_eq!(confirmed.effect, ActionEffect::Confirmed);
+
+        let unknown = focused_document_tool_result(
+            FocusedDocumentTypeOutcome::Unknown("value read-back failed"),
+            12,
+        )
+        .expect("unknown focused-document output");
+        assert_eq!(
+            unknown.structured_content.as_ref().unwrap()["retryable"],
+            false
+        );
+        let unknown = normalize(unknown);
+        assert_eq!(unknown.route, ActionRoute::Accessibility);
+        assert_eq!(unknown.effect, ActionEffect::Unverifiable);
+    }
+
+    #[test]
+    fn not_applicable_before_write_falls_through_to_send_input() {
+        for outcome in [
+            FocusedDocumentTypeOutcome::NotApplicable,
+            focused_document_worker_error(UiaDeadlineError::Busy, false),
+            focused_document_worker_error(UiaDeadlineError::Timeout, false),
+        ] {
+            assert!(focused_document_tool_result(outcome, 12).is_none());
+        }
+    }
+
+    #[test]
+    fn unknown_after_write_stops_without_send_input_or_retry() {
+        for outcome in [
+            FocusedDocumentTypeOutcome::Unknown("read-back failed"),
+            focused_document_worker_error(UiaDeadlineError::Timeout, true),
+            focused_document_worker_error(UiaDeadlineError::Unavailable, true),
+        ] {
+            let result = focused_document_tool_result(outcome, 12)
+                .expect("post-write uncertainty must return, never fall through to SendInput");
+            assert_eq!(result.structured_content.unwrap()["retryable"], false);
         }
     }
 }

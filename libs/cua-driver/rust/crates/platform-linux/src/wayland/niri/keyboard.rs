@@ -431,7 +431,7 @@ pub(in crate::wayland) fn type_text(expected: Option<u64>, text: &str) -> Result
         return Ok(());
     }
     let mut session = Session::begin(expected, text.chars().count())?;
-    let parts = plan_text(session.keyboard.base_text(), session.group, text)?;
+    let parts = plan_text(&session.keyboard.base.text, session.group, text)?;
     let total: usize = parts.iter().map(|part| part.keys.len()).sum();
     let mut sent = Sent::default();
     let typed = session.send(&parts, &mut sent);
@@ -448,7 +448,7 @@ pub(in crate::wayland) fn press(
     name: &str,
 ) -> Result<()> {
     let mut session = Session::begin(expected, 1)?;
-    let key = plan_key(session.keyboard.base_text(), session.group, modifiers, name)?;
+    let key = plan_key(&session.keyboard.base.text, session.group, modifiers, name)?;
     let parts = [Part {
         keys: vec![key],
         extended: None,
@@ -707,10 +707,6 @@ impl Keyboard {
             extended: false,
             pressed: Vec::new(),
         })
-    }
-
-    fn base_text(&self) -> &str {
-        &self.base.text
     }
 
     /// Release anything a failed stroke may have left held, put niri's own

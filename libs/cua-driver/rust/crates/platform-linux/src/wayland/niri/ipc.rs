@@ -329,18 +329,17 @@ fn release_check(
 /// release is known, each call asks a newly attested connection.
 pub(super) fn pinned() -> Result<libc::pid_t> {
     let pinned = recognised()?;
-    release_check(&RELEASE, || match probe(Some(pinned), QUERY_TIMEOUT) {
-        (Attestation::Attested(_), Some(ipc), _) => release_of(ipc),
-        (Attestation::Unrelated(reason) | Attestation::Refused(reason), ..) => bail!("{reason}"),
-        (Attestation::Attested(_), None, _) => bail!("niri IPC connection unavailable"),
-    })?;
+    release_check(&RELEASE, || release_of(attest_to(pinned, QUERY_TIMEOUT)?))?;
     Ok(pinned)
 }
 
 /// A connection to the recognised niri process, re-attested each time.
 pub(super) fn attested_connection(deadline: Instant) -> Result<UnixStream> {
-    let pinned = pinned()?;
-    match probe(Some(pinned), time_remaining(deadline)?) {
+    attest_to(pinned()?, time_remaining(deadline)?)
+}
+
+fn attest_to(pinned: libc::pid_t, timeout: Duration) -> Result<UnixStream> {
+    match probe(Some(pinned), timeout) {
         (Attestation::Attested(_), Some(ipc), _) => Ok(ipc),
         (Attestation::Unrelated(reason) | Attestation::Refused(reason), ..) => bail!("{reason}"),
         (Attestation::Attested(_), None, _) => bail!("niri IPC connection unavailable"),
@@ -506,20 +505,6 @@ pub(super) enum Request {
     KeyboardLayouts,
 }
 
-impl Request {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Version => "Version",
-            Self::Windows => "Windows",
-            Self::Workspaces => "Workspaces",
-            Self::Outputs => "Outputs",
-            Self::FocusedWindow => "FocusedWindow",
-            Self::OverviewState => "OverviewState",
-            Self::KeyboardLayouts => "KeyboardLayouts",
-        }
-    }
-}
-
 pub(super) struct Ipc<C> {
     pub(super) connect: C,
     pub(super) per_attempt: Duration,
@@ -544,7 +529,8 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
     /// newly attested connection; connection and attestation errors are final.
     pub(super) fn query<T: DeserializeOwned>(&mut self, request: Request) -> Result<T> {
         let deadline = Instant::now() + self.total;
-        let name = request.name();
+        let name = format!("{request:?}");
+        let name = name.as_str();
         for attempt in 1..=QUERY_MAX_ATTEMPTS {
             time_remaining(deadline)?;
             let attempt_deadline = deadline.min(Instant::now() + self.per_attempt);

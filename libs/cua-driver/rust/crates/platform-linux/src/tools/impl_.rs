@@ -637,6 +637,15 @@ fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
     })
 }
 
+fn visible_live_desktop_windows(
+    mut windows: Vec<crate::x11::WindowInfo>,
+) -> Vec<crate::x11::WindowInfo> {
+    windows.retain(|window| {
+        window.is_on_screen && window.pid.is_none_or(crate::proc_fs::is_process_live)
+    });
+    windows
+}
+
 #[cfg(test)]
 mod list_windows_tests;
 
@@ -13511,7 +13520,7 @@ impl Tool for GetAccessibilityTreeTool {
         GAX_DEF.get_or_init(|| ToolDef {
             name: "get_accessibility_tree".into(),
             description: "Return a lightweight snapshot of the desktop: running processes and \
-                on-screen visible X11 windows with their bounds and owner pid.\n\n\
+                on-screen visible windows with their bounds and owner pid.\n\n\
                 For the full AT-SPI subtree of a single window (with interactive element indices \
                 you can click by), use get_window_state instead — this is a fast discovery read."
                 .into(),
@@ -13526,11 +13535,15 @@ impl Tool for GetAccessibilityTreeTool {
         let (procs, windows) = tokio::task::spawn_blocking(|| {
             (
                 crate::proc_fs::list_processes(),
-                crate::x11::list_windows(None),
+                visible_live_desktop_windows(crate::wayland::list_windows_dispatch(None)),
             )
         })
         .await
         .unwrap_or_default();
+
+        if crate::wayland::is_wayland() {
+            crate::wayland::remember_observed_window_origins(&windows);
+        }
 
         let mut lines = vec![format!(
             "{} running process(es), {} visible window(s)",
@@ -13572,10 +13585,7 @@ impl Tool for GetAccessibilityTreeTool {
 
         let structured = json!({
             "processes": procs.iter().map(|p| json!({"pid":p.pid,"name":p.name})).collect::<Vec<_>>(),
-            "windows": windows.iter().map(|w| json!({
-                "window_id": w.xid, "pid": w.pid, "title": w.title,
-                "x": w.x, "y": w.y, "width": w.width, "height": w.height
-            })).collect::<Vec<_>>()
+            "windows": windows.iter().map(window_record_json).collect::<Vec<_>>()
         });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }

@@ -2038,8 +2038,14 @@ mod tests {
 
     #[cfg(unix)]
     fn serve_once(response: Value) -> (tempfile::TempDir, String, std::thread::JoinHandle<Value>) {
-        let directory = tempfile::tempdir().unwrap();
-        let socket = directory.path().join("driver.sock");
+        // Short path under /tmp: sun_path holds ~104 bytes on macOS and a CI
+        // TMPDIR can eat most of it. The listener is bound before returning,
+        // so the client needs no readiness wait.
+        let directory = tempfile::Builder::new()
+            .prefix("cd")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket = directory.path().join("d.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = std::thread::spawn(move || {
             let (metadata_stream, _) = listener.accept().unwrap();

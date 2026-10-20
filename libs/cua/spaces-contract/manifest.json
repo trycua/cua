@@ -4623,8 +4623,8 @@
     {
       "name": "share_space",
       "category": "sharing",
-      "description": "Let another cua.ai account watch or edit a Space.",
-      "instructions": "Shares the Space through the cua.ai relay with one account, by verified email or account id, or with a whole team as `team:<id>` (always as an editor; Teams plan); the same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.",
+      "description": "Let someone in your team watch or edit a Space.",
+      "instructions": "Shares the Space through the cua.ai relay with one person in your own team, by verified email or account id, or with the whole team as `team:<id>` (as a viewer or an editor). Sharing is for teams: an account in no team gets `sharing_needs_team` (\"Sharing is for teams. Start a team to share this Space.\"), and someone outside your team gets `share_outside_team`. The same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.",
       "platforms": [
         "macos",
         "windows",
@@ -4672,7 +4672,7 @@
             "type": "string"
           },
           "who": {
-            "description": "Who: an email address (verified by cua.ai) or an account id, or\n`team:<id>` for a whole team. A team always gets `editor` and needs\nthe Teams plan; the sharer is a team owner or admin who owns the Space.",
+            "description": "Who: the email address (verified by cua.ai) or account id of someone\nin your own team, or `team:<id>` for the whole team (as `viewer` or\n`editor`). Sharing is for teams: it needs a team on the Teams plan,\nand a whole-team share needs a team owner or admin who owns the Space.",
             "type": "string"
           }
         },

@@ -252,6 +252,9 @@ pub const METHODS: &[&str] = &[
     "share.initial",
     "share.reduce",
     "share.view",
+    "share.gate",
+    "share.errorWords",
+    "share.removalNote",
     "agents.pageInitial",
     "agents.pageReduce",
     "agents.pageView",
@@ -290,6 +293,7 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "relayUsage.planLimit",
     "resources.view",
     "resources.thisMac",
     "resources.space",
@@ -491,6 +495,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 Some(app) if app.starts_with("https://") => relay_usage::view_for(&usage, &app),
                 _ => relay_usage::view(&usage),
             })
+        }
+        // An error's text that is the relay refusing a new session over the
+        // plan's cap: the sentence and Upgrade (null for any other error).
+        "relayUsage.planLimit" => {
+            let error: String = a.get("error")?;
+            let app = a.get::<Option<String>>("accountApp")?.unwrap_or_default();
+            out(relay_usage::plan_limit_notice(&error, &app))
         }
         // Processor, memory and disk: the rows, bars and warning the apps
         // draw from the runtime's snapshot (`Spaces.resources`).
@@ -1046,6 +1057,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "share.view" => out(share::share_view(
             &a.get::<share::ShareInput>("input")?,
             &a.get::<share::ShareSheetState>("state")?,
+        )),
+        "share.gate" => out(share::share_gate(a.get::<Option<bool>>("hasTeam")?)),
+        "share.errorWords" => out(share::share_error_words(
+            &a.get::<String>("error")?,
+            &a.get::<String>("who")?,
+        )),
+        "share.removalNote" => out(share::share_removal_note(
+            &a.get::<Vec<share::ShareRemovalInput>>("removals")?,
         )),
         "host.clientLabel" => out(host::client_label(
             &a.get::<String>("id")?,

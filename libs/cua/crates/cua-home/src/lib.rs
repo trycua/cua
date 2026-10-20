@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 pub mod env;
 pub mod experimental;
+pub mod plan_limit;
 
 /// Environment variable that marks a test process.
 pub const CUA_TEST_ENV: &str = "CUA_TEST";

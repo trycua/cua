@@ -1515,6 +1515,7 @@ dependencies = [
  "cua-auth",
  "cua-create-failure",
  "cua-daemon",
+ "cua-home",
  "cua-host",
  "cua-image",
  "cua-proto",

@@ -129,6 +129,9 @@ public final class AppModel {
     public var teamsReader: TeamsReading?
     /// Where Settings' Teams stand: not read yet, read, or failed.
     public private(set) var teamsState: AppTeamsState = .signedOut
+    /// The owner's one-line note that sharing is for teams now and some
+    /// people can no longer open a shared computer; shown once.
+    public private(set) var shareRemovalNote: AppShareRemovalNote?
     /// This app as a login item (nil: no Launch at login row).
     let loginItem: LoginItemControlling?
     /// What the system reports for it (nil until read).
@@ -996,6 +999,7 @@ public final class AppModel {
             sendCreate(.cancelDone(id: pendingId))
             throw error
         } catch {
+            devices.noteRefusal(LiveSpacesBackend.words(error))
             sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
                              errorVariant: (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""))
             throw error
@@ -1104,6 +1108,7 @@ public final class AppModel {
                 sendCreate(.powerDone(id: space.id))
                 await refresh()
             } catch {
+                devices.noteRefusal(LiveSpacesBackend.words(error))
                 sendCreate(.powerFail(id: space.id, error: LiveSpacesBackend.words(error)))
             }
         }
@@ -1116,6 +1121,7 @@ public final class AppModel {
     }
 
     public func show(error: String) {
+        devices.noteRefusal(error)
         banner = error
         bannerIsError = true
     }
@@ -1188,6 +1194,7 @@ public final class AppModel {
             // owner (another account is asked to set it up again).
             await host.reconcileAccount()
             await reloadTeams()
+            await reloadShareRemovals()
         } catch {
             guard signInAttempt == current, signIn != .idle else { return }
             signInFailed(LiveSpacesBackend.words(error))
@@ -1246,6 +1253,31 @@ public final class AppModel {
     var teamsSettingsInput: AppTeamsInput {
         AppTeamsInput(accountAppUrl: appAccountAppUrl(), state: identity == nil ? .signedOut : teamsState,
                       currentTeamId: settings.currentTeamId)
+    }
+
+    /// The account is in a team on the Teams plan, which sharing needs: nil
+    /// until Teams are read, so the server decides.
+    public var hasSharingTeam: Bool? {
+        if case .ready(let list) = teamsState { return list.contains { $0.plan == "teams" } }
+        return nil
+    }
+
+    /// Reads who lost access to a shared computer (sharing is for teams) and
+    /// words the one-line note. Nothing when signed out or when there is no one.
+    public func reloadShareRemovals() async {
+        guard identity != nil, let teamsReader else {
+            shareRemovalNote = nil
+            return
+        }
+        let removals = (try? await teamsReader.shareRemovals()) ?? []
+        shareRemovalNote = appShareRemovalNote(removals: removals)
+    }
+
+    /// Closes the note and tells the account it was seen, so it shows once.
+    public func dismissShareRemovalNote() {
+        shareRemovalNote = nil
+        guard let teamsReader else { return }
+        Task { try? await teamsReader.ackShareRemovals() }
     }
 
     /// Reads the account's Teams (Settings, Teams). A failure says so in the

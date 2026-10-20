@@ -22,12 +22,11 @@ enum Change {
     /// Anything that can move, uncover or animate a window, and any event
     /// this adapter does not know, so a newer niri fails closed.
     Moved,
-    /// Keyboard focus went to this window, or to none.
+    /// Keyboard focus went to this window, or to none, or it became its
+    /// workspace's active window.
     Focus(Option<u64>),
     /// This workspace became active on its output.
     Activated(Option<u64>),
-    /// This window became its workspace's active window.
-    Active(Option<u64>),
 }
 
 /// The focus change a pointer action makes itself. Focus moves no floating
@@ -44,9 +43,7 @@ impl Change {
     fn counts(self, expected: Expected) -> bool {
         match self {
             Self::Moved => true,
-            Self::Focus(id) | Self::Active(id) => {
-                expected.window.is_none() || id != expected.window
-            }
+            Self::Focus(id) => expected.window.is_none() || id != expected.window,
             Self::Activated(id) => expected.workspace.is_none() || id != expected.workspace,
         }
     }
@@ -89,7 +86,7 @@ impl LayoutWatch {
             "ConfigLoaded" => Some(Change::Moved),
             "WindowFocusChanged" => Some(Change::Focus(id("id"))),
             "WorkspaceActivated" => Some(Change::Activated(id("id"))),
-            "WorkspaceActiveWindowChanged" => Some(Change::Active(id("active_window_id"))),
+            "WorkspaceActiveWindowChanged" => Some(Change::Focus(id("active_window_id"))),
             "WindowsChanged" => {
                 self.layouts = body
                     .get("windows")

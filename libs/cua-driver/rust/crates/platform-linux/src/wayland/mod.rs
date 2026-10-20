@@ -44,6 +44,7 @@ use wayland_client::{
     event_created_child,
     protocol::{
         wl_buffer::WlBuffer,
+        wl_callback::WlCallback,
         wl_output::{self, WlOutput},
         wl_pointer::{Axis, AxisSource, ButtonState},
         wl_registry,
@@ -408,30 +409,9 @@ struct State {
     scrcopy_manager: Option<ZwlrScreencopyManagerV1>,
     shm: Option<WlShm>,
     capture: CaptureState,
-    /// Whether the pending [`bounded_roundtrip`] was answered.
-    synced: bool,
 }
 
-impl Syncs for State {
-    fn synced(&mut self) -> &mut bool {
-        &mut self.synced
-    }
-}
-
-impl Dispatch<wayland_client::protocol::wl_callback::WlCallback, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &wayland_client::protocol::wl_callback::WlCallback,
-        event: wayland_client::protocol::wl_callback::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wayland_client::protocol::wl_callback::Event::Done { .. } = event {
-            state.synced = true;
-        }
-    }
-}
+wayland_client::delegate_dispatch!(State: [WlCallback: Answered] => Answered);
 
 // ── Bounded Wayland waits (niri) ─────────────────────────────────────────────
 
@@ -457,9 +437,21 @@ impl std::fmt::Display for RoundTripTimedOut {
 
 impl std::error::Error for RoundTripTimedOut {}
 
-/// A dispatch state that records when its `wl_display.sync` is answered.
-trait Syncs {
-    fn synced(&mut self) -> &mut bool;
+/// Set when the `wl_display.sync` of a [`bounded_roundtrip`] is answered.
+#[derive(Clone, Default)]
+struct Answered(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl<D: Dispatch<WlCallback, Answered>> Dispatch<WlCallback, Answered, D> for Answered {
+    fn event(
+        _: &mut D,
+        _: &WlCallback,
+        _: wayland_client::protocol::wl_callback::Event,
+        answered: &Answered,
+        _: &Connection,
+        _: &QueueHandle<D>,
+    ) {
+        answered.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// Send `wl_display.sync` and dispatch until niri answers or `deadline`
@@ -473,18 +465,18 @@ fn bounded_roundtrip<D>(
     deadline: std::time::Instant,
 ) -> anyhow::Result<()>
 where
-    D: Syncs + Dispatch<wayland_client::protocol::wl_callback::WlCallback, ()> + 'static,
+    D: Dispatch<WlCallback, Answered> + 'static,
 {
     use anyhow::Context as _;
     use std::os::fd::AsRawFd as _;
     let deadline = deadline.min(std::time::Instant::now() + NIRI_ROUNDTRIP_TIMEOUT);
-    *state.synced() = false;
-    connection.display().sync(&queue.handle(), ());
+    let answered = Answered::default();
+    connection.display().sync(&queue.handle(), answered.clone());
     loop {
         queue
             .dispatch_pending(state)
             .context("niri Wayland dispatch failed")?;
-        if *state.synced() {
+        if answered.0.load(std::sync::atomic::Ordering::SeqCst) {
             return Ok(());
         }
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());

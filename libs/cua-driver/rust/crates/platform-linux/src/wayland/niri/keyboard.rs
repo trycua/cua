@@ -653,7 +653,6 @@ struct State {
     manager: Option<ZwpVirtualKeyboardManagerV1>,
     keymap: Option<Keymap>,
     error: Option<String>,
-    synced: bool,
 }
 
 /// A virtual keyboard on the attested niri, holding niri's keymap.
@@ -868,26 +867,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     }
 }
 
-impl super::super::Syncs for State {
-    fn synced(&mut self) -> &mut bool {
-        &mut self.synced
-    }
-}
-
-impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &wl_callback::WlCallback,
-        event: wl_callback::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wl_callback::Event::Done { .. } = event {
-            state.synced = true;
-        }
-    }
-}
+wayland_client::delegate_dispatch!(State: [wl_callback::WlCallback: super::super::Answered] => super::super::Answered);
 
 wayland_client::delegate_noop!(State: ZwpVirtualKeyboardManagerV1);
 wayland_client::delegate_noop!(State: ZwpVirtualKeyboardV1);

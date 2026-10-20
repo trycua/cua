@@ -3699,6 +3699,7 @@ pub fn element_bounds_ref(
         ));
     }
     let offset = window_to_screen_offset(pid, xid, None);
+    require_exact_origin(offset, xid, exact_wayland_origin_required(xid))?;
     let coord = if offset.is_some() {
         CoordType::Window
     } else {
@@ -5696,15 +5697,27 @@ pub(crate) fn walk_bounds_usable(
     Some((x, y, w, h))
 }
 
-fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u32, u32)> {
-    // Synchronous X11 lookups stay on the caller's blocking thread, outside
-    // the AT-SPI runtime.
-    let offset = window_to_screen_offset(pid, xid, None);
-    if offset.is_none() && exact_wayland_origin_required(xid) {
+fn require_exact_origin(offset: Option<(i32, i32)>, xid: u64, required: bool) -> Result<()> {
+    if offset.is_none() && required {
         return Err(anyhow!(
             "window {xid} has no exact frame from the GNOME Shell helper"
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn bounds_require_exact_origin_before_screen_fallback() {
+    assert!(require_exact_origin(None, 2, true).is_err());
+    assert!(require_exact_origin(Some((0, 0)), 2, true).is_ok());
+    assert!(require_exact_origin(None, 2, false).is_ok());
+}
+
+fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u32, u32)> {
+    // Synchronous X11 lookups stay on the caller's blocking thread, outside
+    // the AT-SPI runtime.
+    let offset = window_to_screen_offset(pid, xid, None);
+    require_exact_origin(offset, xid, exact_wayland_origin_required(xid))?;
     let display = (!crate::wayland::is_wayland())
         .then(x11_display_size)
         .flatten();
@@ -8414,13 +8427,6 @@ mod token_scope_tests {
         snapshot_binds_window(false, window_scoped, true, || {
             gnome_window_scope_proven(REQUESTED_B, None, false, || true, shell)
         })
-    }
-
-    #[test]
-    fn previously_every_gnome_snapshot_bound_its_elements_to_the_window() {
-        // Before: `!(wayland && hyprland) || window_scoped`.
-        let (wayland, hyprland, window_scoped) = (true, false, false);
-        assert!(!(wayland && hyprland) || window_scoped);
     }
 
     #[test]

@@ -269,11 +269,7 @@ pub fn walk_tree_bounded_within(
     fallback
 }
 
-/// Perform the first advertised action on a node that a walk of window `xid`
-/// found, through the node's own D-Bus object, once a fresh walk proves the
-/// node still belongs to that window ([`require_window_element`]). The node's
-/// index is never looked up again: another snapshot of the process, or an
-/// application-wide walk, numbers elements differently.
+/// Perform the first advertised action on element `idx` within pid's app tree.
 /// Returns `Ok((action_name, suspected_noop, unacknowledged))` on success —
 /// `suspected_noop` is true when the actuated node looked like a silent
 /// no-op (a passive display role, or no advertised action), so the caller
@@ -283,6 +279,16 @@ pub fn walk_tree_bounded_within(
 /// acceptance nor effect is known — the caller must report this as
 /// `unverifiable` with an explicit note, never as a plain confirmed/dispatched
 /// success.
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
+    if let Some(observed) = cache::cached_element(pid, None, idx) {
+        return TokenElement::new(idx, observed, WindowProof::NotRequired)
+            .act(native::perform_action_ref, |idx| {
+                native::perform_action(pid, idx)
+            });
+    }
+    native::perform_action(pid, idx)
+}
+
 pub fn perform_action_walked(pid: u32, xid: u64, node: &AtspiNode) -> Result<(String, bool, bool)> {
     let (identity, object_ref) = walked_object(node)?;
     require_window_element(pid, xid, WindowElement::Identity(identity))?;
@@ -323,7 +329,28 @@ pub fn element_showing_observed(element: &cache::CachedElement) -> Result<bool> 
     native::element_showing_ref(object_ref)
 }
 
+/// Give an indexed AT-SPI element keyboard focus without activating its window.
+pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+    if let Some(observed) = cache::cached_element(pid, None, idx) {
+        return focus_token(
+            pid,
+            &TokenElement::new(idx, observed, WindowProof::NotRequired),
+        );
+    }
+    native::focus_element(pid, idx)
+}
+
 pub use native::ScrollProgress;
+
+pub fn scroll_element(
+    pid: u32,
+    idx: usize,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<ScrollProgress> {
+    native::scroll_element(pid, &WindowElement::Index(idx), direction, amount, by)
+}
 
 /// Enumerate top-level windows from the AT-SPI registry. The window-listing
 /// fallback for Wayland compositors without `zwlr_foreign_toplevel_management`
@@ -530,36 +557,6 @@ fn cached_bounds(pid: u32, xid: Option<u64>, idx: usize) -> Option<(i32, i32, u3
             None
         }
     }
-}
-
-pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
-    if let Some(observed) = cache::cached_element(pid, None, idx) {
-        return TokenElement::new(idx, observed, WindowProof::NotRequired)
-            .act(native::perform_action_ref, |idx| {
-                native::perform_action(pid, idx)
-            });
-    }
-    native::perform_action(pid, idx)
-}
-
-pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
-    if let Some(observed) = cache::cached_element(pid, None, idx) {
-        return focus_token(
-            pid,
-            &TokenElement::new(idx, observed, WindowProof::NotRequired),
-        );
-    }
-    native::focus_element(pid, idx)
-}
-
-pub fn scroll_element(
-    pid: u32,
-    idx: usize,
-    direction: &str,
-    amount: usize,
-    by: cua_driver_contract::ScrollBy,
-) -> Result<ScrollProgress> {
-    native::scroll_element(pid, &WindowElement::Index(idx), direction, amount, by)
 }
 
 pub use native::{is_window_membership_unproven, WindowElement, WindowProof};

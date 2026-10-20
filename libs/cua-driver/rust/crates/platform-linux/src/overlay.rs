@@ -176,7 +176,7 @@ pub(crate) fn wayland_capture_limitation() -> Option<String> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WaylandOverlayBackend {
+pub(crate) enum WaylandOverlayBackend {
     SemanticShellHelper,
     LayerShell,
     LegacyShellHelper,
@@ -203,7 +203,7 @@ fn select_wayland_overlay_backend(
 }
 
 #[cfg(target_os = "linux")]
-fn wayland_overlay_backend() -> WaylandOverlayBackend {
+pub(crate) fn wayland_overlay_backend() -> WaylandOverlayBackend {
     *WAYLAND_OVERLAY_BACKEND.get_or_init(|| {
         select_wayland_overlay_backend(
             crate::wayland::shell_helper::semantic_cursor_available(),

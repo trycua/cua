@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { leavesLine } from "@/lib/host-labels";
+import { messageText } from "@/lib/messages";
 import { Segmented } from "@/components/ui/segmented";
 
 import { markExplained, needsExplainer, TeleportExplainer } from "./explainer";
@@ -167,10 +168,10 @@ function Options({ state, session, teleport }: { state: PickerState; session: Te
               />
               <span className="min-w-0">
                 <span className="block text-[13px]" data-sensitive-label>
-                  {o.label}
+                  {messageText(o.label)}
                 </span>
                 <span className="block text-xs text-muted-foreground" data-sensitive-detail>
-                  {o.detail}
+                  {messageText(o.detail)}
                 </span>
               </span>
             </label>

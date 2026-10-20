@@ -124,6 +124,17 @@ export function t(key: string, options?: TOptions): string {
   return i18next.t(key, options) as string;
 }
 
+/** A message from the Rust core: a stable code plus variables, never English. */
+export interface Msg {
+  code: string;
+  vars: Record<string, string>;
+}
+
+/** Translate a core message by looking its code up like any other key. */
+export function tMsg(msg: Msg): string {
+  return t(msg.code, msg.vars);
+}
+
 /** React hook: `const t = useT("sharing")`. Re-renders on locale change. */
 export function useT(ns: Namespace | Namespace[] = "common") {
   return useTranslation(ns).t;

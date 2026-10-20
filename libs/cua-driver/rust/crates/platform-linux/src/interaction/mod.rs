@@ -1,7 +1,8 @@
 //! The layer every Linux compositor adapter shares: the lock, identity,
-//! delivery, freshness, motion and restore rules in [`policy`], the one foreground transaction entry point, the deadline
-//! rule, the focus read-back loop and the settle loop. Adapters still own
-//! their focus, restore and geometry checks.
+//! delivery, freshness, motion and restore rules in [`policy`], the one
+//! foreground transaction entry point, the deadline rule, the focus
+//! read-back loop and the settle loop. Adapters still own their focus,
+//! restore and geometry checks.
 
 use std::time::{Duration, Instant};
 

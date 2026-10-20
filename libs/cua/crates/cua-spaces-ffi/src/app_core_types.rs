@@ -9910,7 +9910,8 @@ pub struct AppTeamInput {
     pub name: String,
     /// The account's role in it.
     pub role: String,
-    /// `free`, `teams`, ...
+    /// `free`, `teams`, ... After the plan is cancelled but while it still
+    /// runs, `teams@<RFC 3339 end>`.
     pub plan: String,
     /// Paid seats.
     pub seats: i64,

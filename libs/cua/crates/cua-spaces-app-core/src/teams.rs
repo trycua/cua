@@ -28,6 +28,9 @@ pub const INVITED: &str = "(Invited)";
 /// The button that opens the account app's team page.
 pub const MANAGE_TEAM: &str = "Manage team";
 
+/// The button on a cancelled plan; the account app (Billing) renews it in Stripe.
+pub const RESUME_PLAN: &str = "Resume plan";
+
 /// The button that opens the account app's billing page.
 pub const MANAGE_BILLING: &str = "Billing and plans";
 
@@ -55,7 +58,8 @@ pub struct TeamInput {
     pub name: String,
     /// The account's role in it.
     pub role: String,
-    /// `free`, `teams`, ...
+    /// `free`, `teams`, ... After the plan is cancelled but while it still
+    /// runs, `teams@<RFC 3339 end>`.
     pub plan: String,
     /// Paid seats.
     pub seats: i64,
@@ -135,12 +139,40 @@ fn role_label(role: &str) -> String {
     }
 }
 
-fn plan_label(plan: &str) -> &'static str {
-    match plan {
-        "teams" | "team" => "Teams plan",
-        "pro" => "Pro plan",
+/// `plan` and, when the plan is cancelled but still running, its end date.
+fn split_plan(plan: &str) -> (&str, Option<String>) {
+    match plan.split_once('@') {
+        Some((p, ends)) => (p, short_date(ends)),
+        None => (plan, None),
+    }
+}
+
+/// `2026-11-14T12:00:00Z` as `14 Nov 2026` (the date as the API wrote it).
+fn short_date(rfc3339: &str) -> Option<String> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let mut d = rfc3339.get(..10)?.split('-');
+    let year = d.next()?.parse::<u32>().ok()?;
+    let month = d.next()?.parse::<usize>().ok()?;
+    let day = d.next()?.parse::<u32>().ok()?;
+    Some(format!(
+        "{day} {} {year}",
+        MONTHS.get(month.checked_sub(1)?)?
+    ))
+}
+
+fn plan_label(plan: &str) -> String {
+    let (plan, ends) = split_plan(plan);
+    let name = match plan {
+        "teams" | "team" => "Teams",
+        "pro" => "Pro",
         // An unknown plan is Free.
-        _ => "Free plan",
+        _ => return "Free plan".into(),
+    };
+    match ends {
+        Some(date) => format!("{name} until {date}"),
+        None => format!("{name} plan"),
     }
 }
 
@@ -214,6 +246,13 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
                     plan_label(&t.plan)
                 ));
                 out.push(head);
+                if split_plan(&t.plan).1.is_some() {
+                    let mut note = row(&format!("team:{}:ending", t.id), Text, "Plan ends");
+                    note.value = Some("The team keeps working until then".into());
+                    note.button = Some(RESUME_PLAN.into());
+                    note.link_url = Some(format!("{app}/billing"));
+                    out.push(note);
+                }
                 for (i, m) in t.members.iter().enumerate() {
                     let mut r = row(&format!("team:{}:member:{i}", t.id), Text, &m.email);
                     r.value = Some(role_label(&m.role));
@@ -290,6 +329,32 @@ mod tests {
         assert_eq!(flat[1], ("ada@example.com".into(), Some("Owner".into())));
         assert_eq!(flat[2], ("bob@example.com".into(), Some("Member".into())));
         assert_eq!(flat[3], ("cy@example.com".into(), Some("(Invited)".into())));
+    }
+
+    #[test]
+    fn a_cancelled_plan_says_when_it_ends_and_offers_resume() {
+        let mut t = team("Acme Inc", "acme");
+        t.plan = "teams@2026-11-14T12:00:00Z".into();
+        let rows = rows(&input(vec![t]));
+        assert_eq!(
+            rows[0].value.as_deref(),
+            Some("Owner \u{b7} Teams until 14 Nov 2026 \u{b7} 3 seats")
+        );
+        let ending = rows.iter().find(|r| r.label == "Plan ends").unwrap();
+        assert_eq!(
+            ending.value.as_deref(),
+            Some("The team keeps working until then")
+        );
+        assert_eq!(ending.button.as_deref(), Some(RESUME_PLAN));
+        assert_eq!(
+            ending.link_url.as_deref(),
+            Some("https://app.cua.ai/billing")
+        );
+        assert_eq!(
+            plan_label("pro@2026-02-03T00:00:00Z"),
+            "Pro until 3 Feb 2026"
+        );
+        assert_eq!(plan_label("teams@garbage"), "Teams plan");
     }
 
     #[test]

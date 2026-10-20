@@ -29,6 +29,10 @@ pub struct ApiOrg {
     /// `free`, `pro`, `teams`, ...
     #[serde(default)]
     pub plan: String,
+    /// When a cancelled plan that is still running ends (RFC 3339). Empty
+    /// while the plan renews.
+    #[serde(default)]
+    pub plan_ends_at: Option<String>,
     #[serde(default)]
     pub status: String,
     #[serde(default)]

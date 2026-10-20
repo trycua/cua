@@ -52,9 +52,13 @@ impl SuspendedThread {
         let suspended = Self(handle);
         let mut context = AlignedContext(CONTEXT::default());
         #[cfg(target_arch = "x86_64")]
-        context.0.ContextFlags = Debug::CONTEXT_CONTROL_AMD64;
+        {
+            context.0.ContextFlags = Debug::CONTEXT_CONTROL_AMD64;
+        }
         #[cfg(target_arch = "aarch64")]
-        context.0.ContextFlags = Debug::CONTEXT_CONTROL_ARM64;
+        {
+            context.0.ContextFlags = Debug::CONTEXT_CONTROL_ARM64;
+        }
         unsafe { GetThreadContext(*suspended.0, &mut context.0) }.map(|()| suspended)
     }
 

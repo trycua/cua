@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import type { Msg } from "@/bridge";
+import type { Msg } from "../bridge/contracts/teleport";
 
 /**
  * English for the core's message codes (`message::Msg`). This site is

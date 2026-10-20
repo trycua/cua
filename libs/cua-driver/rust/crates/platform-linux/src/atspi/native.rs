@@ -1230,10 +1230,18 @@ async fn resolve_window_frame(
         return correlate_hyprland_frame(&frames, &clients, target);
     }
     if seeds.len() == 1 {
-        // One top-level: the caller's window is the only thing this
-        // application could be showing, and no geometry round-trip can make
-        // that more certain.
-        return Some(0);
+        // One top-level: on X11, and on compositors without a GNOME Shell,
+        // the caller's window is the only thing this application could be
+        // showing, and no geometry round-trip can make that more certain.
+        // GNOME's AT-SPI tree can omit a window the Shell has mapped, so
+        // there the Shell must vouch for it (`lone_top_level_renders`).
+        let proven = !crate::wayland::is_wayland()
+            || bounded_blocking(move || lone_top_level_proves_window(pid, xid))
+                .await
+                .unwrap_or(false);
+        if proven {
+            return Some(0);
+        }
     }
     // A popup menu / popover is an override-redirect window the WM's client
     // list never carries: describe it from the server directly, and let it
@@ -2655,7 +2663,7 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
                     )
                     .unwrap_or((observed_x, observed_y));
                     // Stable, non-zero, unique per (pid, frame ordinal).
-                    let xid = (((cpid as u64) << 16) | (i as u64)).max(1);
+                    let xid = accessibility_window_id(cpid, i);
                     let z_index = z_index_from_stacking(&stacking, cpid, &title);
                     out.push(WindowInfo {
                         xid,
@@ -4686,10 +4694,11 @@ async fn sample_page_probes(
 
 /// Invoke the original target's semantic actions, pacing multi-page requests
 /// with descendant motion. `Err` means no mutation was attempted; an incomplete
-/// `ScrollProgress` preserves uncertainty after an attempted mutation.
+/// `ScrollProgress` preserves uncertainty after an attempted mutation. An
+/// identity the fresh walk no longer has is [`CachedElementGone`].
 pub fn scroll_element(
     pid: u32,
-    idx: usize,
+    element: &WindowElement,
     direction: &str,
     amount: usize,
     by: cua_driver_contract::ScrollBy,
@@ -4702,11 +4711,16 @@ pub fn scroll_element(
             let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            let target = visited
-                .iter()
-                .filter(|v| is_indexable(v))
-                .nth(idx)
-                .ok_or_else(|| anyhow!("element {idx} not found (total: {})", visited.len()))?;
+            let target = element.find(&visited).ok_or_else(|| match element {
+                WindowElement::Index(idx) => {
+                    anyhow!("element {idx} not found (total: {})", visited.len())
+                }
+                WindowElement::Identity(_) => CachedElementGone(
+                    "the observed element is no longer in the application's accessibility tree"
+                        .into(),
+                )
+                .into(),
+            })?;
             let proxies = target
                 .acc
                 .proxies()
@@ -4855,7 +4869,7 @@ pub fn scroll_element(
             }
 
             Err(anyhow!(
-                "element {idx} exposes neither directional scroll actions nor Value"
+                "the element exposes neither directional scroll actions nor Value"
             ))
         },
         || Err(anyhow!("scroll_element timed out for pid {pid}")),
@@ -5091,6 +5105,9 @@ pub fn perform_action_at_screen_point(
                 Some(walked) => walked,
                 None => return Ok(None),
             };
+            if !window_scope_proven_async(pid, xid, scoped_frame).await {
+                return Err(WindowMembershipUnproven(WINDOW_SCOPE_UNPROVEN).into());
+            }
 
             // Share snapshot correlation and geometry, including renderer-frame
             // rebasing and embedded WebProcess insets. Bounds retain application-
@@ -5683,6 +5700,11 @@ fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u
     // Synchronous X11 lookups stay on the caller's blocking thread, outside
     // the AT-SPI runtime.
     let offset = window_to_screen_offset(pid, xid, None);
+    if offset.is_none() && exact_wayland_origin_required(xid) {
+        return Err(anyhow!(
+            "window {xid} has no exact frame from the GNOME Shell helper"
+        ));
+    }
     let display = (!crate::wayland::is_wayland())
         .then(x11_display_size)
         .flatten();
@@ -5690,10 +5712,13 @@ fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited_bounded(conn, pid, xid, None, None)
+            let Collected {
+                visited,
+                scoped_frame,
+                ..
+            } = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
-                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?
-                .visited;
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let web_document_origin = web_document_origin_for_visited(&visited, pid, xid, None)
                 .await
                 .unwrap_or((0, 0));
@@ -5701,6 +5726,7 @@ fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u
             let target = action_nodes
                 .get(idx)
                 .ok_or_else(|| anyhow!("element {idx} not found"))?;
+            gnome_window_bound_element_async(pid, xid, target.frame_ordinal, scoped_frame).await?;
             if !target.has_component {
                 return Err(anyhow!("element {idx} exposes no Component interface"));
             }
@@ -5989,9 +6015,10 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
         // compositor exposes no geometry. Keep that observation as the final
         // fallback so stale default placement cannot override Sway IPC or a
         // shell helper's authoritative frame.
-        return prefer_authoritative_wayland_origin(
+        return wayland_window_origin(
             authoritative,
-            crate::wayland::observed_window_origin(pid),
+            || crate::wayland::observed_window_origin(pid),
+            crate::wayland::shell_helper::available,
         );
     }
     // Resolve a usable window xid. `xid == 0` means "no hint" (get_element_bounds
@@ -6035,7 +6062,7 @@ fn authoritative_wayland_origin(pid: u32, xid: u64, title: Option<&str>) -> Opti
                 })
                 .flatten()
         })
-        .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
+        .or_else(|| crate::wayland::shell_helper::window_origin(pid, xid))
         .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title))
 }
 
@@ -6044,6 +6071,31 @@ fn prefer_authoritative_wayland_origin(
     observed: Option<(i32, i32)>,
 ) -> Option<(i32, i32)> {
     authoritative.or(observed)
+}
+
+/// [`prefer_authoritative_wayland_origin`] for one window's element geometry.
+/// The observation is keyed by PID alone, so it may be a sibling window's
+/// origin. An attested GNOME Shell helper reports every window's exact frame;
+/// when it has none for this window, the observation must not stand in.
+fn wayland_window_origin(
+    authoritative: Option<(i32, i32)>,
+    observed: impl FnOnce() -> Option<(i32, i32)>,
+    shell_reports_exact_frames: impl FnOnce() -> bool,
+) -> Option<(i32, i32)> {
+    if authoritative.is_some() || shell_reports_exact_frames() {
+        return authoritative;
+    }
+    observed()
+}
+
+/// A window-bound geometry query that must refuse instead of falling back to
+/// `CoordType::Screen`: the attested GNOME Shell helper reports exact frames,
+/// and Mutter's Screen extents are not screen coordinates.
+fn exact_wayland_origin_required(xid: u64) -> bool {
+    xid != 0
+        && crate::wayland::is_wayland()
+        && !crate::wayland::hyprland::is_session()
+        && crate::wayland::shell_helper::available()
 }
 
 fn combine_wayland_content_offsets(
@@ -6253,6 +6305,275 @@ fn scoped_component_nodes<'a, T>(
     })
 }
 
+const WINDOW_SCOPE_UNPROVEN: &str = "the accessibility frame of this GNOME window is unproven \
+     and its process has other windows";
+const ELEMENT_OUTSIDE_WINDOW: &str = "element does not belong to the requested window";
+
+/// A window-bound element request failed its window-membership proof. Callers
+/// acting for an exact window refuse on it instead of acting elsewhere.
+#[derive(Debug)]
+pub struct WindowMembershipUnproven(&'static str);
+
+impl std::fmt::Display for WindowMembershipUnproven {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for WindowMembershipUnproven {}
+
+pub fn is_window_membership_unproven(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<WindowMembershipUnproven>().is_some()
+}
+
+/// The AT-SPI window list's handle for top-level `ordinal` of `pid`: stable,
+/// non-zero and unique per (pid, ordinal).
+pub(crate) fn accessibility_window_id(pid: u32, ordinal: usize) -> u64 {
+    ((u64::from(pid) << 16) | ordinal as u64).max(1)
+}
+
+/// GNOME ties an AT-SPI top-level to a Shell window only through frame
+/// correlation. Without it, a window-bound query would admit every same-PID
+/// window's nodes and project them with the requested window's origin, so a
+/// sibling's control could be hit-tested or bounded as the requested one.
+///
+/// A correlated `scoped_frame` is proof. Otherwise the attested Shell must
+/// list exactly one window for the PID, the requested one. With no attested
+/// Shell, a GNOME session proves nothing, except that the AT-SPI window list's
+/// own handle for an application's first top-level names that top-level
+/// (`accessibility_handle`). Compositors without a GNOME Shell keep their
+/// route.
+pub(crate) fn gnome_window_scope_proven(
+    xid: u64,
+    scoped_frame: Option<usize>,
+    accessibility_handle: bool,
+    gnome_session: impl FnOnce() -> bool,
+    pid_shell_windows: impl FnOnce() -> Option<Vec<u64>>,
+) -> bool {
+    if xid == 0 || scoped_frame.is_some() {
+        return true;
+    }
+    match pid_shell_windows() {
+        Some(ids) => ids == [xid],
+        None => accessibility_handle || !gnome_session(),
+    }
+}
+
+/// Whether an application's lone AT-SPI top-level renders window `xid` on a
+/// Wayland session outside Hyprland.
+pub(crate) fn lone_top_level_renders(
+    pid: u32,
+    xid: u64,
+    gnome_session: impl FnOnce() -> bool,
+    pid_shell_windows: impl FnOnce() -> Option<Vec<u64>>,
+) -> bool {
+    gnome_window_scope_proven(
+        xid,
+        None,
+        xid == accessibility_window_id(pid, 0),
+        gnome_session,
+        pid_shell_windows,
+    )
+}
+
+fn lone_top_level_proves_window(pid: u32, xid: u64) -> bool {
+    lone_top_level_renders(
+        pid,
+        xid,
+        crate::wayland::shell_helper::gnome_shell_session,
+        || crate::wayland::shell_helper::trusted_window_ids_for_pid(pid),
+    )
+}
+
+/// An element answers a window-bound query only from a proven window scope,
+/// and only from that window's top-level when one was correlated.
+fn window_bound_element(
+    element_frame: usize,
+    scoped_frame: Option<usize>,
+    scope_proven: impl FnOnce() -> bool,
+) -> Result<()> {
+    if !scope_proven() {
+        return Err(WindowMembershipUnproven(WINDOW_SCOPE_UNPROVEN).into());
+    }
+    if scoped_frame.is_some_and(|scope| element_frame != scope) {
+        return Err(WindowMembershipUnproven(ELEMENT_OUTSIDE_WINDOW).into());
+    }
+    Ok(())
+}
+
+/// The window-scope rule for a walk of window `xid`. X11 and Hyprland keep
+/// their own routes.
+fn window_scope_proven(pid: u32, xid: u64, scoped_frame: Option<usize>) -> bool {
+    if !crate::wayland::is_wayland() || crate::wayland::hyprland::is_session() {
+        return true;
+    }
+    gnome_window_scope_proven(
+        xid,
+        scoped_frame,
+        false,
+        crate::wayland::shell_helper::gnome_shell_session,
+        || crate::wayland::shell_helper::trusted_window_ids_for_pid(pid),
+    )
+}
+
+/// [`window_scope_proven`] from async code. Cases that need no Shell query
+/// answer at once; the rest run off the runtime and refuse on timeout.
+async fn window_scope_proven_async(pid: u32, xid: u64, scoped_frame: Option<usize>) -> bool {
+    if xid == 0
+        || scoped_frame.is_some()
+        || !crate::wayland::is_wayland()
+        || crate::wayland::hyprland::is_session()
+    {
+        return true;
+    }
+    bounded_blocking(move || window_scope_proven(pid, xid, scoped_frame))
+        .await
+        .unwrap_or(false)
+}
+
+/// [`window_bound_element`] where GNOME's rules apply: Wayland outside
+/// Hyprland with an attested Shell helper or a GNOME session. X11, Hyprland
+/// and compositors without a GNOME Shell keep their routes.
+fn gnome_window_bound_element(
+    pid: u32,
+    xid: u64,
+    element_frame: usize,
+    scoped_frame: Option<usize>,
+) -> Result<()> {
+    if xid == 0 || !crate::wayland::is_wayland() || crate::wayland::hyprland::is_session() {
+        return Ok(());
+    }
+    let shell_windows = crate::wayland::shell_helper::trusted_window_ids_for_pid(pid);
+    if shell_windows.is_none() && !crate::wayland::shell_helper::gnome_shell_session() {
+        return Ok(());
+    }
+    window_bound_element(element_frame, scoped_frame, || {
+        gnome_window_scope_proven(xid, scoped_frame, false, || true, || shell_windows)
+    })
+}
+
+async fn gnome_window_bound_element_async(
+    pid: u32,
+    xid: u64,
+    element_frame: usize,
+    scoped_frame: Option<usize>,
+) -> Result<()> {
+    if xid == 0 || !crate::wayland::is_wayland() || crate::wayland::hyprland::is_session() {
+        return Ok(());
+    }
+    bounded_blocking(move || gnome_window_bound_element(pid, xid, element_frame, scoped_frame))
+        .await
+        .unwrap_or_else(|| {
+            Err(WindowMembershipUnproven("the window-membership check timed out").into())
+        })
+}
+
+/// Whether a snapshot of window `xid` may bind its elements to that window as
+/// element tokens. Hyprland needs a correlated top-level. Elsewhere a native
+/// walk's correlated top-level counts, or else the window-scope rule for an
+/// uncorrelated walk: always on X11 and on compositors without a GNOME Shell,
+/// and on GNOME only when the attested Shell lists exactly `xid` for the PID.
+pub(crate) fn snapshot_binds_window(
+    hyprland_session: bool,
+    window_scoped: bool,
+    trusted: bool,
+    unscoped_walk_proven: impl FnOnce() -> bool,
+) -> bool {
+    if hyprland_session {
+        return window_scoped;
+    }
+    (trusted && window_scoped) || unscoped_walk_proven()
+}
+
+pub fn snapshot_binds_window_for(pid: u32, xid: u64, window_scoped: bool, trusted: bool) -> bool {
+    snapshot_binds_window(
+        crate::wayland::is_wayland() && crate::wayland::hyprland::is_session(),
+        window_scoped,
+        trusted,
+        || window_scope_proven(pid, xid, None),
+    )
+}
+
+/// The element a window-bound action names: an index into the walk the
+/// action makes, or the AT-SPI identity a snapshot observed.
+pub enum WindowElement {
+    Index(usize),
+    Identity(super::AtspiIdentity),
+}
+
+impl WindowElement {
+    fn find<'v, 'a>(&self, visited: &'v [Visited<'a>]) -> Option<&'v Visited<'a>> {
+        match self {
+            Self::Index(idx) => visited.iter().filter(|v| is_indexable(v)).nth(*idx),
+            Self::Identity(identity) => visited
+                .iter()
+                .find(|v| v.identity.as_ref() == Some(identity)),
+        }
+    }
+}
+
+/// What [`require_window_element`] established for an element.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowProof {
+    /// A fresh walk scoped to the window found the element there. The action
+    /// must act on that element and never re-resolve an index.
+    Proven,
+    /// The session keeps its own route (X11, Hyprland, compositors without a
+    /// GNOME Shell); no proof was needed.
+    NotRequired,
+}
+
+/// Membership of an element found at `element_frame` (`None` when the fresh
+/// walk no longer has it) in a window-bound walk.
+pub(crate) fn window_element_membership(
+    element_frame: Option<usize>,
+    scoped_frame: Option<usize>,
+    scope_proven: impl FnOnce() -> bool,
+) -> Result<()> {
+    let frame = element_frame.ok_or(WindowMembershipUnproven(
+        "the element is no longer in the application's accessibility tree",
+    ))?;
+    window_bound_element(frame, scoped_frame, scope_proven)
+}
+
+/// Fresh-walk proof that `element` still belongs to window `xid`, for an
+/// action on behalf of that window. The walk is scoped to `xid` and judged by
+/// the rule window-bound bounds use. X11, Hyprland and compositors without a
+/// GNOME Shell keep their own routes ([`WindowProof::NotRequired`]).
+pub fn require_window_element(pid: u32, xid: u64, element: WindowElement) -> Result<WindowProof> {
+    if xid == 0 || !crate::wayland::is_wayland() || crate::wayland::hyprland::is_session() {
+        return Ok(WindowProof::NotRequired);
+    }
+    let shell_windows = crate::wayland::shell_helper::trusted_window_ids_for_pid(pid);
+    if shell_windows.is_none() && !crate::wayland::shell_helper::gnome_shell_session() {
+        return Ok(WindowProof::NotRequired);
+    }
+    bounded_for(
+        INDEX_RESOLVE_BUDGET,
+        async move {
+            let conn = shared_connection().await?;
+            let Collected {
+                visited,
+                scoped_frame,
+                ..
+            } = collect_visited_bounded(conn, pid, xid, None, None)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let element_frame = element.find(&visited).map(|v| v.frame_ordinal);
+            window_element_membership(element_frame, scoped_frame, || {
+                gnome_window_scope_proven(xid, scoped_frame, false, || true, || shell_windows)
+            })
+            .map(|()| WindowProof::Proven)
+        },
+        || {
+            Err(WindowMembershipUnproven(
+                "the window-membership walk timed out (app unresponsive to AT-SPI)",
+            )
+            .into())
+        },
+    )
+}
+
 /// Screen-coordinate bounds for the exact visited sequence rendered into the
 /// current snapshot. Nodes without a usable Component interface, or whose
 /// extents query fails/times out, are omitted rather than borrowing another
@@ -6300,6 +6621,16 @@ async fn element_bounds_for_visited(
         && crate::wayland::hyprland::is_session()
         && (offset.is_none() || scoped_frame.is_none())
     {
+        return (Vec::new(), true);
+    }
+    if offset.is_none()
+        && bounded_blocking(move || exact_wayland_origin_required(xid))
+            .await
+            .unwrap_or(true)
+    {
+        return (Vec::new(), true);
+    }
+    if !window_scope_proven_async(pid, xid, scoped_frame).await {
         return (Vec::new(), true);
     }
     let coord = if offset.is_some() {
@@ -6777,7 +7108,7 @@ mod coord_tests {
         is_showing_state, is_web_process_bus, listing_state, passive_marker,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
-        ApplicationSelection,
+        wayland_window_origin, ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -7205,6 +7536,26 @@ mod coord_tests {
         assert_eq!(
             prefer_authoritative_wayland_origin(None, Some((120, 120))),
             Some((120, 120))
+        );
+    }
+
+    #[test]
+    fn an_attested_shell_without_the_exact_frame_admits_no_pid_observation() {
+        let observed = || Some((120, 120));
+        assert_eq!(
+            wayland_window_origin(Some((600, 0)), observed, || true),
+            Some((600, 0))
+        );
+        assert_eq!(wayland_window_origin(None, observed, || true), None);
+        // Without a Shell helper (Sway, KDE, GNOME without it) the
+        // observation stays the last fallback.
+        assert_eq!(
+            wayland_window_origin(None, observed, || false),
+            Some((120, 120))
+        );
+        assert_eq!(
+            wayland_window_origin(Some((0, 0)), observed, || false),
+            Some((0, 0))
         );
     }
 
@@ -7712,5 +8063,435 @@ mod at_point_rules_tests {
             .describe()
             .starts_with("selected: canvas \"file.txt\""));
         assert!(selected.describe().contains("read back as selected"));
+    }
+}
+
+#[cfg(test)]
+mod window_scope_tests {
+    use super::{
+        accessibility_window_id, gnome_window_scope_proven, lone_top_level_renders,
+        project_screen_extents, scoped_component_nodes, select_click_target, window_bound_element,
+        ELEMENT_OUTSIDE_WINDOW, WINDOW_SCOPE_UNPROVEN,
+    };
+
+    /// `(frame_ordinal, has_component, window-local extents)`.
+    type Node = (usize, bool, (i32, i32, i32, i32));
+
+    // One PID owns Shell windows 1 (sibling A, AT-SPI frame 0) and 2
+    // (requested B, frame 1). Both frames have a button at window-local
+    // (10,10); B sits at compositor origin (600,0).
+    const PID: u32 = 6079;
+    const SIBLING_A: u64 = 1;
+    const REQUESTED_B: u64 = 2;
+    const NODES: [Node; 2] = [(0, true, (10, 10, 20, 20)), (1, true, (10, 10, 40, 40))];
+    const B_ORIGIN: (i32, i32) = (600, 0);
+
+    fn project(
+        nodes: &[Node],
+        scoped_frame: Option<usize>,
+    ) -> Vec<(usize, i32, i32, u32, u32, bool)> {
+        scoped_component_nodes(nodes, scoped_frame, |node| (node.0, node.1))
+            .filter_map(|(idx, node)| {
+                project_screen_extents(node.2, B_ORIGIN, None)
+                    .map(|(x, y, w, h)| (idx, x, y, w, h, false))
+            })
+            .collect()
+    }
+
+    /// `perform_action_at_screen_point` on window B in a GNOME session: the
+    /// scope gate, then the projection of admitted nodes with B's origin,
+    /// then the hit-test.
+    fn click_b(
+        nodes: &[Node],
+        scoped_frame: Option<usize>,
+        pid_shell_windows: Option<Vec<u64>>,
+        x: i32,
+        y: i32,
+    ) -> Result<Option<usize>, &'static str> {
+        if !gnome_window_scope_proven(
+            REQUESTED_B,
+            scoped_frame,
+            false,
+            || true,
+            || pid_shell_windows,
+        ) {
+            return Err(WINDOW_SCOPE_UNPROVEN);
+        }
+        Ok(select_click_target(&project(nodes, scoped_frame), x, y))
+    }
+
+    #[test]
+    fn without_the_gate_the_unresolved_walk_selects_the_sibling() {
+        assert_eq!(
+            select_click_target(&project(&NODES, None), 615, 15),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn unresolved_frame_with_a_same_pid_sibling_refuses() {
+        for shell_windows in [
+            Some(vec![SIBLING_A, REQUESTED_B]),
+            Some(vec![REQUESTED_B, SIBLING_A]),
+            Some(vec![REQUESTED_B, REQUESTED_B]),
+            Some(vec![SIBLING_A]),
+            Some(vec![]),
+            None,
+        ] {
+            assert_eq!(
+                click_b(&NODES, None, shell_windows.clone(), 615, 15),
+                Err(WINDOW_SCOPE_UNPROVEN),
+                "{shell_windows:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn proven_scope_selects_the_requested_window() {
+        assert_eq!(
+            click_b(&NODES, Some(1), Some(vec![SIBLING_A, REQUESTED_B]), 615, 15),
+            Ok(Some(1))
+        );
+    }
+
+    #[test]
+    fn a_single_shell_window_keeps_the_unscoped_walk() {
+        // One Shell window whose app publishes a second top-level (a popover)
+        // that frame correlation cannot place.
+        let nodes = [(0, true, (10, 10, 40, 40)), (1, true, (200, 200, 30, 30))];
+        let single = Some(vec![REQUESTED_B]);
+        assert_eq!(click_b(&nodes, None, single.clone(), 615, 15), Ok(Some(0)));
+        assert_eq!(click_b(&nodes, None, single, 815, 215), Ok(Some(1)));
+    }
+
+    #[test]
+    fn element_bounds_apply_the_same_rule() {
+        let siblings = || {
+            gnome_window_scope_proven(
+                REQUESTED_B,
+                None,
+                false,
+                || true,
+                || Some(vec![SIBLING_A, REQUESTED_B]),
+            )
+        };
+        for frame in [0, 1] {
+            assert_eq!(
+                window_bound_element(frame, None, siblings)
+                    .unwrap_err()
+                    .to_string(),
+                WINDOW_SCOPE_UNPROVEN
+            );
+        }
+
+        let correlated = || {
+            gnome_window_scope_proven(
+                REQUESTED_B,
+                Some(1),
+                false,
+                || panic!("a correlated frame needs no session check"),
+                || panic!("a correlated frame needs no Shell window list"),
+            )
+        };
+        assert!(window_bound_element(1, Some(1), correlated).is_ok());
+        assert_eq!(
+            window_bound_element(0, Some(1), correlated)
+                .unwrap_err()
+                .to_string(),
+            ELEMENT_OUTSIDE_WINDOW
+        );
+
+        let single = || {
+            gnome_window_scope_proven(
+                REQUESTED_B,
+                None,
+                false,
+                || true,
+                || Some(vec![REQUESTED_B]),
+            )
+        };
+        assert!(window_bound_element(0, None, single).is_ok());
+
+        // No window context keeps application-wide bounds.
+        assert!(gnome_window_scope_proven(
+            0,
+            None,
+            false,
+            || panic!("no window, no session check"),
+            || panic!("no window, no Shell query")
+        ));
+    }
+
+    #[test]
+    fn the_rule_follows_the_attested_shell_not_the_desktop_name() {
+        // An attested Shell applies the rule whatever the session reports.
+        let siblings = Some(vec![SIBLING_A, REQUESTED_B]);
+        assert!(!gnome_window_scope_proven(
+            REQUESTED_B,
+            None,
+            false,
+            || false,
+            || siblings
+        ));
+        // GNOME without an attested Shell refuses; compositors without a
+        // GNOME Shell keep their own route.
+        assert!(!gnome_window_scope_proven(
+            REQUESTED_B,
+            None,
+            false,
+            || true,
+            || None
+        ));
+        assert!(gnome_window_scope_proven(
+            REQUESTED_B,
+            None,
+            false,
+            || false,
+            || None
+        ));
+    }
+
+    // AT-SPI exports one top-level (frame 0) for the PID. Window B's tree is
+    // not exported, so when the Shell also lists sibling A, that top-level is
+    // A's; its button at window-local (10,10) sits under B's click (615,15).
+    const LONE_TOP_LEVEL: [Node; 1] = [(0, true, (10, 10, 20, 20))];
+
+    /// `resolve_window_frame` for `xid` on a Wayland session outside
+    /// Hyprland. Geometry correlation adds nothing: a Shell stable sequence
+    /// names no X11 window.
+    fn resolve(
+        xid: u64,
+        top_levels: usize,
+        gnome_session: bool,
+        pid_shell_windows: Option<Vec<u64>>,
+    ) -> Option<usize> {
+        (top_levels == 1
+            && lone_top_level_renders(PID, xid, || gnome_session, || pid_shell_windows))
+        .then_some(0)
+    }
+
+    /// `element_bounds_by_walk` for an element of `frame` in B on GNOME.
+    fn bounds_b(
+        frame: usize,
+        scoped_frame: Option<usize>,
+        pid_shell_windows: Option<Vec<u64>>,
+    ) -> Result<(), String> {
+        window_bound_element(frame, scoped_frame, || {
+            gnome_window_scope_proven(
+                REQUESTED_B,
+                scoped_frame,
+                false,
+                || true,
+                || pid_shell_windows,
+            )
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn without_the_shell_rule_a_lone_top_level_selects_the_sibling() {
+        // Before: one top-level was proof on every session.
+        let scope = Some(0);
+        let siblings = Some(vec![SIBLING_A, REQUESTED_B]);
+        assert_eq!(
+            click_b(&LONE_TOP_LEVEL, scope, siblings, 615, 15),
+            Ok(Some(0))
+        );
+    }
+
+    #[test]
+    fn a_lone_top_level_proves_nothing_while_the_shell_lists_another_window() {
+        for shell_windows in [
+            vec![SIBLING_A, REQUESTED_B],
+            vec![REQUESTED_B, SIBLING_A],
+            vec![REQUESTED_B, REQUESTED_B],
+            vec![SIBLING_A],
+            vec![],
+        ] {
+            let scope = resolve(REQUESTED_B, 1, true, Some(shell_windows.clone()));
+            assert_eq!(scope, None, "{shell_windows:?}");
+            assert_eq!(
+                click_b(&LONE_TOP_LEVEL, scope, Some(shell_windows.clone()), 615, 15),
+                Err(WINDOW_SCOPE_UNPROVEN),
+                "{shell_windows:?}"
+            );
+            assert_eq!(
+                bounds_b(0, scope, Some(shell_windows.clone())),
+                Err(WINDOW_SCOPE_UNPROVEN.to_owned()),
+                "{shell_windows:?}"
+            );
+            // The attested Shell decides even when the session check says
+            // the compositor is not GNOME.
+            assert_eq!(
+                resolve(REQUESTED_B, 1, false, Some(shell_windows.clone())),
+                None,
+                "{shell_windows:?}"
+            );
+        }
+        // The AT-SPI handle for frame 0 is no proof while a Shell answers.
+        let handle = accessibility_window_id(PID, 0);
+        assert_eq!(resolve(handle, 1, true, Some(vec![SIBLING_A])), None);
+    }
+
+    #[test]
+    fn a_lone_top_level_resolves_when_the_shell_lists_only_the_requested_window() {
+        let only_b = Some(vec![REQUESTED_B]);
+        let scope = resolve(REQUESTED_B, 1, true, only_b.clone());
+        assert_eq!(scope, Some(0));
+        assert_eq!(
+            click_b(&LONE_TOP_LEVEL, scope, only_b.clone(), 615, 15),
+            Ok(Some(0))
+        );
+        assert_eq!(bounds_b(0, scope, only_b), Ok(()));
+    }
+
+    #[test]
+    fn without_an_attested_shell_gnome_trusts_only_the_accessibility_handle() {
+        // A Shell sequence ID while no attested Shell answers proves nothing.
+        let scope = resolve(REQUESTED_B, 1, true, None);
+        assert_eq!(scope, None);
+        assert_eq!(
+            click_b(&LONE_TOP_LEVEL, scope, None, 615, 15),
+            Err(WINDOW_SCOPE_UNPROVEN)
+        );
+        assert_eq!(
+            bounds_b(0, scope, None),
+            Err(WINDOW_SCOPE_UNPROVEN.to_owned())
+        );
+        // The AT-SPI window list's own handle for the PID's first top-level
+        // names it, so a single-window app keeps working without the helper.
+        assert_eq!(
+            resolve(accessibility_window_id(PID, 0), 1, true, None),
+            Some(0)
+        );
+        assert_eq!(
+            resolve(accessibility_window_id(PID, 1), 1, true, None),
+            None
+        );
+        assert_eq!(
+            resolve(accessibility_window_id(PID + 1, 0), 1, true, None),
+            None
+        );
+    }
+
+    #[test]
+    fn other_sessions_keep_the_lone_top_level_route() {
+        // Sway and KDE have no GNOME session and no Shell helper.
+        assert_eq!(resolve(REQUESTED_B, 1, false, None), Some(0));
+        // Several top-levels, or none, go to geometry correlation.
+        for top_levels in [0, 2, 3] {
+            assert_eq!(resolve(REQUESTED_B, top_levels, true, None), None);
+        }
+    }
+
+    #[test]
+    fn accessibility_handles_match_the_window_list() {
+        assert_eq!(accessibility_window_id(6079, 0), 6079 << 16);
+        assert_eq!(accessibility_window_id(6079, 3), (6079 << 16) | 3);
+        assert_eq!(accessibility_window_id(0, 0), 1);
+    }
+}
+
+#[cfg(test)]
+mod token_scope_tests {
+    use super::{
+        gnome_window_scope_proven, is_window_membership_unproven, lone_top_level_renders,
+        snapshot_binds_window, window_element_membership, ELEMENT_OUTSIDE_WINDOW,
+        WINDOW_SCOPE_UNPROVEN,
+    };
+
+    // One PID owns Shell windows A and B; `get_window_state` reads B.
+    const PID: u32 = 6079;
+    const SIBLING_A: u64 = 1;
+    const REQUESTED_B: u64 = 2;
+
+    /// The binding decision `get_window_state` makes for B on GNOME with an
+    /// attested Shell: the walk's frame resolution, then the token rule.
+    fn binds_b(shell_windows: &[u64], top_levels: usize) -> bool {
+        let shell = || Some(shell_windows.to_vec());
+        let window_scoped =
+            top_levels == 1 && lone_top_level_renders(PID, REQUESTED_B, || true, shell);
+        snapshot_binds_window(false, window_scoped, true, || {
+            gnome_window_scope_proven(REQUESTED_B, None, false, || true, shell)
+        })
+    }
+
+    #[test]
+    fn previously_every_gnome_snapshot_bound_its_elements_to_the_window() {
+        // Before: `!(wayland && hyprland) || window_scoped`.
+        let (wayland, hyprland, window_scoped) = (true, false, false);
+        assert!(!(wayland && hyprland) || window_scoped);
+    }
+
+    #[test]
+    fn an_unproven_gnome_snapshot_binds_no_tokens() {
+        for (shell_windows, top_levels) in [
+            (&[SIBLING_A, REQUESTED_B][..], 1),
+            (&[REQUESTED_B, SIBLING_A][..], 1),
+            (&[SIBLING_A, REQUESTED_B][..], 2),
+            (&[SIBLING_A][..], 1),
+            (&[][..], 1),
+        ] {
+            assert!(
+                !binds_b(shell_windows, top_levels),
+                "{shell_windows:?} with {top_levels} top-level(s)"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_window_snapshot_binds() {
+        assert!(binds_b(&[REQUESTED_B], 1));
+        // A popover top-level beside the window: the Shell still vouches.
+        assert!(binds_b(&[REQUESTED_B], 2));
+    }
+
+    #[test]
+    fn x11_hyprland_and_other_compositors_bind_as_before() {
+        for window_scoped in [false, true] {
+            for trusted in [false, true] {
+                // X11 and compositors without a GNOME Shell: the uncorrelated
+                // walk rule holds, so the previous `true` stands.
+                assert!(snapshot_binds_window(false, window_scoped, trusted, || {
+                    gnome_window_scope_proven(REQUESTED_B, None, false, || false, || None)
+                }));
+                // Hyprland keeps its correlated-top-level rule.
+                assert_eq!(
+                    snapshot_binds_window(true, window_scoped, trusted, || {
+                        panic!("Hyprland asks no Shell")
+                    }),
+                    window_scoped
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn action_time_membership_uses_the_bounds_rule() {
+        let proven = |scoped: Option<usize>, shell: Vec<u64>| {
+            move || gnome_window_scope_proven(REQUESTED_B, scoped, false, || true, || Some(shell))
+        };
+        let gone = window_element_membership(None, Some(0), || true).unwrap_err();
+        assert!(is_window_membership_unproven(&gone));
+        let sibling =
+            window_element_membership(Some(0), None, proven(None, vec![SIBLING_A, REQUESTED_B]))
+                .unwrap_err();
+        assert!(is_window_membership_unproven(&sibling));
+        assert_eq!(sibling.to_string(), WINDOW_SCOPE_UNPROVEN);
+        let outside = window_element_membership(
+            Some(0),
+            Some(1),
+            proven(Some(1), vec![SIBLING_A, REQUESTED_B]),
+        )
+        .unwrap_err();
+        assert!(is_window_membership_unproven(&outside));
+        assert_eq!(outside.to_string(), ELEMENT_OUTSIDE_WINDOW);
+        assert!(window_element_membership(
+            Some(1),
+            Some(1),
+            proven(Some(1), vec![SIBLING_A, REQUESTED_B])
+        )
+        .is_ok());
+        assert!(window_element_membership(Some(0), None, proven(None, vec![REQUESTED_B])).is_ok());
     }
 }

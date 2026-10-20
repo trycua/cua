@@ -9,8 +9,9 @@ It covers the canonical snapshot-action-verify loop, exact window addressing,
 accessibility and pixel actions, background/foreground delivery, typed browser
 automation, optional visual-region parsing, session recording, and
 platform-specific limitations. The skill
-defaults to background delivery and requires structured refusal or observed
-failure before a caller escalates to foreground input.
+defaults to background delivery. Before a caller sends input again in the
+foreground, it requires a refusal raised before dispatch, or fresh state
+showing the earlier attempt had no effect.
 
 ## Install Cua Driver
 

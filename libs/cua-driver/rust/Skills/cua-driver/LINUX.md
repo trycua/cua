@@ -25,7 +25,9 @@ route and independently verify the application.
 
 `delivery_mode:"foreground"` is a user-visible takeover. Never select it automatically.
 Use explicitly authorized `delivery_mode:"foreground"` only after evidence
-that the chosen background route is unavailable or ineffective. Target-specific
+that the chosen background route is unavailable or ineffective, under
+[No blind retry](WORKFLOW.md#no-blind-retry): a background refusal can follow
+input that already landed. Target-specific
 activation and restoration depend on the compositor adapter. If activation
 cannot be proven, accept the refusal instead of sending keys to whatever is focused.
 
@@ -244,16 +246,18 @@ uinput, escalate to `delivery_mode:"foreground"`. The AT-SPI path only fires
 a control under the point: when the hit test finds nothing deeper than the
 application's own frame or window (Chromium page content before its AT-SPI
 tree is populated), no action is fired. Chromium/Electron targets without a
-real focus-free pointer return `background_unavailable` before the capture is
-consumed, so retry the same capture-bound click with
-`delivery_mode:"foreground"` when foreground input is authorized. (`type_text` in the
+real focus-free pointer return `background_unavailable` before any input is
+sent. When foreground input is authorized, read the window again and click
+from that capture with `delivery_mode:"foreground"`. (`type_text` in the
 `background` rung is focus-dependent for non-editable widgets; that's the one
 genuine background limitation, and `foreground` is the documented escalation.)
 
 ## Wayland
 
-Set `CUA_DRIVER_RS_ENABLE_WAYLAND=1` to enable native Wayland support. The
-driver selects a backend from compositor capabilities:
+Set `CUA_DRIVER_RS_ENABLE_WAYLAND=1` to enable native Wayland support. It
+must be in the daemon's own environment: an export in an interactive shell
+does not reach a daemon that a user service started. The driver selects a
+backend from compositor capabilities:
 
 - Sway and other wlroots compositors use foreign-toplevel discovery,
   wlr-screencopy, virtual pointer, and virtual keyboard protocols.
@@ -277,7 +281,8 @@ occluded surface. Background AX actions can still deliver through AT-SPI, and
 a PX left click can deliver when hit-testing resolves to an actionable AT-SPI
 control. Other focus-bound background pointer and keyboard shapes return an
 exact `background_unavailable` result. They do not report success after a
-silent drop.
+silent drop. On GNOME, `background_unavailable` can also come after input has
+landed; see [GNOME/Mutter](#gnomemutter).
 
 Outside an explicitly enabled, qualified compositor-owned background route,
 raw Wayland input requires explicitly authorized `delivery_mode:"foreground"`.
@@ -286,6 +291,49 @@ before dispatch. If
 the compositor has no target-addressable activation or input backend, the call
 refuses before sending input. Reconstructing coordinates alone does not make
 raw background PX possible on a standard compositor.
+
+### GNOME/Mutter
+
+- **Shell attestation.** The driver uses the WinRects helper only when its
+  bus owner also owns `org.gnome.Shell` and runs a root-owned `gnome-shell`
+  image that no other user can write. After a package update, the running
+  Shell's `/proc/<pid>/exe` ends in ` (deleted)`; the driver then checks the
+  image the process still holds open, so the helper keeps working until the
+  next login.
+- **Helper API and window capture.** Window screenshots use the helper's
+  `CaptureWindow` (API 9 or later), which captures the window's own content
+  even when another window covers it. With an older helper, the window image
+  is a crop of the Shell stage and shows whatever covers the window. Shell
+  loads a new helper version only at the next login, so check the version in
+  memory rather than the files on disk:
+  `gdbus call --session --dest org.cua.WinRects --object-path /org/cua/WinRects --method org.cua.WinRects.GetVersion`.
+- **Window scope.** AT-SPI publishes one tree per process and can omit a
+  window the Shell has mapped. Element tokens, pixel hit-tests and element
+  bounds are bound to one exact Shell window only when the driver can prove
+  which AT-SPI top-level belongs to it: geometry correlation, or the helper
+  listing that window as the process's only window. Otherwise
+  `get_window_state` returns the tree as `degraded`
+  (`accessibility_window_identity_unproven`) without tokens or frames, token
+  actions refuse with `window_scope_unproven` before any input, and a
+  background pixel click returns `background_unavailable`. Read that exact
+  window again after its other windows (often a menu or popover) close, or
+  use an authorized foreground pixel click. Without the helper, a
+  single-window application still works through the AT-SPI window list's own
+  window handle.
+- **Results that can follow delivered input.** A background `type_text` with
+  an element token writes through AT-SPI; if that write errors or runs out of
+  time, the result is `background_unavailable` and the text may already be in
+  the field. A background pixel `click` fires the AT-SPI action under the
+  point; an error or timeout there also ends as `background_unavailable`. A
+  foreground action that reports "GNOME Shell did not restore the previously
+  focused window" sent its input first, and focus may still be on the target.
+  Read fresh state before any retry ([No blind retry](WORKFLOW.md#no-blind-retry)).
+- **Shell prompts.** Polkit authentication and keyring prompts are drawn by
+  the Shell, not by an application window, so the helper's window list does
+  not include them. While one is open it holds the input grab, and input to
+  application windows does not arrive. Find it with `get_desktop_state` (pass
+  `screenshot_out_file` to keep the full display image out of the response),
+  and act on it only with a desktop target and the user's approval.
 
 ### Hyprland input v3 source candidate
 

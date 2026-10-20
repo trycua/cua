@@ -803,8 +803,9 @@ There is no backgrounded path that reaches these apps today.
   click returns `background_unavailable` with `reason:
   "pointer_reading_toolkit"`. Other pointer-reading apps cannot be detected
   cheaply; their background result stays "not driver-verified" and says the
-  pointer was not moved. Retry with `delivery_mode:"foreground"`, which moves
-  the pointer first.
+  pointer was not moved. When a fresh read shows the click had no effect
+  ([No blind retry](WORKFLOW.md#no-blind-retry)), retry with
+  `delivery_mode:"foreground"`, which moves the pointer first.
 
 - **Chromium `<video>` play/pause**: pixel click is often rejected
   by HTML5's click-to-play handler on some builds. Use keyboard

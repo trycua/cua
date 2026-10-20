@@ -7,6 +7,7 @@ import { useState } from "react";
 
 import { useAbout, useBridge, useSession, type AboutLink, type AboutUpdates, type UpdateChannel } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
+import { messagesAsText } from "@/lib/messages";
 import { CuaLogo } from "@/components/cua-logo";
 import { NoticesDialog } from "@/components/settings/notices-dialog";
 import { Button } from "@/components/ui/button";
@@ -34,7 +35,7 @@ function AboutPage() {
   const [notices, setNotices] = useState(false);
   const view = data?.view;
   if (!view) return null;
-  const unavailable = !view.updates && mode === "electron" ? (aboutView(core, { ...data.input, updater: true })?.updates ?? null) : null;
+  const unavailable = !view.updates && mode === "electron" ? (messagesAsText(aboutView(core, { ...data.input, updater: true }))?.updates ?? null) : null;
 
   const open = (link: AboutLink) => {
     if (link.url) void openExternal(link.url).catch(toastError(`Couldn't open ${link.label}`));

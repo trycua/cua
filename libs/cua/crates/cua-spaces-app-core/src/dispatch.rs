@@ -252,6 +252,9 @@ pub const METHODS: &[&str] = &[
     "share.initial",
     "share.reduce",
     "share.view",
+    "share.gate",
+    "share.errorWords",
+    "share.removalNote",
     "agents.pageInitial",
     "agents.pageReduce",
     "agents.pageView",
@@ -1046,6 +1049,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "share.view" => out(share::share_view(
             &a.get::<share::ShareInput>("input")?,
             &a.get::<share::ShareSheetState>("state")?,
+        )),
+        "share.gate" => out(share::share_gate(a.get::<Option<bool>>("hasTeam")?)),
+        "share.errorWords" => out(share::share_error_words(
+            &a.get::<String>("error")?,
+            &a.get::<String>("who")?,
+        )),
+        "share.removalNote" => out(share::share_removal_note(
+            &a.get::<Vec<share::ShareRemovalInput>>("removals")?,
         )),
         "host.clientLabel" => out(host::client_label(
             &a.get::<String>("id")?,

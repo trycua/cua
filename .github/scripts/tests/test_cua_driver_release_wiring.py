@@ -358,9 +358,9 @@ fi
         actually matters: the contract exists in the canonical document, and an
         agent reading AGENTS.md is pointed at it.
         """
-        contributing = self.read("CONTRIBUTING.md")
+        contributing = self.read(".github/CONTRIBUTING.md")
         for token in ("fix(cua-driver):", "feat(lume):", "no-release", "squash"):
-            self.assertIn(token, contributing, "CONTRIBUTING.md")
+            self.assertIn(token, contributing, ".github/CONTRIBUTING.md")
 
         # Either AGENTS.md carries the contract itself or it links to the file
         # that does -- both satisfy "an agent can find the rules from here".
@@ -1040,6 +1040,7 @@ fi
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
             "    needs:\n"
+            "      - staging-gate\n"
             "      - build-linux\n"
             "      - build-windows\n"
             "      - build-macos-universal\n"

@@ -76,6 +76,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "sharing.list": { spaceId: "s1" },
   "sharing.share": { spaceId: "s1", who: "bob@example.com", role: "viewer" },
   "sharing.unshare": { spaceId: "s1", who: "bob@example.com" },
+  "sharing.removals": {},
+  "sharing.ackRemovals": {},
   "volume.overview": {},
   "volume.storage": {},
   "volume.storageSet": { update: { backend: "fs", s3: null, access_key_id: null, secret_access_key: null, dry_run: true } },

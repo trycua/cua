@@ -146,7 +146,7 @@ the 34 policy cases across both apps, are no longer a merge requirement.
 Extended Python stress runs remain diagnostics for specific unresolved
 failures. This decision changes test strategy, records no new passing result,
 and does not waive the affected CI, native evidence, or release gates in
-[RFC 3550](../../../rfcs/3550-hyprland-isolated-input.md).
+[RFC 3550](../../../docs/rfcs/3550-hyprland-isolated-input.md).
 
 ## Repository Map
 

@@ -129,16 +129,17 @@ fn snapshot_settled(driver: &mut McpDriver, pid: u32, wid: u64, mode: &str) -> T
 /// Snapshot with NO capture_mode / no extra args (the default path), retrying
 /// until the tree settles.
 fn snapshot_settled_default(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolResponse {
+    // A cold window can serve its tree before its first frame is capturable,
+    // so settle on both halves of the default response, not the tree alone.
     let args = serde_json::json!({ "pid": pid as i64, "window_id": wid });
-    let mut resp = driver.call("get_window_state", args.clone());
-    for _ in 0..16 {
-        if tree_has_marker(&resp) {
-            break;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let resp = driver.call("get_window_state", args.clone());
+        if (tree_has_marker(&resp) && has_image(&resp)) || std::time::Instant::now() >= deadline {
+            return resp;
         }
-        std::thread::sleep(Duration::from_millis(500));
-        resp = driver.call("get_window_state", args.clone());
+        std::thread::sleep(Duration::from_millis(100));
     }
-    resp
 }
 
 /// Snapshot with `include_screenshot:false` (the perf opt-out), retrying until

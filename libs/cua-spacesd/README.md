@@ -256,5 +256,5 @@ current behavior.
 ## License
 
 Source-available under FSL-1.1-MIT ([LICENSE](LICENSE), see
-[LICENSING.md](../../LICENSING.md)). Code extracted from the MIT-licensed Cua
+[LICENSING.md](../../legal/LICENSING.md)). Code extracted from the MIT-licensed Cua
 prototype keeps its notice; see [Third-party notices](THIRD_PARTY_NOTICES.md).

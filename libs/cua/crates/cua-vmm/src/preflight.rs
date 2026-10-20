@@ -98,7 +98,13 @@ pub async fn report() -> BTreeMap<String, Vec<Issue>> {
         if guest == Guest::Macos && Host::current() != Host::Macos {
             continue;
         }
-        out.insert(name.to_string(), check(&request(guest, runs, None)).await);
+        let req = request(guest, runs, None);
+        // The image's real size is unknown here and it may already be on
+        // disk, so a guess must not block a create that would work: the
+        // create's own disk guards decide.
+        let mut facts = gather(&req).await;
+        facts.free_bytes = None;
+        out.insert(name.to_string(), pf::evaluate(&req, &facts));
     }
     out
 }

@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "cua-create-failure"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "serde",
 ]

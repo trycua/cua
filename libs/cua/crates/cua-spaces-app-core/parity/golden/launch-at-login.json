@@ -188,91 +188,91 @@
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
-        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {*settings.option.on|settings.option.off}",
+        "- launch-at-login-note note: settings.login.note_without_volume",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "enabled"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
-        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {settings.option.on|*settings.option.off}",
+        "- launch-at-login-note note: settings.login.note_without_volume",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "not registered"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
-        "- launch-at-login-approve text: Approve in System Settings › Login Items [Open Login Items]",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {*settings.option.on|settings.option.off}",
+        "- launch-at-login-approve text: settings.login.approve [settings.login.approve_button]",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "requires approval"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off} (disabled)",
-        "- launch-at-login-note note: Login items are not available for this copy of Cua Spaces.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {settings.option.on|*settings.option.off} (disabled)",
+        "- launch-at-login-note note: settings.login.not_found",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "not found"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off} (disabled)",
-        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {settings.option.on|*settings.option.off} (disabled)",
+        "- launch-at-login-note note: settings.login.note_without_volume",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "turning on"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
+        "- launch-at-login toggle: settings.login.label {settings.option.on|*settings.option.off}",
         "- launch-at-login-error error: Operation not permitted",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "failed"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
-        "- launch-at-login-note note: This computer provides Spaces, which stop after a restart until you open Cua Spaces.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {settings.option.on|*settings.option.off}",
+        "- launch-at-login-note note: settings.login.off_spaces",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "off, provides Spaces"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
-        "- launch-at-login-note note: This computer runs persistent agents, which stop after a restart until you open Cua Spaces.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {settings.option.on|*settings.option.off}",
+        "- launch-at-login-note note: settings.login.off_agents",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "off, runs agents"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
-        "- launch-at-login-note note: This computer provides Spaces and runs persistent agents, which stop after a restart until you open Cua Spaces.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {settings.option.on|*settings.option.off}",
+        "- launch-at-login-note note: settings.login.off_both",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "off, both"
     },
     {
       "general": [
-        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
-        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
-        "- notch choice: Spaces tab in the notch {*Show|Hide}",
-        "- welcome text: Welcome [Show again]"
+        "- launch-at-login toggle: settings.login.label {*settings.option.on|settings.option.off}",
+        "- launch-at-login-note note: settings.login.note_without_volume",
+        "- notch choice: settings.notch.label {*settings.notch.show|settings.notch.hide}",
+        "- welcome text: settings.welcome.label [settings.welcome.show_again]"
       ],
       "step": "on, both"
     },

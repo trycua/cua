@@ -10,6 +10,7 @@
  */
 
 import type { CoreClient } from "./core";
+import { messagesAsText } from "@/lib/messages";
 import type { MachineAccessNotice } from "./contracts/devices";
 import type { AgentRunStatus, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type {
@@ -669,7 +670,7 @@ export function settingsPage(
     agentsBusy: agents?.agentsBusy ?? false,
     agentsPending: agents?.agentsPending ?? [],
   };
-  return core.tryCall<SettingsPage>("settings.page", { input }) ?? null;
+  return messagesAsText(core.tryCall<SettingsPage>("settings.page", { input }) ?? null);
 }
 
 /* ---- Keyvault ----------------------------------------------------------- */

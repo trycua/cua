@@ -129,7 +129,7 @@ struct KeyvaultVaultTests {
         await m.loadSettings()
         let section = try #require(m.settingsPage.sections.first { $0.id == "keyvault" })
         let facts = section.rows.filter { $0.id.hasPrefix("keyvault-protection:") }
-        #expect(facts.map(\.label).contains("Touch ID"))
+        #expect(facts.map { CoreMessages.text($0.label) }.contains("Touch ID"))
         #expect(facts.allSatisfy { $0.value != nil })
     }
 

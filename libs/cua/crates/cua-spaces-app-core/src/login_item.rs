@@ -23,10 +23,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::settings::{SettingsOption, SettingsRow, SettingsRowKind, row};
+use crate::message::Msg;
+use crate::settings::{SettingsRow, SettingsRowKind, m, on_off, row};
 
 /// The toggle's label (Settings, General).
-pub const LABEL: &str = "Launch Cua Spaces at login";
+pub const LABEL: &str = "settings.login.label";
 /// The Done page's checkbox.
 pub const DONE_LABEL: &str = "Launch at login";
 /// The one line under the toggle (and under the Done checkbox).
@@ -40,12 +41,21 @@ pub const NOTE_WITHOUT_VOLUME: &str = "Keeps your Spaces and agents available af
 pub fn note(volume: bool) -> &'static str {
     if volume { NOTE } else { NOTE_WITHOUT_VOLUME }
 }
+
+/// [`note`] as a message (`settings.login.note`, `settings.login.note_without_volume`).
+pub fn note_msg(volume: bool) -> Msg {
+    m(if volume {
+        "settings.login.note"
+    } else {
+        "settings.login.note_without_volume"
+    })
+}
 /// macOS asks the user to allow it: where.
-pub const APPROVE: &str = "Approve in System Settings \u{203a} Login Items";
+pub const APPROVE: &str = "settings.login.approve";
 /// Its button (opens Login Items).
-pub const APPROVE_BUTTON: &str = "Open Login Items";
+pub const APPROVE_BUTTON: &str = "settings.login.approve_button";
 /// The system cannot find this copy of the app as a login item.
-pub const NOT_FOUND: &str = "Login items are not available for this copy of Cua Spaces.";
+pub const NOT_FOUND: &str = "settings.login.not_found";
 
 /// What the operating system reports for the app as a login item
 /// (`SMAppService.Status` on macOS).
@@ -101,6 +111,16 @@ pub fn off_warning(provides_spaces: bool, runs_agents: bool) -> Option<String> {
     ))
 }
 
+/// [`off_warning`] as a message (`settings.login.off_*`).
+pub fn off_warning_msg(provides_spaces: bool, runs_agents: bool) -> Option<Msg> {
+    Some(m(match (provides_spaces, runs_agents) {
+        (true, true) => "settings.login.off_both",
+        (true, false) => "settings.login.off_spaces",
+        (false, true) => "settings.login.off_agents",
+        (false, false) => return None,
+    }))
+}
+
 /// The General section's rows: the toggle and one line under it.
 pub fn rows(input: &LoginItemInput) -> Vec<SettingsRow> {
     rows_with(input, true)
@@ -111,41 +131,30 @@ pub fn rows(input: &LoginItemInput) -> Vec<SettingsRow> {
 pub fn rows_with(input: &LoginItemInput, volume: bool) -> Vec<SettingsRow> {
     use SettingsRowKind::*;
     let on = input.status.is_on();
-    let mut toggle = row("launch-at-login", Toggle, LABEL);
-    toggle.options = vec![
-        SettingsOption {
-            id: "on".into(),
-            label: "On".into(),
-            active: on,
-        },
-        SettingsOption {
-            id: "off".into(),
-            label: "Off".into(),
-            active: !on,
-        },
-    ];
+    let mut toggle = row("launch-at-login", Toggle, m(LABEL));
+    toggle.options = on_off(on);
     toggle.enabled = !input.busy && input.status != LoginItemStatus::NotFound;
     let mut out = vec![toggle];
     if let Some(error) = input.error.clone().filter(|e| !e.is_empty()) {
-        out.push(row("launch-at-login-error", Error, &error));
+        out.push(row("launch-at-login-error", Error, Msg::literal(&error)));
         return out;
     }
     match input.status {
         LoginItemStatus::RequiresApproval => {
-            let mut r = row("launch-at-login-approve", Text, APPROVE);
-            r.button = Some(APPROVE_BUTTON.into());
+            let mut r = row("launch-at-login-approve", Text, m(APPROVE));
+            r.button = Some(m(APPROVE_BUTTON));
             out.push(r);
         }
-        LoginItemStatus::NotFound => out.push(row("launch-at-login-note", Note, NOT_FOUND)),
+        LoginItemStatus::NotFound => out.push(row("launch-at-login-note", Note, m(NOT_FOUND))),
         LoginItemStatus::NotRegistered => {
-            let line = off_warning(input.provides_spaces, input.runs_agents);
+            let line = off_warning_msg(input.provides_spaces, input.runs_agents);
             out.push(row(
                 "launch-at-login-note",
                 Note,
-                line.as_deref().unwrap_or(note(volume)),
+                line.unwrap_or_else(|| note_msg(volume)),
             ));
         }
-        LoginItemStatus::Enabled => out.push(row("launch-at-login-note", Note, note(volume))),
+        LoginItemStatus::Enabled => out.push(row("launch-at-login-note", Note, note_msg(volume))),
     }
     out
 }
@@ -192,10 +201,12 @@ pub fn launch_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::message::OptionMsgEnglish;
 
     fn ids(rows: &[SettingsRow]) -> Vec<String> {
         rows.iter()
-            .map(|r| format!("{}:{}", r.id, r.label))
+            .map(|r| format!("{}:{}", r.id, r.label.english()))
             .collect()
     }
 
@@ -229,8 +240,11 @@ mod tests {
             status: LoginItemStatus::RequiresApproval,
             ..Default::default()
         });
-        assert_eq!(approve[1].label, APPROVE);
-        assert_eq!(approve[1].button.as_deref(), Some(APPROVE_BUTTON));
+        assert_eq!(approve[1].label.english(), m(APPROVE).english());
+        assert_eq!(
+            approve[1].button.english(),
+            Some(m(APPROVE_BUTTON).english())
+        );
         let off = rows(&LoginItemInput {
             status: LoginItemStatus::NotRegistered,
             provides_spaces: true,
@@ -246,7 +260,7 @@ mod tests {
             runs_agents: true,
             ..Default::default()
         });
-        assert_eq!(on[1].label, NOTE);
+        assert_eq!(on[1].label.english(), NOTE);
         let failed = rows(&LoginItemInput {
             error: Some("denied".into()),
             ..Default::default()

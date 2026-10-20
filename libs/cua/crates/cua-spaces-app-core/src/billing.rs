@@ -60,8 +60,8 @@ pub const OUT_OF_CREDIT: &str = "You're out of Cua Cloud credit.";
 /// Its button.
 pub const ADD_CREDIT: &str = "Add credit";
 
-/// "Manage billing" (Settings).
-pub const MANAGE_BILLING: &str = "Manage billing";
+/// "Manage billing" (Settings; `settings.billing.manage`).
+pub const MANAGE_BILLING: &str = "settings.billing.manage";
 
 /// A cloud Space refused for want of credit: the line, the button, and the
 /// website billing page it opens.

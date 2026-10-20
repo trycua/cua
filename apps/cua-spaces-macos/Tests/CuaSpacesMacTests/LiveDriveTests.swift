@@ -88,7 +88,7 @@ struct LiveDriveTests {
         await s.send(.save)
         #expect(s.state.check?.applied == true, "\(s.state.check?.detail ?? s.state.error ?? "")")
         #expect(!s.state.dirty && s.state.form.secretAccessKey.isEmpty)
-        #expect(s.section.rows.first { $0.id == "s3-secret" }?.placeholder == "Saved")
+        #expect(s.section.rows.first { $0.id == "s3-secret" }?.placeholder?.code == "settings.storage.saved")
         await s.choose("backend", "fs")
         await s.send(.save)
         #expect(s.state.check?.applied == true, "\(s.state.check?.detail ?? s.state.error ?? "")")

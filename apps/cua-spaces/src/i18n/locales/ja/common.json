@@ -9,5 +9,6 @@
   "common.action.reconnect": "再接続",
   "common.status.connecting": "接続中…",
   "common.action.back": "戻る",
-  "common.action.done": "完了"
+  "common.action.done": "完了",
+  "common.literal": "{text}"
 }

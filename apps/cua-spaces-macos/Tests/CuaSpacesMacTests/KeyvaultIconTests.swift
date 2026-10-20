@@ -206,7 +206,7 @@ struct KeyvaultIconTests {
         await app.keyvault.refresh()
         await app.loadSettings()
         let row = try #require(app.settingsPage.sections.first { $0.id == "keyvault" }?.rows.first { $0.id == "keyvault-site-icons" })
-        #expect(row.label == "Load site icons from Google")
+        #expect(row.label.code == "settings.keyvault.site_icons.label")
         #expect(row.options.first { $0.id == "on" }?.active == true)
         await app.choose(row: "keyvault-site-icons", option: "off")
         #expect(app.settings.keyvaultSiteIcons == false)

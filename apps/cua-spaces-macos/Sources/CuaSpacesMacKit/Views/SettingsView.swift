@@ -25,13 +25,13 @@ struct SettingsView: View {
                         }
                     } header: {
                         HStack {
-                            Text(section.title)
+                            Text(CoreMessages.text(section.title))
                             Spacer()
                             if let button = section.button {
-                                Button(button) { Task { await headerButton(section.id) } }
+                                Button(CoreMessages.text(button)) { Task { await headerButton(section.id) } }
                                     .controlSize(.small)
                                     .disabled(!section.buttonEnabled)
-                                    .help(section.buttonHelp ?? "")
+                                    .help(section.buttonHelp.map(CoreMessages.text) ?? "")
                             }
                         }
                     }
@@ -108,57 +108,59 @@ struct SettingsView: View {
                         Text(value).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     }
                     if let button = r.button {
-                        Button(button) { press(r, in: section) }
+                        Button(CoreMessages.text(button)) { press(r, in: section) }
                             .disabled(!r.enabled)
                     }
                 }
             } label: {
-                Text(r.label).lineLimit(1)
+                Text(CoreMessages.text(r.label)).lineLimit(1)
             }
             .opacity(r.enabled || r.button != nil ? 1 : 0.5)
-            .help(r.help ?? "")
+            .help(r.help.map(CoreMessages.text) ?? "")
         case .choice:
-            Picker(r.label, selection: Binding(
+            Picker(CoreMessages.text(r.label), selection: Binding(
                 get: { r.options.first(where: \.active)?.id ?? "" },
                 set: { id in choose(r, id, in: section) })) {
-                ForEach(r.options, id: \.id) { Text($0.label).tag($0.id) }
+                ForEach(r.options, id: \.id) { Text(CoreMessages.text($0.label)).tag($0.id) }
             }
             .pickerStyle(.segmented)
             .disabled(!r.enabled)
-            .help(r.help ?? "")
+            .help(r.help.map(CoreMessages.text) ?? "")
         case .toggle:
-            Toggle(r.label, isOn: Binding(
+            Toggle(CoreMessages.text(r.label), isOn: Binding(
                 get: { r.options.first(where: { $0.id == "on" })?.active ?? false },
                 set: { choose(r, $0 ? "on" : "off", in: section) }))
                 .disabled(!r.enabled)
-                .help(r.help ?? "")
+                .help(r.help.map(CoreMessages.text) ?? "")
                 .accessibilityIdentifier("settings-\(r.id)")
         case .field:
-            TextField(r.label, text: Binding(get: { r.value ?? "" }, set: { model.storage.edit(r.id, $0) }),
-                      prompt: r.placeholder.map { Text($0) })
+            TextField(CoreMessages.text(r.label), text: Binding(get: { r.value ?? "" }, set: { model.storage.edit(r.id, $0) }),
+                      prompt: r.placeholder.map { Text(CoreMessages.text($0)) })
                 .disabled(!r.enabled)
                 .accessibilityIdentifier("settings-\(r.id)")
         case .secret:
-            SecureField(r.label, text: Binding(get: { r.value ?? "" }, set: { model.storage.edit(r.id, $0) }),
-                        prompt: r.placeholder.map { Text($0) })
+            SecureField(CoreMessages.text(r.label), text: Binding(get: { r.value ?? "" }, set: { model.storage.edit(r.id, $0) }),
+                        prompt: r.placeholder.map { Text(CoreMessages.text($0)) })
                 .disabled(!r.enabled)
                 .accessibilityIdentifier("settings-\(r.id)")
         case .prompt:
-            PromptBox(label: r.label, text: r.value ?? "", copyLabel: r.button ?? "Copy")
+            PromptBox(label: CoreMessages.text(r.label), text: r.value ?? "",
+                      copyLabel: r.button.map(CoreMessages.text) ?? CoreMessages.text(code: "settings.storage.copy"))
         case .link:
-            Button(r.label) { press(r, in: section) }
+            Button(CoreMessages.text(r.label)) { press(r, in: section) }
                 .buttonStyle(.link)
                 .disabled(!r.enabled)
                 .accessibilityIdentifier("settings-\(r.id)")
         case .note:
             HStack(spacing: 4) {
-                Text(r.label).font(.callout).foregroundStyle(.secondary).lineLimit(1).help(r.label)
+                Text(CoreMessages.text(r.label)).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                    .help(CoreMessages.text(r.label))
                 if let label = r.linkLabel, let url = r.linkUrl.flatMap(URL.init(string:)) {
-                    Link(label, destination: url).font(.callout)
+                    Link(CoreMessages.text(label), destination: url).font(.callout)
                 }
             }
         case .error:
-            Text(r.label).foregroundStyle(.red).lineLimit(1).help(r.label)
+            Text(CoreMessages.text(r.label)).foregroundStyle(.red).lineLimit(1).help(CoreMessages.text(r.label))
         }
     }
 }

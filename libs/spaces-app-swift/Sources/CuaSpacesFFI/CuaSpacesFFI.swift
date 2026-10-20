@@ -31774,9 +31774,9 @@ public struct AppSettingsOption: Equatable, Hashable {
      */
     public var id: String
     /**
-     * Label.
+     * Label (`settings.*`; text that is data is `common.literal`).
      */
-    public var label: String
+    public var label: AppMsg
     /**
      * Chosen.
      */
@@ -31789,8 +31789,8 @@ public struct AppSettingsOption: Equatable, Hashable {
          * `show`, `hide`, `local`, `cloud`, `on`, `off`.
          */id: String,
         /**
-         * Label.
-         */label: String,
+         * Label (`settings.*`; text that is data is `common.literal`).
+         */label: AppMsg,
         /**
          * Chosen.
          */active: Bool) {
@@ -31816,14 +31816,14 @@ public struct FfiConverterTypeAppSettingsOption: FfiConverterRustBuffer {
         return
             try AppSettingsOption(
                 id: FfiConverterString.read(from: &buf),
-                label: FfiConverterString.read(from: &buf),
+                label: FfiConverterTypeAppMsg.read(from: &buf),
                 active: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSettingsOption, into buf: inout [UInt8]) {
         FfiConverterString.write(value.id, into: &buf)
-        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterTypeAppMsg.write(value.label, into: &buf)
         FfiConverterBool.write(value.active, into: &buf)
     }
 }
@@ -31846,9 +31846,9 @@ public func FfiConverterTypeAppSettingsOption_lower(_ value: AppSettingsOption) 
 
 public struct AppSettingsPage: Equatable, Hashable {
     /**
-     * "Settings".
+     * "Settings" (`settings.title`).
      */
-    public var title: String
+    public var title: AppMsg
     /**
      * Account, General, Privacy (once read), AI agents.
      */
@@ -31858,8 +31858,8 @@ public struct AppSettingsPage: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Settings".
-         */title: String,
+         * "Settings" (`settings.title`).
+         */title: AppMsg,
         /**
          * Account, General, Privacy (once read), AI agents.
          */sections: [AppSettingsSection]) {
@@ -31883,13 +31883,13 @@ public struct FfiConverterTypeAppSettingsPage: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSettingsPage {
         return
             try AppSettingsPage(
-                title: FfiConverterString.read(from: &buf),
+                title: FfiConverterTypeAppMsg.read(from: &buf),
                 sections: FfiConverterSequenceTypeAppSettingsSection.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSettingsPage, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterTypeAppMsg.write(value.title, into: &buf)
         FfiConverterSequenceTypeAppSettingsSection.write(value.sections, into: &buf)
     }
 }
@@ -31920,17 +31920,19 @@ public struct AppSettingsRow: Equatable, Hashable {
      */
     public var kind: AppSettingsRowKind
     /**
-     * Label (or the note's text).
+     * Label (or the note's text): a message code; a name or an error from
+     * elsewhere is `common.literal`.
      */
-    public var label: String
+    public var label: AppMsg
     /**
-     * Muted value.
+     * Muted value: data, or text composed from it (it moves to message
+     * codes with its surface).
      */
     public var value: String?
     /**
      * A button's label.
      */
-    public var button: String?
+    public var button: AppMsg?
     /**
      * A choice's options.
      */
@@ -31942,11 +31944,11 @@ public struct AppSettingsRow: Equatable, Hashable {
     /**
      * Tooltip.
      */
-    public var help: String?
+    public var help: AppMsg?
     /**
      * A note's link: label.
      */
-    public var linkLabel: String?
+    public var linkLabel: AppMsg?
     /**
      * A note's link: URL (or what a Text row's button opens).
      */
@@ -31954,7 +31956,7 @@ public struct AppSettingsRow: Equatable, Hashable {
     /**
      * A field's placeholder.
      */
-    public var placeholder: String?
+    public var placeholder: AppMsg?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31966,14 +31968,16 @@ public struct AppSettingsRow: Equatable, Hashable {
          * How it draws.
          */kind: AppSettingsRowKind,
         /**
-         * Label (or the note's text).
-         */label: String,
+         * Label (or the note's text): a message code; a name or an error from
+         * elsewhere is `common.literal`.
+         */label: AppMsg,
         /**
-         * Muted value.
+         * Muted value: data, or text composed from it (it moves to message
+         * codes with its surface).
          */value: String?,
         /**
          * A button's label.
-         */button: String?,
+         */button: AppMsg?,
         /**
          * A choice's options.
          */options: [AppSettingsOption],
@@ -31982,16 +31986,16 @@ public struct AppSettingsRow: Equatable, Hashable {
          */enabled: Bool,
         /**
          * Tooltip.
-         */help: String?,
+         */help: AppMsg?,
         /**
          * A note's link: label.
-         */linkLabel: String?,
+         */linkLabel: AppMsg?,
         /**
          * A note's link: URL (or what a Text row's button opens).
          */linkUrl: String?,
         /**
          * A field's placeholder.
-         */placeholder: String?) {
+         */placeholder: AppMsg?) {
         self.id = id
         self.kind = kind
         self.label = label
@@ -32023,30 +32027,30 @@ public struct FfiConverterTypeAppSettingsRow: FfiConverterRustBuffer {
             try AppSettingsRow(
                 id: FfiConverterString.read(from: &buf),
                 kind: FfiConverterTypeAppSettingsRowKind.read(from: &buf),
-                label: FfiConverterString.read(from: &buf),
+                label: FfiConverterTypeAppMsg.read(from: &buf),
                 value: FfiConverterOptionString.read(from: &buf),
-                button: FfiConverterOptionString.read(from: &buf),
+                button: FfiConverterOptionTypeAppMsg.read(from: &buf),
                 options: FfiConverterSequenceTypeAppSettingsOption.read(from: &buf),
                 enabled: FfiConverterBool.read(from: &buf),
-                help: FfiConverterOptionString.read(from: &buf),
-                linkLabel: FfiConverterOptionString.read(from: &buf),
+                help: FfiConverterOptionTypeAppMsg.read(from: &buf),
+                linkLabel: FfiConverterOptionTypeAppMsg.read(from: &buf),
                 linkUrl: FfiConverterOptionString.read(from: &buf),
-                placeholder: FfiConverterOptionString.read(from: &buf)
+                placeholder: FfiConverterOptionTypeAppMsg.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSettingsRow, into buf: inout [UInt8]) {
         FfiConverterString.write(value.id, into: &buf)
         FfiConverterTypeAppSettingsRowKind.write(value.kind, into: &buf)
-        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterTypeAppMsg.write(value.label, into: &buf)
         FfiConverterOptionString.write(value.value, into: &buf)
-        FfiConverterOptionString.write(value.button, into: &buf)
+        FfiConverterOptionTypeAppMsg.write(value.button, into: &buf)
         FfiConverterSequenceTypeAppSettingsOption.write(value.options, into: &buf)
         FfiConverterBool.write(value.enabled, into: &buf)
-        FfiConverterOptionString.write(value.help, into: &buf)
-        FfiConverterOptionString.write(value.linkLabel, into: &buf)
+        FfiConverterOptionTypeAppMsg.write(value.help, into: &buf)
+        FfiConverterOptionTypeAppMsg.write(value.linkLabel, into: &buf)
         FfiConverterOptionString.write(value.linkUrl, into: &buf)
-        FfiConverterOptionString.write(value.placeholder, into: &buf)
+        FfiConverterOptionTypeAppMsg.write(value.placeholder, into: &buf)
     }
 }
 
@@ -32072,13 +32076,13 @@ public struct AppSettingsSection: Equatable, Hashable {
      */
     public var id: String
     /**
-     * "Account", "General", "Privacy", "AI agents".
+     * "Account", "General", "Privacy", "AI agents" (`settings.*.title`).
      */
-    public var title: String
+    public var title: AppMsg
     /**
      * A button in the header.
      */
-    public var button: String?
+    public var button: AppMsg?
     /**
      * That button can be used.
      */
@@ -32086,7 +32090,7 @@ public struct AppSettingsSection: Equatable, Hashable {
     /**
      * Its tooltip.
      */
-    public var buttonHelp: String?
+    public var buttonHelp: AppMsg?
     /**
      * Rows.
      */
@@ -32099,17 +32103,17 @@ public struct AppSettingsSection: Equatable, Hashable {
          * `account`, `general`, `privacy`, `agents`.
          */id: String,
         /**
-         * "Account", "General", "Privacy", "AI agents".
-         */title: String,
+         * "Account", "General", "Privacy", "AI agents" (`settings.*.title`).
+         */title: AppMsg,
         /**
          * A button in the header.
-         */button: String?,
+         */button: AppMsg?,
         /**
          * That button can be used.
          */buttonEnabled: Bool,
         /**
          * Its tooltip.
-         */buttonHelp: String?,
+         */buttonHelp: AppMsg?,
         /**
          * Rows.
          */rows: [AppSettingsRow]) {
@@ -32138,20 +32142,20 @@ public struct FfiConverterTypeAppSettingsSection: FfiConverterRustBuffer {
         return
             try AppSettingsSection(
                 id: FfiConverterString.read(from: &buf),
-                title: FfiConverterString.read(from: &buf),
-                button: FfiConverterOptionString.read(from: &buf),
+                title: FfiConverterTypeAppMsg.read(from: &buf),
+                button: FfiConverterOptionTypeAppMsg.read(from: &buf),
                 buttonEnabled: FfiConverterBool.read(from: &buf),
-                buttonHelp: FfiConverterOptionString.read(from: &buf),
+                buttonHelp: FfiConverterOptionTypeAppMsg.read(from: &buf),
                 rows: FfiConverterSequenceTypeAppSettingsRow.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSettingsSection, into buf: inout [UInt8]) {
         FfiConverterString.write(value.id, into: &buf)
-        FfiConverterString.write(value.title, into: &buf)
-        FfiConverterOptionString.write(value.button, into: &buf)
+        FfiConverterTypeAppMsg.write(value.title, into: &buf)
+        FfiConverterOptionTypeAppMsg.write(value.button, into: &buf)
         FfiConverterBool.write(value.buttonEnabled, into: &buf)
-        FfiConverterOptionString.write(value.buttonHelp, into: &buf)
+        FfiConverterOptionTypeAppMsg.write(value.buttonHelp, into: &buf)
         FfiConverterSequenceTypeAppSettingsRow.write(value.rows, into: &buf)
     }
 }

@@ -34,9 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::about::UpdateChannel;
 
-use crate::settings::{
-    SettingsOption, SettingsPage, SettingsRow, SettingsRowKind, SettingsSection,
-};
+use crate::settings::{SettingsPage, SettingsRow, SettingsRowKind, SettingsSection, m, on_off};
 
 /// The switches, as stored (`"experiments": {"cuaVolume": true}`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -104,25 +102,24 @@ impl Experiment {
         ALL.into_iter().find(|e| e.id() == id.trim())
     }
 
-    /// The switch's label.
+    /// The switch's label, as a message code (`settings.experiments.<id>.title`).
     pub fn title(self) -> &'static str {
         match self {
-            Experiment::CuaVolume => "Cua Volume",
-            Experiment::YourCloud => "Your cloud",
-            Experiment::Sharing => "Sharing",
-            Experiment::WebUi => "New UI",
+            Experiment::CuaVolume => "settings.experiments.cua_volume.title",
+            Experiment::YourCloud => "settings.experiments.your_cloud.title",
+            Experiment::Sharing => "settings.experiments.sharing.title",
+            Experiment::WebUi => "settings.experiments.web_ui.title",
         }
     }
 
-    /// The one line under the switch.
+    /// The one line under the switch, as a message code
+    /// (`settings.experiments.<id>.description`).
     pub fn description(self) -> &'static str {
         match self {
-            Experiment::CuaVolume => "Memory and files your agents share across every Space.",
-            Experiment::YourCloud => {
-                "Create Spaces in your own AWS, Google Cloud or Modal account."
-            }
-            Experiment::Sharing => "Share a Space with other Cua accounts.",
-            Experiment::WebUi => "The Spaces window built on the shared web UI.",
+            Experiment::CuaVolume => "settings.experiments.cua_volume.description",
+            Experiment::YourCloud => "settings.experiments.your_cloud.description",
+            Experiment::Sharing => "settings.experiments.sharing.description",
+            Experiment::WebUi => "settings.experiments.web_ui.description",
         }
     }
 }
@@ -286,54 +283,35 @@ pub fn page(experiments: &Experiments) -> SettingsPage {
         if e == Experiment::WebUi {
             // "Use classic UI": on while the New UI is off.
             let classic = !experiments.web_ui;
-            let mut toggle =
-                crate::settings::row(CLASSIC_UI_ROW, SettingsRowKind::Toggle, "Use classic UI");
-            toggle.options = vec![
-                SettingsOption {
-                    id: "on".into(),
-                    label: "On".into(),
-                    active: classic,
-                },
-                SettingsOption {
-                    id: "off".into(),
-                    label: "Off".into(),
-                    active: !classic,
-                },
-            ];
+            let mut toggle = crate::settings::row(
+                CLASSIC_UI_ROW,
+                SettingsRowKind::Toggle,
+                m("settings.experiments.classic_ui.title"),
+            );
+            toggle.options = on_off(classic);
             rows.push(toggle);
             rows.push(crate::settings::row(
                 &format!("{CLASSIC_UI_ROW}-note"),
                 SettingsRowKind::Note,
-                "Open the previous Spaces window instead of the New UI.",
+                m("settings.experiments.classic_ui.description"),
             ));
             continue;
         }
         let on = experiments.is_on(e);
-        let mut toggle = crate::settings::row(&row_id(e), SettingsRowKind::Toggle, e.title());
-        toggle.options = vec![
-            SettingsOption {
-                id: "on".into(),
-                label: "On".into(),
-                active: on,
-            },
-            SettingsOption {
-                id: "off".into(),
-                label: "Off".into(),
-                active: !on,
-            },
-        ];
+        let mut toggle = crate::settings::row(&row_id(e), SettingsRowKind::Toggle, m(e.title()));
+        toggle.options = on_off(on);
         rows.push(toggle);
         rows.push(crate::settings::row(
             &format!("{}-note", row_id(e)),
             SettingsRowKind::Note,
-            e.description(),
+            m(e.description()),
         ));
     }
     SettingsPage {
-        title: "Experiments".into(),
+        title: m("settings.experiments.title"),
         sections: vec![SettingsSection {
             id: "experiments".into(),
-            title: "Experiments".into(),
+            title: m("settings.experiments.title"),
             button: None,
             button_enabled: false,
             button_help: None,
@@ -367,11 +345,13 @@ pub fn switches(page: &SettingsPage) -> Vec<&SettingsRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::message::OptionMsgEnglish;
 
     #[test]
     fn every_experiment_but_sharing_is_off_by_default_with_one_line_each() {
         let p = page(&Experiments::default());
-        assert_eq!(p.title, "Experiments");
+        assert_eq!(p.title.english(), "Experiments");
         let ids: Vec<&str> = p.sections[0].rows.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -440,7 +420,7 @@ mod tests {
                 .cloned()
                 .unwrap();
             (
-                r.label.clone(),
+                r.label.english(),
                 r.options.iter().find(|o| o.active).unwrap().id.clone(),
             )
         };

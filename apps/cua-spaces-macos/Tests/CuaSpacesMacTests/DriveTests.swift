@@ -136,7 +136,7 @@ struct DriveTests {
         var revealed: [String] = []
         s.reveal = { revealed.append($0) }
         await s.load()
-        #expect(s.section.rows.first?.options.map(\.label) == ["This Mac", "S3-compatible"])
+        #expect(s.section.rows.first?.options.map(\.label.code) == ["settings.storage.this_mac", "settings.storage.s3"])
         #expect(s.section.rows.allSatisfy { !$0.options.contains { $0.id == "cloud" } })
         await s.choose("backend", "s3")
         #expect(s.section.rows.first { $0.id == "s3-prompt" }?.value?.contains("cua volume config set-keys") == true)
@@ -157,7 +157,7 @@ struct DriveTests {
         #expect(save.1["secret_access_key"] as? String == "fixture-secret")
         // Saved: the form forgets the keys; the daemon says they are saved.
         #expect(s.state.form.secretAccessKey.isEmpty && !s.state.dirty)
-        #expect(s.section.rows.first { $0.id == "s3-secret" }?.placeholder == "Saved")
+        #expect(s.section.rows.first { $0.id == "s3-secret" }?.placeholder?.code == "settings.storage.saved")
 
         await s.choose("mount", "on")
         #expect(tools.names().contains("volume_mount"))

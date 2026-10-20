@@ -319,29 +319,29 @@ export interface SettingsInput {
 export interface SettingsRow {
   id: string;
   kind: "text" | "choice" | "note" | "error" | "field" | "secret" | "prompt" | "link" | "toggle";
-  label: string;
+  label: Msg;
   value: string | null;
-  button: string | null;
-  options: { id: string; label: string; active: boolean }[];
+  button: Msg | null;
+  options: { id: string; label: Msg; active: boolean }[];
   enabled: boolean;
-  help: string | null;
-  linkLabel: string | null;
+  help: Msg | null;
+  linkLabel: Msg | null;
   linkUrl: string | null;
   /** A field's placeholder. */
-  placeholder?: string | null;
+  placeholder?: Msg | null;
 }
 
 export interface SettingsSection {
   id: string;
-  title: string;
-  button: string | null;
+  title: Msg;
+  button: Msg | null;
   buttonEnabled: boolean;
-  buttonHelp: string | null;
+  buttonHelp: Msg | null;
   rows: SettingsRow[];
 }
 
 export interface SettingsPage {
-  title: string;
+  title: Msg;
   sections: SettingsSection[];
 }
 

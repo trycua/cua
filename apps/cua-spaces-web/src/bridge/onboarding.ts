@@ -23,6 +23,7 @@
  */
 
 import type { CoreClient } from "./core";
+import { messagesAsText } from "@/lib/messages";
 import { hostOs, type HostOs } from "./host-os";
 import type { OnboardingMode, PermissionHint, TelemetryView } from "./contracts/host";
 import type {
@@ -121,7 +122,7 @@ export function onboardingReduce(
  * passes through, in the words of the system the app runs on (the tray off
  * a Mac). */
 export function onboardingView(core: CoreClient, state: OnboardingFlowState, os: HostOs = hostOs()): OnboardingView {
-  const v = core.tryCall<OnboardingView>("onboarding.view", { state, hostOs: os, withoutCli: true }) ?? fallbackView(state, os);
+  const v = messagesAsText(core.tryCall<OnboardingView>("onboarding.view", { state, hostOs: os, withoutCli: true })) ?? fallbackView(state, os);
   const passed = passedSteps(os);
   const facts = passedFacts(os);
   return {

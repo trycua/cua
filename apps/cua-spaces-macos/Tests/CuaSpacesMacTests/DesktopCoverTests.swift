@@ -36,7 +36,7 @@ struct DesktopCoverTests {
         await model.loadSettings()
         let general = try #require(model.settingsPage.sections.first { $0.id == "general" })
         let row = try #require(general.rows.first { $0.id == "auto-connect" })
-        #expect(row.kind == .toggle && row.label == "Connect to the desktop automatically")
+        #expect(row.kind == .toggle && row.label.code == "settings.auto_connect.label")
         #expect(row.options.first { $0.id == "on" }?.active == true)
         await model.choose(row: "auto-connect", option: "off")
         #expect(!model.settings.autoConnect)

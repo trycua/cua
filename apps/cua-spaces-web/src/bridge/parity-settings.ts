@@ -10,6 +10,7 @@
  */
 
 import type { CoreClient } from "./core";
+import { messagesAsText } from "@/lib/messages";
 import type {
   ApproveSheetState,
   ApproveSheetView,
@@ -64,7 +65,9 @@ export type SettingsCheckpoint =
   | { kind: "notifications"; feed: NotificationInput[]; nowMs: number; view: NotificationsView };
 
 /** The bridge's answer to each Settings and Notifications core call. */
-export function settingsParityMethods(core: CoreClient, record: (c: SettingsCheckpoint) => void): Record<string, (a: Args) => unknown> {
+export function settingsParityMethods(core: CoreClient, recordRaw: (c: SettingsCheckpoint) => void): Record<string, (a: Args) => unknown> {
+  // What the page draws is text: the checkpoints hold the words.
+  const record = (c: SettingsCheckpoint) => recordRaw(messagesAsText(c));
   const seen = <T>(v: T | null, f: (v: T) => void): T | null => {
     if (v !== null) f(v);
     return v;

@@ -1193,10 +1193,16 @@ struct ParityTests {
         }
     }
 
+    /// A message as the goldens show it (`frame::msg_of`): its code, or the
+    /// text of a `common.literal`.
+    func msgWord(_ m: AppMsg) -> String {
+        m.code == "common.literal" ? (m.vars["text"] ?? "") : m.code
+    }
+
     func settingsFrame(_ p: AppSettingsPage) -> [String] {
-        var out = ["= \(p.title)"]
+        var out = ["= \(msgWord(p.title))"]
         for sec in p.sections {
-            out.append("# \(sec.title) (\(sec.id))\(sec.button.map { " [\($0)]" } ?? "")\(sec.button == nil || sec.buttonEnabled ? "" : " (disabled)")")
+            out.append("# \(msgWord(sec.title)) (\(sec.id))\(sec.button.map { " [\(msgWord($0))]" } ?? "")\(sec.button == nil || sec.buttonEnabled ? "" : " (disabled)")")
             for r in sec.rows { out.append(settingRow(r)) }
         }
         return out
@@ -1204,18 +1210,18 @@ struct ParityTests {
 
     /// One Settings row (`frame::setting_row`).
     func settingRow(_ r: AppSettingsRow) -> String {
-        let options = r.options.isEmpty ? "" : " {" + r.options.map { "\($0.active ? "*" : "")\($0.label)" }.joined(separator: "|") + "}"
-        return "- \(r.id) \(String(describing: r.kind)): \(r.label)"
-            + (r.value.map { " = \($0)" } ?? "") + (r.placeholder.map { " ~\($0)" } ?? "")
-            + (r.button.map { " [\($0)]" } ?? "") + options
-            + (r.enabled ? "" : " (disabled)") + (r.help.map { " ?\($0)" } ?? "")
-            + (r.linkUrl.map { " <\(r.linkLabel ?? "") \($0)>" } ?? "")
+        let options = r.options.isEmpty ? "" : " {" + r.options.map { "\($0.active ? "*" : "")\(msgWord($0.label))" }.joined(separator: "|") + "}"
+        return "- \(r.id) \(String(describing: r.kind)): \(msgWord(r.label))"
+            + (r.value.map { " = \($0)" } ?? "") + (r.placeholder.map { " ~\(msgWord($0))" } ?? "")
+            + (r.button.map { " [\(msgWord($0))]" } ?? "") + options
+            + (r.enabled ? "" : " (disabled)") + (r.help.map { " ?\(msgWord($0))" } ?? "")
+            + (r.linkUrl.map { " <\(r.linkLabel.map(msgWord) ?? "") \($0)>" } ?? "")
     }
 
     /// The Volume page's storage choice (`frame::drive_storage`).
     func driveStorageFrame(_ d: AppDriveCard?) -> Any {
         guard let d, let title = d.storageTitle else { return NSNull() }
-        var out = ["\(title) {" + d.storageOptions.map { "\($0.active ? "*" : "")\($0.label)" }.joined(separator: "|") + "}"]
+        var out = ["\(title) {" + d.storageOptions.map { "\($0.active ? "*" : "")\(msgWord($0.label))" }.joined(separator: "|") + "}"]
         out += d.storageRows.map(settingRow)
         if let n = d.storageNote { out.append("~\(n)") }
         if let t = d.storedIn { out.append("\(t) (\(d.storedPath ?? ""))") }
@@ -1400,7 +1406,7 @@ struct ParityTests {
             let section = appStorageSection(input: typed, state: state)
             frames.append([
                 "step": step["step"] as! String,
-                "section": settingsFrame(AppSettingsPage(title: "Settings", sections: [section])),
+                "section": settingsFrame(AppSettingsPage(title: AppMsg(code: "settings.title", vars: [:]), sections: [section])),
                 "request": state.request.map { appStorageRequestText(request: $0) } as Any? ?? NSNull(),
             ])
         }
@@ -2313,7 +2319,7 @@ struct ParityTests {
                 updates = [
                     "autoCheck": check(u.autoCheck, u.autoCheckLabel, true),
                     "autoInstall": check(u.autoInstall, u.autoInstallLabel, u.autoInstallEnabled),
-                    "channel": "\(u.channelLabel) " + u.channels.map { "\($0.label)\($0.active ? "*" : "")" }
+                    "channel": "\(u.channelLabel) " + u.channels.map { "\(msgWord($0.label))\($0.active ? "*" : "")" }
                         .joined(separator: " | "),
                     "help": u.channelHelp,
                     "check": "\(u.checkLabel) \(u.checkEnabled ? "on" : "off")",

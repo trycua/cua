@@ -37,7 +37,7 @@ import type { Location } from "../model/types";
 import { settingsPage, type SettingsRow, type SettingsSection, type SignInPhase } from "../model/window";
 import { experimentsPage, settingsWithStorage } from "../model/experiments";
 import { chooseExperimentRow, useExperiments } from "../state/experiments";
-import { AVAILABLE_LOCALES, t, useT } from "../i18n";
+import { AVAILABLE_LOCALES, tMsg, t, useT, type Msg } from "../i18n";
 import { LOCALE_ENDONYMS, savedLocaleChoice, setLocaleChoice } from "../i18n/preference";
 import { MiddleText } from "./MiddleText";
 import { SfIcon } from "./SfIcon";
@@ -454,7 +454,7 @@ export function SettingsPanel({
     <div
       className="settings-panel dw-settings-panel"
       role="dialog"
-      aria-label={page.title}
+      aria-label={tMsg(page.title)}
       tabIndex={-1}
       ref={panelRef}
       // A click on the panel's own chrome must not fall through to the portal's
@@ -475,19 +475,19 @@ export function SettingsPanel({
         const error = sectionError(section.id);
         const isStorage = section.id === "storage";
         return (
-          <section className="st-group" aria-label={section.title} key={section.id}>
+          <section className="st-group" aria-label={tMsg(section.title)} key={section.id}>
             <div className="st-head">
-              <h3 className="st-title">{section.title}</h3>
+              <h3 className="st-title">{tMsg(section.title)}</h3>
               {section.button && (
                 <button
                   type="button"
                   className="dw-btn dw-btn-quiet"
                   data-owns-enter
                   disabled={!section.buttonEnabled}
-                  title={section.buttonHelp ?? undefined}
+                  title={msgText(section.buttonHelp)}
                   onClick={() => (isStorage ? storage.send({ type: "save" }) : void configureAll())}
                 >
-                  {section.button}
+                  {tMsg(section.button)}
                 </button>
               )}
             </div>
@@ -545,6 +545,9 @@ export function SettingsPanel({
 }
 
 /** One Settings row (also the first run's Volume page bucket rows). */
+/** An optional core message as text (none: undefined). */
+const msgText = (m: Msg | null | undefined): string | undefined => (m ? tMsg(m) : undefined);
+
 export function SettingsRowItem({
   row,
   onPress,
@@ -562,13 +565,13 @@ export function SettingsRowItem({
     case "field":
     case "secret":
       return (
-        <div className="st-row" data-dim={!row.enabled ? "true" : undefined} title={row.help ?? undefined}>
-          <span className="st-label">{row.label}</span>
+        <div className="st-row" data-dim={!row.enabled ? "true" : undefined} title={msgText(row.help)}>
+          <span className="st-label">{tMsg(row.label)}</span>
           <input
             className="dw-input st-field"
             type={row.kind === "secret" ? "password" : "text"}
-            aria-label={row.label}
-            placeholder={row.placeholder ?? undefined}
+            aria-label={tMsg(row.label)}
+            placeholder={msgText(row.placeholder)}
             value={row.value ?? ""}
             disabled={!row.enabled}
             autoComplete="off"
@@ -582,16 +585,16 @@ export function SettingsRowItem({
     case "error":
       return (
         <p className="st-error" role="alert">
-          {row.label}
+          {tMsg(row.label)}
         </p>
       );
     case "note":
       return (
         <p className="st-note">
-          {row.label}{" "}
+          {tMsg(row.label)}{" "}
           {row.linkUrl && (
             <button type="button" className="dw-link" data-owns-enter onClick={() => onOpenExternal(row.linkUrl!)}>
-              {row.linkLabel}
+              {row.linkLabel && tMsg(row.linkLabel)}
             </button>
           )}
         </p>
@@ -599,15 +602,15 @@ export function SettingsRowItem({
     case "toggle": {
       const on = row.options.find((o) => o.id === "on")?.active ?? false;
       return (
-        <div className="st-row" title={row.help ?? undefined}>
-          <span className="st-label">{row.label}</span>
+        <div className="st-row" title={msgText(row.help)}>
+          <span className="st-label">{tMsg(row.label)}</span>
           <button
             type="button"
             role="switch"
             className="kv-switch"
             data-owns-enter
             aria-checked={on}
-            aria-label={row.label}
+            aria-label={tMsg(row.label)}
             disabled={!row.enabled}
             onClick={() => onChoose(row, on ? "off" : "on")}
           />
@@ -616,9 +619,9 @@ export function SettingsRowItem({
     }
     case "choice":
       return (
-        <div className="st-row" title={row.help ?? undefined}>
-          <span className="st-label">{row.label}</span>
-          <div className="st-segmented" role="radiogroup" aria-label={row.label}>
+        <div className="st-row" title={msgText(row.help)}>
+          <span className="st-label">{tMsg(row.label)}</span>
+          <div className="st-segmented" role="radiogroup" aria-label={tMsg(row.label)}>
             {row.options.map((o) => (
               <button
                 key={o.id}
@@ -630,7 +633,7 @@ export function SettingsRowItem({
                 disabled={!row.enabled}
                 onClick={() => onChoose(row, o.id)}
               >
-                {o.label}
+                {tMsg(o.label)}
               </button>
             ))}
           </div>
@@ -640,7 +643,7 @@ export function SettingsRowItem({
       return (
         <div className="st-prompt">
           <div className="st-row">
-            <span className="st-label">{row.label}</span>
+            <span className="st-label">{tMsg(row.label)}</span>
             {row.button && (
               <button
                 type="button"
@@ -648,18 +651,18 @@ export function SettingsRowItem({
                 data-owns-enter
                 onClick={() => void writeClipboard(row.value ?? "").catch(() => {})}
               >
-                {row.button}
+                {tMsg(row.button)}
               </button>
             )}
           </div>
-          <textarea className="st-prompt-text" aria-label={row.label} readOnly rows={5} value={row.value ?? ""} />
+          <textarea className="st-prompt-text" aria-label={tMsg(row.label)} readOnly rows={5} value={row.value ?? ""} />
         </div>
       );
     case "link":
       return (
         <div className="st-row st-link-row">
           <button type="button" className="dw-link st-link" data-owns-enter disabled={!row.enabled} onClick={() => onPress(row)}>
-            {row.label}
+            {tMsg(row.label)}
           </button>
         </div>
       );
@@ -670,12 +673,12 @@ export function SettingsRowItem({
         <div
           className="st-row"
           data-dim={!row.button && !row.enabled ? "true" : undefined}
-          title={path ? undefined : (row.help ?? undefined)}
+          title={path ? undefined : msgText(row.help)}
         >
           <span className="st-label" role={row.id === "sign-in-code" ? "status" : undefined}>
-            {row.label}
+            {tMsg(row.label)}
           </span>
-          {row.value && path && <MiddleText className="st-value" text={row.value} title={row.help} />}
+          {row.value && path && <MiddleText className="st-value" text={row.value} title={msgText(row.help)} />}
           {row.value && !path && (
             <span className={`st-value${row.id === "sign-in-code" ? " st-code" : ""}`} aria-live={row.id === "sign-in-code" ? "polite" : undefined}>
               {row.value}
@@ -683,7 +686,7 @@ export function SettingsRowItem({
           )}
           {row.button && (
             <button type="button" className="dw-btn" data-owns-enter disabled={!row.enabled} onClick={() => onPress(row)}>
-              {row.button}
+              {tMsg(row.button)}
             </button>
           )}
         </div>

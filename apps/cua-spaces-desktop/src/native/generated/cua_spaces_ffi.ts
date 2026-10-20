@@ -6765,15 +6765,64 @@ const FfiConverterTypeAppAboutLink = (() => {
     return new FFIConverter();
 })();
 
+export type AppMsg = {
+    /**
+     * The catalog key, `<area>.<screen_or_component>.<element>`.
+     */
+    code: string,
+    /**
+     * Values for the text's variables.
+     */
+    vars: Map<string, string>
+}
+
+/**
+ * Generated factory for {@link AppMsg} record objects.
+ */
+export const AppMsg = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMsg, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMsg>,
+    });
+})();
+
+const FfiConverterTypeAppMsg = (() => {
+    type TypeName = AppMsg;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                code: FfiConverterString.read(from),
+                vars: FfiConverterMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.code, into);
+            FfiConverterMapStringString.write(value.vars, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.code) +
+             FfiConverterMapStringString.allocationSize(value.vars);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppSettingsOption = {
     /**
      * `show`, `hide`, `local`, `cloud`, `on`, `off`.
      */
     id: string,
     /**
-     * Label.
+     * Label (`settings.*`; text that is data is `common.literal`).
      */
-    label: string,
+    label: AppMsg,
     /**
      * Chosen.
      */
@@ -6802,18 +6851,18 @@ const FfiConverterTypeAppSettingsOption = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 id: FfiConverterString.read(from),
-                label: FfiConverterString.read(from),
+                label: FfiConverterTypeAppMsg.read(from),
                 active: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.id, into);
-            FfiConverterString.write(value.label, into);
+            FfiConverterTypeAppMsg.write(value.label, into);
             FfiConverterBool.write(value.active, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
-             FfiConverterString.allocationSize(value.label) +
+             FfiConverterTypeAppMsg.allocationSize(value.label) +
              FfiConverterBool.allocationSize(value.active);
 
         }
@@ -19414,17 +19463,19 @@ export type AppSettingsRow = {
      */
     kind: AppSettingsRowKind,
     /**
-     * Label (or the note's text).
+     * Label (or the note's text): a message code; a name or an error from
+     * elsewhere is `common.literal`.
      */
-    label: string,
+    label: AppMsg,
     /**
-     * Muted value.
+     * Muted value: data, or text composed from it (it moves to message
+     * codes with its surface).
      */
     value?: string,
     /**
      * A button's label.
      */
-    button?: string,
+    button?: AppMsg,
     /**
      * A choice's options.
      */
@@ -19436,11 +19487,11 @@ export type AppSettingsRow = {
     /**
      * Tooltip.
      */
-    help?: string,
+    help?: AppMsg,
     /**
      * A note's link: label.
      */
-    linkLabel?: string,
+    linkLabel?: AppMsg,
     /**
      * A note's link: URL (or what a Text row's button opens).
      */
@@ -19448,7 +19499,7 @@ export type AppSettingsRow = {
     /**
      * A field's placeholder.
      */
-    placeholder?: string
+    placeholder?: AppMsg
 }
 
 /**
@@ -19474,42 +19525,42 @@ const FfiConverterTypeAppSettingsRow = (() => {
             return {
                 id: FfiConverterString.read(from),
                 kind: FfiConverterTypeAppSettingsRowKind.read(from),
-                label: FfiConverterString.read(from),
+                label: FfiConverterTypeAppMsg.read(from),
                 value: FfiConverterOptionalString.read(from),
-                button: FfiConverterOptionalString.read(from),
+                button: FfiConverterOptionalTypeAppMsg.read(from),
                 options: FfiConverterSequenceTypeAppSettingsOption.read(from),
                 enabled: FfiConverterBool.read(from),
-                help: FfiConverterOptionalString.read(from),
-                linkLabel: FfiConverterOptionalString.read(from),
+                help: FfiConverterOptionalTypeAppMsg.read(from),
+                linkLabel: FfiConverterOptionalTypeAppMsg.read(from),
                 linkUrl: FfiConverterOptionalString.read(from),
-                placeholder: FfiConverterOptionalString.read(from)
+                placeholder: FfiConverterOptionalTypeAppMsg.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.id, into);
             FfiConverterTypeAppSettingsRowKind.write(value.kind, into);
-            FfiConverterString.write(value.label, into);
+            FfiConverterTypeAppMsg.write(value.label, into);
             FfiConverterOptionalString.write(value.value, into);
-            FfiConverterOptionalString.write(value.button, into);
+            FfiConverterOptionalTypeAppMsg.write(value.button, into);
             FfiConverterSequenceTypeAppSettingsOption.write(value.options, into);
             FfiConverterBool.write(value.enabled, into);
-            FfiConverterOptionalString.write(value.help, into);
-            FfiConverterOptionalString.write(value.linkLabel, into);
+            FfiConverterOptionalTypeAppMsg.write(value.help, into);
+            FfiConverterOptionalTypeAppMsg.write(value.linkLabel, into);
             FfiConverterOptionalString.write(value.linkUrl, into);
-            FfiConverterOptionalString.write(value.placeholder, into);
+            FfiConverterOptionalTypeAppMsg.write(value.placeholder, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
              FfiConverterTypeAppSettingsRowKind.allocationSize(value.kind) +
-             FfiConverterString.allocationSize(value.label) +
+             FfiConverterTypeAppMsg.allocationSize(value.label) +
              FfiConverterOptionalString.allocationSize(value.value) +
-             FfiConverterOptionalString.allocationSize(value.button) +
+             FfiConverterOptionalTypeAppMsg.allocationSize(value.button) +
              FfiConverterSequenceTypeAppSettingsOption.allocationSize(value.options) +
              FfiConverterBool.allocationSize(value.enabled) +
-             FfiConverterOptionalString.allocationSize(value.help) +
-             FfiConverterOptionalString.allocationSize(value.linkLabel) +
+             FfiConverterOptionalTypeAppMsg.allocationSize(value.help) +
+             FfiConverterOptionalTypeAppMsg.allocationSize(value.linkLabel) +
              FfiConverterOptionalString.allocationSize(value.linkUrl) +
-             FfiConverterOptionalString.allocationSize(value.placeholder);
+             FfiConverterOptionalTypeAppMsg.allocationSize(value.placeholder);
 
         }
     };
@@ -27248,55 +27299,6 @@ const FfiConverterTypeAppModeChoice = (() => {
             return FfiConverterTypeAppOnboardingMode.allocationSize(value.mode) +
              FfiConverterString.allocationSize(value.label) +
              FfiConverterBool.allocationSize(value.preselected);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-export type AppMsg = {
-    /**
-     * The catalog key, `<area>.<screen_or_component>.<element>`.
-     */
-    code: string,
-    /**
-     * Values for the text's variables.
-     */
-    vars: Map<string, string>
-}
-
-/**
- * Generated factory for {@link AppMsg} record objects.
- */
-export const AppMsg = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<AppMsg, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<AppMsg>,
-    });
-})();
-
-const FfiConverterTypeAppMsg = (() => {
-    type TypeName = AppMsg;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                code: FfiConverterString.read(from),
-                vars: FfiConverterMapStringString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.code, into);
-            FfiConverterMapStringString.write(value.vars, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.code) +
-             FfiConverterMapStringString.allocationSize(value.vars);
 
         }
     };
@@ -36638,13 +36640,13 @@ export type AppSettingsSection = {
      */
     id: string,
     /**
-     * "Account", "General", "Privacy", "AI agents".
+     * "Account", "General", "Privacy", "AI agents" (`settings.*.title`).
      */
-    title: string,
+    title: AppMsg,
     /**
      * A button in the header.
      */
-    button?: string,
+    button?: AppMsg,
     /**
      * That button can be used.
      */
@@ -36652,7 +36654,7 @@ export type AppSettingsSection = {
     /**
      * Its tooltip.
      */
-    buttonHelp?: string,
+    buttonHelp?: AppMsg,
     /**
      * Rows.
      */
@@ -36681,27 +36683,27 @@ const FfiConverterTypeAppSettingsSection = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 id: FfiConverterString.read(from),
-                title: FfiConverterString.read(from),
-                button: FfiConverterOptionalString.read(from),
+                title: FfiConverterTypeAppMsg.read(from),
+                button: FfiConverterOptionalTypeAppMsg.read(from),
                 buttonEnabled: FfiConverterBool.read(from),
-                buttonHelp: FfiConverterOptionalString.read(from),
+                buttonHelp: FfiConverterOptionalTypeAppMsg.read(from),
                 rows: FfiConverterSequenceTypeAppSettingsRow.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.id, into);
-            FfiConverterString.write(value.title, into);
-            FfiConverterOptionalString.write(value.button, into);
+            FfiConverterTypeAppMsg.write(value.title, into);
+            FfiConverterOptionalTypeAppMsg.write(value.button, into);
             FfiConverterBool.write(value.buttonEnabled, into);
-            FfiConverterOptionalString.write(value.buttonHelp, into);
+            FfiConverterOptionalTypeAppMsg.write(value.buttonHelp, into);
             FfiConverterSequenceTypeAppSettingsRow.write(value.rows, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
-             FfiConverterString.allocationSize(value.title) +
-             FfiConverterOptionalString.allocationSize(value.button) +
+             FfiConverterTypeAppMsg.allocationSize(value.title) +
+             FfiConverterOptionalTypeAppMsg.allocationSize(value.button) +
              FfiConverterBool.allocationSize(value.buttonEnabled) +
-             FfiConverterOptionalString.allocationSize(value.buttonHelp) +
+             FfiConverterOptionalTypeAppMsg.allocationSize(value.buttonHelp) +
              FfiConverterSequenceTypeAppSettingsRow.allocationSize(value.rows);
 
         }
@@ -36711,9 +36713,9 @@ const FfiConverterTypeAppSettingsSection = (() => {
 
 export type AppSettingsPage = {
     /**
-     * "Settings".
+     * "Settings" (`settings.title`).
      */
-    title: string,
+    title: AppMsg,
     /**
      * Account, General, Privacy (once read), AI agents.
      */
@@ -36741,16 +36743,16 @@ const FfiConverterTypeAppSettingsPage = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                title: FfiConverterString.read(from),
+                title: FfiConverterTypeAppMsg.read(from),
                 sections: FfiConverterSequenceTypeAppSettingsSection.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.title, into);
+            FfiConverterTypeAppMsg.write(value.title, into);
             FfiConverterSequenceTypeAppSettingsSection.write(value.sections, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.title) +
+            return FfiConverterTypeAppMsg.allocationSize(value.title) +
              FfiConverterSequenceTypeAppSettingsSection.allocationSize(value.sections);
 
         }
@@ -62750,6 +62752,9 @@ const FfiConverterTypeTeleport = new FfiConverterObject(uniffiTypeTeleportObject
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
+// FfiConverter for Map<string, string>
+const FfiConverterMapStringString = new FfiConverterMap(FfiConverterString, FfiConverterString);
+
 // FfiConverter for Array<AppSettingsOption>
 const FfiConverterSequenceTypeAppSettingsOption = new FfiConverterArray(FfiConverterTypeAppSettingsOption);
 
@@ -62948,9 +62953,6 @@ const FfiConverterSequenceTypeAppDeviceInput = new FfiConverterArray(FfiConverte
 // FfiConverter for Array<AppAuditInput>
 const FfiConverterSequenceTypeAppAuditInput = new FfiConverterArray(FfiConverterTypeAppAuditInput);
 
-// FfiConverter for Map<string, string>
-const FfiConverterMapStringString = new FfiConverterMap(FfiConverterString, FfiConverterString);
-
 // FfiConverter for Array<AppMachineInput>
 const FfiConverterSequenceTypeAppMachineInput = new FfiConverterArray(FfiConverterTypeAppMachineInput);
 
@@ -62980,6 +62982,9 @@ const FfiConverterOptionalTypeAppStillAnchor = new FfiConverterOptional(FfiConve
 
 // FfiConverter for Array<AppDragOverlayEvent>
 const FfiConverterSequenceTypeAppDragOverlayEvent = new FfiConverterArray(FfiConverterTypeAppDragOverlayEvent);
+
+// FfiConverter for AppMsg | undefined
+const FfiConverterOptionalTypeAppMsg = new FfiConverterOptional(FfiConverterTypeAppMsg);
 
 // FfiConverter for Array<AppSettingsRow>
 const FfiConverterSequenceTypeAppSettingsRow = new FfiConverterArray(FfiConverterTypeAppSettingsRow);
@@ -63379,9 +63384,6 @@ const FfiConverterOptionalTypeAppSidebarRow = new FfiConverterOptional(FfiConver
 
 // FfiConverter for Array<AppSidebarSection>
 const FfiConverterSequenceTypeAppSidebarSection = new FfiConverterArray(FfiConverterTypeAppSidebarSection);
-
-// FfiConverter for AppMsg | undefined
-const FfiConverterOptionalTypeAppMsg = new FfiConverterOptional(FfiConverterTypeAppMsg);
 
 // FfiConverter for Array<AppDetailAction>
 const FfiConverterSequenceTypeAppDetailAction = new FfiConverterArray(FfiConverterTypeAppDetailAction);

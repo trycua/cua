@@ -406,6 +406,21 @@ pub mod frame {
         v.as_str().unwrap_or("")
     }
 
+    /// A message as the goldens show it: its code, or the text of a
+    /// `common.literal`.
+    fn msg_of(v: &Value) -> String {
+        match v["code"].as_str() {
+            Some("common.literal") => str_of(&v["vars"]["text"]).to_string(),
+            Some(code) => code.to_string(),
+            None => String::new(),
+        }
+    }
+
+    /// [`msg_of`], or nothing when there is no message.
+    fn opt_msg(v: &Value) -> Option<String> {
+        v.is_object().then(|| msg_of(v))
+    }
+
     /// `id: Label [placeholder] !error (advanced)`.
     fn field(f: &Value) -> Value {
         let mut out = format!("{}: {}", str_of(&f["id"]), str_of(&f["label"]));
@@ -756,14 +771,13 @@ pub mod frame {
 
     /// The Settings page, one string per section header and row.
     pub fn settings(v: &Value) -> Value {
-        let mut out = vec![Value::String(format!("= {}", str_of(&v["title"])))];
+        let mut out = vec![Value::String(format!("= {}", msg_of(&v["title"])))];
         for sec in v["sections"].as_array().into_iter().flatten() {
             out.push(Value::String(format!(
                 "# {} ({}){}{}",
-                str_of(&sec["title"]),
+                msg_of(&sec["title"]),
                 str_of(&sec["id"]),
-                sec["button"]
-                    .as_str()
+                opt_msg(&sec["button"])
                     .map(|b| format!(" [{b}]"))
                     .unwrap_or_default(),
                 if sec["button"].is_null() || sec["buttonEnabled"] == true {
@@ -791,7 +805,7 @@ pub mod frame {
                         .map(|x| format!(
                             "{}{}",
                             if x["active"] == true { "*" } else { "" },
-                            str_of(&x["label"])
+                            msg_of(&x["label"])
                         ))
                         .collect::<Vec<_>>()
                         .join("|")
@@ -802,17 +816,15 @@ pub mod frame {
             "- {} {}: {}{}{}{}{}{}{}{}",
             str_of(&r["id"]),
             str_of(&r["kind"]),
-            str_of(&r["label"]),
+            msg_of(&r["label"]),
             r["value"]
                 .as_str()
                 .map(|x| format!(" = {x}"))
                 .unwrap_or_default(),
-            r["placeholder"]
-                .as_str()
+            opt_msg(&r["placeholder"])
                 .map(|x| format!(" ~{x}"))
                 .unwrap_or_default(),
-            r["button"]
-                .as_str()
+            opt_msg(&r["button"])
                 .map(|x| format!(" [{x}]"))
                 .unwrap_or_default(),
             options,
@@ -821,13 +833,12 @@ pub mod frame {
             } else {
                 " (disabled)"
             },
-            r["help"]
-                .as_str()
+            opt_msg(&r["help"])
                 .map(|x| format!(" ?{x}"))
                 .unwrap_or_default(),
             r["linkUrl"]
                 .as_str()
-                .map(|x| format!(" <{} {x}>", str_of(&r["linkLabel"])))
+                .map(|x| format!(" <{} {x}>", msg_of(&r["linkLabel"])))
                 .unwrap_or_default()
         )
     }
@@ -1109,7 +1120,7 @@ pub mod frame {
                 format!(
                     "{}{}",
                     if o["active"] == true { "*" } else { "" },
-                    str_of(&o["label"])
+                    msg_of(&o["label"])
                 )
             })
             .collect::<Vec<_>>()
@@ -1725,7 +1736,7 @@ pub mod frame {
                 "autoCheck": check(&u["autoCheck"], &u["autoCheckLabel"], true),
                 "autoInstall": check(&u["autoInstall"], &u["autoInstallLabel"], u["autoInstallEnabled"] == true),
                 "channel": format!("{} {}", str_of(&u["channelLabel"]), u["channels"].as_array().into_iter().flatten()
-                    .map(|o| format!("{}{}", str_of(&o["label"]), if o["active"] == true { "*" } else { "" }))
+                    .map(|o| format!("{}{}", msg_of(&o["label"]), if o["active"] == true { "*" } else { "" }))
                     .collect::<Vec<_>>().join(" | ")),
                 "help": u["channelHelp"],
                 "check": format!("{} {}", str_of(&u["checkLabel"]), if u["checkEnabled"] == true { "on" } else { "off" }),
@@ -3907,7 +3918,7 @@ fn run_drive_storage(f: &Value, h: &dyn Host) -> Result<Value, String> {
         };
         frames.push(json!({
             "step": step["step"],
-            "section": frame::settings(&json!({ "title": "Settings", "sections": [section] })),
+            "section": frame::settings(&json!({ "title": { "code": "settings.title", "vars": {} }, "sections": [section] })),
             "request": request,
         }));
     }

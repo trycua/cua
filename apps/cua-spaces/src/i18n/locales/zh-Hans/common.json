@@ -9,5 +9,6 @@
   "common.action.reconnect": "重新连接",
   "common.status.connecting": "正在连接…",
   "common.action.back": "返回",
-  "common.action.done": "完成"
+  "common.action.done": "完成",
+  "common.literal": "{text}"
 }

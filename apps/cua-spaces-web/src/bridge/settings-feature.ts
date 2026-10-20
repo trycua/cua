@@ -12,6 +12,7 @@
 
 import { isUnsupported, type DataAdapter } from "./adapter";
 import type { CoreClient } from "./core";
+import { messagesAsText } from "@/lib/messages";
 import type {
   ApproveSheetState,
   ApproveSheetView,
@@ -345,18 +346,18 @@ export class SettingsFeature {
     const done = (data: unknown) => this.set(name, { data, isLoading: false, error: null, unsupported: false });
     switch (name) {
       case "about":
-        if (this.about) done({ input: this.about, view: aboutView(this.core, this.about), canChange: this.aboutCanChange } satisfies AboutData);
+        if (this.about) done({ input: this.about, view: messagesAsText(aboutView(this.core, this.about)), canChange: this.aboutCanChange } satisfies AboutData);
         break;
       case "update":
         if (this.update) done({ state: this.update, installing: this.updateInstalling } satisfies UpdateData);
         break;
       case "experiments":
-        done({ experiments: this.experiments, page: experimentsPage(this.core, this.experiments) } satisfies ExperimentsData);
+        done({ experiments: this.experiments, page: messagesAsText(experimentsPage(this.core, this.experiments)) } satisfies ExperimentsData);
         // What follows the switches.
         if (this.resources.loginItem.data !== undefined) this.publish("loginItem");
         break;
       case "loginItem":
-        if (this.loginItem) done({ input: this.loginItem, rows: loginItemRows(this.core, this.loginItem, this.experiments) } satisfies LoginItemData);
+        if (this.loginItem) done({ input: this.loginItem, rows: messagesAsText(loginItemRows(this.core, this.loginItem, this.experiments)) } satisfies LoginItemData);
         break;
       case "devices": {
         if (!this.devices) break;
@@ -375,7 +376,7 @@ export class SettingsFeature {
       }
       case "storage":
         if (this.storageInput) {
-          const section = storageSection(this.core, this.storageInput, this.storageState);
+          const section = messagesAsText(storageSection(this.core, this.storageInput, this.storageState));
           done({ input: this.storageInput, state: this.storageState, section } satisfies StorageData);
           this.watchStorage(section);
         }

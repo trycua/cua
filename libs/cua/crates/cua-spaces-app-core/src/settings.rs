@@ -12,6 +12,7 @@
 use crate::CoreError;
 use crate::about::UpdateChannel;
 use crate::experiments::{Experiment, Experiments};
+use crate::message::Msg;
 use crate::model::Location;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -420,39 +421,42 @@ fn default_true() -> bool {
     true
 }
 
-/// The site icons switch's label.
-pub const SITE_ICONS_LABEL: &str = "Load site icons from Google";
+/// The site icons switch's label (`settings.keyvault.site_icons.label`).
+pub const SITE_ICONS_LABEL: &str = "settings.keyvault.site_icons.label";
 
 /// The line under it.
-pub const SITE_ICONS_NOTE: &str =
-    "Sends only the site's domain. Off uses your browser's own icons.";
+pub const SITE_ICONS_NOTE: &str = "settings.keyvault.site_icons.note";
 
 /// The auto-connect switch's label.
-pub const AUTO_CONNECT_LABEL: &str = "Connect to the desktop automatically";
+pub const AUTO_CONNECT_LABEL: &str = "settings.auto_connect.label";
 
 /// The auto-connect switch: row id `auto-connect`, options `on` and `off`.
 pub fn auto_connect_row(on: bool) -> SettingsRow {
-    let mut r = row("auto-connect", SettingsRowKind::Toggle, AUTO_CONNECT_LABEL);
-    r.options = vec![opt("on", "On", on), opt("off", "Off", !on)];
-    r.help = Some(if on {
-        "Opening a running Space shows its live desktop".into()
+    let mut r = row(
+        "auto-connect",
+        SettingsRowKind::Toggle,
+        m(AUTO_CONNECT_LABEL),
+    );
+    r.options = on_off(on);
+    r.help = Some(m(if on {
+        "settings.auto_connect.help_on"
     } else {
-        "Opening a running Space shows a preview and a Connect button".into()
-    });
+        "settings.auto_connect.help_off"
+    }));
     r
 }
 
 /// The Keyvault auto-wipe switch's label.
-pub const AUTO_WIPE_LABEL: &str = "Wipe access from Spaces automatically";
+pub const AUTO_WIPE_LABEL: &str = "settings.keyvault.auto_wipe.label";
 
 /// The line under it.
-pub const AUTO_WIPE_NOTE: &str = "When off, sign-ins stay in a Space until you wipe them.";
+pub const AUTO_WIPE_NOTE: &str = "settings.keyvault.auto_wipe.note";
 
 /// The unlock prompt switch's label.
-pub const UNLOCK_PROMPT_LABEL: &str = "Explain unattended access before allowing it";
+pub const UNLOCK_PROMPT_LABEL: &str = "settings.keyvault.unlock_prompt.label";
 
 /// The line under it.
-pub const UNLOCK_PROMPT_NOTE: &str = "Unlocking an item always asks for Touch ID. Turn this on to see the explanation again after choosing Never ask again.";
+pub const UNLOCK_PROMPT_NOTE: &str = "settings.keyvault.unlock_prompt.note";
 
 /// The Keyvault section: the auto-wipe switch (off by default) and its
 /// line, the unlock prompt switch (on by default; "Never ask again" turns it
@@ -468,65 +472,65 @@ pub fn keyvault_section(
     let mut toggle = row(
         "keyvault-auto-wipe",
         SettingsRowKind::Toggle,
-        AUTO_WIPE_LABEL,
+        m(AUTO_WIPE_LABEL),
     );
-    toggle.options = vec![opt("on", "On", auto_wipe), opt("off", "Off", !auto_wipe)];
-    toggle.help = Some(if auto_wipe {
-        "Turning it off asks for Touch ID".into()
+    toggle.options = on_off(auto_wipe);
+    toggle.help = Some(m(if auto_wipe {
+        "settings.keyvault.auto_wipe.help_on"
     } else {
-        "Wipes sign-ins after an hour (15 minutes for identity providers)".into()
-    });
+        "settings.keyvault.auto_wipe.help_off"
+    }));
     let mut rows = vec![
         toggle,
         row(
             "keyvault-auto-wipe-note",
             SettingsRowKind::Note,
-            AUTO_WIPE_NOTE,
+            m(AUTO_WIPE_NOTE),
         ),
     ];
     if let Some(shows) = unlock_prompt {
         let mut t = row(
             "keyvault-unlock-prompt",
             SettingsRowKind::Toggle,
-            UNLOCK_PROMPT_LABEL,
+            m(UNLOCK_PROMPT_LABEL),
         );
-        t.options = vec![opt("on", "On", shows), opt("off", "Off", !shows)];
-        t.help = Some(if shows {
-            "Choosing Never ask again on the prompt turns this off".into()
+        t.options = on_off(shows);
+        t.help = Some(m(if shows {
+            "settings.keyvault.unlock_prompt.help_on"
         } else {
-            "You chose Never ask again. Turn this on to see the prompt again".into()
-        });
+            "settings.keyvault.unlock_prompt.help_off"
+        }));
         rows.push(t);
         rows.push(row(
             "keyvault-unlock-prompt-note",
             SettingsRowKind::Note,
-            UNLOCK_PROMPT_NOTE,
+            m(UNLOCK_PROMPT_NOTE),
         ));
     }
     let mut icons = row(
         "keyvault-site-icons",
         SettingsRowKind::Toggle,
-        SITE_ICONS_LABEL,
+        m(SITE_ICONS_LABEL),
     );
-    icons.options = vec![opt("on", "On", site_icons), opt("off", "Off", !site_icons)];
+    icons.options = on_off(site_icons);
     rows.push(icons);
     rows.push(row(
         "keyvault-site-icons-note",
         SettingsRowKind::Note,
-        SITE_ICONS_NOTE,
+        m(SITE_ICONS_NOTE),
     ));
     for f in protection {
         let mut r = row(
             &format!("keyvault-protection:{}", f.label),
             SettingsRowKind::Text,
-            &f.label,
+            Msg::literal(&f.label),
         );
         r.value = Some(f.value.clone());
         rows.push(r);
     }
     SettingsSection {
         id: "keyvault".into(),
-        title: "Keyvault".into(),
+        title: m("settings.keyvault.title"),
         button: None,
         button_enabled: false,
         button_help: None,
@@ -564,8 +568,8 @@ pub enum SettingsRowKind {
 pub struct SettingsOption {
     /// `show`, `hide`, `local`, `cloud`, `on`, `off`.
     pub id: String,
-    /// Label.
-    pub label: String,
+    /// Label (`settings.*`; text that is data is `common.literal`).
+    pub label: Msg,
     /// Chosen.
     pub active: bool,
 }
@@ -578,24 +582,26 @@ pub struct SettingsRow {
     pub id: String,
     /// How it draws.
     pub kind: SettingsRowKind,
-    /// Label (or the note's text).
-    pub label: String,
-    /// Muted value.
+    /// Label (or the note's text): a message code; a name or an error from
+    /// elsewhere is `common.literal`.
+    pub label: Msg,
+    /// Muted value: data, or text composed from it (it moves to message
+    /// codes with its surface).
     pub value: Option<String>,
     /// A button's label.
-    pub button: Option<String>,
+    pub button: Option<Msg>,
     /// A choice's options.
     pub options: Vec<SettingsOption>,
     /// The button or choice can be used.
     pub enabled: bool,
     /// Tooltip.
-    pub help: Option<String>,
+    pub help: Option<Msg>,
     /// A note's link: label.
-    pub link_label: Option<String>,
+    pub link_label: Option<Msg>,
     /// A note's link: URL (or what a Text row's button opens).
     pub link_url: Option<String>,
     /// A field's placeholder.
-    pub placeholder: Option<String>,
+    pub placeholder: Option<Msg>,
 }
 
 /// A titled group of rows.
@@ -604,14 +610,14 @@ pub struct SettingsRow {
 pub struct SettingsSection {
     /// `account`, `general`, `privacy`, `agents`.
     pub id: String,
-    /// "Account", "General", "Privacy", "AI agents".
-    pub title: String,
+    /// "Account", "General", "Privacy", "AI agents" (`settings.*.title`).
+    pub title: Msg,
     /// A button in the header.
-    pub button: Option<String>,
+    pub button: Option<Msg>,
     /// That button can be used.
     pub button_enabled: bool,
     /// Its tooltip.
-    pub button_help: Option<String>,
+    pub button_help: Option<Msg>,
     /// Rows.
     pub rows: Vec<SettingsRow>,
 }
@@ -619,17 +625,30 @@ pub struct SettingsSection {
 /// The Settings page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsPage {
-    /// "Settings".
-    pub title: String,
+    /// "Settings" (`settings.title`).
+    pub title: Msg,
     /// Account, General, Privacy (once read), AI agents.
     pub sections: Vec<SettingsSection>,
 }
 
-pub(crate) fn row(id: &str, kind: SettingsRowKind, label: &str) -> SettingsRow {
+/// A message with no variables.
+pub(crate) fn m(code: &str) -> Msg {
+    Msg::new(code)
+}
+
+/// The `on` and `off` options of a switch, `on` chosen when `on`.
+pub(crate) fn on_off(on: bool) -> Vec<SettingsOption> {
+    vec![
+        opt("on", m("settings.option.on"), on),
+        opt("off", m("settings.option.off"), !on),
+    ]
+}
+
+pub(crate) fn row(id: &str, kind: SettingsRowKind, label: Msg) -> SettingsRow {
     SettingsRow {
         id: id.into(),
         kind,
-        label: label.into(),
+        label,
         value: None,
         button: None,
         options: vec![],
@@ -641,10 +660,10 @@ pub(crate) fn row(id: &str, kind: SettingsRowKind, label: &str) -> SettingsRow {
     }
 }
 
-fn opt(id: &str, label: &str, active: bool) -> SettingsOption {
+fn opt(id: &str, label: Msg, active: bool) -> SettingsOption {
     SettingsOption {
         id: id.into(),
-        label: label.into(),
+        label,
         active,
     }
 }
@@ -655,9 +674,9 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     let mut account = Vec::new();
     let identity = input.identity.clone().filter(|i| !i.is_empty());
     if let Some(id) = identity {
-        let mut r = row("account", Text, &id);
+        let mut r = row("account", Text, Msg::literal(&id));
         if input.can_sign_out {
-            r.button = Some("Sign out".into());
+            r.button = Some(m("settings.account.sign_out"));
         }
         account.push(r);
         // Billing: the credit left, and the website's billing page (the
@@ -668,9 +687,9 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             .as_ref()
             .filter(|b| b.billing_enabled && crate::billing::BILLING_SHOWN)
         {
-            let mut r = row("billing", Text, "Billing");
+            let mut r = row("billing", Text, m("settings.billing.label"));
             r.value = Some(crate::billing::billing_line(b));
-            r.button = Some(crate::billing::MANAGE_BILLING.into());
+            r.button = Some(m(crate::billing::MANAGE_BILLING));
             r.link_url = Some(crate::billing::BILLING_URL.into());
             r.enabled = true;
             account.push(r);
@@ -679,40 +698,37 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         let mut r = row(
             "sign-in-code",
             Text,
-            if user_code.is_some() {
-                "Enter this code in your browser"
+            m(if user_code.is_some() {
+                "settings.sign_in.enter_code"
             } else {
-                "Finish signing in in your browser."
-            },
+                "settings.sign_in.finish"
+            }),
         );
         r.value = user_code.clone();
-        r.button = Some("Cancel".into());
+        r.button = Some(m("settings.sign_in.cancel"));
         account.push(r);
     } else {
         if let Some(client) = input.api_key_client.clone().filter(|c| !c.is_empty()) {
-            let mut r = row("api-key", Text, "Signed in via API key");
+            let mut r = row("api-key", Text, m("settings.api_key.label"));
             r.value = Some(client);
             account.push(r);
         }
-        let mut r = row("sign-in", Text, "Cua account");
-        r.button = Some(
-            match &input.sign_in {
-                SignInPhase::Failed { .. } => "Try again",
-                SignInPhase::Starting => "Starting\u{2026}",
-                _ => "Sign in to Cua",
-            }
-            .into(),
-        );
+        let mut r = row("sign-in", Text, m("settings.sign_in.label"));
+        r.button = Some(m(match &input.sign_in {
+            SignInPhase::Failed { .. } => "settings.sign_in.try_again",
+            SignInPhase::Starting => "settings.sign_in.starting",
+            _ => "settings.sign_in.button",
+        }));
         r.enabled = input.sign_in != SignInPhase::Starting;
         account.push(r);
         if let SignInPhase::Failed { message } = &input.sign_in {
-            account.push(row("sign-in-error", Error, message));
+            account.push(row("sign-in-error", Error, Msg::literal(message)));
         }
     }
-    let mut notch = row("notch", Choice, "Spaces tab in the notch");
+    let mut notch = row("notch", Choice, m("settings.notch.label"));
     notch.options = vec![
-        opt("show", "Show", !input.menu_bar),
-        opt("hide", "Hide", input.menu_bar),
+        opt("show", m("settings.notch.show"), !input.menu_bar),
+        opt("hide", m("settings.notch.hide"), input.menu_bar),
     ];
     // Launch at login first, as in Tailscale's General settings.
     let mut general = input
@@ -726,33 +742,33 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
     // Where New Space starts: only a choice while the apps offer Cua Cloud.
     if crate::model::CLOUD_SPACES_OFFERED {
-        let mut location = row("default-location", Choice, "New Spaces run on");
+        let mut location = row("default-location", Choice, m("settings.location.label"));
         location.options = vec![
             opt(
                 "local",
-                Location::Local.label(),
+                m("settings.location.local"),
                 input.default_location == Location::Local,
             ),
             opt(
                 "cloud",
-                Location::Cloud.label(),
+                m("settings.location.cloud"),
                 input.default_location == Location::Cloud,
             ),
         ];
         if let Some(var) = input.location_locked_by.clone().filter(|v| !v.is_empty()) {
             location.enabled = false;
-            location.help = Some(format!("Set by {var}"));
+            location.help = Some(m("settings.set_by").with("source", var));
         }
         general.push(location);
     }
-    let mut welcome = row("welcome", Text, "Welcome");
-    welcome.button = Some("Show again".into());
+    let mut welcome = row("welcome", Text, m("settings.welcome.label"));
+    welcome.button = Some(m("settings.welcome.show_again"));
     general.push(welcome);
 
     let mut sections = vec![
         SettingsSection {
             id: "account".into(),
-            title: "Account".into(),
+            title: m("settings.account.title"),
             button: None,
             button_enabled: false,
             button_help: None,
@@ -760,7 +776,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         },
         SettingsSection {
             id: "teams".into(),
-            title: crate::teams::TEAMS_TITLE.into(),
+            title: m(crate::teams::TEAMS_TITLE),
             button: None,
             button_enabled: false,
             button_help: None,
@@ -780,7 +796,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         },
         SettingsSection {
             id: "general".into(),
-            title: "General".into(),
+            title: m("settings.general.title"),
             button: None,
             button_enabled: false,
             button_help: None,
@@ -796,22 +812,18 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
 
     if let Some(t) = &input.telemetry {
-        let mut share = row("telemetry", Choice, "Share usage data to help improve Cua");
-        share.options = vec![opt("on", "On", t.enabled), opt("off", "Off", !t.enabled)];
+        let mut share = row("telemetry", Choice, m("settings.telemetry.label"));
+        share.options = on_off(t.enabled);
         if let Some(by) = t.locked_by.clone().filter(|b| !b.is_empty()) {
             share.enabled = false;
-            share.help = Some(format!("Set by {by}"));
+            share.help = Some(m("settings.set_by").with("source", by));
         }
-        let mut note = row(
-            "telemetry-note",
-            Note,
-            "Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen.",
-        );
-        note.link_label = Some("What is collected".into());
+        let mut note = row("telemetry-note", Note, m("settings.telemetry.note"));
+        note.link_label = Some(m("settings.telemetry.what_is_collected"));
         note.link_url = Some(TELEMETRY_DOCS_URL.into());
         sections.push(SettingsSection {
             id: "privacy".into(),
-            title: "Privacy".into(),
+            title: m("settings.privacy.title"),
             button: None,
             button_enabled: false,
             button_help: None,
@@ -834,7 +846,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         .iter()
         .map(|a| {
             let pending = input.agents_pending.iter().any(|p| p == &a.agent);
-            let mut r = row(&format!("agent:{}", a.agent), Text, &a.name);
+            let mut r = row(&format!("agent:{}", a.agent), Text, Msg::literal(&a.name));
             if a.installed {
                 r.value = Some(if pending {
                     "working\u{2026}".into()
@@ -842,7 +854,11 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
                     a.detail.clone()
                 });
                 if !pending {
-                    r.button = Some(if a.configured { "Remove" } else { "Configure" }.into());
+                    r.button = Some(m(if a.configured {
+                        "settings.agents.remove"
+                    } else {
+                        "settings.agents.configure"
+                    }));
                 }
                 r.enabled = !input.agents_busy;
             } else {
@@ -853,33 +869,28 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         .collect();
     sections.push(SettingsSection {
         id: "agents".into(),
-        title: "AI agents".into(),
-        button: Some(
-            if input.agents_busy {
-                "Configuring\u{2026}"
-            } else {
-                "Configure all detected agents"
-            }
-            .into(),
-        ),
+        title: m("settings.agents.title"),
+        button: Some(m(if input.agents_busy {
+            "settings.agents.configuring"
+        } else {
+            "settings.agents.configure_all"
+        })),
         button_enabled: !input.agents_busy && any_installed,
-        button_help: Some("Add the cua skills and MCP server to every detected agent".into()),
+        button_help: Some(m("settings.agents.configure_all_help")),
         rows,
     });
 
     SettingsPage {
-        title: "Settings".into(),
+        title: m("settings.title"),
         sections,
     }
 }
 
 /// The help under Settings, Runtimes, macOS VMs.
-pub const MACOS_RUNTIME_HELP: &str =
-    "Built-in is Cua\u{2019}s signed Lume, downloaded the first time you need it (6 MB).";
+pub const MACOS_RUNTIME_HELP: &str = "settings.runtimes.macos_help";
 
 /// The help under Settings, Runtimes, Linux.
-pub const LINUX_RUNTIME_HELP: &str =
-    "Built-in is a gVisor Linux VM, downloaded the first time you need it (480 MB).";
+pub const LINUX_RUNTIME_HELP: &str = "settings.runtimes.linux_help";
 
 /// Settings, Runtimes: one row per local runtime Cua can provide itself,
 /// each Automatic, Built-in or System.
@@ -891,30 +902,35 @@ pub const LINUX_RUNTIME_HELP: &str =
 pub fn runtimes_section(lume_source: Option<&str>, linux_source: Option<&str>) -> SettingsSection {
     use SettingsRowKind::*;
     let choice = |id: &str, label: &str, source: &str| {
+        let label = m(label);
         let source = match source {
             "builtin" | "system" => source,
             _ => "auto",
         };
         let mut r = row(id, Choice, label);
         r.options = vec![
-            opt("auto", "Automatic", source == "auto"),
-            opt("builtin", "Built-in", source == "builtin"),
-            opt("system", "System", source == "system"),
+            opt("auto", m("settings.runtimes.auto"), source == "auto"),
+            opt(
+                "builtin",
+                m("settings.runtimes.builtin"),
+                source == "builtin",
+            ),
+            opt("system", m("settings.runtimes.system"), source == "system"),
         ];
         r
     };
     let mut rows = vec![];
     if let Some(source) = lume_source {
-        rows.push(choice("macos-runtime", "macOS VMs", source));
-        rows.push(row("macos-runtime-note", Note, MACOS_RUNTIME_HELP));
+        rows.push(choice("macos-runtime", "settings.runtimes.macos", source));
+        rows.push(row("macos-runtime-note", Note, m(MACOS_RUNTIME_HELP)));
     }
     if let Some(source) = linux_source {
-        rows.push(choice("linux-runtime", "Linux", source));
-        rows.push(row("linux-runtime-note", Note, LINUX_RUNTIME_HELP));
+        rows.push(choice("linux-runtime", "settings.runtimes.linux", source));
+        rows.push(row("linux-runtime-note", Note, m(LINUX_RUNTIME_HELP)));
     }
     SettingsSection {
         id: "runtimes".into(),
-        title: "Runtimes".into(),
+        title: m("settings.runtimes.title"),
         button: None,
         button_enabled: false,
         button_help: None,
@@ -952,6 +968,8 @@ pub fn with_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::message::OptionMsgEnglish;
 
     #[test]
     fn the_runtimes_section_shows_the_lume_choice() {
@@ -978,7 +996,7 @@ mod tests {
             .map(|o| o.id.as_str())
             .collect();
         assert_eq!(active, ["system"]);
-        let ids: Vec<_> = r.options.iter().map(|o| o.label.as_str()).collect();
+        let ids: Vec<_> = r.options.iter().map(|o| o.label.english()).collect();
         assert_eq!(ids, ["Automatic", "Built-in", "System"]);
     }
 
@@ -1001,7 +1019,7 @@ mod tests {
             ]
         );
         let linux = &s.rows[2];
-        assert_eq!(linux.label, "Linux");
+        assert_eq!(linux.label.english(), "Linux");
         let active: Vec<_> = linux
             .options
             .iter()
@@ -1073,7 +1091,10 @@ mod tests {
         });
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["account", "teams", "general", "privacy", "agents"]);
-        assert_eq!(p.sections[0].rows[0].button.as_deref(), Some("Sign out"));
+        assert_eq!(
+            p.sections[0].rows[0].button.english().as_deref(),
+            Some("Sign out")
+        );
         let sign_in: SignInPhase =
             serde_json::from_str(r#"{"kind":"waiting","userCode":"AB-CD"}"#).unwrap();
         assert_eq!(
@@ -1102,14 +1123,18 @@ mod tests {
             ]
         );
         let kv = &p.sections[4];
-        assert_eq!(kv.title, "Keyvault");
+        assert_eq!(kv.title.english(), "Keyvault");
         let toggle = &kv.rows[0];
         assert_eq!(
-            (toggle.id.as_str(), toggle.kind, toggle.label.as_str()),
+            (
+                toggle.id.as_str(),
+                toggle.kind,
+                toggle.label.english().as_str()
+            ),
             (
                 "keyvault-auto-wipe",
                 SettingsRowKind::Toggle,
-                AUTO_WIPE_LABEL
+                m(AUTO_WIPE_LABEL).english().as_str()
             )
         );
         let on = |r: &SettingsRow| r.options.iter().find(|o| o.id == "on").unwrap().active;
@@ -1154,7 +1179,7 @@ mod tests {
             .find(|r| r.id == "keyvault-site-icons")
             .unwrap();
         assert!(on(icons));
-        assert_eq!(icons.label, "Load site icons from Google");
+        assert_eq!(icons.label.english(), "Load site icons from Google");
         assert!(!on(keyvault_section(false, None, false, &[])
             .rows
             .iter()
@@ -1188,8 +1213,16 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            (rows[0].id.as_str(), rows[0].kind, rows[0].label.as_str()),
-            ("launch-at-login", SettingsRowKind::Toggle, LABEL)
+            (
+                rows[0].id.as_str(),
+                rows[0].kind,
+                rows[0].label.english().as_str()
+            ),
+            (
+                "launch-at-login",
+                SettingsRowKind::Toggle,
+                m(LABEL).english().as_str()
+            )
         );
         assert_eq!(rows[1].id, "launch-at-login-note");
         assert_eq!(rows[2].id, "notch");
@@ -1225,8 +1258,11 @@ mod tests {
         assert_eq!(rows[i - 1].id, "notch");
         let r = &rows[i];
         assert_eq!(
-            (r.kind, r.label.as_str()),
-            (SettingsRowKind::Toggle, AUTO_CONNECT_LABEL)
+            (r.kind, r.label.english().as_str()),
+            (
+                SettingsRowKind::Toggle,
+                m(AUTO_CONNECT_LABEL).english().as_str()
+            )
         );
         let on = |r: &SettingsRow| r.options.iter().find(|o| o.id == "on").unwrap().active;
         assert!(on(r));
@@ -1241,7 +1277,7 @@ mod tests {
         use crate::login_item::{LoginItemInput, LoginItemStatus, NOTE, NOTE_WITHOUT_VOLUME};
         let storage = SettingsSection {
             id: "storage".into(),
-            title: "Storage".into(),
+            title: m("settings.storage.title"),
             button: None,
             button_enabled: false,
             button_help: None,
@@ -1261,7 +1297,7 @@ mod tests {
                 .rows
                 .iter()
                 .find(|r| r.id == "launch-at-login-note")
-                .map(|r| r.label.clone())
+                .map(|r| r.label.english())
         };
         let off = with_storage(&page(&input), &storage, &input.experiments);
         assert_eq!(ids(&off), ["account", "teams", "general", "agents"]);

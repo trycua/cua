@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDemoAdapter } from "../adapters/demo";
 import { demoPlatformOf, type DemoPlatform } from "../adapters/demo/platform";
 import { wizardEnv, wizardInitial, wizardReduce, wizardView } from "../new-space";
+import { messagesAsText } from "@/lib/messages";
 import { storageInitial, storageSection } from "../settings-derive";
 import { testCore, wasmBuilt } from "./testCore";
 
@@ -65,7 +66,7 @@ describe("the demo host on Windows and Linux", () => {
     for (const p of [demoPlatformOf("win32", "x64"), demoPlatformOf("linux", "x64")]) {
       const a = demo(p);
       const section = storageSection(core, await a.call("storage.get", {}), storageInitial(core)!)!;
-      const words = JSON.stringify(section);
+      const words = JSON.stringify(messagesAsText(section));
       expect(words).not.toMatch(MAC_WORDS);
       expect(words).toContain(p.os === "windows" ? "This PC" : "This computer");
       if (p.os === "linux") expect(words).toContain("Mounted at");

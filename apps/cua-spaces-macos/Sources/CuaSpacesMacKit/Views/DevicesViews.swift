@@ -22,7 +22,7 @@ struct SettingsScene: View {
                 .tabItem { Label(model.devices.view.labels.title, systemImage: "laptopcomputer.and.iphone") }
                 .tag(SettingsTab.devices)
             ExperimentsSettingsView(model: model)
-                .tabItem { Label(model.experimentsPage.title, systemImage: "flask") }
+                .tabItem { Label(CoreMessages.text(model.experimentsPage.title), systemImage: "flask") }
                 .tag(SettingsTab.experiments)
             AboutSettingsView(updates: model.updates)
                 .tabItem { Label("About", systemImage: "info.circle") }
@@ -42,11 +42,11 @@ struct ExperimentsSettingsView: View {
             ForEach(page.sections, id: \.id) { section in
                 Section {
                     ForEach(section.rows.filter { $0.kind == .toggle }, id: \.id) { r in
-                        let note = section.rows.first { $0.id == "\(r.id)-note" }?.label
+                        let note = section.rows.first { $0.id == "\(r.id)-note" }.map { CoreMessages.text($0.label) }
                         Toggle(isOn: Binding(
                             get: { r.options.first(where: { $0.id == "on" })?.active ?? false },
                             set: { model.chooseExperiment(row: r.id, option: $0 ? "on" : "off") })) {
-                            Text(r.label)
+                            Text(CoreMessages.text(r.label))
                             if let note { Text(note) }
                         }
                         .disabled(!r.enabled)

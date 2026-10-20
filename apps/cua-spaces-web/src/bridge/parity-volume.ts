@@ -11,6 +11,7 @@
  */
 
 import type { CoreClient } from "./core";
+import { messagesAsText } from "@/lib/messages";
 import type { OnboardingFlowState, OnboardingView } from "./contracts/onboarding";
 import type { AgentSetupOutcome, AgentSetupSummary, DriveFrame, DriveInput, DriveState, DriveView, DriverFrame } from "./contracts/volume";
 import { onboardingCopy, writeSavedOnboarding } from "./onboarding";
@@ -28,7 +29,9 @@ export type VolumeCheckpoint =
   | { kind: "driver-summary"; agent: string; name: string; outcomes: AgentSetupOutcome[]; summary: AgentSetupSummary };
 
 /** The bridge's answer to each core method these screens call. */
-export function volumeBridgeMethods(core: CoreClient, record: (c: VolumeCheckpoint) => void): Record<string, (a: Args) => unknown> {
+export function volumeBridgeMethods(core: CoreClient, recordRaw: (c: VolumeCheckpoint) => void): Record<string, (a: Args) => unknown> {
+  // What the page draws is text: the checkpoints hold the words.
+  const record = (c: VolumeCheckpoint) => recordRaw(messagesAsText(c));
   return {
     "drive.initial": () => driveInitial(core),
     "drive.reduce": (a) => driveReduce(core, a.state, a.action),

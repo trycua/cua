@@ -499,7 +499,7 @@ struct ViewModelTests {
         // Linux picks runtime.linux (the built-in Linux runtime).
         let linux = model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
             .first { $0.id == "linux-runtime" }!
-        #expect(linux.label == "Linux")
+        #expect(linux.label.code == "settings.runtimes.linux")
         #expect(linux.options.first(where: \.active)?.id == "auto")
         await model.choose(row: "linux-runtime", option: "system")
         #expect(model.linuxSource == "system")
@@ -509,7 +509,7 @@ struct ViewModelTests {
         await model.press(row: "sign-in")
         #expect(model.identity == "you@example.com")
         #expect(model.chrome.account == "you@example.com")
-        #expect(model.settingsPage.sections[0].rows[0].button == "Sign out")
+        #expect(model.settingsPage.sections[0].rows[0].button?.code == "settings.account.sign_out")
         await model.choose(row: "notch", option: "hide")
         #expect(model.settings.menuBar)
         await model.press(row: "agent:claude-code")
@@ -1387,12 +1387,12 @@ struct ViewModelTests {
         let rows = model.settingsPage.sections.flatMap(\.rows)
         #expect(!rows.contains { $0.id == "billing" })
         #expect(!rows.contains { $0.id == "default-location" })
-        #expect(!rows.contains { $0.value == "Coming soon" || $0.button == "Join the waitlist" })
+        #expect(!rows.contains { $0.value == "Coming soon" || $0.button.map(CoreMessages.text) == "Join the waitlist" })
         let team = model.settingsPage.sections.first { $0.id == "teams" }!.rows
-        #expect(team[0].label == "acme", "the alias stands in for a missing name")
+        #expect(CoreMessages.text(team[0].label) == "acme", "the alias stands in for a missing name")
         #expect(team[0].value == "Owner \u{b7} Teams plan \u{b7} 3 seats")
-        #expect(team.first { $0.label == "linus@example.com" }?.value == "(Invited)")
-        #expect(team.first { $0.label == "grace@example.com" }?.value == "Member")
+        #expect(team.first { CoreMessages.text($0.label) == "linus@example.com" }?.value == "(Invited)")
+        #expect(team.first { CoreMessages.text($0.label) == "grace@example.com" }?.value == "Member")
         await model.press(row: "teams-manage")
         await model.press(row: "teams-billing")
         #expect(opened.map(\.absoluteString) == ["https://app.cua.ai/team", "https://app.cua.ai/billing"])

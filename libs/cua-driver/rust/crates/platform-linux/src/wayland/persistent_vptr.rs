@@ -282,6 +282,17 @@ struct Cursors {
     pressing: HashMap<String, usize>,
 }
 
+impl Cursors {
+    fn press_dropped(&mut self, cursor_id: &str) {
+        if let Some(count) = self.pressing.get_mut(cursor_id) {
+            *count -= 1;
+            if *count == 0 {
+                self.pressing.remove(cursor_id);
+            }
+        }
+    }
+}
+
 impl HeldCursors {
     fn lock(&self) -> std::sync::MutexGuard<'_, Cursors> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
@@ -298,11 +309,12 @@ impl HeldCursors {
 
     /// The owner handled a command for `cursor_id`, a press when `pressed`.
     fn publish(&self, cursor_id: &str, owner: &dyn Owner, pressed: bool) {
-        if pressed {
-            self.press_dropped(cursor_id);
-        }
+        let holds = owner.holds(cursor_id);
         let mut cursors = self.lock();
-        if owner.holds(cursor_id) {
+        if pressed {
+            cursors.press_dropped(cursor_id);
+        }
+        if holds {
             cursors.held.insert(cursor_id.to_owned());
         } else {
             cursors.held.remove(cursor_id);
@@ -311,13 +323,7 @@ impl HeldCursors {
 
     /// A queued press for `cursor_id` is no longer pending.
     fn press_dropped(&self, cursor_id: &str) {
-        let mut cursors = self.lock();
-        if let Some(count) = cursors.pressing.get_mut(cursor_id) {
-            *count -= 1;
-            if *count == 0 {
-                cursors.pressing.remove(cursor_id);
-            }
-        }
+        self.lock().press_dropped(cursor_id);
     }
 
     fn contains(&self, cursor_id: &str) -> bool {
@@ -1230,6 +1236,55 @@ mod tests {
         .unwrap_err();
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         drop(rx);
+    }
+
+    #[test]
+    fn cleanup_sees_a_handled_press_pending_while_its_hold_is_published() {
+        struct Holding(
+            std::sync::mpsc::SyncSender<()>,
+            std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+        );
+        impl Owner for Holding {
+            fn press(&mut self, _: &str, _: u64, _: i32, _: i32, _: u8) -> anyhow::Result<()> {
+                unreachable!()
+            }
+            fn move_to(&mut self, _: &str, _: i32, _: i32) -> anyhow::Result<()> {
+                unreachable!()
+            }
+            fn release(&mut self, _: &str, _: u8) -> anyhow::Result<()> {
+                unreachable!()
+            }
+            fn release_unrecorded(&mut self, _: &str) -> anyhow::Result<bool> {
+                unreachable!()
+            }
+            fn forget(&mut self, _: &str) {}
+            fn holds(&self, _: &str) -> bool {
+                self.0.send(()).unwrap();
+                self.1.lock().unwrap().recv().unwrap();
+                true
+            }
+        }
+        let held = Arc::new(HeldCursors::default());
+        held.press_queued("c");
+        let (asked, asking) = std::sync::mpsc::sync_channel(0);
+        let (answer, answering) = std::sync::mpsc::channel();
+        let publisher = {
+            let held = held.clone();
+            thread::spawn(move || {
+                held.publish("c", &Holding(asked, std::sync::Mutex::new(answering)), true)
+            })
+        };
+        asking.recv().unwrap();
+        let (seen, seeing) = std::sync::mpsc::channel();
+        thread::spawn({
+            let held = held.clone();
+            move || seen.send(held.contains("c"))
+        });
+        let visible = seeing.recv_timeout(std::time::Duration::from_secs(2));
+        answer.send(()).unwrap();
+        assert_eq!(visible, Ok(true));
+        publisher.join().unwrap();
+        assert!(held.contains("c"));
     }
 
     #[test]

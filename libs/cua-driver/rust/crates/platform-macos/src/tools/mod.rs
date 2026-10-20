@@ -1,6 +1,6 @@
 //! MCP tool implementations for macOS.
 
-mod bring_to_front;
+pub(crate) mod bring_to_front;
 mod capture_binding;
 mod click;
 mod clipboard;

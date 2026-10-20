@@ -79,6 +79,8 @@ pub(super) struct FixtureState {
     dom_click_changes_readback: bool,
     dom_click_readback_available: bool,
     dom_click_generation: u64,
+    dom_click_focused: bool,
+    dom_click_reads_before_failure: Option<usize>,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -115,6 +117,8 @@ impl Default for FixtureState {
             dom_click_changes_readback: true,
             dom_click_readback_available: true,
             dom_click_generation: 0,
+            dom_click_focused: false,
+            dom_click_reads_before_failure: None,
             calls: Vec::new(),
         }
     }
@@ -717,18 +721,32 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     .as_str()
                     .is_some_and(|function| function.contains("ariaPressed")) =>
             {
+                if let Some(remaining) = st.dom_click_reads_before_failure.as_mut() {
+                    if *remaining == 0 {
+                        return MockReply::err(-32000, "execution context destroyed");
+                    }
+                    *remaining -= 1;
+                }
                 if !st.dom_click_readback_available {
                     return MockReply::err(-32000, "semantic click readback unavailable");
                 }
-                MockReply::ok(json!({
-                    "result": {
-                        "value": {
-                            "innerText": format!("counter={}", st.dom_click_generation)
-                        }
-                    }
-                }))
+                let mut value = json!({
+                    "innerText": format!("counter={}", st.dom_click_generation)
+                });
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| function.contains("activeElement"))
+                {
+                    value["activeElement"] = json!(if st.dom_click_focused {
+                        "BUTTON"
+                    } else {
+                        "BODY"
+                    });
+                }
+                MockReply::ok(json!({ "result": { "value": value } }))
             }
             "Runtime.callFunctionOn" => {
+                st.dom_click_focused = true;
                 if st.dom_click_changes_readback {
                     st.dom_click_generation += 1;
                 }
@@ -1349,7 +1367,11 @@ async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() 
         }))
         .await;
     assert_eq!(
-        clicked.action_record.as_ref().expect("click action record").effect,
+        clicked
+            .action_record
+            .as_ref()
+            .expect("click action record")
+            .effect,
         crate::action_record::ActionEffect::Confirmed
     );
     let typed = BrowserTypeTool::new(f.engine.clone())
@@ -3026,6 +3048,35 @@ async fn dom_event_click_remains_unverifiable_when_semantic_readback_is_unavaila
     assert_eq!(
         public["escalation"]["reason"], "effect_unconfirmed",
         "{public}"
+    );
+}
+
+#[tokio::test]
+async fn dom_event_click_is_unverifiable_when_readback_disappears() {
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_reads_before_failure = Some(2);
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+    let public = result.action_record.unwrap().public_result().unwrap();
+    let public = serde_json::to_value(public).unwrap();
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert!(public["evidence"].is_null(), "{public}");
+    assert_eq!(
+        f.state.lock().unwrap().dom_click_reads_before_failure,
+        Some(0)
     );
 }
 

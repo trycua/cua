@@ -54,13 +54,6 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
 const DOM_CLICK_READBACK: &str = r#"function() {
   const bounded = value => typeof value === 'string' ? value.slice(0, 512) : null;
   const attr = name => bounded(this.getAttribute(name));
-  const active = this.ownerDocument && this.ownerDocument.activeElement;
-  const activeIdentity = active ? [
-    active.tagName,
-    bounded(active.id) || null,
-    bounded(active.getAttribute('name')),
-    bounded(active.getAttribute('data-cua-id'))
-  ] : null;
   return {
     ariaPressed: attr('aria-pressed'),
     ariaSelected: attr('aria-selected'),
@@ -74,8 +67,7 @@ const DOM_CLICK_READBACK: &str = r#"function() {
     innerText: bounded(this.innerText),
     href: this.ownerDocument && this.ownerDocument.location
       ? bounded(this.ownerDocument.location.href)
-      : null,
-    activeElement: activeIdentity
+      : null
   };
 }"#;
 
@@ -123,21 +115,24 @@ async fn observe_dom_click(
         };
     };
     let started = Instant::now();
-    let mut readable_after = false;
     loop {
         if let Some(after) = read_dom_click_state(conn, cdp, object_id).await {
-            readable_after = true;
             if dom_click_state_changed(&before, &after) {
                 return DomClickObservation {
                     effect: effect_from_value_readback(true, true, true),
                     readback_available: true,
                 };
             }
+        } else {
+            return DomClickObservation {
+                effect: effect_from_value_readback(false, false, false),
+                readback_available: false,
+            };
         }
         if started.elapsed() >= DOM_CLICK_READBACK_DEADLINE {
             return DomClickObservation {
-                effect: effect_from_value_readback(false, false, readable_after),
-                readback_available: readable_after,
+                effect: effect_from_value_readback(false, false, true),
+                readback_available: true,
             };
         }
         tokio::time::sleep(DOM_CLICK_READBACK_INTERVAL).await;

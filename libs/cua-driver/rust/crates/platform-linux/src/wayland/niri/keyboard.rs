@@ -365,9 +365,8 @@ fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Option<Key> {
             if map.key_get_syms_by_level(code, group, level) != [sym] {
                 continue;
             }
-            let mut masks = [0_u32; 32];
-            let count = map.key_get_mods_for_level(code, group, level, &mut masks);
-            candidates.extend(masks.iter().take(count).filter_map(|&modifiers| {
+            let masks = level_mods(map, code, group, level);
+            candidates.extend(masks.into_iter().filter_map(|modifiers| {
                 let mut state = xkb::State::new(map);
                 state.update_mask(modifiers, 0, 0, 0, 0, group);
                 (state.key_get_one_sym(code) == sym).then_some(Key {

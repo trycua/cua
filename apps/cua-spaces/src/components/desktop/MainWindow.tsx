@@ -77,7 +77,7 @@ import { useExperiments } from '../../state/experiments';
 import { createLoginItemBridge, type LoginItemBridge } from '../../native/loginItem';
 import { launchPlan, readLaunchChoice, writeLaunchChoice } from '../../model/loginItem';
 import { Sym } from './Sym';
-import { useT } from "../../i18n";
+import { tMsg, useT } from "../../i18n";
 
 export interface MainWindowProps {
   fleet?: FleetBridge;
@@ -621,9 +621,9 @@ export function MainWindow({
             </ul>
           )}
           {sidebar.sections.map((section) => (
-            <div key={section.title}>
-              <div className="dw-nav-section">{section.title}</div>
-              <ul className="dw-nav-list" role="listbox" aria-label={section.title}>
+            <div key={section.title.code}>
+              <div className="dw-nav-section">{tMsg(section.title)}</div>
+              <ul className="dw-nav-list" role="listbox" aria-label={tMsg(section.title)}>
                 {section.rows.map((row) => (
                   <SpaceRowItem
                     key={row.id}
@@ -637,7 +637,7 @@ export function MainWindow({
             </div>
           ))}
           {sidebar.emptyText && !sidebar.thisMachine && !sync.rosterError && (
-            <p className="dw-hint dw-nav-section">{sidebar.emptyText}</p>
+            <p className="dw-hint dw-nav-section">{tMsg(sidebar.emptyText)}</p>
           )}
           <ul className="dw-nav-list" aria-label={t("spaces.main.agents_label")}>
             {(
@@ -1058,8 +1058,8 @@ function PowerRowButton({ button, onPress }: { button: PowerButton; onPress: () 
     <button
       type="button"
       className="dw-icon-btn dw-row-power"
-      aria-label={button.help}
-      title={button.help}
+      aria-label={tMsg(button.help)}
+      title={tMsg(button.help)}
       disabled={!button.enabled}
       data-busy={button.busy ? 'true' : undefined}
       onClick={onPress}
@@ -1102,7 +1102,7 @@ function SpaceRowItem({
           // Being created: the percentage and a ring, no dot.
           <>
             <span className="dw-row-trailing">{row.trailing}</span>
-            <span role="img" aria-label={row.statusText}>
+            <span role="img" aria-label={tMsg(row.statusText)}>
               <RadialProgress className="dw-row-ring" fraction={row.progress / 1000} />
             </span>
           </>
@@ -1114,7 +1114,7 @@ function SpaceRowItem({
                 {row.trailing}
               </span>
             )}
-            <span className="dw-dot" data-status={row.status} aria-label={row.statusText} />
+            <span className="dw-dot" data-status={row.status} aria-label={tMsg(row.statusText)} />
           </>
         )}
       </button>

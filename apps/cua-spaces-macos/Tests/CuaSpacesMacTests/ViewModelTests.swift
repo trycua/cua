@@ -591,7 +591,7 @@ struct ViewModelTests {
         model.query = "auro"
         #expect(model.sidebar.sections.flatMap(\.rows).map(\.name) == ["aurora"])
         model.query = "zzz"
-        #expect(model.sidebar.emptyText == "No matches")
+        #expect(model.sidebar.emptyText?.code == "spaces.sidebar.no_matches")
     }
 
     @Test func wizardWalksToALocalPlanAndCreates() async {
@@ -836,7 +836,7 @@ struct ViewModelTests {
         }
         let failed = try #require(row)
         #expect(failed.trailing == "no local runtime found" && failed.progress == nil)
-        #expect(failed.statusText == "Failed" && failed.dim)
+        #expect(failed.statusText.code == "spaces.status.failed" && failed.dim)
         #expect(model.banner == nil, "the error is on the row, not a banner")
         let space = try #require(model.spaces.first { $0.id == failed.id })
         let detail = model.detail(space)
@@ -925,7 +925,7 @@ struct ViewModelTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(!model.spaces.contains { $0.id == id })
-        #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.statusText == "Failed" })
+        #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.statusText.code == "spaces.status.failed" })
         #expect(backend.cancelRequests.isEmpty)
     }
 
@@ -989,7 +989,7 @@ struct ViewModelTests {
         model.delete(space)
         // Synchronously, before the SDK has done anything.
         let row = try #require(model.sidebar.sections.flatMap(\.rows).first { $0.id == space.id })
-        #expect(row.status == .deleting && row.statusText == "Deleting\u{2026}" && row.dim)
+        #expect(row.status == .deleting && row.statusText.code == "spaces.status.deleting" && row.dim)
         #expect(model.notch.view.activity?.kind == .deleting)
         let deleting = try #require(model.spaces.first { $0.id == space.id })
         let detail = model.detail(deleting)
@@ -1076,7 +1076,7 @@ struct ViewModelTests {
         let row = { (id: String) in model.sidebar.sections.flatMap(\.rows).first { $0.id == id } }
         #expect(row("cloud:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
-        #expect(row(aurora.id)?.power?.help == "Suspend")
+        #expect(row(aurora.id)?.power?.help.code == "spaces.power.suspend")
         // Share before power (Sharing is on by default); none with Sharing turned off.
         #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
         model.chooseExperiment(row: "experiment:sharing", option: "off")
@@ -1086,27 +1086,27 @@ struct ViewModelTests {
         model.setPower(aurora, on: false)
         // Synchronously, before the SDK has done anything.
         let busy = try #require(row(aurora.id)?.power)
-        #expect(busy.busy && !busy.enabled && busy.help == "Suspending\u{2026}")
-        #expect(row(aurora.id)?.statusText == "Suspending\u{2026}")
+        #expect(busy.busy && !busy.enabled && busy.help.code == "spaces.status.suspending")
+        #expect(row(aurora.id)?.statusText.code == "spaces.status.suspending")
         let auroraNow = try #require(model.spaces.first { $0.id == aurora.id })
         let action = try #require(model.detail(auroraNow).actions.first { $0.id == .power })
         #expect(action.busy && !action.enabled)
         model.setPower(aurora, on: false)
         backend.releasePower()
-        for _ in 0..<200 where row(aurora.id)?.power?.help != "Resume" {
+        for _ in 0..<200 where row(aurora.id)?.power?.help.code != "spaces.power.resume" {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(backend.powerRequests.map(\.id) == [aurora.id], "one press")
-        #expect(row(aurora.id)?.statusText == "Stopped")
+        #expect(row(aurora.id)?.statusText.code == "spaces.status.stopped")
         #expect(model.creates.powering.isEmpty, "settled once the registry showed it off")
 
         let off = try #require(model.spaces.first { $0.id == aurora.id })
         model.setPower(off, on: true)
-        for _ in 0..<200 where row(aurora.id)?.power?.help != "Suspend" {
+        for _ in 0..<200 where row(aurora.id)?.power?.help.code != "spaces.power.suspend" {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(backend.powerRequests.map(\.on) == [false, true])
-        #expect(row(aurora.id)?.statusText == "Running")
+        #expect(row(aurora.id)?.statusText.code == "spaces.status.running")
     }
 
     /// A failed power action shows why on the row and the detail, and the

@@ -33319,9 +33319,10 @@ export type AppPowerButton = {
     symbol: string,
     /**
      * Tooltip and accessibility label: "Suspend", "Resume", "Turn off" or
-     * "Turn on"; while it runs, "Suspending…" and the like.
+     * "Turn on" (`spaces.power.*`); while it runs, "Suspending…" and the
+     * like (`spaces.status.*`).
      */
-    help: string,
+    help: AppMsg,
     /**
      * A press turns it on (else off): the shell's SDK call.
      */
@@ -33358,7 +33359,7 @@ const FfiConverterTypeAppPowerButton = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 symbol: FfiConverterString.read(from),
-                help: FfiConverterString.read(from),
+                help: FfiConverterTypeAppMsg.read(from),
                 turnOn: FfiConverterBool.read(from),
                 enabled: FfiConverterBool.read(from),
                 busy: FfiConverterBool.read(from)
@@ -33366,14 +33367,14 @@ const FfiConverterTypeAppPowerButton = (() => {
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.symbol, into);
-            FfiConverterString.write(value.help, into);
+            FfiConverterTypeAppMsg.write(value.help, into);
             FfiConverterBool.write(value.turnOn, into);
             FfiConverterBool.write(value.enabled, into);
             FfiConverterBool.write(value.busy, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.symbol) +
-             FfiConverterString.allocationSize(value.help) +
+             FfiConverterTypeAppMsg.allocationSize(value.help) +
              FfiConverterBool.allocationSize(value.turnOn) +
              FfiConverterBool.allocationSize(value.enabled) +
              FfiConverterBool.allocationSize(value.busy);
@@ -37529,7 +37530,7 @@ export type AppSidebarRow = {
     /**
      * Status word (the dot's accessibility label).
      */
-    statusText: string,
+    statusText: AppMsg,
     /**
      * Tooltip.
      */
@@ -37593,7 +37594,7 @@ const FfiConverterTypeAppSidebarRow = (() => {
                 name: FfiConverterString.read(from),
                 osIcon: FfiConverterString.read(from),
                 status: FfiConverterTypeAppSpaceStatus.read(from),
-                statusText: FfiConverterString.read(from),
+                statusText: FfiConverterTypeAppMsg.read(from),
                 detail: FfiConverterString.read(from),
                 dim: FfiConverterBool.read(from),
                 selected: FfiConverterBool.read(from),
@@ -37609,7 +37610,7 @@ const FfiConverterTypeAppSidebarRow = (() => {
             FfiConverterString.write(value.name, into);
             FfiConverterString.write(value.osIcon, into);
             FfiConverterTypeAppSpaceStatus.write(value.status, into);
-            FfiConverterString.write(value.statusText, into);
+            FfiConverterTypeAppMsg.write(value.statusText, into);
             FfiConverterString.write(value.detail, into);
             FfiConverterBool.write(value.dim, into);
             FfiConverterBool.write(value.selected, into);
@@ -37624,7 +37625,7 @@ const FfiConverterTypeAppSidebarRow = (() => {
              FfiConverterString.allocationSize(value.name) +
              FfiConverterString.allocationSize(value.osIcon) +
              FfiConverterTypeAppSpaceStatus.allocationSize(value.status) +
-             FfiConverterString.allocationSize(value.statusText) +
+             FfiConverterTypeAppMsg.allocationSize(value.statusText) +
              FfiConverterString.allocationSize(value.detail) +
              FfiConverterBool.allocationSize(value.dim) +
              FfiConverterBool.allocationSize(value.selected) +
@@ -37641,9 +37642,10 @@ const FfiConverterTypeAppSidebarRow = (() => {
 
 export type AppSidebarSection = {
     /**
-     * "Cua Cloud", "This Mac", "Connected", "My machines".
+     * "Cua Cloud", "This Mac", "Connected", "My computers"
+     * (`spaces.sidebar.section.*`).
      */
-    title: string,
+    title: AppMsg,
     /**
      * Rows.
      */
@@ -37671,16 +37673,16 @@ const FfiConverterTypeAppSidebarSection = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                title: FfiConverterString.read(from),
+                title: FfiConverterTypeAppMsg.read(from),
                 rows: FfiConverterSequenceTypeAppSidebarRow.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.title, into);
+            FfiConverterTypeAppMsg.write(value.title, into);
             FfiConverterSequenceTypeAppSidebarRow.write(value.rows, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.title) +
+            return FfiConverterTypeAppMsg.allocationSize(value.title) +
              FfiConverterSequenceTypeAppSidebarRow.allocationSize(value.rows);
 
         }
@@ -37702,9 +37704,10 @@ export type AppSidebarView = {
      */
     selectedId?: string,
     /**
-     * "No matches" / "No Spaces yet" when nothing is listed.
+     * "No matches" / "No Spaces yet" when nothing is listed
+     * (`spaces.sidebar.*`).
      */
-    emptyText?: string
+    emptyText?: AppMsg
 }
 
 /**
@@ -37731,20 +37734,20 @@ const FfiConverterTypeAppSidebarView = (() => {
                 thisMachine: FfiConverterOptionalTypeAppSidebarRow.read(from),
                 sections: FfiConverterSequenceTypeAppSidebarSection.read(from),
                 selectedId: FfiConverterOptionalString.read(from),
-                emptyText: FfiConverterOptionalString.read(from)
+                emptyText: FfiConverterOptionalTypeAppMsg.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalTypeAppSidebarRow.write(value.thisMachine, into);
             FfiConverterSequenceTypeAppSidebarSection.write(value.sections, into);
             FfiConverterOptionalString.write(value.selectedId, into);
-            FfiConverterOptionalString.write(value.emptyText, into);
+            FfiConverterOptionalTypeAppMsg.write(value.emptyText, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalTypeAppSidebarRow.allocationSize(value.thisMachine) +
              FfiConverterSequenceTypeAppSidebarSection.allocationSize(value.sections) +
              FfiConverterOptionalString.allocationSize(value.selectedId) +
-             FfiConverterOptionalString.allocationSize(value.emptyText);
+             FfiConverterOptionalTypeAppMsg.allocationSize(value.emptyText);
 
         }
     };
@@ -63376,6 +63379,9 @@ const FfiConverterOptionalTypeAppSidebarRow = new FfiConverterOptional(FfiConver
 
 // FfiConverter for Array<AppSidebarSection>
 const FfiConverterSequenceTypeAppSidebarSection = new FfiConverterArray(FfiConverterTypeAppSidebarSection);
+
+// FfiConverter for AppMsg | undefined
+const FfiConverterOptionalTypeAppMsg = new FfiConverterOptional(FfiConverterTypeAppMsg);
 
 // FfiConverter for Array<AppDetailAction>
 const FfiConverterSequenceTypeAppDetailAction = new FfiConverterArray(FfiConverterTypeAppDetailAction);

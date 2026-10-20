@@ -16,18 +16,18 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My computers",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.cloud",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This computer | This Mac | Set up for access"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Set up for access"
       }
     },
     {
@@ -47,18 +47,18 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My computers",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.cloud",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This computer | This Mac | Set up for access"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Set up for access"
       }
     },
     {
@@ -86,18 +86,18 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My computers",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.cloud",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This computer | This Mac | Sharing · 2 connected"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Sharing · 2 connected"
       }
     },
     {
@@ -122,18 +122,18 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My computers",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.cloud",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This computer | This Mac | Host service stopped"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Host service stopped"
       }
     },
     {
@@ -141,8 +141,8 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac"
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac"
         ],
         "selectedId": "this-mac",
         "thisMachine": null

@@ -678,8 +678,9 @@ pub struct AppPowerButton {
     /// SF Symbol ([`POWER_SYMBOL`]).
     pub symbol: String,
     /// Tooltip and accessibility label: "Suspend", "Resume", "Turn off" or
-    /// "Turn on"; while it runs, "Suspending…" and the like.
-    pub help: String,
+    /// "Turn on" (`spaces.power.*`); while it runs, "Suspending…" and the
+    /// like (`spaces.status.*`).
+    pub help: AppMsg,
     /// A press turns it on (else off): the shell's SDK call.
     pub turn_on: bool,
     /// It can be pressed (not while an action runs).
@@ -702,7 +703,7 @@ pub struct AppSidebarRow {
     /// Status (the dot).
     pub status: AppSpaceStatus,
     /// Status word (the dot's accessibility label).
-    pub status_text: String,
+    pub status_text: AppMsg,
     /// Tooltip.
     pub detail: String,
     /// Drawn at reduced opacity.
@@ -729,8 +730,9 @@ pub struct AppSidebarRow {
 pub type AppSidebarSection = core::spaces::sidebar::SidebarSection;
 #[uniffi::remote(Record)]
 pub struct AppSidebarSection {
-    /// "Cua Cloud", "This Mac", "Connected", "My machines".
-    pub title: String,
+    /// "Cua Cloud", "This Mac", "Connected", "My computers"
+    /// (`spaces.sidebar.section.*`).
+    pub title: AppMsg,
     /// Rows.
     pub rows: Vec<AppSidebarRow>,
 }
@@ -745,8 +747,9 @@ pub struct AppSidebarView {
     pub sections: Vec<AppSidebarSection>,
     /// The effective selection (falls back to the first Space).
     pub selected_id: Option<String>,
-    /// "No matches" / "No Spaces yet" when nothing is listed.
-    pub empty_text: Option<String>,
+    /// "No matches" / "No Spaces yet" when nothing is listed
+    /// (`spaces.sidebar.*`).
+    pub empty_text: Option<AppMsg>,
 }
 
 /// A fact's copy button: an icon button that puts `text` on the pasteboard,

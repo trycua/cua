@@ -127,7 +127,10 @@ export interface Msg {
 
 /** Translate a core message by looking its code up like any other key. */
 export function tMsg(msg: Msg): string {
-  return t(msg.code, msg.vars);
+  // The code's first word is its namespace (`spaces.status.running` is in
+  // `spaces.json`), and `t` alone only looks in `common`.
+  const ns = msg.code.split(".")[0] as Namespace;
+  return t(msg.code, { ...msg.vars, ns: (NAMESPACES as readonly string[]).includes(ns) ? ns : undefined });
 }
 
 /** React hook: `const t = useT("sharing")`. Re-renders on locale change. */

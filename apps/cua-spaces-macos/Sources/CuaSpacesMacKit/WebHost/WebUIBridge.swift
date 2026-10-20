@@ -469,7 +469,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     func machines() -> [String: Any] {
         let sidebar = model.sidebar
         return [
-            "thisMachine": BridgeValue.encode(sidebar.thisMachine),
+            // The web page reads the status as text.
+            "thisMachine": sidebar.thisMachine.map { row -> Any in
+                var out = BridgeValue.encode(row) as? [String: Any] ?? [:]
+                out["statusText"] = CoreMessages.text(row.statusText)
+                return out
+            } ?? NSNull(),
             "sections": BridgeValue.encode(sidebar.sections),
             "devices": model.devices.snapshot == nil ? NSNull() : BridgeValue.encode(model.devices.view),
             "accessNotice": BridgeValue.encode(model.devices.accessNotice),

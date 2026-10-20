@@ -474,7 +474,7 @@
     },
     {
       "frame": {
-        "emptyText": "No Spaces yet",
+        "emptyText": "spaces.sidebar.empty",
         "sections": [],
         "selectedId": null,
         "thisMachine": null
@@ -483,7 +483,7 @@
     },
     {
       "frame": {
-        "emptyText": "No Spaces yet",
+        "emptyText": "spaces.sidebar.empty",
         "sections": [],
         "selectedId": null,
         "thisMachine": null

@@ -1,0 +1,2 @@
+# Add exactly 20 task IDs from the gated, release-pinned task bundle.
+# Keep evaluator/setup source sealed from the agent.

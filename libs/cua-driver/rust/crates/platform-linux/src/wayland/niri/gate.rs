@@ -83,8 +83,8 @@ pub(super) fn aim_at(window: &Window, x: i32, y: i32) -> Result<((i32, i32), Rec
 /// the layout again before every event, so a window that moved, or a pointer
 /// space that changed, refuses the next one. Two equal snapshots cannot see a
 /// move away and back between them, nor an animation niri does not report.
-pub struct PointerGate {
-    ipc: AttestedIpc,
+pub struct PointerGate<C = fn(Instant) -> Result<UnixStream>> {
+    ipc: Ipc<C>,
     /// The window and the rectangle its points were admitted on.
     window: Option<(u64, Rect)>,
     points: Vec<(i32, i32)>,
@@ -92,17 +92,22 @@ pub struct PointerGate {
     space: (i32, i32, u32, u32),
 }
 
-impl PointerGate {
+impl<C: FnMut(Instant) -> Result<UnixStream>> PointerGate<C> {
     /// Recheck the admitted action right before an event that acts on the
-    /// target: the first motion, the first press, and each wheel tick.
+    /// target: the first motion, the first press, and each wheel tick. A
+    /// window target must also still hold keyboard focus, read back from
+    /// niri: a lock or layer-shell surface can take it without moving it.
     pub fn holds(&mut self) -> Result<()> {
         if let Some((id, rect)) = self.window {
-            let window = self
-                .ipc
-                .scene()
-                .and_then(|scene| scene.window(id))
-                .map_err(input_unavailable)?;
+            let scene = self.ipc.scene().map_err(input_unavailable)?;
+            let window = scene.window(id).map_err(input_unavailable)?;
             pointer_admission(&window, rect, &self.points, |_| None)?;
+            let pid = scene
+                .windows
+                .iter()
+                .find(|w| w.id == id)
+                .and_then(|w| w.pid);
+            confirm_focus(&mut self.ipc, id, pid, Duration::ZERO)?;
         }
         let current =
             pointer_space_of(&self.ipc.query(Request::Outputs)?).map_err(input_unavailable)?;
@@ -237,6 +242,8 @@ pub(super) fn desktop_admission(scene: &Scene, points: &[(i32, i32)]) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::sync::Arc;
 
     #[test]
     fn a_window_that_moved_after_admission_refuses_the_next_event() {
@@ -255,6 +262,31 @@ mod tests {
         ]);
         assert!(
             pointer_admission(&placed_window(&covered, 7), rect, &[(150, 100)], |_| None).is_err()
+        );
+    }
+
+    #[test]
+    fn focus_taken_without_any_move_refuses_the_next_event() {
+        let mut target = floating(7, 1, (100.0, 60.0), (300, 200));
+        target["is_focused"] = json!(true);
+        let fake = Arc::new(Mutex::new(Fake {
+            windows: vec![target],
+            workspaces: vec![workspace(1, "winit", true, Some(7))],
+            outputs: vec![output("winit", 0, 0, (1280, 720), 1.5, "Flipped180")],
+            ..Fake::default()
+        }));
+        let admitted = one_output(fake.lock().unwrap().windows.clone());
+        let mut gate = PointerGate {
+            ipc: fake_ipc(&fake),
+            window: Some((7, gate_pointer(&admitted, 7, &[(150, 100)]).unwrap())),
+            points: vec![(150, 100)],
+            space: admitted.pointer_space().unwrap(),
+        };
+        gate.holds().unwrap();
+        fake.lock().unwrap().windows[0]["is_focused"] = json!(false);
+        assert_eq!(
+            gate.holds().unwrap_err().to_string(),
+            "foreground_unavailable: niri did not confirm focus on window 7 (focused: none)"
         );
     }
 

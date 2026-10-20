@@ -88,6 +88,7 @@ pub(super) fn placement(scene: &Scene, id: u64) -> Result<Placed, Unplaced> {
 pub(super) struct Fake {
     pub(super) windows: Vec<Value>,
     pub(super) workspaces: Vec<Value>,
+    pub(super) outputs: Vec<Value>,
     pub(super) overview: bool,
     /// FocusWindow is answered `Handled` but changes nothing.
     pub(super) ignore_focus: bool,
@@ -117,6 +118,14 @@ impl Fake {
                 }
                 _ => json!({"Ok": {"Workspaces": self.workspaces}}),
             },
+            Some("Outputs") => {
+                let outputs: serde_json::Map<String, Value> = self
+                    .outputs
+                    .iter()
+                    .map(|o| (o["name"].as_str().unwrap().to_owned(), o.clone()))
+                    .collect();
+                json!({"Ok": {"Outputs": outputs}})
+            }
             Some("OverviewState") => {
                 json!({"Ok": {"OverviewState": {"is_open": self.overview}}})
             }

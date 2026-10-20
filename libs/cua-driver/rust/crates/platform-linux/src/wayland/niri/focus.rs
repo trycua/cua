@@ -103,7 +103,7 @@ fn focus_window<C: FnMut(Instant) -> Result<UnixStream>>(
     confirm_focus(ipc, id, pid, confirm)
 }
 
-fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
+pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     ipc: &mut Ipc<C>,
     id: u64,
     pid: Option<i32>,

@@ -1301,7 +1301,7 @@ impl ToolRegistry {
     }
 
     pub fn is_known_tool(&self, name: &str) -> bool {
-        name == "type_text_chars" || self.tools.contains_key(name)
+        name == "type_text_chars" || self.tools.contains_key(renamed_tool(name).unwrap_or(name))
     }
 
     pub fn retain_session_end_hook(

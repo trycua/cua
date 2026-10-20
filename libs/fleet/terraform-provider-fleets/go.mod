@@ -2,8 +2,6 @@ module github.com/trycua/terraform-provider-fleets
 
 go 1.25.8
 
-toolchain go1.26.10
-
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-framework-jsontypes v0.2.0

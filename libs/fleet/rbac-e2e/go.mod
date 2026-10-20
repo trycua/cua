@@ -2,8 +2,6 @@ module cyclops-cs-rbac-e2e
 
 go 1.24.7
 
-toolchain go1.26.10
-
 require (
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3

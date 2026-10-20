@@ -134,10 +134,17 @@ CHECKS = [
 ]
 
 
+# Read-only mirrors of private canonical repositories: a change here is overwritten
+# by the next sync (fleet-mirror-guard), so the bump must land upstream instead.
+MIRRORED = ("libs/fleet/",)
+
+
 def main(root="."):
     files = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True).stdout.split("\n")
     failures = []
     for f in filter(None, files):
+        if f.startswith(MIRRORED):
+            continue
         for match, fn in CHECKS:
             if match(f):
                 try:

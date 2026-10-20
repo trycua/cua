@@ -934,15 +934,6 @@ async fn dispatch_request(
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(mut call) => {
                 crate::tool_args::sanitize_reserved_args(&mut call.args);
-                if !provider.is_known_tool(&call.name) {
-                    return Response::ok(
-                        id,
-                        tool_error_result(
-                            format!("Unknown tool: {}", call.name),
-                            serde_json::json!({"code": "unknown_tool"}),
-                        ),
-                    );
-                }
                 if let Err(error) = authorize_tool_call(&call.name, &call.args) {
                     return Response::ok(
                         id,
@@ -952,6 +943,16 @@ async fn dispatch_request(
                                 error.to_string(),
                                 serde_json::json!({"code": "permission_denied"}),
                             ),
+                        ),
+                    );
+                }
+
+                if !provider.is_known_tool(&call.name) {
+                    return Response::ok(
+                        id,
+                        tool_error_result(
+                            format!("Unknown tool: {}", call.name),
+                            serde_json::json!({"code": "unknown_tool"}),
                         ),
                     );
                 }

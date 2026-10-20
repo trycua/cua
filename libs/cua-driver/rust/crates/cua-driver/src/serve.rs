@@ -496,6 +496,7 @@ async fn invoke_daemon_tool(
         }
     }
 
+    // Policy enforcement — defense-in-depth for direct daemon socket connections.
     if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
         observe_daemon_error(observation, 1);
         return DaemonResponse::err(error.to_string(), 1);

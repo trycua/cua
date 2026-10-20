@@ -48,15 +48,33 @@ jobs:
       run:
         working-directory: apps/cua-spaces
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@v4
+      - name: Check LiteLLM secrets
+        id: secrets
+        env:
+          I18N_BASE_URL: ${{ secrets.LITELLM_BASE_URL }}
+          I18N_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -z "$I18N_BASE_URL" ] || [ -z "$I18N_API_KEY" ]; then
+            echo "::notice::translation skipped: LiteLLM secrets not configured"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.secrets.outputs.configured == 'true'
+        uses: actions/checkout@v4
+      - if: steps.secrets.outputs.configured == 'true'
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - if: steps.secrets.outputs.configured == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - if: steps.secrets.outputs.configured == 'true'
+        run: pnpm install --frozen-lockfile
       - name: Translate
+        if: steps.secrets.outputs.configured == 'true'
         env:
           I18N_BASE_URL: ${{ secrets.LITELLM_BASE_URL }}
           I18N_API_KEY: ${{ secrets.LITELLM_API_KEY }}
@@ -73,6 +91,7 @@ jobs:
           [ "$FORCE" = "true" ] && args+=(--force)
           node scripts/i18n-translate.mjs "${args[@]}"
       - name: Open the PR
+        if: steps.secrets.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.PR_TOKEN || github.token }}
         working-directory: ${{ github.workspace }}

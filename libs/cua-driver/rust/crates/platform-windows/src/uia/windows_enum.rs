@@ -170,7 +170,7 @@ where
 {
     run_uia_with_deadline_cancelable(
         "focused document typing",
-        SUBTREE_OP_TIMEOUT,
+        Duration::from_millis(200),
         "the existing input route unless the write started",
         f,
     )

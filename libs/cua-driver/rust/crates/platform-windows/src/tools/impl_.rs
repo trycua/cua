@@ -4577,9 +4577,6 @@ impl Tool for TypeTextTool {
             // Description ported from Swift `TypeTextTool.swift` with the
             // Windows transport note.  Swift tries AXSetAttribute(kAXSelectedText)
             // first, falls back to character-by-character CGEvent synthesis.
-            // Windows uses character-by-character PostMessage(WM_CHAR) to the
-            // window's focused child — there's no UIA equivalent of
-            // AXSelectedText wired up yet, so it's always the synthesis path.
             description: "Insert text into the target pid via character-by-character \
                 PostMessage(WM_CHAR) to the focused window. No focus steal.\n\n\
                 Special keys (Return, Escape, arrows, Tab) go through `press_key` / \
@@ -4587,7 +4584,7 @@ impl Tool for TypeTextTool {
                 **Routing on Windows.** `element_token` selects a specific UIA element \
                 and writes its ValuePattern value. For no-element foreground typing, a \
                 separate capability-gated path can use the exact focused UIA Document \
-                when it is writable and empty or has one collapsed caret at its end. \
+                when it is writable and empty. \
                 Eligibility depends on control capabilities and live focus, not app names. \
                 Chromium/Electron windows keep their existing boundary because a UIA \
                 value echo does not prove that the renderer accepted the text. The \
@@ -4598,9 +4595,9 @@ impl Tool for TypeTextTool {
                 are not guaranteed; single-line Edit controls and middle selections \
                 keep the existing input route. For other XAML / WinUI3 / UWP cases, \
                 use `element_token` from `get_window_state`; background WM_CHAR does \
-                not reach their CoreInput dispatcher. Native ConsoleHost on Windows ARM64 is \
-                hard-refused because it can \
-                accept synthesized Unicode events without delivering them; use a process \
+                not reach their CoreInput dispatcher. Native ConsoleHost on Windows ARM64 \
+                is hard-refused because it can accept synthesized Unicode events without \
+                delivering them; use a process \
                 or PTY setup channel instead. Legacy Win32 apps still use the PostMessage \
                 path, preserving the no-focus-steal property.\n\n\
                 `delay_ms` (0–200, default 30) spaces successive characters on the \
@@ -4644,10 +4641,7 @@ impl Tool for TypeTextTool {
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let text_len = text.chars().count();
-            if args.get("element_token").is_none()
-                && args.get("x").is_none()
-                && args.get("y").is_none()
-            {
+            if focused_document_route(&args, crate::input::is_chromium_target_window(hwnd)) {
                 let uia_text = text.clone();
                 match tokio::task::spawn_blocking(move || {
                     crate::uia::focused_document::try_type_focused_document_append(
@@ -4845,9 +4839,7 @@ impl Tool for TypeTextTool {
         // rather than a false success.
         if delivery == DeliveryMode::Foreground {
             if elem_idx.is_none()
-                && args.get("element_token").is_none()
-                && args.get("x").is_none()
-                && args.get("y").is_none()
+                && focused_document_route(&args, crate::input::is_chromium_target_window(hwnd))
             {
                 let uia_text = text.clone();
                 match tokio::task::spawn_blocking(move || {
@@ -5213,6 +5205,19 @@ impl Tool for TypeTextTool {
             Ok((Err(e), _, _, _)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+fn focused_document_route(args: &Value, chromium: bool) -> bool {
+    !chromium && ["element_token", "x", "y"].iter().all(|key| args.get(*key).is_none())
+}
+
+#[test]
+fn focused_document_route_excludes_explicit_targets_and_chromium() {
+    assert!(focused_document_route(&json!({}), false));
+    assert!(!focused_document_route(&json!({}), true));
+    for args in [json!({"element_token": "s00000000:0"}), json!({"x": 1}), json!({"y": 1})] {
+        assert!(!focused_document_route(&args, false));
     }
 }
 

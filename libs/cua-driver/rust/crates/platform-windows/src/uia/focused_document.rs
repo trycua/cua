@@ -118,6 +118,9 @@ fn try_type_focused_document_append_unbounded(
             return not_applicable("value_unavailable");
         };
         let initial_value = initial_value.to_string();
+        if !initial_value.is_empty() {
+            return not_applicable("document_not_empty");
+        }
 
         let Ok(text_pattern) = (unsafe { focused.GetCurrentPattern(UIA_TextPatternId) }) else {
             return not_applicable("text_pattern_unavailable");
@@ -183,7 +186,7 @@ fn try_type_focused_document_append_unbounded(
             return not_applicable("cancelled_before_write");
         }
 
-        let expected_value = focused_document_appended_value(&initial_value, text);
+        let expected_value = text.to_owned();
         let write_result = (|| -> Result<(), &'static str> {
             let value = BSTR::from(expected_value.as_str());
             unsafe { value_pattern.SetValue(&value) }
@@ -353,12 +356,9 @@ fn focused_document_eligible(
     writable_value: bool,
     value_is_empty: bool,
     single_text_selection: bool,
-    collapsed_caret_at_end: bool,
+    _collapsed_caret_at_end: bool,
 ) -> bool {
-    exact_target
-        && writable_value
-        && single_text_selection
-        && (value_is_empty || collapsed_caret_at_end)
+    exact_target && writable_value && single_text_selection && value_is_empty
 }
 
 fn classify_focused_document_write(
@@ -374,14 +374,16 @@ fn classify_focused_document_write(
     }
 }
 
+#[cfg(test)]
 fn normalize_document_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 fn normalized_text_matches(expected: &str, actual: &str) -> bool {
-    normalize_document_line_endings(expected) == normalize_document_line_endings(actual)
+    expected == actual
 }
 
+#[cfg(test)]
 fn focused_document_appended_value(current_value: &str, input: &str) -> String {
     if current_value.is_empty() {
         return input.to_owned();
@@ -415,7 +417,7 @@ mod tests {
     #[test]
     fn focused_document_requires_exact_target_and_safe_value_selection() {
         assert!(focused_document_eligible(true, true, true, true, false));
-        assert!(focused_document_eligible(true, true, false, true, true));
+        assert!(!focused_document_eligible(true, true, false, true, true));
         assert!(!focused_document_eligible(true, true, false, true, false));
         assert!(!focused_document_eligible(true, true, false, false, true));
         assert!(!focused_document_eligible(false, true, false, true, true));
@@ -478,7 +480,7 @@ mod tests {
             normalize_document_line_endings("one\r\n\r\ntwo\rthree\n"),
             "one\n\ntwo\nthree\n"
         );
-        assert!(normalized_text_matches(
+        assert!(!normalized_text_matches(
             "one\r\n\r\ntwo\r\u{676d}\u{5dde}\u{4e1c}",
             "one\n\ntwo\n\u{676d}\u{5dde}\u{4e1c}"
         ));

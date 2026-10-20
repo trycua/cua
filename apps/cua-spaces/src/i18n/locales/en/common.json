@@ -2,5 +2,10 @@
   "common": {
     "app_name": "Cua Spaces"
   },
-  "common.action.dismiss": "Dismiss"
+  "common.action.dismiss": "Dismiss",
+  "common.action.retry": "Retry",
+  "common.action.cancel": "Cancel",
+  "common.action.close": "Close",
+  "common.action.reconnect": "Reconnect",
+  "common.status.connecting": "Connecting…"
 }

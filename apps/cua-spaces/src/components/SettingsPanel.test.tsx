@@ -365,6 +365,7 @@ describe("SettingsPanel Privacy", () => {
         view = { ...view, enabled, source: "config /tmp/cua/config.toml", sourceKind: "config" };
         return view;
       },
+      setUiLocale: () => {},
       recordFeature: () => {},
       recordStep: () => {},
       recordStream: () => {},
@@ -420,6 +421,7 @@ describe("SettingsPanel Experiments", () => {
       acknowledgeNotice: async () => view,
       setEnabled: async () => view,
       welcomeLeft: async () => view,
+      setUiLocale: () => {},
       recordFeature: () => {},
       recordStep: () => {},
       recordStream: () => {},

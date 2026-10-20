@@ -576,6 +576,7 @@ pub fn run() {
             telemetry::telemetry_record_feature,
             telemetry::telemetry_record_step,
             telemetry::telemetry_record_signals,
+            telemetry::telemetry_set_ui_locale,
             telemetry::telemetry_welcome_left,
             telemetry::telemetry_record_stream,
             webview_data::ui_storage_set,

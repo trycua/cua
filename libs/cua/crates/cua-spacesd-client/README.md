@@ -15,7 +15,7 @@ use cua_spacesd_client::{SpacesdClient, ScreenshotOptions};
 
 #[tokio::main]
 async fn main() -> cua_spacesd_client::Result<()> {
-    // The Space's spacesd endpoint and token (`cua spaces show <name>`).
+    // The Space's spacesd URL and token: `cua sb info <space> --connection`.
     let space = SpacesdClient::connect_url("127.0.0.1:3211", Some("TOKEN".into())).await?;
 
     let out = space.run("uname -a").await?;

@@ -9,17 +9,21 @@ The `.proto` files of Cua, for calling a Space from any language:
   `ComputerService` (screenshots, pointer, keyboard).
 - `cua/daemon/v1`: the local `cua daemon`.
 
-Every call needs the Space's token as `authorization: Bearer <token>`.
-Get a Space's endpoint and token from the cua CLI, the SDKs, or the Cua
-Spaces app.
+Every call, reflection included, needs the Space's token as
+`authorization: Bearer <token>`. The cua CLI prints a Space's spacesd URL
+and token:
+
+```sh
+cua sb info <space> --connection --json   # .spacesd.url, .spacesd.token
+```
 
 ## Look around with grpcurl
 
 spacesd has gRPC server reflection on, so grpcurl needs no files:
 
 ```sh
-TOKEN=...            # the Space's token
-ADDR=127.0.0.1:3211  # the Space's spacesd address
+TOKEN=...            # .spacesd.token
+ADDR=127.0.0.1:3211  # host:port of .spacesd.url
 
 grpcurl -plaintext -H "authorization: Bearer $TOKEN" "$ADDR" list
 grpcurl -plaintext -H "authorization: Bearer $TOKEN" "$ADDR" describe cua.env.v1.ProcessService

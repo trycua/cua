@@ -59,6 +59,7 @@ const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
 const DESKTOP_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Subtree scans: keep the pre-existing interactive operation budget.
 const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
+const FOCUSED_DOCUMENT_TIMEOUT: Duration = Duration::from_millis(200);
 /// Health probes can tolerate the same budget without delaying window listing.
 const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
 
@@ -170,7 +171,7 @@ where
 {
     run_uia_with_deadline_cancelable(
         "focused document typing",
-        Duration::from_millis(200),
+        FOCUSED_DOCUMENT_TIMEOUT,
         "the existing input route unless the write started",
         f,
     )

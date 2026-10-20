@@ -89,9 +89,6 @@ fn try_type_focused_document_append_unbounded(
         if expected_pid.is_some_and(|pid| pid != target_pid) {
             return not_applicable("target_pid_mismatch");
         }
-        if crate::input::is_chromium_target_window(target_hwnd) {
-            return not_applicable("chromium_valuepattern_echo_untrusted");
-        }
 
         let Ok(uia) = (unsafe {
             CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
@@ -137,20 +134,11 @@ fn try_type_focused_document_append_unbounded(
             return not_applicable("initial_eligibility_not_met");
         }
 
-        let caret_at_end = if initial_value.is_empty() {
-            false
-        } else {
-            match text_pattern_caret_at_document_end(&text_pattern) {
-                Ok(at_end) => at_end,
-                Err(stage) => return not_applicable(stage),
-            }
-        };
         if !focused_document_eligible(
             exact_foreground_target(target, Some(target_pid)),
             !initial_read_only.as_bool(),
             initial_value.is_empty(),
             single_text_selection,
-            caret_at_end,
         ) {
             return not_applicable("initial_eligibility_not_met");
         }
@@ -173,13 +161,6 @@ fn try_type_focused_document_append_unbounded(
         };
         if read_only_before_write.as_bool() || value_before_write.to_string() != initial_value {
             return not_applicable("value_changed_or_read_only_before_write");
-        }
-        if !initial_value.is_empty() {
-            match text_pattern_caret_at_document_end(&text_pattern) {
-                Ok(true) => {}
-                Ok(false) => return not_applicable("caret_not_at_document_end_before_write"),
-                Err(stage) => return not_applicable(stage),
-            }
         }
         write_started.store(true, Ordering::SeqCst);
         if cancelled.load(Ordering::SeqCst) {
@@ -321,42 +302,11 @@ fn exact_foreground_target(target: HWND, expected_pid: Option<u32>) -> bool {
             .is_some_and(|pid| expected_pid.is_none_or(|expected| expected == pid))
 }
 
-fn text_pattern_caret_at_document_end(
-    text_pattern: &IUIAutomationTextPattern,
-) -> Result<bool, &'static str> {
-    let document_range =
-        unsafe { text_pattern.DocumentRange() }.map_err(|_| "document_range_unavailable")?;
-    let selections = unsafe { text_pattern.GetSelection() }.map_err(|_| "selection_unavailable")?;
-    if unsafe { selections.Length() }.map_err(|_| "selection_count_unavailable")? != 1 {
-        return Ok(false);
-    }
-    let selection =
-        unsafe { selections.GetElement(0) }.map_err(|_| "selection_range_unavailable")?;
-    let start_at_end = unsafe {
-        selection.CompareEndpoints(
-            TextPatternRangeEndpoint_Start,
-            &document_range,
-            TextPatternRangeEndpoint_End,
-        )
-    }
-    .map_err(|_| "selection_start_comparison_unavailable")?;
-    let end_at_end = unsafe {
-        selection.CompareEndpoints(
-            TextPatternRangeEndpoint_End,
-            &document_range,
-            TextPatternRangeEndpoint_End,
-        )
-    }
-    .map_err(|_| "selection_end_comparison_unavailable")?;
-    Ok(start_at_end == 0 && end_at_end == 0)
-}
-
 fn focused_document_eligible(
     exact_target: bool,
     writable_value: bool,
     value_is_empty: bool,
     single_text_selection: bool,
-    _collapsed_caret_at_end: bool,
 ) -> bool {
     exact_target && writable_value && single_text_selection && value_is_empty
 }
@@ -374,23 +324,9 @@ fn classify_focused_document_write(
     }
 }
 
-#[cfg(test)]
-fn normalize_document_line_endings(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
-}
-
 fn normalized_text_matches(expected: &str, actual: &str) -> bool {
-    expected == actual
-}
-
-#[cfg(test)]
-fn focused_document_appended_value(current_value: &str, input: &str) -> String {
-    if current_value.is_empty() {
-        return input.to_owned();
-    }
-    let mut value = normalize_document_line_endings(current_value);
-    value.push_str(&normalize_document_line_endings(input));
-    value
+    let normalize = |text: &str| text.replace("\r\n", "\n").replace('\r', "\n");
+    normalize(expected) == normalize(actual)
 }
 
 pub(crate) fn focused_document_worker_error(
@@ -408,36 +344,18 @@ pub(crate) fn focused_document_worker_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_focused_document_write, focused_document_appended_value,
-        focused_document_eligible, focused_document_worker_error, normalize_document_line_endings,
+        classify_focused_document_write, focused_document_eligible, focused_document_worker_error,
         normalized_text_matches, FocusedDocumentTypeOutcome,
     };
     use crate::uia::windows_enum::UiaDeadlineError;
 
     #[test]
     fn focused_document_requires_exact_target_and_safe_value_selection() {
-        assert!(focused_document_eligible(true, true, true, true, false));
-        assert!(!focused_document_eligible(true, true, false, true, true));
-        assert!(!focused_document_eligible(true, true, false, true, false));
-        assert!(!focused_document_eligible(true, true, false, false, true));
-        assert!(!focused_document_eligible(false, true, false, true, true));
-        assert!(!focused_document_eligible(true, false, false, true, true));
-    }
-
-    #[test]
-    fn append_preserves_content_and_normalizes_each_line_ending_source() {
-        assert_eq!(
-            focused_document_appended_value("marker\r", "\n\u{676d}\u{5dde}\u{4e1c}\r\n"),
-            "marker\n\n\u{676d}\u{5dde}\u{4e1c}\n"
-        );
-        assert_eq!(
-            focused_document_appended_value("", "new\r\nline"),
-            "new\r\nline"
-        );
-        assert_eq!(
-            focused_document_appended_value("prefix \u{1f642}", " suffix"),
-            "prefix \u{1f642} suffix"
-        );
+        assert!(focused_document_eligible(true, true, true, true));
+        assert!(!focused_document_eligible(true, true, false, true));
+        assert!(!focused_document_eligible(true, true, true, false));
+        assert!(!focused_document_eligible(false, true, true, true));
+        assert!(!focused_document_eligible(true, false, true, true));
     }
 
     #[test]
@@ -476,11 +394,7 @@ mod tests {
 
     #[test]
     fn line_ending_checks_preserve_blank_lines_and_non_ascii_text() {
-        assert_eq!(
-            normalize_document_line_endings("one\r\n\r\ntwo\rthree\n"),
-            "one\n\ntwo\nthree\n"
-        );
-        assert!(!normalized_text_matches(
+        assert!(normalized_text_matches(
             "one\r\n\r\ntwo\r\u{676d}\u{5dde}\u{4e1c}",
             "one\n\ntwo\n\u{676d}\u{5dde}\u{4e1c}"
         ));

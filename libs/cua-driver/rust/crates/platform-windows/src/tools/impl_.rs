@@ -5310,10 +5310,27 @@ mod focused_document_result_tests {
     }
 
     #[test]
-    fn busy_before_probe_falls_back() {
-        let busy = focused_document_worker_error(UiaDeadlineError::Busy, false);
-        assert_eq!(busy, FocusedDocumentTypeOutcome::NotApplicable);
-        assert!(focused_document_tool_result(busy, 12).is_none());
+    fn not_applicable_before_write_falls_through_to_send_input() {
+        for outcome in [
+            FocusedDocumentTypeOutcome::NotApplicable,
+            focused_document_worker_error(UiaDeadlineError::Busy, false),
+            focused_document_worker_error(UiaDeadlineError::Timeout, false),
+        ] {
+            assert!(focused_document_tool_result(outcome, 12).is_none());
+        }
+    }
+
+    #[test]
+    fn unknown_after_write_stops_without_send_input_or_retry() {
+        for outcome in [
+            FocusedDocumentTypeOutcome::Unknown("read-back failed"),
+            focused_document_worker_error(UiaDeadlineError::Timeout, true),
+            focused_document_worker_error(UiaDeadlineError::Unavailable, true),
+        ] {
+            let result = focused_document_tool_result(outcome, 12)
+                .expect("post-write uncertainty must return, never fall through to SendInput");
+            assert_eq!(result.structured_content.unwrap()["retryable"], false);
+        }
     }
 }
 

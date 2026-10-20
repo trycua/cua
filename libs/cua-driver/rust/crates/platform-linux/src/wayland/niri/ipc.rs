@@ -4,9 +4,6 @@
 use super::*;
 
 pub(super) const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
-pub(super) const QUERY_TOTAL_TIMEOUT: Duration = Duration::from_secs(3);
-pub(super) const QUERY_RETRY_BACKOFF: Duration = Duration::from_millis(50);
-const QUERY_MAX_ATTEMPTS: usize = 2;
 const MAX_REPLY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_LOGICAL_PIXELS: u64 = 64 * 1024 * 1024;
 
@@ -14,15 +11,9 @@ const MAX_LOGICAL_PIXELS: u64 = 64 * 1024 * 1024;
 
 /// The compositor process recognised as niri for this driver process.
 pub(super) static RECOGNIZED: OnceLock<libc::pid_t> = OnceLock::new();
-/// Why the latest probe before recognition could not tell whether
-/// `NIRI_SOCKET` is this session's niri; routes refuse with it meanwhile.
-static UNKNOWN: Mutex<Option<String>> = Mutex::new(None);
-/// Whether the adapter supports the recognised niri's release: `None` until
-/// niri answers a `Version` request, and every route refuses meanwhile.
-static RELEASE: Mutex<Option<Result<(), String>>> = Mutex::new(None);
-/// The oldest niri release the adapter supports: 25.08 reports the window
-/// layout that geometry needs, and serves several requests per connection.
-const MIN_RELEASE: (u32, u32) = (25, 8);
+/// Set once a probe found `NIRI_SOCKET` lastingly unrelated to this session,
+/// so a stale socket on another desktop costs one probe, not one per call.
+static UNRELATED: OnceLock<()> = OnceLock::new();
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Attestation {
@@ -125,52 +116,23 @@ pub fn is_session() -> bool {
     ) {
         return known;
     }
-    // An unrelated socket stays unrelated for the same environment: a stale
-    // NIRI_SOCKET on another desktop must not cost a probe on every call.
-    static UNRELATED: Mutex<Option<(OsString, OsString)>> = Mutex::new(None);
-    let environment = (
-        std::env::var_os("NIRI_SOCKET").unwrap_or_default(),
-        std::env::var_os("WAYLAND_DISPLAY").unwrap_or_default(),
-    );
-    if UNRELATED
-        .lock()
-        .is_ok_and(|unrelated| unrelated.as_ref() == Some(&environment))
-    {
+    if UNRELATED.get().is_some() {
         return false;
     }
-    let (attestation, connection, lasting) = probe(None, QUERY_TIMEOUT);
+    let (attestation, _, lasting) = probe(None, QUERY_TIMEOUT);
     match probed(attestation, lasting) {
         Probed::Niri(pid) => {
-            // A proven niri stays niri even when it is too old for the
-            // adapter or its version is not read yet: routes refuse with the
-            // reason instead of falling back to generic Wayland discovery.
-            if let Err(error) = release_check(&RELEASE, || {
-                connection
-                    .context("niri IPC connection unavailable")
-                    .and_then(release_of)
-            }) {
-                tracing::warn!("{error:#}");
-            }
             let pinned = *RECOGNIZED.get_or_init(|| pid);
             tracing::info!(pid = pinned, "niri session recognised");
             true
         }
         Probed::Unknown(reason) => {
             tracing::warn!("niri session probe failed, refusing until one passes: {reason}");
-            *UNKNOWN
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reason);
             true
         }
         Probed::NotNiri(reason) => {
-            static LOGGED: std::sync::atomic::AtomicBool =
-                std::sync::atomic::AtomicBool::new(false);
-            if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                tracing::warn!("NIRI_SOCKET is not this Wayland session's niri: {reason}");
-            }
-            if let Ok(mut unrelated) = UNRELATED.lock() {
-                *unrelated = Some(environment);
-            }
+            tracing::warn!("NIRI_SOCKET is not this Wayland session's niri: {reason}");
+            let _ = UNRELATED.set(());
             false
         }
     }
@@ -199,27 +161,12 @@ fn probed(attestation: Attestation, lasting: bool) -> Probed {
     }
 }
 
-/// The refusal while niri is not recognised, with the reason a probe could
-/// not tell when there is one.
-fn not_recognised(unknown: Option<&str>) -> anyhow::Error {
-    match unknown {
-        Some(reason) => anyhow!(
-            "niri session has not been recognised: the session probe failed ({reason}); try again once niri answers"
-        ),
-        None => anyhow!("niri session has not been recognised"),
-    }
-}
-
 /// The recognised niri process, or the refusal while there is none.
 pub(super) fn recognised() -> Result<libc::pid_t> {
-    RECOGNIZED.get().copied().ok_or_else(|| {
-        not_recognised(
-            UNKNOWN
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .as_deref(),
-        )
-    })
+    RECOGNIZED
+        .get()
+        .copied()
+        .context("niri session has not been recognised")
 }
 
 /// Whether this is a niri session without probing, or `None` to probe. A
@@ -233,93 +180,9 @@ fn session_check(adapter_on: bool, recognized: bool, socket_set: bool) -> Option
     }
 }
 
-/// The `Version` reply on a newly attested connection, which carries only
-/// this request: niri before 25.05 serves one request per connection.
-fn release_of(connection: UnixStream) -> Result<String> {
-    let mut connection = Some(connection);
-    Ipc {
-        connect: move |_| {
-            connection
-                .take()
-                .context("niri IPC connection already used")
-        },
-        per_attempt: QUERY_TIMEOUT,
-        total: QUERY_TOTAL_TIMEOUT,
-        backoff: QUERY_RETRY_BACKOFF,
-        lines: None,
-    }
-    .query(Request::Version)
-}
-
-/// Whether the adapter supports niri `version`, such as `26.04 (8ed0da4)`.
-/// Only the leading digits of the year and month count: packagers may add
-/// a suffix, such as `26.04-1 (e35c630)`.
-fn release_supported(version: &str) -> Result<(), String> {
-    let release = version
-        .split_once(" (")
-        .map_or(version, |(release, _)| release);
-    let leading = |part: Option<&str>| {
-        let part = part?;
-        let digits = part
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(part.len());
-        part[..digits].parse::<u32>().ok()
-    };
-    let mut parts = release.split('.');
-    match (leading(parts.next()), leading(parts.next())) {
-        (Some(year), Some(month)) => {
-            if (year, month) >= MIN_RELEASE {
-                Ok(())
-            } else {
-                Err(format!(
-                    "niri {release} is not supported: the niri adapter needs niri {}.{:02} or later",
-                    MIN_RELEASE.0, MIN_RELEASE.1
-                ))
-            }
-        }
-        _ => Err(format!(
-            "niri reports version {version:?}, which the niri adapter cannot read; it needs niri {}.{:02} or later",
-            MIN_RELEASE.0, MIN_RELEASE.1
-        )),
-    }
-}
-
-/// Decide whether the adapter supports niri's release, reading its version
-/// through `read` while undecided. A failed read leaves it undecided.
-fn release_check(
-    release: &Mutex<Option<Result<(), String>>>,
-    read: impl FnOnce() -> Result<String>,
-) -> Result<()> {
-    let mut release = release
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let verdict = match release.as_ref() {
-        Some(verdict) => verdict.clone(),
-        None => {
-            let version = read().context(
-                "niri did not report its version, so the niri adapter cannot yet check that it supports it",
-            )?;
-            let verdict = release_supported(&version);
-            if let Err(reason) = &verdict {
-                tracing::warn!("{reason}");
-            }
-            release.insert(verdict).clone()
-        }
-    };
-    verdict.map_err(|reason| anyhow!(reason))
-}
-
-/// The recognised niri process, when the adapter supports it. Until niri's
-/// release is known, each call asks a newly attested connection.
-pub(super) fn pinned() -> Result<libc::pid_t> {
-    let pinned = recognised()?;
-    release_check(&RELEASE, || release_of(attest_to(pinned, QUERY_TIMEOUT)?))?;
-    Ok(pinned)
-}
-
 /// A connection to the recognised niri process, re-attested each time.
 pub(super) fn attested_connection(deadline: Instant) -> Result<UnixStream> {
-    attest_to(pinned()?, time_remaining(deadline)?)
+    attest_to(recognised()?, time_remaining(deadline)?)
 }
 
 fn attest_to(pinned: libc::pid_t, timeout: Duration) -> Result<UnixStream> {
@@ -333,7 +196,7 @@ fn attest_to(pinned: libc::pid_t, timeout: Duration) -> Result<UnixStream> {
 /// A Wayland client socket proven to reach the recognised niri process, for
 /// a keyboard helper that must not rediscover the display on its own.
 pub(in crate::wayland) fn attested_wayland_socket() -> Result<UnixStream> {
-    let pinned = pinned()?;
+    let pinned = recognised()?;
     let socket = super::super::compositor_peer::wayland_socket_with_timeout(QUERY_TIMEOUT)?;
     let peer = peer_pid(socket.as_raw_fd())?;
     if peer != pinned {
@@ -349,9 +212,7 @@ pub(super) type AttestedIpc = Ipc<fn(Instant) -> Result<UnixStream>>;
 pub(super) fn ipc() -> AttestedIpc {
     Ipc {
         connect: attested_connection,
-        per_attempt: QUERY_TIMEOUT,
-        total: QUERY_TOTAL_TIMEOUT,
-        backoff: QUERY_RETRY_BACKOFF,
+        timeout: QUERY_TIMEOUT,
         lines: None,
     }
 }
@@ -364,15 +225,6 @@ fn time_remaining(deadline: Instant) -> Result<Duration> {
         return Err(io::Error::new(io::ErrorKind::TimedOut, "niri IPC timed out").into());
     }
     Ok(remaining)
-}
-
-fn is_timeout(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<io::Error>().is_some_and(|error| {
-        matches!(
-            error.kind(),
-            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-        )
-    })
 }
 
 /// niri replies one JSON line per request; the event stream sends one line
@@ -477,7 +329,7 @@ pub(super) fn reply_ok(request: &str, reply: serde_json::Value) -> Result<serde_
         .with_context(|| format!("unexpected niri reply to {request}"))
 }
 
-/// The niri IPC requests this adapter reads. Only these are retried.
+/// The niri IPC requests this adapter reads.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Request {
     Version,
@@ -491,9 +343,8 @@ pub(super) enum Request {
 
 pub(super) struct Ipc<C> {
     pub(super) connect: C,
-    pub(super) per_attempt: Duration,
-    pub(super) total: Duration,
-    pub(super) backoff: Duration,
+    /// The deadline of each request and its reply.
+    pub(super) timeout: Duration,
     /// The connection earlier requests used. A connected socket keeps its
     /// peer, so it stays attested; niri answers one connection's requests
     /// in order. A failed exchange drops it, so a late reply is never read
@@ -509,43 +360,22 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
         }
     }
 
-    /// A read-only request. Only a timed-out request/reply is retried, on a
-    /// newly attested connection; connection and attestation errors are final.
+    /// A read-only request; a failure is final.
     pub(super) fn query<T: DeserializeOwned>(&mut self, request: Request) -> Result<T> {
-        let deadline = Instant::now() + self.total;
+        let deadline = Instant::now() + self.timeout;
         let name = format!("{request:?}");
         let name = name.as_str();
-        for attempt in 1..=QUERY_MAX_ATTEMPTS {
-            time_remaining(deadline)?;
-            let attempt_deadline = deadline.min(Instant::now() + self.per_attempt);
-            let mut lines = self.connection(attempt_deadline)?;
-            match lines.exchange(&format!("\"{name}\""), attempt_deadline) {
-                Ok(reply) => {
-                    self.lines = Some(lines);
-                    let mut payload = reply_ok(name, reply)?;
-                    let value = payload
-                        .get_mut(name)
-                        .map(serde_json::Value::take)
-                        .with_context(|| format!("niri reply to {name} has no {name}"))?;
-                    return serde_json::from_value(value)
-                        .with_context(|| format!("invalid niri {name} reply"));
-                }
-                Err(error) => {
-                    if !is_timeout(&error)
-                        || attempt == QUERY_MAX_ATTEMPTS
-                        || deadline.saturating_duration_since(Instant::now()) <= self.backoff
-                    {
-                        return Err(error).with_context(|| {
-                            format!("niri IPC {name} failed after {attempt} attempt(s)")
-                        });
-                    }
-                    drop(lines);
-                    tracing::warn!(name, attempt, "niri IPC request timed out; retrying");
-                    std::thread::sleep(self.backoff);
-                }
-            }
-        }
-        unreachable!("the final query attempt always returns")
+        let mut lines = self.connection(deadline)?;
+        let reply = lines
+            .exchange(&format!("\"{name}\""), deadline)
+            .with_context(|| format!("niri IPC {name} failed"))?;
+        self.lines = Some(lines);
+        let mut payload = reply_ok(name, reply)?;
+        let value = payload
+            .get_mut(name)
+            .map(serde_json::Value::take)
+            .with_context(|| format!("niri reply to {name} has no {name}"))?;
+        serde_json::from_value(value).with_context(|| format!("invalid niri {name} reply"))
     }
 
     /// One compositor action. Never retried: after a timeout niri may have
@@ -563,7 +393,7 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
     }
 
     fn send_action(&mut self, action: serde_json::Value, gated: bool) -> Result<()> {
-        let deadline = Instant::now() + self.per_attempt;
+        let deadline = Instant::now() + self.timeout;
         let request = serde_json::json!({ "Action": action }).to_string();
         let mut lines = self.connection(deadline)?;
         if gated {
@@ -746,7 +576,6 @@ impl IpcOutput {
 mod tests {
     use super::*;
     use serde_json::{json, Value};
-    use std::sync::Mutex;
 
     /// A connection whose peer sends `reply` (raw bytes) and then holds it open.
     fn replying(reply: Vec<u8>) -> UnixStream {
@@ -783,10 +612,6 @@ mod tests {
             probed(Attestation::Unrelated(timed_out.into()), false),
             Probed::Unknown(timed_out.into())
         );
-        assert_eq!(
-            not_recognised(Some(timed_out)).to_string(),
-            format!("niri session has not been recognised: the session probe failed ({timed_out}); try again once niri answers")
-        );
         // Nothing listening, or another session's niri: not niri.
         assert_eq!(
             probed(Attestation::Unrelated("refused".into()), true),
@@ -801,67 +626,6 @@ mod tests {
         assert_eq!(session_check(true, false, false), Some(false));
         assert_eq!(session_check(true, false, true), None);
         assert_eq!(session_check(false, true, true), Some(false));
-    }
-
-    #[test]
-    fn a_proven_niri_refuses_until_a_version_read_answers() {
-        let release = Mutex::new(None);
-        // niri did not answer: still niri, refused, and asked again later.
-        assert_eq!(
-            format!(
-                "{:#}",
-                release_check(&release, || bail!("niri IPC request timed out")).unwrap_err()
-            ),
-            "niri did not report its version, so the niri adapter cannot yet check that it supports it: niri IPC request timed out"
-        );
-        release_check(&release, || Ok("26.04 (8ed0da4)".into())).unwrap();
-        // Answered once: never read again.
-        release_check(&release, || panic!("the release was read again")).unwrap();
-
-        let release = Mutex::new(None);
-        let old = "niri 25.05 is not supported: the niri adapter needs niri 25.08 or later";
-        assert_eq!(
-            release_check(&release, || Ok("25.05 (abc)".into()))
-                .unwrap_err()
-                .to_string(),
-            old
-        );
-        assert_eq!(
-            release_check(&release, || panic!("the release was read again"))
-                .unwrap_err()
-                .to_string(),
-            old
-        );
-    }
-
-    #[test]
-    fn niri_older_than_25_08_is_refused_at_recognition() {
-        for version in [
-            "25.08 (6a1b2c3)",
-            "25.11.1 (abc)",
-            "26.04 (8ed0da4)",
-            "26.04",
-            // niri's packaging guide suggests a distribution suffix.
-            "26.04-1 (abc)",
-            "25.08.1-2",
-        ] {
-            assert_eq!(release_supported(version), Ok(()), "{version}");
-        }
-        // 25.05 still reads one request per connection; 25.08 added the
-        // window layout every geometry route needs.
-        assert_eq!(
-            release_supported("25.05.1 (abc)"),
-            Err("niri 25.05.1 is not supported: the niri adapter needs niri 25.08 or later".into())
-        );
-        assert!(release_supported("25.02").is_err());
-        for version in ["", "unknown (abc)", "25", "25.x"] {
-            assert_eq!(
-                release_supported(version),
-                Err(format!(
-                    "niri reports version {version:?}, which the niri adapter cannot read; it needs niri 25.08 or later"
-                )),
-            );
-        }
     }
 
     #[test]
@@ -888,7 +652,7 @@ mod tests {
     // ── Transport ───────────────────────────────────────────────────────────
 
     #[test]
-    fn stalled_niri_hits_the_deadline_and_retries_a_read_once() {
+    fn stalled_niri_hits_the_deadline_without_a_retry() {
         let mut attempts = 0;
         let mut held = Vec::new();
         let started = Instant::now();
@@ -900,12 +664,11 @@ mod tests {
                 Ok(client)
             },
             Duration::from_millis(40),
-            Duration::from_millis(500),
         )
         .query::<Value>(Request::Windows)
         .unwrap_err();
-        assert!(is_timeout(&error), "{error:#}");
-        assert_eq!(attempts, 2);
+        assert!(format!("{error:#}").contains("timed out"), "{error:#}");
+        assert_eq!(attempts, 1);
         // Bounded by the deadlines, not by the peer; loose for loaded CI.
         assert!(started.elapsed() < Duration::from_secs(2));
     }
@@ -933,7 +696,6 @@ mod tests {
                 Ok(client)
             },
             Duration::from_millis(40),
-            Duration::from_millis(500),
         )
         .action(focus_window_action(7))
         .unwrap_err();
@@ -950,7 +712,6 @@ mod tests {
                 bail!("NIRI_SOCKET is served by pid 10 but WAYLAND_DISPLAY by pid 20")
             },
             QUERY_TIMEOUT,
-            QUERY_TOTAL_TIMEOUT,
         )
         .query::<Value>(Request::Windows)
         .unwrap_err();
@@ -966,7 +727,6 @@ mod tests {
         let error = ipc_with(
             |_| Ok(replying(b"{\"Err\":\"error parsing request\"}\n".to_vec())),
             QUERY_TIMEOUT,
-            QUERY_TOTAL_TIMEOUT,
         )
         .action(focus_window_action(7))
         .unwrap_err();
@@ -978,13 +738,9 @@ mod tests {
     #[test]
     fn oversize_and_malformed_replies_refuse() {
         let reply = |bytes: Vec<u8>| {
-            ipc_with(
-                move |_| Ok(replying(bytes.clone())),
-                QUERY_TIMEOUT,
-                QUERY_TOTAL_TIMEOUT,
-            )
-            .query::<Vec<IpcWindow>>(Request::Windows)
-            .unwrap_err()
+            ipc_with(move |_| Ok(replying(bytes.clone())), QUERY_TIMEOUT)
+                .query::<Vec<IpcWindow>>(Request::Windows)
+                .unwrap_err()
         };
         let oversize = reply(vec![b' '; MAX_REPLY_BYTES + 1]);
         assert!(format!("{oversize:#}").contains("niri IPC reply exceeds size limit"));

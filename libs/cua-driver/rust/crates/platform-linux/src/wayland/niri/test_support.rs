@@ -220,23 +220,18 @@ pub(super) fn fake_ipc(fake: &Arc<Mutex<Fake>>) -> Ipc<impl FnMut(Instant) -> Re
             });
             Ok(client)
         },
-        per_attempt: Duration::from_secs(1),
-        total: Duration::from_secs(2),
-        backoff: Duration::from_millis(1),
+        timeout: Duration::from_secs(1),
         lines: None,
     }
 }
 
 pub(super) fn ipc_with(
     connect: impl FnMut(Instant) -> Result<UnixStream>,
-    per_attempt: Duration,
-    total: Duration,
+    timeout: Duration,
 ) -> Ipc<impl FnMut(Instant) -> Result<UnixStream>> {
     Ipc {
         connect,
-        per_attempt,
-        total,
-        backoff: Duration::from_millis(1),
+        timeout,
         lines: None,
     }
 }

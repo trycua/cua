@@ -23,7 +23,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
@@ -203,7 +202,7 @@ pub fn health_note() -> Option<String> {
             probe(RECOGNIZED.get().copied(), QUERY_TIMEOUT).0,
         ));
     }
-    if let Err(reason) = pinned() {
+    if let Err(reason) = recognised() {
         return Some(format!(
             "niri: {reason:#}; niri window ids, focus and geometry refuse."
         ));

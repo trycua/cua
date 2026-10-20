@@ -456,7 +456,6 @@ mod tests {
             &mut ipc_with(
                 |_| bail!("niri was recognised as pid 20, but the compositor is now pid 40"),
                 Duration::from_millis(50),
-                Duration::from_millis(100),
             ),
             107,
             7,

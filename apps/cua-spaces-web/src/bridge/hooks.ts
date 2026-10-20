@@ -81,6 +81,21 @@ function useAction(): <R>(f: (s: BridgeStore) => Promise<R> | R) => Promise<R> {
   return (f) => ready.then(f);
 }
 
+/**
+ * Records a Spaces app feature (a fixed name such as `agents_page_open`) once
+ * each time `when` turns true, as the SwiftUI and Tauri apps do when the page
+ * or sheet opens. The host and the machine's telemetry switch decide whether
+ * anything is sent.
+ */
+export function useFeatureRecorded(feature: string, when = true): void {
+  // Not an error without a provider: a screen drawn on its own records nothing.
+  const ready = useContext(BridgeContext)?.ready;
+  useEffect(() => {
+    if (!when || !ready) return;
+    void ready.then((s) => s.telemetry.track([{ type: "feature", feature }]));
+  }, [ready, feature, when]);
+}
+
 /** The host, the app core and the raw adapter. */
 export function useBridge(): { mode: BridgeMode; core: CoreClient; data: DataAdapter | null } {
   const { mode, core, adapter } = useBridgeContext();

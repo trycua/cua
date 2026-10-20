@@ -256,4 +256,4 @@ Sandboxes are daemon-agnostic: readiness is the provider's "running" plus your
 the image has it and raise `SpacesdNotAvailable` otherwise. `await sb.spacesd()`
 returns the SDK's typed `SpacesdClient` and is optional.
 
-Cua Cloud has ended; see [Cua Cloud has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended). `on="cloud"`, `local=False`, `CloudOptions`, `Pool` and `cua_sandbox.pools` now raise that error.
+Cua Cloud has ended; see [Cua Cloud has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended). `on="cloud"`, `local=False` and `pool=` raise that error.

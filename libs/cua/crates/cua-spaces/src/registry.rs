@@ -73,9 +73,6 @@ pub struct Credential {
     /// name → endpoint URL.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub service_urls: BTreeMap<String, String>,
-    /// A cloud Space's claim namespace (a lookup hint; never shown).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
 }
 
 impl std::fmt::Debug for Credential {
@@ -84,7 +81,6 @@ impl std::fmt::Debug for Credential {
             .field("url", &self.url)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .field("service_urls", &self.service_urls)
-            .field("namespace", &self.namespace)
             .finish()
     }
 }
@@ -282,8 +278,8 @@ impl Registry {
     }
 
     /// Reads `spaces.json`. Ids an older client stored
-    /// (`space://fleet/<ns>/<claim>`, ...) come back in the new form
-    /// (`cloud:<claim>`), and the version key it wrote before the
+    /// (`space://direct/<host:port>`, ...) come back in the new form
+    /// (`direct:<host:port>`), and the version key it wrote before the
     /// cua-spacesd rename (`envDriverVersion`) as `spacesdVersion`; the file
     /// is rewritten on the next change.
     fn read_spaces(&self) -> Result<Vec<dpb::Space>> {
@@ -320,8 +316,7 @@ impl Registry {
         Ok(out)
     }
 
-    /// Reads the credential store, keyed by canonical id. A legacy cloud id
-    /// leaves its namespace in the credential as a lookup hint.
+    /// Reads the credential store, keyed by canonical id.
     fn read_credentials(&self) -> Result<BTreeMap<String, Credential>> {
         let stored: BTreeMap<String, Credential> = match std::fs::read(self.credentials_path()) {
             Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => BTreeMap::new(),
@@ -330,14 +325,7 @@ impl Registry {
             Err(e) => return Err(e.into()),
         };
         let mut out = BTreeMap::new();
-        for (id, mut cred) in stored {
-            if let Ok(crate::SpaceId::Cloud {
-                namespace: Some(ns),
-                ..
-            }) = crate::SpaceId::parse(&id)
-            {
-                cred.namespace.get_or_insert(ns);
-            }
+        for (id, cred) in stored {
             out.entry(crate::id::canonical_id(&id)).or_insert(cred);
         }
         Ok(out)
@@ -542,8 +530,7 @@ mod tests {
     }
 
     /// Registries written before the unified refs keep working: legacy ids
-    /// read back in the new form, a cloud id's namespace stays as a hint,
-    /// and lookups accept either spelling.
+    /// read back in the new form, and lookups accept either spelling.
     #[test]
     fn legacy_ids_migrate_on_read() {
         let dir = tempfile::tempdir().unwrap();
@@ -551,7 +538,7 @@ mod tests {
         std::fs::write(
             reg.spaces_path(),
             serde_json::to_vec(&[
-                space("space://fleet/ns-1/claim-1"),
+                space("space://relay/0123abcd4567ef89"),
                 space("space://direct/h:1"),
             ])
             .unwrap(),
@@ -559,20 +546,19 @@ mod tests {
         .unwrap();
         std::fs::write(
             reg.credentials_path(),
-            br#"{"space://fleet/ns-1/claim-1": {"token": "t"}}"#,
+            br#"{"space://relay/0123abcd4567ef89": {"token": "t"}}"#,
         )
         .unwrap();
         let ids: Vec<String> = reg.list().unwrap().into_iter().map(|s| s.id).collect();
-        assert_eq!(ids, ["cloud:claim-1", "direct:h:1"]);
-        let cred = reg.credential("cloud:claim-1").unwrap().unwrap();
+        assert_eq!(ids, ["relay:0123abcd4567ef89", "direct:h:1"]);
+        let cred = reg.credential("relay:0123abcd4567ef89").unwrap().unwrap();
         assert_eq!(cred.token.as_deref(), Some("t"));
-        assert_eq!(cred.namespace.as_deref(), Some("ns-1"));
-        assert!(reg.get("space://fleet/ns-1/claim-1").unwrap().is_some());
+        assert!(reg.get("space://relay/0123abcd4567ef89").unwrap().is_some());
         // The next write stores the new form.
         assert!(reg.remove("space://direct/h:1").unwrap());
         let bytes = std::fs::read_to_string(reg.spaces_path()).unwrap();
         assert!(
-            bytes.contains("\"cloud:claim-1\"") && !bytes.contains("space://"),
+            bytes.contains("\"relay:0123abcd4567ef89\"") && !bytes.contains("space://"),
             "{bytes}"
         );
     }

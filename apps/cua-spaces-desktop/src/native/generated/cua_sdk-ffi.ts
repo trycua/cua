@@ -349,26 +349,6 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
-    "uniffi_cua_sdk_fn_clone_fleet": {
-      args: [FfiType.Handle],
-      ret: FfiType.Handle,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_free_fleet": {
-      args: [FfiType.Handle],
-      ret: FfiType.Void,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_clone_fleetpools": {
-      args: [FfiType.Handle],
-      ret: FfiType.Handle,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_free_fleetpools": {
-      args: [FfiType.Handle],
-      ret: FfiType.Void,
-      hasRustCallStatus: true,
-    },
     "uniffi_cua_sdk_fn_clone_framesink": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -694,31 +674,6 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
-    "uniffi_cua_sdk_fn_func_fleet_check_runtime": {
-      args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_func_fleet_generate_claim_token": {
-      args: [],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_func_fleet_image_variant": {
-      args: [FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_func_fleet_resolve_runtime": {
-      args: [FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_func_fleet_size_limits": {
-      args: [],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
     "uniffi_cua_sdk_fn_func_image_alias": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -729,7 +684,7 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
-    "uniffi_cua_sdk_fn_func_may_have_fleet_session": {
+    "uniffi_cua_sdk_fn_func_may_have_session": {
       args: [],
       ret: FfiType.Int8,
       hasRustCallStatus: true,
@@ -1139,11 +1094,6 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
-    "uniffi_cua_sdk_fn_method_cua_fleet": {
-      args: [FfiType.Handle],
-      ret: FfiType.Handle,
-      hasRustCallStatus: true,
-    },
     "uniffi_cua_sdk_fn_method_cua_info": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -1236,171 +1186,6 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_devices_snapshot": {
       args: [FfiType.Handle, FfiType.UInt32],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_acquire": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_acquire_with": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_apply": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_apply_pool": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_apply_pool_template": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_attach_claim": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_base_url": {
-      args: [FfiType.Handle],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_billing_status": {
-      args: [FfiType.Handle],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_check_pool_spec": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_claim": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_create_image": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_create_signed_service_url": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.UInt32],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_delete_image": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_delete_pool": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_ephemeral_pool_name": {
-      args: [FfiType.Handle],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_export_pool": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_get_image": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_get_pool": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_keep_alive": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.UInt32],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_list_claims": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_list_images": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_list_pools": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_list_templates": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_pool_image_info": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_pools": {
-      args: [FfiType.Handle],
-      ret: FfiType.Handle,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_release": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_service_url": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.RustBuffer,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_set_pool_replicas": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.UInt32],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_usage_pricing": {
-      args: [FfiType.Handle],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleet_wait_pool_ready": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.UInt32],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleetpools_gc": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleetpools_gc_pools": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_fleetpools_list": {
-      args: [FfiType.Handle],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -1753,11 +1538,6 @@ const DEFINITIONS = {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_fn_method_sandbox_detach": {
-      args: [FfiType.Handle],
-      ret: FfiType.Void,
-      hasRustCallStatus: true,
     },
     "uniffi_cua_sdk_fn_method_sandbox_forward": {
       args: [FfiType.Handle, FfiType.UInt16],
@@ -2974,31 +2754,6 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
-    "uniffi_cua_sdk_checksum_func_fleet_check_runtime": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_func_fleet_generate_claim_token": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_func_fleet_image_variant": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_func_fleet_resolve_runtime": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_func_fleet_size_limits": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
     "uniffi_cua_sdk_checksum_func_image_alias": {
       args: [],
       ret: FfiType.UInt16,
@@ -3009,7 +2764,7 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
-    "uniffi_cua_sdk_checksum_func_may_have_fleet_session": {
+    "uniffi_cua_sdk_checksum_func_may_have_session": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -3419,11 +3174,6 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
-    "uniffi_cua_sdk_checksum_method_cua_fleet": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
     "uniffi_cua_sdk_checksum_method_cua_info": {
       args: [],
       ret: FfiType.UInt16,
@@ -3515,171 +3265,6 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_devices_snapshot": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_acquire": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_acquire_with": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_apply": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_apply_pool": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_apply_pool_template": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_attach_claim": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_base_url": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_billing_status": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_check_pool_spec": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_claim": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_create_image": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_delete_image": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_delete_pool": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_export_pool": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_get_image": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_get_pool": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_keep_alive": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_list_claims": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_list_images": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_list_pools": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_list_templates": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_pool_image_info": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_pools": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_release": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_service_url": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_usage_pricing": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleetpools_gc": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleetpools_gc_pools": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_fleetpools_list": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4030,11 +3615,6 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_sandbox_delete": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_sdk_checksum_method_sandbox_detach": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5377,10 +4957,6 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_free_cua(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_devices(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_free_devices(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
-    uniffi_cua_sdk_fn_clone_fleet(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
-    uniffi_cua_sdk_fn_free_fleet(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
-    uniffi_cua_sdk_fn_clone_fleetpools(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
-    uniffi_cua_sdk_fn_free_fleetpools(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_framesink(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_free_framesink(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_guestdisplay(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -5446,14 +5022,9 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_func_contrib_providers_built(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_cua_sdk_version(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_error_doc_url(variant: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_func_fleet_check_runtime(runtime: Uint8Array, image: Uint8Array, variant: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_func_fleet_generate_claim_token(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_func_fleet_image_variant(manifest: Uint8Array, config: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_func_fleet_resolve_runtime(runtime: Uint8Array, image: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_func_fleet_size_limits(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_image_alias(name: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_locations(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_func_may_have_fleet_session(uniffi_out_err: UniffiRustCallStatus): number;
+    uniffi_cua_sdk_fn_func_may_have_session(uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_sdk_fn_func_mcp_connect(config: Uint8Array): bigint;
     uniffi_cua_sdk_fn_func_mcp_connect_url(url: Uint8Array, headers: Uint8Array): bigint;
     uniffi_cua_sdk_fn_func_normalize_image(reference: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -5535,7 +5106,6 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_constructor_cua_embedded(config: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_cua_agent_setup(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_cua_auth(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
-    uniffi_cua_sdk_fn_method_cua_fleet(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_cua_info(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_cua_local(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_cua_mode(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -5555,39 +5125,6 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_devices_revoke(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_devices_snapshot(uniffiSelf: bigint, auditLimit: number): bigint;
-    uniffi_cua_sdk_fn_method_fleet_acquire(uniffiSelf: bigint, pool: Uint8Array, name: Uint8Array, ttlSeconds: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_acquire_with(uniffiSelf: bigint, pool: Uint8Array, options: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_apply(uniffiSelf: bigint, name: Uint8Array, spec: Uint8Array, options: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_apply_pool(uniffiSelf: bigint, spec: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_apply_pool_template(uniffiSelf: bigint, pool: Uint8Array, spec: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_attach_claim(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_base_url(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_method_fleet_billing_status(uniffiSelf: bigint): bigint;
-    uniffi_cua_sdk_fn_method_fleet_check_pool_spec(uniffiSelf: bigint, pool: Uint8Array, spec: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_claim(uniffiSelf: bigint, pool: Uint8Array, name: Uint8Array, ttlSeconds: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_create_image(uniffiSelf: bigint, namespace: Uint8Array, manifestJson: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_create_signed_service_url(uniffiSelf: bigint, sandbox: Uint8Array, service: Uint8Array, label: Uint8Array, expiresInSeconds: number): bigint;
-    uniffi_cua_sdk_fn_method_fleet_delete_image(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_delete_pool(uniffiSelf: bigint, name: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_ephemeral_pool_name(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_method_fleet_export_pool(uniffiSelf: bigint, name: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_get_image(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_get_pool(uniffiSelf: bigint, name: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_keep_alive(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array, seconds: number): bigint;
-    uniffi_cua_sdk_fn_method_fleet_list_claims(uniffiSelf: bigint, namespace: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_list_images(uniffiSelf: bigint, namespace: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_list_pools(uniffiSelf: bigint, namespace: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_list_templates(uniffiSelf: bigint, namespace: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_pool_image_info(uniffiSelf: bigint, name: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_pools(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
-    uniffi_cua_sdk_fn_method_fleet_release(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleet_service_url(uniffiSelf: bigint, sandbox: Uint8Array, service: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_cua_sdk_fn_method_fleet_set_pool_replicas(uniffiSelf: bigint, name: Uint8Array, replicas: number): bigint;
-    uniffi_cua_sdk_fn_method_fleet_usage_pricing(uniffiSelf: bigint): bigint;
-    uniffi_cua_sdk_fn_method_fleet_wait_pool_ready(uniffiSelf: bigint, name: Uint8Array, timeoutMs: number): bigint;
-    uniffi_cua_sdk_fn_method_fleetpools_gc(uniffiSelf: bigint, idleSeconds: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleetpools_gc_pools(uniffiSelf: bigint, names: Uint8Array, idleSeconds: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_fleetpools_list(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_framesink_on_frame(uniffiSelf: bigint, frame: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_framesink_on_event(uniffiSelf: bigint, event: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_guestdisplay_open_command(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -5658,7 +5195,6 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_resourceswatch_stop(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_sandbox_agents(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_sandbox_delete(uniffiSelf: bigint): bigint;
-    uniffi_cua_sdk_fn_method_sandbox_detach(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_sandbox_forward(uniffiSelf: bigint, port: number): bigint;
     uniffi_cua_sdk_fn_method_sandbox_guest_display(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_sandbox_guest_screenshot(uniffiSelf: bigint): bigint;
@@ -5902,14 +5438,9 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_func_contrib_providers_built(): number;
     uniffi_cua_sdk_checksum_func_cua_sdk_version(): number;
     uniffi_cua_sdk_checksum_func_error_doc_url(): number;
-    uniffi_cua_sdk_checksum_func_fleet_check_runtime(): number;
-    uniffi_cua_sdk_checksum_func_fleet_generate_claim_token(): number;
-    uniffi_cua_sdk_checksum_func_fleet_image_variant(): number;
-    uniffi_cua_sdk_checksum_func_fleet_resolve_runtime(): number;
-    uniffi_cua_sdk_checksum_func_fleet_size_limits(): number;
     uniffi_cua_sdk_checksum_func_image_alias(): number;
     uniffi_cua_sdk_checksum_func_locations(): number;
-    uniffi_cua_sdk_checksum_func_may_have_fleet_session(): number;
+    uniffi_cua_sdk_checksum_func_may_have_session(): number;
     uniffi_cua_sdk_checksum_func_mcp_connect(): number;
     uniffi_cua_sdk_checksum_func_mcp_connect_url(): number;
     uniffi_cua_sdk_checksum_func_normalize_image(): number;
@@ -5991,7 +5522,6 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_constructor_cua_embedded(): number;
     uniffi_cua_sdk_checksum_method_cua_agent_setup(): number;
     uniffi_cua_sdk_checksum_method_cua_auth(): number;
-    uniffi_cua_sdk_checksum_method_cua_fleet(): number;
     uniffi_cua_sdk_checksum_method_cua_info(): number;
     uniffi_cua_sdk_checksum_method_cua_local(): number;
     uniffi_cua_sdk_checksum_method_cua_mode(): number;
@@ -6011,39 +5541,6 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_devices_revoke(): number;
     uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(): number;
     uniffi_cua_sdk_checksum_method_devices_snapshot(): number;
-    uniffi_cua_sdk_checksum_method_fleet_acquire(): number;
-    uniffi_cua_sdk_checksum_method_fleet_acquire_with(): number;
-    uniffi_cua_sdk_checksum_method_fleet_apply(): number;
-    uniffi_cua_sdk_checksum_method_fleet_apply_pool(): number;
-    uniffi_cua_sdk_checksum_method_fleet_apply_pool_template(): number;
-    uniffi_cua_sdk_checksum_method_fleet_attach_claim(): number;
-    uniffi_cua_sdk_checksum_method_fleet_base_url(): number;
-    uniffi_cua_sdk_checksum_method_fleet_billing_status(): number;
-    uniffi_cua_sdk_checksum_method_fleet_check_pool_spec(): number;
-    uniffi_cua_sdk_checksum_method_fleet_claim(): number;
-    uniffi_cua_sdk_checksum_method_fleet_create_image(): number;
-    uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url(): number;
-    uniffi_cua_sdk_checksum_method_fleet_delete_image(): number;
-    uniffi_cua_sdk_checksum_method_fleet_delete_pool(): number;
-    uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name(): number;
-    uniffi_cua_sdk_checksum_method_fleet_export_pool(): number;
-    uniffi_cua_sdk_checksum_method_fleet_get_image(): number;
-    uniffi_cua_sdk_checksum_method_fleet_get_pool(): number;
-    uniffi_cua_sdk_checksum_method_fleet_keep_alive(): number;
-    uniffi_cua_sdk_checksum_method_fleet_list_claims(): number;
-    uniffi_cua_sdk_checksum_method_fleet_list_images(): number;
-    uniffi_cua_sdk_checksum_method_fleet_list_pools(): number;
-    uniffi_cua_sdk_checksum_method_fleet_list_templates(): number;
-    uniffi_cua_sdk_checksum_method_fleet_pool_image_info(): number;
-    uniffi_cua_sdk_checksum_method_fleet_pools(): number;
-    uniffi_cua_sdk_checksum_method_fleet_release(): number;
-    uniffi_cua_sdk_checksum_method_fleet_service_url(): number;
-    uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas(): number;
-    uniffi_cua_sdk_checksum_method_fleet_usage_pricing(): number;
-    uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready(): number;
-    uniffi_cua_sdk_checksum_method_fleetpools_gc(): number;
-    uniffi_cua_sdk_checksum_method_fleetpools_gc_pools(): number;
-    uniffi_cua_sdk_checksum_method_fleetpools_list(): number;
     uniffi_cua_sdk_checksum_method_framesink_on_frame(): number;
     uniffi_cua_sdk_checksum_method_framesink_on_event(): number;
     uniffi_cua_sdk_checksum_method_guestdisplay_open_command(): number;
@@ -6114,7 +5611,6 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_resourceswatch_stop(): number;
     uniffi_cua_sdk_checksum_method_sandbox_agents(): number;
     uniffi_cua_sdk_checksum_method_sandbox_delete(): number;
-    uniffi_cua_sdk_checksum_method_sandbox_detach(): number;
     uniffi_cua_sdk_checksum_method_sandbox_forward(): number;
     uniffi_cua_sdk_checksum_method_sandbox_guest_display(): number;
     uniffi_cua_sdk_checksum_method_sandbox_guest_screenshot(): number;

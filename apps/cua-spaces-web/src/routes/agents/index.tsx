@@ -10,6 +10,7 @@ import {
   useAgentDetail,
   useAgents,
   useAgentTimeline,
+  useFeatureRecorded,
   useSession,
   type AgentRunSummary,
   type AgentsData,
@@ -70,6 +71,7 @@ function AgentsPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: "/agents/" });
   const { data, isLoading, error } = useAgents();
+  useFeatureRecorded("agents_page_open");
   const [connectOpen, setConnectOpen] = useState(false);
   const selected = resolveSelection(data, search);
   const select = (next: AgentsSelection) => void navigate({ search: next, replace: true });

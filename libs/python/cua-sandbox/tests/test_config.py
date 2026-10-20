@@ -56,21 +56,6 @@ class TestConfig:
         configure(api_key="sk-configured")
         assert get_api_key() == "sk-configured"
 
-    def test_cloud_options_are_accepted_and_ignored_with_a_warning(self):
-        """Cua Cloud has ended: its options keep parsing but change nothing."""
-        with pytest.warns(DeprecationWarning, match="Cua Cloud has ended"):
-            configure(
-                fleet_base_url="https://fleet.example.test",
-                token_url="https://auth.example.test/token",
-                client_id="client-id",
-                client_secret="client-secret",
-                fleet_token="fleet-token",
-            )
-
-        assert get_base_url() == "https://api.cua.ai"
-        assert get_api_key() is None
-        assert not hasattr(_global_config, "client_id")
-
     def test_api_key_and_base_url_do_not_warn(self):
         with warnings.catch_warnings():
             warnings.simplefilter("error")

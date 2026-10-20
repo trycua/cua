@@ -961,10 +961,6 @@
         "server_backstop": false
       },
       {
-        "provider": "fleet",
-        "server_backstop": false
-      },
-      {
         "provider": "demo",
         "server_backstop": false
       },
@@ -1003,8 +999,8 @@
       "is_ready": true
     },
     {
-      "id": "fleet:cua-spaces-demo:claim-77",
-      "provider": "fleet",
+      "id": "direct:10.1.2.3:3211",
+      "provider": "direct",
       "operating_system": "linux",
       "state": "ready",
       "raw_phase": "Bound",
@@ -1043,7 +1039,7 @@
   },
   "attach_to_absent_space": {
     "tag": "SpaceUnavailable",
-    "message": "Space fleet:not-here unavailable: not among the 3 Spaces this account can see"
+    "message": "Space local:not-here unavailable: not among the 3 Spaces this account can see"
   },
   "windows": [
     {
@@ -1335,7 +1331,7 @@
     },
     "wrong_space": {
       "tag": "TeleportRefused",
-      "message": "teleport refused: this approval was granted for fleet:elsewhere, not local:cua-space-fixture01"
+      "message": "teleport refused: this approval was granted for local:elsewhere, not local:cua-space-fixture01"
     }
   },
   "teleport_server_default": {

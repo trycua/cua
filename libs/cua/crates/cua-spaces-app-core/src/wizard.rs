@@ -1037,17 +1037,13 @@ fn default_memory_gb(image: &SandboxImage) -> u32 {
 pub const STEPS: [&str; 4] = ["System", "Resources", "Options", "Summary"];
 /// Memory slider bounds, GB (local).
 pub const MEMORY_GB_RANGE: (u32, u32) = (2, 16);
-/// vCPU slider bounds for Cua Cloud: the everyday range,
-/// `cua_fleet::CLOUD_DEFAULT_RANGE_CPUS` (a cua-sdk test keeps them equal).
-/// The SDK accepts more (up to 64); Fleet decides what an account may run.
+/// vCPU slider bounds for Cua Cloud: the everyday range.
 pub const CLOUD_CPU_RANGE: (u32, u32) = (1, 8);
-/// Memory slider bounds for Cua Cloud, GB: the everyday range,
-/// `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB` (1-32 GB); desktops start
-/// at 2.
+/// Memory slider bounds for Cua Cloud, GB: the everyday range (1-32 GB);
+/// desktops start at 2.
 pub const CLOUD_MEMORY_GB_RANGE: (u32, u32) = (2, 32);
 
-/// Cua Cloud rates for this account (the SDK's `Fleet.usage_pricing()`,
-/// read from Fleet's `GET /api/config`).
+/// Cua Cloud rates for this account.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudPricing {
@@ -1159,7 +1155,7 @@ pub struct WizardEnv {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuChoice {
-    /// `lume`, `qemu`, `container`, `gvisor`, `fleet`.
+    /// `lume`, `qemu`, `container`, `gvisor`, `cloud`.
     pub runtime: String,
     /// What the create passes as `gpu` (`paravirtual`).
     pub id: String,
@@ -2092,7 +2088,7 @@ pub fn create_args(plan: &CreatePlan) -> CreateSpaceArgs {
 /// container's by its runtime), or the cloud's.
 fn gpu_runtime(image: &SandboxImage, placement: Location, runtime: Runtime) -> &'static str {
     match placement {
-        Location::Cloud => "fleet",
+        Location::Cloud => "cloud",
         // Your cloud's machine types carry no GPU option (yet): no row.
         Location::Yours => "yours",
         // Nor do your other machines (their runtimes are not this Mac's).
@@ -4303,8 +4299,7 @@ mod tests {
         }
     }
 
-    /// Fleet's default rates (trycua/cloud `DefaultUsageVCPUHourPriceUSD`,
-    /// `DefaultUsageMemoryGiBHourPriceUSD`).
+    /// Cua Cloud's default rates.
     const RATES: CloudPricing = CloudPricing {
         vcpu_hour_usd: 0.044625,
         memory_gib_hour_usd: 0.0223125,

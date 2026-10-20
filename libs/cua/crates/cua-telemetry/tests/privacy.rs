@@ -1459,25 +1459,37 @@ fn agent_runs_respect_every_opt_out_and_never_count_inside_a_run() {
 
 #[test]
 fn agent_run_end_follows_the_published_status() {
-    assert_eq!(events::agent_run_end("running", None, false), None);
-    assert_eq!(events::agent_run_end("unknown", None, false), None);
+    assert_eq!(events::agent_run_end("running", None, None), None);
+    assert_eq!(events::agent_run_end("unknown", None, None), None);
     assert_eq!(
-        events::agent_run_end("idle", Some("end_turn"), false),
+        events::agent_run_end("idle", Some("end_turn"), None),
         Some((Outcome::Ok, None))
     );
     assert_eq!(
-        events::agent_run_end("idle", Some("cancelled"), false),
+        events::agent_run_end("idle", Some("cancelled"), None),
         Some((Outcome::Cancelled, None))
     );
     assert_eq!(
-        events::agent_run_end("failed", None, true),
+        events::agent_run_end("failed", None, Some("boom")),
         Some((Outcome::Error, Some("AgentFailed")))
     );
     assert_eq!(
-        events::agent_run_end("crashed", None, false),
+        events::agent_run_end("crashed", None, None),
         Some((Outcome::Error, Some("AgentCrashed")))
     );
     assert_eq!(events::error_kind("AgentFailed"), "agent_failed");
+    let cause = |t| {
+        events::agent_run_end("failed", None, Some(t))
+            .unwrap()
+            .1
+            .unwrap()
+    };
+    assert_eq!(cause("ANTHROPIC_API_KEY is not set"), "no_api_key");
+    assert_eq!(cause("429 rate limit from provider"), "provider_error");
+    assert_eq!(cause("request timed out"), "timeout");
+    assert_eq!(cause("cancelled by user"), "user_cancelled");
+    assert_eq!(cause("something else"), "AgentFailed");
+    assert_eq!(events::error_kind("no_api_key"), "no_api_key");
     assert_eq!(events::error_kind("Agent"), "agent");
 }
 
@@ -1615,4 +1627,65 @@ fn space_tool_groups_cover_the_tools_that_act_inside_a_space() {
     ] {
         assert_eq!(g(admin), None, "{admin}");
     }
+}
+
+#[test]
+fn a_repeating_persistent_agent_failure_is_sent_once_per_hour() {
+    let h = tempfile::tempdir().unwrap();
+    let daemon = |home: &Path| {
+        let sink = Arc::new(MemorySink::new());
+        let t = Telemetry::builder()
+            .env(env_of(&[]))
+            .home(home)
+            .sink(sink.clone())
+            .product("daemon", "1.2.3")
+            .foreground()
+            .build();
+        t.acknowledge_notice();
+        (t, sink)
+    };
+    let (t, sink) = daemon(h.path());
+    let resume =
+        || events::persistent_agent("resume", None, Outcome::Error, Some("other")).unwrap();
+    assert_eq!(t.capture(resume()), Captured::Queued);
+    assert_eq!(t.capture(resume()), Captured::AlreadyRecorded);
+    // Another process of the same install is held back too.
+    let (t2, _s2) = daemon(h.path());
+    assert_eq!(t2.capture(resume()), Captured::AlreadyRecorded);
+    // A different failure, and successes, still go through.
+    let pause = events::persistent_agent("pause", None, Outcome::Error, Some("other")).unwrap();
+    assert_eq!(t.capture(pause), Captured::Queued);
+    let ok = events::persistent_agent("resume", None, Outcome::Ok, None).unwrap();
+    assert_eq!(t.capture(ok.clone()), Captured::Queued);
+    assert_eq!(t.capture(ok), Captured::Queued);
+    t.flush(Duration::from_secs(1));
+    let sent = sink
+        .events()
+        .iter()
+        .filter(|e| e["event"] == "cua_persistent_agent")
+        .count();
+    assert_eq!(sent, 4);
+}
+
+#[test]
+fn sdk_test_runs_are_marked_synthetic() {
+    let synthetic = |product: &str, env: &[(&str, &str)]| {
+        let h = tempfile::tempdir().unwrap();
+        let t = Telemetry::builder()
+            .env(env_of(env))
+            .home(h.path())
+            .sink(Arc::new(MemorySink::new()))
+            .product(product, "1.2.3")
+            .foreground()
+            .build();
+        t.envelope_preview()["is_synthetic"].as_bool().unwrap()
+    };
+    assert!(synthetic(
+        "sdk_python",
+        &[("PYTEST_CURRENT_TEST", "t.py::x")]
+    ));
+    assert!(synthetic("sdk_typescript", &[("VITEST", "true")]));
+    assert!(!synthetic("sdk_python", &[]));
+    assert!(!synthetic("cli", &[("PYTEST_CURRENT_TEST", "t.py::x")]));
+    assert!(synthetic("cli", &[("CUA_TELEMETRY_SYNTHETIC", "1")]));
 }

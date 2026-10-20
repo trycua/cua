@@ -15,7 +15,7 @@ describe("endpoint", () => {
   it("derives the base from the page in every mode", () => {
     expect(baseUrlFor("http://127.0.0.1:3211/viewer/")).toBe("http://127.0.0.1:3211/");
     expect(baseUrlFor("http://127.0.0.1:3211/viewer/index.html?x=1#t")).toBe("http://127.0.0.1:3211/");
-    expect(baseUrlFor("https://gw.example/api/signed-svc/tok/viewer/")).toBe("https://gw.example/api/signed-svc/tok/");
+    expect(baseUrlFor("https://gw.example/gw/tok/viewer/")).toBe("https://gw.example/gw/tok/");
     expect(baseUrlFor("http://localhost:8211/s/local%3Adev/viewer/")).toBe("http://localhost:8211/s/local%3Adev/");
   });
 
@@ -34,7 +34,7 @@ describe("endpoint", () => {
   });
 
   it("resolves the media socket and file URLs against the base", () => {
-    expect(mediaSocketUrl("https://gw.example/api/signed-svc/tok/", "/media?ticket=abc")).toBe("wss://gw.example/api/signed-svc/tok/media?ticket=abc");
+    expect(mediaSocketUrl("https://gw.example/gw/tok/", "/media?ticket=abc")).toBe("wss://gw.example/gw/tok/media?ticket=abc");
     expect(mediaSocketUrl("http://127.0.0.1:3211/", "/media?ticket=abc")).toBe("ws://127.0.0.1:3211/media?ticket=abc");
     expect(spacesdUrl("http://h/s/x/", "/files/a?sig=1")).toBe("http://h/s/x/files/a?sig=1");
   });

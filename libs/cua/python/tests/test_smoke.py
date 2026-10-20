@@ -123,7 +123,7 @@ async def exercise(c: cua.Cua, fx: dict) -> None:
 
 
 def test_embedded(fixtures, tmp_path):
-    c = cua.embedded(state_dir=str(tmp_path / "sbx"), fleet_from_env=False)
+    c = cua.embedded(state_dir=str(tmp_path / "sbx"))
     assert c.mode() == cua.CuaMode.EMBEDDED
     run(exercise(c, fixtures))
 
@@ -135,23 +135,13 @@ def _assert_cloud_ended(info):
 
 
 def test_cloud_creates_fail_with_the_cloud_ended_error(fixtures, tmp_path):
-    # Even with Fleet credentials (the fake API), nothing reaches Fleet.
-    c = cua.embedded(
-        state_dir=str(tmp_path / "sbx"),
-        fleet_from_env=False,
-        fleet=cua.FleetSettings(base_url=fixtures["fleet_base_url"], token=fixtures["fleet_token"]),
-    )
-
-    with pytest.raises(cua.CuaError.Unsupported) as info:
-        c.fleet()
-    _assert_cloud_ended(info)
+    c = cua.embedded(state_dir=str(tmp_path / "sbx"))
 
     async def body():
         sbx = c.sandboxes()
         for opts in (
             cua.SandboxCreateOptions(on="cloud", image="img:test", kind="vm"),
-            cua.SandboxCreateOptions(image="img:test", warm=True),
-            cua.SandboxCreateOptions(image="img:test", cloud=cua.CloudOptions()),
+            cua.SandboxCreateOptions(image="pool:a-pool"),
         ):
             with pytest.raises(cua.CuaError.Unsupported) as info:
                 await sbx.create(opts)
@@ -161,43 +151,6 @@ def test_cloud_creates_fail_with_the_cloud_ended_error(fixtures, tmp_path):
         assert "cloud" not in cua.sandbox_locations()
 
     run(body())
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854); removed with the Fleet provider")
-def test_embedded_fleet_through_fake_api(fixtures, tmp_path):
-    c = cua.embedded(
-        state_dir=str(tmp_path / "sbx"),
-        fleet_from_env=False,
-        fleet=cua.FleetSettings(base_url=fixtures["fleet_base_url"], token=fixtures["fleet_token"]),
-    )
-
-    async def body():
-        fleet = c.fleet()
-        pool = await fleet.apply_pool(
-            cua.FleetPoolSpec(name="cua-e2e-py", image="img:test", runtime="gvisor")
-        )
-        assert pool.name == "cua-e2e-py"
-        sb = await c.sandboxes().create(
-            cua.SandboxCreateOptions(
-                on="cloud", pool="cua-e2e-py", name="cua-e2e-py-claim"
-            )
-        )
-        assert sb.location() == "cloud"
-        # The claim's env service is the fixture's cua-spacesd (through the
-        # fake gateway), which speaks gRPC, not plain HTTP.
-        out = await (await sb.spacesd(5_000)).sh("echo claim", None)
-        assert bytes(out.stdout) == b"claim\n"
-        await sb.delete()
-        await fleet.delete_pool("cua-e2e-py")
-
-    run(body())
-
-
-def test_fleet_fails_with_the_cloud_ended_error(tmp_path):
-    c = cua.embedded(state_dir=str(tmp_path), fleet_from_env=False)
-    with pytest.raises(cua.CuaError.Unsupported) as info:
-        c.fleet()
-    _assert_cloud_ended(info)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Unix socket")

@@ -2436,6 +2436,8 @@ name = "cua-create-failure"
 version = "0.1.0"
 dependencies = [
  "cua-telemetry",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2448,6 +2450,7 @@ dependencies = [
  "bytes",
  "cua-byoc",
  "cua-contrib",
+ "cua-create-failure",
  "cua-disk",
  "cua-home",
  "cua-host",
@@ -3203,6 +3206,7 @@ dependencies = [
  "base64 0.22.1",
  "bollard",
  "bytes",
+ "cua-create-failure",
  "cua-spacesd-client",
  "filetime",
  "futures",

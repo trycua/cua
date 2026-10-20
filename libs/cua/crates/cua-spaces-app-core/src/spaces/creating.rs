@@ -691,6 +691,24 @@ fn short_duration(secs: f64) -> String {
     }
 }
 
+/// The first thing that would stop a create of `space` (`linux_container`,
+/// `linux_vm`, `macos_vm`, `windows_vm`), from the `preflight` entry of the
+/// daemon's runtime doctor report (`report_json`), to show before Create:
+/// its plain sentence and the single fix button, when there is one. `None`:
+/// nothing in the way, or the report has no verdict for it (an older
+/// daemon), so Create goes ahead.
+pub fn preflight_issue(
+    report_json: &str,
+    space: &str,
+) -> Option<cua_create_failure::preflight::Issue> {
+    let report: serde_json::Value = serde_json::from_str(report_json).ok()?;
+    let issues = report.get("preflight")?.get(space)?.clone();
+    serde_json::from_value::<Vec<cua_create_failure::preflight::Issue>>(issues)
+        .ok()?
+        .into_iter()
+        .next()
+}
+
 /// The SDK's disk refusal ("not enough disk space to pull ...: it needs
 /// about 30.0 GB and cua keeps 5.0 GB free, but only 12.0 GB is available
 /// on /Users/me/.lume (...)") in plain words, with its numbers when present.
@@ -1475,6 +1493,36 @@ pub fn compose(registry: &[Space], state: &CreatesState) -> Vec<Space> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preflight_issue_reads_the_daemons_report() {
+        let report = r#"{"preflight":{
+            "linux_container":[{"kind":"engine_missing",
+              "message":"Install Docker Desktop to run Linux computers.",
+              "fix":{"label":"Get Docker","action":{"type":"open_url","value":"https://www.docker.com/products/docker-desktop/"}}}],
+            "linux_vm":[]}}"#;
+        let issue = preflight_issue(report, "linux_container").unwrap();
+        assert_eq!(
+            issue.message,
+            "Install Docker Desktop to run Linux computers."
+        );
+        assert_eq!(issue.fix.unwrap().label, "Get Docker");
+        assert!(preflight_issue(report, "linux_vm").is_none());
+        assert!(preflight_issue(report, "windows_vm").is_none());
+        // An older daemon has no verdict; garbage never blocks a create.
+        assert!(preflight_issue("{}", "linux_vm").is_none());
+        assert!(preflight_issue("not json", "linux_vm").is_none());
+    }
+
+    #[test]
+    fn a_failed_create_with_a_preflight_sentence_keeps_its_cause() {
+        let raw = "Install Docker Desktop to run Linux computers.";
+        assert_eq!(failure_text(raw, Some("preparing"), None, false), raw);
+        assert_eq!(
+            failure_variant(raw, Some("preparing"), false, "Runtime", None),
+            "runtime_missing"
+        );
+    }
 
     /// CUA-1807: Turn on showed the SDK's raw Local Network error.
     #[test]

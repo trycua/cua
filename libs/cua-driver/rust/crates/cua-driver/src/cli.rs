@@ -2533,6 +2533,52 @@ mod daemon_compatibility_tests {
     }
 }
 
+fn call_text<'a>(
+    tool: &str,
+    args: Option<&serde_json::Value>,
+    result: &'a serde_json::Value,
+    printed: bool,
+) -> Vec<&'a str> {
+    let page_read = tool == "page"
+        && matches!(
+            args.and_then(|a| a["action"].as_str()),
+            Some("get_text" | "query_dom")
+        );
+    if printed && !page_read {
+        return Vec::new();
+    }
+    result["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["type"] == "text")
+        .filter_map(|item| item["text"].as_str())
+        .collect()
+}
+
+#[test]
+fn call_page_read_preserves_text_with_structured_content() {
+    let result = serde_json::json!({
+        "content": [{"type": "text", "text": "Page body"}],
+        "structuredContent": {"source": "ax"}
+    });
+    for action in ["get_text", "query_dom"] {
+        let args = serde_json::json!({"action": action});
+        assert_eq!(
+            call_text("page", Some(&args), &result, true),
+            vec!["Page body"]
+        );
+    }
+    assert!(call_text("other", None, &result, true).is_empty());
+    assert!(call_text(
+        "page",
+        Some(&serde_json::json!({"action": "click"})),
+        &result,
+        true
+    )
+    .is_empty());
+}
+
 pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
@@ -2674,19 +2720,8 @@ pub fn run_call(
                             println!("{pretty}");
                             printed = true;
                         }
-                        if !printed {
-                            if let Some(content) = result.get("content").and_then(|v| v.as_array())
-                            {
-                                for item in content {
-                                    if item.get("type").and_then(|v| v.as_str()) == Some("text") {
-                                        if let Some(text) =
-                                            item.get("text").and_then(|v| v.as_str())
-                                        {
-                                            println!("{text}");
-                                        }
-                                    }
-                                }
-                            }
+                        for text in call_text(tool, json_args.as_ref(), &result, printed) {
+                            println!("{text}");
                         }
                         if is_error {
                             process::exit(1);

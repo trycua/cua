@@ -70,7 +70,7 @@ class BenchWebAdapter(BenchAdapter):
     kinds = ("container", "vm")
     server = ServerSpec(port=CTL_PORT, health="/healthz")
     ports = (CDP_PORT, MINIWOB_PORT)
-    reset = "fresh-claim"
+    reset = "fresh-sandbox"
     action_mode = "driver"
     width, height = 1280, 800
 

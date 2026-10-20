@@ -17,8 +17,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-/// Longest a local public URL may live (the same bound as Fleet's signed
-/// service URLs).
+/// Longest a local public URL may live.
 pub const MAX_TTL: Duration = Duration::from_secs(86_400);
 /// Default lifetime.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(3_600);
@@ -36,7 +35,7 @@ pub struct PublicUrl {
     pub sandbox: String,
     /// Service name.
     pub service: String,
-    /// Provider internals (cloud: namespace, claim; local: upstream).
+    /// Provider internals (local: upstream).
     pub provider_details: std::collections::BTreeMap<String, String>,
 }
 

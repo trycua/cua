@@ -87,7 +87,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
   if (input.step === "connect") {
     return {
       step: "connect",
-      later: "Set up later",
+      later: "Skip for now",
       connect: {
         title: "A shared Space for every agent.",
         accent: "agent",
@@ -111,7 +111,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
   const ok = input.signedIn && Boolean(input.host?.configured);
   return {
     step: "setup",
-    later: "Set up later",
+    later: "Skip for now",
     connect: null,
     setup: {
       title: ok ? `Your agent can use ${place}.` : "Checking your setup.",

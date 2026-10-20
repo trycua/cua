@@ -4,7 +4,7 @@
 //! is never returned as a bearer value and cannot move to another connection.
 
 use crate::{DriverError, TrustedSessionOptions};
-use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse};
+use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse, REPLY_DEADLINE};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
@@ -12,8 +12,6 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
 
-#[cfg(unix)]
-const SERVICE_REQUEST_DEADLINE: Duration = Duration::from_secs(120);
 const RESUME_REGISTRATION_RETRIES: usize = 20;
 const RESUME_REGISTRATION_DELAY: Duration = Duration::from_millis(10);
 
@@ -292,7 +290,7 @@ fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::R
     cua_driver_core::socket_io::write_all_with_retry(
         writer,
         &frame,
-        Instant::now() + SERVICE_REQUEST_DEADLINE,
+        Instant::now() + REPLY_DEADLINE,
     )
 }
 
@@ -305,7 +303,7 @@ fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::R
 
 #[cfg(unix)]
 fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<Option<String>> {
-    let deadline = Instant::now() + SERVICE_REQUEST_DEADLINE;
+    let deadline = Instant::now() + REPLY_DEADLINE;
     let mut bytes = Vec::new();
     loop {
         match reader.read_until(b'\n', &mut bytes) {
@@ -325,7 +323,7 @@ fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<
                 if Instant::now() >= deadline {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
-                        "timed out after 120s waiting for trusted service response",
+                        format!("timed out after {REPLY_DEADLINE:?} waiting for trusted service response"),
                     ));
                 }
             }

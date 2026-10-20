@@ -95,7 +95,7 @@
     },
     {
       "kind": "host_capability_missing",
-      "meaning": "A prerequisite on this computer is missing: Fleet credentials, a local runtime, an operator display or app-session providers.",
+      "meaning": "A prerequisite on this computer is missing: a local runtime, an operator display or app-session providers.",
       "fix": "Set up what the message names (see the tool's `host_requires`)."
     },
     {
@@ -167,21 +167,6 @@
       "kind": "env",
       "meaning": "A cua-spacesd call failed.",
       "fix": "Retry; if it persists, check the spacesd log in the Space."
-    },
-    {
-      "kind": "fleet",
-      "meaning": "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The Fleet control plane failed a cloud Space call.",
-      "fix": "Create the Space locally or on one of your computers; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended."
-    },
-    {
-      "kind": "fleet_admission_denied",
-      "meaning": "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). Fleet's admission refused the cloud Space: a size over this account's limits, or a template its policy does not admit.",
-      "fix": "Create the Space locally or on one of your computers; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended."
-    },
-    {
-      "kind": "cloud_credit_exhausted",
-      "meaning": "Retired: no longer returned since Cua Cloud ended (cua 0.4.2). The account was out of Cua Cloud credit and Fleet refused the new cloud Space.",
-      "fix": "Create the Space locally or on one of your computers; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended."
     },
     {
       "kind": "invalid_placement",
@@ -427,14 +412,11 @@
       "sdk_symbol": "Spaces.create(options)",
       "rust_symbol": "Spaces::create",
       "notes": [
-        "Cloud needs Fleet credentials (`cua auth login`); local needs a container engine, QEMU or Lume (`cua runtime doctor`)."
+        "Local needs a container engine, QEMU or Lume (`cua runtime doctor`)."
       ],
       "result": "JSON: the registered Space, `phase: \"ready\"` and `reused` (true when `reuse` returned an existing Space); with `wait: false`, `{\"id\", \"phase\": \"starting\"}` at once; with `count` above 1, an array of them.",
       "errors": [
         "invalid_placement",
-        "fleet",
-        "fleet_admission_denied",
-        "cloud_credit_exhausted",
         "sandbox",
         "timeout",
         "ambiguous_host",
@@ -491,7 +473,7 @@
             "type": "string"
           },
           "on": {
-            "description": "Where it runs: `local` (this computer, free), `cloud` (Cua cloud,\nmetered), or `host:<computer>`: one of the user's own computers that\nprovides Spaces (`cua host setup --provide-spaces` on it), named by\nid or by words from its name (\"host:spare mac mini\" matches \"Mac\nmini (spare)\" or `dillons-mac-mini`). Default: the user's default\nlocation (`cua config set default.on`, `CUA_DEFAULT_ON`), else\n`local`. Not `direct:<addr>`: that is one already-running Space at a\nfixed address, attached with `add_space`, not a host this can create\non. An existing computer is added with `add_space`, not created.",
+            "description": "Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal` (your own\ncloud account, billed there), or `host:<computer>`: one of the user's own computers that\nprovides Spaces (`cua host setup --provide-spaces` on it), named by\nid or by words from its name (\"host:spare mac mini\" matches \"Mac\nmini (spare)\" or `dillons-mac-mini`). Default: the user's default\nlocation (`cua config set default.on`, `CUA_DEFAULT_ON`), else\n`local`. Not `direct:<addr>`: that is one already-running Space at a\nfixed address, attached with `add_space`, not a host this can create\non. An existing computer is added with `add_space`, not created.",
             "type": "string"
           },
           "reuse": {
@@ -563,7 +545,6 @@
       "notes": [],
       "result": "Text: what was deleted (`Deleted <id> (...)`), or `Removed <id> (...)` for a Space added by address.",
       "errors": [
-        "fleet",
         "sandbox"
       ],
       "input_schema": {
@@ -583,7 +564,7 @@
       "name": "stop_space",
       "category": "lifecycle",
       "description": "Turn a Space off: suspend it (memory kept) or stop it (disk kept).",
-      "instructions": "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Fleet cloud Space, a Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.",
+      "instructions": "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.",
       "platforms": [
         "macos",
         "windows",
@@ -2309,7 +2290,7 @@
       "name": "agent_pause",
       "category": "persistent-agents",
       "description": "Pause a persistent agent: its run, its routines and its Space.",
-      "instructions": "One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended (Fleet has no per-claim pause), so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own computers are never suspended.",
+      "instructions": "One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended, so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own computers are never suspended.",
       "platforms": [
         "macos",
         "windows",
@@ -2388,8 +2369,7 @@
       "result": "JSON: `space` (it can change when a cloud Space is created again), `recreated`, `restored`, `run_id` and `ready_ms` (from the call to the home being back in a ready Space).",
       "errors": [
         "agent",
-        "sandbox",
-        "fleet"
+        "sandbox"
       ],
       "input_schema": {
         "properties": {
@@ -4643,8 +4623,8 @@
     {
       "name": "share_space",
       "category": "sharing",
-      "description": "Let another cua.ai account watch or edit a Space.",
-      "instructions": "Shares the Space through the cua.ai relay with one account, by verified email or account id, or with a whole team as `team:<id>` (always as an editor; Teams plan); the same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.",
+      "description": "Let someone in your team watch or edit a Space.",
+      "instructions": "Shares the Space through the cua.ai relay with one person in your own team, by verified email or account id, or with the whole team as `team:<id>` (as a viewer or an editor). Sharing is for teams: an account in no team gets `sharing_needs_team` (\"Sharing is for teams. Start a team to share this Space.\"), and someone outside your team gets `share_outside_team`. The same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.",
       "platforms": [
         "macos",
         "windows",
@@ -4692,7 +4672,7 @@
             "type": "string"
           },
           "who": {
-            "description": "Who: an email address (verified by cua.ai) or an account id, or\n`team:<id>` for a whole team. A team always gets `editor` and needs\nthe Teams plan; the sharer is a team owner or admin who owns the Space.",
+            "description": "Who: the email address (verified by cua.ai) or account id of someone\nin your own team, or `team:<id>` for the whole team (as `viewer` or\n`editor`). Sharing is for teams: it needs a team on the Teams plan,\nand a whole-team share needs a team owner or admin who owns the Space.",
             "type": "string"
           }
         },

@@ -535,33 +535,24 @@ async fn auto_prefers_native_for_direct() {
 }
 
 #[tokio::test]
-async fn fleet_gateway_uses_grpc_web_bearer_and_claim() {
-    let prefix = "/api/svc/cua-e2e-pool/sbx-1-env";
+async fn gateway_uses_grpc_web_and_the_bearer() {
+    let prefix = "/m/abcd1234";
     let srv = MockServer::start(MockAuth {
         token: Some(TOKEN.into()),
         gateway: Some(MockGateway {
             prefix: prefix.into(),
-            bearer: "fleet-bearer".into(),
-            claim: "claim-abc".into(),
+            bearer: "gateway-bearer".into(),
         }),
         prefix: None,
     })
     .await;
-    let endpoint =
-        cua_spacesd_client::Endpoint::fleet_service(&srv.url(), "cua-e2e-pool", "sbx-1", "env")
-            .unwrap();
+    let endpoint = cua_spacesd_client::Endpoint::parse(&format!("{}{prefix}", srv.url())).unwrap();
     let opts = ConnectOptions::new(endpoint.clone())
         .token(TOKEN)
-        .fleet_gateway(
-            Arc::new(StaticBearer("fleet-bearer".into())),
-            Some("claim-abc".into()),
-        );
+        .transport(TransportPreference::GrpcWeb)
+        .gateway(Arc::new(StaticBearer("gateway-bearer".into())));
     let env = SpacesdClient::connect(opts).await.unwrap();
-    assert_eq!(
-        env.transport(),
-        Transport::GrpcWeb,
-        "gateway must auto-select gRPC-Web"
-    );
+    assert_eq!(env.transport(), Transport::GrpcWeb);
     assert_eq!(
         env.run("echo via gateway").await.unwrap().stdout_str(),
         "via gateway\n"
@@ -578,17 +569,18 @@ async fn fleet_gateway_uses_grpc_web_bearer_and_claim() {
         0
     );
 
-    // A token-provider closure also works, and a wrong claim is refused.
+    // A token-provider closure also works, and a wrong bearer is refused.
     let refreshes = Arc::new(AtomicU64::new(0));
     let counter = refreshes.clone();
     let provider = move |_force: bool| {
         counter.fetch_add(1, Ordering::Relaxed);
-        async { Ok::<_, cua_spacesd_client::error::BoxError>("fleet-bearer".to_string()) }
+        async { Ok::<_, cua_spacesd_client::error::BoxError>("other-bearer".to_string()) }
     };
     let err = SpacesdClient::connect(
         ConnectOptions::new(endpoint)
             .token(TOKEN)
-            .fleet_gateway(Arc::new(provider), Some("other-claim".into())),
+            .transport(TransportPreference::GrpcWeb)
+            .gateway(Arc::new(provider)),
     )
     .await
     .unwrap_err();
@@ -596,7 +588,7 @@ async fn fleet_gateway_uses_grpc_web_bearer_and_claim() {
     assert!(
         matches!(
             err,
-            Error::SpacesdNotAvailable { .. } | Error::PermissionDenied(_)
+            Error::SpacesdNotAvailable { .. } | Error::Unauthenticated(_)
         ),
         "{err:?}"
     );

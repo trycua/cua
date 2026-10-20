@@ -53,7 +53,11 @@ function spaceFor(spaces: Space[], offers: (space: Space) => boolean | undefined
   return { offered };
 }
 
-export function GettingStarted() {
+/** With a Space ready, the order that leads somewhere: run an agent in it first; Add computer and Share last. */
+const READY_ORDER: ChecklistStep[] = ["run_agent", "create_space", "teleport", "add_machine", "share"];
+
+/** `onRunAgent`: the Space is ready, so Run an agent opens "Run an agent here" and leads the list. */
+export function GettingStarted({ onRunAgent }: { onRunAgent?: () => void } = {}) {
   const { view, shown, dismiss } = useChecklist();
   const navigate = useNavigate();
   const newSpace = useNewSpace();
@@ -102,9 +106,10 @@ export function GettingStarted() {
       case "share":
         return onSpace("share", (space) => share.open(space, session?.signedIn ?? false), "Share");
       case "run_agent":
-        return void navigate({ to: "/agents" });
+        return onRunAgent ? onRunAgent() : void navigate({ to: "/agents" });
     }
   };
+  const rows = onRunAgent ? [...view.rows].sort((a, b) => READY_ORDER.indexOf(a.step) - READY_ORDER.indexOf(b.step)) : view.rows;
 
   return (
     <section data-checklist="" aria-labelledby="checklist-title" className="mb-6 rounded-xl border bg-card shadow-xs">
@@ -123,7 +128,7 @@ export function GettingStarted() {
         </Button>
       </header>
       <ol className="divide-y border-t">
-        {view.rows.map(({ step, title, detail, action, done }) => (
+        {rows.map(({ step, title, detail, action, done }) => (
           <li key={step} data-checklist-step={step} data-done={done || undefined} className="flex items-center gap-3 px-4 py-2.5">
             <span
               aria-hidden

@@ -168,7 +168,7 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// instead of failing every call. The signed-in session drives the relay
     /// account.
     public static func make() throws -> LiveSpacesBackend {
-        LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(fleetFromSession: true)))
+        LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(accountFromSession: true)))
     }
 
     public func rows() async throws -> [AppSpaceRow] {
@@ -377,8 +377,6 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     /// Bounded: the session read can wait on the credential vault.
     public func cloudAvailable() async -> Bool {
-        let env = ProcessInfo.processInfo.environment
-        if env["FLEETS_TOKEN"] != nil || env["CUA_CLIENT_ID"] != nil { return true }
         let status = await withTimeout(seconds: Self.probeSeconds) { [cua] in try cua.auth().status().loggedIn }
         return (try? status.get()) ?? false
     }

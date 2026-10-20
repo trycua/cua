@@ -18,6 +18,7 @@ container = ["dep:bollard", "dep:bytes"]
 # Scratch file for the disk-architecture probe (qemu-img dd).
 tempfile = "3"
 async-trait = "0.1"
+cua-create-failure.workspace = true
 base64 = "0.22"
 bollard = { version = "0.21", optional = true }
 bytes = { version = "1", optional = true }

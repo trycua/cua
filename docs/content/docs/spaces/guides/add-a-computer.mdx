@@ -11,7 +11,13 @@ can open its desktop from anywhere, even when nobody is sitting at it. Cua
 doesn't rent computers: add a Mac on your desk, a spare box in the office, or a
 VM in your own cloud account.
 
-{/* VIDEO: Add a second computer to Cua Spaces with a link and open it from your Mac (about 45 seconds) */}
+<VideoDemo
+  src="https://trycua.github.io/assets/videos/cua-spaces/add-a-computer.mp4"
+  poster="https://trycua.github.io/assets/videos/cua-spaces/add-a-computer-poster.jpg"
+  title="Add a computer to Cua Spaces"
+>
+  Add a second computer with a link and see it appear in your list (32 seconds, no sound).
+</VideoDemo>
 
 ## Add a computer from the app
 
@@ -138,11 +144,12 @@ and when). When another device asks to join, the app shows an approval sheet:
 Approve asks for Touch ID or your login password first, and Deny revokes that
 device.
 
-## Share it with other accounts
+## Share it with your team
 
 `--allow` at setup, or later from an enrolled device, shares the computer with
-another account (id or verified email). Sharing asks for confirmation.
-Unsharing cuts that account's open connections.
+someone in your team (id or verified email). Sharing is for teams: you need a
+team, and they must be in it. See [Share a Space](/spaces/guides/share-a-space).
+Sharing asks for confirmation. Unsharing cuts that account's open connections.
 
 ```bash test="cli-shape" id="cua-host-share"
 cua host share friend@example.com

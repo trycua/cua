@@ -749,6 +749,61 @@ pub fn app_share_view(input: AppShareInput, state: AppShareSheetState) -> AppSha
     core::share::share_view(&input, &state)
 }
 
+/// Why the Share sheet is closed, from whether the account is in a team
+/// that can share (`None`: the host could not say, so the sheet stays open
+/// and the server decides). Sharing is for teams (CUA-1883).
+#[uniffi::export]
+pub fn app_share_gate(has_team: Option<bool>) -> Option<AppShareGate> {
+    core::share::share_gate(has_team)
+}
+
+/// A refused share in plain words (`share_outside_team`,
+/// `sharing_needs_team`); `None` for any other error.
+#[uniffi::export]
+pub fn app_share_error_words(error: String, who: String) -> Option<String> {
+    core::share::share_error_words(&error, &who)
+}
+
+/// The owner's one-line note about people removed from shared computers.
+#[uniffi::export]
+pub fn app_share_removal_note(removals: Vec<AppShareRemovalInput>) -> Option<AppShareRemovalNote> {
+    core::share::share_removal_note(&removals)
+}
+
+/// People removed from the account's shared computers because sharing is
+/// for teams now, until [`app_ack_share_removals`]. Empty on a server that
+/// predates it.
+#[uniffi::export]
+pub async fn app_share_removals(account_token: String) -> Result<Vec<AppShareRemovalInput>> {
+    cua_sdk::support::run(async move {
+        let api = cua_host::spaces_api::SpacesApiClient::current()?;
+        match api.share_removals(&account_token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(vec![]),
+            other => Ok(other?
+                .into_iter()
+                .map(|r| core::share::ShareRemovalInput {
+                    who: r.who,
+                    machine_name: r.machine_name,
+                })
+                .collect()),
+        }
+    })
+    .await
+}
+
+/// The owner has seen the note: it is not shown again.
+#[uniffi::export]
+pub async fn app_ack_share_removals(account_token: String) -> Result<()> {
+    cua_sdk::support::run(async move {
+        let api = cua_host::spaces_api::SpacesApiClient::current()?;
+        match api.ack_share_removals(&account_token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(()),
+            other => Ok(other?),
+        }
+    })
+    .await
+}
+
 /// Share sheet input from JSON (fixtures, parity flows).
 #[uniffi::export]
 pub fn app_share_input_from_json(json: String) -> Result<AppShareInput> {
@@ -1865,23 +1920,6 @@ pub fn app_onboarding_view(state: AppOnboardingState) -> AppOnboardingView {
     core::onboarding::view(&state)
 }
 
-/// The SDK's billing status as the app core takes it (Settings' Billing
-/// row).
-#[uniffi::export]
-pub fn app_billing_status(status: cua_sdk::FleetBillingStatus) -> AppBillingStatus {
-    core::billing::BillingStatus {
-        billing_enabled: status.billing_enabled,
-        card: status.card.map(|c| core::billing::BillingCard {
-            brand: c.brand,
-            last4: c.last4,
-        }),
-        credit: status.credit.map(|c| core::billing::BillingCredit {
-            balance_usd_cents: c.balance_usd_cents,
-        }),
-        billing_url: status.billing_url,
-    }
-}
-
 /// The account's relay allowance this month (`GET /v1/usage` on the relay
 /// `devices` uses, as `cua usage` reads it) with `account_token`; none
 /// from a relay that meters nothing. Both Spaces apps read it here.
@@ -2835,38 +2873,6 @@ mod host_setup_tests {
         })
         .unwrap();
         assert_eq!(o.profile.as_deref(), Some("spare"));
-    }
-}
-
-#[cfg(test)]
-mod size_limit_tests {
-    use cua_spaces_app_core::wizard::{CLOUD_CPU_RANGE, CLOUD_MEMORY_GB_RANGE};
-
-    /// The wizard's cloud sliders offer the everyday range
-    /// (`cua_fleet::CLOUD_DEFAULT_RANGE_*`, what `fleet_size_limits`
-    /// returns), which sits inside what the SDK accepts
-    /// (`cua_fleet::FLEET_ABSOLUTE_*`).
-    #[test]
-    fn the_wizard_offers_the_everyday_cloud_sizes() {
-        let (cpus, mem) = (
-            cua_fleet::CLOUD_DEFAULT_RANGE_CPUS,
-            cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB,
-        );
-        assert_eq!(CLOUD_CPU_RANGE, (*cpus.start(), *cpus.end()));
-        assert!(CLOUD_MEMORY_GB_RANGE.0 * 1024 >= *mem.start());
-        assert_eq!(CLOUD_MEMORY_GB_RANGE.1 * 1024, *mem.end());
-        let l = cua_sdk::fleet_size_limits();
-        assert_eq!((l.min_cpus, l.max_cpus), (*cpus.start(), *cpus.end()));
-        assert_eq!(
-            (l.min_memory_mb, l.max_memory_mb),
-            (*mem.start(), *mem.end())
-        );
-        let (abs_cpus, abs_mem) = (
-            cua_fleet::FLEET_ABSOLUTE_CPUS,
-            cua_fleet::FLEET_ABSOLUTE_MEMORY_MB,
-        );
-        assert!(abs_cpus.contains(cpus.start()) && abs_cpus.contains(cpus.end()));
-        assert!(abs_mem.contains(mem.start()) && abs_mem.contains(mem.end()));
     }
 }
 

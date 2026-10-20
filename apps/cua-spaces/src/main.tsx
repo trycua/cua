@@ -7,6 +7,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { TeleportPicker } from "./components/TeleportPicker";
 import { MainWindow } from "./components/desktop/MainWindow";
+import "./i18n";
 import { initCore } from "./core";
 import { createBridge, hasTauri } from "./native/bridge";
 import { createFleetBridge } from "./native/fleet";

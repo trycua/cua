@@ -18,10 +18,11 @@ that lets your devices reach your computers. Current prices are on
 | Pro | $18 a month or $180 a year, one person | 5 | 200 a month |
 | Teams | $30 per seat a month or $300 per seat a year, 1 to 100 seats | 5 per seat | 200 per seat a month, pooled across the team |
 
-Every plan includes Spaces on every computer you connect, Teleport and sharing a
-Space with named people. Pro adds more live sessions and remote hours. Teams
-adds team-owned computers, roles and device approval. SSO and audit export are
-not included yet.
+Every plan includes Spaces on every computer you connect and Teleport. Pro adds
+more live sessions and remote hours. Teams adds sharing a Space with your team,
+team-owned computers, roles and device approval. Sharing is for teams: Free and
+Pro accounts without a team cannot share a Space. SSO and audit export are not
+included yet.
 
 ## What counts toward the limits
 
@@ -64,7 +65,13 @@ and their agents. Computers belong to the team instead of one person's account,
 an owner and admins decide who can do what, and a new device must be approved
 before it can reach a team computer.
 
-{/* VIDEO: Create a team, invite a teammate and share a machine with them (about 60 seconds) */}
+<VideoDemo
+  src="https://trycua.github.io/assets/videos/cua-spaces/teams.mp4"
+  poster="https://trycua.github.io/assets/videos/cua-spaces/teams-poster.jpg"
+  title="Cua Spaces Teams"
+>
+  Create a team, invite a teammate and add a computer for the team (29 seconds, no sound).
+</VideoDemo>
 
 Teams starts at 1 seat, so you can begin with just yourself and add seats as
 people join. Two seats give 10 live sessions and 400 remote hours a month for the
@@ -204,8 +211,9 @@ with the Cua account service and caches the answer for up to a minute.
 ### Share a Space with the team
 
 To make a Space you already have a team computer, share it with the team. Every
-member of the team, and their agents, then sees it and can open it as an editor
-(full control), from a device an admin has approved.
+member of the team, and their agents, then sees it and can open it from a device
+an admin has approved, either as **Can edit** (full control) or **Can view**
+(watch only).
 
 - **In the app:** press **Share** on the Space. If you own or manage a team on
   the Teams plan, the Share window shows a **Share with** button for each of
@@ -214,12 +222,13 @@ member of the team, and their agents, then sees it and can open it as an editor
   `cua team add-machine <team> <space>`. `cua team ls` shows the team ID.
 - Only an owner or admin of the team can do this, and only for a Space they
   own. A team can hold as many shared computers as its seats allow.
-- A team always gets the Editor role. There is no view-only share for a whole
-  team. To let someone only watch, share with them as a person, as a viewer.
+- Choose **Can view** or **Can edit** for the whole team. Share again with the
+  other role to change it.
 - To stop, remove the team in the Share window, or run
   `cua spaces unshare <space> team:<team id>`.
 
-You can also share a Space with one person who is not on your team. See
+You can also share a Space with one person in your team. Sharing is for teams:
+you cannot share with anyone outside your team. See
 [Share a Space](/spaces/guides/share-a-space).
 
 ## Seats and billing

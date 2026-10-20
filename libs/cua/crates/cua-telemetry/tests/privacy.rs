@@ -140,7 +140,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::stream_summary(s, s, Some(true), 900, 1080, Some(40.0), d).unwrap(),
         events::app_active(),
         // Unknown experiment ids are dropped (`none`); known ones kept.
-        events::app_active_with(&[s, "sharing", s]),
+        events::app_active_with(&[s, "sharing", s], s),
         events::space_create(
             &events::SpaceCreate {
                 on: s,
@@ -1279,6 +1279,61 @@ fn the_active_day_carries_the_experiments_that_are_on() {
     assert!(!h2.path().join("telemetry/experiments_on").exists());
 }
 
+/// `ui_locale`: the Spaces app's interface language, one of a fixed set
+/// (anything else is `other`), kept for the day's `cua_app_active`; `en`
+/// before the app says; nothing written while telemetry is off.
+#[test]
+fn the_active_day_carries_the_ui_locale() {
+    let k = Kind::Enum(schema::UI_LOCALES);
+    for ok in ["en", "zh-Hans", "ko", "pt-BR", "ja", "es", "other"] {
+        assert!(schema::value_ok(k, &Value::from(ok)), "{ok}");
+    }
+    for bad in [
+        "",
+        "fr",
+        "en-US",
+        "zh-Hant",
+        "EN",
+        "/Users/alice",
+        "Paris, France",
+    ] {
+        assert!(!schema::value_ok(k, &Value::from(bad)), "{bad}");
+    }
+    assert_eq!(events::ui_locale("ja"), "ja");
+    assert_eq!(events::ui_locale(" pt-BR\n"), "pt-BR");
+    for other in ["", "fr", "en-US", "ja-JP", "alice@example.com", "other"] {
+        assert_eq!(events::ui_locale(other), "other", "{other}");
+    }
+
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[]);
+    assert_eq!(t.capture_active_on(20_000), Captured::Queued);
+    t.set_ui_locale("ko");
+    // The next day, another process of the same install.
+    let (t2, sink2) = ready(h.path(), &[]);
+    assert_eq!(t2.capture_active_on(20_001), Captured::Queued);
+    t.set_ui_locale("fr-CA");
+    let (t3, sink3) = ready(h.path(), &[]);
+    assert_eq!(t3.capture_active_on(20_002), Captured::Queued);
+    for x in [&t, &t2, &t3] {
+        x.flush(Duration::from_secs(1));
+    }
+    let locales = |s: &MemorySink| -> Vec<String> {
+        s.events()
+            .iter()
+            .filter(|e| e["event"] == "cua_app_active")
+            .map(|e| e["properties"]["ui_locale"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(locales(&sink), ["en"], "en before the app says");
+    assert_eq!(locales(&sink2), ["ko"]);
+    assert_eq!(locales(&sink3), ["other"]);
+    let h2 = tempfile::tempdir().unwrap();
+    let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
+    off.set_ui_locale("ja");
+    assert!(!h2.path().join("telemetry/ui_locale").exists());
+}
+
 #[test]
 fn stream_summary_is_bucketed_and_needs_video() {
     let e = events::stream_summary(
@@ -1459,25 +1514,37 @@ fn agent_runs_respect_every_opt_out_and_never_count_inside_a_run() {
 
 #[test]
 fn agent_run_end_follows_the_published_status() {
-    assert_eq!(events::agent_run_end("running", None, false), None);
-    assert_eq!(events::agent_run_end("unknown", None, false), None);
+    assert_eq!(events::agent_run_end("running", None, None), None);
+    assert_eq!(events::agent_run_end("unknown", None, None), None);
     assert_eq!(
-        events::agent_run_end("idle", Some("end_turn"), false),
+        events::agent_run_end("idle", Some("end_turn"), None),
         Some((Outcome::Ok, None))
     );
     assert_eq!(
-        events::agent_run_end("idle", Some("cancelled"), false),
+        events::agent_run_end("idle", Some("cancelled"), None),
         Some((Outcome::Cancelled, None))
     );
     assert_eq!(
-        events::agent_run_end("failed", None, true),
+        events::agent_run_end("failed", None, Some("boom")),
         Some((Outcome::Error, Some("AgentFailed")))
     );
     assert_eq!(
-        events::agent_run_end("crashed", None, false),
+        events::agent_run_end("crashed", None, None),
         Some((Outcome::Error, Some("AgentCrashed")))
     );
     assert_eq!(events::error_kind("AgentFailed"), "agent_failed");
+    let cause = |t| {
+        events::agent_run_end("failed", None, Some(t))
+            .unwrap()
+            .1
+            .unwrap()
+    };
+    assert_eq!(cause("ANTHROPIC_API_KEY is not set"), "no_api_key");
+    assert_eq!(cause("429 rate limit from provider"), "provider_error");
+    assert_eq!(cause("request timed out"), "timeout");
+    assert_eq!(cause("cancelled by user"), "user_cancelled");
+    assert_eq!(cause("something else"), "AgentFailed");
+    assert_eq!(events::error_kind("no_api_key"), "no_api_key");
     assert_eq!(events::error_kind("Agent"), "agent");
 }
 
@@ -1615,4 +1682,65 @@ fn space_tool_groups_cover_the_tools_that_act_inside_a_space() {
     ] {
         assert_eq!(g(admin), None, "{admin}");
     }
+}
+
+#[test]
+fn a_repeating_persistent_agent_failure_is_sent_once_per_hour() {
+    let h = tempfile::tempdir().unwrap();
+    let daemon = |home: &Path| {
+        let sink = Arc::new(MemorySink::new());
+        let t = Telemetry::builder()
+            .env(env_of(&[]))
+            .home(home)
+            .sink(sink.clone())
+            .product("daemon", "1.2.3")
+            .foreground()
+            .build();
+        t.acknowledge_notice();
+        (t, sink)
+    };
+    let (t, sink) = daemon(h.path());
+    let resume =
+        || events::persistent_agent("resume", None, Outcome::Error, Some("other")).unwrap();
+    assert_eq!(t.capture(resume()), Captured::Queued);
+    assert_eq!(t.capture(resume()), Captured::AlreadyRecorded);
+    // Another process of the same install is held back too.
+    let (t2, _s2) = daemon(h.path());
+    assert_eq!(t2.capture(resume()), Captured::AlreadyRecorded);
+    // A different failure, and successes, still go through.
+    let pause = events::persistent_agent("pause", None, Outcome::Error, Some("other")).unwrap();
+    assert_eq!(t.capture(pause), Captured::Queued);
+    let ok = events::persistent_agent("resume", None, Outcome::Ok, None).unwrap();
+    assert_eq!(t.capture(ok.clone()), Captured::Queued);
+    assert_eq!(t.capture(ok), Captured::Queued);
+    t.flush(Duration::from_secs(1));
+    let sent = sink
+        .events()
+        .iter()
+        .filter(|e| e["event"] == "cua_persistent_agent")
+        .count();
+    assert_eq!(sent, 4);
+}
+
+#[test]
+fn sdk_test_runs_are_marked_synthetic() {
+    let synthetic = |product: &str, env: &[(&str, &str)]| {
+        let h = tempfile::tempdir().unwrap();
+        let t = Telemetry::builder()
+            .env(env_of(env))
+            .home(h.path())
+            .sink(Arc::new(MemorySink::new()))
+            .product(product, "1.2.3")
+            .foreground()
+            .build();
+        t.envelope_preview()["is_synthetic"].as_bool().unwrap()
+    };
+    assert!(synthetic(
+        "sdk_python",
+        &[("PYTEST_CURRENT_TEST", "t.py::x")]
+    ));
+    assert!(synthetic("sdk_typescript", &[("VITEST", "true")]));
+    assert!(!synthetic("sdk_python", &[]));
+    assert!(!synthetic("cli", &[("PYTEST_CURRENT_TEST", "t.py::x")]));
+    assert!(synthetic("cli", &[("CUA_TELEMETRY_SYNTHETIC", "1")]));
 }

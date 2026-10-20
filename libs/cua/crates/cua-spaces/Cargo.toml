@@ -60,7 +60,6 @@ cua-icon-cache.workspace = true
 cua-agents = { workspace = true, optional = true }
 # Agent provider keys saved in the OS credential vault (agents::keys).
 cua-auth = { workspace = true, optional = true }
-cua-fleet.workspace = true
 cua-image.workspace = true
 # Per-Space disk accounting (resources).
 cua-disk.workspace = true
@@ -112,7 +111,6 @@ cua-mesh = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-host = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-fleet = { workspace = true, features = ["testing"] }
 cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
 tokio-stream = { workspace = true, features = ["net"] }

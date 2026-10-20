@@ -1097,8 +1097,14 @@ fn harness_appkit_invoke_menu_live_path() {
                 invoked.text()
             );
             assert_eq!(invoked.action_effect(), Some("unverifiable"));
-            std::thread::sleep(Duration::from_millis(300));
-            let post = snapshot_elements(driver, pid, wid);
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut post = snapshot_elements(driver, pid, wid);
+            while !post.tree_text().contains("menu_action=window_arrange_left")
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(50));
+                post = snapshot_elements(driver, pid, wid);
+            }
             assert!(
                 post.tree_text().contains("menu_action=window_arrange_left"),
                 "menu action did not reach fixture: {}",

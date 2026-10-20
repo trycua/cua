@@ -2,7 +2,7 @@ name: "CI: SPDX Headers"
 
 # Two checks. The `fsl` job (enforcing) verifies that every source file in an
 # FSL-1.1-MIT package carries `SPDX-License-Identifier: FSL-1.1-MIT` (see
-# LICENSING.md). The `check` job verifies that every cua-driver source file
+# legal/LICENSING.md). The `check` job verifies that every cua-driver source file
 # carries an SPDX-License-Identifier header; it is warn-only
 # (continue-on-error: true) while we stamp the existing tree in a separate
 # sweep PR, and will be flipped to enforcing once the tree is clean. See
@@ -23,8 +23,7 @@ on:
       - "libs/python/cua-sandbox-apps/**"
       - "libs/cua-bench/**"
       - "libs/cua-bench-rl/**"
-      - "examples/streaming/**"
-      - "samples/**"
+      - "examples/**"
       - "tests/e2e/**"
       - "scripts/spdx-headers.py"
       - ".github/workflows/ci-spdx-headers.yml"

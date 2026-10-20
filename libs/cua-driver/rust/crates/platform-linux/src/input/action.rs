@@ -68,6 +68,14 @@ impl Action {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
     }
 
+    /// Whether the caller stopped waiting, so fenced sockets are shut.
+    pub fn is_abandoned(&self) -> bool {
+        self.fenced
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .0
+    }
+
     /// Shut `socket` down once this action is abandoned, before waiting for a
     /// send under way, so nothing queued on it is written later.
     pub fn fence(&self, socket: impl AsFd) -> std::io::Result<()> {

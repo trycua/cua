@@ -3140,6 +3140,59 @@ fn admitted<T, E: Into<anyhow::Error>>(send: impl FnOnce() -> Result<T, E>) -> R
     action::admit(send)?.map_err(Into::into)
 }
 
+/// How long releasing an abandoned call's presses may take.
+const ABANDONED_RELEASE_WAIT: Duration = Duration::from_secs(2);
+
+/// XTest presses this call queued. Abandoning the call shuts its connection,
+/// so the releases it still owes cannot go out there: dropping this then
+/// sends them on a fresh connection, while the call still holds the desktop.
+/// The server ignores a release for a key or button that is already up.
+#[derive(Default)]
+struct Delivered(Vec<(u8, u8)>);
+
+impl Delivered {
+    fn press<C>(
+        &mut self,
+        kind: u8,
+        detail: u8,
+        send: impl FnOnce() -> Result<C, x11rb::errors::ConnectionError>,
+    ) -> Result<C> {
+        let sent = admitted(send)?;
+        self.0.push((kind + 1, detail));
+        Ok(sent)
+    }
+}
+
+impl Drop for Delivered {
+    fn drop(&mut self) {
+        if self.0.is_empty() || !action::current().is_some_and(|action| action.is_abandoned()) {
+            return;
+        }
+        if let Err(error) = release_abandoned(std::mem::take(&mut self.0)) {
+            tracing::warn!("releasing the input of an abandoned call failed: {error:#}");
+        }
+    }
+}
+
+fn release_abandoned(presses: Vec<(u8, u8)>) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let released = (|| -> Result<()> {
+            let (conn, _) = RustConnection::connect(None)?;
+            for &(kind, detail) in presses.iter().rev() {
+                conn.xtest_fake_input(kind, detail, 0, x11rb::NONE, 0, 0, 0)?;
+            }
+            conn.get_input_focus()?.reply()?;
+            Ok(())
+        })();
+        let _ = done.send(released);
+    });
+    finished.recv_timeout(ABANDONED_RELEASE_WAIT).map_err(|_| {
+        anyhow!("the X server did not take the releases within {ABANDONED_RELEASE_WAIT:?}")
+    })?
+}
+
 /// Send a synthetic FocusIn event to a window without changing the actual X11 input focus.
 /// This can trigger toolkit-level focus handlers (e.g., Qt5's AT-SPI bridge) without
 /// moving the window manager's active window. Use with send_focus_out to restore state.
@@ -3639,17 +3692,18 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
         |keycode, needs_shift| {
             client.borrow_mut().record_recipient(keycode);
-            if needs_shift {
-                admitted(|| {
-                    conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)
+            let mut delivered = Delivered::default();
+            for kc in needs_shift.then_some(shift_kc).into_iter().chain([keycode]) {
+                delivered.press(KEY_PRESS_EVENT, kc, || {
+                    conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)
                 })?;
             }
-            admitted(|| conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0))?;
             conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
             if needs_shift {
                 conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
             }
             conn.flush()?;
+            delivered.0.clear();
             sleep(Duration::from_millis(KEY_DELAY_MS));
             Ok(())
         },
@@ -3729,13 +3783,17 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     };
 
     // Press modifiers (+ auto-Shift), tap the key, release in reverse order.
-    for &kc in &mod_keycodes {
-        admitted(|| conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0))?;
+    let mut delivered = Delivered::default();
+    for kc in mod_keycodes
+        .iter()
+        .copied()
+        .chain(auto_shift_kc)
+        .chain([keycode])
+    {
+        delivered.press(KEY_PRESS_EVENT, kc, || {
+            conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)
+        })?;
     }
-    if let Some(sk) = auto_shift_kc {
-        admitted(|| conn.xtest_fake_input(KEY_PRESS_EVENT, sk, 0, x11rb::NONE, 0, 0, 0))?;
-    }
-    admitted(|| conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0))?;
     // Flush modifiers and key-down before measuring the delivered hold interval.
     conn.flush()?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
@@ -3747,6 +3805,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
         conn.xtest_fake_input(KEY_RELEASE_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
     }
     conn.flush()?;
+    delivered.0.clear();
 
     // Round-trip so the server actually PROCESSES (delivers) the injected XTEST
     // key events before this function returns and drops its short-lived
@@ -3807,9 +3866,12 @@ pub fn send_click_xtest_desktop_with_modifiers(
     }
     let mut pressed = Vec::new();
     let mut button_pressed = false;
+    let mut delivered = Delivered::default();
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
-            admitted(|| conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0))?;
+            delivered.press(KEY_PRESS_EVENT, keycode, || {
+                conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+            })?;
             pressed.push(keycode);
         }
         // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the
@@ -3817,7 +3879,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
         admitted(|| conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0))?;
         let count = count.max(1);
         for click_index in 0..count {
-            let press = admitted(|| {
+            let press = delivered.press(BUTTON_PRESS_EVENT, button, || {
                 conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)
             })?;
             // Confirm delivery before sleeping; buffering both edges produces a zero-ms click.
@@ -3859,6 +3921,9 @@ pub fn send_click_xtest_desktop_with_modifiers(
         conn.get_input_focus()?.reply()?;
         Ok(())
     })();
+    if completion_result.is_ok() {
+        delivered.0.clear();
+    }
     drop(guards);
     gesture_result?;
     release_result?;
@@ -3891,13 +3956,15 @@ pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize)
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
     admitted(|| conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0))?;
+    let mut delivered = Delivered::default();
     for _ in 0..amount.max(1) {
-        admitted(|| {
+        delivered.press(BUTTON_PRESS_EVENT, button, || {
             conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)
         })?;
         conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
     }
     conn.flush()?;
+    delivered.0.clear();
     let _ = conn.get_input_focus()?.reply();
     Ok(())
 }
@@ -3956,10 +4023,13 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     let delay = duration_ms / steps as u64;
     let mut pressed_modifiers = Vec::new();
     let mut button_pressed = false;
+    let mut delivered = Delivered::default();
 
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
-            admitted(|| conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0))?;
+            delivered.press(KEY_PRESS_EVENT, keycode, || {
+                conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+            })?;
             pressed_modifiers.push(keycode);
         }
         admitted(|| {
@@ -3973,7 +4043,7 @@ pub fn send_drag_xtest_desktop_with_modifiers(
                 0,
             )
         })?;
-        admitted(|| {
+        delivered.press(BUTTON_PRESS_EVENT, button, || {
             conn.xtest_fake_input(
                 BUTTON_PRESS_EVENT,
                 button,
@@ -4048,6 +4118,9 @@ pub fn send_drag_xtest_desktop_with_modifiers(
         if cleanup_result.is_ok() {
             cleanup_result = Err(error.into());
         }
+    }
+    if cleanup_result.is_ok() {
+        delivered.0.clear();
     }
     let _ = conn.get_input_focus()?.reply();
     drop(guards);
@@ -4269,6 +4342,57 @@ mod admission_tests {
 
         let _expired = action::bind(action::Action::new(Duration::ZERO));
         admitted(|| -> Result<()> { panic!("queued past the deadline") }).unwrap_err();
+    }
+
+    #[test]
+    fn a_drag_abandoned_after_its_press_still_releases_the_button() {
+        use std::io::{BufRead, BufReader};
+        struct Server(std::process::Child);
+        impl Drop for Server {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut server = Server(
+            std::process::Command::new("Xvfb")
+                .args(["-displayfd", "1", "-nolisten", "tcp"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("install xvfb to run X11 input tests"),
+        );
+        let mut number = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut number)
+            .unwrap();
+        let display = format!(":{}", number.trim());
+        let _display = crate::test_env::x11_display(&display);
+        let action = action::Action::new(Duration::from_secs(60));
+        let dragging = {
+            let action = action.clone();
+            std::thread::spawn(move || {
+                let _bound = action::bind(action);
+                send_drag_xtest_desktop(10, 10, 200, 200, 1, 3000, 30)
+            })
+        };
+        let (observer, screen) = RustConnection::connect(Some(&display)).unwrap();
+        let root = observer.setup().roots[screen].root;
+        let held = || {
+            let mask = observer.query_pointer(root).unwrap().reply().unwrap().mask;
+            mask.contains(KeyButMask::BUTTON1)
+        };
+        let pressed_by = std::time::Instant::now() + Duration::from_secs(2);
+        while !held() {
+            assert!(
+                std::time::Instant::now() < pressed_by,
+                "the drag never pressed"
+            );
+            sleep(Duration::from_millis(20));
+        }
+        action.abandon();
+        dragging.join().unwrap().unwrap_err();
+        assert!(!held(), "the abandoned drag left button 1 held");
     }
 }
 

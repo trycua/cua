@@ -373,6 +373,7 @@ impl X11 {
         let (conn, screen) = RustConnection::connect(None).map_err(|e| {
             anyhow!("{CODE_UNAVAILABLE}: cannot open DISPLAY to verify X11 input focus: {e}")
         })?;
+        super::action::fence(conn.stream())?;
         let root = conn.setup().roots[screen].root;
         let resource_id_mask = conn.setup().resource_id_mask;
         let net_active_window = conn
@@ -499,12 +500,14 @@ impl X11 {
         let event =
             ClientMessageEvent::new(32, target, self.net_active_window, [2, time, prior, 0, 0]);
         debug_assert_eq!(event.response_type, CLIENT_MESSAGE_EVENT);
-        self.conn.send_event(
-            false,
-            self.root,
-            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-            event,
-        )?;
+        super::action::admit(|| {
+            self.conn.send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )
+        })??;
         // Set the core focus explicitly as well (what `xdotool windowactivate`
         // does): WMs with focus-stealing prevention honour `_NET_ACTIVE_WINDOW`
         // as raise-only. BadMatch on a not-yet-viewable window is expected and

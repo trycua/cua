@@ -214,7 +214,9 @@ mod tests {
             Some(json!({"uri": "skill://cua-driver/WINDOWS.md"})),
         );
         let text = read["contents"][0]["text"].as_str().unwrap();
-        assert!(text.contains("\"...msedge.exe\", additional_arguments: [\"https://example.com/\"]"));
+        assert!(
+            text.contains("\"...msedge.exe\", additional_arguments: [\"https://example.com/\"]")
+        );
         assert!(text.contains("Do not combine `path` or `aumid` with `urls`"));
         assert!(text.contains("For the default browser, use `urls` only"));
         assert!(text.contains("additional_arguments:[<file>]"));

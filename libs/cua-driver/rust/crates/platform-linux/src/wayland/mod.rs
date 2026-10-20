@@ -1716,8 +1716,6 @@ fn pointer_reaches(origin_x: i32, origin_y: i32, w: u32, h: u32, x: i32, y: i32)
 #[derive(Clone, Debug, Default)]
 pub struct DesktopInputSpace {
     snapshot: Option<hyprland::DesktopSnapshot>,
-    /// The `get_desktop_state` capture the points come from, when named.
-    capture: Option<String>,
 }
 
 impl DesktopInputSpace {
@@ -1729,16 +1727,7 @@ impl DesktopInputSpace {
         } else {
             None
         };
-        Ok(Self {
-            snapshot,
-            capture: None,
-        })
-    }
-
-    /// Name the `get_desktop_state` capture the action's points come from.
-    pub fn with_capture(mut self, capture_id: Option<String>) -> Self {
-        self.capture = capture_id;
-        self
+        Ok(Self { snapshot })
     }
 
     /// Layout coordinates of a desktop-frame point.
@@ -2318,12 +2307,10 @@ fn centres_origin_click(x: i32, y: i32, layout_addressed: bool) -> bool {
 }
 
 /// On niri, admit the action's pointer input through [`niri::prepare_target`]:
-/// window-addressed input waits for the layout to settle, proves each layout
-/// point lands on the target window and then activates it. Desktop-scope
-/// input names no window: its points are pixels of the latest
-/// `get_desktop_state` screenshot, admitted while that screenshot's frame
-/// holds. Input under an outer foreground target checks that window without
-/// moving focus. Recheck the gate with [`niri_gate_holds`] before each event.
+/// window-addressed input proves each layout point lands on the target
+/// window and then activates it. Desktop-scope input names no window: its
+/// points are pixels of the single output. Input under an outer foreground
+/// target checks that window without moving focus. Recheck the gate with [`niri_gate_holds`] before each event.
 fn niri_pointer_gate(
     window_id: Option<u64>,
     desktop: Option<&DesktopInputSpace>,
@@ -2335,7 +2322,7 @@ fn niri_pointer_gate(
     }
     let target = match (window_id, desktop) {
         (Some(id), _) => niri::Target::Window { id, activate: true },
-        (None, Some(desktop)) => niri::Target::Desktop(desktop.capture.as_deref()),
+        (None, Some(_)) => niri::Target::Desktop,
         (None, None) => match current_foreground_target() {
             Some((_, id)) => niri::Target::Window {
                 id,
@@ -2784,9 +2771,6 @@ fn drag_vptr(
     let (fx, fy) = clamp_xy(from_x, from_y);
     let (tx, ty) = clamp_xy(to_x, to_y);
     let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[(from_x, from_y), (to_x, to_y)])?;
-    if let Some(gate) = &gate {
-        gate.drag_start(from_x, from_y)?;
-    }
     sess.motion(fx, fy)?;
     std::thread::sleep(std::time::Duration::from_millis(15));
     niri_gate_holds(&mut gate)?;

@@ -10,22 +10,24 @@
 //! (`tile_pos_in_workspace_view`): a tiled window's place depends on the
 //! view's scroll position, which IPC does not report. Window capture and
 //! window-coordinate pointer input therefore refuse a tiled window; the
-//! desktop scope reaches it, with pixels of a `get_desktop_state` screenshot
-//! that are admitted while niri reports no layout change, for at most
-//! [`FRAME_MAX_AGE`] (see [`DesktopFrame`]). IPC positions also omit niri's
-//! animation offset, so pointer and crop routes wait until the layout has
-//! been quiet for a while (see [`History`]).
+//! desktop scope reaches it with pixels of the single output.
+//!
+//! Pointer input and window capture check the layout as niri reports it now,
+//! before and again during the action ([`PointerGate`]). Nothing keeps a
+//! history of layout changes: a `get_desktop_state` screenshot is not proven
+//! fresh when desktop-scope input uses its pixels, a move away and back
+//! between two reads is not seen, and IPC positions omit niri's animation
+//! offset, so a window still animating is checked at its destination.
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -38,14 +40,13 @@ mod ipc;
 pub(super) mod keyboard;
 mod lock;
 mod scene;
-mod settle;
 #[cfg(test)]
 mod test_support;
 
 pub use self::ipc::is_session;
 #[cfg(test)]
 use self::test_support::*;
-pub(crate) use self::{capture::*, focus::*, gate::*, ipc::*, lock::*, scene::*, settle::*};
+pub(crate) use self::{capture::*, focus::*, gate::*, ipc::*, lock::*, scene::*};
 
 // ── Observation ──────────────────────────────────────────────────────────────
 

@@ -5849,19 +5849,14 @@ async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: 
 
 /// The compositor snapshot a desktop-scope action is addressed in. One
 /// snapshot converts the action's points, places the overlay and sizes the
-/// virtual pointer, so they cannot disagree about the monitor layout. The
-/// points come from the `get_desktop_state` capture `capture_id` when it is
-/// named, else from the latest one.
-async fn desktop_input_space(
-    capture_id: Option<String>,
-) -> anyhow::Result<crate::wayland::DesktopInputSpace> {
+/// virtual pointer, so they cannot disagree about the monitor layout.
+async fn desktop_input_space() -> anyhow::Result<crate::wayland::DesktopInputSpace> {
     if !crate::wayland::wayland_input_enabled() {
         return Ok(crate::wayland::DesktopInputSpace::default());
     }
     tokio::task::spawn_blocking(crate::wayland::DesktopInputSpace::current)
         .await
         .map_err(|error| anyhow::anyhow!("task error: {error}"))?
-        .map(|space| space.with_capture(capture_id))
 }
 
 /// Keep the logical cursor position in sync with every visibly targeted
@@ -6833,7 +6828,7 @@ impl Tool for ClickTool {
                     .with_structured(json!({ "code": "invalid_arguments" }));
             }
             let n = click_train(u64::from(n));
-            let space = match desktop_input_space(args.opt_str("capture_id")).await {
+            let space = match desktop_input_space().await {
                 Ok(space) => space,
                 Err(error) => {
                     return ToolResult::error(format!("desktop-scope click failed: {error}"))
@@ -10135,7 +10130,7 @@ impl Tool for ScrollTool {
             let display = direction.clone();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
-            let space = match desktop_input_space(None).await {
+            let space = match desktop_input_space().await {
                 Ok(space) => space,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
@@ -11339,7 +11334,7 @@ impl Tool for DragTool {
                 return wayland_modified_drag_refusal();
             }
             let path = if wayland { "wayland_desktop" } else { "xtest" };
-            let space = match desktop_input_space(None).await {
+            let space = match desktop_input_space().await {
                 Ok(space) => space,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
@@ -13247,7 +13242,7 @@ impl Tool for GetDesktopStateTool {
             let niri_frame = (crate::wayland::is_wayland() && crate::wayland::niri::is_session())
                 .then(|| crate::wayland::niri::desktop_snapshot().map(|snapshot| snapshot.frame))
                 .transpose()?;
-            let capture = || {
+            let (native_png, overlay_capture) =
                 cursor_overlay::capture_exclusion::capture_excluding_overlays(
                     &crate::overlay_capture::OverlayExcluder,
                     |hidden| {
@@ -13263,16 +13258,7 @@ impl Tool for GetDesktopStateTool {
                             png, hidden,
                         ))
                     },
-                )
-            };
-            // niri: capture on a settled layout, and keep the frame that
-            // desktop-scope input on this screenshot is checked against.
-            let ((native_png, overlay_capture), niri_desktop) = if niri_frame.is_some() {
-                let (captured, frame) = crate::wayland::niri::capture_desktop(capture)?;
-                (captured, Some(frame))
-            } else {
-                (capture()?, None)
-            };
+                )?;
             let (native_w, native_h) = crate::capture::png_dimensions_pub(&native_png)?;
             // True screen size. On a pure-Wayland session (native backend
             // opted in, no X11 DISPLAY) the capture above came from the
@@ -13340,19 +13326,13 @@ impl Tool for GetDesktopStateTool {
                 );
                 frame.rebase_windows(&mut windows);
             }
-            let publish = || {
-                crate::capture_action_frame::publish_desktop(
-                    &capture_service,
-                    &capture_args,
-                    &png,
-                    (shot_w, shot_h),
-                    (screen_w, screen_h),
-                )
-            };
-            let capture_id = match niri_desktop {
-                Some(frame) => crate::wayland::niri::adopt_desktop(frame, publish)?,
-                None => publish()?,
-            };
+            let capture_id = crate::capture_action_frame::publish_desktop(
+                &capture_service,
+                &capture_args,
+                &png,
+                (shot_w, shot_h),
+                (screen_w, screen_h),
+            )?;
             Ok((
                 b64,
                 shot_w,

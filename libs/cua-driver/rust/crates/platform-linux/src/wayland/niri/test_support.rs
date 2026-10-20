@@ -241,10 +241,6 @@ pub(super) fn ipc_with(
     }
 }
 
-pub(super) fn unchanged(_: Mark) -> Result<bool> {
-    Ok(false)
-}
-
 pub(super) fn display(output: &str, size: (u32, u32)) -> Result<DisplayCapture> {
     oriented(output, 6, size)
 }
@@ -273,34 +269,6 @@ pub(super) fn focus_fixture() -> Arc<Mutex<Fake>> {
     }))
 }
 
-/// A fresh history; each test needs its own event stream.
-pub(super) fn history() -> &'static History {
-    Box::leak(Box::new(History::new()))
-}
-
-/// A niri event stream that sends `events`, each after its delay, then
-/// stays open for `open`.
-pub(super) fn event_stream_open(events: Vec<(Duration, Value)>, open: Duration) -> UnixStream {
-    let (client, mut server) = UnixStream::pair().unwrap();
-    std::thread::spawn(move || {
-        let mut request = [0u8; 64];
-        let _ = server.read(&mut request);
-        let _ = server.write_all(b"{\"Ok\":\"Handled\"}\n");
-        for (delay, event) in events {
-            std::thread::sleep(delay);
-            if server.write_all(format!("{event}\n").as_bytes()).is_err() {
-                return;
-            }
-        }
-        std::thread::sleep(open);
-    });
-    client
-}
-
-pub(super) fn event_stream(events: Vec<(Duration, Value)>) -> UnixStream {
-    event_stream_open(events, Duration::from_secs(5))
-}
-
 // ── Tiled windows and desktop frames ────────────────────────────────────
 
 /// Tiled window 5 (active) and 6 beside it, and floating window 7, on
@@ -324,24 +292,4 @@ pub(super) fn tiled_scene(focused: Option<u64>) -> Scene {
         vec![output("winit", 1920, 0, (1280, 720), 1.5, "Flipped180")],
         false,
     )
-}
-
-/// The frame a desktop capture of [`tiled_scene`] gives, checked against
-/// `history`.
-pub(super) fn desktop_frame(history: &'static History) -> DesktopFrame {
-    let mark = history
-        .settle(
-            || Ok(event_stream(vec![])),
-            Duration::from_millis(10),
-            Duration::from_secs(1),
-        )
-        .unwrap();
-    capture_desktop_in(
-        || Ok(tiled_scene(Some(5))),
-        || Ok(mark),
-        |mark| history.changed_since(mark, Expected::default()),
-        || Ok(()),
-    )
-    .unwrap()
-    .1
 }

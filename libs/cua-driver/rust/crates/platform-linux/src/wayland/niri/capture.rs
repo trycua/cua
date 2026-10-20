@@ -85,9 +85,9 @@ pub(super) fn capture_plan_in(
     })
 }
 
-/// Capture one floating window by cropping a settled display capture. The
-/// layout must stay quiet through the capture, and the window and its
-/// output unchanged. Errors are refusal reasons for
+/// Capture one floating window by cropping a display capture. The window
+/// and its output must read the same before and after the capture; a move
+/// away and back between the two reads is not seen. Errors are refusal reasons for
 /// `surface_identity_unproven`.
 pub fn capture_window(
     id: u64,
@@ -95,20 +95,11 @@ pub fn capture_window(
     capture_display: impl FnOnce() -> Result<DisplayCapture>,
 ) -> Result<(Vec<u8>, CapturePlan), String> {
     let mut ipc = ipc();
-    capture_window_in(
-        || ipc.scene(),
-        settled,
-        |mark| HISTORY.changed_since(mark, Expected::default()),
-        id,
-        pid,
-        capture_display,
-    )
+    capture_window_in(|| ipc.scene(), id, pid, capture_display)
 }
 
 fn capture_window_in(
     mut scene: impl FnMut() -> Result<Scene>,
-    settle: impl FnOnce() -> Result<Mark>,
-    changed_since: impl FnOnce(Mark) -> Result<bool>,
     id: u64,
     pid: Option<u32>,
     capture_display: impl FnOnce() -> Result<DisplayCapture>,
@@ -120,17 +111,8 @@ fn capture_window_in(
             pid,
         )?)
     };
-    let before = plan_now()?;
-    let mark = settle().map_err(|e| format!("{e:#}"))?;
     let plan = plan_now()?;
-    if plan != before {
-        return Err("the window moved while niri was settling".into());
-    }
     let capture = capture_display().map_err(|e| format!("{e:#}"))?;
-    if changed_since(mark).map_err(|e| format!("{e:#}"))? {
-        return Err("the niri layout changed during capture".into());
-    }
-    // niri has no output-change event: compare the output itself.
     if plan_now()? != plan {
         return Err("the niri window or its output changed during capture".into());
     }
@@ -227,13 +209,6 @@ mod tests {
         assert!(placed.covers(101, 100));
     }
 
-    fn settled_now() -> Result<Mark> {
-        Ok(Mark {
-            generation: 1,
-            at: 0,
-        })
-    }
-
     #[test]
     fn capture_refuses_an_output_change_niri_sends_no_event_for() {
         let window = || floating(7, 1, (100.0, 60.0), (300, 200));
@@ -242,7 +217,7 @@ mod tests {
             || {
                 calls += 1;
                 // The scale changes during the capture; the layout does not.
-                let scale = if calls <= 2 { 1.5 } else { 1.0 };
+                let scale = if calls <= 1 { 1.5 } else { 1.0 };
                 Ok(scene(
                     vec![window()],
                     vec![workspace(1, "winit", true, None)],
@@ -250,8 +225,6 @@ mod tests {
                     false,
                 ))
             },
-            settled_now,
-            unchanged,
             7,
             None,
             || display("winit", (1280, 720)),
@@ -269,19 +242,14 @@ mod tests {
         // name, area, scale and image size.
         let one = || Ok(one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]));
         assert_eq!(
-            capture_window_in(one, settled_now, unchanged, 7, None, || oriented(
-                "winit",
-                0,
-                (1280, 720)
-            ))
-            .unwrap_err(),
+            capture_window_in(one, 7, None, || oriented("winit", 0, (1280, 720))).unwrap_err(),
             "the capture was oriented for output transform 0, but the window's output has 6"
         );
         let mut calls = 0;
         let error = capture_window_in(
             || {
                 calls += 1;
-                let transform = if calls <= 2 { "Flipped180" } else { "Normal" };
+                let transform = if calls <= 1 { "Flipped180" } else { "Normal" };
                 Ok(scene(
                     vec![floating(7, 1, (100.0, 60.0), (300, 200))],
                     vec![workspace(1, "winit", true, None)],
@@ -289,8 +257,6 @@ mod tests {
                     false,
                 ))
             },
-            settled_now,
-            unchanged,
             7,
             None,
             || display("winit", (1280, 720)),
@@ -306,28 +272,14 @@ mod tests {
     fn capture_refuses_another_output_or_size() {
         let one = || Ok(one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]));
         assert_eq!(
-            capture_window_in(one, settled_now, unchanged, 7, None, || display(
-                "DP-1",
-                (1280, 720)
-            ))
-            .unwrap_err(),
+            capture_window_in(one, 7, None, || display("DP-1", (1280, 720))).unwrap_err(),
             "the display capture copied output \"DP-1\", not the window's output \"winit\""
         );
         assert_eq!(
-            capture_window_in(one, settled_now, unchanged, 7, None, || display(
-                "winit",
-                (1920, 1080)
-            ))
-            .unwrap_err(),
+            capture_window_in(one, 7, None, || display("winit", (1920, 1080))).unwrap_err(),
             "the capture is 1920x1080 pixels, but niri reports 1280x720 for output \"winit\""
         );
-        assert!(
-            capture_window_in(one, settled_now, unchanged, 7, None, || display(
-                "winit",
-                (1280, 720)
-            ))
-            .is_ok()
-        );
+        assert!(capture_window_in(one, 7, None, || display("winit", (1280, 720))).is_ok());
     }
 
     #[test]

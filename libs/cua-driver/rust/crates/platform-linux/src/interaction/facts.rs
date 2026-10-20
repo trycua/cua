@@ -12,6 +12,13 @@ pub enum Fact<T> {
     Unknown(String),
 }
 
+/// The facts the policy admits an operation on.
+pub struct Facts {
+    pub locked: Fact<bool>,
+    /// Whether the target's exact focus was read back right before dispatch.
+    pub focused: Fact<bool>,
+}
+
 const LOCK_PROBE_CAP: Duration = Duration::from_millis(250);
 
 /// Whether the session's screensaver reports itself active. KWin and X11

@@ -5852,7 +5852,10 @@ async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: 
 /// virtual pointer, so they cannot disagree about the monitor layout.
 async fn desktop_input_space() -> anyhow::Result<crate::wayland::DesktopInputSpace> {
     tokio::task::spawn_blocking(|| {
-        crate::interaction::admit_lock(crate::interaction::policy::Scope::DesktopInput, false)?;
+        crate::interaction::admit_lock(
+            crate::interaction::policy::Scope::DesktopInput,
+            crate::interaction::facts::Fact::Unknown("desktop input addresses no window".into()),
+        )?;
         if !crate::wayland::wayland_input_enabled() {
             return Ok(crate::wayland::DesktopInputSpace::default());
         }

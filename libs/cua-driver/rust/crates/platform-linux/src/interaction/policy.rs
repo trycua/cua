@@ -3,7 +3,7 @@
 
 use anyhow::{bail, Result};
 
-use super::facts::Fact;
+use super::facts::{Fact, Facts};
 
 /// What an operation addresses.
 #[derive(Clone, Copy)]
@@ -18,10 +18,10 @@ pub enum Scope {
 
 /// Whether the session lock admits the operation. A known lock refuses
 /// everything. An unknown lock admits window input only when the target's
-/// exact focus was read back, and admits target-bound input, desktop input
+/// exact focus was read back as `Known(true)`, and admits target-bound input, desktop input
 /// and capture on the adapter's other checks, as before this rule existed.
-pub fn lock(scope: Scope, locked: &Fact<bool>, focus_read_back: bool) -> Result<()> {
-    match (locked, scope) {
+pub fn lock(scope: Scope, facts: &Facts) -> Result<()> {
+    match (&facts.locked, scope) {
         (Fact::Known(true), _) => {
             bail!("screen_locked: the session screensaver reports itself active, so nothing was sent or captured")
         }
@@ -30,7 +30,9 @@ pub fn lock(scope: Scope, locked: &Fact<bool>, focus_read_back: bool) -> Result<
             Fact::Unknown(_),
             Scope::TargetBoundInput | Scope::DesktopInput | Scope::Capture,
         ) => Ok(()),
-        (Fact::Unknown(_), Scope::WindowInput) if focus_read_back => Ok(()),
+        (Fact::Unknown(_), Scope::WindowInput) if matches!(facts.focused, Fact::Known(true)) => {
+            Ok(())
+        }
         (Fact::Unknown(why), Scope::WindowInput) => bail!(
             "foreground_unavailable: the lock state is unknown ({why}) and the target's focus was not read back"
         ),
@@ -72,12 +74,46 @@ pub fn focused<T: PartialEq>(expected: &T, observed: &Fact<Option<T>>) -> bool {
     identity(expected, observed).is_ok()
 }
 
+/// Whether an admitted observation still holds. No adapter counts layout
+/// events yet, so this is the weaker snapshot check: the current geometry
+/// equals the admitted one, which cannot see a move away and back between
+/// the two reads. A changed or unknown current geometry is stale.
+pub fn fresh<G: PartialEq>(admitted: &G, current: &Fact<G>) -> bool {
+    matches!(current, Fact::Known(current) if current == admitted)
+}
+
+/// Whether observable geometry stopped moving: two consecutive reads agree.
+/// A read that differs, or one that could not be taken, is still moving;
+/// agreeing reads do not prove a rendered animation finished.
+pub fn settled<K: PartialEq>(last: &K, next: &Fact<K>) -> bool {
+    matches!(next, Fact::Known(next) if next == last)
+}
+
+/// The saved focus a `RestorePrevious` transaction gives back. Without a
+/// valid saved recipe, or with an unknown one, the transaction does not
+/// begin, so nothing is focused that could not be restored.
+pub fn restore<R>(saved: Fact<Option<R>>) -> Result<R> {
+    match saved {
+        Fact::Known(Some(recipe)) => Ok(recipe),
+        Fact::Known(None) => bail!(
+            "foreground_unavailable: the compositor exposes no restorable prior focus, so nothing was focused"
+        ),
+        Fact::Unknown(why) => {
+            bail!("foreground_unavailable: {why}")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn unknown<T>() -> Fact<T> {
         Fact::Unknown("no source".into())
+    }
+
+    fn facts(locked: Fact<bool>, focused: Fact<bool>) -> Facts {
+        Facts { locked, focused }
     }
 
     #[test]
@@ -88,26 +124,27 @@ mod tests {
             Scope::DesktopInput,
             Scope::Capture,
         ] {
-            let refused = lock(scope, &Fact::Known(true), true).unwrap_err();
+            let refused = lock(scope, &facts(Fact::Known(true), Fact::Known(true))).unwrap_err();
             assert!(refused.to_string().starts_with("screen_locked:"));
-            lock(scope, &Fact::Known(false), false).unwrap();
+            lock(scope, &facts(Fact::Known(false), Fact::Known(false))).unwrap();
         }
     }
 
     #[test]
     fn an_unknown_lock_admits_window_input_only_after_focus_read_back() {
-        lock(Scope::WindowInput, &unknown(), true).unwrap();
+        lock(Scope::WindowInput, &facts(unknown(), Fact::Known(true))).unwrap();
+        assert!(lock(Scope::WindowInput, &facts(unknown(), unknown())).is_err());
         assert_eq!(
-            lock(Scope::WindowInput, &unknown(), false).unwrap_err().to_string(),
+            lock(Scope::WindowInput, &facts(unknown(), Fact::Known(false))).unwrap_err().to_string(),
             "foreground_unavailable: the lock state is unknown (no source) and the target's focus was not read back"
         );
     }
 
     #[test]
     fn an_unknown_lock_admits_target_bound_input_desktop_input_and_capture() {
-        lock(Scope::TargetBoundInput, &unknown(), false).unwrap();
-        lock(Scope::DesktopInput, &unknown(), false).unwrap();
-        lock(Scope::Capture, &unknown(), false).unwrap();
+        lock(Scope::TargetBoundInput, &facts(unknown(), unknown())).unwrap();
+        lock(Scope::DesktopInput, &facts(unknown(), unknown())).unwrap();
+        lock(Scope::Capture, &facts(unknown(), unknown())).unwrap();
     }
 
     #[test]
@@ -119,6 +156,33 @@ mod tests {
                 .to_string()
                 .starts_with("foreground_unavailable:"));
         }
+    }
+
+    #[test]
+    fn only_an_unchanged_known_geometry_is_fresh() {
+        assert!(fresh(&(100, 60), &Fact::Known((100, 60))));
+        assert!(!fresh(&(100, 60), &Fact::Known((120, 60))));
+        assert!(!fresh(&(100, 60), &unknown()));
+    }
+
+    #[test]
+    fn only_two_agreeing_known_reads_are_settled() {
+        assert!(settled(&3, &Fact::Known(3)));
+        assert!(!settled(&3, &Fact::Known(4)));
+        assert!(!settled(&3, &unknown()));
+    }
+
+    #[test]
+    fn restore_needs_a_known_saved_focus_before_focusing() {
+        assert_eq!(restore(Fact::Known(Some(5))).unwrap(), 5);
+        assert_eq!(
+            restore::<u64>(Fact::Known(None)).unwrap_err().to_string(),
+            "foreground_unavailable: the compositor exposes no restorable prior focus, so nothing was focused"
+        );
+        assert_eq!(
+            restore::<u64>(unknown()).unwrap_err().to_string(),
+            "foreground_unavailable: no source"
+        );
     }
 
     #[test]

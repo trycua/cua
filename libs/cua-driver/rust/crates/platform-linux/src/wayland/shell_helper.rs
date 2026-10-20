@@ -410,11 +410,12 @@ pub fn with_focused_window<T>(
         &(Some(pid), window_id),
         &crate::interaction::facts::Fact::Known(Some((target.info.pid, target.info.xid))),
     )?;
-    let previous = before
-        .iter()
-        .find(|window| window.focused)
-        .and_then(|window| window.info.pid.map(|pid| (pid, window.info.xid)))
-        .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not expose a restorable focused window"))?;
+    let previous = crate::interaction::policy::restore(crate::interaction::facts::Fact::Known(
+        before
+            .iter()
+            .find(|window| window.focused)
+            .and_then(|window| window.info.pid.map(|pid| (pid, window.info.xid))),
+    ))?;
 
     if target.focused {
         return body();

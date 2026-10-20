@@ -1,5 +1,5 @@
-//! The layer every Linux compositor adapter shares: the lock rule in
-//! [`policy`], the one foreground transaction entry point, the deadline
+//! The layer every Linux compositor adapter shares: the lock, identity,
+//! delivery, freshness, motion and restore rules in [`policy`], the one foreground transaction entry point, the deadline
 //! rule, the focus read-back loop and the settle loop. Adapters still own
 //! their focus, restore and geometry checks.
 
@@ -11,9 +11,13 @@ pub mod facts;
 pub mod policy;
 
 /// Refuse an operation of `scope` the session lock does not admit.
-/// `focus_read_back` says the target's exact focus was read back.
-pub fn admit_lock(scope: policy::Scope, focus_read_back: bool) -> Result<()> {
-    policy::lock(scope, &facts::locked(), focus_read_back)
+/// `focused` is the target's exact focus, read back right before dispatch.
+pub fn admit_lock(scope: policy::Scope, focused: facts::Fact<bool>) -> Result<()> {
+    let facts = facts::Facts {
+        locked: facts::locked(),
+        focused,
+    };
+    policy::lock(scope, &facts)
 }
 
 /// Whether a foreground transaction gives focus back once its body ran.
@@ -49,11 +53,22 @@ pub fn with_target_foreground<T>(
 ) -> Result<T> {
     use crate::wayland::{bind_foreground_target, kwin_helper, niri, shell_helper, sway_ipc};
     if let RestoreMode::LeaveFocused = mode {
-        admit_lock(policy::Scope::TargetBoundInput, false)?;
+        admit_lock(
+            policy::Scope::TargetBoundInput,
+            facts::Fact::Unknown("the body activates the target itself".into()),
+        )?;
         return body();
     }
     let body = || {
-        admit_lock(policy::Scope::WindowInput, true)?;
+        let focused = if niri::is_session() {
+            match niri::keyboard_focus() {
+                Ok(focused) => facts::Fact::Known(focused == Some(window_id)),
+                Err(error) => facts::Fact::Unknown(format!("{error:#}")),
+            }
+        } else {
+            facts::Fact::Known(true)
+        };
+        admit_lock(policy::Scope::WindowInput, focused)?;
         body()
     };
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
@@ -139,7 +154,9 @@ pub fn settled<T, K: PartialEq, E>(
             break;
         }
         let next = observe(deadline)?;
-        if Instant::now() < deadline && key(&next) == key(&last) {
+        if Instant::now() < deadline
+            && policy::settled(&key(&last), &facts::Fact::Known(key(&next)))
+        {
             return Ok(next);
         }
         last = next;

@@ -214,7 +214,7 @@ fn pointer_admission(
     let placed = placed_or_refuse(window)?;
     for &(x, y) in points {
         let expected = aimed((x, y)).unwrap_or(before);
-        if placed.rect != expected {
+        if !interaction::policy::fresh(&expected, &interaction::facts::Fact::Known(placed.rect)) {
             return Err(foreground_unavailable(format!(
                 "niri window {} moved from {expected:?} to {:?} after its coordinates were computed; take a new screenshot",
                 window.id, placed.rect

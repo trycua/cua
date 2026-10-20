@@ -120,7 +120,8 @@ fn capture_window_in(
         "the niri window or its output is still changing".to_owned()
     })?;
     let capture = capture_display().map_err(|e| format!("{e:#}"))?;
-    if plan_now(interaction::operation_deadline(QUERY_TIMEOUT))? != plan {
+    let now = plan_now(interaction::operation_deadline(QUERY_TIMEOUT))?;
+    if !interaction::policy::fresh(&plan, &interaction::facts::Fact::Known(now)) {
         return Err("the niri window or its output changed during capture".into());
     }
     if capture.output != plan.output {

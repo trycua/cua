@@ -2980,7 +2980,7 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
 }
 
 #[tokio::test]
-async fn dom_event_click_reports_suspected_noop_when_only_focus_changes() {
+async fn dom_event_click_remains_unverifiable_when_only_focus_changes() {
     let f = fixture_with(|state| state.dom_click_changes_readback = false).await;
     assert!(!f.state.lock().unwrap().dom_click_focused);
     let (target, tab) = bind(&f).await;
@@ -3000,7 +3000,7 @@ async fn dom_event_click_reports_suspected_noop_when_only_focus_changes() {
     assert!(result.content.iter().any(|content| matches!(
         content,
         Content::Text { text, .. }
-            if text.contains("suspected no-op is advisory, not proof of failure")
+            if text.contains("target state remained unchanged; application effect is unverifiable")
     )));
     let public = result
         .action_record
@@ -3010,10 +3010,10 @@ async fn dom_event_click_reports_suspected_noop_when_only_focus_changes() {
         .expect("public browser click result");
     let public = serde_json::to_value(public).expect("serialize public result");
     assert!(f.state.lock().unwrap().dom_click_focused);
-    assert_eq!(public["effect"], "suspected_noop", "{public}");
+    assert_eq!(public["effect"], "unverifiable", "{public}");
     assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
     assert_eq!(public["escalation"]["target"], "page", "{public}");
-    assert_eq!(public["escalation"]["reason"], "suspected_noop", "{public}");
+    assert_eq!(public["escalation"]["reason"], "effect_unconfirmed", "{public}");
 }
 
 #[tokio::test]

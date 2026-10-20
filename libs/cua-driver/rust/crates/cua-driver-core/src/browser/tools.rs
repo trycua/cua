@@ -131,7 +131,7 @@ async fn observe_dom_click(
         }
         if started.elapsed() >= DOM_CLICK_READBACK_DEADLINE {
             return DomClickObservation {
-                effect: effect_from_value_readback(false, false, true),
+                effect: ActionEffect::Unverifiable,
                 readback_available: true,
             };
         }
@@ -159,8 +159,8 @@ fn dom_click_action_record(observation: &DomClickObservation) -> ActionExecution
     if observation.effect != ActionEffect::Confirmed {
         builder = builder.escalation(ActionEscalation {
             kind: EscalationKind::RetryWithPageAction,
-            detail: Some(if observation.effect == ActionEffect::SuspectedNoop {
-                "bounded semantic target state remained unchanged; this is advisory, not proof of failure"
+            detail: Some(if observation.readback_available {
+                "bounded semantic target state remained unchanged; application effect is unverifiable"
                     .to_owned()
             } else {
                 "semantic target readback was unavailable".to_owned()
@@ -1406,11 +1406,10 @@ impl Tool for BrowserClickTool {
                              readback confirmed a target-state change",
                             ext_ref.as_deref().unwrap_or("?")
                         ),
-                        ActionEffect::SuspectedNoop => format!(
+                        _ if observation.readback_available => format!(
                             "dispatched synthetic DOM click on {} in {tab_id}; bounded semantic \
-                             target state remained unchanged (suspected no-op is advisory, not \
-                             proof of failure). Refresh page state and verify the expected \
-                             postcondition",
+                             target state remained unchanged; application effect is unverifiable. \
+                             Refresh page state and verify the expected postcondition",
                             ext_ref.as_deref().unwrap_or("?")
                         ),
                         _ => format!(

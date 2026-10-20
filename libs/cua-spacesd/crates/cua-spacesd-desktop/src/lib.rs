@@ -1432,7 +1432,7 @@ impl CuaPresenceOverlay {
         #[cfg(target_os = "windows")]
         {
             if platform_windows::overlay::is_enabled(user_key) {
-                return Some(platform_windows::overlay::current_position(user_key));
+                return platform_windows::overlay::current_position(user_key);
             }
             None
         }

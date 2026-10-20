@@ -532,14 +532,14 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-driver"
-version = "0.28.2"
+version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/01/101a1fe4529baeb65e2bff7b0b3801d79ecf0c9613061088e0b3060c6fd9/cua_driver-0.28.2-py3-none-macosx_13_0_universal2.whl", hash = "sha256:5862eaaf7fd5238cc992e7ddd3c574aaecc5b5180feacb19d2b0085081860ecd", size = 40948331, upload-time = "2026-09-15T21:57:20.368Z" },
-    { url = "https://files.pythonhosted.org/packages/92/da/c082de65bd1f92fae39e2fd235cabbe849bd17c83779c45ffcb756c38106/cua_driver-0.28.2-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:d9457716abe9e1213a60bf56398bc17f01140ddd339590b0466285f4c84fa251", size = 29179511, upload-time = "2026-09-15T21:57:23.658Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/ee/155db51a62d0441e6975e38825e9b2e0b8b3edb6153f309870db90dbb2de/cua_driver-0.28.2-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:c601cc9e2a42186cabf9febf187dfd374c0a934c71689a7bfc5eb8ba36f11de9", size = 29029090, upload-time = "2026-09-15T21:57:27.175Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/43/550a7005f627fb23ecd5b77fda012fbd09fffcc71c3e43c7c6d8743c54fe/cua_driver-0.28.2-py3-none-win_amd64.whl", hash = "sha256:b987cfb1ac3eb7c682650f8cdfd3698ca3d31adeb0b0cf419829025ca4aa2be8", size = 26763742, upload-time = "2026-09-15T21:57:30.726Z" },
-    { url = "https://files.pythonhosted.org/packages/9f/1e/5a2322065d7e45dc62e16fc0f8cac065ec7403f5a12f5dc67feff73e2c75/cua_driver-0.28.2-py3-none-win_arm64.whl", hash = "sha256:5c03234fbf9ab8c1830caea4c364f6f84614986c8d15cb8e64210e9b65bec278", size = 25033022, upload-time = "2026-09-15T21:57:34.259Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/f5/86c25585d760d01c339a09d01c286cdd685b1f1d24104591123ec261eb64/cua_driver-0.37.0-py3-none-macosx_13_0_universal2.whl", hash = "sha256:6e6b95b86a7695fb8363bdba66fce6bb55d66bf09ca2329b670392e84b291910", size = 50576165, upload-time = "2026-10-20T03:44:51.327Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/33/81e2531353837f80358fbf56629a74f50d7f097af4b5f67626b0afce2d61/cua_driver-0.37.0-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:1a0103fd7fa5e9d51ee3ce26d502eb4187702282b3f4bcf1e9c09c6ce9f9d558", size = 35067554, upload-time = "2026-10-20T03:44:55.06Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/b0/97f6d8828b8a6ca3649ad7150ddbc23addde56f014c9bd407876484ecb8d/cua_driver-0.37.0-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:e530ee36226d99516ef7ec696ba31d516e487ae5e5effdd5e2610c56af3eee19", size = 34913523, upload-time = "2026-10-20T03:44:58.72Z" },
+    { url = "https://files.pythonhosted.org/packages/67/57/069f4d0550bd7f758c280f98c621a6b0e6778bd1d3e71dc2072fdfc09d26/cua_driver-0.37.0-py3-none-win_amd64.whl", hash = "sha256:7057528bdbf2a28c37a85b2a67d12689ec12c46fb1ffc60fa40155a7cca63a2f", size = 32793155, upload-time = "2026-10-20T03:45:02.559Z" },
+    { url = "https://files.pythonhosted.org/packages/07/78/f52bdbe4aa7db328db87fa462e5836d316455b7d2bb56c9a65464f38893f/cua_driver-0.37.0-py3-none-win_arm64.whl", hash = "sha256:123934810004cca5bdebcb8c0a6759f6902531b6bbc65d40c9e29a6f1d92af79", size = 30577937, upload-time = "2026-10-20T03:45:05.91Z" },
 ]
 
 [[package]]
@@ -587,7 +587,7 @@ dev = [
 requires-dist = [
     { name = "cua", editable = "../../cua/python" },
     { name = "cua-core", specifier = ">=0.1.18,<0.4.0" },
-    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.28.2" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.37.0" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10" },

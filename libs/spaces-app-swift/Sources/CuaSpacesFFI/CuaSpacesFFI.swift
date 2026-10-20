@@ -20396,6 +20396,72 @@ public func FfiConverterTypeAppModeChoice_lower(_ value: AppModeChoice) -> RustB
 }
 
 
+public struct AppMsg: Equatable, Hashable {
+    /**
+     * The catalog key, `<area>.<screen_or_component>.<element>`.
+     */
+    public var code: String
+    /**
+     * Values for the text's variables.
+     */
+    public var vars: [String: String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The catalog key, `<area>.<screen_or_component>.<element>`.
+         */code: String,
+        /**
+         * Values for the text's variables.
+         */vars: [String: String]) {
+        self.code = code
+        self.vars = vars
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMsg: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMsg: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMsg {
+        return
+            try AppMsg(
+                code: FfiConverterString.read(from: &buf),
+                vars: FfiConverterDictionaryStringString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMsg, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterDictionaryStringString.write(value.vars, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMsg_lift(_ buf: RustBuffer) throws -> AppMsg {
+    return try FfiConverterTypeAppMsg.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMsg_lower(_ value: AppMsg) -> RustBuffer {
+    return FfiConverterTypeAppMsg.lower(value)
+}
+
+
 public struct AppNewSpaceOn: Equatable, Hashable {
     /**
      * The button's label.
@@ -29246,11 +29312,11 @@ public struct AppSensitiveOption: Equatable, Hashable {
     /**
      * Label.
      */
-    public var label: String
+    public var label: AppMsg
     /**
      * The line under the label.
      */
-    public var detail: String
+    public var detail: AppMsg
     /**
      * Checked.
      */
@@ -29264,10 +29330,10 @@ public struct AppSensitiveOption: Equatable, Hashable {
          */group: AppSensitiveGroup,
         /**
          * Label.
-         */label: String,
+         */label: AppMsg,
         /**
          * The line under the label.
-         */detail: String,
+         */detail: AppMsg,
         /**
          * Checked.
          */checked: Bool) {
@@ -29294,16 +29360,16 @@ public struct FfiConverterTypeAppSensitiveOption: FfiConverterRustBuffer {
         return
             try AppSensitiveOption(
                 group: FfiConverterTypeAppSensitiveGroup.read(from: &buf),
-                label: FfiConverterString.read(from: &buf),
-                detail: FfiConverterString.read(from: &buf),
+                label: FfiConverterTypeAppMsg.read(from: &buf),
+                detail: FfiConverterTypeAppMsg.read(from: &buf),
                 checked: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppSensitiveOption, into buf: inout [UInt8]) {
         FfiConverterTypeAppSensitiveGroup.write(value.group, into: &buf)
-        FfiConverterString.write(value.label, into: &buf)
-        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterTypeAppMsg.write(value.label, into: &buf)
+        FfiConverterTypeAppMsg.write(value.detail, into: &buf)
         FfiConverterBool.write(value.checked, into: &buf)
     }
 }

@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { type CatalogEntry, MOVE_LABEL, type RunReport, type TeleportHost } from "@trycua/cua/teleport";
+import { type CatalogEntry, type RunReport, type TeleportHost } from "@trycua/cua/teleport";
 
 import {
   TeleportPickerController,
@@ -24,7 +24,7 @@ import { hasTauri } from "../native/bridge";
 import { useGridLoads } from "./pickerLoads";
 import { PickerTileView } from "./PickerTile";
 import { SearchGlyph } from "./SearchGlyph";
-import { useT } from "../i18n";
+import { tMsg, useT } from "../i18n";
 
 /**
  * "Teleport an app…": every app on this machine, classified by the cua SDK
@@ -205,7 +205,7 @@ export function AppTeleportPicker({
                   checked={s.move === m}
                   onChange={() => controller.dispatch({ type: "move", move: m })}
                 />
-                <span>{MOVE_LABEL[m]}</span>
+                <span>{t(`teleport.move.${m}`)}</span>
               </label>
             ))}
           </div>
@@ -219,8 +219,8 @@ export function AppTeleportPicker({
                     onChange={(ev) => controller.dispatch({ type: "sensitive", group: o.group, value: ev.target.checked })}
                   />
                   <span>
-                    <span className="ta-optin-label">{o.label}</span>
-                    <span className="ta-optin-detail">{o.detail}</span>
+                    <span className="ta-optin-label">{tMsg(o.label)}</span>
+                    <span className="ta-optin-detail">{tMsg(o.detail)}</span>
                   </span>
                 </label>
               ))}

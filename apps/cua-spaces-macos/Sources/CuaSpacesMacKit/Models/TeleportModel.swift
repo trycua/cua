@@ -498,9 +498,9 @@ extension AppTeleportMove {
 
     public var label: String {
         switch self {
-        case .appOnly: return "Just the app"
-        case .appWithFiles: return "The app with files or folders"
-        case .appWithState: return "The app with its signed-in state"
+        case .appOnly: return CoreMessages.text(code: "teleport.move.app_only")
+        case .appWithFiles: return CoreMessages.text(code: "teleport.move.app_with_files")
+        case .appWithState: return CoreMessages.text(code: "teleport.move.app_with_state")
         }
     }
 }

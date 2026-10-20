@@ -25929,6 +25929,55 @@ const FfiConverterTypeAppModeChoice = (() => {
     return new FFIConverter();
 })();
 
+export type AppMsg = {
+    /**
+     * The catalog key, `<area>.<screen_or_component>.<element>`.
+     */
+    code: string,
+    /**
+     * Values for the text's variables.
+     */
+    vars: Map<string, string>
+}
+
+/**
+ * Generated factory for {@link AppMsg} record objects.
+ */
+export const AppMsg = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMsg, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMsg>,
+    });
+})();
+
+const FfiConverterTypeAppMsg = (() => {
+    type TypeName = AppMsg;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                code: FfiConverterString.read(from),
+                vars: FfiConverterMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.code, into);
+            FfiConverterMapStringString.write(value.vars, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.code) +
+             FfiConverterMapStringString.allocationSize(value.vars);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppNewSpaceOn = {
     /**
      * The button's label.
@@ -34090,11 +34139,11 @@ export type AppSensitiveOption = {
     /**
      * Label.
      */
-    label: string,
+    label: AppMsg,
     /**
      * The line under the label.
      */
-    detail: string,
+    detail: AppMsg,
     /**
      * Checked.
      */
@@ -34123,21 +34172,21 @@ const FfiConverterTypeAppSensitiveOption = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 group: FfiConverterTypeAppSensitiveGroup.read(from),
-                label: FfiConverterString.read(from),
-                detail: FfiConverterString.read(from),
+                label: FfiConverterTypeAppMsg.read(from),
+                detail: FfiConverterTypeAppMsg.read(from),
                 checked: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterTypeAppSensitiveGroup.write(value.group, into);
-            FfiConverterString.write(value.label, into);
-            FfiConverterString.write(value.detail, into);
+            FfiConverterTypeAppMsg.write(value.label, into);
+            FfiConverterTypeAppMsg.write(value.detail, into);
             FfiConverterBool.write(value.checked, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppSensitiveGroup.allocationSize(value.group) +
-             FfiConverterString.allocationSize(value.label) +
-             FfiConverterString.allocationSize(value.detail) +
+             FfiConverterTypeAppMsg.allocationSize(value.label) +
+             FfiConverterTypeAppMsg.allocationSize(value.detail) +
              FfiConverterBool.allocationSize(value.checked);
 
         }
@@ -63533,6 +63582,7 @@ export default Object.freeze({
     FfiConverterTypeAppMenuPreview,
     FfiConverterTypeAppMenuPreviewRow,
     FfiConverterTypeAppModeChoice,
+    FfiConverterTypeAppMsg,
     FfiConverterTypeAppNewSpaceOn,
     FfiConverterTypeAppNotchAccess,
     FfiConverterTypeAppNotchActivity,

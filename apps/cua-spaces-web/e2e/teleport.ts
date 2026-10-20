@@ -15,6 +15,7 @@ import { expect, type Page } from "@playwright/test";
 import type { ParityCheckpoint } from "../src/bridge/parity";
 import type { PickerGrid, PickerTile } from "../src/bridge/contracts/teleport";
 import type { GridShown } from "../src/bridge/parity-teleport";
+import { messageText } from "../src/lib/messages";
 
 type Cp<K extends ParityCheckpoint["kind"]> = Extract<ParityCheckpoint, { kind: K }>;
 
@@ -103,7 +104,7 @@ async function checkPicker(page: Page, cp: Cp<"picker">): Promise<void> {
     case "options": {
       await expect.poll(() => root.locator("[data-move]").evaluateAll((els) => els.map((e) => e.getAttribute("data-move")))).toEqual(state.entry?.moves ?? []);
       await expect(root.locator("[data-move]:has([data-checked])")).toHaveAttribute("data-move", state.move ?? "app_only");
-      const want = frame.sensitive.map((o) => `${o.group}:${o.label}:${o.detail}:${o.checked ? "on" : "off"}`);
+      const want = frame.sensitive.map((o) => `${o.group}:${messageText(o.label)}:${messageText(o.detail)}:${o.checked ? "on" : "off"}`);
       await expect
         .poll(() =>
           root.locator("[data-sensitive]").evaluateAll((els) =>

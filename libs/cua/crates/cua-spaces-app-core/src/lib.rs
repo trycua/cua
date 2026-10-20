@@ -75,6 +75,7 @@ pub mod installer;
 pub mod keyvault;
 pub mod login_item;
 pub mod machines;
+pub mod message;
 pub mod model;
 pub mod notch;
 pub mod notifications;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { teamName, useShareSheet, useTeamChoices } from "@/bridge";
+import { teamName, useFeatureRecorded, useShareSheet, useTeamChoices } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
  */
 export default function ShareSheet() {
   const { session, sharing } = useShareSheet();
+  useFeatureRecorded("share_open", Boolean(session));
   const choices = useTeamChoices(Boolean(session?.input.signedIn && session.input.shareable));
   if (!session || !sharing) return null;
   const v = session.view;

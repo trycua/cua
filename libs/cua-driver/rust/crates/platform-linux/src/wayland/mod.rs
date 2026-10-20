@@ -924,7 +924,7 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     // On niri every round trip is bounded by it as well, so a stalled niri
     // ends the capture at the deadline instead of hanging it.
-    let niri = is_wayland() && niri::is_session();
+    let niri = niri::is_session();
     let bounded = niri.then_some(deadline);
     let conn = wayland_connection(niri)?;
     let mut queue = conn.new_event_queue::<State>();
@@ -1281,7 +1281,7 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
             )
         });
     }
-    if is_wayland() && niri::is_session() {
+    if niri::is_session() {
         return niri_window_capture(xid, pid);
     }
     if is_wayland() {
@@ -1411,7 +1411,7 @@ fn crop_png_to_rect(
 ///    first use per session.
 /// 5. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
-    if is_wayland() && niri::is_session() {
+    if niri::is_session() {
         return niri_display_capture().map(|capture| capture.png);
     }
     if is_wayland() && hyprland::is_session() {
@@ -1566,7 +1566,7 @@ fn with_libei_fallback<T>(
     f: impl FnOnce() -> anyhow::Result<T>,
     fallback: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    libei_recovery(is_wayland() && niri::is_session(), f, fallback)
+    libei_recovery(niri::is_session(), f, fallback)
 }
 
 /// [`with_libei_fallback`] for a session known to be (or not be) niri.
@@ -1732,7 +1732,7 @@ impl DesktopInputSpace {
     pub fn current() -> anyhow::Result<Self> {
         let snapshot = if is_wayland() && hyprland::is_session() {
             Some(hyprland::desktop_snapshot()?)
-        } else if is_wayland() && niri::is_session() {
+        } else if niri::is_session() {
             Some(niri::desktop_snapshot()?)
         } else {
             None
@@ -1849,7 +1849,7 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
 fn virtual_pointer_space(output_mode: (u32, u32)) -> anyhow::Result<(i32, i32, u32, u32)> {
     let layout = if hyprland::is_session() {
         hyprland::pointer_space()?
-    } else if is_wayland() && niri::is_session() {
+    } else if niri::is_session() {
         Some(niri::pointer_space()?)
     } else {
         None
@@ -1883,7 +1883,7 @@ fn open_vptr_session_in(
 ) -> anyhow::Result<VptrSession> {
     // A niri window is activated by the pointer gate, once the action is
     // admitted; its id never reaches the foreign-toplevel match below.
-    let niri = is_wayland() && niri::is_session();
+    let niri = niri::is_session();
     let deadline = niri.then(|| {
         crate::input::action::current().map_or_else(
             || std::time::Instant::now() + NIRI_POINTER_TIMEOUT,
@@ -1999,7 +1999,7 @@ pub fn activate_window_for_input_target(
         }
         anyhow::bail!("foreground_unavailable: exact-address Hyprland activation is not implemented; refusing title-based activation");
     }
-    if is_wayland() && niri::is_session() {
+    if niri::is_session() {
         // A niri id never enters the foreign-toplevel title route: focus the
         // exact window and read the focus back.
         return niri::activate(window_id, target_pid);
@@ -2072,7 +2072,7 @@ pub fn with_target_foreground<T>(
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let _target_guard = bind_foreground_target(pid, window_id);
-    if is_wayland() && niri::is_session() {
+    if niri::is_session() {
         return niri::with_focused_window(pid, window_id, body);
     }
     if let Some(window) = sway_ipc::window_for_id(window_id) {
@@ -2161,7 +2161,7 @@ pub fn restoring_niri_focus<T>(
     window_id: u64,
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    if is_wayland() && niri::is_session() {
+    if niri::is_session() {
         let _target_guard = bind_foreground_target(pid, window_id);
         return niri::with_focus_restored(pid, window_id, body);
     }
@@ -2235,7 +2235,7 @@ pub fn click_desktop(
 /// The niri pointer space now, read on an attested connection, or `None`
 /// off niri.
 fn niri_pointer_space_now() -> anyhow::Result<Option<(i32, i32, u32, u32)>> {
-    if !(is_wayland() && niri::is_session()) {
+    if !niri::is_session() {
         return Ok(None);
     }
     niri::pointer_space()
@@ -2338,7 +2338,7 @@ fn niri_pointer_gate(
     sess: &VptrSession,
     points: &[(i32, i32)],
 ) -> anyhow::Result<Option<niri::PointerGate>> {
-    if !(is_wayland() && niri::is_session()) {
+    if !niri::is_session() {
         return Ok(None);
     }
     let target = match (window_id, desktop) {
@@ -2424,7 +2424,7 @@ pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()
 /// On niri a window without a reported place (a tiled one) refuses: passing
 /// `(x, y)` through would aim window-local coordinates at the layout origin.
 pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
-    if is_wayland() && niri::is_session() {
+    if niri::is_session() {
         return niri::aim(window_id, x, y);
     }
     Ok(window_geometry(window_id)
@@ -2441,7 +2441,7 @@ pub fn window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
         // an explicit native Hyprland address is missing.
         return hyprland::window_for_address(window_id).map(|w| (w.x, w.y, w.width, w.height));
     }
-    if is_wayland() && niri::is_session() {
+    if niri::is_session() {
         // Only a placed floating niri window has geometry. A tiled one has
         // none, and no title or app-id match may supply it.
         let placed = niri::window_for_id(window_id).ok()?.placement.ok()?;
@@ -2572,7 +2572,7 @@ fn scroll_vptr(
     // the wheel provably reaches the window rather than whatever is under the
     // pointer.
     let point = match (point, window_id) {
-        (None, Some(id)) if is_wayland() && niri::is_session() => {
+        (None, Some(id)) if niri::is_session() => {
             let (_, _, width, height) = window_geometry(id).ok_or_else(|| {
                 anyhow::anyhow!(
                     "foreground_unavailable: niri reports no on-screen place for window {id}; pass a point inside a floating window"
@@ -2825,12 +2825,25 @@ fn drag_vptr(
 /// the intended window in focus first. Under niri, text goes out on niri's
 /// own keymap instead (see [`niri::keyboard`]).
 pub fn type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
+    type_into(Some(window_id), text)
+}
+
+/// Type into a surface whose exact Sway container is already held focused by
+/// the caller. This avoids re-resolving a title that can change mid-sequence
+/// (for example after opening a Chromium tab). Under niri, text goes out on
+/// niri's own keymap and stops if focus leaves the window that had it.
+pub fn type_text_focused(text: &str) -> anyhow::Result<()> {
+    type_into(None, text)
+}
+
+/// [`type_text`] into `window`, activated first, or [`type_text_focused`].
+fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
-    activate_window_for_input(window_id)?;
-    if is_wayland() && niri::is_session() {
-        return niri::keyboard::type_text(Some(window_id), text);
+    window.map_or(Ok(()), activate_window_for_input)?;
+    if niri::is_session() {
+        return niri::keyboard::type_text(window.or_else(niri_expected_window), text);
     }
     // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
     // seat (notably sway), the compositor needs the first virtual-keyboard event
@@ -2847,34 +2860,10 @@ pub fn type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
         other => with_wtype_libei_fallback(
             || {
                 libei_wait_keyboard_ready()?;
-                activate_window_for_input(window_id)?;
+                window.map_or(Ok(()), activate_window_for_input)?;
                 libei_type_text(text)
             },
             other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
-        ),
-    }
-}
-
-/// Type into a surface whose exact Sway container is already held focused by
-/// the caller. This avoids re-resolving a title that can change mid-sequence
-/// (for example after opening a Chromium tab). Under niri, text goes out on
-/// niri's own keymap and stops if focus leaves the window that had it.
-pub fn type_text_focused(text: &str) -> anyhow::Result<()> {
-    if text.is_empty() {
-        return Ok(());
-    }
-    if is_wayland() && niri::is_session() {
-        return niri::keyboard::type_text(niri_expected_window(), text);
-    }
-    let result = wtype_output(&["-k", "Shift_L", "--", text]);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        other => with_wtype_libei_fallback(
-            || {
-                libei_wait_keyboard_ready()?;
-                libei_type_text(text)
-            },
-            other.map(|out| String::from_utf8_lossy(&out.stderr).into_owned()),
         ),
     }
 }
@@ -2885,7 +2874,7 @@ pub fn type_text_focused(text: &str) -> anyhow::Result<()> {
 /// process after the text has landed.
 pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
     let keysym = key_to_keysym(key);
-    if is_wayland() && niri::is_session() {
+    if niri::is_session() {
         niri::keyboard::type_text(niri_expected_window(), text)?;
         return niri::keyboard::press(niri_expected_window(), &[], &keysym);
     }
@@ -2915,10 +2904,24 @@ pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
 
 /// Press a single named key into the focused Wayland surface via `wtype -k`.
 pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
-    activate_window_for_input(window_id)?;
+    press_into(Some(window_id), key)
+}
+
+/// Press one key while an outer exact-container focus guard is active.
+pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let (pid, window_id) = inject_focused_target()?;
+        return inject_press_key(pid, window_id, key);
+    }
+    press_into(None, key)
+}
+
+/// [`press_key`] into `window`, activated first, or [`press_key_focused`].
+fn press_into(window: Option<u64>, key: &str) -> anyhow::Result<()> {
+    window.map_or(Ok(()), activate_window_for_input)?;
     let keysym = key_to_keysym(key);
-    if is_wayland() && niri::is_session() {
-        return niri::keyboard::press(Some(window_id), &[], &keysym);
+    if niri::is_session() {
+        return niri::keyboard::press(window.or_else(niri_expected_window), &[], &keysym);
     }
     // Keep the sacrificial modifier and requested key in one virtual-keyboard
     // lifetime. Starting a second wtype process creates a fresh protocol object,
@@ -2929,33 +2932,10 @@ pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
         other => with_wtype_libei_fallback(
             || {
                 libei_wait_keyboard_ready()?;
-                activate_window_for_input(window_id)?;
+                window.map_or(Ok(()), activate_window_for_input)?;
                 libei_press_key(key)
             },
             other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
-        ),
-    }
-}
-
-/// Press one key while an outer exact-container focus guard is active.
-pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
-    if is_inject_mode() {
-        let (pid, window_id) = inject_focused_target()?;
-        return inject_press_key(pid, window_id, key);
-    }
-    let keysym = key_to_keysym(key);
-    if is_wayland() && niri::is_session() {
-        return niri::keyboard::press(niri_expected_window(), &[], &keysym);
-    }
-    let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        other => with_wtype_libei_fallback(
-            || {
-                libei_wait_keyboard_ready()?;
-                libei_press_key(key)
-            },
-            other.map(|out| String::from_utf8_lossy(&out.stderr).into_owned()),
         ),
     }
 }
@@ -2966,10 +2946,25 @@ pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
 /// straight to wtype's `-k` so single-character keys and X keysym names work
 /// as-is. This is the Wayland equivalent of the X11 `send_key` modifier mask.
 pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
-    activate_window_for_input(window_id)?;
+    chord_into(Some(window_id), keys)
+}
+
+/// Send a chord while an outer exact-container focus guard is active.
+pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let (pid, window_id) = inject_focused_target()?;
+        return inject_hotkey(pid, window_id, keys);
+    }
+    chord_into(None, keys)
+}
+
+/// [`hotkey`] into `window`, activated first, or [`hotkey_focused`].
+fn chord_into(window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
+    window.map_or(Ok(()), activate_window_for_input)?;
     let (mods, final_key) = partition_modifiers(keys)?;
-    if is_wayland() && niri::is_session() {
-        return niri::keyboard::press(Some(window_id), &mods, &chord_keysym(&final_key));
+    if niri::is_session() {
+        let expected = window.or_else(niri_expected_window);
+        return niri::keyboard::press(expected, &mods, &chord_keysym(&final_key));
     }
     if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
         return Ok(());
@@ -2986,49 +2981,7 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
                 return with_wtype_libei_fallback(
                     || {
                         libei::wait_keyboard_ready()?;
-                        activate_window_for_input(window_id)?;
-                        libei_hotkey(&mods, &final_key)
-                    },
-                    stderr,
-                );
-            }
-            #[cfg(not(feature = "portal-input"))]
-            {
-                anyhow::bail!(
-                    "wtype {} failed: {}",
-                    args.join(" "),
-                    stderr.unwrap_or_else(|_| "wtype unavailable".into())
-                );
-            }
-        }
-    }
-}
-
-/// Send a chord while an outer exact-container focus guard is active.
-pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
-    if is_inject_mode() {
-        let (pid, window_id) = inject_focused_target()?;
-        return inject_hotkey(pid, window_id, keys);
-    }
-    let (mods, final_key) = partition_modifiers(keys)?;
-    if is_wayland() && niri::is_session() {
-        return niri::keyboard::press(niri_expected_window(), &mods, &chord_keysym(&final_key));
-    }
-    if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
-        return Ok(());
-    }
-    let keysym = key_to_keysym(&final_key);
-    let args = wtype_hotkey_args(&mods, &keysym);
-    let result = wtype_output(&args);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        other => {
-            let stderr = other.map(|out| String::from_utf8_lossy(&out.stderr).into_owned());
-            #[cfg(feature = "portal-input")]
-            {
-                return with_wtype_libei_fallback(
-                    || {
-                        libei::wait_keyboard_ready()?;
+                        window.map_or(Ok(()), activate_window_for_input)?;
                         libei_hotkey(&mods, &final_key)
                     },
                     stderr,
